@@ -806,6 +806,39 @@ const buildWorkspaceArchiveUrl = (path = "") => {
   return `${wunderBase}/workspace/archive?${params.toString()}`;
 };
 
+const getWorkspaceAuthHeaders = () => {
+  const apiKey = String(elements.apiKey?.value || "").trim();
+  if (!apiKey) {
+    return undefined;
+  }
+  return { "X-API-Key": apiKey };
+};
+
+const downloadWorkspaceByFetch = async (url, filename) => {
+  if (!url) {
+    return false;
+  }
+  try {
+    const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
+    if (!response.ok) {
+      throw new Error(`请求失败：${response.status}`);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename || "download";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+    return true;
+  } catch (error) {
+    notify(`下载失败：${error.message}`, "error");
+    return false;
+  }
+};
+
 const downloadWorkspaceEntry = (entry) => {
   if (!entry) {
     return;
@@ -821,25 +854,15 @@ const downloadWorkspaceEntry = (entry) => {
       appendLog("请先填写 user_id。");
       return;
     }
-    const link = document.createElement("a");
-    link.href = url;
     const downloadName = entry.name ? `${entry.name}.zip` : "workspace_folder.zip";
-    link.download = downloadName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadWorkspaceByFetch(url, downloadName);
     return;
   }
   if (entry.type !== "file") {
     return;
   }
   const url = buildWorkspaceDownloadUrl(entry);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = entry.name || "download";
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  downloadWorkspaceByFetch(url, entry.name || "download");
 };
 
 // 下载工作区全量压缩包，便于一次性保存所有文件
@@ -850,13 +873,7 @@ const downloadWorkspaceArchive = () => {
     return false;
   }
   const userId = elements.userId.value.trim();
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `workspace_${userId || "all"}.zip`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  return true;
+  return downloadWorkspaceByFetch(url, `workspace_${userId || "all"}.zip`);
 };
 
 // 统一获取 user_id，避免重复提示
@@ -1085,7 +1102,7 @@ const renderTextPreview = async (entry, url) => {
   resetPreviewContainer();
   renderUnsupportedPreview("正在加载预览...");
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
       throw new Error(`请求失败：${response.status}`);
     }
@@ -1112,7 +1129,7 @@ const renderImagePreview = async (entry, url) => {
   resetPreviewContainer();
   renderUnsupportedPreview("正在加载预览...");
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
       throw new Error(`请求失败：${response.status}`);
     }
@@ -1140,7 +1157,7 @@ const renderPdfPreview = async (entry, url) => {
   resetPreviewContainer();
   renderUnsupportedPreview("正在加载预览...");
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
       throw new Error(`请求失败：${response.status}`);
     }

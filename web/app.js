@@ -4,7 +4,7 @@ import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
 import { initToolDetailModal } from "./modules/tool-detail.js";
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20251231-01";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20251231-03";
 import {
   applyPromptToolError,
   ensureToolSelectionLoaded,
