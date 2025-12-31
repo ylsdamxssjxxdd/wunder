@@ -1,8 +1,6 @@
 # wunder
 wunder是对eva改装构建的一个面向多用户的智能体调度平台，支持对接大模型 API、MCP 工具与 Skills 流程并提供基础的字面知识库检索功能。通过 FastAPI 暴露统一入口 `/wunder`，可流式返回中间过程与最终回复，并提供调试页面与基础运维接口。
-
-<img width="1000" height="563" alt="wunder" src="https://github.com/user-attachments/assets/34fab73a-b0b0-4270-871b-300ac5a623a2" />
-
+<img width="1000" height="563" alt="wunder" src="https://github.com/user-attachments/assets/4e589030-f1fc-4e0c-91a7-3419eb39a046" />
 
 ## 核心理念
 对开发者来说一切都是接口，对大模型来说一切皆工具
