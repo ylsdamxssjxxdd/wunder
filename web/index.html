@@ -1,0 +1,2035 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>测试调试</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="./third/fontawesome-free-6.7.2-web/svgs/solid/dragon.svg"
+    />
+    <link
+      rel="stylesheet"
+      href="./third/fontawesome-free-6.7.2-web/css/fontawesome.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
+    />
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-title">
+          <i class="fa-solid fa-dragon"></i>WUNDER 终端
+        </div>
+        <button id="navMonitor" class="nav-btn active">
+          <i class="fa-solid fa-heart"></i>内部状态
+        </button>
+        <button id="navUsers" class="nav-btn">
+          <i class="fa-solid fa-users"></i>用户管理
+        </button>
+        <button id="navMemory" class="nav-btn">
+          <i class="fa-solid fa-brain"></i>记忆体
+        </button>
+        <button id="navLlm" class="nav-btn">
+          <i class="fa-solid fa-sliders"></i>模型配置
+        </button>
+        <button id="navBuiltin" class="nav-btn">
+          <i class="fa-solid fa-tools"></i>内置工具链
+        </button>
+        <button id="navMcp" class="nav-btn">
+          <i class="fa-solid fa-plug"></i>MCP 服务
+        </button>
+        <button id="navSkills" class="nav-btn">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>技能管理
+        </button>
+        <button id="navKnowledge" class="nav-btn">
+          <i class="fa-solid fa-book"></i>字面知识库
+        </button>
+        <button id="navPrompt" class="nav-btn">
+          <i class="fa-solid fa-file-lines"></i>系统提示词
+        </button>
+        <button id="navDebug" class="nav-btn">
+          <i class="fa-solid fa-bug"></i>调试面板
+        </button>
+      </aside>
+
+      <main class="content">
+        <section id="monitorPanel" class="panel active">
+          <div class="list-header">
+            <h1>内部状态</h1>
+            <div class="header-actions monitor-header-actions">
+              <div class="header-input monitor-time-filter">
+                <label>筛选时间</label>
+                <label class="monitor-filter-toggle">
+                  <input id="monitorTimeFilterToggle" type="checkbox" />
+                  <span>启用</span>
+                </label>
+                <input id="monitorTimeStart" type="datetime-local" />
+                <span class="monitor-time-sep">-</span>
+                <input id="monitorTimeEnd" type="datetime-local" />
+              </div>
+              <div class="header-input monitor-time-range">
+                <label for="monitorTimeRange">监视时间</label>
+                <input
+                  id="monitorTimeRange"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  placeholder="默认 3"
+                />
+                <span class="monitor-time-unit">小时</span>
+              </div>
+              <button id="monitorRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>刷新
+              </button>
+            </div>
+          </div>
+          <div class="tips">展示系统资源占用与服务运行状态。</div>
+
+          <div class="monitor-layout">
+              <div class="monitor-dashboard">
+                <div class="monitor-block monitor-block-summary">
+                  <div class="monitor-block-title">系统与服务状态</div>
+                  <div class="monitor-summary">
+                    <div>
+                      <div class="monitor-section-title">系统状态</div>
+                      <table class="monitor-kv-table">
+                        <tbody>
+                          <tr>
+                            <th>CPU</th>
+                            <td><strong id="metricCpu">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>内存</th>
+                            <td>
+                              <strong id="metricMemory">-</strong>
+                              <div id="metricMemoryDetail" class="monitor-subtext"></div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <th>负载 1/5/15</th>
+                            <td>
+                              <strong
+                                ><span id="metricLoad1">-</span> / <span id="metricLoad5">-</span> /
+                                <span id="metricLoad15">-</span></strong
+                              >
+                            </td>
+                          </tr>
+                          <tr>
+                            <th>运行时长</th>
+                            <td><strong id="metricUptime">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>磁盘</th>
+                            <td>
+                              <strong id="metricDisk">-</strong>
+                              <div id="metricDiskDetail" class="monitor-subtext"></div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <th>磁盘 IO</th>
+                            <td>
+                              <strong
+                                ><span id="metricDiskRead">-</span> / <span id="metricDiskWrite">-</span></strong
+                              >
+                              <div class="monitor-subtext">读 / 写</div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <th>网络 IO</th>
+                            <td>
+                              <strong
+                                ><span id="metricNetSent">-</span> / <span id="metricNetRecv">-</span></strong
+                              >
+                              <div class="monitor-subtext">上行 / 下行</div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <th>进程资源</th>
+                            <td>
+                              <strong
+                                ><span id="metricProcessMemory">-</span> /
+                                <span id="metricProcessCpu">-</span></strong
+                              >
+                              <div class="monitor-subtext">内存 / CPU</div>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div>
+                      <div class="monitor-section-title">服务状态</div>
+                      <table class="monitor-kv-table">
+                        <tbody>
+                          <tr>
+                            <th>活动线程</th>
+                            <td><strong id="metricServiceActive">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>历史线程</th>
+                            <td><strong id="metricServiceHistory">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>已完成</th>
+                            <td><strong id="metricServiceFinished">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>已失败</th>
+                            <td><strong id="metricServiceError">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>已取消</th>
+                            <td><strong id="metricServiceCancelled">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>总线程</th>
+                            <td><strong id="metricServiceTotal">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th id="metricServiceRecentLabel">近 1 小时完成</th>
+                            <td><strong id="metricServiceRecent">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>平均耗时</th>
+                            <td><strong id="metricServiceAvg">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>Token 总占用</th>
+                            <td><strong id="metricServiceTokenTotal">-</strong></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div>
+                      <div class="monitor-section-title">Sandbox 状态</div>
+                      <table class="monitor-kv-table">
+                        <tbody>
+                          <tr>
+                            <th>模式</th>
+                            <td><strong id="metricSandboxMode">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>网络</th>
+                            <td><strong id="metricSandboxNetwork">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>只读</th>
+                            <td><strong id="metricSandboxReadonly">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th>资源限额</th>
+                            <td>
+                              <strong id="metricSandboxResources">-</strong>
+                              <div id="metricSandboxResourcesDetail" class="monitor-subtext"></div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <th id="metricSandboxCallsLabel">近 3 小时调用</th>
+                            <td><strong id="metricSandboxCalls">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th id="metricSandboxSessionsLabel">近 3 小时会话</th>
+                            <td><strong id="metricSandboxSessions">-</strong></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="monitor-block monitor-block-tools">
+                  <div id="toolHeatmapTitle" class="monitor-block-title">
+                    近 3 小时工具调用热力图
+                  </div>
+                  <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
+                    <div id="toolHeatmapGrid" class="tool-heatmap"></div>
+                  </div>
+                  <div id="toolHeatmapEmpty" class="tool-heatmap-empty">暂无工具调用</div>
+                </div>
+
+              <div class="monitor-block monitor-block-token">
+                <div id="serviceTokenTitle" class="monitor-block-title">
+                  每 3 小时 Token 总占用趋势
+                </div>
+                <div id="serviceTokenChartWrap" class="monitor-chart-scroll">
+                  <div id="serviceTokenChart" class="monitor-chart monitor-chart-content"></div>
+                </div>
+              </div>
+
+              <div class="monitor-block monitor-block-status">
+                <div id="serviceStatusTitle" class="monitor-block-title">近 3 小时线程状态占比</div>
+                <div id="serviceStatusChart" class="monitor-chart"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="usersPanel" class="panel">
+          <div class="user-management">
+            <div class="list-header">
+              <h1>用户管理</h1>
+              <div class="header-actions">
+                <div class="header-input">
+                  <label for="userSearchInput">搜索用户</label>
+                  <input id="userSearchInput" type="text" placeholder="输入用户ID" />
+                </div>
+                <button id="userRefreshBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-arrows-rotate"></i>刷新
+                </button>
+              </div>
+            </div>
+            <div class="tips">
+              统计各用户历史对话记录、会话与工具调用次数，点击历史对话记录可查看该用户全部会话。
+            </div>
+
+            <div class="management-layout user-layout">
+              <div class="management-list">
+                <div class="list-header">
+                  <label>用户统计</label>
+                </div>
+                <div class="monitor-section-body monitor-paged">
+                  <div class="monitor-table-scroll">
+                    <table class="monitor-table user-table">
+                      <colgroup>
+                        <col class="col-user-id" />
+                        <col class="col-chat" />
+                        <col class="col-session" />
+                        <col class="col-tool" />
+                        <col class="col-active" />
+                        <col class="col-action" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>用户</th>
+                          <th>历史对话记录</th>
+                          <th>会话次数</th>
+                          <th>Token 占用</th>
+                          <th>活动线程</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="userStatsBody"></tbody>
+                    </table>
+                    <div id="userStatsEmpty" class="muted">暂无用户数据</div>
+                  </div>
+                  <div id="userStatsPagination" class="monitor-pagination">
+                    <div id="userStatsPageInfo" class="monitor-pagination-info"></div>
+                    <div class="monitor-pagination-controls">
+                      <button id="userStatsPrevBtn" class="secondary" type="button">上一页</button>
+                      <button id="userStatsNextBtn" class="secondary" type="button">下一页</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="management-detail user-detail">
+                <div class="detail-header">
+                  <div>
+                    <div id="userDetailTitle" class="detail-title">全部用户</div>
+                    <div id="userDetailMeta" class="muted"></div>
+                  </div>
+                </div>
+
+                <div class="monitor-table-wrap">
+                  <div class="monitor-sections">
+                    <div class="monitor-section">
+                      <div class="monitor-section-title">活动线程</div>
+                      <div class="monitor-section-body monitor-paged">
+                        <div class="monitor-table-scroll">
+                          <table class="monitor-table">
+                            <colgroup>
+                              <col class="col-start" />
+                              <col class="col-session" />
+                              <col class="col-user" />
+                              <col class="col-question" />
+                              <col class="col-status" />
+                              <col class="col-token" />
+                              <col class="col-elapsed" />
+                              <col class="col-stage" />
+                              <col class="col-action" />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th>开始时间</th>
+                                <th>会话</th>
+                                <th>用户</th>
+                                <th>问题</th>
+                                <th>状态</th>
+                                <th>Token</th>
+                                <th>耗时</th>
+                                <th>阶段</th>
+                                <th>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody id="monitorTableBody"></tbody>
+                          </table>
+                          <div id="monitorEmpty" class="muted">暂无活动线程。</div>
+                        </div>
+                        <div id="monitorActivePagination" class="monitor-pagination">
+                          <div id="monitorActivePageInfo" class="monitor-pagination-info">
+                            共 0 条 · 第 1 / 1 页 · 每页 100 条
+                          </div>
+                          <div class="monitor-pagination-controls">
+                            <button id="monitorActivePrevBtn" class="secondary" type="button">
+                              上一页
+                            </button>
+                            <button id="monitorActiveNextBtn" class="secondary" type="button">
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="monitor-section">
+                      <div class="monitor-section-title">历史线程</div>
+                      <div class="monitor-section-body monitor-paged">
+                        <div class="monitor-table-scroll">
+                          <table class="monitor-table">
+                            <colgroup>
+                              <col class="col-start" />
+                              <col class="col-session" />
+                              <col class="col-user" />
+                              <col class="col-question" />
+                              <col class="col-status" />
+                              <col class="col-token" />
+                              <col class="col-elapsed" />
+                              <col class="col-stage" />
+                              <col class="col-action" />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th>开始时间</th>
+                                <th>会话</th>
+                                <th>用户</th>
+                                <th>问题</th>
+                                <th>状态</th>
+                                <th>Token</th>
+                                <th>耗时</th>
+                                <th>阶段</th>
+                                <th>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody id="monitorHistoryBody"></tbody>
+                          </table>
+                          <div id="monitorHistoryEmpty" class="muted">暂无历史线程。</div>
+                        </div>
+                        <div id="monitorHistoryPagination" class="monitor-pagination">
+                          <div id="monitorHistoryPageInfo" class="monitor-pagination-info">
+                            共 0 条 · 第 1 / 1 页 · 每页 100 条
+                          </div>
+                          <div class="monitor-pagination-controls">
+                            <button id="monitorHistoryPrevBtn" class="secondary" type="button">
+                              上一页
+                            </button>
+                            <button id="monitorHistoryNextBtn" class="secondary" type="button">
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="memoryPanel" class="panel">
+          <div class="user-management">
+            <div class="list-header">
+              <h1>记忆体</h1>
+              <div class="header-actions">
+                <div class="header-input">
+                  <label for="memorySearchInput">搜索用户</label>
+                  <input id="memorySearchInput" type="text" placeholder="输入用户ID" />
+                </div>
+                <button id="memoryRefreshBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-arrows-rotate"></i>刷新
+                </button>
+              </div>
+            </div>
+            <div class="tips">
+              记忆体用于管理用户长期记忆数据，开启后会将历史记忆追加到系统提示词末尾，并在每次最终回复后自动总结。
+            </div>
+
+            <div class="management-layout memory-layout">
+              <div class="management-list">
+                <div class="list-header">
+                  <label>用户列表</label>
+                </div>
+                <div class="monitor-section-body monitor-paged">
+                  <div class="monitor-table-scroll">
+                    <table class="monitor-table memory-table">
+                      <colgroup>
+                        <col class="col-memory-user" />
+                        <col class="col-memory-count" />
+                        <col class="col-memory-updated" />
+                        <col class="col-memory-enabled" />
+                        <col class="col-memory-action" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>用户</th>
+                          <th>记录数</th>
+                          <th>更新时间</th>
+                          <th>启用</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="memoryUsersBody"></tbody>
+                    </table>
+                    <div id="memoryUsersEmpty" class="muted">暂无用户</div>
+                  </div>
+                  <div id="memoryUsersPagination" class="monitor-pagination">
+                    <div id="memoryUsersPageInfo" class="monitor-pagination-info"></div>
+                    <div class="monitor-pagination-controls">
+                      <button id="memoryUsersPrevBtn" class="secondary" type="button">上一页</button>
+                      <button id="memoryUsersNextBtn" class="secondary" type="button">下一页</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="management-detail memory-status">
+                <div class="detail-header">
+                  <div>
+                    <div class="detail-title">记忆体运行状态</div>
+                    <div id="memoryStatusMeta" class="muted"></div>
+                  </div>
+                </div>
+
+                <div class="monitor-table-wrap">
+                  <div class="monitor-sections memory-status-sections">
+                    <div class="monitor-section">
+                      <div class="monitor-section-title">活动队列</div>
+                      <div class="monitor-section-body monitor-paged">
+                        <div class="monitor-table-scroll">
+                          <table class="monitor-table memory-queue-table">
+                            <colgroup>
+                              <col class="col-memory-queue-time" />
+                              <col class="col-memory-queue-session" />
+                              <col class="col-memory-queue-user" />
+                              <col class="col-memory-queue-status" />
+                              <col class="col-memory-queue-elapsed" />
+                              <col class="col-memory-queue-action" />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th>开始时间</th>
+                                <th>会话</th>
+                                <th>用户</th>
+                                <th>状态</th>
+                                <th>耗时</th>
+                                <th>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody id="memoryStatusActiveBody"></tbody>
+                          </table>
+                          <div id="memoryStatusActiveEmpty" class="muted">暂无活动任务。</div>
+                        </div>
+                        <div id="memoryStatusActivePagination" class="monitor-pagination">
+                          <div id="memoryStatusActivePageInfo" class="monitor-pagination-info"></div>
+                          <div class="monitor-pagination-controls">
+                            <button id="memoryStatusActivePrevBtn" class="secondary" type="button">
+                              上一页
+                            </button>
+                            <button id="memoryStatusActiveNextBtn" class="secondary" type="button">
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="monitor-section">
+                      <div class="monitor-section-title">历史队列</div>
+                      <div class="monitor-section-body monitor-paged">
+                        <div class="monitor-table-scroll">
+                          <table class="monitor-table memory-queue-table">
+                            <colgroup>
+                              <col class="col-memory-queue-time" />
+                              <col class="col-memory-queue-session" />
+                              <col class="col-memory-queue-user" />
+                              <col class="col-memory-queue-status" />
+                              <col class="col-memory-queue-elapsed" />
+                              <col class="col-memory-queue-action" />
+                            </colgroup>
+                            <thead>
+                              <tr>
+                                <th>开始时间</th>
+                                <th>会话</th>
+                                <th>用户</th>
+                                <th>状态</th>
+                                <th>耗时</th>
+                                <th>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody id="memoryStatusHistoryBody"></tbody>
+                          </table>
+                          <div id="memoryStatusHistoryEmpty" class="muted">暂无历史任务。</div>
+                        </div>
+                        <div id="memoryStatusHistoryPagination" class="monitor-pagination">
+                          <div id="memoryStatusHistoryPageInfo" class="monitor-pagination-info"></div>
+                          <div class="monitor-pagination-controls">
+                            <button id="memoryStatusHistoryPrevBtn" class="secondary" type="button">
+                              上一页
+                            </button>
+                            <button id="memoryStatusHistoryNextBtn" class="secondary" type="button">
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="debugPanel" class="panel">
+          <div class="list-header">
+            <h1>请求调试</h1>
+            <div class="header-actions debug-header-actions">
+              <div class="header-input">
+                <label for="userId">user_id</label>
+                <input id="userId" type="text" />
+              </div>
+              <div class="header-input">
+                <label for="sessionId">session_id（可选）</label>
+                <input id="sessionId" type="text" placeholder="留空自动生成" />
+              </div>
+              <div class="header-input">
+                <label for="debugModelName">模型配置</label>
+                <select id="debugModelName">
+                  <option value="">默认模型</option>
+                </select>
+              </div>
+              <div class="header-input">
+                <label for="apiBase">API 地址</label>
+                <input id="apiBase" type="text" />
+              </div>
+              <div class="header-input">
+                <label for="apiKey">API Key</label>
+                <div class="api-key-field">
+                  <input id="apiKey" type="password" />
+                  <button
+                    id="apiKeyToggle"
+                    class="api-key-toggle"
+                    type="button"
+                    aria-label="显示 API Key"
+                    title="显示 API Key"
+                  >
+                    <i class="fa-solid fa-eye"></i>
+                  </button>
+                </div>
+              </div>
+              <button
+                id="debugHistoryBtn"
+                class="secondary btn-with-icon"
+                type="button"
+                aria-label="历史"
+                title="历史"
+              >
+                <i class="fa-solid fa-clock-rotate-left"></i>
+              </button>
+            </div>
+          </div>
+          <div class="tips">
+            本页面用于快速测试 /wunder 接口（SSE 或非流式）。请确保后端服务已启动，并且地址可访问。
+            如果使用 file:// 打开页面，浏览器可能拦截跨域请求，请使用本地静态服务或开启 CORS。
+          </div>
+
+          <div class="debug-layout">
+            <div class="debug-form">
+              <div class="form-section debug-form-section">
+                <div class="form-row">
+                  <div class="workspace-header">
+                    <label>临时工作区</label>
+                    <div class="workspace-actions">
+                      <button
+                        id="workspaceUpBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="上级"
+                        aria-label="上级"
+                      >
+                        <i class="fa-solid fa-arrow-up"></i>
+                      </button>
+                      <button
+                        id="workspaceNewFileBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="新建文件"
+                        aria-label="新建文件"
+                      >
+                        <i class="fa-solid fa-file-circle-plus"></i>
+                      </button>
+                      <button
+                        id="workspaceNewFolderQuickBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="新建文件夹"
+                        aria-label="新建文件夹"
+                      >
+                        <i class="fa-solid fa-folder-plus"></i>
+                      </button>
+                      <button
+                        id="workspaceRefreshBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="刷新"
+                        aria-label="刷新"
+                      >
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                      </button>
+                      <button
+                        id="workspaceUploadBtn"
+                        class="btn-with-icon icon-only"
+                        type="button"
+                        title="上传"
+                        aria-label="上传"
+                      >
+                        <i class="fa-solid fa-upload"></i>
+                      </button>
+                      <button
+                        id="workspaceDownloadAllBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="全下"
+                        aria-label="全下"
+                      >
+                        <i class="fa-solid fa-download"></i>
+                      </button>
+                    </div>
+                  </div>
+                  <div id="workspacePath" class="workspace-path">/</div>
+                  <div class="workspace-toolbar">
+                    <div class="workspace-search">
+                      <i class="fa-solid fa-magnifying-glass"></i>
+                      <input
+                        id="workspaceSearchInput"
+                        type="text"
+                        placeholder="搜索工作区（名称）"
+                      />
+                    </div>
+                    <div class="workspace-sort">
+                      <select id="workspaceSortSelect">
+                        <option value="name">名称排序</option>
+                        <option value="updated_time">更新时间</option>
+                        <option value="size">大小</option>
+                      </select>
+                      <button
+                        id="workspaceSortOrderBtn"
+                        class="secondary btn-with-icon icon-only"
+                        type="button"
+                        title="排序方向"
+                        aria-label="排序方向"
+                      >
+                        <i class="fa-solid fa-arrow-up-short-wide"></i>
+                      </button>
+                    </div>
+                    <div id="workspaceSelectionMeta" class="workspace-selection-meta muted"></div>
+                  </div>
+                  <div id="workspaceList" class="workspace-list"></div>
+                </div>
+
+              <div class="form-row debug-attachments">
+                <div class="debug-attachments-header">
+                  <label>附件</label>
+                  <div id="debugAttachmentMeta" class="muted"></div>
+                </div>
+                <div id="debugAttachmentList" class="debug-attachments-list">
+                  暂未附加文件或图片
+                </div>
+              </div>
+
+              <!-- 问题输入区域 -->
+              <div class="form-row question-row">
+                <label for="question">question</label>
+                <textarea id="question" placeholder="请输入需要测试的问题"></textarea>
+              </div>
+
+              <!-- 操作按钮：发送、停止 -->
+              <div class="actions debug-actions">
+                <button
+                  id="debugNewSessionBtn"
+                  class="secondary btn-with-icon icon-only"
+                  type="button"
+                  title="新会话"
+                  aria-label="新会话"
+                >
+                  <i class="fa-solid fa-plus"></i>
+                </button>
+                <button
+                  id="debugUploadBtn"
+                  class="secondary btn-with-icon icon-only"
+                  type="button"
+                  title="上传附件"
+                  aria-label="上传附件"
+                >
+                  <i class="fa-solid fa-paperclip"></i>
+                </button>
+                <button
+                  id="sendBtn"
+                  class="btn-with-icon icon-only"
+                  type="button"
+                  title="发送"
+                  aria-label="发送"
+                >
+                  <i class="fa-solid fa-paper-plane"></i>
+                </button>
+              </div>
+              </div>
+            </div>
+
+            <div class="panel-logs">
+              <div class="log-card">
+                <div class="log-card-header">
+                  <label>事件日志</label>
+                  <span class="log-waiting">进行中</span>
+                </div>
+                <div id="eventLog" class="log log-collapsible"></div>
+              </div>
+
+              <div class="log-card">
+                <div class="log-card-header">
+                  <label>请求日志</label>
+                  <span class="log-waiting">进行中</span>
+                </div>
+                <div id="requestLog" class="log log-collapsible"></div>
+              </div>
+
+              <div class="log-card">
+                <div class="log-card-header">
+                  <label>模型输出</label>
+                  <div class="header-input">
+                    <label for="modelOutputRoundSelect">轮次</label>
+                    <select id="modelOutputRoundSelect"></select>
+                  </div>
+                </div>
+                <div id="modelOutput" class="log"></div>
+              </div>
+
+              <div class="log-card">
+                <label>统计信息</label>
+                <div id="finalAnswer" class="answer"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+          <section id="mcpPanel" class="panel">
+            <div class="list-header">
+              <h1>MCP 服务管理</h1>
+              <div class="header-actions">
+                <button id="mcpRefreshAllBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-arrows-rotate"></i>全部刷新
+                </button>
+                <button id="mcpImportBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-file-import"></i>导入服务
+                </button>
+              </div>
+            </div>
+          <div class="tips">
+            录入 MCP 服务后可连接列出工具，并选择是否启用。启用的工具会注入系统提示词。
+          </div>
+
+          <div class="management-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label>服务列表</label>
+              </div>
+              <div id="mcpServerList" class="list-body"></div>
+            </div>
+
+            <div class="management-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="mcpDetailTitle" class="detail-title">未选择服务</div>
+                  <div id="mcpDetailMeta" class="muted"></div>
+                  <div id="mcpDetailDesc" class="muted"></div>
+                </div>
+              </div>
+              <div class="detail-actions">
+                <div class="actions">
+                  <button id="mcpConnectBtn" class="btn-with-icon">
+                    <i class="fa-solid fa-link"></i>连接
+                  </button>
+                  <button id="mcpEnableAllBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-check-double"></i>全选
+                  </button>
+                  <button id="mcpDisableAllBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-ban"></i>全不选
+                  </button>
+                </div>
+                <div class="actions">
+                  <button id="mcpEditBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-pen-to-square"></i>编辑服务
+                  </button>
+                  <button id="mcpDeleteBtn" class="danger btn-with-icon">
+                    <i class="fa-solid fa-trash"></i>删除服务
+                  </button>
+                </div>
+              </div>
+              <div class="muted">勾选后将写入 allow_tools，仅启用选中的工具。</div>
+              <div id="mcpToolList" class="tool-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="builtinPanel" class="panel">
+          <div class="list-header">
+            <h1>内置工具链</h1>
+            <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
+              <i class="fa-solid fa-arrows-rotate"></i>刷新工具
+            </button>
+          </div>
+          <div class="tips">勾选后将注入系统提示词，不勾选则不加入。</div>
+
+          <div class="skills-panel">
+            <div id="builtinToolsList" class="tool-list"></div>
+          </div>
+        </section>
+
+        <section id="skillsPanel" class="panel">
+          <div class="list-header">
+            <h1>技能管理</h1>
+            <div class="header-actions">
+              <button id="addSkillBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-plus"></i>添加技能
+              </button>
+              <button id="refreshSkillsBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>刷新技能
+              </button>
+            </div>
+          </div>
+          <div class="tips">从技能目录读取可用技能，勾选后会注入系统提示词。</div>
+
+          <div class="skills-panel">
+            <div id="skillsList" class="skills-list"></div>
+          </div>
+        </section>
+
+        <section id="knowledgePanel" class="panel">
+          <div class="list-header">
+            <h1>字面知识库</h1>
+            <div class="header-actions">
+              <button id="knowledgeAddBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-plus"></i>新增
+              </button>
+              <button id="knowledgeRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>刷新
+              </button>
+            </div>
+          </div>
+          <div class="tips">配置不同知识库目录并提供检索工具，新增或编辑时在弹窗中完成。</div>
+
+          <div class="management-layout knowledge-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label>知识库列表</label>
+              </div>
+              <div id="knowledgeBaseList" class="list-body"></div>
+            </div>
+
+            <div class="management-detail knowledge-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="knowledgeDetailTitle" class="detail-title">未选择知识库</div>
+                  <div id="knowledgeDetailMeta" class="muted"></div>
+                  <div id="knowledgeDetailDesc" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="knowledgeEditBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-pen"></i>编辑
+                  </button>
+                  <button id="knowledgeDeleteBtn" class="danger btn-with-icon">
+                    <i class="fa-solid fa-trash"></i>删除知识库
+                  </button>
+                </div>
+              </div>
+
+              <div class="knowledge-section form-section">
+                <div class="knowledge-content">
+                  <div class="llm-card knowledge-files-card">
+                    <div class="knowledge-file-layout">
+                      <div class="knowledge-file-pane">
+                        <div class="knowledge-file-toolbar">
+                          <button id="knowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
+                            <i class="fa-solid fa-upload"></i>上传
+                          </button>
+                          <button id="knowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
+                            <i class="fa-solid fa-plus"></i>新建
+                          </button>
+                          <button id="knowledgeFileSaveBtn" class="btn-with-icon btn-compact">
+                            <i class="fa-solid fa-floppy-disk"></i>保存
+                          </button>
+                        </div>
+                        <input
+                          id="knowledgeFileUploadInput"
+                          type="file"
+                          hidden
+                        />
+                        <div id="knowledgeFileList" class="knowledge-file-list"></div>
+                      </div>
+                        <div class="knowledge-file-editor">
+                          <div id="knowledgeFileName" class="muted">未选择文档</div>
+                          <div class="knowledge-editor-wrapper">
+                            <div
+                              id="knowledgeFileHighlight"
+                              class="knowledge-editor-highlight"
+                              aria-hidden="true"
+                            ></div>
+                            <textarea
+                              id="knowledgeFileContent"
+                              placeholder="在此编辑 Markdown 内容"
+                            ></textarea>
+                          </div>
+                        </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="llmPanel" class="panel">
+          <div class="list-header">
+            <h1>模型配置</h1>
+            <button id="saveLlmBtn" class="btn-with-icon">
+              <i class="fa-solid fa-floppy-disk"></i>保存配置
+            </button>
+          </div>
+          <div class="tips">配置模型服务地址、密钥与生成参数，保存后立即生效。</div>
+
+          <div class="management-layout llm-layout">
+            <div class="management-list llm-list">
+              <div class="list-header">
+                <label>配置列表</label>
+                <button id="llmAddBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-plus"></i>新增
+                </button>
+              </div>
+              <div id="llmConfigList" class="list-body"></div>
+            </div>
+
+            <div class="management-detail llm-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="llmDetailTitle" class="detail-title">未选择配置</div>
+                  <div id="llmDetailMeta" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="llmSetDefaultBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-star"></i>设为默认
+                  </button>
+                  <button id="llmDeleteBtn" class="danger btn-with-icon" type="button">
+                    <i class="fa-solid fa-trash"></i>删除
+                  </button>
+                </div>
+              </div>
+
+              <div class="llm-panel form-section">
+                <div class="llm-card">
+                  <div class="llm-card-title">
+                    <i class="fa-solid fa-gear"></i>基础设置
+                  </div>
+                  <div class="form-row">
+                    <label for="llmConfigName">配置名称</label>
+                    <input id="llmConfigName" type="text" placeholder="例如：main" />
+                  </div>
+                  <div class="grid">
+                    <div class="form-row">
+                      <label for="llmProvider">provider</label>
+                      <select id="llmProvider">
+                        <option value="openai_compatible">openai_compatible</option>
+                      </select>
+                    </div>
+                    <div class="form-row">
+                      <label for="llmModel">model</label>
+                      <input id="llmModel" type="text" placeholder="例如：gpt-4.1" />
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="llmBaseUrl">base_url</label>
+                    <input id="llmBaseUrl" type="text" placeholder="https://api.example.com" />
+                  </div>
+
+                  <div class="form-row">
+                    <label for="llmApiKey">api_key（选填）</label>
+                    <input id="llmApiKey" type="text" placeholder="sk-..." />
+                  </div>
+                </div>
+
+                <div class="llm-card">
+                  <div class="llm-card-title">
+                    <i class="fa-solid fa-sliders"></i>生成参数
+                  </div>
+                  <div class="grid">
+                    <div class="form-row">
+                      <label for="llmTemperature">temperature</label>
+                      <input id="llmTemperature" type="number" min="0" max="2" step="0.1" />
+                    </div>
+                    <div class="form-row">
+                      <label for="llmTimeout">timeout_s</label>
+                      <input id="llmTimeout" type="number" min="1" step="1" />
+                    </div>
+                  </div>
+
+                  <div class="grid">
+                    <div class="form-row">
+                      <label for="llmRetry">retry</label>
+                      <input id="llmRetry" type="number" min="0" step="1" />
+                    </div>
+                    <div class="form-row">
+                      <label for="llmMaxOutput">最大输出长度（选填）</label>
+                      <input
+                        id="llmMaxOutput"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="例如：4096"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="llmMaxRounds">最大执行轮次</label>
+                    <input
+                      id="llmMaxRounds"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="例如：10"
+                    />
+                  </div>
+
+                  <div class="form-row">
+                    <label for="llmMaxContext">最大上下文（选填）</label>
+                    <div class="form-row-inline">
+                      <input
+                        id="llmMaxContext"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="例如：128000"
+                      />
+                      <button
+                        id="llmProbeContextBtn"
+                        type="button"
+                        class="secondary btn-with-icon"
+                      >
+                        <i class="fa-solid fa-magnifying-glass"></i>自动探测
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="llm-card">
+                  <div class="llm-card-title">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>能力选项
+                  </div>
+                  <div class="form-row">
+                    <div class="checkbox-row-group">
+                      <label class="checkbox-row checkbox-compact">
+                        <input id="llmVision" type="checkbox" />
+                        <span>支持视觉</span>
+                      </label>
+                      <label class="checkbox-row checkbox-compact">
+                        <input id="llmStreamIncludeUsage" type="checkbox" />
+                        <span>流式返回 usage</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="llm-card">
+                  <div class="llm-card-title">
+                    <i class="fa-solid fa-compress"></i>上下文压缩
+                  </div>
+                  <div class="grid">
+                    <div class="form-row">
+                      <label for="llmHistoryCompactionRatio">历史压缩阈值比例</label>
+                      <input
+                        id="llmHistoryCompactionRatio"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        placeholder="0.8"
+                      />
+                    </div>
+                    <div class="form-row">
+                      <label for="llmHistoryCompactionReset">压缩重置策略</label>
+                      <select id="llmHistoryCompactionReset">
+                        <option value="zero">zero（清零）</option>
+                        <option value="current">current（重置为当前）</option>
+                        <option value="keep">keep（不重置）</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="promptPanel" class="panel">
+          <div class="list-header">
+            <h1>系统提示词</h1>
+            <div class="header-actions">
+              <div class="header-input">
+                <label for="promptUserId">user_id</label>
+                <input id="promptUserId" type="text" />
+              </div>
+              <button id="loadPromptBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>刷新提示词
+              </button>
+              <div id="promptBuildTime" class="muted">构建耗时：--</div>
+            </div>
+          </div>
+          <div class="tips">
+            用于查看当前智能体的系统提示词，左侧勾选工具会同步注入提示词并影响调试面板请求。
+          </div>
+
+          <div class="prompt-content">
+            <div class="prompt-sidebar">
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-tools"></i>内置工具
+                </div>
+                <div id="promptBuiltinTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-plug"></i>MCP 工具
+                </div>
+                <div id="promptMcpTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-book"></i>知识库工具
+                </div>
+                <div id="promptKnowledgeTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i>技能
+                </div>
+                <div id="promptSkills" class="prompt-tool-list"></div>
+              </div>
+            </div>
+            <div class="prompt-secondary">
+              <div class="prompt-section">
+                <div class="prompt-section-header">
+                  <div class="prompt-section-title">
+                    <i class="fa-solid fa-toolbox"></i>自建工具
+                  </div>
+                  <button id="promptUserToolAdd" class="icon-btn" type="button" title="新增自建工具">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                </div>
+                <div id="promptUserTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-infinity"></i>共享工具
+                </div>
+                <div id="promptSharedTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-star"></i>附加提示词
+                </div>
+                <textarea
+                  id="promptExtraPrompt"
+                  class="prompt-extra-input"
+                  placeholder="输入需要附加到系统提示词的内容"
+                ></textarea>
+                <div id="promptExtraPromptStatus" class="muted"></div>
+              </div>
+            </div>
+            <div class="prompt-view">
+              <div id="systemPrompt" class="log"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="mcpModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="mcpModalTitle" class="detail-title">编辑 MCP 服务</div>
+          <button id="mcpModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="mcpName">服务名称</label>
+            <input id="mcpName" type="text" placeholder="例如：local_tools" />
+          </div>
+          <div class="form-row">
+            <label for="mcpDisplayName">显示名称（可选）</label>
+            <input id="mcpDisplayName" type="text" placeholder="用于前端展示" />
+          </div>
+          <div class="form-row">
+            <label for="mcpEndpoint">服务地址</label>
+            <input id="mcpEndpoint" type="text" placeholder="http://127.0.0.1:9000/mcp" />
+          </div>
+          <div class="form-row">
+            <label for="mcpTransport">传输类型</label>
+            <select id="mcpTransport">
+              <option value="">auto</option>
+              <option value="sse">sse</option>
+              <option value="http">http</option>
+              <option value="streamable-http">streamable-http</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="mcpDescription">服务描述（可选）</label>
+            <textarea id="mcpDescription" placeholder="用于记录服务作用"></textarea>
+          </div>
+          <div class="form-row">
+            <label for="mcpHeaders">请求头（JSON，可选）</label>
+            <textarea id="mcpHeaders" placeholder='{"Authorization":"Bearer sk-..."}'></textarea>
+            <div id="mcpHeadersError" class="error-text"></div>
+          </div>
+          <div class="form-row">
+            <label>
+              <input id="mcpEnabled" type="checkbox" checked />
+              启用服务
+            </label>
+          </div>
+          <div class="form-row">
+            <label for="mcpStructPreview">JSON 结构体预览（可复制）</label>
+            <textarea id="mcpStructPreview" class="code-preview" readonly></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="mcpModalCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="mcpModalSave" class="btn-with-icon">
+            <i class="fa-solid fa-check"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="mcpImportModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title">导入 MCP 结构体</div>
+          <button id="mcpImportClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="mcpImportInput">MCP 结构体（JSON）</label>
+            <textarea
+              id="mcpImportInput"
+              placeholder='{"mcpServers":{"WebSearch":{"type":"sse","baseUrl":"https://...","headers":{"Authorization":"Bearer sk-..."}}}}'
+            ></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="mcpImportCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="mcpImportConfirm" class="btn-with-icon">
+            <i class="fa-solid fa-file-import"></i>导入
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="skillModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="skillModalTitle" class="detail-title">技能详情</div>
+          <button id="skillModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="skillModalMeta" class="muted"></div>
+          <pre id="skillModalContent" class="skill-content"></pre>
+        </div>
+        <div class="modal-actions">
+          <button id="skillModalCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="knowledgeModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="knowledgeModalTitle" class="detail-title">知识库配置</div>
+          <button id="knowledgeModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="knowledgeModalName">名称</label>
+            <input id="knowledgeModalName" type="text" placeholder="知识库工具名称" />
+          </div>
+          <div class="form-row">
+            <label for="knowledgeModalRoot">目录</label>
+            <input
+              id="knowledgeModalRoot"
+              type="text"
+              placeholder="可留空，自动创建 ./knowledge/<名称>"
+            />
+          </div>
+          <div class="form-row">
+            <label for="knowledgeModalDesc">描述</label>
+            <textarea id="knowledgeModalDesc" placeholder="知识库用途说明"></textarea>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="knowledgeModalEnabled" type="checkbox" checked />
+              <span>启用</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="knowledgeModalCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="knowledgeModalSave" class="btn-with-icon">
+            <i class="fa-solid fa-check"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="userKnowledgeModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="userKnowledgeModalTitle" class="detail-title">知识库配置</div>
+          <button id="userKnowledgeModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userKnowledgeModalName">名称</label>
+            <input id="userKnowledgeModalName" type="text" placeholder="知识库名称" />
+          </div>
+          <div class="form-row">
+            <label for="userKnowledgeModalDesc">描述</label>
+            <textarea id="userKnowledgeModalDesc" placeholder="知识库用途说明"></textarea>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="userKnowledgeModalEnabled" type="checkbox" checked />
+              <span>启用</span>
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="userKnowledgeModalShared" type="checkbox" />
+              <span>共享</span>
+            </label>
+          </div>
+          <div class="muted">目录固定在 data/user_tools/&lt;user&gt;/knowledge/&lt;名称&gt;，保存后自动生成。</div>
+        </div>
+        <div class="modal-actions">
+          <button id="userKnowledgeModalCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="userKnowledgeModalSave" class="btn-with-icon">
+            <i class="fa-solid fa-check"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="userToolModal" class="modal">
+      <div class="modal-card modal-card-lg user-tool-modal-card">
+        <div class="modal-header">
+          <div class="detail-title">自建工具</div>
+          <button id="userToolModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="user-tool-layout">
+            <div class="user-tool-sidebar">
+              <div class="user-tool-sidebar-title">工具分类</div>
+              <button id="userToolTabMcp" class="tab-btn active" type="button">MCP 工具</button>
+              <button id="userToolTabSkills" class="tab-btn" type="button">技能工具</button>
+              <button id="userToolTabKnowledge" class="tab-btn" type="button">知识库工具</button>
+            </div>
+
+            <div class="user-tool-content">
+              <div id="userToolPaneMcp" class="user-tool-pane active">
+                <div class="list-header">
+                  <label>我的 MCP 服务</label>
+                  <div class="header-actions">
+                    <button id="userMcpRefreshAllBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-arrows-rotate"></i>全部刷新
+                    </button>
+                    <button id="userMcpImportBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-file-import"></i>导入服务
+                    </button>
+                  </div>
+                </div>
+                <div class="tips">
+                  配置个人 MCP 服务并选择共享工具，工具会以 user_id@server@tool 形式注入系统提示词。
+                </div>
+                <div class="management-layout">
+                  <div class="management-list">
+                    <div class="list-header">
+                      <label>服务列表</label>
+                    </div>
+                    <div id="userMcpServerList" class="list-body"></div>
+                  </div>
+
+                  <div class="management-detail">
+                    <div class="detail-header">
+                      <div>
+                        <div id="userMcpDetailTitle" class="detail-title">未选择服务</div>
+                        <div id="userMcpDetailMeta" class="muted"></div>
+                        <div id="userMcpDetailDesc" class="muted"></div>
+                      </div>
+                    </div>
+
+                    <div class="detail-actions">
+                      <div class="actions">
+                        <button id="userMcpConnectBtn" class="btn-with-icon">
+                          <i class="fa-solid fa-link"></i>连接
+                        </button>
+                        <button id="userMcpEnableAllBtn" class="secondary btn-with-icon">
+                          <i class="fa-solid fa-check-double"></i>全选
+                        </button>
+                        <button id="userMcpDisableAllBtn" class="secondary btn-with-icon">
+                          <i class="fa-solid fa-ban"></i>全不选
+                        </button>
+                      </div>
+                      <div class="actions">
+                        <button id="userMcpEditBtn" class="secondary btn-with-icon">
+                          <i class="fa-solid fa-pen-to-square"></i>编辑服务
+                        </button>
+                        <button id="userMcpDeleteBtn" class="danger btn-with-icon">
+                          <i class="fa-solid fa-trash"></i>删除服务
+                        </button>
+                      </div>
+                    </div>
+                    <div class="muted">勾选启用/共享后将出现在系统提示词工具列表中。</div>
+                    <div id="userMcpToolList" class="tool-list"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="userToolPaneSkills" class="user-tool-pane">
+                <div class="list-header">
+                  <label>技能管理</label>
+                  <div class="header-actions">
+                    <button id="userSkillUploadBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-plus"></i>上传技能包
+                    </button>
+                    <button id="userSkillRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-arrows-rotate"></i>刷新
+                    </button>
+                  </div>
+                </div>
+                <div class="tips">
+                  技能名称会以 user_id@技能名 展示，勾选共享即可让其他用户使用。
+                </div>
+                <input id="userSkillUploadInput" type="file" accept=".zip" hidden />
+                <div id="userSkillsList" class="skills-list"></div>
+              </div>
+
+              <div id="userToolPaneKnowledge" class="user-tool-pane">
+                <div class="list-header">
+                  <label>知识库管理</label>
+                  <div class="header-actions">
+                    <button id="userKnowledgeAddBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-plus"></i>新增
+                    </button>
+                    <button id="userKnowledgeRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
+                      <i class="fa-solid fa-arrows-rotate"></i>刷新
+                    </button>
+                  </div>
+                </div>
+                <div class="tips">
+                  知识库目录固定在 data/user_tools/&lt;user&gt;/knowledge，工具名称会以 user_id@知识库名 展示，新增或编辑在弹窗中完成。
+                </div>
+
+                <div class="management-layout knowledge-layout">
+                  <div class="management-list">
+                    <div class="list-header">
+                      <label>知识库列表</label>
+                    </div>
+                    <div id="userKnowledgeBaseList" class="list-body"></div>
+                  </div>
+
+                  <div class="management-detail knowledge-detail">
+                    <div class="detail-header">
+                      <div>
+                        <div id="userKnowledgeDetailTitle" class="detail-title">未选择知识库</div>
+                        <div id="userKnowledgeDetailMeta" class="muted"></div>
+                        <div id="userKnowledgeDetailDesc" class="muted"></div>
+                      </div>
+                      <div class="detail-actions">
+                        <button id="userKnowledgeEditBtn" class="secondary btn-with-icon btn-compact">
+                          <i class="fa-solid fa-pen"></i>编辑
+                        </button>
+                        <button id="userKnowledgeDeleteBtn" class="danger btn-with-icon btn-compact">
+                          <i class="fa-solid fa-trash"></i>删除知识库
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="knowledge-section form-section">
+                      <div class="knowledge-content">
+                        <div class="llm-card knowledge-files-card">
+                          <div class="knowledge-file-layout">
+                            <div class="knowledge-file-pane">
+                              <div class="knowledge-file-toolbar">
+                                <button id="userKnowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
+                                  <i class="fa-solid fa-upload"></i>上传
+                                </button>
+                                <button id="userKnowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
+                                  <i class="fa-solid fa-file-circle-plus"></i>新建
+                                </button>
+                                <button id="userKnowledgeFileSaveBtn" class="btn-with-icon btn-compact">
+                                  <i class="fa-solid fa-floppy-disk"></i>保存
+                                </button>
+                              </div>
+                              <div id="userKnowledgeFileList" class="knowledge-file-list"></div>
+                            </div>
+                              <div class="knowledge-file-editor">
+                                <div id="userKnowledgeFileName" class="muted">未选择文档</div>
+                                <div class="knowledge-editor-wrapper">
+                                  <div
+                                    id="userKnowledgeFileHighlight"
+                                    class="knowledge-editor-highlight"
+                                    aria-hidden="true"
+                                  ></div>
+                                  <textarea id="userKnowledgeFileContent"></textarea>
+                                </div>
+                              </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <input id="userKnowledgeFileUploadInput" type="file" hidden />
+              </div>
+
+              <div id="userToolSaveStatus" class="muted"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userToolModalCloseBtn" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="userMcpModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="userMcpModalTitle" class="detail-title">编辑 MCP 服务</div>
+          <button id="userMcpModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userMcpName">服务名称</label>
+            <input id="userMcpName" type="text" placeholder="例如：local_tools" />
+          </div>
+          <div class="form-row">
+            <label for="userMcpDisplayName">显示名称（可选）</label>
+            <input id="userMcpDisplayName" type="text" placeholder="用于前端展示" />
+          </div>
+          <div class="form-row">
+            <label for="userMcpEndpoint">服务地址</label>
+            <input id="userMcpEndpoint" type="text" placeholder="http://127.0.0.1:9000/mcp" />
+          </div>
+          <div class="form-row">
+            <label for="userMcpTransport">传输类型</label>
+            <select id="userMcpTransport">
+              <option value="">auto</option>
+              <option value="sse">sse</option>
+              <option value="http">http</option>
+              <option value="streamable-http">streamable-http</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="userMcpDescription">服务描述（可选）</label>
+            <textarea id="userMcpDescription" placeholder="用于记录服务作用"></textarea>
+          </div>
+          <div class="form-row">
+            <label for="userMcpHeaders">Headers JSON（可选）</label>
+            <textarea id="userMcpHeaders" placeholder='{"Authorization":"Bearer ..."}'></textarea>
+            <div id="userMcpHeadersError" class="error-text"></div>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="userMcpEnabled" type="checkbox" />
+              <span>启用服务</span>
+            </label>
+          </div>
+          <div class="form-row">
+            <label for="userMcpStructPreview">JSON 结构体预览（可复制）</label>
+            <textarea id="userMcpStructPreview" class="code-preview" readonly></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userMcpModalCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="userMcpModalSave" class="btn-with-icon">
+            <i class="fa-solid fa-floppy-disk"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="userMcpImportModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title">导入 MCP 服务</div>
+          <button id="userMcpImportClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userMcpImportInput">MCP 结构体（JSON）</label>
+            <textarea
+              id="userMcpImportInput"
+              placeholder='{"mcpServers":{"WebSearch":{"type":"sse","baseUrl":"https://...","headers":{"Authorization":"Bearer sk-..."}}}}'
+            ></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userMcpImportCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>取消
+          </button>
+          <button id="userMcpImportConfirm" class="btn-with-icon">
+            <i class="fa-solid fa-file-import"></i>导入
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toolDetailModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="toolDetailTitle" class="detail-title">工具详情</div>
+          <button id="toolDetailClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="toolDetailMeta" class="muted"></div>
+          <div class="form-row">
+            <label>描述</label>
+            <div id="toolDetailDesc" class="tool-desc"></div>
+          </div>
+          <div class="form-row">
+            <label>输入结构</label>
+            <pre id="toolDetailSchema" class="tool-schema"></pre>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="toolDetailCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="workspacePreviewModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="workspacePreviewTitle" class="detail-title">文件预览</div>
+          <button id="workspacePreviewClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="workspacePreviewMeta" class="muted"></div>
+          <div id="workspacePreviewHint" class="muted"></div>
+          <div id="workspacePreviewContainer" class="workspace-preview"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="workspacePreviewDownload" class="secondary btn-with-icon">
+            <i class="fa-solid fa-download"></i>下载
+          </button>
+          <button id="workspacePreviewCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <input id="skillUploadInput" type="file" accept=".zip" style="display: none" />
+    <input id="workspaceUploadInput" type="file" style="display: none" multiple />
+    <input id="debugUploadInput" type="file" style="display: none" multiple />
+
+    <div id="workspaceMenu" class="context-menu">
+      <button id="workspaceNewFileMenuBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-file-circle-plus"></i>新建文件
+      </button>
+      <button id="workspaceEditBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-pen-to-square"></i>编辑
+      </button>
+      <button id="workspaceRenameBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-i-cursor"></i>重命名
+      </button>
+      <button id="workspaceMoveBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-arrow-right-arrow-left"></i>移动到
+      </button>
+      <button id="workspaceCopyBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-copy"></i>复制到
+      </button>
+      <button id="workspaceNewFolderBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-folder-plus"></i>新建文件夹
+      </button>
+      <button id="workspaceDownloadBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-download"></i>下载
+      </button>
+      <button id="workspaceDeleteBtn" class="danger btn-with-icon" type="button">
+        <i class="fa-solid fa-trash"></i>删除
+      </button>
+    </div>
+
+    <div id="debugQuestionMenu" class="context-menu debug-question-menu"></div>
+
+    <div id="debugHistoryModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div class="detail-title">调试历史</div>
+            <div id="debugHistoryMeta" class="muted"></div>
+          </div>
+          <button id="debugHistoryClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="list-header">
+            <label>会话列表</label>
+          </div>
+          <div id="debugHistoryList" class="list-body"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="debugHistoryCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="monitorDetailModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="monitorDetailTitle" class="detail-title">线程详情</div>
+          <button id="monitorDetailClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="monitorDetailMeta" class="muted"></div>
+          <div class="form-row">
+            <label>问题</label>
+            <div id="monitorDetailQuestion" class="log"></div>
+          </div>
+          <div class="form-row">
+            <label>事件详情</label>
+            <div id="monitorDetailEvents" class="log"></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="monitorDetailCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="monitorStatusModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div id="monitorStatusTitle" class="detail-title">线程状态</div>
+            <div id="monitorStatusMeta" class="muted"></div>
+          </div>
+          <button id="monitorStatusClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="list-header">
+            <label>线程列表</label>
+          </div>
+          <div id="monitorStatusList" class="list-body monitor-status-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="monitorStatusCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="memoryModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div>
+            <div id="memoryModalTitle" class="detail-title">记忆记录</div>
+            <div id="memoryModalMeta" class="muted"></div>
+          </div>
+          <button id="memoryModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="detail-header memory-modal-header">
+            <div class="detail-actions">
+              <label class="checkbox-row">
+                <input id="memoryModalEnableToggle" type="checkbox" />
+                <span>启用长期记忆</span>
+              </label>
+              <button id="memoryModalClearBtn" class="danger btn-with-icon btn-compact">
+                <i class="fa-solid fa-trash"></i>清空
+              </button>
+            </div>
+          </div>
+          <div class="monitor-section-body">
+            <div class="monitor-table-scroll">
+              <table class="monitor-table memory-record-table">
+                <colgroup>
+                  <col class="col-memory-session" />
+                  <col class="col-memory-record-time" />
+                  <col class="col-memory-summary" />
+                  <col class="col-memory-record-action" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>会话</th>
+                    <th>更新时间</th>
+                    <th>记忆内容</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="memoryModalRecordBody"></tbody>
+              </table>
+              <div id="memoryModalRecordEmpty" class="muted">暂无记忆记录</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="memoryModalCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="memoryRecordEditModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div>
+            <div id="memoryRecordEditTitle" class="detail-title">编辑记忆</div>
+            <div id="memoryRecordEditMeta" class="muted"></div>
+          </div>
+          <button id="memoryRecordEditClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="memoryRecordEditInput">记忆内容</label>
+            <textarea id="memoryRecordEditInput" class="memory-record-editor"></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="memoryRecordEditCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+          <button id="memoryRecordEditSave" class="btn-with-icon">
+            <i class="fa-solid fa-floppy-disk"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="memoryQueueModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div>
+            <div id="memoryQueueTitle" class="detail-title">记忆任务详情</div>
+            <div id="memoryQueueMeta" class="muted"></div>
+          </div>
+          <button id="memoryQueueClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label>请求内容</label>
+            <div id="memoryQueueRequest" class="log"></div>
+          </div>
+          <div class="form-row">
+            <label>总结结果</label>
+            <div id="memoryQueueResult" class="log"></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="memoryQueueCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="monitorToolModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div id="monitorToolTitle" class="detail-title">工具调用</div>
+            <div id="monitorToolMeta" class="muted"></div>
+          </div>
+          <button id="monitorToolClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="list-header">
+            <label>调用线程</label>
+          </div>
+          <div id="monitorToolList" class="list-body monitor-status-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="monitorToolCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="workspaceEditorModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div id="workspaceEditorTitle" class="detail-title">编辑文件</div>
+            <div id="workspaceEditorPath" class="muted"></div>
+          </div>
+          <button id="workspaceEditorClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <textarea id="workspaceEditorContent" class="workspace-editor-text"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button id="workspaceEditorCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i>关闭
+          </button>
+          <button id="workspaceEditorSave" class="btn-with-icon">
+            <i class="fa-solid fa-floppy-disk"></i>保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- 引入调试脚本：负责请求与 SSE 解析 -->
+    <script src="./third/echarts/echarts.min.js"></script>
+    <script type="module" src="./app.js?v=20251231-05"></script>
+  </body>
+</html>
+
+

@@ -1,0 +1,2037 @@
+﻿import { APP_CONFIG } from "../app.config.js";
+import { elements } from "./elements.js?v=20251231-03";
+import { state } from "./state.js";
+import { appendLog } from "./log.js?v=20251229-02";
+import {
+  formatBytes,
+  formatDuration,
+  formatDurationLong,
+  formatTimestamp,
+  formatTokenCount,
+} from "./utils.js?v=20251229-02";
+import { getWunderBase } from "./api.js";
+import { notify } from "./notify.js";
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
+// Token 趋势默认展示的时间桶数量，避免折线图从最早记录开始导致卡顿
+const TOKEN_TREND_MAX_BUCKETS = 24;
+// Token 趋势保留的最大时间桶数量，避免长期运行累积过多历史数据
+const TOKEN_TREND_RETENTION_BUCKETS = 96;
+// 用户管理线程列表分页尺寸，避免一次渲染过多行
+const DEFAULT_MONITOR_SESSION_PAGE_SIZE = 100;
+let tokenTrendChart = null;
+let statusChart = null;
+let statusChartClickBound = false;
+let tokenTrendZoomBound = false;
+let mcpToolNameSet = new Set();
+// 监控轮询配置：full 为完整监控面板，sessions 为用户管理页轻量轮询
+let monitorPollMode = "full";
+let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
+// 工具热力图按总调用次数渐变配色（10/20/30/40 次为蓝/绿/黄/红）
+const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
+const TOOL_HEATMAP_MAX_VALUE = 40;
+const TOOL_HEATMAP_MIN_LIGHTNESS = 46;
+const TOOL_HEATMAP_MAX_LIGHTNESS = 90;
+const TOOL_HEATMAP_MIN_SATURATION = 52;
+const TOOL_HEATMAP_MAX_SATURATION = 82;
+const TOOL_HEATMAP_HUE_ANCHORS = [
+  { value: 10, hue: 210 },
+  { value: 20, hue: 135 },
+  { value: 30, hue: 50 },
+  { value: 40, hue: 5 },
+];
+const TOOL_HEATMAP_TILE_SIZE = 68;
+const TOOL_HEATMAP_GAP = 8;
+const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
+// 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
+const TOOL_HEATMAP_ICON_RULES = [
+  { keyword: "列出文件", icon: "fa-folder-open" },
+  { keyword: "读取文件", icon: "fa-file-lines" },
+  { keyword: "写入文件", icon: "fa-file-circle-plus" },
+  { keyword: "编辑文件", icon: "fa-pen-to-square" },
+  { keyword: "替换文本", icon: "fa-arrow-right-arrow-left" },
+];
+// 线程状态环图配色与图例配置
+const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
+const STATUS_CHART_EMPTY_COLOR = "#ffffff";
+const STATUS_CHART_LEGEND = ["活动", "已完成", "已失败", "已取消"];
+const STATUS_CHART_EMPTY_NAME = "__empty__";
+// 线程状态图例与后端状态字段的映射，便于点击后过滤记录
+const STATUS_LABEL_TO_KEY = {
+  [STATUS_CHART_LEGEND[0]]: "active",
+  [STATUS_CHART_LEGEND[1]]: "finished",
+  [STATUS_CHART_LEGEND[2]]: "error",
+  [STATUS_CHART_LEGEND[3]]: "cancelled",
+};
+
+// 兼容旧版本状态结构，避免缓存旧 state.js 时导致监控图表异常
+const ensureMonitorState = () => {
+  if (!state.monitor) {
+    state.monitor = {
+      sessions: [],
+      selected: null,
+      tokenTrend: [],
+      tokenDeltas: [],
+      tokenUsageBySession: {},
+      toolStats: [],
+      availableTools: [],
+      availableToolsUpdatedAt: 0,
+      tokenZoomLocked: false,
+      tokenZoomInitialized: false,
+      userFilter: "",
+      timeRangeHours: DEFAULT_MONITOR_TIME_RANGE_HOURS,
+      serviceSnapshot: null,
+      pagination: {
+        pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
+        activePage: 1,
+        historyPage: 1,
+      },
+      timeFilter: {
+        enabled: false,
+        start: "",
+        end: "",
+      },
+    };
+  }
+  if (!Array.isArray(state.monitor.tokenTrend)) {
+    state.monitor.tokenTrend = [];
+  }
+  if (!Array.isArray(state.monitor.tokenDeltas)) {
+    state.monitor.tokenDeltas = [];
+  }
+  if (!state.monitor.tokenUsageBySession || typeof state.monitor.tokenUsageBySession !== "object") {
+    state.monitor.tokenUsageBySession = {};
+  }
+  if (!Array.isArray(state.monitor.toolStats)) {
+    state.monitor.toolStats = [];
+  }
+  if (!Array.isArray(state.monitor.availableTools)) {
+    state.monitor.availableTools = [];
+  }
+  if (!Number.isFinite(state.monitor.availableToolsUpdatedAt)) {
+    state.monitor.availableToolsUpdatedAt = 0;
+  }
+  if (!Array.isArray(state.monitor.sessions)) {
+    state.monitor.sessions = [];
+  }
+  if (typeof state.monitor.tokenZoomLocked !== "boolean") {
+    state.monitor.tokenZoomLocked = false;
+  }
+  if (typeof state.monitor.tokenZoomInitialized !== "boolean") {
+    state.monitor.tokenZoomInitialized = false;
+  }
+  if (typeof state.monitor.userFilter !== "string") {
+    state.monitor.userFilter = "";
+  }
+  if (!Number.isFinite(state.monitor.timeRangeHours)) {
+    state.monitor.timeRangeHours = DEFAULT_MONITOR_TIME_RANGE_HOURS;
+  }
+  if (!state.monitor.serviceSnapshot) {
+    state.monitor.serviceSnapshot = null;
+  }
+  if (!state.monitor.timeFilter || typeof state.monitor.timeFilter !== "object") {
+    state.monitor.timeFilter = {
+      enabled: false,
+      start: "",
+      end: "",
+    };
+  }
+  if (typeof state.monitor.timeFilter.enabled !== "boolean") {
+    state.monitor.timeFilter.enabled = false;
+  }
+  if (typeof state.monitor.timeFilter.start !== "string") {
+    state.monitor.timeFilter.start = "";
+  }
+  if (typeof state.monitor.timeFilter.end !== "string") {
+    state.monitor.timeFilter.end = "";
+  }
+  // 分页状态兼容旧缓存，避免切换用户或刷新后页码异常
+  if (!state.monitor.pagination || typeof state.monitor.pagination !== "object") {
+    state.monitor.pagination = {
+      pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
+      activePage: 1,
+      historyPage: 1,
+    };
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.pageSize) ||
+    state.monitor.pagination.pageSize <= 0
+  ) {
+    state.monitor.pagination.pageSize = DEFAULT_MONITOR_SESSION_PAGE_SIZE;
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.activePage) ||
+    state.monitor.pagination.activePage < 1
+  ) {
+    state.monitor.pagination.activePage = 1;
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.historyPage) ||
+    state.monitor.pagination.historyPage < 1
+  ) {
+    state.monitor.pagination.historyPage = 1;
+  }
+};
+
+// 格式化监视时间，保证展示简洁
+const formatMonitorHours = (value) => {
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) {
+    return String(DEFAULT_MONITOR_TIME_RANGE_HOURS);
+  }
+  return hours.toFixed(2).replace(/\.?0+$/, "");
+};
+
+// 解析监视时间范围（小时），支持管理员自定义
+const resolveMonitorTimeRangeHours = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MONITOR_TIME_RANGE_HOURS;
+  }
+  return parsed;
+};
+
+// 获取当前监视时间范围（小时）
+const getMonitorTimeRangeHours = () => resolveMonitorTimeRangeHours(state.monitor.timeRangeHours);
+
+// 获取当前监视时间范围（毫秒），避免小数导致时间戳对齐误差
+const getMonitorTimeRangeMs = () =>
+  Math.max(1, Math.round(getMonitorTimeRangeHours() * ONE_HOUR_MS));
+
+// 获取 Token 趋势的保留窗口，避免前端长时间运行后堆积过多历史
+const getTokenTrendRetentionMs = () => {
+  const intervalMs = getMonitorTimeRangeMs();
+  if (!intervalMs) {
+    return 0;
+  }
+  return Math.max(intervalMs, intervalMs * TOKEN_TREND_RETENTION_BUCKETS);
+};
+
+// 解析筛选时间输入，返回毫秒时间戳
+const parseMonitorFilterTimestamp = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// 获取筛选时间范围，未启用或无效时返回 null
+const resolveMonitorTimeFilterRange = () => {
+  if (!state.monitor.timeFilter?.enabled) {
+    return null;
+  }
+  const start = parseMonitorFilterTimestamp(state.monitor.timeFilter.start);
+  const end = parseMonitorFilterTimestamp(state.monitor.timeFilter.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  if (end <= start) {
+    return null;
+  }
+  return { start, end };
+};
+
+// 格式化筛选区间标签，便于图表标题提示
+const formatMonitorFilterLabel = (range) => {
+  const format = (timestamp) =>
+    new Date(timestamp).toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  return `区间 ${format(range.start)} ~ ${format(range.end)}`;
+};
+
+// 生成监视时间范围的文案标签
+const getMonitorTimeRangeLabel = () => {
+  const hours = getMonitorTimeRangeHours();
+  return `每 ${formatMonitorHours(hours)} 小时`;
+};
+
+// 生成监视时间窗口的文案标签，用于近况统计
+const getMonitorTimeWindowLabel = () => {
+  const range = resolveMonitorTimeFilterRange();
+  if (range) {
+    return formatMonitorFilterLabel(range);
+  }
+  const hours = getMonitorTimeRangeHours();
+  return `近 ${formatMonitorHours(hours)} 小时`;
+};
+
+// 同步监视时间标题文案，保持图表描述一致
+const updateMonitorChartTitles = () => {
+  const label = getMonitorTimeRangeLabel();
+  if (elements.serviceTokenTitle) {
+    elements.serviceTokenTitle.textContent = `${label} Token 总占用趋势`;
+  }
+  if (elements.serviceStatusTitle) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.serviceStatusTitle.textContent = `${windowLabel} 线程状态占比`;
+  }
+  if (elements.metricServiceRecentLabel) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.metricServiceRecentLabel.textContent = `${windowLabel} 完成`;
+  }
+  if (elements.toolHeatmapTitle) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.toolHeatmapTitle.textContent = `${windowLabel} 工具调用热力图`;
+  }
+  if (elements.metricSandboxCallsLabel) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.metricSandboxCallsLabel.textContent = `${windowLabel} 调用`;
+  }
+  if (elements.metricSandboxSessionsLabel) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.metricSandboxSessionsLabel.textContent = `${windowLabel} 会话`;
+  }
+};
+
+// 规范化监视时间设置并刷新相关展示
+const applyMonitorTimeRange = (value, options = {}) => {
+  const { resetTrend = false } = options;
+  const hours = resolveMonitorTimeRangeHours(value);
+  state.monitor.timeRangeHours = hours;
+  state.monitor.tokenZoomLocked = false;
+  const hoursText = formatMonitorHours(hours);
+  if (elements.monitorTimeRange && elements.monitorTimeRange.value !== hoursText) {
+    elements.monitorTimeRange.value = hoursText;
+  }
+  updateMonitorChartTitles();
+  if (resetTrend) {
+    state.monitor.tokenDeltas = [];
+    state.monitor.tokenUsageBySession = {};
+  }
+  if (state.monitor.sessions.length || state.monitor.serviceSnapshot) {
+    renderServiceCharts(state.monitor.serviceSnapshot, state.monitor.sessions);
+  } else {
+    renderTokenTrendChart();
+  }
+};
+
+// 同步筛选时间输入框状态
+const syncMonitorTimeFilterInputs = () => {
+  if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
+    return;
+  }
+  const filter = state.monitor.timeFilter || { enabled: false, start: "", end: "" };
+  elements.monitorTimeFilterToggle.checked = Boolean(filter.enabled);
+  if (elements.monitorTimeStart.value !== filter.start) {
+    elements.monitorTimeStart.value = filter.start;
+  }
+  if (elements.monitorTimeEnd.value !== filter.end) {
+    elements.monitorTimeEnd.value = filter.end;
+  }
+  const disabled = !filter.enabled;
+  elements.monitorTimeStart.disabled = disabled;
+  elements.monitorTimeEnd.disabled = disabled;
+};
+
+// 应用筛选时间并刷新图表
+const applyMonitorTimeFilter = async (options = {}) => {
+  const { refresh = false } = options;
+  if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
+    return;
+  }
+  state.monitor.timeFilter = {
+    enabled: Boolean(elements.monitorTimeFilterToggle.checked),
+    start: String(elements.monitorTimeStart.value || ""),
+    end: String(elements.monitorTimeEnd.value || ""),
+  };
+  state.monitor.tokenZoomLocked = false;
+  syncMonitorTimeFilterInputs();
+  updateMonitorChartTitles();
+  const range = resolveMonitorTimeFilterRange();
+  if (state.monitor.timeFilter.enabled && state.monitor.timeFilter.start && state.monitor.timeFilter.end && !range) {
+    notify("筛选时间需保证开始早于结束。", "warning");
+    return;
+  }
+  if (refresh) {
+    try {
+      await loadMonitorData();
+    } catch (error) {
+      appendLog(`监控刷新失败：${error.message}`);
+    }
+    return;
+  }
+  if (state.monitor.sessions.length || state.monitor.serviceSnapshot) {
+    renderServiceCharts(state.monitor.serviceSnapshot, state.monitor.sessions);
+  } else {
+    renderTokenTrendChart();
+  }
+};
+
+// 初始化图表实例，避免重复创建导致内存占用增长
+const ensureMonitorCharts = () => {
+  if (!window.echarts) {
+    return false;
+  }
+  if (elements.serviceTokenChart && !tokenTrendChart) {
+    tokenTrendChart = window.echarts.init(elements.serviceTokenChart);
+  }
+  if (elements.serviceStatusChart && !statusChart) {
+    statusChart = window.echarts.init(elements.serviceStatusChart);
+    statusChartClickBound = false;
+  }
+  bindStatusChartClick();
+  bindTokenTrendZoom();
+  return Boolean(tokenTrendChart || statusChart);
+};
+
+// 点击线程状态环图时打开对应记录列表
+const handleStatusChartClick = (params) => {
+  const label = String(params?.name || "");
+  if (!label || label === STATUS_CHART_EMPTY_NAME) {
+    return;
+  }
+  if (!STATUS_LABEL_TO_KEY[label]) {
+    return;
+  }
+  openMonitorStatusModal(label);
+};
+
+// 仅绑定一次点击事件，避免重复注册导致多次弹窗
+const bindStatusChartClick = () => {
+  if (!statusChart || statusChartClickBound) {
+    return;
+  }
+  statusChartClickBound = true;
+  statusChart.on("click", handleStatusChartClick);
+};
+
+// 监听 Token 趋势图缩放，避免刷新时覆盖用户视图
+const bindTokenTrendZoom = () => {
+  if (!tokenTrendChart || tokenTrendZoomBound) {
+    return;
+  }
+  tokenTrendZoomBound = true;
+  tokenTrendChart.on("datazoom", () => {
+    if (state.monitor) {
+      state.monitor.tokenZoomLocked = true;
+    }
+  });
+};
+
+// 格式化趋势图时间标签，保留日期便于跨天对比
+const formatTokenTrendLabel = (timestamp) =>
+  new Date(timestamp).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+// 按监视时间粒度对齐时间戳，保证刻度从整点开始
+const floorToIntervalBoundary = (timestamp, intervalMs) => {
+  const date = new Date(timestamp);
+  const midnight = new Date(date);
+  midnight.setHours(0, 0, 0, 0);
+  const offset = timestamp - midnight.getTime();
+  const index = Math.floor(offset / intervalMs);
+  return midnight.getTime() + index * intervalMs;
+};
+
+// 记录 token 增量，便于按小时汇总
+const recordTokenDeltas = (sessions) => {
+  const usageMap = state.monitor.tokenUsageBySession;
+  (sessions || []).forEach((session) => {
+    const sessionId = session?.session_id;
+    if (!sessionId) {
+      return;
+    }
+    const current = Number(session?.token_usage) || 0;
+    const previous = Number(usageMap[sessionId]) || 0;
+    const delta = current - previous;
+    if (delta > 0) {
+      const timestamp = resolveSessionTimestamp(session) || Date.now();
+      state.monitor.tokenDeltas.push({ timestamp, value: delta });
+    }
+    usageMap[sessionId] = current;
+  });
+  pruneTokenDeltas(Date.now());
+};
+
+// 裁剪过旧的 token 增量，避免长期运行后趋势数据膨胀
+const pruneTokenDeltas = (nowMs) => {
+  const deltas = state.monitor.tokenDeltas;
+  if (!Array.isArray(deltas) || !deltas.length) {
+    return;
+  }
+  const timeRange = resolveMonitorTimeFilterRange();
+  let cutoff = null;
+  if (timeRange && Number.isFinite(timeRange.start)) {
+    cutoff = timeRange.start;
+  } else {
+    const retentionMs = getTokenTrendRetentionMs();
+    if (retentionMs) {
+      cutoff = nowMs - retentionMs;
+    }
+  }
+  if (!Number.isFinite(cutoff)) {
+    return;
+  }
+  const filtered = deltas.filter((item) => {
+    const timestamp = Number(item?.timestamp);
+    return Number.isFinite(timestamp) && timestamp >= cutoff;
+  });
+  if (filtered.length !== deltas.length) {
+    state.monitor.tokenDeltas = filtered;
+  }
+};
+
+// 汇总 token 增量，生成按时间间隔的折线图数据
+const buildTokenSeries = (sessions) => {
+  const deltas = state.monitor.tokenDeltas || [];
+  const intervalMs = getMonitorTimeRangeMs();
+  if (!intervalMs) {
+    return { labels: [], values: [], latestValue: 0 };
+  }
+  pruneTokenDeltas(Date.now());
+  const timeRange = resolveMonitorTimeFilterRange();
+  let now = Date.now();
+  if (timeRange) {
+    now = timeRange.end;
+    const startBoundary = floorToIntervalBoundary(timeRange.start, intervalMs);
+    if (!Number.isFinite(startBoundary) || !Number.isFinite(now)) {
+      return { labels: [], values: [], latestValue: 0 };
+    }
+    const totals = new Map();
+    if (Array.isArray(deltas)) {
+      deltas.forEach((item) => {
+        const timestamp = Number(item?.timestamp);
+        if (!Number.isFinite(timestamp)) {
+          return;
+        }
+        if (timestamp < timeRange.start || timestamp > timeRange.end) {
+          return;
+        }
+        const bucketIndex = Math.max(0, Math.floor((timestamp - startBoundary) / intervalMs));
+        totals.set(bucketIndex, (totals.get(bucketIndex) || 0) + (Number(item?.value) || 0));
+      });
+    }
+    const labels = [formatTokenTrendLabel(startBoundary)];
+    const values = [0];
+    let cursor = startBoundary;
+    let bucketIndex = 0;
+    while (cursor + intervalMs <= now) {
+      const bucketValue = totals.get(bucketIndex) || 0;
+      cursor += intervalMs;
+      labels.push(formatTokenTrendLabel(cursor));
+      values.push(bucketValue);
+      bucketIndex += 1;
+    }
+    if (cursor < now) {
+      const bucketValue = totals.get(bucketIndex) || 0;
+      labels.push(formatTokenTrendLabel(now));
+      values.push(bucketValue);
+    }
+    const latestValue = values.length ? values[values.length - 1] : 0;
+    return { labels, values, latestValue };
+  }
+  const sessionStartTimes = (sessions || [])
+    .map((session) => parseMonitorTimestamp(session?.start_time))
+    .filter((value) => Number.isFinite(value));
+  const deltaTimes = Array.isArray(deltas) ? deltas.map((item) => item.timestamp) : [];
+  const earliest = Math.min(...[...sessionStartTimes, ...deltaTimes].filter(Number.isFinite));
+  const retentionMs = getTokenTrendRetentionMs();
+  const retentionStart =
+    Number.isFinite(retentionMs) && retentionMs > 0 ? now - retentionMs : null;
+  const startBase = Number.isFinite(retentionStart)
+    ? Number.isFinite(earliest)
+      ? Math.max(earliest, retentionStart)
+      : retentionStart
+    : earliest;
+  if (!Number.isFinite(startBase)) {
+    return { labels: [], values: [], latestValue: 0 };
+  }
+  const startBoundary = floorToIntervalBoundary(startBase, intervalMs);
+  // 使用区间索引聚合，避免小数间隔导致的时间戳精度误差
+  const totals = new Map();
+  if (Array.isArray(deltas)) {
+    deltas.forEach((item) => {
+      const timestamp = Number(item?.timestamp);
+      if (!Number.isFinite(timestamp)) {
+        return;
+      }
+      if (timestamp < startBoundary || timestamp > now) {
+        return;
+      }
+      const bucketIndex = Math.max(0, Math.floor((timestamp - startBoundary) / intervalMs));
+      totals.set(bucketIndex, (totals.get(bucketIndex) || 0) + (Number(item?.value) || 0));
+    });
+  }
+  const labels = [formatTokenTrendLabel(startBoundary)];
+  const values = [0];
+  let cursor = startBoundary;
+  let bucketIndex = 0;
+  while (cursor + intervalMs <= now) {
+    const bucketValue = totals.get(bucketIndex) || 0;
+    cursor += intervalMs;
+    labels.push(formatTokenTrendLabel(cursor));
+    values.push(bucketValue);
+    bucketIndex += 1;
+  }
+  if (cursor < now) {
+    const bucketValue = totals.get(bucketIndex) || 0;
+    labels.push(formatTokenTrendLabel(now));
+    values.push(bucketValue);
+  }
+  const latestValue = values.length ? values[values.length - 1] : 0;
+  return { labels, values, latestValue };
+};
+
+// 规范化工具列表，保留类别用于图标选择
+const normalizeAvailableTools = (payload) => {
+  const tools = [];
+  mcpToolNameSet = new Set();
+  const pushList = (items, category) => {
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const name = String(item?.name ?? "").trim();
+      if (!name) {
+        return;
+      }
+      tools.push({ name, category });
+      if (category === "mcp") {
+        mcpToolNameSet.add(name);
+      }
+    });
+  };
+  pushList(payload?.builtin_tools, "builtin");
+  pushList(payload?.mcp_tools, "mcp");
+  pushList(payload?.knowledge_tools, "knowledge");
+  pushList(payload?.skills, "skill");
+  pushList(payload?.user_tools, "user");
+  pushList(payload?.shared_tools, "shared");
+  return tools;
+};
+
+// 获取所有可用工具列表，避免轮询时重复请求
+const loadAvailableTools = async (options = {}) => {
+  const { force = false } = options;
+  const now = Date.now();
+  if (
+    !force &&
+    state.monitor.availableTools.length &&
+    now - state.monitor.availableToolsUpdatedAt < TOOL_LIST_CACHE_MS
+  ) {
+    return state.monitor.availableTools;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/tools`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  const result = await response.json();
+  state.monitor.availableTools = normalizeAvailableTools(result);
+  state.monitor.availableToolsUpdatedAt = now;
+  return state.monitor.availableTools;
+};
+
+// 将 HSL 转为 RGB，便于计算文字对比色
+const hslToRgb = (hue, saturation, lightness) => {
+  const h = ((Number(hue) || 0) % 360) / 360;
+  const s = Math.max(0, Math.min(1, (Number(saturation) || 0) / 100));
+  const l = Math.max(0, Math.min(1, (Number(lightness) || 0) / 100));
+  if (s === 0) {
+    const gray = Math.round(l * 255);
+    return [gray, gray, gray];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hueToRgb = (t) => {
+    let value = t;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return p + (q - p) * 6 * value;
+    if (value < 1 / 2) return q;
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+    return p;
+  };
+  return [
+    Math.round(hueToRgb(h + 1 / 3) * 255),
+    Math.round(hueToRgb(h) * 255),
+    Math.round(hueToRgb(h - 1 / 3) * 255),
+  ];
+};
+
+// 计算热力图配色的基础色相，保证从蓝过渡到红
+const resolveHeatmapHue = (value) => {
+  const anchors = TOOL_HEATMAP_HUE_ANCHORS;
+  if (!anchors.length) {
+    return 210;
+  }
+  if (value <= anchors[0].value) {
+    return anchors[0].hue;
+  }
+  for (let i = 1; i < anchors.length; i += 1) {
+    const next = anchors[i];
+    if (value <= next.value) {
+      const prev = anchors[i - 1];
+      const span = next.value - prev.value || 1;
+      const ratio = (value - prev.value) / span;
+      return prev.hue + (next.hue - prev.hue) * ratio;
+    }
+  }
+  return anchors[anchors.length - 1].hue;
+};
+
+// 生成热力图颜色，按总次数渐变且次数越多越深
+const resolveHeatmapColor = (totalCalls) => {
+  const value = Math.max(0, Number(totalCalls) || 0);
+  if (value <= 0) {
+    return { color: `rgb(${TOOL_HEATMAP_ZERO_RGB.join(", ")})`, rgb: TOOL_HEATMAP_ZERO_RGB };
+  }
+  const clamped = Math.min(value, TOOL_HEATMAP_MAX_VALUE);
+  const ratio = clamped / TOOL_HEATMAP_MAX_VALUE;
+  const hue = resolveHeatmapHue(clamped);
+  const saturation =
+    TOOL_HEATMAP_MIN_SATURATION +
+    ratio * (TOOL_HEATMAP_MAX_SATURATION - TOOL_HEATMAP_MIN_SATURATION);
+  const lightness =
+    TOOL_HEATMAP_MAX_LIGHTNESS -
+    ratio * (TOOL_HEATMAP_MAX_LIGHTNESS - TOOL_HEATMAP_MIN_LIGHTNESS);
+  const rgb = hslToRgb(hue, saturation, lightness);
+  return { color: `rgb(${rgb.join(", ")})`, rgb };
+};
+
+// 按亮度对比调整文字颜色，保证可读性
+const resolveHeatmapTextColor = (rgb) => {
+  const [r, g, b] = rgb;
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance >= 0.65 ? "#0f172a" : "#f8fafc";
+};
+
+// 根据工具名称选择更贴合的图标
+const resolveToolIcon = (name, category) => {
+  const toolName = String(name || "").trim();
+  const lowerName = toolName.toLowerCase();
+  // wunder@run 是特殊 MCP 工具，用龙图标突出识别
+  if (lowerName === "wunder@run" || lowerName.endsWith("@wunder@run")) {
+    return "fa-dragon";
+  }
+  for (const rule of TOOL_HEATMAP_ICON_RULES) {
+    if (toolName.includes(rule.keyword)) {
+      return rule.icon;
+    }
+  }
+  if (toolName.includes("@")) {
+    const atCount = toolName.split("@").length - 1;
+    if (atCount >= 2 || !mcpToolNameSet.has(toolName)) {
+      return "fa-wrench";
+    }
+    return "fa-plug";
+  }
+  if (category === "mcp") {
+    return "fa-plug";
+  }
+  if (category === "knowledge") {
+    return "fa-book";
+  }
+  if (category === "skill") {
+    return "fa-wand-magic-sparkles";
+  }
+  if (category === "user" || category === "shared") {
+    return "fa-wrench";
+  }
+  if (toolName.includes("执行命令")) {
+    return "fa-terminal";
+  }
+  if (toolName.toLowerCase().includes("ptc")) {
+    return "fa-code";
+  }
+  if (toolName.includes("搜索") || toolName.includes("检索")) {
+    return "fa-magnifying-glass";
+  }
+  if (
+    toolName.includes("读取") ||
+    toolName.includes("写入") ||
+    toolName.includes("编辑") ||
+    toolName.includes("替换") ||
+    toolName.includes("列出")
+  ) {
+    return "fa-file-lines";
+  }
+  if (toolName.includes("知识")) {
+    return "fa-book";
+  }
+  if (toolName.includes("最终回复")) {
+    return "fa-flag-checkered";
+  }
+  if (category === "builtin") {
+    return "fa-toolbox";
+  }
+  return "fa-toolbox";
+};
+
+// 规范化工具调用次数，避免使用 k 单位
+const formatHeatmapCount = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "0";
+  }
+  return String(Math.max(0, Math.round(parsed)));
+};
+
+// 规整工具统计结构，避免缺字段导致渲染异常
+const normalizeToolStats = (toolStats) =>
+  (Array.isArray(toolStats) ? toolStats : [])
+    .map((item) => ({
+      name: String(item?.tool ?? item?.name ?? "").trim(),
+      calls: Number(item?.calls ?? item?.count ?? item?.tool_calls ?? 0),
+    }))
+    .filter((item) => item.name);
+
+// 合并工具列表与调用次数，确保未调用工具也展示
+const buildHeatmapItems = (toolStats) => {
+  const normalized = normalizeToolStats(toolStats);
+  const callsMap = new Map(normalized.map((item) => [item.name, item.calls]));
+  const items = [];
+  const seen = new Set();
+  (state.monitor.availableTools || []).forEach((tool) => {
+    const name = String(tool?.name ?? "").trim();
+    if (!name || seen.has(name)) {
+      return;
+    }
+    items.push({
+      name,
+      calls: callsMap.get(name) ?? 0,
+      category: tool?.category || "other",
+    });
+    seen.add(name);
+  });
+  normalized.forEach((item) => {
+    if (seen.has(item.name)) {
+      return;
+    }
+    items.push({ name: item.name, calls: item.calls, category: "other" });
+    seen.add(item.name);
+  });
+  return items;
+};
+
+// 渲染工具调用热力图
+const renderToolHeatmap = (toolStats) => {
+  if (!elements.toolHeatmapGrid || !elements.toolHeatmapEmpty) {
+    return;
+  }
+  const normalized = buildHeatmapItems(toolStats);
+  elements.toolHeatmapGrid.textContent = "";
+  if (!normalized.length) {
+    elements.toolHeatmapEmpty.style.display = "block";
+    elements.toolHeatmapGrid.style.display = "none";
+    return;
+  }
+  elements.toolHeatmapEmpty.style.display = "none";
+  elements.toolHeatmapGrid.style.display = "grid";
+  const wrapHeight = elements.toolHeatmapWrap?.clientHeight || 0;
+  const rows = Math.max(
+    1,
+    Math.floor((wrapHeight + TOOL_HEATMAP_GAP) / (TOOL_HEATMAP_TILE_SIZE + TOOL_HEATMAP_GAP))
+  );
+  elements.toolHeatmapGrid.style.setProperty("--heatmap-rows", String(rows));
+  normalized.forEach((item) => {
+    const { color, rgb } = resolveHeatmapColor(item.calls);
+    const tile = document.createElement("div");
+    tile.className = "tool-heatmap-item";
+    tile.style.backgroundColor = color;
+    tile.style.color = resolveHeatmapTextColor(rgb);
+    tile.title = `${item.name}\n调用 ${formatHeatmapCount(item.calls)}`;
+    const icon = document.createElement("i");
+    icon.className = `fa-solid ${resolveToolIcon(item.name, item.category)}`;
+    const name = document.createElement("span");
+    name.className = "tool-heatmap-name";
+    name.textContent = item.name;
+    tile.appendChild(icon);
+    tile.appendChild(name);
+    // 点击热力图块时弹出该工具的调用线程列表
+    tile.addEventListener("click", () => {
+      openMonitorToolModal(item.name);
+    });
+    elements.toolHeatmapGrid.appendChild(tile);
+  });
+};
+
+// 渲染系统监视指标
+const renderMonitorMetrics = (system) => {
+  if (!system) {
+    elements.metricCpu.textContent = "-";
+    elements.metricMemory.textContent = "-";
+    elements.metricMemoryDetail.textContent = "";
+    elements.metricProcessMemory.textContent = "-";
+    elements.metricProcessCpu.textContent = "-";
+    elements.metricLoad1.textContent = "-";
+    elements.metricLoad5.textContent = "-";
+    elements.metricLoad15.textContent = "-";
+    elements.metricUptime.textContent = "-";
+    elements.metricDisk.textContent = "-";
+    elements.metricDiskDetail.textContent = "";
+    elements.metricDiskRead.textContent = "-";
+    elements.metricDiskWrite.textContent = "-";
+    elements.metricNetSent.textContent = "-";
+    elements.metricNetRecv.textContent = "-";
+    return;
+  }
+  elements.metricCpu.textContent = `${system.cpu_percent.toFixed(1)}%`;
+  elements.metricMemory.textContent = formatBytes(system.memory_used);
+  elements.metricMemoryDetail.textContent = `总计 ${formatBytes(system.memory_total)} / 可用 ${formatBytes(
+    system.memory_available
+  )}`;
+  elements.metricProcessMemory.textContent = formatBytes(system.process_rss);
+  elements.metricProcessCpu.textContent = `${system.process_cpu_percent.toFixed(1)}%`;
+  const loadValues = [
+    system.load_avg_1,
+    system.load_avg_5,
+    system.load_avg_15,
+  ].map((value) => (Number.isFinite(value) ? value.toFixed(2) : "-"));
+  [elements.metricLoad1.textContent, elements.metricLoad5.textContent, elements.metricLoad15.textContent] =
+    loadValues;
+  elements.metricUptime.textContent = formatDurationLong(system.uptime_s);
+  const hasDisk = Number.isFinite(system.disk_total) && system.disk_total > 0;
+  elements.metricDisk.textContent =
+    hasDisk && Number.isFinite(system.disk_percent)
+      ? `${system.disk_percent.toFixed(1)}%`
+      : "-";
+  elements.metricDiskDetail.textContent = hasDisk
+    ? `已用 ${formatBytes(system.disk_used)} / 总计 ${formatBytes(system.disk_total)} · 可用 ${formatBytes(
+        system.disk_free
+      )}`
+    : "";
+  elements.metricDiskRead.textContent = formatBytes(system.disk_read_bytes);
+  elements.metricDiskWrite.textContent = formatBytes(system.disk_write_bytes);
+  elements.metricNetSent.textContent = formatBytes(system.net_sent_bytes);
+  elements.metricNetRecv.textContent = formatBytes(system.net_recv_bytes);
+};
+
+// 渲染服务层线程指标，统一保持数值与展示文案分离
+const renderServiceMetrics = (service) => {
+  if (!service) {
+    elements.metricServiceActive.textContent = "-";
+    elements.metricServiceHistory.textContent = "-";
+    elements.metricServiceFinished.textContent = "-";
+    elements.metricServiceError.textContent = "-";
+    elements.metricServiceCancelled.textContent = "-";
+    elements.metricServiceTotal.textContent = "-";
+    elements.metricServiceRecent.textContent = "-";
+    elements.metricServiceAvg.textContent = "-";
+    return;
+  }
+  elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
+  elements.metricServiceHistory.textContent = `${service.history_sessions ?? 0}`;
+  elements.metricServiceFinished.textContent = `${service.finished_sessions ?? 0}`;
+  elements.metricServiceError.textContent = `${service.error_sessions ?? 0}`;
+  elements.metricServiceCancelled.textContent = `${service.cancelled_sessions ?? 0}`;
+  elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
+  elements.metricServiceRecent.textContent = `${service.recent_completed ?? 0}`;
+  elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
+};
+
+// 渲染沙盒状态指标，兼顾配置与近期调用统计
+const renderSandboxMetrics = (sandbox) => {
+  if (!elements.metricSandboxMode) {
+    return;
+  }
+  if (!sandbox) {
+    elements.metricSandboxMode.textContent = "-";
+    elements.metricSandboxNetwork.textContent = "-";
+    elements.metricSandboxReadonly.textContent = "-";
+    elements.metricSandboxResources.textContent = "-";
+    elements.metricSandboxResourcesDetail.textContent = "";
+    elements.metricSandboxCalls.textContent = "-";
+    elements.metricSandboxSessions.textContent = "-";
+    return;
+  }
+  const mode = String(sandbox.mode || "").toLowerCase();
+  elements.metricSandboxMode.textContent =
+    mode === "sandbox" ? "沙盒" : mode ? "本地" : "-";
+  elements.metricSandboxNetwork.textContent = sandbox.network || "-";
+  elements.metricSandboxReadonly.textContent = sandbox.readonly_rootfs ? "是" : "否";
+  const cpuValue = Number(sandbox.resources?.cpu);
+  const cpuText =
+    Number.isFinite(cpuValue) && cpuValue > 0
+      ? Number.isInteger(cpuValue)
+        ? cpuValue.toFixed(0)
+        : cpuValue.toFixed(cpuValue >= 10 ? 0 : 1)
+      : "-";
+  const memoryMb = Number(sandbox.resources?.memory_mb);
+  const memoryBytes = Number.isFinite(memoryMb) ? memoryMb * 1024 * 1024 : NaN;
+  const memoryText =
+    Number.isFinite(memoryMb) && memoryMb > 0 ? formatBytes(memoryBytes) : "-";
+  elements.metricSandboxResources.textContent = `CPU ${cpuText} / 内存 ${memoryText}`;
+  const pids = Number(sandbox.resources?.pids);
+  elements.metricSandboxResourcesDetail.textContent =
+    Number.isFinite(pids) && pids > 0 ? `PID ${pids}` : "";
+  elements.metricSandboxCalls.textContent = `${sandbox.recent_calls ?? 0}`;
+  elements.metricSandboxSessions.textContent = `${sandbox.recent_sessions ?? 0}`;
+};
+
+// 计算所有会话累计 token 数量
+const resolveTotalTokens = (sessions) =>
+  (sessions || []).reduce((sum, session) => sum + (Number(session?.token_usage) || 0), 0);
+
+// 解析监控时间字段，避免格式异常导致筛选失败
+const parseMonitorTimestamp = (value) => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// 获取会话的可比较时间戳
+const resolveSessionTimestamp = (session) => {
+  const updated = parseMonitorTimestamp(session?.updated_time);
+  if (updated) {
+    return updated;
+  }
+  const started = parseMonitorTimestamp(session?.start_time);
+  return started || null;
+};
+
+// 根据监视时间范围筛选会话，用于当前区间的状态统计
+const filterSessionsByInterval = (sessions) => {
+  const timeRange = resolveMonitorTimeFilterRange();
+  if (timeRange) {
+    return (sessions || []).filter((session) => {
+      const timestamp = resolveSessionTimestamp(session);
+      if (!timestamp) {
+        return true;
+      }
+      return timestamp >= timeRange.start && timestamp <= timeRange.end;
+    });
+  }
+  const windowMs = getMonitorTimeRangeMs();
+  if (!windowMs) {
+    return sessions || [];
+  }
+  const cutoff = Date.now() - windowMs;
+  return (sessions || []).filter((session) => {
+    const timestamp = resolveSessionTimestamp(session);
+    if (!timestamp) {
+      return true;
+    }
+    return timestamp >= cutoff;
+  });
+};
+
+// 更新 token 趋势折线图
+const renderTokenTrendChart = () => {
+  if (!tokenTrendChart) {
+    return;
+  }
+  const { labels, values } = buildTokenSeries(state.monitor.sessions);
+  if (elements.serviceTokenChart) {
+    elements.serviceTokenChart.style.width = "100%";
+  }
+  const shouldApplyZoom = !state.monitor.tokenZoomLocked || !state.monitor.tokenZoomInitialized;
+  const option = {
+    grid: {
+      left: 42,
+      right: 16,
+      top: 20,
+      bottom: 24,
+    },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const point = params?.[0];
+        if (!point) {
+          return "";
+        }
+        return `${point.axisValue}<br/>Token ${formatTokenCount(point.data)}`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: labels,
+      boundaryGap: false,
+      axisLabel: {
+        color: "#94a3b8",
+      },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: "#e2e8f0" } },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: {
+        color: "#94a3b8",
+        formatter: (value) => formatTokenCount(value),
+      },
+      splitLine: {
+        lineStyle: { color: "#e2e8f0" },
+      },
+    },
+    series: [
+      {
+        name: "Token",
+        type: "line",
+        data: values,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { color: "#3b82f6", width: 2 },
+        areaStyle: { color: "rgba(59, 130, 246, 0.15)" },
+      },
+    ],
+  };
+  if (shouldApplyZoom) {
+    const zoomConfig = {
+      id: "tokenZoom",
+      type: "inside",
+      xAxisIndex: 0,
+      filterMode: "none",
+    };
+    if (labels.length) {
+      const visiblePoints = Math.min(labels.length, TOKEN_TREND_MAX_BUCKETS + 1);
+      const startIndex = Math.max(0, labels.length - visiblePoints);
+      zoomConfig.startValue = labels[startIndex];
+      zoomConfig.endValue = labels[labels.length - 1];
+    }
+    // 启用内置缩放，默认聚焦最近窗口
+    option.dataZoom = [zoomConfig];
+  }
+  tokenTrendChart.setOption(option, false);
+  state.monitor.tokenZoomInitialized = true;
+  if (tokenTrendChart) {
+    tokenTrendChart.resize();
+  }
+};
+
+// 汇总线程状态占比，便于图表展示
+const resolveStatusCounts = (sessions) => {
+  const counts = {
+    active: 0,
+    finished: 0,
+    error: 0,
+    cancelled: 0,
+  };
+  (sessions || []).forEach((session) => {
+    const status = session?.status;
+    if (ACTIVE_STATUSES.has(status)) {
+      counts.active += 1;
+      return;
+    }
+    if (status === "finished") {
+      counts.finished += 1;
+    } else if (status === "error") {
+      counts.error += 1;
+    } else if (status === "cancelled") {
+      counts.cancelled += 1;
+    }
+  });
+  return counts;
+};
+
+// 生成状态环图数据，空数据时返回白色空心环占位
+const buildStatusChartData = (counts) => {
+  const raw = [
+    { value: counts.active, name: "活动" },
+    { value: counts.finished, name: "已完成" },
+    { value: counts.error, name: "已失败" },
+    { value: counts.cancelled, name: "已取消" },
+  ];
+  const total = raw.reduce((sum, item) => sum + item.value, 0);
+  const visibleCount = raw.filter((item) => item.value > 0).length;
+  const normalized = raw.map((item) => {
+    if (item.value > 0) {
+      return item;
+    }
+    return {
+      ...item,
+      itemStyle: {
+        borderWidth: 0,
+      },
+      emphasis: { disabled: true },
+    };
+  });
+  if (total <= 0) {
+    return {
+      data: [
+        ...normalized,
+        {
+          value: 1,
+          name: STATUS_CHART_EMPTY_NAME,
+          itemStyle: {
+            color: STATUS_CHART_EMPTY_COLOR,
+            borderColor: "#e2e8f0",
+            borderWidth: 2,
+            borderRadius: 8,
+          },
+        },
+      ],
+      isEmpty: true,
+      visibleCount: 0,
+    };
+  }
+  return { data: normalized, isEmpty: false, visibleCount };
+};
+
+// 更新服务状态占比图表
+const renderServiceStatusChart = (service, sessions) => {
+  if (!statusChart) {
+    return;
+  }
+  const counts = Array.isArray(sessions)
+    ? resolveStatusCounts(sessions)
+    : {
+        active: Number(service?.active_sessions) || 0,
+        finished: Number(service?.finished_sessions) || 0,
+        error: Number(service?.error_sessions) || 0,
+        cancelled: Number(service?.cancelled_sessions) || 0,
+      };
+  const { data, isEmpty, visibleCount } = buildStatusChartData(counts);
+  const padAngle = isEmpty || visibleCount <= 1 ? 0 : 1;
+  const ringStyle = isEmpty
+    ? {
+        borderColor: "#e2e8f0",
+        borderWidth: 2,
+        borderRadius: 8,
+        shadowBlur: 0,
+      }
+    : {
+        borderColor: "rgba(15, 23, 42, 0.6)",
+        borderWidth: 2,
+        borderRadius: 6,
+        shadowBlur: 0,
+      };
+  statusChart.setOption(
+    {
+      tooltip: {
+        trigger: "item",
+        show: !isEmpty,
+        backgroundColor: "rgba(15, 23, 42, 0.95)",
+        borderColor: "rgba(59, 130, 246, 0.35)",
+        textStyle: { color: "#e2e8f0" },
+      },
+      legend: {
+        bottom: 2,
+        show: true,
+        icon: "circle",
+        itemWidth: 8,
+        itemHeight: 8,
+        data: STATUS_CHART_LEGEND,
+        textStyle: {
+          color: "#64748b",
+          fontSize: 13,
+        },
+      },
+      series: [
+        {
+          type: "pie",
+          radius: ["52%", "78%"],
+          center: ["50%", "45%"],
+          avoidLabelOverlap: true,
+          label: { show: false },
+          emphasis: {
+            label: {
+              show: !isEmpty,
+              fontSize: 12,
+              formatter: "{b}: {c}",
+              color: "#f8fafc",
+            },
+          },
+          labelLine: { show: false },
+          padAngle,
+          itemStyle: ringStyle,
+          data,
+          color: STATUS_CHART_COLORS,
+          silent: isEmpty,
+        },
+      ],
+    },
+    true
+  );
+};
+
+// 汇总服务图表数据并刷新渲染
+const renderServiceCharts = (service, sessions) => {
+  updateMonitorChartTitles();
+  const totalTokens = resolveTotalTokens(sessions);
+  if (elements.metricServiceTokenTotal) {
+    elements.metricServiceTokenTotal.textContent = formatTokenCount(totalTokens);
+  }
+  if (!ensureMonitorCharts()) {
+    return;
+  }
+  renderTokenTrendChart();
+  const scopedSessions = filterSessionsByInterval(sessions);
+  renderServiceStatusChart(service, scopedSessions);
+  resizeMonitorCharts();
+};
+
+// 图表尺寸随容器变化自动适配
+const resizeMonitorCharts = () => {
+  if (tokenTrendChart) {
+    renderTokenTrendChart();
+  }
+  if (statusChart) {
+    statusChart.resize();
+  }
+  renderToolHeatmap(state.monitor.toolStats);
+};
+
+const buildStatusBadge = (status) => {
+  const span = document.createElement("span");
+  span.className = `monitor-status ${status}`;
+  span.textContent = status;
+  return span;
+};
+
+const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
+
+const sortSessionsByUpdate = (sessions) =>
+  [...sessions].sort((a, b) => new Date(b.updated_time).getTime() - new Date(a.updated_time).getTime());
+
+// 根据用户筛选线程列表，空值时返回全量
+const filterSessionsByUser = (sessions) => {
+  const userId = String(state.monitor.userFilter || "").trim();
+  if (!userId) {
+    return sessions;
+  }
+  return (sessions || []).filter((session) => String(session?.user_id || "") === userId);
+};
+
+// 读取分页配置，确保分页尺寸为正整数
+const resolveMonitorPageSize = () => {
+  const rawValue = Math.floor(Number(state.monitor.pagination?.pageSize));
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return DEFAULT_MONITOR_SESSION_PAGE_SIZE;
+  }
+  return rawValue;
+};
+
+// 统一约束页码范围，避免越界导致分页为空
+const clampMonitorPage = (value, totalPages) => {
+  const page = Number(value);
+  if (!Number.isFinite(page) || page < 1) {
+    return 1;
+  }
+  if (!Number.isFinite(totalPages) || totalPages <= 0) {
+    return 1;
+  }
+  return Math.min(page, totalPages);
+};
+
+// 根据分页状态切片线程列表，并回写合法页码
+const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
+  const { sorted = false } = options;
+  const pageSize = resolveMonitorPageSize();
+  const total = Array.isArray(sessions) ? sessions.length : 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = clampMonitorPage(state.monitor.pagination?.[pageKey], totalPages);
+  if (state.monitor.pagination) {
+    state.monitor.pagination[pageKey] = currentPage;
+  }
+  const ordered = sorted ? sessions || [] : sortSessionsByUpdate(sessions || []);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageSessions = ordered.slice(startIndex, startIndex + pageSize);
+  return { total, totalPages, currentPage, pageSize, sessions: pageSessions };
+};
+
+// 兼容旧版本 elements.js 未包含分页元素的情况
+const resolveMonitorPaginationElement = (key, id) => {
+  if (elements[key]) {
+    return elements[key];
+  }
+  const node = document.getElementById(id);
+  if (node) {
+    elements[key] = node;
+  }
+  return node;
+};
+
+// 获取分页控件 DOM，便于复用更新逻辑
+const getMonitorPaginationElements = (type) => {
+  if (type === "active") {
+    return {
+      container: resolveMonitorPaginationElement("monitorActivePagination", "monitorActivePagination"),
+      info: resolveMonitorPaginationElement("monitorActivePageInfo", "monitorActivePageInfo"),
+      prev: resolveMonitorPaginationElement("monitorActivePrevBtn", "monitorActivePrevBtn"),
+      next: resolveMonitorPaginationElement("monitorActiveNextBtn", "monitorActiveNextBtn"),
+    };
+  }
+  if (type === "history") {
+    return {
+      container: resolveMonitorPaginationElement("monitorHistoryPagination", "monitorHistoryPagination"),
+      info: resolveMonitorPaginationElement("monitorHistoryPageInfo", "monitorHistoryPageInfo"),
+      prev: resolveMonitorPaginationElement("monitorHistoryPrevBtn", "monitorHistoryPrevBtn"),
+      next: resolveMonitorPaginationElement("monitorHistoryNextBtn", "monitorHistoryNextBtn"),
+    };
+  }
+  return null;
+};
+
+// 同步分页区域文案与按钮状态
+const renderMonitorPagination = (type, pageData) => {
+  const controls = getMonitorPaginationElements(type);
+  if (!controls?.container || !controls.info || !controls.prev || !controls.next) {
+    return;
+  }
+  if (!pageData || pageData.total <= 0) {
+    controls.container.style.display = "none";
+    return;
+  }
+  controls.container.style.display = "flex";
+  controls.info.textContent = `共 ${pageData.total} 条 · 第 ${pageData.currentPage} / ${pageData.totalPages} 页 · 每页 ${pageData.pageSize} 条`;
+  controls.prev.disabled = pageData.currentPage <= 1;
+  controls.next.disabled = pageData.currentPage >= pageData.totalPages;
+};
+
+const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
+  const {
+    showCancel = false,
+    showDelete = false,
+    emptyText = "暂无数据",
+    skipSort = false,
+  } = options;
+  body.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    emptyNode.textContent = emptyText;
+    emptyNode.style.display = "block";
+    return;
+  }
+  emptyNode.style.display = "none";
+  // 分页逻辑已排序时跳过二次排序，减少渲染开销
+  const sorted = skipSort ? sessions : sortSessionsByUpdate(sessions);
+  sorted.forEach((session) => {
+    const row = document.createElement("tr");
+    const startCell = document.createElement("td");
+    startCell.textContent = formatTimestamp(session.start_time);
+    const sessionCell = document.createElement("td");
+    sessionCell.textContent = session.session_id || "-";
+    const userCell = document.createElement("td");
+    userCell.textContent = session.user_id || "-";
+    const questionCell = document.createElement("td");
+    questionCell.textContent = session.question || "-";
+    const statusCell = document.createElement("td");
+    statusCell.appendChild(buildStatusBadge(session.status || ""));
+    const tokenCell = document.createElement("td");
+    tokenCell.textContent = formatTokenCount(session.token_usage);
+    const elapsedCell = document.createElement("td");
+    elapsedCell.textContent = formatDuration(session.elapsed_s);
+    const stageCell = document.createElement("td");
+    stageCell.textContent = session.stage || "-";
+    const actionCell = document.createElement("td");
+    if (showCancel && ACTIVE_STATUSES.has(session.status)) {
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = "终止";
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        requestCancelSession(session.session_id);
+      });
+      actionCell.appendChild(btn);
+    }
+    if (showDelete && !ACTIVE_STATUSES.has(session.status)) {
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = "删除";
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        requestDeleteSession(session.session_id);
+      });
+      actionCell.appendChild(btn);
+    }
+    row.appendChild(startCell);
+    row.appendChild(sessionCell);
+    row.appendChild(userCell);
+    row.appendChild(questionCell);
+    row.appendChild(statusCell);
+    row.appendChild(tokenCell);
+    row.appendChild(elapsedCell);
+    row.appendChild(stageCell);
+    row.appendChild(actionCell);
+    row.addEventListener("click", () => {
+      if (!session.session_id) {
+        return;
+      }
+      openMonitorDetail(session.session_id);
+    });
+    body.appendChild(row);
+  });
+};
+
+const renderMonitorSessions = (sessions) => {
+  const filtered = filterSessionsByUser(sessions || []);
+  const sorted = sortSessionsByUpdate(filtered);
+  const active = [];
+  const history = [];
+  sorted.forEach((session) => {
+    if (ACTIVE_STATUSES.has(session.status)) {
+      active.push(session);
+    } else {
+      history.push(session);
+    }
+  });
+  // 活动线程分页渲染，避免一次输出过多记录
+  const activePage = resolveMonitorPageSlice(active, "activePage", { sorted: true });
+  renderMonitorTable(elements.monitorTableBody, elements.monitorEmpty, activePage.sessions, {
+    showCancel: true,
+    emptyText: "暂无活动线程",
+    skipSort: true,
+  });
+  renderMonitorPagination("active", activePage);
+
+  // 历史线程分页渲染，保持排序与页码一致
+  const historyPage = resolveMonitorPageSlice(history, "historyPage", { sorted: true });
+  renderMonitorTable(
+    elements.monitorHistoryBody,
+    elements.monitorHistoryEmpty,
+    historyPage.sessions,
+    {
+      showDelete: true,
+      emptyText: "暂无历史线程",
+      skipSort: true,
+    }
+  );
+  renderMonitorPagination("history", historyPage);
+};
+
+// 切换分页页码并触发列表刷新
+const updateMonitorPage = (pageKey, delta) => {
+  ensureMonitorState();
+  const current = Number(state.monitor.pagination?.[pageKey]) || 1;
+  const nextPage = Math.max(1, current + delta);
+  if (state.monitor.pagination) {
+    state.monitor.pagination[pageKey] = nextPage;
+  }
+  renderMonitorSessions(state.monitor.sessions);
+};
+
+// 绑定分页按钮事件，避免重复查找 DOM
+const bindMonitorPagination = () => {
+  if (elements.monitorActivePrevBtn) {
+    elements.monitorActivePrevBtn.addEventListener("click", () => {
+      updateMonitorPage("activePage", -1);
+    });
+  }
+  if (elements.monitorActiveNextBtn) {
+    elements.monitorActiveNextBtn.addEventListener("click", () => {
+      updateMonitorPage("activePage", 1);
+    });
+  }
+  if (elements.monitorHistoryPrevBtn) {
+    elements.monitorHistoryPrevBtn.addEventListener("click", () => {
+      updateMonitorPage("historyPage", -1);
+    });
+  }
+  if (elements.monitorHistoryNextBtn) {
+    elements.monitorHistoryNextBtn.addEventListener("click", () => {
+      updateMonitorPage("historyPage", 1);
+    });
+  }
+};
+
+// 根据图例标签解析对应的状态 key
+const resolveStatusKey = (label) => STATUS_LABEL_TO_KEY[label] || "";
+
+// 判断会话是否属于指定状态分组
+const matchSessionByStatusKey = (session, key) => {
+  const status = session?.status;
+  if (key === "active") {
+    return ACTIVE_STATUSES.has(status);
+  }
+  if (key === "finished") {
+    return status === "finished";
+  }
+  if (key === "error") {
+    return status === "error";
+  }
+  if (key === "cancelled") {
+    return status === "cancelled";
+  }
+  return false;
+};
+
+// 渲染状态详情列表，支持点击打开线程详情
+const renderMonitorStatusList = (sessions) => {
+  if (!elements.monitorStatusList) {
+    return;
+  }
+  elements.monitorStatusList.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    elements.monitorStatusList.textContent = "暂无记录";
+    return;
+  }
+  sortSessionsByUpdate(sessions).forEach((session) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "list-item monitor-status-item";
+
+    const header = document.createElement("div");
+    header.className = "monitor-status-item-header";
+    const title = document.createElement("div");
+    title.className = "monitor-status-item-title";
+    title.textContent = session?.question || "（无问题）";
+    const badge = buildStatusBadge(session?.status || "");
+    header.appendChild(title);
+    header.appendChild(badge);
+
+    const metaParts = [];
+    metaParts.push(session?.session_id || "-");
+    metaParts.push(session?.user_id || "-");
+    const timeText = formatTimestamp(session?.updated_time || session?.start_time);
+    if (timeText && timeText !== "-") {
+      metaParts.push(timeText);
+    }
+    const meta = document.createElement("small");
+    meta.textContent = metaParts.join(" · ");
+
+    const detailParts = [];
+    const tokenText = formatTokenCount(session?.token_usage);
+    if (tokenText && tokenText !== "-") {
+      detailParts.push(`Token ${tokenText}`);
+    }
+    const elapsedText = formatDuration(session?.elapsed_s);
+    if (elapsedText && elapsedText !== "-") {
+      detailParts.push(`耗时 ${elapsedText}`);
+    }
+    if (session?.stage) {
+      detailParts.push(`阶段 ${session.stage}`);
+    }
+    const detail = document.createElement("small");
+    detail.textContent = detailParts.join(" · ");
+
+    item.appendChild(header);
+    item.appendChild(meta);
+    if (detailParts.length) {
+      item.appendChild(detail);
+    }
+    item.addEventListener("click", () => {
+      if (!session?.session_id) {
+        return;
+      }
+      openMonitorDetail(session.session_id);
+    });
+    elements.monitorStatusList.appendChild(item);
+  });
+};
+
+// 解析工具调用会话的时间戳，优先使用最近调用时间
+const resolveToolSessionTimestamp = (session) => {
+  const raw = session?.last_time || session?.updated_time || session?.start_time;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+// 渲染工具调用会话列表，保持与线程状态弹窗一致的风格
+const renderMonitorToolList = (sessions) => {
+  if (!elements.monitorToolList) {
+    return;
+  }
+  elements.monitorToolList.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    elements.monitorToolList.textContent = "暂无记录";
+    return;
+  }
+  [...sessions]
+    .sort((a, b) => resolveToolSessionTimestamp(b) - resolveToolSessionTimestamp(a))
+    .forEach((session) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "list-item monitor-status-item";
+
+      const header = document.createElement("div");
+      header.className = "monitor-status-item-header";
+      const title = document.createElement("div");
+      title.className = "monitor-status-item-title";
+      title.textContent = session?.question || "（无问题）";
+      const badge = buildStatusBadge(session?.status || "");
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const metaParts = [];
+      metaParts.push(session?.session_id || "-");
+      metaParts.push(session?.user_id || "-");
+      const timeText = formatTimestamp(
+        session?.last_time || session?.updated_time || session?.start_time
+      );
+      if (timeText && timeText !== "-") {
+        metaParts.push(timeText);
+      }
+      const meta = document.createElement("small");
+      meta.textContent = metaParts.join(" · ");
+
+      const detailParts = [];
+      detailParts.push(`调用 ${formatHeatmapCount(session?.tool_calls)} 次`);
+      const tokenText = formatTokenCount(session?.token_usage);
+      if (tokenText && tokenText !== "-") {
+        detailParts.push(`Token ${tokenText}`);
+      }
+      const elapsedText = formatDuration(session?.elapsed_s);
+      if (elapsedText && elapsedText !== "-") {
+        detailParts.push(`耗时 ${elapsedText}`);
+      }
+      if (session?.stage) {
+        detailParts.push(`阶段 ${session.stage}`);
+      }
+      const detail = document.createElement("small");
+      detail.textContent = detailParts.join(" · ");
+
+      item.appendChild(header);
+      item.appendChild(meta);
+      if (detailParts.length) {
+        item.appendChild(detail);
+      }
+      item.addEventListener("click", () => {
+        if (!session?.session_id) {
+          return;
+        }
+        openMonitorDetail(session.session_id);
+      });
+      elements.monitorToolList.appendChild(item);
+    });
+};
+
+// 获取指定工具的调用会话列表
+const fetchMonitorToolSessions = async (toolName) => {
+  const wunderBase = getWunderBase();
+  const params = new URLSearchParams({ tool: toolName });
+  const timeRange = resolveMonitorTimeFilterRange();
+  if (timeRange) {
+    params.set("start_time", (timeRange.start / 1000).toFixed(3));
+    params.set("end_time", (timeRange.end / 1000).toFixed(3));
+  } else {
+    params.set("tool_hours", String(getMonitorTimeRangeHours()));
+  }
+  const endpoint = `${wunderBase}/admin/monitor/tool_usage?${params.toString()}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  const result = await response.json();
+  return Array.isArray(result.sessions) ? result.sessions : [];
+};
+
+// 打开工具调用明细弹窗
+const openMonitorToolModal = async (toolName) => {
+  if (!elements.monitorToolModal) {
+    return;
+  }
+  const cleaned = String(toolName || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  if (elements.monitorToolTitle) {
+    elements.monitorToolTitle.textContent = `工具调用：${cleaned}`;
+  }
+  if (elements.monitorToolMeta) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.monitorToolMeta.textContent = `${windowLabel} · 加载中`;
+  }
+  if (elements.monitorToolList) {
+    elements.monitorToolList.textContent = "加载中...";
+  }
+  elements.monitorToolModal.classList.add("active");
+  try {
+    const sessions = await fetchMonitorToolSessions(cleaned);
+    if (elements.monitorToolMeta) {
+      const windowLabel = getMonitorTimeWindowLabel();
+      elements.monitorToolMeta.textContent = `${windowLabel} · 共 ${sessions.length} 条`;
+    }
+    renderMonitorToolList(sessions);
+  } catch (error) {
+    appendLog(`工具调用详情加载失败：${error.message}`);
+    if (elements.monitorToolList) {
+      elements.monitorToolList.textContent = "加载失败";
+    }
+  }
+};
+
+// 关闭工具调用弹窗
+const closeMonitorToolModal = () => {
+  elements.monitorToolModal?.classList.remove("active");
+};
+
+// 打开线程状态明细弹窗，显示对应状态的会话记录
+const openMonitorStatusModal = (label) => {
+  if (!elements.monitorStatusModal) {
+    return;
+  }
+  const key = resolveStatusKey(label);
+  if (!key) {
+    return;
+  }
+  const scopedSessions = filterSessionsByInterval(state.monitor.sessions || []);
+  const matchedSessions = scopedSessions.filter((session) => matchSessionByStatusKey(session, key));
+  if (elements.monitorStatusTitle) {
+    elements.monitorStatusTitle.textContent = `线程状态：${label}`;
+  }
+  if (elements.monitorStatusMeta) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.monitorStatusMeta.textContent = `${windowLabel} · 共 ${matchedSessions.length} 条`;
+  }
+  renderMonitorStatusList(matchedSessions);
+  elements.monitorStatusModal.classList.add("active");
+};
+
+// 关闭线程状态明细弹窗
+const closeMonitorStatusModal = () => {
+  elements.monitorStatusModal?.classList.remove("active");
+};
+
+export const loadMonitorData = async (options = {}) => {
+  ensureMonitorState();
+  // 用户管理页仅需会话列表，使用 sessions 模式避免无关的图表与热力图刷新
+  const mode = options?.mode === "sessions" ? "sessions" : "full";
+  const wunderBase = getWunderBase();
+  const toolListPromise =
+    mode === "full"
+      ? loadAvailableTools().catch((error) => {
+          appendLog(`工具清单加载失败：${error.message}`);
+          return [];
+        })
+      : Promise.resolve([]);
+  const params = new URLSearchParams({ active_only: "false" });
+  const timeRange = resolveMonitorTimeFilterRange();
+  if (timeRange) {
+    params.set("start_time", (timeRange.start / 1000).toFixed(3));
+    params.set("end_time", (timeRange.end / 1000).toFixed(3));
+  } else {
+    const toolHours = getMonitorTimeRangeHours();
+    params.set("tool_hours", String(toolHours));
+  }
+  const endpoint = `${wunderBase}/admin/monitor?${params.toString()}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  const result = await response.json();
+  const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+  state.monitor.sessions = sessions;
+  if (mode === "full") {
+    await toolListPromise;
+    renderMonitorMetrics(result.system);
+    renderServiceMetrics(result.service);
+    renderSandboxMetrics(result.sandbox);
+    state.monitor.serviceSnapshot = result.service || null;
+    state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
+    recordTokenDeltas(sessions);
+  }
+  renderMonitorSessions(state.monitor.sessions);
+  if (mode === "full") {
+    renderToolHeatmap(state.monitor.toolStats);
+    if (elements.metricServiceTokenTotal) {
+      renderServiceCharts(result.service, state.monitor.sessions);
+    }
+  }
+};
+
+// 切换用户筛选条件并即时刷新线程表格
+export const setMonitorUserFilter = (userId) => {
+  ensureMonitorState();
+  state.monitor.userFilter = String(userId || "").trim();
+  // 切换用户后重置分页，避免页码落在空页面
+  if (state.monitor.pagination) {
+    state.monitor.pagination.activePage = 1;
+    state.monitor.pagination.historyPage = 1;
+  }
+  renderMonitorSessions(state.monitor.sessions);
+};
+
+export const toggleMonitorPolling = (enabled, options = {}) => {
+  const mode = options?.mode === "sessions" ? "sessions" : "full";
+  const intervalMs =
+    typeof options?.intervalMs === "number" && options.intervalMs > 0
+      ? options.intervalMs
+      : APP_CONFIG.monitorPollIntervalMs;
+  const immediate = options?.immediate !== false;
+  if (enabled) {
+    const shouldRestart =
+      !state.runtime.monitorPollTimer ||
+      monitorPollMode !== mode ||
+      monitorPollIntervalMs !== intervalMs;
+    if (state.runtime.monitorPollTimer && shouldRestart) {
+      clearInterval(state.runtime.monitorPollTimer);
+      state.runtime.monitorPollTimer = null;
+    }
+    monitorPollMode = mode;
+    monitorPollIntervalMs = intervalMs;
+    if (!state.runtime.monitorPollTimer) {
+      if (immediate) {
+        loadMonitorData({ mode }).catch((error) => {
+          appendLog(`监控刷新失败：${error.message}`);
+        });
+      }
+      // 用户管理页使用 sessions 模式轮询，降低对图表渲染的影响
+      state.runtime.monitorPollTimer = setInterval(() => {
+        loadMonitorData({ mode }).catch(() => {});
+      }, intervalMs);
+    }
+  } else if (state.runtime.monitorPollTimer) {
+    clearInterval(state.runtime.monitorPollTimer);
+    state.runtime.monitorPollTimer = null;
+  }
+};
+
+// 转义 HTML，避免事件详情中的用户内容污染展示
+const escapeMonitorHtml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const MONITOR_TIMESTAMP_RE =
+  /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]/g;
+
+// 高亮事件详情里的时间戳，方便快速定位条目
+const highlightMonitorTimestamps = (detailText) =>
+  escapeMonitorHtml(detailText).replace(
+    MONITOR_TIMESTAMP_RE,
+    '<span class="log-timestamp">[$1]</span>'
+  );
+
+export const openMonitorDetail = async (sessionId) => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
+  try {
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(`请求失败：${response.status}`);
+    }
+    const result = await response.json();
+    const session = result.session || {};
+    state.monitor.selected = session.session_id;
+    elements.monitorDetailTitle.textContent = `线程详情：${session.session_id || "-"}`;
+    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} · ${
+      session.status || "-"
+    } · ${formatDuration(session.elapsed_s)}`;
+    elements.monitorDetailQuestion.textContent = session.question || "";
+    const events = Array.isArray(result.events) ? result.events : [];
+    const detailText = events
+      .map((item) => `[${item.timestamp}] ${item.type}: ${JSON.stringify(item.data)}`)
+      .join("\n");
+    if (detailText) {
+      elements.monitorDetailEvents.innerHTML = highlightMonitorTimestamps(detailText);
+    } else {
+      elements.monitorDetailEvents.textContent = "暂无事件";
+    }
+    elements.monitorDetailModal.classList.add("active");
+  } catch (error) {
+    appendLog(`监控详情加载失败：${error.message}`);
+  }
+};
+
+const closeMonitorDetail = () => {
+  elements.monitorDetailModal.classList.remove("active");
+};
+
+const requestDeleteSession = async (sessionId) => {
+  if (!sessionId) {
+    return;
+  }
+  const confirmed = window.confirm(`确定删除历史线程 ${sessionId} 吗？`);
+  if (!confirmed) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
+  const response = await fetch(endpoint, { method: "DELETE" });
+  if (!response.ok) {
+    appendLog(`删除失败：${response.status}`);
+    return;
+  }
+  const result = await response.json();
+  appendLog(result.message || "已删除");
+  await loadMonitorData();
+  if (state.monitor.selected === sessionId) {
+    state.monitor.selected = null;
+    closeMonitorDetail();
+  }
+};
+
+const requestCancelSession = async (sessionId) => {
+  if (!sessionId) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/cancel`;
+  const response = await fetch(endpoint, { method: "POST" });
+  if (!response.ok) {
+    appendLog(`终止失败：${response.status}`);
+    notify(`终止失败：${response.status}`, "error");
+    return;
+  }
+  const result = await response.json();
+  appendLog(result.message || "已请求终止");
+  notify(result.message || "已请求终止", "info");
+  await loadMonitorData();
+  if (state.monitor.selected === sessionId) {
+    await openMonitorDetail(sessionId);
+  }
+};
+
+// 初始化监控面板交互
+export const initMonitorPanel = () => {
+  ensureMonitorState();
+  ensureMonitorCharts();
+  bindMonitorPagination();
+  window.addEventListener("resize", resizeMonitorCharts);
+  if (elements.monitorTimeRange) {
+    applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
+    const applyInputValue = () => {
+      applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
+    };
+    elements.monitorTimeRange.addEventListener("change", applyInputValue);
+    elements.monitorTimeRange.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        applyInputValue();
+      }
+    });
+  } else {
+    updateMonitorChartTitles();
+  }
+  syncMonitorTimeFilterInputs();
+  if (elements.monitorTimeFilterToggle && elements.monitorTimeStart && elements.monitorTimeEnd) {
+    const applyFilter = () => applyMonitorTimeFilter({ refresh: true });
+    elements.monitorTimeFilterToggle.addEventListener("change", applyFilter);
+    elements.monitorTimeStart.addEventListener("change", applyFilter);
+    elements.monitorTimeEnd.addEventListener("change", applyFilter);
+  }
+  elements.monitorRefreshBtn.addEventListener("click", async () => {
+    try {
+      await loadMonitorData();
+      notify("监控数据已刷新。", "success");
+    } catch (error) {
+      appendLog(`监控刷新失败：${error.message}`);
+      notify(`监控刷新失败：${error.message}`, "error");
+    }
+  });
+  elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);
+  elements.monitorDetailCloseBtn.addEventListener("click", closeMonitorDetail);
+  elements.monitorDetailModal.addEventListener("click", (event) => {
+    if (event.target === elements.monitorDetailModal) {
+      closeMonitorDetail();
+    }
+  });
+  if (elements.monitorStatusClose) {
+    elements.monitorStatusClose.addEventListener("click", closeMonitorStatusModal);
+  }
+  if (elements.monitorStatusCloseBtn) {
+    elements.monitorStatusCloseBtn.addEventListener("click", closeMonitorStatusModal);
+  }
+  if (elements.monitorStatusModal) {
+    elements.monitorStatusModal.addEventListener("click", (event) => {
+      if (event.target === elements.monitorStatusModal) {
+        closeMonitorStatusModal();
+      }
+    });
+  }
+  if (elements.monitorToolClose) {
+    elements.monitorToolClose.addEventListener("click", closeMonitorToolModal);
+  }
+  if (elements.monitorToolCloseBtn) {
+    elements.monitorToolCloseBtn.addEventListener("click", closeMonitorToolModal);
+  }
+  if (elements.monitorToolModal) {
+    elements.monitorToolModal.addEventListener("click", (event) => {
+      if (event.target === elements.monitorToolModal) {
+        closeMonitorToolModal();
+      }
+    });
+  }
+};
+
+
+
+

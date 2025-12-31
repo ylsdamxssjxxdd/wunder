@@ -1,0 +1,101 @@
+﻿import { elements } from "./elements.js?v=20251231-03";
+import { state } from "./state.js";
+import { getWunderBase } from "./api.js";
+import { getToolInputSchema } from "./utils.js?v=20251229-02";
+import { syncPromptTools } from "./tools.js?v=20251227-13";
+import { openToolDetailModal } from "./tool-detail.js";
+import { notify } from "./notify.js";
+
+// 拉取内置工具清单与启用状态
+export const loadBuiltinTools = async () => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/tools`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  const result = await response.json();
+  state.builtin.tools = Array.isArray(result.tools) ? result.tools : [];
+  renderBuiltinTools();
+};
+
+// 渲染内置工具勾选列表
+const renderBuiltinTools = () => {
+  elements.builtinToolsList.textContent = "";
+  if (!state.builtin.tools.length) {
+    elements.builtinToolsList.textContent = "未发现内置工具。";
+    return;
+  }
+  state.builtin.tools.forEach((tool) => {
+    const item = document.createElement("div");
+    item.className = "tool-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = Boolean(tool.enabled);
+    checkbox.addEventListener("change", (event) => {
+      tool.enabled = event.target.checked;
+      saveBuiltinTools().catch((error) => {
+        console.error("内置工具启用状态保存失败:", error);
+        notify(`内置工具保存失败：${error.message}`, "error");
+      });
+    });
+    const label = document.createElement("label");
+    label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${
+      tool.description || ""
+    }</span>`;
+    // 点击工具条目查看详情，避免与勾选动作冲突
+    item.addEventListener("click", (event) => {
+      if (event.target === checkbox) {
+        return;
+      }
+      const metaParts = ["内置工具", checkbox.checked ? "已启用" : "未启用"];
+      openToolDetailModal({
+        title: tool.name || "工具详情",
+        meta: metaParts.join(" · "),
+        description: tool.description || "",
+        schema: getToolInputSchema(tool),
+      });
+    });
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    elements.builtinToolsList.appendChild(item);
+  });
+};
+
+// 保存内置工具启用状态
+const saveBuiltinTools = async () => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/tools`;
+  const enabled = state.builtin.tools.filter((tool) => tool.enabled).map((tool) => tool.name);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    throw new Error(`请求失败：${response.status}`);
+  }
+  const result = await response.json();
+  state.builtin.tools = Array.isArray(result.tools) ? result.tools : [];
+  renderBuiltinTools();
+  syncPromptTools();
+};
+
+// 初始化内置工具面板交互
+export const initBuiltinPanel = () => {
+  elements.refreshBuiltinBtn.addEventListener("click", async () => {
+    try {
+      await loadBuiltinTools();
+      notify("内置工具已刷新。", "success");
+    } catch (error) {
+      elements.builtinToolsList.textContent = `刷新失败：${error.message}`;
+      notify(`内置工具刷新失败：${error.message}`, "error");
+    }
+  });
+};
+
+
+
+

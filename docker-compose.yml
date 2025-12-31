@@ -1,0 +1,30 @@
+services:
+  WUNDER:
+    image: wunder:20251224-x86
+    ports:
+      - "8000:8000"
+    volumes:
+      # - /etc/localtime:/etc/localtime:ro #同步宿主机时间
+      # - /etc/timezone:/etc/timezone:ro #同步宿主机时间
+      - ./:/workspaces
+    environment:
+      - TZ=Asia/Shanghai
+      - WUNDER_SANDBOX_ENDPOINT=http://sandbox:9001
+    depends_on:
+      - SANDBOX
+    command: uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  SANDBOX:
+    image: wunder:20251224-x86
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # - /etc/localtime:/etc/localtime:ro #同步宿主机时间
+      # - /etc/timezone:/etc/timezone:ro #同步宿主机时间
+      - ./app:/workspaces/app:ro
+      - ./data/user_tools:/workspaces/data/user_tools:ro
+      - ./data/workspaces:/workspaces/data/workspaces
+      - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
+    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001
+    restart: unless-stopped

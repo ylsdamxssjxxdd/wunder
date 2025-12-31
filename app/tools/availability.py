@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from app.core.config import WunderConfig
+from app.knowledge.service import build_knowledge_tool_specs, get_knowledge_tool_names
+from app.skills.registry import SkillSpec
+from app.tools.constants import BUILTIN_TOOL_NAMES
+from app.tools.registry import ToolSpec
+from app.tools.specs import build_eva_tool_specs
+
+
+def normalize_mcp_input_schema(raw_tool: Dict[str, Any]) -> Dict[str, Any]:
+    """规范化 MCP 工具的输入结构，统一字段名与空结构表现。"""
+    if not isinstance(raw_tool, dict):
+        return {"type": "object", "properties": {}}
+    input_schema = raw_tool.get("inputSchema") or raw_tool.get("input_schema") or {
+        "type": "object",
+        "properties": {},
+    }
+    if not isinstance(input_schema, dict):
+        return {"type": "object", "properties": {}}
+    return input_schema
+
+
+def resolve_mcp_description(server: Any, tool: Dict[str, Any]) -> str:
+    """统一 MCP 工具描述策略，优先工具描述，缺失时回退到服务描述。"""
+    description = str(tool.get("description", "")).strip()
+    if description:
+        return description
+    fallback = (
+        str(getattr(server, "description", "") or "")
+        or str(getattr(server, "display_name", "") or "")
+    )
+    return str(fallback).strip()
+
+
+def _iter_mcp_tool_specs(config: WunderConfig) -> Iterable[Tuple[str, ToolSpec]]:
+    """遍历 MCP 工具规格，输出标准化 ToolSpec，供多处复用。"""
+    for server in config.mcp.servers:
+        if not getattr(server, "enabled", True):
+            continue
+        cached_tools = getattr(server, "tool_specs", None)
+        if not isinstance(cached_tools, list) or not cached_tools:
+            continue
+        allow_tools = list(getattr(server, "allow_tools", []) or [])
+        for tool in cached_tools:
+            if not isinstance(tool, dict):
+                continue
+            tool_name = str(tool.get("name", "")).strip()
+            if not tool_name:
+                continue
+            if allow_tools and tool_name not in allow_tools:
+                continue
+            full_name = f"{server.name}@{tool_name}"
+            yield full_name, ToolSpec(
+                name=full_name,
+                description=resolve_mcp_description(server, tool),
+                args_schema=normalize_mcp_input_schema(tool),
+            )
+
+
+def build_enabled_builtin_spec_map(config: WunderConfig) -> Dict[str, ToolSpec]:
+    """构建已启用内置工具的规格映射，便于快速查找。"""
+    specs = build_eva_tool_specs()
+    enabled = set(config.tools.builtin.enabled or [])
+    return {
+        name: specs[name]
+        for name in BUILTIN_TOOL_NAMES
+        if name in enabled and name in specs
+    }
+
+
+def build_enabled_builtin_specs(
+    config: WunderConfig, *, allowed_names: Optional[Set[str]] = None
+) -> List[ToolSpec]:
+    """按内置工具顺序输出规格列表，可选过滤允许的工具名称集合。"""
+    specs = build_eva_tool_specs()
+    enabled = set(config.tools.builtin.enabled or [])
+    output: List[ToolSpec] = []
+    for name in BUILTIN_TOOL_NAMES:
+        if name not in enabled:
+            continue
+        if name not in specs:
+            continue
+        if allowed_names is not None and name not in allowed_names:
+            continue
+        output.append(specs[name])
+    return output
+
+
+def build_mcp_tool_spec_map(config: WunderConfig) -> Dict[str, ToolSpec]:
+    """构建 MCP 工具规格映射，统一过滤与 schema 规范化策略。"""
+    return {name: spec for name, spec in _iter_mcp_tool_specs(config)}
+
+
+def build_mcp_tool_specs(
+    config: WunderConfig, *, allowed_names: Optional[Set[str]] = None
+) -> List[ToolSpec]:
+    """输出 MCP 工具规格列表，可选按工具名过滤。"""
+    specs: List[ToolSpec] = []
+    for name, spec in _iter_mcp_tool_specs(config):
+        if allowed_names is not None and name not in allowed_names:
+            continue
+        specs.append(spec)
+    return specs
+
+
+def build_skill_tool_spec_map(skill_specs: Sequence[SkillSpec]) -> Dict[str, ToolSpec]:
+    """将技能元数据转换为 ToolSpec 映射，统一供工具别名与列表使用。"""
+    output: Dict[str, ToolSpec] = {}
+    for spec in skill_specs:
+        output[spec.name] = ToolSpec(
+            name=spec.name,
+            description=spec.description,
+            args_schema=spec.input_schema or {},
+        )
+    return output
+
+
+def build_knowledge_tool_spec_map(
+    config: WunderConfig, *, blocked_names: Optional[Set[str]] = None
+) -> Dict[str, ToolSpec]:
+    """构建知识库工具规格映射，自动处理与技能名称冲突。"""
+    return {
+        spec.name: spec
+        for spec in build_knowledge_tool_specs(config, blocked_names=blocked_names)
+    }
+
+
+def build_knowledge_tool_specs_filtered(
+    config: WunderConfig,
+    *,
+    blocked_names: Optional[Set[str]] = None,
+    allowed_names: Optional[Set[str]] = None,
+) -> List[ToolSpec]:
+    """输出知识库工具规格列表，支持冲突过滤与允许列表过滤。"""
+    output: List[ToolSpec] = []
+    for spec in build_knowledge_tool_specs(config, blocked_names=blocked_names):
+        if allowed_names is not None and spec.name not in allowed_names:
+            continue
+        output.append(spec)
+    return output
+
+
+def collect_available_tool_names(
+    config: WunderConfig,
+    skill_specs: Sequence[SkillSpec],
+    user_tool_bindings: Optional[Any] = None,
+) -> Set[str]:
+    """汇总当前可用的工具名称集合，统一内置/MCP/技能/知识库/自建工具策略。"""
+    names: Set[str] = set()
+    names.update(build_enabled_builtin_spec_map(config).keys())
+    names.update(build_mcp_tool_spec_map(config).keys())
+
+    skill_names = {spec.name for spec in skill_specs}
+    names.update(skill_names)
+    names.update(get_knowledge_tool_names(config, blocked_names=skill_names))
+
+    if user_tool_bindings:
+        alias_specs = getattr(user_tool_bindings, "alias_specs", None)
+        if isinstance(alias_specs, dict):
+            names.update(alias_specs.keys())
+        user_skill_specs = getattr(user_tool_bindings, "skill_specs", None)
+        if isinstance(user_skill_specs, list):
+            names.update(
+                {
+                    getattr(spec, "name", "")
+                    for spec in user_skill_specs
+                    if getattr(spec, "name", "")
+                }
+            )
+    return names
+
+
+def collect_prompt_tool_specs(
+    config: WunderConfig,
+    skill_specs: Sequence[SkillSpec],
+    allowed_tool_names: Set[str],
+    user_tool_bindings: Optional[Any] = None,
+) -> List[ToolSpec]:
+    """按提示词注入顺序收集可用工具规格，确保多处输出一致。"""
+    if not allowed_tool_names:
+        return []
+    tools: List[ToolSpec] = []
+    tools.extend(build_enabled_builtin_specs(config, allowed_names=allowed_tool_names))
+    tools.extend(build_mcp_tool_specs(config, allowed_names=allowed_tool_names))
+    skill_names = {spec.name for spec in skill_specs}
+    tools.extend(
+        build_knowledge_tool_specs_filtered(
+            config, blocked_names=skill_names, allowed_names=allowed_tool_names
+        )
+    )
+    if user_tool_bindings:
+        alias_specs = getattr(user_tool_bindings, "alias_specs", None)
+        if isinstance(alias_specs, dict):
+            for name, spec in alias_specs.items():
+                if name not in allowed_tool_names:
+                    continue
+                tools.append(spec)
+    return tools

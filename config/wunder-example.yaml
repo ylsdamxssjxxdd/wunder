@@ -1,0 +1,108 @@
+﻿server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
+  host: 0.0.0.0 # 服务监听地址，0.0.0.0 表示监听所有网卡
+  port: 8000 # 服务监听端口
+  stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
+  max_active_sessions: 30 # 全局最大并发会话数，超过后请求排队
+
+security: # 安全与权限配置
+  api_key: ylsdamxssjxxdd # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入
+  allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
+    - '*'
+  allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）
+    - ./EVA_SKILLS
+    - ./skills
+  deny_globs: # 拒绝访问的路径通配规则（用于阻断敏感目录）
+    - '**/.git/**'
+    - '**/node_modules/**'
+    - '**/__pycache__/**'
+
+cors: # CORS 跨域配置（供前端调试面板调用）
+  allow_origins: # 允许的来源列表，'*' 表示全部放行（生产环境建议收敛）
+    - '*'
+  allow_credentials: false # 是否允许携带凭证（cookie/authorization）
+  allow_methods: # 允许的 HTTP 方法
+    - '*'
+  allow_headers: # 允许的请求头
+    - '*'
+
+mcp: # MCP 工具配置
+  timeout_s: 1200 # MCP 调用超时（秒），避免外部服务长期阻塞
+  servers: # MCP 服务列表
+    - name: wunder # MCP 服务名称（用于 server@tool 标识）
+      endpoint: http://127.0.0.1:8000/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
+      allow_tools: # 允许调用的工具白名单（为空表示全部）
+        - run
+      enabled: true # 是否启用该 MCP 服务
+      transport: streamable-http # 传输协议类型（http/sse/streamable-http）
+      description: wunder 自托管 MCP 服务，用于执行内部智能体任务。 # 服务描述信息（用于前端展示）
+      display_name: Wunder 智能体 # 服务展示名（用于前端展示）
+      headers: # 额外请求头（如鉴权信息）
+        Authorization: Bearer ylsdamxssjxxdd
+      auth: null # MCP auth 字段（可选，保留原始接入参数）
+      tool_specs: # 预缓存的工具规格（避免首次调用远端探测）
+        - name: run # 工具名称
+          description: 执行 wunder 智能体任务并返回最终回复。 # 工具描述
+          input_schema: # 工具输入 Schema（JSON Schema 结构）
+            properties: # 入参属性定义
+              task: # 任务描述文本
+                type: string
+            required: # 必填字段列表
+              - task
+            type: object # Schema 类型
+
+skills: # Skills 技能配置
+  paths: # 技能扫描路径列表（支持相对路径）
+    - ./skills
+    - ./EVA_SKILLS
+    - EVA_SKILLS
+  enabled: # 默认启用的技能名称列表
+    - skill-creator
+
+tools: # 内置工具配置
+  builtin:
+    enabled: # 启用的内置工具名称列表
+      - 最终回复       # 输出最终回答的终止工具
+      - 执行命令       # 执行系统命令（受 allow_commands 控制）
+      - ptc            # 执行 ptc 脚本工具
+      - 列出文件       # 列出目录下文件
+      - 搜索内容       # 搜索文件内容
+      - 读取文件       # 读取文件内容
+      - 写入文件       # 写入文件内容
+      - 替换文本       # 批量替换文本
+      - 编辑文件       # 结构化编辑文件
+
+knowledge: # 字面知识库配置
+  bases: # 知识库列表
+    - name: 公司制度知识库 # 知识库名称（作为工具名）
+      description: 公司制度知识库示例 # 知识库描述
+      root: ./knowledge/plan # 知识库根目录（Markdown 文档所在目录）
+      enabled: true # 是否启用该知识库
+
+workspace: # 工作区配置
+  root: ./data/workspaces # 工作区根目录（按 user_id 划分子目录）
+  max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
+  retention_days: 0 # 历史保留天数（<=0 表示不清理）
+
+storage: # 存储配置
+  db_path: ./data/wunder.db # SQLite 数据库路径（记录会话、工具、监控数据）
+
+observability: # 可观测性配置
+  log_level: INFO # 日志级别（DEBUG/INFO/WARNING/ERROR）
+  monitor_event_limit: 500 # 监控事件保留条数上限（<=0 表示不限制，注意会增加内存占用）
+  monitor_payload_max_chars: 4000 # 监控事件单条最大字符数（超出会截断）
+  monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）
+    - llm_output_delta
+
+sandbox: # 沙盒执行配置
+  mode: sandbox # 沙盒模式（local/sandbox）
+  image: wunder:20251224-x86 # 沙盒容器镜像名称
+  endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
+  container_root: /workspaces # 容器内项目根目录
+  network: bridge # 容器网络模式（bridge/host）
+  readonly_rootfs: true # 是否以只读根文件系统运行容器
+  idle_ttl_s: 0 # 空闲回收秒数（0 表示不回收）
+  timeout_s: 300 # 单次执行超时时间（秒）
+  resources: # 资源限制配置
+    cpu: 1.0 # CPU 核心数限制
+    memory_mb: 2048 # 内存上限（MB）
+    pids: 256 # 进程数上限

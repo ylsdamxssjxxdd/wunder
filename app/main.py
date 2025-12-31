@@ -1,0 +1,122 @@
+import asyncio
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.api.deps import get_orchestrator
+from app.api.wunder import router as wunder_router
+from app.core.auth import extract_api_key, normalize_api_key
+from app.core.config import get_config
+from app.core.http_client import close_async_client
+from app.core.logging import setup_logging
+from app.mcp.server import create_wunder_mcp_app
+from app.monitor.registry import set_app_start_time, warm_monitor_history
+
+
+async def warm_admin_cache() -> None:
+    """后台预热管理端依赖数据，降低首次打开页面卡顿。"""
+    # 先触发监控历史加载，避免首次访问内部状态阻塞
+    warm_monitor_history()
+    try:
+        orchestrator = await asyncio.to_thread(get_orchestrator)
+    except Exception:
+        return
+    try:
+        await asyncio.to_thread(orchestrator.workspace_manager.get_user_usage_stats)
+    except Exception:
+        return
+    try:
+        await asyncio.to_thread(orchestrator.workspace_manager.get_tool_usage_stats)
+    except Exception:
+        return
+
+
+def build_lifespan(mcp_app) -> callable:
+    """组装 FastAPI 与 MCP 的生命周期，按需初始化组件。"""
+
+    @asynccontextmanager
+    async def _core_lifespan():
+        set_app_start_time()
+        warm_task = asyncio.create_task(warm_admin_cache())
+        try:
+            yield
+        finally:
+            if not warm_task.done():
+                warm_task.cancel()
+            # 关闭全局连接池，避免资源泄漏。
+            await close_async_client()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if hasattr(mcp_app, "startup"):
+            await mcp_app.startup()
+            try:
+                async with _core_lifespan():
+                    yield
+            finally:
+                if hasattr(mcp_app, "shutdown"):
+                    await mcp_app.shutdown()
+        else:
+            async with mcp_app.lifespan(app):
+                async with _core_lifespan():
+                    yield
+
+    return lifespan
+
+
+def _is_protected_path(path: str) -> bool:
+    """判断当前请求路径是否需要 API Key 鉴权。"""
+    if not path.startswith("/wunder"):
+        return False
+    # 静态调试页不走接口鉴权，避免浏览器直接访问被拦截。
+    if path.startswith("/wunder/web"):
+        return False
+    return True
+
+
+def create_app() -> FastAPI:
+    """创建 FastAPI 应用实例。"""
+    config = get_config()
+    setup_logging(config)
+
+    mcp_app = create_wunder_mcp_app()
+    app = FastAPI(title="wunder", version="0.1.0", lifespan=build_lifespan(mcp_app))
+    # 统一保存 API Key，避免每次请求重复读取配置文件。
+    app.state.api_key = normalize_api_key(config.security.api_key)
+
+    @app.middleware("http")
+    async def api_key_guard(request: Request, call_next):
+        """统一拦截 /wunder 与 /wunder/mcp 请求，校验 API Key。"""
+        # 放行 CORS 预检请求，避免影响浏览器跨域调用。
+        if request.method == "OPTIONS" or not _is_protected_path(request.url.path):
+            return await call_next(request)
+        expected_api_key = getattr(request.app.state, "api_key", "")
+        if not expected_api_key:
+            raise HTTPException(status_code=500, detail="API key 未配置")
+        provided_api_key = extract_api_key(request.headers)
+        if provided_api_key != expected_api_key:
+            raise HTTPException(status_code=401, detail="API key 无效")
+        return await call_next(request)
+    # 调试期默认开放跨域，避免前端测试被浏览器拦截。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors.allow_origins,
+        allow_credentials=config.cors.allow_credentials,
+        allow_methods=config.cors.allow_methods,
+        allow_headers=config.cors.allow_headers,
+    )
+    # 通过 /wunder/web 暴露前端静态资源，便于远程调试访问。
+    web_root = Path(__file__).resolve().parents[1] / "web"
+    if web_root.exists():
+        app.mount("/wunder/web", StaticFiles(directory=str(web_root), html=True), name="wunder-web")
+    app.include_router(wunder_router)
+    # 挂载自托管 MCP 服务，供外部或自调用使用。
+    app.mount("/wunder/mcp", mcp_app, name="wunder-mcp")
+
+    return app
+
+
+app = create_app()
