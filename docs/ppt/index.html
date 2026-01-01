@@ -12,237 +12,110 @@
     <div id="deck">
       <!-- 第 1 页：欢迎页（封面） -->
       <section class="slide cover active" data-title="欢迎">
-        <div class="eyebrow">WUNDER AGENT ROUTER</div>
         <h1>wunder 智能体路由器</h1>
-        <p class="subtitle">让大模型从“会聊”升级为“会做事”</p>
-        <p class="section-lead">一条从“提问”走向“落地”的故事线</p>
-        <div class="cover-pills">
-          <span class="pill">统一入口 /wunder</span>
-          <span class="pill">工具编排</span>
-          <span class="pill">多用户工作区</span>
-          <span class="pill">流式过程可追踪</span>
-        </div>
-        <div class="grid three">
-          <div class="card">
-            <h3>目标</h3>
-            <p>让模型会调用工具、完成任务、留下可复用资产</p>
-          </div>
-          <div class="card">
-            <h3>对象</h3>
-            <p>面向业务同学的日常效率与协作场景</p>
-          </div>
-          <div class="card">
-            <h3>方式</h3>
-            <p>统一接口 + 工具体系 + 可观测流程</p>
-          </div>
-        </div>
-        <div class="spacer"></div>
-        <p class="hint">操作提示：左右方向键 / 空格 翻页</p>
+        <p class="subtitle">让大模型从“会聊”走向“会做事”</p>
       </section>
 
       <!-- 第 2 页：目录页（明确章节结构） -->
       <section class="slide toc" data-title="目录">
         <div class="eyebrow">目录</div>
-        <h2>今天会讲 7 个部分</h2>
-        <p class="section-lead">按同一条线索逐步展开：机制 → 工具 → 资产 → 稳定性 → 落地</p>
+        <h2>今天的 7 个部分</h2>
         <div class="toc-grid">
           <div class="toc-item">
             <div class="toc-index">01</div>
             <div>
-              <div class="toc-title">工作机制</div>
-              <div class="toc-desc">从请求到回复的完整链路</div>
+              <div class="toc-title">核心理念</div>
+              <div class="toc-desc">从“会聊”到“会做事”</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">02</div>
             <div>
-              <div class="toc-title">六种工具体系</div>
-              <div class="toc-desc">每种工具解决什么问题</div>
+              <div class="toc-title">工具体系</div>
+              <div class="toc-desc">六类工具与统一治理</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">03</div>
             <div>
               <div class="toc-title">工作区</div>
-              <div class="toc-desc">文件与产物如何长期沉淀</div>
+              <div class="toc-desc">产出沉淀与可复用资产</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">04</div>
             <div>
               <div class="toc-title">上下文压缩</div>
-              <div class="toc-desc">长对话如何稳定不断线</div>
+              <div class="toc-desc">长对话持续可用</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">05</div>
             <div>
               <div class="toc-title">长期记忆</div>
-              <div class="toc-desc">跨会话保留关键结论</div>
+              <div class="toc-desc">跨会话保持一致</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">06</div>
             <div>
-              <div class="toc-title">线程监视</div>
-              <div class="toc-desc">过程可追踪，卡住可终止</div>
+              <div class="toc-title">智能体线程管理</div>
+              <div class="toc-desc">稳定、可监控、可取消</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">07</div>
             <div>
-              <div class="toc-title">落地与 Q&A</div>
-              <div class="toc-desc">怎么开始试用与复用</div>
+              <div class="toc-title">快速开始</div>
+              <div class="toc-desc">从一个场景做起</div>
             </div>
           </div>
         </div>
-        <p class="hint">从下一页开始，每页都会标注“第几节”，方便定位讲到哪里</p>
       </section>
 
-      <!-- 第 3 页：工作机制 - 总览 -->
-      <section class="slide" data-title="工作机制总览">
+      <!-- 第 3 页：核心理念 -->
+      <section class="slide" data-title="核心理念">
         <div class="slide-meta">
-          <span class="section-tag">第1节 工作机制</span>
+          <span class="section-tag">第1节 核心理念</span>
           <div class="section-map">
-            <span class="section-chip active">总览</span>
-            <span class="section-chip">生命周期</span>
-            <span class="section-chip">调度策略</span>
+            <span class="section-chip active">核心理念</span>
           </div>
         </div>
-        <h2>工作机制总览</h2>
-        <p class="section-lead">故事从一次请求开始：用户提问，系统开始行动</p>
+        <h2>从“会聊”到“会做事”</h2>
+        <p class="section-lead">一次提问，跑通从理解到落地的链路</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">核心输入</span>
-            <div class="kv">
-              <div class="kv-item">
-                <span class="kv-label">接口</span>
-                <span class="kv-value">/wunder（支持流式 SSE）</span>
-              </div>
-              <div class="kv-item">
-                <span class="kv-label">必填</span>
-                <span class="kv-value">user_id、question</span>
-              </div>
-              <div class="kv-item">
-                <span class="kv-label">可选</span>
-                <span class="kv-value">tool_names、stream</span>
-              </div>
-            </div>
-            <span class="pill">核心价值</span>
+            <span class="pill">用户看到的</span>
             <ul>
-              <li>把“思考”转成“执行”，过程可追踪</li>
-              <li>工具统一调度，避免重复造轮子</li>
-              <li>多用户隔离与持久化，适合团队复用</li>
+              <li>只需提出问题</li>
+              <li>过程清晰可追踪</li>
+              <li>结果能落成产物</li>
             </ul>
+            <span class="pill">统一入口</span>
+            <p>/wunder 支持流式返回过程与最终回复</p>
           </div>
           <div class="card soft stack">
-            <span class="pill">链路视图</span>
+            <span class="pill">执行链路</span>
             <div class="flow">
-              <div class="flow-item">客户端</div>
+              <div class="flow-item">提问</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">/wunder API</div>
+              <div class="flow-item">任务规划</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">Orchestrator</div>
+              <div class="flow-item">工具执行</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">LLM</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">工具执行层</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">回复 + 监控</div>
+              <div class="flow-item">产物沉淀</div>
             </div>
-            <p class="hint">所有工具与技能统一被调度器编排执行</p>
+            <div class="note">
+              <strong>理念：</strong>对开发者一切是接口，对模型一切皆工具
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 第 4 页：工作机制 - 请求生命周期 -->
-      <section class="slide" data-title="请求生命周期">
+      <!-- 第 4 页：工具体系总览 -->
+      <section class="slide" data-title="工具体系">
         <div class="slide-meta">
-          <span class="section-tag">第1节 工作机制</span>
-          <div class="section-map">
-            <span class="section-chip">总览</span>
-            <span class="section-chip active">生命周期</span>
-            <span class="section-chip">调度策略</span>
-          </div>
-        </div>
-        <h2>一次请求的生命周期</h2>
-        <p class="section-lead">当请求进入系统，它会走过四个关键阶段</p>
-        <div class="steps">
-          <div class="step fragment">
-            <h3>1. 构建提示词</h3>
-            <p>注入选中的工具、技能与工作区信息</p>
-          </div>
-          <div class="step fragment">
-            <h3>2. 模型规划</h3>
-            <p>模型产生工具调用或直接回复</p>
-          </div>
-          <div class="step fragment">
-            <h3>3. 工具执行</h3>
-            <p>内置/MCP/技能/知识库统一执行</p>
-          </div>
-          <div class="step fragment">
-            <h3>4. 过程记录</h3>
-            <p>写入日志、监控与工作区产物</p>
-          </div>
-        </div>
-        <div class="card soft stack">
-          <span class="pill">SSE 事件类型</span>
-          <div class="badge-group">
-            <span class="badge">progress</span>
-            <span class="badge">tool_call</span>
-            <span class="badge">tool_result</span>
-            <span class="badge">llm_output</span>
-            <span class="badge">final</span>
-            <span class="badge">error</span>
-          </div>
-          <p class="hint">过程可见，让“正在做什么”一目了然</p>
-        </div>
-      </section>
-
-      <!-- 第 5 页：工作机制 - 调度策略 -->
-      <section class="slide" data-title="调度策略">
-        <div class="slide-meta">
-          <span class="section-tag">第1节 工作机制</span>
-          <div class="section-map">
-            <span class="section-chip">总览</span>
-            <span class="section-chip">生命周期</span>
-            <span class="section-chip active">调度策略</span>
-          </div>
-        </div>
-        <h2>调度策略与效率优化</h2>
-        <p class="section-lead">为了让行动又快又稳，调度层做了这些优化</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>按需注入</h3>
-            <p>只注入 tool_names，避免上下文膨胀</p>
-          </div>
-          <div class="card">
-            <h3>工具规格缓存</h3>
-            <p>MCP 工具清单缓存，减少远端探测</p>
-          </div>
-          <div class="card">
-            <h3>提示词缓存</h3>
-            <p>按用户与工具列表缓存，降低延迟</p>
-          </div>
-          <div class="card">
-            <h3>工作区树缓存</h3>
-            <p>减少目录重复遍历与 IO 开销</p>
-          </div>
-          <div class="card">
-            <h3>连接池复用</h3>
-            <p>LLM/MCP 统一 HTTP 连接池</p>
-          </div>
-          <div class="card">
-            <h3>并发管控</h3>
-            <p>同一用户单会话，冲突返回 429</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- 第 6 页：工具体系总览 -->
-      <section class="slide" data-title="工具体系总览">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip active">总览</span>
             <span class="section-chip">内置</span>
@@ -253,40 +126,43 @@
             <span class="section-chip">共享</span>
           </div>
         </div>
-        <h2>六种工具体系，总结如下</h2>
-        <p class="section-lead">机制就位后，能力被拆成六类工具</p>
+        <h2>六类工具构成能力地图</h2>
+        <p class="section-lead">能力拆分后，才能被治理、复用与共享</p>
         <div class="grid three">
-          <div class="card fragment">
+          <div class="card">
             <h3>内置工具</h3>
-            <p>文件/命令/脚本，最基础的“手脚”</p>
+            <p>文件与命令等基础动作</p>
           </div>
-          <div class="card fragment">
+          <div class="card">
             <h3>MCP 工具</h3>
-            <p>接入外部平台能力，扩展边界</p>
+            <p>外部系统与平台能力接入</p>
           </div>
-          <div class="card fragment">
-            <h3>Skills 技能</h3>
-            <p>把 SOP 固化成可复用流程</p>
+          <div class="card">
+            <h3>Skills 工具</h3>
+            <p>把经验固化成标准流程</p>
           </div>
-          <div class="card fragment">
-            <h3>知识库</h3>
-            <p>企业资料结构化检索与回答</p>
+          <div class="card">
+            <h3>知识库工具</h3>
+            <p>资料可检索、可追溯</p>
           </div>
-          <div class="card fragment">
+          <div class="card">
             <h3>自建工具</h3>
-            <p>个人工具包，满足个性化需求</p>
+            <p>个人专属能力包</p>
           </div>
-          <div class="card fragment">
+          <div class="card">
             <h3>共享工具</h3>
-            <p>把成熟能力共享给团队使用</p>
+            <p>团队复用能力池</p>
           </div>
+        </div>
+        <div class="note">
+          <strong>统一治理：</strong>统一清单、白名单管控、可组合使用
         </div>
       </section>
 
-      <!-- 第 7 页：内置工具 -->
+      <!-- 第 5 页：内置工具 -->
       <section class="slide" data-title="内置工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip active">内置</span>
@@ -298,36 +174,32 @@
           </div>
         </div>
         <h2>内置工具：基础手脚</h2>
-        <p class="section-lead">先从基础动作开始：文件与命令的能力</p>
+        <p class="section-lead">先把常用动作标准化</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>系统内置的文件与命令操作工具，默认可用</p>
-            <span class="pill">包含能力</span>
             <ul>
-              <li>列出/读取/写入/替换/搜索文件</li>
-              <li>执行命令、运行 ptc 临时脚本</li>
-              <li>支持沙盒与本机执行模式</li>
+              <li>文件读写、搜索、替换</li>
+              <li>命令执行与脚本运行</li>
+              <li>ptc 临时脚本支持</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">有什么用</span>
             <ul>
-              <li>整理资料、批量处理、生成脚本</li>
-              <li>把“答案”直接变成“文件结果”</li>
-              <li>可配合 Skills 做全流程自动化</li>
+              <li>把答案直接写成文件结果</li>
+              <li>批量整理、清洗、生成产物</li>
             </ul>
-            <div class="note">
-              <strong>安全策略：</strong>allow_paths / allow_commands 控制可访问范围
-            </div>
+            <span class="pill">治理要点</span>
+            <p>allow_paths / allow_commands 控制访问范围</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 8 页：MCP 工具 -->
+      <!-- 第 6 页：MCP 工具 -->
       <section class="slide" data-title="MCP 工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip">内置</span>
@@ -338,39 +210,33 @@
             <span class="section-chip">共享</span>
           </div>
         </div>
-        <h2>MCP 工具：对接外部能力</h2>
-        <p class="section-lead">当内置不够用，就把外部系统接进来</p>
+        <h2>MCP 工具：接入外部系统</h2>
+        <p class="section-lead">当内置不够用，就把外部能力接进来</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>通过 MCP 协议接入外部服务，以 server@tool 调用</p>
-            <span class="pill">典型用途</span>
             <ul>
-              <li>调用企业系统、搜索、BI 等服务</li>
-              <li>让模型具备跨系统操作能力</li>
-              <li>统一纳入工具清单管理</li>
+              <li>通过 MCP 协议接入外部服务</li>
+              <li>统一以 server@tool 方式调用</li>
+              <li>自动加入工具清单管理</li>
             </ul>
           </div>
           <div class="card soft stack">
-            <span class="pill">治理方式</span>
+            <span class="pill">有什么用</span>
             <ul>
-              <li>allow_tools 白名单控制可调用工具</li>
-              <li>tool_specs 缓存，避免频繁远端发现</li>
-              <li>统一 timeout，避免外部服务阻塞</li>
+              <li>连接企业系统、搜索、BI 等能力</li>
+              <li>形成跨系统的执行链路</li>
             </ul>
-            <div class="badge-group">
-              <span class="badge">server@tool</span>
-              <span class="badge">allow_tools</span>
-              <span class="badge">timeout</span>
-            </div>
+            <span class="pill">治理要点</span>
+            <p>allow_tools 白名单 + 统一超时控制</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 9 页：Skills 技能 -->
-      <section class="slide" data-title="Skills 技能">
+      <!-- 第 7 页：Skills 工具 -->
+      <section class="slide" data-title="Skills 工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip">内置</span>
@@ -381,42 +247,33 @@
             <span class="section-chip">共享</span>
           </div>
         </div>
-        <h2>Skills：把经验变成流程</h2>
-        <p class="section-lead">有了工具，还要把经验写成可复用流程</p>
+        <h2>Skills 工具：经验固化为流程</h2>
+        <p class="section-lead">把成功经验写成可重复的 SOP</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>以 SKILL.md + run.py 描述标准作业流程</p>
-            <span class="pill">有什么用</span>
             <ul>
-              <li>把专家经验变成可复用 SOP</li>
-              <li>保证执行一致性，减少人肉操作</li>
-              <li>团队共享，提高可复制性</li>
+              <li>SKILL.md 描述输入与步骤</li>
+              <li>run.py 执行具体流程</li>
+              <li>一句话触发完整任务</li>
             </ul>
           </div>
           <div class="card soft stack">
-            <span class="pill">结构示意</span>
-            <div class="kv">
-              <div class="kv-item">
-                <span class="kv-label">SKILL.md</span>
-                <span class="kv-value">描述目标、输入、步骤</span>
-              </div>
-              <div class="kv-item">
-                <span class="kv-label">run.py</span>
-                <span class="kv-value">执行脚本或流程逻辑</span>
-              </div>
-            </div>
-            <div class="note">
-              <strong>效果：</strong>一句话触发复杂流程
-            </div>
+            <span class="pill">有什么用</span>
+            <ul>
+              <li>保证执行一致性与可复制性</li>
+              <li>减少人工操作与沟通成本</li>
+            </ul>
+            <span class="pill">治理要点</span>
+            <p>版本管理与共享边界清晰</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 10 页：知识库 -->
-      <section class="slide" data-title="知识库">
+      <!-- 第 8 页：知识库工具 -->
+      <section class="slide" data-title="知识库工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip">内置</span>
@@ -427,37 +284,33 @@
             <span class="section-chip">共享</span>
           </div>
         </div>
-        <h2>知识库：把资料变成可检索工具</h2>
-        <p class="section-lead">流程需要事实依据，知识库提供可查的答案</p>
+        <h2>知识库工具：把资料变成可检索工具</h2>
+        <p class="section-lead">让答案可追溯，减少“拍脑袋”</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>以 Markdown 文档构建的检索工具</p>
-            <span class="pill">机制要点</span>
             <ul>
-              <li>按一级标题切分知识点</li>
-              <li>query/limit 作为输入参数</li>
-              <li>检索模型重排序，失败可回退</li>
+              <li>用 Markdown 构建资料库</li>
+              <li>按标题切分知识点</li>
+              <li>query / limit 作为输入</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">有什么用</span>
             <ul>
-              <li>制度、流程、产品资料统一检索</li>
-              <li>回答可追溯，避免“胡编”</li>
-              <li>支持多知识库并行启用</li>
+              <li>制度、流程、资料统一检索</li>
+              <li>回答可追溯、可复用</li>
             </ul>
-            <div class="note">
-              <strong>价值：</strong>资料沉淀 = 可随用随查
-            </div>
+            <span class="pill">治理要点</span>
+            <p>定期更新与权限控制</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 11 页：自建工具 -->
+      <!-- 第 9 页：自建工具 -->
       <section class="slide" data-title="自建工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip">内置</span>
@@ -469,36 +322,32 @@
           </div>
         </div>
         <h2>自建工具：个人专属能力</h2>
-        <p class="section-lead">人人都能拥有自己的专属工具箱</p>
+        <p class="section-lead">每个人都能拥有自己的工具箱</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>每个用户维护自己的工具配置包</p>
-            <span class="pill">关键特性</span>
             <ul>
-              <li>配置路径：data/user_tools/&lt;user_id&gt;</li>
+              <li>个人工具包独立配置</li>
+              <li>路径：data/user_tools/&lt;user_id&gt;</li>
               <li>别名统一为 user_id@tool</li>
-              <li>可独立启用 MCP、技能、知识库</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">有什么用</span>
             <ul>
-              <li>满足个人差异化需求</li>
-              <li>不影响他人，隔离又可控</li>
-              <li>可选择共享给团队</li>
+              <li>满足个性化需求且不影响他人</li>
+              <li>能力可选择共享给团队</li>
             </ul>
-            <div class="note">
-              <strong>效果：</strong>个人工具箱随账号长期保留
-            </div>
+            <span class="pill">治理要点</span>
+            <p>隔离可控，启用需明确勾选</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 12 页：共享工具 -->
+      <!-- 第 10 页：共享工具 -->
       <section class="slide" data-title="共享工具">
         <div class="slide-meta">
-          <span class="section-tag">第2节 六种工具体系</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
             <span class="section-chip">总览</span>
             <span class="section-chip">内置</span>
@@ -510,349 +359,206 @@
           </div>
         </div>
         <h2>共享工具：团队复用能力</h2>
-        <p class="section-lead">个人能力还能变成团队共享能力池</p>
+        <p class="section-lead">能力共享，但工作区仍独立</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">是什么</span>
-            <p>共享的是配置与可用清单，而非共享工作区</p>
-            <span class="pill">共享方式</span>
             <ul>
-              <li>名称统一为 owner_id@tool</li>
-              <li>共享标记即白名单</li>
-              <li>使用者需显式勾选</li>
+              <li>共享工具清单与配置</li>
+              <li>不共享对方工作区</li>
+              <li>命名统一为 owner_id@tool</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">有什么用</span>
             <ul>
-              <li>让成熟工具在团队内快速复制</li>
-              <li>不共享对方工作区与额外提示词</li>
+              <li>成熟能力快速复制到团队</li>
               <li>降低协作门槛与沟通成本</li>
             </ul>
-            <div class="note">
-              <strong>效果：</strong>像“工具市场”一样复用能力
-            </div>
+            <span class="pill">治理要点</span>
+            <p>使用者需显式启用共享工具</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 13 页：工作区 - 定位 -->
-      <section class="slide" data-title="工作区定位">
+      <!-- 第 11 页：工作区 -->
+      <section class="slide" data-title="工作区">
         <div class="slide-meta">
           <span class="section-tag">第3节 工作区</span>
           <div class="section-map">
-            <span class="section-chip active">定位</span>
-            <span class="section-chip">使用方式</span>
+            <span class="section-chip active">工作区</span>
+            <span class="section-chip">功能演示</span>
           </div>
         </div>
-        <h2>工作区是什么？</h2>
-        <p class="section-lead">工具执行需要长期落脚点，这就是工作区</p>
+        <h2>工作区：长期的资料落脚点</h2>
+        <p class="section-lead">产出不会消失，而是持续积累</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">核心定位</span>
-            <p>每个用户一块持久化空间，用于存放文件与产物</p>
+            <span class="pill">定位</span>
+            <p>每个用户一块持久化空间</p>
             <span class="pill">路径示例</span>
             <p>data/workspaces/&lt;user_id&gt;/files</p>
-            <span class="pill">主要资产</span>
+            <span class="pill">沉淀内容</span>
             <ul>
               <li>文档、脚本、分析结果</li>
               <li>工具执行产物与中间文件</li>
-              <li>长期可复用的业务资料</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">有什么用</span>
             <ul>
-              <li>让模型“写出来”的内容有处可存</li>
-              <li>跨会话继续使用同一套资料</li>
-              <li>避免对话结束后成果消失</li>
+              <li>对话输出直接变成资产</li>
+              <li>跨会话继续使用同一资料</li>
+              <li>方便分享、复用、协作</li>
             </ul>
-            <div class="note">
-              <strong>效果：</strong>对话变成可持续的工作资产
-            </div>
           </div>
         </div>
       </section>
 
-      <!-- 第 14 页：工作区 - 使用方式 -->
-      <section class="slide" data-title="工作区使用方式">
+      <!-- 第 12 页：智能体功能演示 -->
+      <section class="slide" data-title="智能体功能演示">
         <div class="slide-meta">
           <span class="section-tag">第3节 工作区</span>
           <div class="section-map">
-            <span class="section-chip">定位</span>
-            <span class="section-chip active">使用方式</span>
+            <span class="section-chip">工作区</span>
+            <span class="section-chip active">功能演示</span>
           </div>
         </div>
-        <h2>工作区怎么用？</h2>
-        <p class="section-lead">资料进入、处理、输出形成闭环</p>
+        <h2>智能体功能演示：画爱心并保存</h2>
+        <p class="section-lead">证明“工具 + 工作区”闭环</p>
         <div class="grid three">
           <div class="card">
-            <h3>资料进入</h3>
-            <p>上传文件或由工具写入工作区</p>
+            <h3>1. 提问</h3>
+            <p>请用 Python 画一颗爱心</p>
           </div>
           <div class="card">
-            <h3>工具处理</h3>
-            <p>脚本清洗、报告生成、批量整理</p>
+            <h3>2. 执行</h3>
+            <p>生成图片并保存到临时文件区</p>
           </div>
           <div class="card">
-            <h3>成果输出</h3>
-            <p>下载/共享/再次复用</p>
+            <h3>3. 下载</h3>
+            <p>用户将结果下载到本地</p>
           </div>
         </div>
-        <div class="card soft stack">
-          <span class="pill">配套能力</span>
-          <ul>
-            <li>树形浏览、搜索、复制/移动</li>
-            <li>与工具执行深度联动</li>
-            <li>同一用户多次会话共用资产</li>
-          </ul>
+        <div class="note">
+          <strong>结果：</strong>从一句话到可交付文件
         </div>
       </section>
 
-      <!-- 第 15 页：上下文压缩 - 为什么 -->
-      <section class="slide" data-title="上下文压缩意义">
+      <!-- 第 13 页：上下文压缩 -->
+      <section class="slide" data-title="上下文压缩">
         <div class="slide-meta">
           <span class="section-tag">第4节 上下文压缩</span>
           <div class="section-map">
-            <span class="section-chip active">为什么</span>
-            <span class="section-chip">流程</span>
+            <span class="section-chip active">上下文压缩</span>
           </div>
         </div>
-        <h2>为什么要做上下文压缩？</h2>
-        <p class="section-lead">对话越长越重，需要机制保持可持续</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">问题</span>
-            <ul>
-              <li>长对话会占满模型上下文</li>
-              <li>越到后面越慢、越贵、越容易超限</li>
-              <li>历史信息被截断会导致答非所问</li>
-            </ul>
-          </div>
-          <div class="card soft stack">
-            <span class="pill">解决目标</span>
-            <ul>
-              <li>保留关键知识与近期上下文</li>
-              <li>避免请求因超限失败</li>
-              <li>让会话可持续进行</li>
-            </ul>
-            <div class="note">
-              <strong>一句话：</strong>让对话“能一直聊下去”
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 第 16 页：上下文压缩 - 流程 -->
-      <section class="slide" data-title="上下文压缩流程">
-        <div class="slide-meta">
-          <span class="section-tag">第4节 上下文压缩</span>
-          <div class="section-map">
-            <span class="section-chip">为什么</span>
-            <span class="section-chip active">流程</span>
-          </div>
-        </div>
-        <h2>上下文压缩是怎么做的？</h2>
-        <p class="section-lead">用结构化摘要保住重点，再继续对话</p>
+        <h2>上下文压缩：让长对话持续可用</h2>
+        <p class="section-lead">对话越长越重，需要稳定机制</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">触发条件</span>
             <ul>
-              <li>历史 token 占用达到阈值（默认 80%）</li>
+              <li>上下文占用 token 达阈值</li>
               <li>当前消息接近安全上限</li>
             </ul>
-            <span class="pill">核心流程</span>
+          </div>
+          <div class="card soft stack">
+            <span class="pill">处理方式</span>
             <ul>
               <li>保留系统提示词 + 最近消息</li>
-              <li>生成结构化摘要并插入系统消息</li>
-              <li>重置历史占用，避免重复触发</li>
+              <li>生成结构化摘要并注入</li>
+              <li>重置历史占用继续对话</li>
             </ul>
-          </div>
-          <div class="card soft stack">
-            <span class="pill">结果效果</span>
-            <ul>
-              <li>关键信息被保留，细节被压缩</li>
-              <li>长会话仍可稳定执行工具</li>
-              <li>对用户透明，不影响使用体验</li>
-            </ul>
-            <div class="note">
-              <strong>标记：</strong>摘要消息以 [上下文摘要] 形式注入
-            </div>
+            <span class="pill">口径说明</span>
+            <p>统计的是上下文占用 token，不是总消耗</p>
           </div>
         </div>
       </section>
 
-      <!-- 第 17 页：长期记忆 - 流程 -->
-      <section class="slide" data-title="长期记忆流程">
+      <!-- 第 14 页：长期记忆 -->
+      <section class="slide" data-title="长期记忆">
         <div class="slide-meta">
           <span class="section-tag">第5节 长期记忆</span>
           <div class="section-map">
-            <span class="section-chip active">生成</span>
-            <span class="section-chip">价值</span>
+            <span class="section-chip active">长期记忆</span>
           </div>
         </div>
-        <h2>长期记忆是怎么生成的？</h2>
-        <p class="section-lead">压缩解决单次会话，记忆贯穿长期协作</p>
+        <h2>长期记忆：跨会话保持一致</h2>
+        <p class="section-lead">把关键结论延续到下一次协作</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">触发时机</span>
+            <span class="pill">生成方式</span>
             <ul>
-              <li>最终回复完成后自动触发总结</li>
-              <li>使用专用提示词 memory_summary.txt</li>
-            </ul>
-            <span class="pill">写入方式</span>
-            <ul>
-              <li>保存到 memory_records 表</li>
-              <li>带年月日时分时间前缀</li>
-              <li>单用户最多 30 条</li>
+              <li>最终回复完成后自动总结</li>
+              <li>写入长期记忆记录（最多 30 条）</li>
+              <li>带时间戳便于回溯</li>
             </ul>
           </div>
           <div class="card soft stack">
-            <span class="pill">对话注入</span>
+            <span class="pill">使用与控制</span>
             <ul>
-              <li>后续会话自动追加 [长期记忆]</li>
-              <li>让模型记住用户偏好与关键信息</li>
-              <li>跨会话依然能承接任务</li>
-            </ul>
-            <div class="note">
-              <strong>效果：</strong>从“临时聊天”升级为“长期助理”
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 第 18 页：长期记忆 - 价值与控制 -->
-      <section class="slide" data-title="长期记忆价值">
-        <div class="slide-meta">
-          <span class="section-tag">第5节 长期记忆</span>
-          <div class="section-map">
-            <span class="section-chip">生成</span>
-            <span class="section-chip active">价值</span>
-          </div>
-        </div>
-        <h2>长期记忆有什么用？</h2>
-        <p class="section-lead">让协作信息持续一致，同时保持可控</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">业务价值</span>
-            <ul>
-              <li>保留常用结论、固定约束、偏好</li>
-              <li>让协作中的信息持续一致</li>
-              <li>减少重复解释与回顾成本</li>
-            </ul>
-          </div>
-          <div class="card soft stack">
-            <span class="pill">可控性</span>
-            <ul>
-              <li>支持开关控制是否启用</li>
-              <li>可查看、清空或删除记录</li>
-              <li>避免误记或过时信息干扰</li>
-            </ul>
-            <div class="note">
-              <strong>效果：</strong>长期记忆可用且可控
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 第 19 页：线程监视 - 生命周期 -->
-      <section class="slide" data-title="线程生命周期">
-        <div class="slide-meta">
-          <span class="section-tag">第6节 线程监视</span>
-          <div class="section-map">
-            <span class="section-chip active">生命周期</span>
-            <span class="section-chip">监控</span>
-          </div>
-        </div>
-        <h2>线程生命周期与并发规则</h2>
-        <p class="section-lead">当任务并发起来，监视保障稳定</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">状态机</span>
-            <div class="flow">
-              <div class="flow-item">running</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">finished</div>
-              <div class="flow-arrow">/</div>
-              <div class="flow-item">error</div>
-              <div class="flow-arrow">/</div>
-              <div class="flow-item">cancelled</div>
-            </div>
-            <p class="hint">中途可进入 cancelling，再到 cancelled</p>
-          </div>
-          <div class="card soft stack">
-            <span class="pill">并发规则</span>
-            <ul>
-              <li>同一 user_id 同时只允许一个运行会话</li>
-              <li>冲突请求返回 429 提示稍后再试</li>
-              <li>会话锁与心跳续租避免并发写冲突</li>
+              <li>后续会话自动注入 [长期记忆]</li>
+              <li>可开关、可清空、可删除</li>
+              <li>让偏好与约束持续一致</li>
             </ul>
           </div>
         </div>
       </section>
 
-      <!-- 第 20 页：线程监视 - 监控与治理 -->
-      <section class="slide" data-title="线程监控">
+      <!-- 第 15 页：智能体线程管理 -->
+      <section class="slide" data-title="智能体线程管理">
         <div class="slide-meta">
-          <span class="section-tag">第6节 线程监视</span>
+          <span class="section-tag">第6节 智能体线程管理</span>
           <div class="section-map">
-            <span class="section-chip">生命周期</span>
-            <span class="section-chip active">监控</span>
+            <span class="section-chip active">线程管理</span>
           </div>
         </div>
-        <h2>线程监控能解决什么问题？</h2>
-        <p class="section-lead">把黑盒执行变成可观察过程</p>
+        <h2>智能体线程管理：稳定可控</h2>
+        <p class="section-lead">任务并发时，保障执行稳定</p>
         <div class="grid three">
           <div class="card">
-            <h3>过程可追踪</h3>
-            <p>事件流记录每一步执行情况</p>
+            <h3>生命周期</h3>
+            <p>running → finished / error / cancelled</p>
           </div>
           <div class="card">
-            <h3>可定位问题</h3>
-            <p>查看工具调用、模型轮次与耗时</p>
+            <h3>并发规则</h3>
+            <p>同一用户单线程，冲突即时提示</p>
           </div>
           <div class="card">
-            <h3>可中止任务</h3>
-            <p>卡住时可主动取消线程</p>
+            <h3>监控与取消</h3>
+            <p>过程可追踪，卡住可终止</p>
           </div>
-        </div>
-        <div class="card soft stack">
-          <span class="pill">监控入口</span>
-          <ul>
-            <li>/wunder/admin/monitor 查看实时与历史线程</li>
-            <li>事件类型：progress / tool_call / tool_result / final 等</li>
-            <li>SSE 断开仍可回放，避免信息丢失</li>
-          </ul>
         </div>
       </section>
 
-      <!-- 第 21 页：落地方式 -->
-      <section class="slide" data-title="落地方式">
+      <!-- 第 16 页：快速开始 -->
+      <section class="slide" data-title="快速开始">
         <div class="slide-meta">
-          <span class="section-tag">第7节 落地与 Q&A</span>
+          <span class="section-tag">第7节 快速开始</span>
           <div class="section-map">
-            <span class="section-chip active">落地方式</span>
-            <span class="section-chip">Q&A</span>
+            <span class="section-chip active">快速开始</span>
+            <span class="section-chip">收尾</span>
           </div>
         </div>
-        <h2>怎么开始落地？</h2>
-        <p class="section-lead">把能力回到真实业务场景，形成持续闭环</p>
+        <h2>快速开始：三步落地</h2>
+        <p class="section-lead">从一个高频场景做起，快速见效</p>
         <div class="grid three">
           <div class="card">
             <h3>1. 选场景</h3>
-            <p>挑一个高频需求做试点</p>
+            <p>挑一个需求高频且明确的场景</p>
           </div>
           <div class="card">
-            <h3>2. 选工具</h3>
-            <p>工具 + 知识库 + Skills 组合</p>
+            <h3>2. 选工具组合</h3>
+            <p>工具 + 知识库 + Skills 搭配</p>
           </div>
           <div class="card">
             <h3>3. 固化流程</h3>
-            <p>把成功经验写成技能与模板</p>
+            <p>把成功经验沉淀为流程模板</p>
           </div>
         </div>
         <div class="card soft stack">
-          <span class="pill">建议从这里开始</span>
+          <span class="pill">试点示例</span>
           <ul>
             <li>制度/流程问答（知识库）</li>
             <li>周报/纪要生成（Skills）</li>
@@ -861,30 +567,28 @@
         </div>
       </section>
 
-      <!-- 第 22 页：收尾与 Q&A -->
-      <section class="slide" data-title="Q&A">
+      <!-- 第 17 页：收尾 -->
+      <section class="slide" data-title="收尾">
         <div class="slide-meta">
-          <span class="section-tag">第7节 落地与 Q&A</span>
+          <span class="section-tag">第7节 快速开始</span>
           <div class="section-map">
-            <span class="section-chip">落地方式</span>
-            <span class="section-chip active">Q&A</span>
+            <span class="section-chip">快速开始</span>
+            <span class="section-chip active">收尾</span>
           </div>
         </div>
-        <h2>谢谢！欢迎提问</h2>
-        <p class="section-lead">故事讲完，期待把能力转化为团队常态</p>
+        <h2>谢谢</h2>
+        <p class="section-lead">欢迎提问，也欢迎一起做试点</p>
         <div class="card">
-          <h3>我们一起把流程固化成技能</h3>
-          <p>用最少的成本，让团队持续复用能力</p>
+          <h3>wunder：让大模型会做事，并能长期复用</h3>
+          <p>从一个场景开始，把成功经验沉淀成工具与流程</p>
         </div>
-        <div class="spacer"></div>
-        <p class="hint">wunder：让大模型真正“会做事”</p>
       </section>
     </div>
 
     <!-- HUD 区域：显示进度条与页码，方便演讲掌控节奏 -->
     <div id="hud">
       <div id="progress"><div id="progress-bar"></div></div>
-      <div id="counter">1 / 22</div>
+      <div id="counter">1 / 17</div>
     </div>
 
     <!-- 引入本地脚本：负责翻页与分步展示 -->
