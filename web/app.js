@@ -4,7 +4,7 @@ import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
 import { initToolDetailModal } from "./modules/tool-detail.js";
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20251231-03";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260101-02";
 import {
   applyPromptToolError,
   ensureToolSelectionLoaded,
@@ -12,7 +12,7 @@ import {
   resetToolSelection,
 } from "./modules/tools.js?v=20251231-01";
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20251231-01";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260101-02";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20251231-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20251231-01";
 import {

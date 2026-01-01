@@ -49,6 +49,25 @@ let previewObjectUrl = null;
 let editorEntry = null;
 let editorLoading = false;
 
+// 兜底修复工作区状态，避免切换面板时状态结构被破坏导致渲染异常
+const ensureWorkspaceState = () => {
+  if (!(state.workspace.selectedPaths instanceof Set)) {
+    state.workspace.selectedPaths = new Set();
+  }
+  if (!(state.workspace.expanded instanceof Set)) {
+    state.workspace.expanded = new Set();
+  }
+  if (!Array.isArray(state.workspace.entries)) {
+    state.workspace.entries = [];
+  }
+  if (!Array.isArray(state.workspace.flatEntries)) {
+    state.workspace.flatEntries = [];
+  }
+};
+
+const normalizeWorkspaceEntries = (entries) =>
+  (Array.isArray(entries) ? entries : []).filter((entry) => entry && typeof entry === "object");
+
 // 统一解析文件后缀，供图标与预览判断使用
 const getWorkspaceExtension = (entry) => {
   const rawName = String(entry?.name || entry?.path || "");
@@ -168,6 +187,7 @@ const updateWorkspaceSortIcon = () => {
 
 // 选中状态管理（支持多选/范围选择）
 const updateWorkspaceSelectionMeta = () => {
+  ensureWorkspaceState();
   if (!elements.workspaceSelectionMeta) {
     return;
   }
@@ -207,20 +227,24 @@ const toggleWorkspaceSelection = (path) => {
   updateWorkspaceSelectionMeta();
 };
 
-const getWorkspaceSelectionPaths = () => Array.from(state.workspace.selectedPaths);
+const getWorkspaceSelectionPaths = () => {
+  ensureWorkspaceState();
+  return Array.from(state.workspace.selectedPaths);
+};
 
 // 展开树形结构为线性列表，便于 Shift 区间选择
 const flattenWorkspaceEntries = (entries, depth = 0, result = []) => {
-  entries.forEach((entry) => {
+  // 仅展开合法条目，避免异常数据导致渲染报错
+  normalizeWorkspaceEntries(entries).forEach((entry) => {
     result.push(entry);
-    if (
-      entry.type === "dir" &&
-      state.workspace.expanded.has(entry.path) &&
-      Array.isArray(entry.children) &&
-      entry.children.length
-    ) {
-      flattenWorkspaceEntries(entry.children, depth + 1, result);
+    if (entry.type !== "dir" || !state.workspace.expanded.has(entry.path)) {
+      return;
     }
+    const safeChildren = normalizeWorkspaceEntries(entry.children);
+    if (!safeChildren.length) {
+      return;
+    }
+    flattenWorkspaceEntries(safeChildren, depth + 1, result);
   });
   return result;
 };
@@ -230,11 +254,14 @@ const findWorkspaceEntry = (entries, targetPath) => {
     return null;
   }
   for (const entry of entries) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
     if (entry.path === targetPath) {
       return entry;
     }
     if (entry.children?.length) {
-      const found = findWorkspaceEntry(entry.children, targetPath);
+      const found = findWorkspaceEntry(normalizeWorkspaceEntries(entry.children), targetPath);
       if (found) {
         return found;
       }
@@ -248,7 +275,8 @@ const attachWorkspaceChildren = (entries, targetPath, children) => {
   if (!target || target.type !== "dir") {
     return false;
   }
-  target.children = Array.isArray(children) ? children : [];
+  // 过滤非法子节点，避免展开目录时出现 undefined
+  target.children = normalizeWorkspaceEntries(children);
   target.childrenLoaded = true;
   return true;
 };
@@ -357,8 +385,10 @@ const uploadWorkspaceGroups = async (items, basePath = "") => {
 };
 
 const renderWorkspaceList = (entries) => {
+  ensureWorkspaceState();
+  const safeEntries = normalizeWorkspaceEntries(entries);
   elements.workspaceList.textContent = "";
-  if (!Array.isArray(entries) || entries.length === 0) {
+  if (safeEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "muted";
     empty.textContent = state.workspace.searchMode ? "未找到匹配文件。" : "暂无文件。";
@@ -372,6 +402,9 @@ const renderWorkspaceList = (entries) => {
   const isTreeView = !state.workspace.searchMode;
 
   const renderEntry = (entry, depth) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
     flatEntries.push(entry);
     const item = document.createElement("div");
     item.className = "workspace-item";
@@ -480,18 +513,13 @@ const renderWorkspaceList = (entries) => {
     }
     elements.workspaceList.appendChild(item);
 
-    if (
-      isTreeView &&
-      entry.type === "dir" &&
-      state.workspace.expanded.has(entry.path) &&
-      Array.isArray(entry.children) &&
-      entry.children.length
-    ) {
-      entry.children.forEach((child) => renderEntry(child, depth + 1));
+    if (isTreeView && entry.type === "dir" && state.workspace.expanded.has(entry.path)) {
+      const safeChildren = normalizeWorkspaceEntries(entry.children);
+      safeChildren.forEach((child) => renderEntry(child, depth + 1));
     }
   };
 
-  entries.forEach((entry) => renderEntry(entry, 0));
+  safeEntries.forEach((entry) => renderEntry(entry, 0));
   state.workspace.flatEntries = flatEntries;
 };
 
@@ -502,6 +530,7 @@ const updateWorkspacePath = () => {
 };
 
 export const loadWorkspace = async (options = {}) => {
+  ensureWorkspaceState();
   const refreshTree = Boolean(options.refreshTree);
   const resetExpanded = Boolean(options.resetExpanded);
   const resetSearch = Boolean(options.resetSearch);
@@ -539,7 +568,7 @@ export const loadWorkspace = async (options = {}) => {
     const normalizedPath = normalizeWorkspacePath(result.path ?? currentPath);
     state.workspace.path = normalizedPath;
     state.workspace.parent = getWorkspaceParentPath(normalizedPath);
-    state.workspace.entries = Array.isArray(result.entries) ? result.entries : [];
+    state.workspace.entries = normalizeWorkspaceEntries(result.entries);
     const rootPath = normalizedPath;
     if (state.workspace.expanded.size) {
       const filtered = new Set();
@@ -562,6 +591,7 @@ export const loadWorkspace = async (options = {}) => {
 };
 
 const loadWorkspaceSearch = async (options = {}) => {
+  ensureWorkspaceState();
   const keyword = String(state.workspace.searchKeyword || "").trim();
   if (!keyword) {
     state.workspace.searchMode = false;
@@ -571,7 +601,7 @@ const loadWorkspaceSearch = async (options = {}) => {
   resetWorkspaceSelection();
   try {
     const result = await fetchWorkspaceSearch(keyword, { offset: 0, limit: 200 });
-    state.workspace.entries = Array.isArray(result?.entries) ? result.entries : [];
+    state.workspace.entries = normalizeWorkspaceEntries(result?.entries);
     state.workspace.searchMode = true;
     updateWorkspacePath();
     renderWorkspaceList(state.workspace.entries);
@@ -600,7 +630,7 @@ const hydrateExpandedEntries = async () => {
         sortBy: state.workspace.sortBy,
         order: state.workspace.sortOrder,
       });
-      attachWorkspaceChildren(state.workspace.entries, path, result?.entries || []);
+      attachWorkspaceChildren(state.workspace.entries, path, normalizeWorkspaceEntries(result?.entries));
     } catch (error) {
       state.workspace.expanded.delete(path);
     }
@@ -628,7 +658,7 @@ const toggleWorkspaceDirectory = async (entry) => {
       sortBy: state.workspace.sortBy,
       order: state.workspace.sortOrder,
     });
-    attachWorkspaceChildren(state.workspace.entries, entry.path, result?.entries || []);
+    attachWorkspaceChildren(state.workspace.entries, entry.path, normalizeWorkspaceEntries(result?.entries));
   } catch (error) {
     state.workspace.expanded.delete(entry.path);
     notify(error.message || "目录加载失败。", "error");
@@ -1414,6 +1444,7 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
   if (!entry) {
     return;
   }
+  ensureWorkspaceState();
   if (state.workspace.selectedPaths.size > 1) {
     await moveWorkspaceSelectionToDirectory();
     return;
@@ -1912,7 +1943,3 @@ export const initWorkspace = () => {
   document.addEventListener("scroll", closeWorkspaceMenu, true);
   window.addEventListener("resize", closeWorkspaceMenu);
 };
-
-
-
-
