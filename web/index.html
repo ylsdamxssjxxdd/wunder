@@ -58,6 +58,9 @@
         <button id="navDebug" class="nav-btn">
           <i class="fa-solid fa-bug"></i>调试面板
         </button>
+        <button id="navIntro" class="nav-btn">
+          <i class="fa-solid fa-circle-info"></i>系统介绍
+        </button>
       </aside>
 
       <main class="content">
@@ -268,6 +271,28 @@
                 <div id="serviceStatusChart" class="monitor-chart"></div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section id="introPanel" class="panel">
+          <div class="list-header">
+            <h1>系统介绍</h1>
+            <div class="header-actions">
+              <button id="introFullscreenBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-expand"></i>全屏
+              </button>
+            </div>
+          </div>
+          <div class="tips">这里嵌入系统介绍 PPT，适合现场演示或全屏播放。</div>
+          <div id="introFrameWrap" class="intro-frame-wrap">
+            <iframe
+              id="introFrame"
+              class="intro-frame"
+              src="/wunder/ppt/index.html"
+              title="wunder 系统介绍"
+              loading="lazy"
+              allowfullscreen
+            ></iframe>
           </div>
         </section>
 

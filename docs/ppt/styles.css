@@ -1,0 +1,584 @@
+/* =========================================================
+   wunder HTML PPT 主题样式
+   目标：浅色、清晰、层次分明，适合投屏与会议室演示
+   说明：本样式不依赖外部库，保证离线可用
+   ========================================================= */
+
+/* 主题变量集中维护，便于整体换色与统一视觉 */
+:root {
+  --bg: #f4f7fb;
+  --bg-strong: #edf2ff;
+  --surface: #ffffff;
+  --surface-weak: #f2f5fb;
+  --text: #1f2a3a;
+  --text-muted: #5b687b;
+  --accent: #3a6ff5;
+  --accent-strong: #2155ff;
+  --accent-soft: #e6edff;
+  --success: #2f9b6a;
+  --warning: #ffb347;
+  --border: #e3e9f2;
+  --shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+  --shadow-soft: 0 10px 22px rgba(15, 23, 42, 0.08);
+  --radius: 18px;
+}
+
+/* 统一盒模型，避免 padding 影响布局宽度 */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 页面背景采用轻微渐变，提升质感但不干扰阅读 */
+body {
+  margin: 0;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  color: var(--text);
+  background: radial-gradient(800px 500px at 90% -10%, #e9f0ff 0%, transparent 70%),
+    radial-gradient(600px 400px at -10% 110%, #eef4ff 0%, transparent 70%),
+    var(--bg);
+}
+
+/* 幻灯片容器占满视口并承载背景装饰 */
+#deck {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 背景装饰用于增强层次感，不影响内容 */
+#deck::before,
+#deck::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#deck::before {
+  width: 420px;
+  height: 420px;
+  top: -160px;
+  right: -160px;
+  background: radial-gradient(circle, rgba(58, 111, 245, 0.18), transparent 70%);
+}
+
+#deck::after {
+  width: 520px;
+  height: 520px;
+  bottom: -220px;
+  left: -220px;
+  background: radial-gradient(circle, rgba(58, 111, 245, 0.12), transparent 70%);
+}
+
+/* 单页幻灯片基础布局，保持统一留白 */
+.slide {
+  position: absolute;
+  inset: 0;
+  padding: clamp(24px, 6vmin, 72px) clamp(28px, 7vmin, 96px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 2.2vmin, 24px);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(24px);
+  transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s ease;
+  z-index: 1;
+}
+
+/* 当前页可见 */
+.slide.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}
+
+/* 封面页强化视觉重心 */
+.slide.cover {
+  justify-content: center;
+  gap: clamp(12px, 2.4vmin, 24px);
+}
+
+/* 目录页保持紧凑布局 */
+.slide.toc {
+  gap: clamp(10px, 2vmin, 18px);
+}
+
+/* 顶部章节定位条，提示当前讲述位置 */
+.slide-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: clamp(4px, 1vmin, 6px) clamp(10px, 2vmin, 14px);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: clamp(11px, 1.8vmin, 14px);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.section-tag::before {
+  content: "";
+  width: clamp(4px, 0.9vmin, 6px);
+  height: clamp(4px, 0.9vmin, 6px);
+  border-radius: 50%;
+  background: var(--accent-strong);
+}
+
+/* 章节进度标签，用于体现页与页之间的连续关系 */
+.section-map {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(6px, 1.2vmin, 8px);
+}
+
+.section-chip {
+  padding: clamp(2px, 0.6vmin, 4px) clamp(8px, 1.6vmin, 10px);
+  border-radius: 999px;
+  font-size: clamp(10px, 1.6vmin, 12px);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #f6f8fc;
+  border: 1px solid var(--border);
+}
+
+.section-chip.active {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 标题与正文排版统一，保持清晰层次 */
+h1,
+h2,
+h3 {
+  margin: 0;
+  color: var(--text);
+}
+
+h1 {
+  font-size: clamp(30px, 6.5vmin, 60px);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+h2 {
+  font-size: clamp(22px, 4.8vmin, 42px);
+  font-weight: 700;
+}
+
+h3 {
+  font-size: clamp(16px, 2.8vmin, 24px);
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+  line-height: 1.7;
+  color: var(--text-muted);
+  font-size: clamp(13px, 2.2vmin, 19px);
+}
+
+/* 章节提示语：强调承接关系，强化故事感 */
+.section-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(6px, 1.2vmin, 10px);
+  font-size: clamp(12px, 1.8vmin, 16px);
+  color: var(--text-muted);
+}
+
+.section-lead::before {
+  content: "";
+  width: clamp(4px, 0.9vmin, 6px);
+  height: clamp(4px, 0.9vmin, 6px);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 顶部小标签与副标题样式 */
+.eyebrow {
+  font-size: clamp(11px, 1.9vmin, 16px);
+  letter-spacing: clamp(2px, 0.4vmin, 3px);
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.subtitle {
+  font-size: clamp(15px, 2.6vmin, 22px);
+  color: var(--text-muted);
+}
+
+/* 封面页关键词标签组 */
+.cover-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(8px, 1.6vmin, 12px);
+}
+
+/* 卡片式内容块，形成模块化视觉 */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: clamp(12px, 2.4vmin, 18px);
+  padding: clamp(12px, 2.6vmin, 20px) clamp(14px, 3vmin, 24px);
+  box-shadow: var(--shadow-soft);
+}
+
+.card.soft {
+  background: var(--surface-weak);
+  box-shadow: none;
+}
+
+.card.compact {
+  padding: clamp(10px, 1.8vmin, 14px) clamp(12px, 2.2vmin, 16px);
+  border-radius: clamp(10px, 2vmin, 14px);
+  box-shadow: none;
+}
+
+/* 纵向堆叠容器，用于减少手动 margin */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.5vmin, 12px);
+}
+
+.stack.lg {
+  gap: clamp(12px, 2vmin, 18px);
+}
+
+/* 多列网格布局 */
+.grid {
+  display: grid;
+  gap: clamp(12px, 2.4vmin, 20px);
+}
+
+.grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 目录页专用布局，强调章节与描述 */
+.toc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(12px, 2.2vmin, 18px);
+}
+
+.toc-item {
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 2vmin, 16px);
+  padding: clamp(12px, 2.4vmin, 18px) clamp(14px, 3vmin, 20px);
+  border-radius: clamp(12px, 2.2vmin, 16px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+.toc-index {
+  width: clamp(32px, 5vmin, 46px);
+  height: clamp(32px, 5vmin, 46px);
+  border-radius: clamp(10px, 2vmin, 14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: clamp(14px, 2.4vmin, 18px);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.toc-title {
+  font-size: clamp(16px, 2.6vmin, 20px);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toc-desc {
+  font-size: clamp(12px, 2.1vmin, 15px);
+  color: var(--text-muted);
+  margin-top: clamp(2px, 0.8vmin, 4px);
+}
+
+/* 标签与强调块，用于提示重点 */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: clamp(4px, 1vmin, 6px) clamp(10px, 2vmin, 14px);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: clamp(12px, 2vmin, 15px);
+  font-weight: 600;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: clamp(4px, 1vmin, 6px) clamp(8px, 1.6vmin, 10px);
+  border-radius: 8px;
+  background: rgba(58, 111, 245, 0.12);
+  color: var(--accent-strong);
+  font-size: clamp(11px, 1.8vmin, 14px);
+  font-weight: 600;
+}
+
+/* 流程展示，用于描绘链路关系 */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: clamp(10px, 1.8vmin, 14px);
+  flex-wrap: wrap;
+}
+
+.flow-item {
+  padding: clamp(8px, 1.6vmin, 12px) clamp(12px, 2.4vmin, 18px);
+  border-radius: clamp(10px, 2vmin, 14px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.flow-arrow {
+  color: var(--accent-strong);
+  font-size: clamp(16px, 3vmin, 20px);
+  font-weight: 700;
+}
+
+/* 步骤条，用于展示流程节点 */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(12px, 2.2vmin, 16px);
+}
+
+.step {
+  padding: clamp(12px, 2.2vmin, 18px);
+  border-radius: clamp(12px, 2.4vmin, 16px);
+  border: 1px dashed rgba(58, 111, 245, 0.6);
+  background: rgba(58, 111, 245, 0.06);
+}
+
+.step h3 {
+  font-size: clamp(15px, 2.4vmin, 20px);
+  margin-bottom: clamp(4px, 0.8vmin, 6px);
+}
+
+/* 关键字段列表，用于展示结构化信息 */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.4vmin, 10px);
+}
+
+.kv-item {
+  display: grid;
+  grid-template-columns: clamp(60px, 10vmin, 80px) 1fr;
+  gap: clamp(8px, 1.6vmin, 12px);
+  align-items: center;
+}
+
+.kv-label {
+  font-size: clamp(11px, 1.8vmin, 14px);
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.kv-value {
+  font-size: clamp(13px, 2.2vmin, 17px);
+  color: var(--text-muted);
+}
+
+/* 轻量徽章列表，用于展示事件类型等标签 */
+.badge-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(8px, 1.6vmin, 10px);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: clamp(4px, 1vmin, 6px) clamp(10px, 2vmin, 12px);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #f8faff;
+  font-size: clamp(11px, 1.8vmin, 13px);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 重点提示框，用于强调价值或规则 */
+.note {
+  padding: clamp(10px, 2vmin, 12px) clamp(12px, 2.4vmin, 14px);
+  border-radius: clamp(10px, 2vmin, 12px);
+  background: rgba(58, 111, 245, 0.08);
+  border: 1px solid rgba(58, 111, 245, 0.2);
+  color: var(--text);
+  font-size: clamp(12px, 2vmin, 15px);
+}
+
+/* 列表统一风格 */
+ul {
+  margin: 0;
+  padding-left: clamp(16px, 2.8vmin, 20px);
+  color: var(--text-muted);
+  font-size: clamp(13px, 2.1vmin, 18px);
+  line-height: 1.7;
+}
+
+li {
+  margin-bottom: clamp(4px, 0.8vmin, 6px);
+}
+
+/* 强调数字或短语 */
+.metric {
+  font-size: clamp(22px, 4.8vmin, 34px);
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+/* 图片展示 */
+.hero-image {
+  width: 100%;
+  border-radius: clamp(12px, 2.4vmin, 16px);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+/* 底部 HUD：进度条与页码 */
+#hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: clamp(8px, 1.6vmin, 14px) clamp(14px, 3vmin, 32px)
+    clamp(10px, 2vmin, 18px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-muted);
+  font-size: clamp(11px, 1.6vmin, 14px);
+  background: rgba(246, 248, 252, 0.85);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+
+#progress {
+  flex: 1;
+  height: clamp(4px, 0.8vmin, 6px);
+  background: #dde5f2;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #7bb0ff, #3a6ff5);
+  transition: width 0.25s ease;
+}
+
+#counter {
+  min-width: clamp(56px, 10vmin, 72px);
+  text-align: right;
+  font-weight: 600;
+}
+
+/* 逐步揭示的元素，默认隐藏 */
+.fragment {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.fragment.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 代码块视觉 */
+pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: clamp(12px, 2.2vmin, 20px);
+  border-radius: clamp(10px, 2.4vmin, 14px);
+  font-size: clamp(12px, 2vmin, 15px);
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+/* 小提示文本 */
+.hint {
+  font-size: clamp(11px, 1.8vmin, 14px);
+  color: var(--text-muted);
+}
+
+/* 对比面板 */
+.compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(12px, 2.4vmin, 20px);
+}
+
+.compare .card {
+  height: 100%;
+}
+
+/* 重点色块 */
+.highlight {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+/* 占位撑开布局，用于底部对齐 */
+.spacer {
+  flex: 1;
+}
+
+/* 响应式缩放，保证小屏仍可阅读 */
+@media (max-width: 1200px) {
+  .grid.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .grid.three,
+  .grid.two,
+  .compare,
+  .toc-grid {
+    grid-template-columns: 1fr;
+  }
+}

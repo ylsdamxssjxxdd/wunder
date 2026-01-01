@@ -74,6 +74,9 @@ def _is_protected_path(path: str) -> bool:
     # 静态调试页不走接口鉴权，避免浏览器直接访问被拦截。
     if path.startswith("/wunder/web"):
         return False
+    # 系统介绍 PPT 作为静态页面开放访问。
+    if path.startswith("/wunder/ppt"):
+        return False
     return True
 
 
@@ -112,6 +115,10 @@ def create_app() -> FastAPI:
     web_root = Path(__file__).resolve().parents[1] / "web"
     if web_root.exists():
         app.mount("/wunder/web", StaticFiles(directory=str(web_root), html=True), name="wunder-web")
+    # 通过 /wunder/ppt 暴露系统介绍 PPT，便于前端嵌入。
+    ppt_root = Path(__file__).resolve().parents[1] / "docs" / "ppt"
+    if ppt_root.exists():
+        app.mount("/wunder/ppt", StaticFiles(directory=str(ppt_root), html=True), name="wunder-ppt")
     app.include_router(wunder_router)
     # 挂载自托管 MCP 服务，供外部或自调用使用。
     app.mount("/wunder/mcp", mcp_app, name="wunder-mcp")

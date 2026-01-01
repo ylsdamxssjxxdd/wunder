@@ -1,5 +1,5 @@
 ﻿import { APP_CONFIG, applyDefaultConfig } from "./app.config.js";
-import { elements } from "./modules/elements.js?v=20251231-03";
+import { elements } from "./modules/elements.js?v=20260101-01";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
@@ -49,6 +49,7 @@ const patchApiFetch = () => {
 // 切换侧边栏面板，保持单页无整体滚动
 const panelMap = {
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
+  intro: { panel: elements.introPanel, nav: elements.navIntro },
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
@@ -113,6 +114,9 @@ const bindNavigation = () => {
         appendLog(`记忆体加载失败：${error.message}`);
       }
     }
+  });
+  elements.navIntro.addEventListener("click", () => {
+    switchPanel("intro");
   });
   elements.navDebug.addEventListener("click", () => switchPanel("debug"));
   elements.navDebug.addEventListener("click", () => {
@@ -182,6 +186,25 @@ const bindNavigation = () => {
     }
     if (!elements.systemPrompt.textContent.trim() || state.runtime.promptNeedsRefresh) {
       loadSystemPrompt();
+    }
+  });
+};
+
+// 系统介绍面板：全屏按钮与展示容器绑定
+const bindIntroPanel = () => {
+  if (!elements.introFullscreenBtn || !elements.introFrameWrap) {
+    return;
+  }
+  elements.introFullscreenBtn.addEventListener("click", () => {
+    const target = elements.introFrameWrap;
+    if (document.fullscreenElement) {
+      if (document.fullscreenElement === target && document.exitFullscreen) {
+        document.exitFullscreen();
+        return;
+      }
+    }
+    if (target.requestFullscreen) {
+      target.requestFullscreen().catch(() => {});
     }
   });
 };
@@ -269,6 +292,7 @@ const bootstrap = () => {
   initPromptPanel();
   initUserTools();
   bindNavigation();
+  bindIntroPanel();
   bindGlobalInputs();
   switchPanel(APP_CONFIG.defaultPanel);
   if (APP_CONFIG.defaultPanel === "users") {
