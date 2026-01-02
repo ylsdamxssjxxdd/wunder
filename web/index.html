@@ -58,6 +58,9 @@
         <button id="navDebug" class="nav-btn">
           <i class="fa-solid fa-bug"></i>调试面板
         </button>
+        <button id="navSettings" class="nav-btn">
+          <i class="fa-solid fa-gear"></i>系统设置
+        </button>
         <button id="navIntro" class="nav-btn">
           <i class="fa-solid fa-circle-info"></i>系统介绍
         </button>
@@ -638,25 +641,6 @@
                   <option value="">默认模型</option>
                 </select>
               </div>
-              <div class="header-input">
-                <label for="apiBase">API 地址</label>
-                <input id="apiBase" type="text" />
-              </div>
-              <div class="header-input">
-                <label for="apiKey">API Key</label>
-                <div class="api-key-field">
-                  <input id="apiKey" type="password" />
-                  <button
-                    id="apiKeyToggle"
-                    class="api-key-toggle"
-                    type="button"
-                    aria-label="显示 API Key"
-                    title="显示 API Key"
-                  >
-                    <i class="fa-solid fa-eye"></i>
-                  </button>
-                </div>
-              </div>
               <button
                 id="debugHistoryBtn"
                 class="secondary btn-with-icon"
@@ -848,6 +832,87 @@
                 <label>统计信息</label>
                 <div id="finalAnswer" class="answer"></div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="settingsPanel" class="panel">
+          <div class="list-header">
+            <h1>系统设置</h1>
+            <div class="header-actions">
+              <button id="settingsResetBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-rotate-left"></i>恢复默认
+              </button>
+              <button id="settingsSaveBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i>保存设置
+              </button>
+            </div>
+          </div>
+          <div class="tips">设置仅保存在当前浏览器，用于控制调试面板与常用系统行为。</div>
+          <div class="settings-layout">
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-link"></i>接口与鉴权
+              </div>
+              <div class="settings-grid">
+                <div class="form-row">
+                  <label for="apiBase">API 地址</label>
+                  <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000/wunder" />
+                </div>
+                <div class="form-row">
+                  <label for="apiKey">API Key</label>
+                  <div class="api-key-field settings-api-key-field">
+                    <input id="apiKey" type="password" placeholder="可选" />
+                    <button
+                      id="apiKeyToggle"
+                      class="api-key-toggle"
+                      type="button"
+                      aria-label="显示 API Key"
+                      title="显示 API Key"
+                    >
+                      <i class="fa-solid fa-eye"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-hint">用于调试面板与管理接口请求，支持本地或远程地址。</div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-gear"></i>常用系统配置
+              </div>
+              <div class="settings-grid">
+                <div class="form-row">
+                  <label for="settingsDefaultUserId">默认 user_id</label>
+                  <input id="settingsDefaultUserId" type="text" placeholder="demo_user" />
+                </div>
+                <div class="form-row">
+                  <label for="settingsDefaultPanel">默认进入面板</label>
+                  <select id="settingsDefaultPanel">
+                    <option value="monitor">内部状态</option>
+                    <option value="users">用户管理</option>
+                    <option value="memory">记忆体</option>
+                    <option value="llm">模型配置</option>
+                    <option value="builtin">内置工具链</option>
+                    <option value="mcp">MCP 服务</option>
+                    <option value="skills">技能管理</option>
+                    <option value="knowledge">字面知识库</option>
+                    <option value="prompt">系统提示词</option>
+                    <option value="debug">调试面板</option>
+                    <option value="settings">系统设置</option>
+                    <option value="intro">系统介绍</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label for="settingsMonitorInterval">监控刷新间隔（毫秒）</label>
+                  <input id="settingsMonitorInterval" type="number" min="500" step="100" />
+                </div>
+                <div class="form-row">
+                  <label for="settingsPromptDelay">提示词刷新延迟（毫秒）</label>
+                  <input id="settingsPromptDelay" type="number" min="50" step="50" />
+                </div>
+              </div>
+              <div class="settings-hint">保存后立即更新轮询间隔，默认面板需刷新页面生效。</div>
             </div>
           </div>
         </section>

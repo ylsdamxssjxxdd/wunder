@@ -1,4 +1,5 @@
 ﻿import { APP_CONFIG, applyDefaultConfig } from "./app.config.js";
+import { applyStoredConfig } from "./app.config.js";
 import { elements } from "./modules/elements.js?v=20260101-01";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
@@ -27,6 +28,7 @@ import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20251231-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20251231-01";
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
+import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 
 const patchApiFetch = () => {
   // 统一为前端请求补齐 API Key，避免每处调用手动添加。
@@ -59,6 +61,7 @@ const panelMap = {
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
+  settings: { panel: elements.settingsPanel, nav: elements.navSettings },
 };
 
 const switchPanel = (panel) => {
@@ -122,6 +125,7 @@ const bindNavigation = () => {
   elements.navDebug.addEventListener("click", () => {
     loadWorkspace();
   });
+  elements.navSettings.addEventListener("click", () => switchPanel("settings"));
   elements.navMcp.addEventListener("click", async () => {
     switchPanel("mcp");
     if (!state.panelLoaded.mcp) {
@@ -276,6 +280,7 @@ const bindGlobalInputs = () => {
 
 // 启动入口：初始化默认值、模块交互与首屏数据
 const bootstrap = () => {
+  applyStoredConfig();
   applyDefaultConfig(elements);
   patchApiFetch();
   initToolDetailModal();
@@ -291,11 +296,13 @@ const bootstrap = () => {
   initLlmPanel();
   initPromptPanel();
   initUserTools();
+  initSettingsPanel();
   bindNavigation();
   bindIntroPanel();
   bindGlobalInputs();
-  switchPanel(APP_CONFIG.defaultPanel);
-  if (APP_CONFIG.defaultPanel === "users") {
+  const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
+  switchPanel(initialPanel);
+  if (initialPanel === "users") {
     loadUserStats().catch((error) => {
       appendLog(`用户统计加载失败：${error.message}`);
     });

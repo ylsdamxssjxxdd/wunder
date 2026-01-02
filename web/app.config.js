@@ -1,5 +1,5 @@
 // 前端统一配置：集中管理默认值与页面行为参数
-export const APP_CONFIG = {
+const APP_CONFIG_DEFAULTS = {
   // 默认 API 地址：用于初始化调试面板输入框
   defaultApiBase: "http://127.0.0.1:8000/wunder",
   // 默认 API Key：为空表示由用户自行输入
@@ -20,6 +20,86 @@ export const APP_CONFIG = {
   // 系统提示词自动刷新延迟（毫秒）
   promptReloadDelayMs: 300,
 };
+
+export const APP_CONFIG = { ...APP_CONFIG_DEFAULTS };
+
+const CONFIG_STORAGE_KEY = "wunder_app_config";
+
+// 规范化本地存储配置，避免异常字段污染
+const sanitizeConfig = (raw) => {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const next = {};
+  if (typeof raw.defaultApiBase === "string") {
+    next.defaultApiBase = raw.defaultApiBase.trim();
+  }
+  if (typeof raw.defaultApiKey === "string") {
+    next.defaultApiKey = raw.defaultApiKey.trim();
+  }
+  if (typeof raw.defaultUserId === "string") {
+    next.defaultUserId = raw.defaultUserId.trim();
+  }
+  if (typeof raw.defaultPanel === "string") {
+    next.defaultPanel = raw.defaultPanel.trim();
+  }
+  const monitorInterval = Number(raw.monitorPollIntervalMs);
+  if (Number.isFinite(monitorInterval) && monitorInterval > 0) {
+    next.monitorPollIntervalMs = Math.round(monitorInterval);
+  }
+  const promptDelay = Number(raw.promptReloadDelayMs);
+  if (Number.isFinite(promptDelay) && promptDelay > 0) {
+    next.promptReloadDelayMs = Math.round(promptDelay);
+  }
+  return next;
+};
+
+// 读取本地存储配置，合并到默认配置中
+export const readStoredConfig = () => {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return sanitizeConfig(parsed);
+  } catch (error) {
+    return {};
+  }
+};
+
+// 应用本地配置到 APP_CONFIG，用于初始化默认值
+export const applyStoredConfig = () => {
+  const stored = readStoredConfig();
+  Object.assign(APP_CONFIG, APP_CONFIG_DEFAULTS, stored);
+  return { ...APP_CONFIG };
+};
+
+// 写入新的配置补丁，并同步 APP_CONFIG
+export const updateStoredConfig = (patch) => {
+  const current = readStoredConfig();
+  const next = sanitizeConfig({ ...current, ...(patch || {}) });
+  try {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(next));
+  } catch (error) {
+    // 忽略本地存储不可用的情况
+  }
+  Object.assign(APP_CONFIG, APP_CONFIG_DEFAULTS, next);
+  return { ...APP_CONFIG };
+};
+
+// 清空本地配置并恢复默认值
+export const resetStoredConfig = () => {
+  try {
+    localStorage.removeItem(CONFIG_STORAGE_KEY);
+  } catch (error) {
+    // 忽略本地存储不可用的情况
+  }
+  Object.assign(APP_CONFIG, APP_CONFIG_DEFAULTS);
+  return { ...APP_CONFIG };
+};
+
+export const getDefaultConfig = () => ({ ...APP_CONFIG_DEFAULTS });
 
 // 应用默认配置到界面输入框，避免在 HTML 中硬编码默认值
 export const applyDefaultConfig = (elements) => {
