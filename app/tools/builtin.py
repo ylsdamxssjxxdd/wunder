@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.i18n import t
 from app.tools.types import ToolContext, ToolResult
 
 
@@ -54,20 +55,20 @@ def _resolve_path_with_base(context: ToolContext, relative_path: str) -> Tuple[P
         relative = target.relative_to(base)
         for pattern in deny_globs:
             if fnmatch.fnmatch(str(relative), pattern):
-                raise ValueError("路径被安全策略禁止。")
+                raise ValueError(t("tool.fs.path_forbidden"))
 
     if rel.is_absolute():
         target = rel.resolve()
         base = _match_allowed_root(target)
         if not base:
-            raise ValueError("不允许使用绝对路径。")
+            raise ValueError(t("tool.fs.absolute_forbidden"))
         _check_deny_globs(target, base)
         return target, base
 
     target = (root / rel).resolve()
     base = _match_allowed_root(target)
     if not base:
-        raise ValueError("路径越界访问被禁止。")
+        raise ValueError(t("tool.fs.path_out_of_bounds"))
     _check_deny_globs(target, base)
     return target, base
 
@@ -117,7 +118,7 @@ def _parse_file_specs(args: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
             _append_spec(path, ranges)
 
     if not specs:
-        return [], "未提供文件路径。"
+        return [], t("tool.read.no_path")
     return specs, ""
 
 
@@ -135,10 +136,10 @@ def read_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             outputs.append(f">>> {spec['path']}\n{exc}")
             continue
         if not path.exists():
-            outputs.append(f">>> {spec['path']}\n文件不存在。")
+            outputs.append(f">>> {spec['path']}\n{t('tool.read.not_found')}")
             continue
         if path.stat().st_size > MAX_READ_BYTES:
-            outputs.append(f">>> {spec['path']}\n文件过大，已拒绝读取。")
+            outputs.append(f">>> {spec['path']}\n{t('tool.read.too_large')}")
             continue
 
         content = path.read_text(encoding="utf-8", errors="ignore")
@@ -146,10 +147,17 @@ def read_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         file_output: List[str] = []
         for start, end in spec["ranges"]:
             if not lines:
-                file_output.append("(empty file)")
+                file_output.append(t("tool.read.empty_file"))
                 continue
             if start > len(lines):
-                file_output.append(f"(range {start}-{end} out of file size {len(lines)})")
+                file_output.append(
+                    t(
+                        "tool.read.range_out_of_file",
+                        start=start,
+                        end=end,
+                        total=len(lines),
+                    )
+                )
                 continue
             last = min(end, len(lines))
             slice_lines = [
@@ -158,7 +166,7 @@ def read_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             file_output.append("\n".join(slice_lines))
         outputs.append(f">>> {spec['path']}\n" + "\n---\n".join(file_output))
 
-    result = "\n\n".join(outputs) if outputs else "no readable files"
+    result = "\n\n".join(outputs) if outputs else t("tool.read.empty_result")
     return ToolResult(ok=True, data={"content": result})
 
 
@@ -179,7 +187,7 @@ def list_files(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     display_root = base_path
 
     if not base_path.exists():
-        return ToolResult(ok=False, data={}, error="路径不存在。")
+        return ToolResult(ok=False, data={}, error=t("tool.list.path_not_found"))
 
     results: List[str] = []
     base_depth = len(base_path.parts)
@@ -209,9 +217,9 @@ def search_content(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     show_absolute = base_root != context.workspace.root
 
     if not query:
-        return ToolResult(ok=False, data={}, error="搜索关键字不能为空。")
+        return ToolResult(ok=False, data={}, error=t("tool.search.empty"))
     if not base_path.exists():
-        return ToolResult(ok=False, data={}, error="路径不存在。")
+        return ToolResult(ok=False, data={}, error=t("tool.search.path_not_found"))
 
     matches: List[str] = []
     lower_query = query.lower()
@@ -241,16 +249,16 @@ def replace_in_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     expected = int(args.get("expected_replacements", 1))
 
     if not path.exists():
-        return ToolResult(ok=False, data={}, error="文件不存在。")
+        return ToolResult(ok=False, data={}, error=t("tool.replace.file_not_found"))
     content = path.read_text(encoding="utf-8", errors="ignore")
     occurrences = content.count(old)
     if occurrences == 0:
-        return ToolResult(ok=False, data={}, error="未找到要替换的内容。")
+        return ToolResult(ok=False, data={}, error=t("tool.replace.not_found"))
     if expected and occurrences != expected:
         return ToolResult(
             ok=False,
             data={"occurrences": occurrences},
-            error="实际替换数量与期望不一致。",
+            error=t("tool.replace.count_mismatch"),
         )
     replaced = content.replace(old, new)
     path.write_text(replaced, encoding="utf-8")
@@ -264,7 +272,7 @@ def edit_in_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     ensure_newline = bool(args.get("ensure_newline_at_eof", True))
 
     if not path.exists():
-        return ToolResult(ok=False, data={}, error="文件不存在。")
+        return ToolResult(ok=False, data={}, error=t("tool.edit.file_not_found"))
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
 
     def _insert_lines(index: int, content: str) -> None:
@@ -281,28 +289,34 @@ def edit_in_file(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         new_content = edit.get("new_content", "")
 
         if start_line < 1:
-            return ToolResult(ok=False, data={}, error="起始行号非法。")
+            return ToolResult(ok=False, data={}, error=t("tool.edit.invalid_start"))
         if start_line > len(lines) + 1:
-            return ToolResult(ok=False, data={}, error="编辑行号超出文件范围。")
+            return ToolResult(ok=False, data={}, error=t("tool.edit.out_of_range"))
 
         start_index = start_line - 1
         end_index = max(start_index, end_line - 1)
 
         if action == "replace":
             if end_index >= len(lines):
-                return ToolResult(ok=False, data={}, error="替换范围超出文件行数。")
+                return ToolResult(
+                    ok=False, data={}, error=t("tool.edit.replace_out_of_range")
+                )
             del lines[start_index : end_index + 1]
             _insert_lines(start_index, new_content)
         elif action == "delete":
             if end_index >= len(lines):
-                return ToolResult(ok=False, data={}, error="删除范围超出文件行数。")
+                return ToolResult(
+                    ok=False, data={}, error=t("tool.edit.delete_out_of_range")
+                )
             del lines[start_index : end_index + 1]
         elif action == "insert_before":
             _insert_lines(start_index, new_content)
         elif action == "insert_after":
             _insert_lines(end_index + 1, new_content)
         else:
-            return ToolResult(ok=False, data={}, error="不支持的编辑动作。")
+            return ToolResult(
+                ok=False, data={}, error=t("tool.edit.action_unsupported")
+            )
 
     output = "\n".join(lines)
     if ensure_newline:
@@ -334,7 +348,7 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         use_shell = bool(raw_shell)
 
     if not content:
-        return ToolResult(ok=False, data={}, error="命令不能为空。")
+        return ToolResult(ok=False, data={}, error=t("tool.exec.command_required"))
 
     # 允许指定工作目录，但仅限工作区或白名单目录
     try:
@@ -342,9 +356,9 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     except ValueError as exc:
         return ToolResult(ok=False, data={}, error=str(exc))
     if not cwd.exists():
-        return ToolResult(ok=False, data={}, error="工作目录不存在。")
+        return ToolResult(ok=False, data={}, error=t("tool.exec.workdir_not_found"))
     if not cwd.is_dir():
-        return ToolResult(ok=False, data={}, error="工作目录不是目录。")
+        return ToolResult(ok=False, data={}, error=t("tool.exec.workdir_not_dir"))
 
     def _strip_wrapped_quotes(token: str) -> str:
         """去除命令参数首尾成对的引号，避免传入被当作字面量。"""
@@ -362,7 +376,7 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                 return ToolResult(
                     ok=False,
                     data={},
-                    error='启用 shell 执行需要 allow_commands 包含 "*"。',
+                    error=t("tool.exec.shell_not_allowed"),
                 )
             try:
                 completed = subprocess.run(
@@ -375,14 +389,18 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                     shell=True,
                 )
             except Exception as exc:
-                return ToolResult(ok=False, data={}, error=f"命令执行异常: {exc}")
+                return ToolResult(
+                    ok=False,
+                    data={},
+                    error=t("tool.exec.command_failed", detail=str(exc)),
+                )
         else:
             tokens = shlex.split(command, posix=False)
             tokens = [_strip_wrapped_quotes(token) for token in tokens]
             if not tokens:
-                return ToolResult(ok=False, data={}, error="命令解析失败。")
+                return ToolResult(ok=False, data={}, error=t("tool.exec.parse_failed"))
             if not allow_all and tokens[0].lower() not in allow_commands:
-                return ToolResult(ok=False, data={}, error="命令不在允许列表中。")
+                return ToolResult(ok=False, data={}, error=t("tool.exec.not_allowed"))
 
             try:
                 completed = subprocess.run(
@@ -394,7 +412,11 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                     check=False,
                 )
             except Exception as exc:
-                return ToolResult(ok=False, data={}, error=f"命令执行异常: {exc}")
+                return ToolResult(
+                    ok=False,
+                    data={},
+                    error=t("tool.exec.command_failed", detail=str(exc)),
+                )
         command_results.append(
             {
                 "command": command,
@@ -409,7 +431,7 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                 data={
                     "results": command_results,
                 },
-                error="命令执行失败。",
+                error=t("tool.exec.failed"),
             )
 
     return ToolResult(ok=True, data={"results": command_results})
@@ -422,18 +444,18 @@ def ptc(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     content = args.get("content", "")
 
     if not filename:
-        return ToolResult(ok=False, data={}, error="脚本文件名不能为空。")
+        return ToolResult(ok=False, data={}, error=t("tool.ptc.filename_required"))
     if not isinstance(content, str) or not content.strip():
-        return ToolResult(ok=False, data={}, error="脚本内容不能为空。")
+        return ToolResult(ok=False, data={}, error=t("tool.ptc.content_required"))
 
     # 仅允许文件名，避免路径穿透
     path = Path(filename)
     if path.name != filename:
-        return ToolResult(ok=False, data={}, error="脚本文件名不能包含路径。")
+        return ToolResult(ok=False, data={}, error=t("tool.ptc.filename_invalid"))
     if not path.suffix:
         path = path.with_suffix(".py")
     if path.suffix.lower() != ".py":
-        return ToolResult(ok=False, data={}, error="仅支持 .py 脚本文件。")
+        return ToolResult(ok=False, data={}, error=t("tool.ptc.ext_invalid"))
 
     # 解析工作目录与 PTC 临时目录
     try:
@@ -461,7 +483,9 @@ def ptc(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             check=False,
         )
     except Exception as exc:
-        return ToolResult(ok=False, data={}, error=f"脚本执行异常: {exc}")
+        return ToolResult(
+            ok=False, data={}, error=t("tool.ptc.exec_error", detail=str(exc))
+        )
 
     data = {
         "path": str(script_path),
@@ -471,5 +495,5 @@ def ptc(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         "stderr": completed.stderr,
     }
     if completed.returncode != 0:
-        return ToolResult(ok=False, data=data, error="脚本执行失败。")
+        return ToolResult(ok=False, data=data, error=t("tool.ptc.exec_failed"))
     return ToolResult(ok=True, data=data)

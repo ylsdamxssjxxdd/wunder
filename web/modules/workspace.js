@@ -4,6 +4,7 @@ import { appendLog } from "./log.js?v=20251229-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -192,7 +193,8 @@ const updateWorkspaceSelectionMeta = () => {
     return;
   }
   const count = state.workspace.selectedPaths.size;
-  elements.workspaceSelectionMeta.textContent = count > 0 ? `已选择 ${count} 项` : "";
+  elements.workspaceSelectionMeta.textContent =
+    count > 0 ? t("workspace.selection.count", { count }) : "";
 };
 
 const resetWorkspaceSelection = () => {
@@ -391,7 +393,9 @@ const renderWorkspaceList = (entries) => {
   if (safeEntries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "muted";
-    empty.textContent = state.workspace.searchMode ? "未找到匹配文件。" : "暂无文件。";
+    empty.textContent = state.workspace.searchMode
+      ? t("workspace.empty.search")
+      : t("workspace.empty");
     elements.workspaceList.appendChild(empty);
     state.workspace.flatEntries = [];
     updateWorkspaceSelectionMeta();
@@ -466,7 +470,7 @@ const renderWorkspaceList = (entries) => {
     meta.className = "workspace-item-meta";
     const metaParts = [];
     if (entry.type === "dir") {
-      metaParts.push("目录");
+      metaParts.push(t("workspace.entry.folder"));
     } else {
       metaParts.push(formatBytes(entry.size || 0));
     }
@@ -536,7 +540,7 @@ export const loadWorkspace = async (options = {}) => {
   const resetSearch = Boolean(options.resetSearch);
   const userId = elements.userId.value.trim();
   if (!userId) {
-    const message = "请先填写 user_id。";
+    const message = t("common.userIdRequired");
     elements.workspaceList.textContent = message;
     return { ok: false, error: message };
   }
@@ -563,7 +567,7 @@ export const loadWorkspace = async (options = {}) => {
       refreshTree,
     });
     if (!result) {
-      throw new Error("加载失败");
+      throw new Error(t("common.loadFailed"));
     }
     const normalizedPath = normalizeWorkspacePath(result.path ?? currentPath);
     state.workspace.path = normalizedPath;
@@ -584,8 +588,8 @@ export const loadWorkspace = async (options = {}) => {
     renderWorkspaceList(state.workspace.entries);
     return { ok: true };
   } catch (error) {
-    const message = error?.message || "加载失败";
-    elements.workspaceList.textContent = `加载失败：${message}`;
+    const message = error?.message || t("common.loadFailed");
+    elements.workspaceList.textContent = t("common.loadFailedWithMessage", { message });
     return { ok: false, error: message };
   }
 };
@@ -607,8 +611,8 @@ const loadWorkspaceSearch = async (options = {}) => {
     renderWorkspaceList(state.workspace.entries);
     return { ok: true };
   } catch (error) {
-    const message = error?.message || "搜索失败";
-    elements.workspaceList.textContent = `搜索失败：${message}`;
+    const message = error?.message || t("workspace.searchFailed");
+    elements.workspaceList.textContent = t("workspace.searchFailedWithMessage", { message });
     return { ok: false, error: message };
   }
 };
@@ -661,7 +665,7 @@ const toggleWorkspaceDirectory = async (entry) => {
     attachWorkspaceChildren(state.workspace.entries, entry.path, normalizeWorkspaceEntries(result?.entries));
   } catch (error) {
     state.workspace.expanded.delete(entry.path);
-    notify(error.message || "目录加载失败。", "error");
+    notify(error.message || t("workspace.folder.loadFailed"), "error");
   }
   renderWorkspaceList(state.workspace.entries);
 };
@@ -741,7 +745,7 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const trimmed = String(nextName || "").trim();
   state.workspace.renamingPath = "";
   if (!trimmed || !isValidWorkspaceName(trimmed)) {
-    notify("名称不能为空，且不能包含斜杠。", "warn");
+    notify(t("workspace.name.invalid"), "warn");
     renderWorkspaceList(state.workspace.entries);
     return;
   }
@@ -756,9 +760,9 @@ const finishWorkspaceRename = async (entry, nextName) => {
     if (!ok) {
       return;
     }
-    notify(`已重命名为 ${trimmed}`, "success");
+    notify(t("workspace.rename.success", { name: trimmed }), "success");
   } catch (error) {
-    notify(error.message || "重命名失败。", "error");
+    notify(error.message || t("workspace.rename.failed"), "error");
   } finally {
     state.workspace.renamingPath = "";
     renderWorkspaceList(state.workspace.entries);
@@ -851,7 +855,7 @@ const downloadWorkspaceByFetch = async (url, filename) => {
   try {
     const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const blob = await response.blob();
     const objectUrl = URL.createObjectURL(blob);
@@ -864,7 +868,7 @@ const downloadWorkspaceByFetch = async (url, filename) => {
     URL.revokeObjectURL(objectUrl);
     return true;
   } catch (error) {
-    notify(`下载失败：${error.message}`, "error");
+    notify(t("workspace.downloadFailed", { message: error.message }), "error");
     return false;
   }
 };
@@ -881,7 +885,7 @@ const downloadWorkspaceEntry = (entry) => {
     }
     const url = buildWorkspaceArchiveUrl(entry.path);
     if (!url) {
-      appendLog("请先填写 user_id。");
+      appendLog(t("common.userIdRequired"));
       return;
     }
     const downloadName = entry.name ? `${entry.name}.zip` : "workspace_folder.zip";
@@ -899,7 +903,7 @@ const downloadWorkspaceEntry = (entry) => {
 const downloadWorkspaceArchive = () => {
   const url = buildWorkspaceArchiveUrl();
   if (!url) {
-    appendLog("请先填写 user_id。");
+    appendLog(t("common.userIdRequired"));
     return false;
   }
   const userId = elements.userId.value.trim();
@@ -910,7 +914,7 @@ const downloadWorkspaceArchive = () => {
 const getWorkspaceUserId = () => {
   const userId = elements.userId.value.trim();
   if (!userId) {
-    notify("请先填写 user_id。", "warn");
+    notify(t("common.userIdRequired"), "warn");
     return "";
   }
   return userId;
@@ -969,7 +973,9 @@ const fetchWorkspaceContent = async (path, options = {}) => {
   const response = await fetch(endpoint);
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `加载失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.loadFailed", { status: response.status }))
+    );
   }
   return response.json();
 };
@@ -994,7 +1000,9 @@ const fetchWorkspaceSearch = async (keyword, options = {}) => {
   const response = await fetch(endpoint);
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `搜索失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.searchFailed", { status: response.status }))
+    );
   }
   return response.json();
 };
@@ -1019,7 +1027,9 @@ const batchWorkspaceAction = async (action, paths, destination) => {
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `批量操作失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.batchFailed", { status: response.status }))
+    );
   }
   return response.json();
 };
@@ -1047,7 +1057,9 @@ const createWorkspaceDirectory = async (path) => {
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `创建失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.createFailed", { status: response.status }))
+    );
   }
   await reloadWorkspaceView({ refreshTree: true });
   return true;
@@ -1069,7 +1081,9 @@ const moveWorkspaceEntry = async (source, destination) => {
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `移动失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.moveFailed", { status: response.status }))
+    );
   }
   await reloadWorkspaceView({ refreshTree: true });
   return true;
@@ -1096,7 +1110,9 @@ const saveWorkspaceFileContent = async (path, content, options = {}) => {
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(getWorkspaceErrorMessage(result, `保存失败：${response.status}`));
+    throw new Error(
+      getWorkspaceErrorMessage(result, t("workspace.saveFailed", { status: response.status }))
+    );
   }
   await reloadWorkspaceView({ refreshTree: true });
   return true;
@@ -1124,17 +1140,17 @@ const resetPreviewContainer = () => {
 const renderUnsupportedPreview = (message) => {
   const placeholder = document.createElement("div");
   placeholder.className = "muted";
-  placeholder.textContent = message || "暂不支持预览。";
+  placeholder.textContent = message || t("workspace.preview.unsupported");
   elements.workspacePreviewContainer.appendChild(placeholder);
 };
 
 const renderTextPreview = async (entry, url) => {
   resetPreviewContainer();
-  renderUnsupportedPreview("正在加载预览...");
+  renderUnsupportedPreview(t("workspace.preview.loading"));
   try {
     const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const text = await response.text();
     if (state.workspace.previewEntry?.path !== entry.path) {
@@ -1143,25 +1159,25 @@ const renderTextPreview = async (entry, url) => {
     resetPreviewContainer();
     const pre = document.createElement("pre");
     pre.className = "workspace-preview-text";
-    pre.textContent = text || "（文件为空）";
+    pre.textContent = text || t("workspace.preview.emptyFile");
     elements.workspacePreviewContainer.appendChild(pre);
   } catch (error) {
     if (state.workspace.previewEntry?.path !== entry.path) {
       return;
     }
     resetPreviewContainer();
-    setPreviewHint("预览加载失败，请下载查看。");
-    renderUnsupportedPreview("预览加载失败，请下载查看。");
+    setPreviewHint(t("workspace.preview.loadFailed"));
+    renderUnsupportedPreview(t("workspace.preview.loadFailed"));
   }
 };
 
 const renderImagePreview = async (entry, url) => {
   resetPreviewContainer();
-  renderUnsupportedPreview("正在加载预览...");
+  renderUnsupportedPreview(t("workspace.preview.loading"));
   try {
     const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const blob = await response.blob();
     if (state.workspace.previewEntry?.path !== entry.path) {
@@ -1178,18 +1194,18 @@ const renderImagePreview = async (entry, url) => {
       return;
     }
     resetPreviewContainer();
-    setPreviewHint("预览加载失败，请下载查看。");
-    renderUnsupportedPreview("预览加载失败，请下载查看。");
+    setPreviewHint(t("workspace.preview.loadFailed"));
+    renderUnsupportedPreview(t("workspace.preview.loadFailed"));
   }
 };
 
 const renderPdfPreview = async (entry, url) => {
   resetPreviewContainer();
-  renderUnsupportedPreview("正在加载预览...");
+  renderUnsupportedPreview(t("workspace.preview.loading"));
   try {
     const response = await fetch(url, { headers: getWorkspaceAuthHeaders() });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const blob = await response.blob();
     if (state.workspace.previewEntry?.path !== entry.path) {
@@ -1207,8 +1223,8 @@ const renderPdfPreview = async (entry, url) => {
       return;
     }
     resetPreviewContainer();
-    setPreviewHint("预览加载失败，请下载查看。");
-    renderUnsupportedPreview("预览加载失败，请下载查看。");
+    setPreviewHint(t("workspace.preview.loadFailed"));
+    renderUnsupportedPreview(t("workspace.preview.loadFailed"));
   }
 };
 
@@ -1217,7 +1233,7 @@ const openWorkspacePreview = async (entry) => {
     return;
   }
   state.workspace.previewEntry = entry;
-  elements.workspacePreviewTitle.textContent = entry.name || "文件预览";
+  elements.workspacePreviewTitle.textContent = entry.name || t("workspace.preview.title");
   const metaParts = [];
   if (entry.path) {
     metaParts.push(entry.path);
@@ -1242,8 +1258,8 @@ const openWorkspacePreview = async (entry) => {
   const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 
   if (OFFICE_EXTENSIONS.has(extension)) {
-    setPreviewHint("浏览器不支持该格式预览，可下载后使用本机程序打开。");
-    renderUnsupportedPreview("暂不支持该格式预览。");
+    setPreviewHint(t("workspace.preview.unsupportedHint"));
+    renderUnsupportedPreview(t("workspace.preview.unsupported"));
     return;
   }
   if (IMAGE_EXTENSIONS.has(extension)) {
@@ -1256,19 +1272,19 @@ const openWorkspacePreview = async (entry) => {
   }
   if (TEXT_EXTENSIONS.has(extension)) {
     if (!canPreviewText) {
-      setPreviewHint("文件过大，无法预览，请下载查看。");
-      renderUnsupportedPreview("文件过大，无法预览。");
+      setPreviewHint(t("workspace.preview.tooLargeHint"));
+      renderUnsupportedPreview(t("workspace.preview.tooLarge"));
       return;
     }
     await renderTextPreview(entry, downloadUrl);
     return;
   }
   if (!canPreviewText) {
-    setPreviewHint("文件过大，无法预览，请下载查看。");
-    renderUnsupportedPreview("文件过大，无法预览。");
+    setPreviewHint(t("workspace.preview.tooLargeHint"));
+    renderUnsupportedPreview(t("workspace.preview.tooLarge"));
     return;
   }
-  setPreviewHint("未识别格式，已按文本方式尝试预览。");
+  setPreviewHint(t("workspace.preview.fallback"));
   await renderTextPreview(entry, downloadUrl);
 };
 
@@ -1281,14 +1297,16 @@ const openWorkspaceEditor = async (entry) => {
     return;
   }
   if (!isWorkspaceTextEditable(entry)) {
-    notify("仅支持预览范围内的文本文件编辑。", "warn");
+    notify(t("workspace.editor.unsupported"), "warn");
     return;
   }
   editorEntry = entry;
   editorLoading = true;
-  elements.workspaceEditorTitle.textContent = `编辑文件：${entry.name || ""}`;
+  elements.workspaceEditorTitle.textContent = t("workspace.editor.title", {
+    name: entry.name || "",
+  });
   elements.workspaceEditorPath.textContent = entry.path || "";
-  elements.workspaceEditorContent.value = "正在加载...";
+  elements.workspaceEditorContent.value = t("common.loading");
   elements.workspaceEditorModal.classList.add("active");
   try {
     const result = await fetchWorkspaceContent(entry.path, {
@@ -1297,7 +1315,7 @@ const openWorkspaceEditor = async (entry) => {
     });
     const text = result?.content ?? "";
     if (result?.truncated) {
-      throw new Error("文件过大，无法编辑。");
+      throw new Error(t("workspace.editor.tooLarge"));
     }
     if (!editorEntry || editorEntry.path !== entry.path) {
       return;
@@ -1305,7 +1323,7 @@ const openWorkspaceEditor = async (entry) => {
     elements.workspaceEditorContent.value = text;
   } catch (error) {
     if (editorEntry?.path === entry.path) {
-      notify(error.message || "文件加载失败。", "error");
+      notify(error.message || t("workspace.editor.loadFailed"), "error");
       closeWorkspaceEditor();
     }
   } finally {
@@ -1334,16 +1352,21 @@ const saveWorkspaceEditor = async () => {
     if (!ok) {
       return;
     }
-    notify(`已保存 ${editorEntry.name || "文件"}`, "success");
+    notify(
+      t("workspace.editor.saveSuccess", {
+        name: editorEntry.name || t("workspace.editor.file"),
+      }),
+      "success"
+    );
     closeWorkspaceEditor();
   } catch (error) {
-    notify(error.message || "文件保存失败。", "error");
+    notify(error.message || t("workspace.editor.saveFailed"), "error");
   }
 };
 
 const closeWorkspacePreview = () => {
   state.workspace.previewEntry = null;
-  elements.workspacePreviewTitle.textContent = "文件预览";
+  elements.workspacePreviewTitle.textContent = t("workspace.preview.title");
   elements.workspacePreviewMeta.textContent = "";
   setPreviewHint("");
   resetPreviewContainer();
@@ -1354,22 +1377,32 @@ const notifyBatchResult = (result, actionLabel) => {
   const failedCount = result?.failed?.length || 0;
   const succeededCount = result?.succeeded?.length || 0;
   if (failedCount) {
-    notify(`${actionLabel}部分失败：成功 ${succeededCount} 项，失败 ${failedCount} 项。`, "warn");
+    notify(
+      t("workspace.batch.partialFailed", {
+        action: actionLabel,
+        success: succeededCount,
+        failed: failedCount,
+      }),
+      "warn"
+    );
   } else {
-    notify(`${actionLabel}完成：成功 ${succeededCount} 项。`, "success");
+    notify(
+      t("workspace.batch.success", { action: actionLabel, success: succeededCount }),
+      "success"
+    );
   }
 };
 
 const deleteWorkspaceSelection = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) {
-    notify("未选择任何条目。", "info");
+    notify(t("workspace.selection.empty"), "info");
     return;
   }
   const confirmed = window.confirm(
     selectedPaths.length === 1
-      ? "确认删除所选条目吗？"
-      : `确认删除所选 ${selectedPaths.length} 项吗？`
+      ? t("workspace.delete.confirm.single")
+      : t("workspace.delete.confirm.multi", { count: selectedPaths.length })
   );
   if (!confirmed) {
     return;
@@ -1379,26 +1412,26 @@ const deleteWorkspaceSelection = async () => {
     if (!result) {
       return;
     }
-    notifyBatchResult(result, "删除");
+    notifyBatchResult(result, t("workspace.action.delete"));
     await reloadWorkspaceView({ refreshTree: true });
   } catch (error) {
-    notify(error.message || "删除失败。", "error");
+    notify(error.message || t("workspace.delete.failed"), "error");
   }
 };
 
 const moveWorkspaceSelectionToDirectory = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) {
-    notify("未选择任何条目。", "info");
+    notify(t("workspace.selection.empty"), "info");
     return;
   }
-  const targetDirInput = window.prompt("请输入目标目录（相对路径，留空为根目录）", "");
+  const targetDirInput = window.prompt(t("workspace.move.prompt"), "");
   if (targetDirInput === null) {
     return;
   }
   const targetDir = normalizeWorkspacePath(targetDirInput.trim());
   if (!isValidWorkspacePath(targetDir)) {
-    notify("目录格式不正确，不能包含非法路径段。", "warn");
+    notify(t("workspace.path.invalid"), "warn");
     return;
   }
   try {
@@ -1406,26 +1439,26 @@ const moveWorkspaceSelectionToDirectory = async () => {
     if (!result) {
       return;
     }
-    notifyBatchResult(result, "移动");
+    notifyBatchResult(result, t("workspace.action.move"));
     await reloadWorkspaceView({ refreshTree: true });
   } catch (error) {
-    notify(error.message || "移动失败。", "error");
+    notify(error.message || t("workspace.move.failed"), "error");
   }
 };
 
 const copyWorkspaceSelectionToDirectory = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) {
-    notify("未选择任何条目。", "info");
+    notify(t("workspace.selection.empty"), "info");
     return;
   }
-  const targetDirInput = window.prompt("请输入目标目录（相对路径，留空为根目录）", "");
+  const targetDirInput = window.prompt(t("workspace.move.prompt"), "");
   if (targetDirInput === null) {
     return;
   }
   const targetDir = normalizeWorkspacePath(targetDirInput.trim());
   if (!isValidWorkspacePath(targetDir)) {
-    notify("目录格式不正确，不能包含非法路径段。", "warn");
+    notify(t("workspace.path.invalid"), "warn");
     return;
   }
   try {
@@ -1433,10 +1466,10 @@ const copyWorkspaceSelectionToDirectory = async () => {
     if (!result) {
       return;
     }
-    notifyBatchResult(result, "复制");
+    notifyBatchResult(result, t("workspace.action.copy"));
     await reloadWorkspaceView({ refreshTree: true });
   } catch (error) {
-    notify(error.message || "复制失败。", "error");
+    notify(error.message || t("workspace.copy.failed"), "error");
   }
 };
 
@@ -1449,23 +1482,23 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
     await moveWorkspaceSelectionToDirectory();
     return;
   }
-  const targetDirInput = window.prompt("请输入目标目录（相对路径，留空为根目录）", "");
+  const targetDirInput = window.prompt(t("workspace.move.prompt"), "");
   if (targetDirInput === null) {
     return;
   }
   const targetDir = normalizeWorkspacePath(targetDirInput.trim());
   if (!isValidWorkspacePath(targetDir)) {
-    notify("目录格式不正确，不能包含非法路径段。", "warn");
+    notify(t("workspace.path.invalid"), "warn");
     return;
   }
   const sourceName = entry.name || entry.path.split("/").pop();
   if (!sourceName) {
-    notify("无法解析源文件名称。", "error");
+    notify(t("workspace.sourceName.invalid"), "error");
     return;
   }
   const destination = joinWorkspacePath(targetDir, sourceName);
   if (destination === entry.path) {
-    notify("目标目录与当前目录一致。", "info");
+    notify(t("workspace.target.same"), "info");
     return;
   }
   try {
@@ -1473,9 +1506,9 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
     if (!ok) {
       return;
     }
-    notify(`已移动到 ${targetDir || "/"}。`, "success");
+    notify(t("workspace.move.success", { target: targetDir || "/" }), "success");
   } catch (error) {
-    notify(error.message || "移动失败。", "error");
+    notify(error.message || t("workspace.move.failed"), "error");
   }
 };
 
@@ -1487,13 +1520,13 @@ const renameWorkspaceEntry = (entry) => {
 };
 
 const createWorkspaceFile = async () => {
-  const fileName = window.prompt("请输入新文件名称", "untitled.txt");
+  const fileName = window.prompt(t("workspace.file.prompt"), "untitled.txt");
   if (fileName === null) {
     return;
   }
   const trimmed = String(fileName || "").trim();
   if (!isValidWorkspaceName(trimmed)) {
-    notify("名称不能为空，且不能包含斜杠。", "warn");
+    notify(t("workspace.name.invalid"), "warn");
     return;
   }
   const basePath = normalizeWorkspacePath(state.workspace.path);
@@ -1503,21 +1536,21 @@ const createWorkspaceFile = async () => {
     if (!ok) {
       return;
     }
-    notify(`已创建文件 ${trimmed}`, "success");
+    notify(t("workspace.file.created", { name: trimmed }), "success");
   } catch (error) {
-    notify(error.message || "创建文件失败。", "error");
+    notify(error.message || t("workspace.file.createFailed"), "error");
   }
 };
 
 // 新建文件夹
 const createWorkspaceFolder = async () => {
-  const folderName = window.prompt("请输入新文件夹名称");
+  const folderName = window.prompt(t("workspace.folder.prompt"));
   if (folderName === null) {
     return;
   }
   const trimmed = String(folderName || "").trim();
   if (!isValidWorkspaceName(trimmed)) {
-    notify("名称不能为空，且不能包含斜杠。", "warn");
+    notify(t("workspace.name.invalid"), "warn");
     return;
   }
   const basePath = normalizeWorkspacePath(state.workspace.path);
@@ -1527,9 +1560,9 @@ const createWorkspaceFolder = async () => {
     if (!ok) {
       return;
     }
-    notify(`已创建文件夹 ${trimmed}`, "success");
+    notify(t("workspace.folder.created", { name: trimmed }), "success");
   } catch (error) {
-    notify(error.message || "创建文件夹失败。", "error");
+    notify(error.message || t("workspace.folder.createFailed"), "error");
   }
 };
 
@@ -1537,7 +1570,7 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
   const { refreshTree = true, relativePaths = [] } = options;
   const userId = elements.userId.value.trim();
   if (!userId) {
-    throw new Error("请先填写 user_id。");
+    throw new Error(t("common.userIdRequired"));
   }
   if (!files || !Array.from(files).length) {
     return;
@@ -1558,7 +1591,7 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
     body: form,
   });
   if (!response.ok) {
-    throw new Error(`上传失败：${response.status}`);
+    throw new Error(t("workspace.uploadFailed", { status: response.status }));
   }
   if (refreshTree) {
     await reloadWorkspaceView({ refreshTree: true });
@@ -1597,11 +1630,11 @@ const handleWorkspaceDrop = async (event) => {
   }
   try {
     await uploadWorkspaceGroups(dropped);
-    appendLog("工作区拖拽上传完成。");
-    notify("工作区拖拽上传完成。", "success");
+    appendLog(t("workspace.upload.dragSuccess"));
+    notify(t("workspace.upload.dragSuccess"), "success");
   } catch (error) {
-    appendLog(`工作区拖拽上传失败：${error.message}`);
-    notify(`工作区拖拽上传失败：${error.message}`, "error");
+    appendLog(t("workspace.upload.dragFailed", { message: error.message }));
+    notify(t("workspace.upload.dragFailed", { message: error.message }), "error");
   }
 };
 
@@ -1644,10 +1677,10 @@ const handleWorkspaceUpDrop = async (event) => {
     if (!result) {
       return;
     }
-    notifyBatchResult(result, "移动到上级目录");
+    notifyBatchResult(result, t("workspace.action.moveToParent"));
     await reloadWorkspaceView({ refreshTree: true });
   } catch (error) {
-    notify(error.message || "移动失败。", "error");
+    notify(error.message || t("workspace.move.failed"), "error");
   }
 };
 
@@ -1717,10 +1750,11 @@ const handleWorkspaceItemDrop = async (event, entry) => {
       if (!result) {
         return;
       }
-      notifyBatchResult(result, `移动到 ${entry.name || "目录"}`);
+      const targetName = entry.name || t("workspace.entry.folder");
+      notifyBatchResult(result, t("workspace.action.moveTo", { target: targetName }));
       await reloadWorkspaceView({ refreshTree: true });
     } catch (error) {
-      notify(error.message || "移动失败。", "error");
+      notify(error.message || t("workspace.move.failed"), "error");
     }
     return;
   }
@@ -1730,11 +1764,11 @@ const handleWorkspaceItemDrop = async (event, entry) => {
   }
   try {
     await uploadWorkspaceGroups(dropped, entry.path);
-    appendLog("工作区拖拽上传完成。");
-    notify("工作区拖拽上传完成。", "success");
+    appendLog(t("workspace.upload.dragSuccess"));
+    notify(t("workspace.upload.dragSuccess"), "success");
   } catch (error) {
-    appendLog(`工作区拖拽上传失败：${error.message}`);
-    notify(`工作区拖拽上传失败：${error.message}`, "error");
+    appendLog(t("workspace.upload.dragFailed", { message: error.message }));
+    notify(t("workspace.upload.dragFailed", { message: error.message }), "error");
   }
 };
 
@@ -1767,16 +1801,24 @@ export const initWorkspace = () => {
   elements.workspaceRefreshBtn.addEventListener("click", async () => {
     const result = await reloadWorkspaceView({ refreshTree: true });
     if (result?.ok) {
-      notify(state.workspace.searchMode ? "搜索结果已刷新。" : "工作区已刷新。", "success");
+      notify(
+        state.workspace.searchMode
+          ? t("workspace.refresh.searchSuccess")
+          : t("workspace.refresh.success"),
+        "success"
+      );
       return;
     }
     const message = result?.error;
     if (!message) {
-      notify("工作区刷新失败。", "error");
+      notify(t("workspace.refresh.failed"), "error");
       return;
     }
     const isUserMissing = message.includes("user_id");
-    notify(isUserMissing ? message : `工作区刷新失败：${message}`, isUserMissing ? "warn" : "error");
+    notify(
+      isUserMissing ? message : t("workspace.refresh.failedWithMessage", { message }),
+      isUserMissing ? "warn" : "error"
+    );
   });
   elements.workspaceUpBtn.addEventListener("click", () => {
     if (!state.workspace.path) {
@@ -1803,9 +1845,9 @@ export const initWorkspace = () => {
   elements.workspaceDownloadAllBtn.addEventListener("click", () => {
     const ok = downloadWorkspaceArchive();
     if (ok) {
-      notify("工作区压缩包已开始下载。", "info");
+      notify(t("workspace.download.started"), "info");
     } else {
-      notify("请先填写 user_id。", "warn");
+      notify(t("common.userIdRequired"), "warn");
     }
   });
   elements.workspaceUploadInput.addEventListener("change", async () => {
@@ -1815,11 +1857,11 @@ export const initWorkspace = () => {
     }
     try {
       await uploadWorkspaceFiles(files, state.workspace.path);
-      appendLog("工作区上传完成。");
-      notify("工作区上传完成。", "success");
+      appendLog(t("workspace.upload.success"));
+      notify(t("workspace.upload.success"), "success");
     } catch (error) {
-      appendLog(`工作区上传失败：${error.message}`);
-      notify(`工作区上传失败：${error.message}`, "error");
+      appendLog(t("workspace.upload.failed", { message: error.message }));
+      notify(t("workspace.upload.failed", { message: error.message }), "error");
     }
   });
   if (elements.workspaceSearchInput) {

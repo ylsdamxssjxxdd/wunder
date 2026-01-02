@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.core.i18n import t
 from app.storage.sqlite import SQLiteStorage
 
 
@@ -146,7 +147,7 @@ class MemoryStore:
         if not merged:
             return ""
         # 统一加上长期记忆标签，后面保持纯文本列表格式
-        return "[长期记忆]\n" + merged
+        return t("memory.block_prefix") + "\n" + merged
 
     @staticmethod
     def _format_memory_time_prefix(ts: float) -> str:
@@ -154,9 +155,13 @@ class MemoryStore:
         if not isinstance(ts, (int, float)) or ts <= 0:
             return ""
         dt = datetime.fromtimestamp(float(ts))
-        return (
-            f"{dt.year:04d}年{dt.month:02d}月{dt.day:02d}日"
-            f"{dt.hour:02d}时{dt.minute:02d}分"
+        return t(
+            "memory.time_prefix",
+            year=dt.year,
+            month=dt.month,
+            day=dt.day,
+            hour=dt.hour,
+            minute=dt.minute,
         )
 
     async def is_enabled(self, user_id: str) -> bool:
@@ -209,11 +214,31 @@ class MemoryStore:
         queued_ts = float(item.get("queued_time") or 0)
         started_ts = float(item.get("started_time") or 0)
         finished_ts = float(item.get("finished_time") or 0)
+        status = str(item.get("status") or "").strip()
+        status_map = {
+            "排队中": "queued",
+            "queued": "queued",
+            "正在处理": "running",
+            "processing": "running",
+            "已完成": "done",
+            "completed": "done",
+            "失败": "failed",
+            "failed": "failed",
+        }
+        normalized = status_map.get(status.lower(), status_map.get(status, ""))
+        if normalized == "queued":
+            status = t("memory.status.queued")
+        elif normalized == "running":
+            status = t("memory.status.running")
+        elif normalized == "done":
+            status = t("memory.status.done")
+        elif normalized == "failed":
+            status = t("memory.status.failed")
         return {
             "task_id": str(item.get("task_id") or ""),
             "user_id": str(item.get("user_id") or ""),
             "session_id": str(item.get("session_id") or ""),
-            "status": str(item.get("status") or ""),
+            "status": status,
             "queued_time": _format_ts(queued_ts),
             "queued_time_ts": queued_ts,
             "started_time": _format_ts(started_ts),

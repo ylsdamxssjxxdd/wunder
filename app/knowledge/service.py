@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from app.core.config import KnowledgeBaseConfig, LLMConfig, WunderConfig
+from app.core.i18n import get_known_prefixes, get_language, t
 from app.knowledge.parser import KnowledgeSection, load_knowledge_sections
 from app.llm.base import LLMUnavailableError
 from app.llm.factory import build_llm_client
@@ -22,15 +23,44 @@ logger = logging.getLogger(__name__)
 _KNOWLEDGE_BLOCK_PATTERN = re.compile(r"<knowledge>(.*?)</knowledge>", re.S)
 DEFAULT_MAX_DOCUMENTS = 5
 DEFAULT_CANDIDATE_LIMIT = 80
-DEFAULT_SYSTEM_PROMPT = (
-    "你是一名字面知识库检索助手，需要根据用户提问在给定的知识点列表中挑选最相关的内容。\n"
-    "请严格按照以下要求输出：\n"
-    "1. 每个知识点都对应唯一编号（如 K0001），请优先依据编号定位章节。\n"
-    "2. 最多返回{limit}个知识点，可根据相关度筛选；即便相关度较低，也尽量返回 2-3 条最接近的知识点，避免空列表。\n"
-    "3. 输出必须使用 <knowledge></knowledge> 包裹 JSON，字段为 documents(List)。\n"
-    "4. documents 中的每个对象需包含 code、name、score(0~1) 与 reason(简述命中原因)。\n"
-    "5. 未命中时也要输出空数组，切勿输出 JSON 之外的多余文字。"
-)
+_FULL_TEXT_LABELS = set(get_known_prefixes("knowledge.section.full_text"))
+_SYSTEM_PROMPT_TEMPLATES = {
+    "zh-CN": (
+        "你是一名字面知识库检索助手，需要根据用户提问在给定的知识点列表中挑选最相关的内容。\n"
+        "请严格按照以下要求输出：\n"
+        "1. 每个知识点都对应唯一编号（如 K0001），请优先依据编号定位章节。\n"
+        "2. 最多返回{limit}个知识点，可根据相关度筛选；即便相关度较低，也尽量返回 2-3 条最接近的知识点，避免空列表。\n"
+        "3. 输出必须使用 <knowledge></knowledge> 包裹 JSON，字段为 documents(List)。\n"
+        "4. documents 中的每个对象需包含 code、name、score(0~1) 与 reason(简述命中原因)。\n"
+        "5. 未命中时也要输出空数组，切勿输出 JSON 之外的多余文字。"
+    ),
+    "en-US": (
+        "You are a knowledge-base retrieval assistant. Select the most relevant items from the list based on the user query.\n"
+        "Follow these requirements strictly:\n"
+        "1. Each knowledge item has a unique code (e.g., K0001). Prefer matching by code.\n"
+        "2. Return at most {limit} items. Even if relevance is low, try to return 2-3 closest items to avoid an empty list.\n"
+        "3. Output must be JSON wrapped by <knowledge></knowledge>, with field documents (List).\n"
+        "4. Each document item must include code, name, score(0~1), and reason (brief).\n"
+        "5. If nothing matches, return an empty array only, and do not output extra text outside JSON."
+    ),
+}
+
+_QUESTION_TEMPLATES = {
+    "zh-CN": {
+        "base_name": "【知识库名称】",
+        "user_query": "【用户提问】",
+        "candidates": "【候选知识点列表】",
+        "empty": "- （暂无知识点）",
+        "footer": "请按要求返回 JSON 结果。",
+    },
+    "en-US": {
+        "base_name": "[Knowledge Base]",
+        "user_query": "[User Question]",
+        "candidates": "[Candidate Knowledge Items]",
+        "empty": "- (No items available)",
+        "footer": "Return the JSON result as required.",
+    },
+}
 
 
 class KnowledgeQueryError(RuntimeError):
@@ -51,12 +81,16 @@ class KnowledgeDocument:
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为工具返回的 JSON 结构。"""
+        normalized_section_path = [
+            t("knowledge.section.full_text") if part in _FULL_TEXT_LABELS else part
+            for part in self.section_path
+        ]
         payload: Dict[str, Any] = {
             "code": self.code,
             "name": self.name,
             "content": self.content,
             "document": self.document,
-            "section_path": self.section_path,
+            "section_path": normalized_section_path,
         }
         if self.score is not None:
             payload["score"] = self.score
@@ -154,7 +188,9 @@ def build_knowledge_tool_specs(
         if base.name in seen:
             continue
         seen.add(base.name)
-        description = base.description.strip() or f"检索知识库：{base.name}"
+        description = base.description.strip() or t(
+            "knowledge.tool.description", name=base.name
+        )
         specs.append(
             ToolSpec(
                 name=base.name,
@@ -164,12 +200,12 @@ def build_knowledge_tool_specs(
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "查询内容",
+                            "description": t("knowledge.tool.query.description"),
                         },
                         "limit": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "返回条数（可选，默认使用系统内置上限）",
+                            "description": t("knowledge.tool.limit.description"),
                         },
                     },
                     "required": ["query"],
@@ -270,7 +306,9 @@ def _resolve_positive_int(value: Optional[int], default: int) -> int:
 
 def _build_system_prompt(limit: int) -> str:
     """构建知识库检索专用的系统提示词。"""
-    return DEFAULT_SYSTEM_PROMPT.format(limit=limit)
+    language = get_language()
+    template = _SYSTEM_PROMPT_TEMPLATES.get(language) or _SYSTEM_PROMPT_TEMPLATES["zh-CN"]
+    return template.format(limit=limit)
 
 
 def _build_llm_payload(
@@ -293,6 +331,8 @@ def _build_question(
     base_name: str, query: str, candidates: Sequence[KnowledgeSection]
 ) -> str:
     """构建知识库检索请求的问题描述。"""
+    language = get_language()
+    labels = _QUESTION_TEMPLATES.get(language) or _QUESTION_TEMPLATES["zh-CN"]
     listing_lines: List[str] = []
     for section in candidates:
         preview = section.preview
@@ -300,13 +340,13 @@ def _build_question(
             listing_lines.append(f"- [{section.code}] {section.identifier} | {preview}")
         else:
             listing_lines.append(f"- [{section.code}] {section.identifier}")
-    listing = "\n".join(listing_lines) if listing_lines else "- （暂无知识点）"
+    listing = "\n".join(listing_lines) if listing_lines else labels["empty"]
     return (
-        f"【知识库名称】\n{base_name}\n\n"
-        f"【用户提问】\n{query}\n\n"
-        "【候选知识点列表】\n"
+        f"{labels['base_name']}\n{base_name}\n\n"
+        f"{labels['user_query']}\n{query}\n\n"
+        f"{labels['candidates']}\n"
         f"{listing}\n\n"
-        "请按要求返回 JSON 结果。"
+        f"{labels['footer']}"
     )
 
 
@@ -385,7 +425,7 @@ def _fallback_documents(
                 document=section.document,
                 section_path=[part for part in section.section_path if part],
                 score=None,
-                reason="词面匹配",
+                reason=t("knowledge.fallback_reason"),
             )
         )
     return fallback

@@ -14,6 +14,7 @@ from typing import Any, Deque, Dict, List, Optional
 import psutil
 
 from app.core.config import get_config
+from app.core.i18n import get_known_prefixes, t
 from app.storage.sqlite import SQLiteStorage, get_storage
 
 def _now_ts() -> float:
@@ -22,6 +23,54 @@ def _now_ts() -> float:
 
 def _format_ts(ts: float) -> str:
     return datetime.utcfromtimestamp(ts).isoformat() + "Z"
+
+
+def _split_tool_summary_template(template: str) -> tuple[str, str]:
+    """拆分工具调用摘要模板，提取前后缀。"""
+    if "{tool}" not in template:
+        return template, ""
+    prefix, suffix = template.split("{tool}", 1)
+    return prefix, suffix
+
+
+_TOOL_SUMMARY_PARTS = [
+    _split_tool_summary_template(item)
+    for item in get_known_prefixes("monitor.summary.tool_call")
+]
+_SUMMARY_LOOKUP = {
+    key: set(get_known_prefixes(key))
+    for key in (
+        "monitor.summary.restarted",
+        "monitor.summary.finished",
+        "monitor.summary.received",
+        "monitor.summary.model_call",
+        "monitor.summary.exception",
+        "monitor.summary.cancelled",
+        "monitor.summary.cancel_requested",
+        "monitor.summary.user_deleted_cancel",
+    )
+}
+
+
+def _localize_summary(summary: str) -> str:
+    """根据当前语言转换已知摘要文案。"""
+    if not summary:
+        return summary
+    for prefix, suffix in _TOOL_SUMMARY_PARTS:
+        if not prefix:
+            continue
+        if not summary.startswith(prefix):
+            continue
+        if suffix and not summary.endswith(suffix):
+            continue
+        tool_name = summary[len(prefix) :]
+        if suffix:
+            tool_name = summary[len(prefix) : -len(suffix)]
+        return t("monitor.summary.tool_call", tool=tool_name.strip())
+    for key, candidates in _SUMMARY_LOOKUP.items():
+        if summary in candidates:
+            return t(key)
+    return summary
 
 
 @dataclass
@@ -49,7 +98,17 @@ class MonitorEvent:
         return cls(timestamp=timestamp, event_type=event_type, data=data)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"timestamp": _format_ts(self.timestamp), "type": self.event_type, "data": self.data}
+        data = self.data
+        if isinstance(data, dict):
+            summary = data.get("summary")
+            if isinstance(summary, str):
+                data = dict(data)
+                data["summary"] = _localize_summary(summary)
+        return {
+            "timestamp": _format_ts(self.timestamp),
+            "type": self.event_type,
+            "data": data,
+        }
 
 
 @dataclass
@@ -81,7 +140,7 @@ class SessionRecord:
             "question": self.question,
             "status": self.status,
             "stage": self.stage,
-            "summary": self.summary,
+            "summary": _localize_summary(self.summary),
             "start_time": _format_ts(self.start_time),
             "updated_time": _format_ts(self.updated_time),
             "elapsed_s": round(self.elapsed_s(), 2),
@@ -216,7 +275,7 @@ class SessionMonitor:
             # 进程重启后，未结束的线程视为异常结束
             if record.status in {self.STATUS_RUNNING, self.STATUS_CANCELLING}:
                 record.status = self.STATUS_ERROR
-                record.summary = "服务重启，线程未完成。"
+                record.summary = t("monitor.summary.restarted")
                 record.ended_time = record.updated_time or _now_ts()
                 self._append_event(
                     record,
@@ -227,7 +286,7 @@ class SessionMonitor:
             # 重启后按最终状态修正阶段与摘要，避免历史记录显示为中间阶段
             if record.status == self.STATUS_FINISHED:
                 record.stage = "final"
-                record.summary = "已完成回复。"
+                record.summary = t("monitor.summary.finished")
             elif record.status == self.STATUS_ERROR:
                 record.stage = "error"
             elif record.status == self.STATUS_CANCELLED:
@@ -395,7 +454,7 @@ class SessionMonitor:
             record.question = question
             record.status = self.STATUS_RUNNING
             record.stage = "received"
-            record.summary = "已接收请求，开始处理。"
+            record.summary = t("monitor.summary.received")
             record.start_time = now
             record.updated_time = now
             record.ended_time = None
@@ -414,7 +473,7 @@ class SessionMonitor:
             question=question,
             status=self.STATUS_RUNNING,
             stage="received",
-            summary="已接收请求，开始处理。",
+            summary=t("monitor.summary.received"),
             start_time=now,
             updated_time=now,
         )
@@ -460,16 +519,20 @@ class SessionMonitor:
                 record.summary = str(data.get("summary", record.summary))
             elif event_type == "tool_call":
                 record.stage = "tool_call"
-                record.summary = f"调用工具：{data.get('tool', '')}"
+                record.summary = t(
+                    "monitor.summary.tool_call", tool=str(data.get("tool", "") or "")
+                )
             elif event_type == "llm_request":
                 record.stage = "llm_request"
-                record.summary = "调用模型请求"
+                record.summary = t("monitor.summary.model_call")
             elif event_type == "final":
                 record.stage = "final"
-                record.summary = "已完成回复。"
+                record.summary = t("monitor.summary.finished")
             elif event_type == "error":
                 record.stage = "error"
-                record.summary = str(data.get("message", "执行异常"))
+                record.summary = str(
+                    data.get("message") or t("monitor.summary.exception")
+                )
 
             self._append_event(record, event_type, data, now)
 
@@ -483,7 +546,9 @@ class SessionMonitor:
 
     def mark_cancelled(self, session_id: str) -> None:
         """标记会话被终止。"""
-        self._mark_status(session_id, self.STATUS_CANCELLED, summary="已终止")
+        self._mark_status(
+            session_id, self.STATUS_CANCELLED, summary=t("monitor.summary.cancelled")
+        )
 
     def _mark_status(self, session_id: str, status: str, summary: Optional[str] = None) -> None:
         now = _now_ts()
@@ -498,7 +563,7 @@ class SessionMonitor:
             # 根据最终状态修正阶段与摘要，确保落盘后仍显示正确阶段
             if status == self.STATUS_FINISHED:
                 record.stage = "final"
-                record.summary = summary or "已完成回复。"
+                record.summary = summary or t("monitor.summary.finished")
             elif status == self.STATUS_ERROR:
                 record.stage = "error"
                 if summary:
@@ -555,7 +620,7 @@ class SessionMonitor:
             self._append_event(
                 record,
                 "cancel",
-                {"summary": "已请求终止"},
+                {"summary": t("monitor.summary.cancel_requested")},
                 record.updated_time,
             )
             return True
@@ -597,7 +662,7 @@ class SessionMonitor:
                     self._append_event(
                         record,
                         "cancel",
-                        {"summary": "用户已删除，已请求终止"},
+                        {"summary": t("monitor.summary.user_deleted_cancel")},
                         record.updated_time,
                     )
                     cancelled += 1

@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from app.api.deps import get_config_path, get_orchestrator, get_orchestrator_if_ready
 from app.api.responses import json_response
 from app.core.config import KnowledgeBaseConfig, WunderConfig, load_config
+from app.core.i18n import t
 from app.core.config_store import (
     update_builtin_tools,
     update_knowledge_config,
@@ -85,11 +86,16 @@ def _get_knowledge_base(config: WunderConfig, base_name: str) -> KnowledgeBaseCo
     """根据名称定位知识库配置，找不到时抛出异常。"""
     cleaned = base_name.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "知识库名称不能为空"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.knowledge_base_name_required")},
+        )
     for base in config.knowledge.bases:
         if base.name == cleaned:
             return base
-    raise HTTPException(status_code=404, detail={"message": "知识库不存在"})
+    raise HTTPException(
+        status_code=404, detail={"message": t("error.knowledge_base_not_found")}
+    )
 
 
 def _resolve_knowledge_root(base: KnowledgeBaseConfig, *, create: bool = False) -> Path:
@@ -99,9 +105,15 @@ def _resolve_knowledge_root(base: KnowledgeBaseConfig, *, create: bool = False) 
         if create:
             root.mkdir(parents=True, exist_ok=True)
         else:
-            raise HTTPException(status_code=404, detail={"message": "知识库目录不存在"})
+            raise HTTPException(
+                status_code=404,
+                detail={"message": t("error.knowledge_root_not_found")},
+            )
     if not root.is_dir():
-        raise HTTPException(status_code=400, detail={"message": "知识库目录不是文件夹"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.knowledge_root_not_dir")},
+        )
     return root
 
 
@@ -109,10 +121,16 @@ def _resolve_knowledge_path(root: Path, relative_path: str) -> Path:
     """解析知识库文件路径，阻止目录穿越。"""
     rel = Path(relative_path)
     if rel.is_absolute():
-        raise HTTPException(status_code=400, detail={"message": "不允许使用绝对路径"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.absolute_path_forbidden")},
+        )
     target = (root / rel).resolve()
     if target != root and root not in target.parents:
-        raise HTTPException(status_code=400, detail={"message": "路径越界访问被禁止"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.path_out_of_bounds")},
+        )
     return target
 
 
@@ -167,12 +185,15 @@ async def wunder_llm_context_window(request: LlmContextProbeRequest):
     base_url = request.base_url.strip()
     model = request.model.strip()
     if not base_url or not model:
-        raise HTTPException(status_code=400, detail={"message": "base_url 或 model 不能为空"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.base_url_or_model_required")},
+        )
 
     if request.provider != "openai_compatible":
         return json_response(
             LlmContextProbeResponse(
-                max_context=None, message="当前 provider 暂不支持探测"
+                max_context=None, message=t("probe.provider_unsupported")
             )
         )
 
@@ -186,19 +207,19 @@ async def wunder_llm_context_window(request: LlmContextProbeRequest):
     except Exception as exc:
         return json_response(
             LlmContextProbeResponse(
-                max_context=None, message=f"探测失败: {exc}"
+                max_context=None, message=t("probe.failed", detail=str(exc))
             )
         )
 
     if not max_context:
         return json_response(
             LlmContextProbeResponse(
-                max_context=None, message="未获取到上下文长度"
+                max_context=None, message=t("probe.no_context")
             )
         )
 
     return json_response(
-        LlmContextProbeResponse(max_context=max_context, message="ok")
+        LlmContextProbeResponse(max_context=max_context, message=t("probe.success"))
     )
 
 
@@ -301,7 +322,9 @@ async def wunder_skills_content(name: str = Query(..., description="技能名称
     """读取指定技能的 SKILL.md 内容。"""
     cleaned = name.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "技能名称不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skill_name_required")}
+        )
     config = load_config(get_config_path())
     eva_skills = Path("EVA_SKILLS")
     scan_paths = list(config.skills.paths)
@@ -319,14 +342,19 @@ async def wunder_skills_content(name: str = Query(..., description="技能名称
             skill_spec = spec
             break
     if not skill_spec:
-        raise HTTPException(status_code=404, detail={"message": "技能不存在"})
+        raise HTTPException(status_code=404, detail={"message": t("error.skill_not_found")})
     skill_path = Path(skill_spec.path)
     if not skill_path.exists() or not skill_path.is_file():
-        raise HTTPException(status_code=404, detail={"message": "技能文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.skill_file_not_found")}
+        )
     try:
         content = skill_path.read_text(encoding="utf-8")
     except Exception as exc:
-        raise HTTPException(status_code=400, detail={"message": f"读取技能文件失败: {exc}"}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.skill_file_read_failed", detail=str(exc))},
+        ) from exc
     response = SkillContentResponse(
         name=skill_spec.name,
         path=str(skill_path),
@@ -380,7 +408,9 @@ async def wunder_skills_delete(name: str = Query(..., description="技能名称"
     """删除 EVA_SKILLS 目录下的技能。"""
     cleaned = name.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "技能名称不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skill_name_required")}
+        )
 
     config = load_config(get_config_path())
     eva_skills = Path("EVA_SKILLS")
@@ -400,25 +430,32 @@ async def wunder_skills_delete(name: str = Query(..., description="技能名称"
             skill_spec = spec
             break
     if not skill_spec:
-        raise HTTPException(status_code=404, detail={"message": "技能不存在"})
+        raise HTTPException(status_code=404, detail={"message": t("error.skill_not_found")})
 
     skill_path = Path(skill_spec.path).resolve()
     if not skill_path.exists() or not skill_path.is_file():
-        raise HTTPException(status_code=404, detail={"message": "技能文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.skill_file_not_found")}
+        )
 
     skill_dir = skill_path.parent.resolve()
     if not eva_root.exists():
-        raise HTTPException(status_code=400, detail={"message": "EVA_SKILLS 目录不存在"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skills_dir_missing")}
+        )
     if skill_dir != eva_root and eva_root not in skill_dir.parents:
         raise HTTPException(
             status_code=400,
-            detail={"message": "仅支持删除 EVA_SKILLS 目录内的技能"},
+            detail={"message": t("error.skill_delete_restricted")},
         )
 
     try:
         shutil.rmtree(skill_dir)
     except OSError as exc:
-        raise HTTPException(status_code=400, detail={"message": f"删除技能失败: {exc}"}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.skill_delete_failed", detail=str(exc))},
+        ) from exc
 
     enabled = [name for name in (config.skills.enabled or []) if name != cleaned]
     if enabled != list(config.skills.enabled or []):
@@ -433,10 +470,12 @@ async def wunder_skills_delete(name: str = Query(..., description="技能名称"
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
-                detail={"message": f"技能已删除，但更新配置失败: {exc}"},
+                detail={"message": t("error.skill_delete_update_failed", detail=str(exc))},
             ) from exc
 
-    response = SkillsDeleteResponse(ok=True, name=cleaned, message="已删除")
+    response = SkillsDeleteResponse(
+        ok=True, name=cleaned, message=t("message.skill_deleted")
+    )
     return json_response(response)
 
 
@@ -445,7 +484,9 @@ async def wunder_skills_upload(file: UploadFile = File(...)):
     """上传技能压缩包并解压到 EVA_SKILLS。"""
     filename = file.filename or ""
     if not filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail={"message": "仅支持上传 .zip 压缩包"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skill_upload_zip_only")}
+        )
 
     target_root = Path("EVA_SKILLS").resolve()
     target_root.mkdir(parents=True, exist_ok=True)
@@ -459,24 +500,34 @@ async def wunder_skills_upload(file: UploadFile = File(...)):
                     continue
                 raw_name = info.filename.replace("\\", "/")
                 if not raw_name or raw_name.startswith("/") or raw_name.startswith("\\"):
-                    raise HTTPException(status_code=400, detail={"message": "压缩包路径非法"})
+                    raise HTTPException(
+                        status_code=400, detail={"message": t("error.zip_path_invalid")}
+                    )
                 path = Path(raw_name)
                 if any(part == ".." for part in path.parts):
-                    raise HTTPException(status_code=400, detail={"message": "压缩包包含非法路径"})
+                    raise HTTPException(
+                        status_code=400, detail={"message": t("error.zip_path_illegal")}
+                    )
                 dest = (target_root / path).resolve()
                 if dest != target_root and target_root not in dest.parents:
-                    raise HTTPException(status_code=400, detail={"message": "压缩包包含越界路径"})
+                    raise HTTPException(
+                        status_code=400, detail={"message": t("error.zip_path_out_of_bounds")}
+                    )
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zip_file.open(info) as src, dest.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 extracted += 1
     except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail={"message": "压缩包格式错误"}) from exc
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.zip_invalid")}
+        ) from exc
     finally:
         await file.close()
 
     return json_response(
-        SkillsUploadResponse(ok=True, extracted=extracted, message="上传成功")
+        SkillsUploadResponse(
+            ok=True, extracted=extracted, message=t("message.upload_success")
+        )
     )
 
 
@@ -590,11 +641,13 @@ async def wunder_knowledge_upload(
     extension = Path(filename).suffix.lower()
     supported = set(get_supported_extensions())
     if not extension:
-        raise HTTPException(status_code=400, detail={"message": "文件缺少扩展名"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.file_extension_missing")}
+        )
     if extension not in supported:
         raise HTTPException(
             status_code=400,
-            detail={"message": f"不支持的文件类型: {extension}"},
+            detail={"message": t("error.unsupported_file_type", extension=extension)},
         )
     stem = sanitize_filename_stem(Path(filename).stem) or "document"
     output_path = resolve_unique_markdown_path(root, stem)
@@ -618,7 +671,7 @@ async def wunder_knowledge_upload(
         KnowledgeBaseConfig(name=base, description=target.description, root=str(root))
     )
     relative_path = output_path.relative_to(root).as_posix()
-    message = "上传并转换完成"
+    message = t("message.upload_converted")
     response = KnowledgeUploadResponse(
         ok=True,
         message=message,
@@ -659,9 +712,13 @@ async def wunder_knowledge_file(
     root = _resolve_knowledge_root(target, create=True)
     file_path = _resolve_knowledge_path(root, path)
     if file_path.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail={"message": "文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.file_not_found")}
+        )
     content = file_path.read_text(encoding="utf-8", errors="ignore")
     response = KnowledgeFileResponse(base=base, path=path, content=content)
     return json_response(response)
@@ -675,13 +732,17 @@ async def wunder_knowledge_file_update(request: KnowledgeFileUpdateRequest):
     root = _resolve_knowledge_root(target, create=True)
     file_path = _resolve_knowledge_path(root, request.path)
     if file_path.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(request.content or "", encoding="utf-8")
     await refresh_knowledge_cache(
         KnowledgeBaseConfig(name=request.base, description="", root=str(root))
     )
-    response = KnowledgeActionResponse(ok=True, message="已保存并刷新索引")
+    response = KnowledgeActionResponse(
+        ok=True, message=t("message.saved_and_reindexed")
+    )
     return json_response(response)
 
 
@@ -696,13 +757,15 @@ async def wunder_knowledge_file_delete(
     root = _resolve_knowledge_root(target, create=True)
     file_path = _resolve_knowledge_path(root, path)
     if file_path.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     if file_path.exists() and file_path.is_file():
         file_path.unlink()
         await refresh_knowledge_cache(
             KnowledgeBaseConfig(name=base, description="", root=str(root))
         )
-    response = KnowledgeActionResponse(ok=True, message="已删除")
+    response = KnowledgeActionResponse(ok=True, message=t("message.deleted"))
     return json_response(response)
 
 
@@ -717,7 +780,9 @@ async def wunder_knowledge_refresh(
     await refresh_knowledge_cache(
         KnowledgeBaseConfig(name=base, description=target.description, root=str(root))
     )
-    response = KnowledgeActionResponse(ok=True, message="已刷新索引")
+    response = KnowledgeActionResponse(
+        ok=True, message=t("message.index_refreshed")
+    )
     return json_response(response)
 
 
@@ -787,7 +852,9 @@ async def wunder_monitor_tool_usage(
     """获取指定工具的调用会话列表。"""
     cleaned = tool.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "工具名称不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.tool_name_required")}
+        )
 
     def _normalize_ts(value: Optional[float]) -> Optional[float]:
         """规范化时间戳输入，避免无效值影响筛选。"""
@@ -855,7 +922,9 @@ async def wunder_monitor_detail(session_id: str):
     """获取指定会话的运行详情。"""
     detail = monitor.get_detail(session_id)
     if not detail:
-        raise HTTPException(status_code=404, detail={"message": "会话不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.session_not_found")}
+        )
     return json_response(MonitorDetailResponse(**detail))
 
 
@@ -865,9 +934,13 @@ async def wunder_monitor_cancel(session_id: str):
     ok = monitor.cancel(session_id)
     if not ok:
         return json_response(
-            MonitorCancelResponse(ok=False, message="会话不存在或已结束")
+            MonitorCancelResponse(
+                ok=False, message=t("error.session_not_found_or_finished")
+            )
         )
-    return json_response(MonitorCancelResponse(ok=True, message="已请求终止"))
+    return json_response(
+        MonitorCancelResponse(ok=True, message=t("message.cancel_requested"))
+    )
 
 
 @router.delete("/wunder/admin/monitor/{session_id}", response_model=MonitorDeleteResponse)
@@ -876,9 +949,11 @@ async def wunder_monitor_delete(session_id: str):
     ok = monitor.delete_session(session_id)
     if not ok:
         return json_response(
-            MonitorDeleteResponse(ok=False, message="会话不存在或仍在运行")
+            MonitorDeleteResponse(
+                ok=False, message=t("error.session_not_found_or_running")
+            )
         )
-    return json_response(MonitorDeleteResponse(ok=True, message="已删除"))
+    return json_response(MonitorDeleteResponse(ok=True, message=t("message.deleted")))
 
 
 @router.get("/wunder/admin/users", response_model=UserStatsResponse)
@@ -990,11 +1065,15 @@ async def wunder_admin_memory_status_detail(task_id: str):
     """获取指定长期记忆任务的详情。"""
     cleaned = task_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "任务ID不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.task_id_required")}
+        )
     orchestrator = get_orchestrator()
     detail = await orchestrator.get_memory_queue_detail(cleaned)
     if not detail:
-        raise HTTPException(status_code=404, detail={"message": "任务不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.task_not_found")}
+        )
     return json_response(MemoryQueueDetailResponse(**detail))
 
 
@@ -1003,7 +1082,9 @@ async def wunder_admin_memory_records(user_id: str):
     """获取指定用户的长期记忆记录列表。"""
     cleaned = user_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     orchestrator = get_orchestrator()
     memory_store = orchestrator.memory_store
     enabled = await memory_store.is_enabled(cleaned)
@@ -1029,16 +1110,24 @@ async def wunder_admin_memory_record_update(
     cleaned_session = session_id.strip()
     summary = str(request.summary or "").strip()
     if not cleaned or not cleaned_session:
-        raise HTTPException(status_code=400, detail={"message": "参数不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.param_required")}
+        )
     if not summary:
-        raise HTTPException(status_code=400, detail={"message": "内容不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.content_required")}
+        )
     orchestrator = get_orchestrator()
     ok = await orchestrator.memory_store.update_record(
         cleaned, cleaned_session, summary, now_ts=time.time()
     )
     if not ok:
-        raise HTTPException(status_code=400, detail={"message": "内容不能为空"})
-    return json_response(MemoryActionResponse(ok=True, message="已更新", deleted=0))
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.content_required")}
+        )
+    return json_response(
+        MemoryActionResponse(ok=True, message=t("message.updated"), deleted=0)
+    )
 
 
 @router.post(
@@ -1051,7 +1140,9 @@ async def wunder_admin_memory_enabled(
     """更新指定用户的长期记忆开关。"""
     cleaned = user_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     orchestrator = get_orchestrator()
     await orchestrator.memory_store.set_enabled(cleaned, request.enabled)
     return json_response(
@@ -1068,11 +1159,13 @@ async def wunder_admin_memory_record_delete(user_id: str, session_id: str):
     cleaned = user_id.strip()
     cleaned_session = session_id.strip()
     if not cleaned or not cleaned_session:
-        raise HTTPException(status_code=400, detail={"message": "参数不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.param_required")}
+        )
     orchestrator = get_orchestrator()
     deleted = await orchestrator.memory_store.delete_record(cleaned, cleaned_session)
     return json_response(
-        MemoryActionResponse(ok=True, message="已删除", deleted=deleted)
+        MemoryActionResponse(ok=True, message=t("message.deleted"), deleted=deleted)
     )
 
 
@@ -1084,11 +1177,13 @@ async def wunder_admin_memory_clear(user_id: str):
     """清空指定用户的长期记忆记录。"""
     cleaned = user_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     orchestrator = get_orchestrator()
     deleted = await orchestrator.memory_store.clear_records(cleaned)
     return json_response(
-        MemoryActionResponse(ok=True, message="已清空", deleted=deleted)
+        MemoryActionResponse(ok=True, message=t("message.cleared"), deleted=deleted)
     )
 
 
@@ -1100,7 +1195,9 @@ async def wunder_admin_user_sessions(
     """列出指定用户的历史会话。"""
     cleaned = user_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     sessions = monitor.list_sessions(active_only=active_only)
     filtered = [session for session in sessions if session.get("user_id") == cleaned]
     return json_response(UserSessionsResponse(user_id=cleaned, sessions=filtered))
@@ -1111,12 +1208,14 @@ async def wunder_admin_user_delete(user_id: str):
     """删除指定用户的活动线程、历史记录与工作区数据。"""
     cleaned = user_id.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     monitor_result = monitor.purge_user_sessions(cleaned)
     purge_result = get_orchestrator().workspace_manager.purge_user_data(cleaned)
     response = UserDeleteResponse(
         ok=True,
-        message="已清除用户数据",
+        message=t("message.user_deleted"),
         cancelled_sessions=monitor_result.get("cancelled", 0),
         deleted_sessions=monitor_result.get("deleted", 0),
         deleted_chat_records=purge_result.get("chat_records", 0),

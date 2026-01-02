@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from app.core.config import LLMConfig
+from app.core.i18n import t
 from app.core.http_client import get_async_client
 from app.llm.base import LLMClient, LLMUnavailableError, LLMResponse, LLMStreamChunk
 
@@ -117,7 +118,7 @@ class OpenAICompatibleClient(LLMClient):
     async def complete(self, messages: List[Dict[str, Any]]) -> LLMResponse:
         """一次性获取完整回复。"""
         if not self._endpoint or not self._config.api_key:
-            raise LLMUnavailableError("LLM 未配置 base_url 或 api_key。")
+            raise LLMUnavailableError(t("error.llm_config_missing"))
 
         payload = self._build_payload(messages, stream=False)
         headers = {"Authorization": f"Bearer {self._config.api_key}"}
@@ -153,7 +154,7 @@ class OpenAICompatibleClient(LLMClient):
                     await asyncio.sleep(self._compute_backoff(attempt))
                     continue
                 raise LLMUnavailableError(
-                    "LLM 请求失败。",
+                    t("error.llm_request_failed"),
                     detail=self._extract_error_detail(resp),
                 )
             except (httpx.HTTPError, json.JSONDecodeError) as exc:
@@ -162,11 +163,11 @@ class OpenAICompatibleClient(LLMClient):
                     await asyncio.sleep(self._compute_backoff(attempt))
                     continue
                 raise LLMUnavailableError(
-                    "LLM 请求失败。",
+                    t("error.llm_request_failed"),
                     detail={"error": str(exc), "endpoint": self._endpoint},
                 ) from exc
         raise LLMUnavailableError(
-            "LLM 请求失败。",
+            t("error.llm_request_failed"),
             detail={"error": str(last_error) if last_error else "", "endpoint": self._endpoint},
         )
 
@@ -175,7 +176,7 @@ class OpenAICompatibleClient(LLMClient):
     ) -> AsyncGenerator[LLMStreamChunk, None]:
         """流式获取回复内容，逐段输出。"""
         if not self._endpoint or not self._config.api_key:
-            raise LLMUnavailableError("LLM 未配置 base_url 或 api_key。")
+            raise LLMUnavailableError(t("error.llm_config_missing"))
 
         include_usage = bool(self._config.stream_include_usage)
         usage_fallback = include_usage
@@ -207,7 +208,7 @@ class OpenAICompatibleClient(LLMClient):
                         if attempt < attempts and self._should_retry(resp.status_code):
                             await asyncio.sleep(self._compute_backoff(attempt))
                             continue
-                        raise LLMUnavailableError("LLM 请求失败。", detail=detail)
+                        raise LLMUnavailableError(t("error.llm_request_failed"), detail=detail)
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
@@ -246,7 +247,7 @@ class OpenAICompatibleClient(LLMClient):
                         await asyncio.sleep(self._compute_backoff(attempt))
                         continue
                     raise LLMUnavailableError(
-                        "LLM 流式响应中断。",
+                        t("error.llm_stream_interrupted"),
                         detail={
                             "stream_incomplete": True,
                             "endpoint": self._endpoint,
@@ -262,7 +263,7 @@ class OpenAICompatibleClient(LLMClient):
                     await asyncio.sleep(self._compute_backoff(attempt))
                     continue
                 raise LLMUnavailableError(
-                    "LLM 流式响应中断。",
+                    t("error.llm_stream_interrupted"),
                     detail={
                         "stream_incomplete": True,
                         "error": str(exc),
@@ -271,7 +272,7 @@ class OpenAICompatibleClient(LLMClient):
                     },
                 ) from exc
         raise LLMUnavailableError(
-            "LLM 请求失败。",
+            t("error.llm_request_failed"),
             detail={"error": str(last_error) if last_error else "", "endpoint": self._endpoint},
         )
 

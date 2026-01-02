@@ -3,16 +3,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import LLMConfig
+from app.core.i18n import get_known_prefixes, t
 from app.orchestrator.constants import (
     ARTIFACT_INDEX_MAX_ITEMS,
-    ARTIFACT_INDEX_PREFIX,
     COMPACTION_META_TYPE,
     COMPACTION_OUTPUT_RESERVE,
     COMPACTION_RATIO,
     COMPACTION_SAFETY_MARGIN,
-    COMPACTION_SUMMARY_PREFIX,
     OBSERVATION_PREFIX,
 )
+from app.orchestrator.prompt_builder import read_prompt_template
 from app.orchestrator.context import RequestContext
 
 
@@ -24,9 +24,10 @@ class HistoryManager:
         """统一摘要格式，便于后续识别与注入上下文。"""
         cleaned = summary.strip()
         if not cleaned:
-            cleaned = "暂无摘要。"
-        if not cleaned.startswith(COMPACTION_SUMMARY_PREFIX):
-            cleaned = f"{COMPACTION_SUMMARY_PREFIX}\n{cleaned}"
+            cleaned = t("memory.empty_summary")
+        prefixes = get_known_prefixes("history.compaction_prefix")
+        if not any(cleaned.startswith(prefix) for prefix in prefixes):
+            cleaned = f"{t('history.compaction_prefix')}\n{cleaned}"
         return cleaned
 
     @staticmethod
@@ -35,8 +36,9 @@ class HistoryManager:
         cleaned = str(content or "").strip()
         if not cleaned:
             return ""
-        if not cleaned.startswith(ARTIFACT_INDEX_PREFIX):
-            cleaned = f"{ARTIFACT_INDEX_PREFIX}\n{cleaned}"
+        prefixes = get_known_prefixes("history.artifact_prefix")
+        if not any(cleaned.startswith(prefix) for prefix in prefixes):
+            cleaned = f"{t('history.artifact_prefix')}\n{cleaned}"
         return cleaned
 
     @staticmethod
@@ -46,8 +48,10 @@ class HistoryManager:
         if isinstance(meta, dict) and meta.get("type") == COMPACTION_META_TYPE:
             return True
         content = item.get("content")
-        if isinstance(content, str) and content.startswith(COMPACTION_SUMMARY_PREFIX):
-            return True
+        if isinstance(content, str):
+            prefixes = get_known_prefixes("history.compaction_prefix")
+            if any(content.startswith(prefix) for prefix in prefixes):
+                return True
         return False
 
     @staticmethod
@@ -55,12 +59,9 @@ class HistoryManager:
         """读取上下文压缩提示词，保证可维护性。"""
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "compact_prompt.txt"
         try:
-            return prompt_path.read_text(encoding="utf-8").strip()
+            return read_prompt_template(prompt_path).strip()
         except OSError:
-            return (
-                "请输出可交接的结构化摘要，包含任务目标、已完成进度、关键决策与约束、"
-                "关键数据与产物、待办与下一步。若某项为空请写“暂无”。"
-            )
+            return t("history.compaction_prompt_fallback")
 
     @staticmethod
     def _unique_in_order(items: List[str]) -> List[str]:
@@ -81,7 +82,7 @@ class HistoryManager:
             return ""
         total = len(items)
         display = items[:limit]
-        suffix = f" …等{total}项" if total > limit else ""
+        suffix = t("history.items_suffix", total=total) if total > limit else ""
         return ", ".join(display) + suffix
 
     def _build_artifact_index_text(self, artifacts: List[Dict[str, Any]]) -> str:
@@ -94,12 +95,12 @@ class HistoryManager:
         scripts: List[str] = []
         failures: List[str] = []
         action_labels = {
-            "read": "读取",
-            "write": "写入",
-            "replace": "替换",
-            "edit": "编辑",
-            "execute": "执行",
-            "run": "运行",
+            "read": t("history.action.read"),
+            "write": t("history.action.write"),
+            "replace": t("history.action.replace"),
+            "edit": t("history.action.edit"),
+            "execute": t("history.action.execute"),
+            "run": t("history.action.run"),
         }
         for entry in artifacts:
             kind = str(entry.get("kind", "")).strip()
@@ -109,8 +110,12 @@ class HistoryManager:
             error = str(entry.get("error", "") or "").strip()
             meta = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
             if error or ok is False:
-                label = name or str(entry.get("tool", "") or "").strip() or "未知条目"
-                failure_text = error or "执行失败"
+                label = (
+                    name
+                    or str(entry.get("tool", "") or "").strip()
+                    or t("history.failure.unknown_item")
+                )
+                failure_text = error or t("history.failure.execution")
                 failures.append(f"{label}: {failure_text}")
             if not name:
                 continue
@@ -119,7 +124,7 @@ class HistoryManager:
                     file_reads.append(name)
                 else:
                     actions = file_changes.setdefault(name, [])
-                    action_label = action_labels.get(action, action or "改动")
+                    action_label = action_labels.get(action, action or t("history.action.unknown"))
                     if action_label not in actions:
                         actions.append(action_label)
             elif kind == "command":
@@ -136,30 +141,50 @@ class HistoryManager:
         failures = self._unique_in_order(failures)
         file_change_items = []
         for path, actions in file_changes.items():
-            action_text = "/".join(actions) if actions else "改动"
+            action_text = "/".join(actions) if actions else t("history.action.unknown")
             file_change_items.append(f"{path}({action_text})")
         file_change_items = self._unique_in_order(file_change_items)
         list_limit = 12
-        lines: List[str] = [ARTIFACT_INDEX_PREFIX]
+        lines: List[str] = [t("history.artifact_prefix")]
         if file_reads:
             lines.append(
-                f"- 文件读取({len(file_reads)}): {self._format_index_items(file_reads, list_limit)}"
+                t(
+                    "history.summary.file_reads",
+                    count=len(file_reads),
+                    items=self._format_index_items(file_reads, list_limit),
+                )
             )
         if file_change_items:
             lines.append(
-                f"- 文件改动({len(file_change_items)}): {self._format_index_items(file_change_items, list_limit)}"
+                t(
+                    "history.summary.file_changes",
+                    count=len(file_change_items),
+                    items=self._format_index_items(file_change_items, list_limit),
+                )
             )
         if commands:
             lines.append(
-                f"- 命令执行({len(commands)}): {self._format_index_items(commands, list_limit)}"
+                t(
+                    "history.summary.command_runs",
+                    count=len(commands),
+                    items=self._format_index_items(commands, list_limit),
+                )
             )
         if scripts:
             lines.append(
-                f"- 脚本运行({len(scripts)}): {self._format_index_items(scripts, list_limit)}"
+                t(
+                    "history.summary.script_runs",
+                    count=len(scripts),
+                    items=self._format_index_items(scripts, list_limit),
+                )
             )
         if failures:
             lines.append(
-                f"- 失败记录({len(failures)}): {self._format_index_items(failures, list_limit)}"
+                t(
+                    "history.summary.failures",
+                    count=len(failures),
+                    items=self._format_index_items(failures, list_limit),
+                )
             )
         return "\n".join(lines)
 

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.i18n import t
 DEFAULT_CONFIG_PATH = Path("config/wunder.yaml")
 DEFAULT_OVERRIDE_PATH = Path("data/config/wunder.override.yaml")
 LEGACY_OVERRIDE_PATH = Path("data/config/wunder.yaml")
@@ -307,7 +308,9 @@ def load_config(path: Path, overrides: Optional[Dict[str, Any]] = None) -> Wunde
     """从 YAML 读取基础配置并合并持久化覆盖与临时覆盖。"""
     base_path = resolve_config_path(path)
     if not base_path.exists():
-        raise FileNotFoundError(f"配置文件不存在: {base_path}")
+        raise FileNotFoundError(
+            t("error.config_file_not_found", path=base_path)
+        )
     raw = _read_raw_config(base_path)
     override_path = resolve_override_config_path()
     override_raw = _read_raw_config(override_path)

@@ -4,6 +4,7 @@ import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 // 渲染系统提示词，并高亮 <tools> 区域内的工具名称与技能名
 const renderPromptSegmentWithSkills = (segment, segmentState) => {
@@ -102,16 +103,16 @@ const updatePromptBuildTime = (value, options = {}) => {
     return;
   }
   if (options.loading) {
-    elements.promptBuildTime.textContent = "构建耗时：计算中...";
+    elements.promptBuildTime.textContent = t("prompt.buildTime.loading");
     return;
   }
   if (!Number.isFinite(value)) {
-    elements.promptBuildTime.textContent = "构建耗时：--";
+    elements.promptBuildTime.textContent = t("prompt.buildTime.empty");
     return;
   }
   const ms = Math.max(0, Number(value));
   const display = ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(2)} ms`;
-  elements.promptBuildTime.textContent = `构建耗时：${display}`;
+  elements.promptBuildTime.textContent = t("prompt.buildTime.value", { duration: display });
 };
 
 // 拉取系统提示词并展示在侧边栏面板
@@ -135,7 +136,7 @@ export const loadSystemPrompt = async (options = {}) => {
     payload.tool_names = toolNames;
   }
 
-  elements.systemPrompt.textContent = "加载中...";
+  elements.systemPrompt.textContent = t("common.loading");
   updatePromptBuildTime(null, { loading: true });
   try {
     const response = await fetch(endpoint, {
@@ -146,20 +147,20 @@ export const loadSystemPrompt = async (options = {}) => {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     elements.systemPrompt.innerHTML = renderSystemPrompt(result.prompt || "");
     updatePromptBuildTime(result.build_time_ms);
     state.runtime.promptNeedsRefresh = false;
     if (showToast) {
-      notify("系统提示词已刷新。", "success");
+      notify(t("prompt.refreshSuccess"), "success");
     }
   } catch (error) {
-    elements.systemPrompt.textContent = `请求异常：${error.message}`;
+    elements.systemPrompt.textContent = t("prompt.requestError", { message: error.message });
     updatePromptBuildTime(null);
     if (showToast) {
-      notify(`系统提示词刷新失败：${error.message}`, "error");
+      notify(t("prompt.refreshFailed", { message: error.message }), "error");
     }
   }
 };

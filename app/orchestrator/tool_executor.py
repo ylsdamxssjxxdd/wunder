@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from app.core.config import KnowledgeBaseConfig
+from app.core.i18n import t
 from app.knowledge.service import KnowledgeQueryError, query_knowledge_documents
 from app.orchestrator.constants import TOOL_CALL_OPEN_PATTERN, TOOL_CALL_PATTERN
 from app.orchestrator.context import RequestContext, UserToolBindings
@@ -252,11 +253,23 @@ class ToolExecutor:
                     ctx, user_tool_bindings, alias_entry.owner_id
                 )
                 if not registry:
-                    return _finish(ToolResult(ok=False, data={}, error="用户技能未加载"))
+                    return _finish(
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.user_skill_not_loaded"),
+                        )
+                    )
                 try:
                     skill = registry.get(alias_entry.target)
                 except KeyError:
-                    return _finish(ToolResult(ok=False, data={}, error="用户技能不存在"))
+                    return _finish(
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.user_skill_not_found"),
+                        )
+                    )
                 payload = args.get("payload") if isinstance(args, dict) else None
                 if isinstance(payload, dict):
                     payload_data = payload
@@ -273,13 +286,21 @@ class ToolExecutor:
                     )
                 except Exception as exc:
                     return _finish(
-                        ToolResult(ok=False, data={}, error=f"用户技能执行失败: {exc}"),
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.user_skill_failed", detail=str(exc)),
+                        ),
                         mutated=True,
                     )
             if alias_entry.kind == "knowledge":
                 query = str(args.get("query", "")).strip()
                 if not query:
-                    return _finish(ToolResult(ok=False, data={}, error="知识库查询不能为空"))
+                    return _finish(
+                        ToolResult(
+                            ok=False, data={}, error=t("error.knowledge_query_required")
+                        )
+                    )
                 try:
                     root = self._user_tool_manager.store.resolve_knowledge_base_root(
                         alias_entry.owner_id, alias_entry.target
@@ -318,12 +339,24 @@ class ToolExecutor:
                 )
             if alias_entry.kind == "mcp":
                 if "@" not in alias_entry.target:
-                    return _finish(ToolResult(ok=False, data={}, error="MCP 工具名称格式错误"))
+                    return _finish(
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.mcp_name_invalid"),
+                        )
+                    )
                 server_name, tool_name = alias_entry.target.split("@", 1)
                 server_map = user_tool_bindings.mcp_servers.get(alias_entry.owner_id, {})
                 server_config = server_map.get(server_name)
                 if not server_config:
-                    return _finish(ToolResult(ok=False, data={}, error="MCP 服务未配置或未启用"))
+                    return _finish(
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.mcp_server_unavailable"),
+                        )
+                    )
                 try:
                     client = MCPClient(ctx.config, servers=[server_config])
                     result = await client.call_tool(server_name, tool_name, args)
@@ -336,14 +369,20 @@ class ToolExecutor:
                                 "tool": tool_name,
                                 "result": result,
                             },
-                            error="" if ok else "MCP 工具返回错误",
+                            error="" if ok else t("tool.invoke.mcp_result_error"),
                         )
                     )
                 except Exception as exc:
                     return _finish(
-                        ToolResult(ok=False, data={}, error=f"MCP 工具调用失败: {exc}")
+                        ToolResult(
+                            ok=False,
+                            data={},
+                            error=t("tool.invoke.mcp_call_failed", detail=str(exc)),
+                        )
                     )
-            return _finish(ToolResult(ok=False, data={}, error="未知的自建工具类型"))
+            return _finish(
+                ToolResult(ok=False, data={}, error=t("tool.invoke.user_tool_unknown"))
+            )
 
         try:
             skill = ctx.skills.get(name)
@@ -363,7 +402,11 @@ class ToolExecutor:
                 )
             except Exception as exc:
                 return _finish(
-                    ToolResult(ok=False, data={}, error=f"技能执行失败: {exc}"),
+                    ToolResult(
+                        ok=False,
+                        data={},
+                        error=t("tool.invoke.skill_failed", detail=str(exc)),
+                    ),
                     mutated=True,
                 )
 
@@ -396,7 +439,11 @@ class ToolExecutor:
                 )
             except Exception as exc:
                 return _finish(
-                    ToolResult(ok=False, data={}, error=f"wunder@run 调用失败: {exc}")
+                    ToolResult(
+                        ok=False,
+                        data={},
+                        error=t("tool.invoke.wunder_run_failed", detail=str(exc)),
+                    )
                 )
 
         if "@" in name:
@@ -408,12 +455,16 @@ class ToolExecutor:
                     ToolResult(
                         ok=ok,
                         data={"server": server, "tool": tool, "result": result},
-                        error="" if ok else "MCP 工具返回错误",
+                        error="" if ok else t("tool.invoke.mcp_result_error"),
                     )
                 )
             except Exception as exc:
                 return _finish(
-                    ToolResult(ok=False, data={}, error=f"MCP 工具调用失败: {exc}")
+                    ToolResult(
+                        ok=False,
+                        data={},
+                        error=t("tool.invoke.mcp_call_failed", detail=str(exc)),
+                    )
                 )
 
         if (

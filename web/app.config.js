@@ -7,18 +7,28 @@ const APP_CONFIG_DEFAULTS = {
   // 默认用户 ID：用于初始化调试面板输入框
   defaultUserId: "demo_user",
   // 调试面板问题预设：右键问题区域快速填充
-  debugQuestionPresets: [
-    "你好，介绍一下 wunder 的核心能力。",
-    "请列出当前可用工具，并说明用途。",
-    "用python绘制一个爱心保存到本地png",
-    "广州今天的天气如何？",
-  ],
+  debugQuestionPresets: {
+    "zh-CN": [
+      "你好，介绍一下 wunder 的核心能力。",
+      "请列出当前可用工具，并说明用途。",
+      "用python绘制一个爱心保存到本地png",
+      "广州今天的天气如何？",
+    ],
+    "en-US": [
+      "Hi, introduce wunder's core capabilities.",
+      "List the available tools and explain their purposes.",
+      "Use Python to draw a heart and save it as a local PNG.",
+      "What's the weather in Guangzhou today?",
+    ],
+  },
   // 默认首屏面板
   defaultPanel: "monitor",
   // 监控轮询间隔（毫秒）
   monitorPollIntervalMs: 3000,
   // 系统提示词自动刷新延迟（毫秒）
   promptReloadDelayMs: 300,
+  // 默认语言：用于控制前端显示与请求语言
+  language: "zh-CN",
 };
 
 export const APP_CONFIG = { ...APP_CONFIG_DEFAULTS };
@@ -42,6 +52,9 @@ const sanitizeConfig = (raw) => {
   }
   if (typeof raw.defaultPanel === "string") {
     next.defaultPanel = raw.defaultPanel.trim();
+  }
+  if (typeof raw.language === "string") {
+    next.language = raw.language.trim();
   }
   const monitorInterval = Number(raw.monitorPollIntervalMs);
   if (Number.isFinite(monitorInterval) && monitorInterval > 0) {

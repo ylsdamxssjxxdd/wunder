@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from app.core.config import WunderConfig, get_config, load_config, resolve_override_config_path
+from app.core.i18n import t
 from app.tools.constants import BUILTIN_TOOL_NAMES
 
 _SAFE_KNOWLEDGE_DIR_PATTERN = re.compile(r"[\\/:*?\"<>|]+")
@@ -24,7 +25,7 @@ def _build_default_knowledge_root(name: str) -> str:
     """当未填写目录时，生成默认目录（./knowledge/<name>）。"""
     safe_dir = _sanitize_knowledge_dir_name(name)
     if not safe_dir:
-        raise ValueError("知识库名称不合法，无法生成默认目录")
+        raise ValueError(t("error.knowledge_base_name_invalid"))
     return f"./knowledge/{safe_dir}"
 
 
@@ -52,7 +53,9 @@ def update_knowledge_config(path: Path, knowledge: Dict[str, Any]) -> WunderConf
             try:
                 Path(root).resolve().mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                raise ValueError(f"无法创建知识库目录: {root}, {exc}") from exc
+                raise ValueError(
+                    t("error.knowledge_root_create_failed", root=root, detail=str(exc))
+                ) from exc
         bases.append(
             {
                 "name": name,
@@ -229,7 +232,7 @@ def update_llm_config(path: Path, llm: Dict[str, Any]) -> WunderConfig:
         cleaned_models[model_name] = cleaned
 
     if not cleaned_models:
-        raise ValueError("至少需要一套模型配置")
+        raise ValueError(t("error.llm_config_required"))
 
     default_name = str(llm.get("default") or "").strip()
     if default_name not in cleaned_models:

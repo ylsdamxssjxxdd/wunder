@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable, Dict, List, Optional
 
+from app.core.i18n import get_language, t
 from app.tools import builtin
 from app.tools.registry import ToolCallable, ToolSpec, ensure_async
 from app.tools.types import ToolContext, ToolResult
@@ -39,305 +41,316 @@ class ToolDescriptor:
         return ensure_async(self.handler)
 
 
-_BUILTIN_TOOL_DESCRIPTORS: List[ToolDescriptor] = [
-    ToolDescriptor(
-        name="最终回复",
-        description="返回给用户的最终回复。",
-        args_schema={
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "最终回复内容。"}
+@lru_cache(maxsize=4)
+def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]:
+    """按语言生成内置工具描述，避免重复构建。"""
+    return (
+        ToolDescriptor(
+            name="最终回复",
+            description=t("tool.spec.final.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": t("tool.spec.final.args.content"),
+                    }
+                },
+                "required": ["content"],
             },
-            "required": ["content"],
-        },
-        handler=None,
-        runtime=False,
-    ),
-    ToolDescriptor(
-        name="执行命令",
-        description=(
-            "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。"
-            "默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。"
-            "当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。"
-            "若需 cd/&& 等 shell 语法，请确保 shell 为 true。"
+            handler=None,
+            runtime=False,
         ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "CLI 命令。"},
-                "workdir": {
-                    "type": "string",
-                    "description": "可选，工作目录，相对工作区或白名单目录的绝对路径。",
+        ToolDescriptor(
+            name="执行命令",
+            description=t("tool.spec.exec.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": t("tool.spec.exec.args.content"),
+                    },
+                    "workdir": {
+                        "type": "string",
+                        "description": t("tool.spec.exec.args.workdir"),
+                    },
+                    "timeout_s": {
+                        "type": "integer",
+                        "description": t("tool.spec.exec.args.timeout"),
+                    },
+                    "shell": {
+                        "type": "boolean",
+                        "description": t("tool.spec.exec.args.shell"),
+                    },
                 },
-                "timeout_s": {
-                    "type": "integer",
-                    "description": "可选，命令超时秒数，默认 30 秒。",
-                },
-                "shell": {
-                    "type": "boolean",
-                    "description": "可选，使用 shell 执行，仅在 allow_commands 为 * 时允许。",
-                },
+                "required": ["content"],
             },
-            "required": ["content"],
-        },
-        handler=builtin.execute_command,
-        runtime=True,
-        sandbox=True,
-        mutates_workspace=True,
-    ),
-    ToolDescriptor(
-        name="ptc",
-        description=(
-            "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。"
-            "脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
+            handler=builtin.execute_command,
+            runtime=True,
+            sandbox=True,
+            mutates_workspace=True,
         ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Python 脚本文件名，例如 helper.py。",
+        ToolDescriptor(
+            name="ptc",
+            description=t("tool.spec.ptc.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": t("tool.spec.ptc.args.filename"),
+                    },
+                    "workdir": {
+                        "type": "string",
+                        "description": t("tool.spec.ptc.args.workdir"),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": t("tool.spec.ptc.args.content"),
+                    },
                 },
-                "workdir": {
-                    "type": "string",
-                    "description": "相对工作区的工作目录，使用 . 表示根目录。",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "完整的 Python 脚本内容。",
-                },
+                "required": ["filename", "workdir", "content"],
             },
-            "required": ["filename", "workdir", "content"],
-        },
-        handler=builtin.ptc,
-        runtime=True,
-        sandbox=True,
-        mutates_workspace=True,
-    ),
-    ToolDescriptor(
-        name="列出文件",
-        description=(
-            "列出目录下所有直接子文件夹和文件。"
-            "如果未提供路径，默认使用工程师工作目录。"
+            handler=builtin.ptc,
+            runtime=True,
+            sandbox=True,
+            mutates_workspace=True,
         ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": (
-                        "可选，要列出的目录（相对工程师工作目录）。"
-                        "留空则使用当前工作目录。"
-                    ),
-                }
+        ToolDescriptor(
+            name="列出文件",
+            description=t("tool.spec.list.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": t("tool.spec.list.args.path"),
+                    }
+                },
             },
-        },
-        handler=builtin.list_files,
-        runtime=True,
-        sandbox=False,
-    ),
-    ToolDescriptor(
-        name="搜索内容",
-        description=(
-            "在工程师工作目录下搜索所有文本文件中的查询字符串（不区分大小写）。"
-            "返回格式为 <path>:<line>:<content>。"
+            handler=builtin.list_files,
+            runtime=True,
+            sandbox=False,
         ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "要搜索的文本（不区分大小写的字面量）。",
+        ToolDescriptor(
+            name="搜索内容",
+            description=t("tool.spec.search.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": t("tool.spec.search.args.query"),
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": t("tool.spec.search.args.path"),
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": t("tool.spec.search.args.file_pattern"),
+                    },
                 },
-                "path": {
-                    "type": "string",
-                    "description": (
-                        "可选，限制搜索范围的目录，相对工程师工作目录。"
-                    ),
-                },
-                "file_pattern": {
-                    "type": "string",
-                    "description": "可选，用于过滤文件的 glob，例如 *.cpp 或 src/**.ts。",
-                },
+                "required": ["query"],
             },
-            "required": ["query"],
-        },
-        handler=builtin.search_content,
-        runtime=True,
-        sandbox=False,
-    ),
-    ToolDescriptor(
-        name="读取文件",
-        description="读取指定路径的文件内容，支持批量读取并指定行号范围。",
-        args_schema={
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "description": "要读取的文件列表，可选指定行号范围。",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "要读取的路径。",
-                            },
-                            "start_line": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "description": "可选起始行（包含）。",
-                            },
-                            "end_line": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "description": "可选结束行（包含）。",
-                            },
-                            "line_ranges": {
-                                "type": "array",
-                                "description": "可选的行号范围列表。",
-                                "items": {
+            handler=builtin.search_content,
+            runtime=True,
+            sandbox=False,
+        ),
+        ToolDescriptor(
+            name="读取文件",
+            description=t("tool.spec.read.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "description": t("tool.spec.read.args.files"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": t("tool.spec.read.args.files.path"),
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.read.args.files.start_line"),
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.read.args.files.end_line"),
+                                },
+                                "line_ranges": {
                                     "type": "array",
-                                    "items": [
-                                        {"type": "integer", "minimum": 1},
-                                        {"type": "integer", "minimum": 1},
-                                    ],
+                                    "description": t("tool.spec.read.args.files.line_ranges"),
+                                    "items": {
+                                        "type": "array",
+                                        "items": [
+                                            {"type": "integer", "minimum": 1},
+                                            {"type": "integer", "minimum": 1},
+                                        ],
+                                    },
                                 },
                             },
+                            "required": ["path"],
                         },
-                        "required": ["path"],
                     },
                 },
+                "required": ["files"],
             },
-            "required": ["files"],
-        },
-        handler=builtin.read_file,
-        runtime=True,
-        sandbox=False,
-    ),
-    ToolDescriptor(
-        name="写入文件",
-        description=(
-            "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
+            handler=builtin.read_file,
+            runtime=True,
+            sandbox=False,
         ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "要写入的文件路径。"},
-                "content": {"type": "string", "description": "文件内容。"},
-            },
-            "required": ["path", "content"],
-        },
-        handler=builtin.write_file,
-        runtime=True,
-        sandbox=False,
-        mutates_workspace=True,
-    ),
-    ToolDescriptor(
-        name="替换文本",
-        description=(
-            "请求在现有文件中替换文本。默认只替换一次 old_string 的出现。"
-        ),
-        args_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "要编辑的文件路径。"},
-                "old_string": {
-                    "type": "string",
-                    "description": "要被替换的精确文本（请包含上下文）。",
-                },
-                "new_string": {
-                    "type": "string",
-                    "description": "用于替换 old_string 的精确文本。",
-                },
-                "expected_replacements": {
-                    "type": "number",
-                    "description": "期望替换的次数，省略则默认 1。",
-                    "minimum": 1,
-                },
-            },
-            "required": ["path", "old_string", "new_string"],
-        },
-        handler=builtin.replace_in_file,
-        runtime=True,
-        sandbox=False,
-        mutates_workspace=True,
-    ),
-    ToolDescriptor(
-        name="编辑文件",
-        description="对现有文本文件应用结构化的行级编辑。",
-        args_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "要编辑的文件路径。"},
-                "edits": {
-                    "type": "array",
-                    "description": "按顺序执行的编辑操作列表。",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
-                                "type": "string",
-                                "enum": ["replace", "insert_before", "insert_after", "delete"],
-                                "description": "要应用的编辑类型。",
-                            },
-                            "start_line": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "description": "编辑开始的行号（从 1 开始）。",
-                            },
-                            "end_line": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "description": "编辑结束的行号（包含）。",
-                            },
-                            "new_content": {
-                                "type": "string",
-                                "description": "替换或插入的内容。",
-                            },
-                        },
-                        "required": ["action", "start_line"],
-                        "additionalProperties": False,
+        ToolDescriptor(
+            name="写入文件",
+            description=t("tool.spec.write.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": t("tool.spec.write.args.path"),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": t("tool.spec.write.args.content"),
                     },
                 },
-                "ensure_newline_at_eof": {
-                    "type": "boolean",
-                    "description": "为 true 时确保文件以换行结束。",
-                },
+                "required": ["path", "content"],
             },
-            "required": ["path", "edits"],
-        },
-        handler=builtin.edit_in_file,
-        runtime=True,
-        sandbox=False,
-        mutates_workspace=True,
-    ),
-]
+            handler=builtin.write_file,
+            runtime=True,
+            sandbox=False,
+            mutates_workspace=True,
+        ),
+        ToolDescriptor(
+            name="替换文本",
+            description=t("tool.spec.replace.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": t("tool.spec.replace.args.path"),
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": t("tool.spec.replace.args.old_string"),
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": t("tool.spec.replace.args.new_string"),
+                    },
+                    "expected_replacements": {
+                        "type": "number",
+                        "description": t("tool.spec.replace.args.expected_replacements"),
+                        "minimum": 1,
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+            handler=builtin.replace_in_file,
+            runtime=True,
+            sandbox=False,
+            mutates_workspace=True,
+        ),
+        ToolDescriptor(
+            name="编辑文件",
+            description=t("tool.spec.edit.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": t("tool.spec.edit.args.path"),
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": t("tool.spec.edit.args.edits"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": [
+                                        "replace",
+                                        "insert_before",
+                                        "insert_after",
+                                        "delete",
+                                    ],
+                                    "description": t("tool.spec.edit.args.edits.action"),
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.edit.args.edits.start_line"),
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.edit.args.edits.end_line"),
+                                },
+                                "new_content": {
+                                    "type": "string",
+                                    "description": t("tool.spec.edit.args.edits.new_content"),
+                                },
+                            },
+                            "required": ["action", "start_line"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "ensure_newline_at_eof": {
+                        "type": "boolean",
+                        "description": t("tool.spec.edit.args.ensure_newline"),
+                    },
+                },
+                "required": ["path", "edits"],
+            },
+            handler=builtin.edit_in_file,
+            runtime=True,
+            sandbox=False,
+            mutates_workspace=True,
+        ),
+    )
 
 
 def list_builtin_tool_descriptors() -> List[ToolDescriptor]:
     """返回内置工具定义列表，用于提示词、注册与配置一致性。"""
-    return list(_BUILTIN_TOOL_DESCRIPTORS)
+    language = get_language()
+    return list(_build_builtin_tool_descriptors(language))
 
 
 def list_builtin_tool_names() -> List[str]:
     """列出内置工具名称，供配置默认值与工具选择使用。"""
-    return [descriptor.name for descriptor in _BUILTIN_TOOL_DESCRIPTORS]
+    return [descriptor.name for descriptor in list_builtin_tool_descriptors()]
 
 
 def list_sandbox_tool_names() -> List[str]:
     """列出需要进入沙盒执行的工具名称。"""
-    return [descriptor.name for descriptor in _BUILTIN_TOOL_DESCRIPTORS if descriptor.sandbox]
+    return [
+        descriptor.name
+        for descriptor in list_builtin_tool_descriptors()
+        if descriptor.sandbox
+    ]
 
 
 def build_builtin_tool_specs() -> Dict[str, ToolSpec]:
     """构建内置工具规格映射，用于提示词注入与管理展示。"""
-    return {descriptor.name: descriptor.to_spec() for descriptor in _BUILTIN_TOOL_DESCRIPTORS}
+    return {
+        descriptor.name: descriptor.to_spec()
+        for descriptor in list_builtin_tool_descriptors()
+    }
 
 
 def build_builtin_tool_handlers() -> Dict[str, ToolCallable]:
     """构建内置工具执行入口映射，保证与规格一致。"""
     handlers: Dict[str, ToolCallable] = {}
-    for descriptor in _BUILTIN_TOOL_DESCRIPTORS:
+    for descriptor in list_builtin_tool_descriptors():
         async_handler = descriptor.to_async_handler()
         if async_handler is not None and descriptor.runtime:
             handlers[descriptor.name] = async_handler
@@ -347,7 +360,7 @@ def build_builtin_tool_handlers() -> Dict[str, ToolCallable]:
 def build_sandbox_tool_handlers() -> Dict[str, ToolHandler]:
     """构建沙盒可执行的同步工具映射，仅包含允许沙盒运行的工具。"""
     handlers: Dict[str, ToolHandler] = {}
-    for descriptor in _BUILTIN_TOOL_DESCRIPTORS:
+    for descriptor in list_builtin_tool_descriptors():
         if descriptor.handler is None or not descriptor.sandbox:
             continue
         handlers[descriptor.name] = descriptor.handler
@@ -356,7 +369,7 @@ def build_sandbox_tool_handlers() -> Dict[str, ToolHandler]:
 
 def is_workspace_mutation_tool(tool_name: str) -> bool:
     """判断工具是否可能改写工作区内容，用于刷新目录树缓存。"""
-    for descriptor in _BUILTIN_TOOL_DESCRIPTORS:
+    for descriptor in list_builtin_tool_descriptors():
         if descriptor.name == tool_name:
             return descriptor.mutates_workspace
     return False

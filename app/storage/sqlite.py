@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.core.i18n import DEFAULT_LANGUAGE, normalize_language
+
 
 _STORAGE_LOCK = threading.Lock()
 _STORAGE_CACHE: Dict[str, "SQLiteStorage"] = {}
@@ -642,9 +644,14 @@ class SQLiteStorage:
                 records.append(payload)
         return records
 
-    def get_session_system_prompt(self, user_id: str, session_id: str) -> Optional[str]:
+    def get_session_system_prompt(
+        self, user_id: str, session_id: str, language: Optional[str] = None
+    ) -> Optional[str]:
         """读取指定会话固定系统提示词。"""
         self.ensure_initialized()
+        normalized_language = (
+            normalize_language(language, fallback=True) if language else None
+        )
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -664,6 +671,14 @@ class SQLiteStorage:
                 continue
             if meta.get("type") != "system_prompt":
                 continue
+            if normalized_language:
+                meta_language = str(meta.get("language") or "").strip()
+                if meta_language:
+                    if normalize_language(meta_language, fallback=True) != normalized_language:
+                        continue
+                elif normalized_language != DEFAULT_LANGUAGE:
+                    # 旧数据未记录语言时默认视为中文
+                    continue
             content = payload.get("content")
             if isinstance(content, str) and content.strip():
                 return content

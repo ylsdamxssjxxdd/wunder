@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
+from app.core.i18n import get_language, t
 from app.memory.workspace import build_workspace_tree
 from app.tools.registry import ToolSpec
 
@@ -12,19 +13,30 @@ _PROMPT_FILE_CACHE: dict[str, tuple[float, str]] = {}
 _PROMPT_FILE_LOCK = threading.Lock()
 
 
+def _resolve_prompt_path(path: Path) -> Path:
+    """按语言解析提示词模板路径，优先使用对应语言版本。"""
+    language = get_language()
+    if language.startswith("en"):
+        candidate = path.parent / "en" / path.name
+        if candidate.exists():
+            return candidate
+    return path
+
+
 def read_prompt_template(path: Path) -> str:
     """读取提示词模板文件，基于文件更新时间缓存内容以减少磁盘 IO。"""
     # 模板文件会在每次构建提示词时读取，使用 mtime 缓存可以显著降低重复磁盘访问开销。
+    resolved = _resolve_prompt_path(path)
     try:
-        mtime = path.stat().st_mtime
+        mtime = resolved.stat().st_mtime
     except OSError:
-        return path.read_text(encoding="utf-8")
-    cache_key = str(path)
+        return resolved.read_text(encoding="utf-8")
+    cache_key = str(resolved)
     with _PROMPT_FILE_LOCK:
         cached = _PROMPT_FILE_CACHE.get(cache_key)
         if cached and cached[0] == mtime:
             return cached[1]
-    text = path.read_text(encoding="utf-8")
+    text = resolved.read_text(encoding="utf-8")
     with _PROMPT_FILE_LOCK:
         _PROMPT_FILE_CACHE[cache_key] = (mtime, text)
     return text
@@ -70,7 +82,7 @@ def _build_engineer_info(
     template = _read_prompt_file(template_path)
     ptc_guidance = ""
     if include_ptc:
-        ptc_guidance = "- 若已挂载 ptc，优先使用 ptc 完成任务，不需要先写脚本保存到本地然后再去执行，提高效率。"
+        ptc_guidance = t("prompt.engineer.ptc_guidance")
     return _render_template(
         template,
         {

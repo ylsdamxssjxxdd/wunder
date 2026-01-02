@@ -11,6 +11,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from app.core.i18n import t
+
 _DEFAULT_SUPPORTED_EXTENSIONS = {
     ".txt",
     ".md",
@@ -104,7 +106,7 @@ def resolve_unique_markdown_path(root: Path, stem: str) -> Path:
         candidate = root / f"{safe_stem}-{idx}.md"
         if not candidate.exists():
             return candidate
-    raise RuntimeError("无法生成唯一的 Markdown 文件名")
+    raise RuntimeError(t("error.converter_unique_markdown_name"))
 
 
 def resolve_doc2md_binary() -> Optional[Path]:
@@ -147,9 +149,11 @@ def run_doc2md(binary: Path, input_path: Path, output_path: Path) -> Tuple[bool,
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     if result.returncode != 0:
-        return False, (result.stderr or result.stdout or "doc2md 执行失败").strip()
+        return False, (
+            result.stderr or result.stdout or t("error.converter_doc2md_failed")
+        ).strip()
     if not output_path.exists():
-        return False, "doc2md 未生成输出文件"
+        return False, t("error.converter_doc2md_no_output")
     return True, ""
 
 
@@ -160,7 +164,7 @@ def _read_text(path: Path) -> str:
             return path.read_text(encoding=encoding, errors="ignore")
         except OSError:
             continue
-    raise RuntimeError("文本读取失败")
+    raise RuntimeError(t("error.converter_read_text_failed"))
 
 
 def _wrap_code_block(text: str, language: str) -> str:
@@ -195,7 +199,9 @@ def _convert_docx(path: Path) -> str:
     try:
         from docx import Document  # type: ignore
     except Exception as exc:
-        raise RuntimeError(f"python-docx 不可用: {exc}") from exc
+        raise RuntimeError(
+            t("error.converter_python_docx_unavailable", detail=str(exc))
+        ) from exc
     doc = Document(str(path))
     lines: List[str] = []
     for paragraph in doc.paragraphs:
@@ -222,7 +228,9 @@ def _convert_pptx(path: Path) -> str:
     try:
         from pptx import Presentation  # type: ignore
     except Exception as exc:
-        raise RuntimeError(f"python-pptx 不可用: {exc}") from exc
+        raise RuntimeError(
+            t("error.converter_python_pptx_unavailable", detail=str(exc))
+        ) from exc
     presentation = Presentation(str(path))
     lines: List[str] = []
     for index, slide in enumerate(presentation.slides, start=1):
@@ -244,7 +252,9 @@ def _convert_xlsx(path: Path) -> str:
     try:
         from openpyxl import load_workbook  # type: ignore
     except Exception as exc:
-        raise RuntimeError(f"openpyxl 不可用: {exc}") from exc
+        raise RuntimeError(
+            t("error.converter_openpyxl_unavailable", detail=str(exc))
+        ) from exc
     workbook = load_workbook(filename=str(path), data_only=True)
     lines: List[str] = []
     for sheet in workbook.worksheets:
@@ -319,7 +329,7 @@ def convert_with_python(path: Path, extension: str) -> Tuple[str, str]:
     if ext == ".xlsx":
         return _convert_xlsx(path), "openpyxl"
 
-    raise RuntimeError(f"未找到可用的 Python 转换器: {ext}")
+    raise RuntimeError(t("error.converter_python_converter_not_found", ext=ext))
 
 
 def convert_to_markdown(
@@ -332,10 +342,10 @@ def convert_to_markdown(
         ok, detail = run_doc2md(binary, input_path, output_path)
         if ok:
             return ConversionResult(converter="doc2md", warnings=warnings)
-        warnings.append(detail or "doc2md 转换失败")
+        warnings.append(detail or t("error.converter_doc2md_convert_failed"))
     markdown, converter = convert_with_python(input_path, extension)
     if not markdown.strip():
-        raise RuntimeError("转换结果为空")
+        raise RuntimeError(t("error.converter_empty_result"))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(markdown, encoding="utf-8")
     return ConversionResult(converter=converter, warnings=warnings)

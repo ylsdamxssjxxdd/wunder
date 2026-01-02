@@ -1,0 +1,44 @@
+"use strict";
+
+import { createSlide } from "./utils.js";
+
+// 第 6 页：MCP 工具，用于拆分维护本页内容。
+export default function buildSlide() {
+  return createSlide(`
+<section class="slide" data-title="MCP 工具">
+        <div class="slide-meta">
+          <span class="section-tag">第2节 工具体系</span>
+          <div class="section-map">
+            <span class="section-chip">总览</span>
+            <span class="section-chip">内置</span>
+            <span class="section-chip active">MCP</span>
+            <span class="section-chip">Skills</span>
+            <span class="section-chip">知识库</span>
+            <span class="section-chip">自建</span>
+            <span class="section-chip">共享</span>
+          </div>
+        </div>
+        <h2>MCP 工具：接入外部系统</h2>
+        <p class="section-lead">当内置不够用，就把外部能力接进来</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">是什么</span>
+            <ul>
+              <li>通过 MCP 协议接入外部服务</li>
+              <li>统一以 server@tool 方式调用</li>
+              <li>自动加入工具清单管理</li>
+            </ul>
+          </div>
+          <div class="card soft stack">
+            <span class="pill">有什么用</span>
+            <ul>
+              <li>连接企业系统、搜索、BI 等能力</li>
+              <li>形成跨系统的执行链路</li>
+            </ul>
+            <span class="pill">治理要点</span>
+            <p>allow_tools 白名单 + 统一超时控制</p>
+          </div>
+        </div>
+      </section>
+  `);
+}

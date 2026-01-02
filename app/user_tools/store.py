@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import MCPServerConfig, WunderConfig
+from app.core.i18n import t
 
 
 @dataclass
@@ -191,13 +192,13 @@ class UserToolStore:
         """解析用户知识库目录路径，阻止路径穿越。"""
         cleaned = str(base_name or "").strip()
         if not cleaned:
-            raise ValueError("知识库名称不能为空")
+            raise ValueError(t("error.knowledge_base_name_required"))
         if "/" in cleaned or "\\" in cleaned or ".." in cleaned:
-            raise ValueError("知识库名称包含非法路径")
+            raise ValueError(t("error.knowledge_name_invalid_path"))
         root = self.get_knowledge_root(user_id)
         target = (root / cleaned).resolve()
         if target != root and root not in target.parents:
-            raise ValueError("知识库路径越界访问被禁止")
+            raise ValueError(t("error.knowledge_path_out_of_bounds"))
         if create and not target.exists():
             target.mkdir(parents=True, exist_ok=True)
         return target

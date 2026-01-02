@@ -4,6 +4,7 @@ import asyncio
 from typing import Any, Callable, List, Optional
 
 from app.api.deps import get_orchestrator
+from app.core.i18n import t
 from app.schemas.wunder import WunderRequest
 from app.tools.availability import collect_available_tool_names
 
@@ -28,7 +29,7 @@ async def run_wunder_task(task: str) -> dict:
     """执行 wunder 智能体任务并返回结果。"""
     cleaned = str(task or "").strip()
     if not cleaned:
-        raise ValueError("任务不能为空")
+        raise ValueError(t("error.task_required"))
     # 统一封装内部执行逻辑，供 MCP 工具与直连调用复用。
     tool_names = _build_allowed_tool_names()
     request = WunderRequest(
@@ -49,14 +50,16 @@ def _build_mcp_server():
     """延迟创建 FastMCP 服务，避免导入期加载重依赖。"""
     from fastmcp import FastMCP
 
+    instructions = t("mcp.instructions")
+    description = t("mcp.tool.run.description")
     mcp_server = FastMCP(
         name=MCP_SERVER_NAME,
-        instructions="调用 wunder 智能体执行任务并返回最终回复。",
+        instructions=instructions,
     )
 
     @mcp_server.tool(
         name=MCP_TOOL_NAME,
-        description="执行 wunder 智能体任务并返回最终回复。",
+        description=description,
     )
     async def wunder_run(task: str) -> dict:
         """执行 wunder 智能体任务。"""

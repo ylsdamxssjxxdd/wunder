@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20251229-02";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 let contextProbeTimer = null;
 let lastProbeKey = "";
@@ -127,10 +128,10 @@ const updateDetailHeader = () => {
   const config = state.llm.configs[activeName];
   if (!activeName || !config) {
     if (elements.llmDetailTitle) {
-      elements.llmDetailTitle.textContent = "未选择配置";
+      elements.llmDetailTitle.textContent = t("llm.detail.emptyTitle");
     }
     if (elements.llmDetailMeta) {
-      elements.llmDetailMeta.textContent = "暂无模型配置。";
+      elements.llmDetailMeta.textContent = t("llm.detail.emptyMeta");
     }
     if (elements.llmSetDefaultBtn) {
       elements.llmSetDefaultBtn.disabled = true;
@@ -148,15 +149,15 @@ const updateDetailHeader = () => {
   if (elements.llmDetailMeta) {
     const parts = [];
     if (activeName === state.llm.defaultName) {
-      parts.push("默认模型");
+      parts.push(t("llm.default"));
     }
     if (config.model) {
-      parts.push(`模型：${config.model}`);
+      parts.push(t("llm.modelLabel", { model: config.model }));
     }
     if (config.base_url) {
       parts.push(config.base_url);
     }
-    elements.llmDetailMeta.textContent = parts.join(" · ") || "已选择模型配置。";
+    elements.llmDetailMeta.textContent = parts.join(" · ") || t("llm.detail.selected");
   }
   if (elements.llmSetDefaultBtn) {
     const isDefault = activeName === state.llm.defaultName;
@@ -175,7 +176,7 @@ const renderLlmList = () => {
   }
   elements.llmConfigList.textContent = "";
   if (!state.llm.order.length) {
-    elements.llmConfigList.textContent = "暂无模型配置。";
+    elements.llmConfigList.textContent = t("llm.list.empty");
     return;
   }
   state.llm.order.forEach((name) => {
@@ -195,7 +196,7 @@ const renderLlmList = () => {
     if (name === state.llm.defaultName) {
       const badge = document.createElement("span");
       badge.className = "llm-default-tag";
-      badge.innerHTML = '<i class="fa-solid fa-star"></i>默认';
+      badge.innerHTML = `<i class="fa-solid fa-star"></i>${t("llm.defaultBadge")}`;
       title.appendChild(badge);
     }
 
@@ -207,7 +208,7 @@ const renderLlmList = () => {
     if (config?.base_url) {
       metaParts.push(config.base_url);
     }
-    meta.textContent = metaParts.join(" · ") || "未配置模型信息";
+    meta.textContent = metaParts.join(" · ") || t("llm.meta.empty");
 
     item.appendChild(title);
     item.appendChild(meta);
@@ -336,7 +337,7 @@ const requestContextWindow = async (force = false) => {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     const latestPayload = buildContextProbePayload();
@@ -353,19 +354,19 @@ const requestContextWindow = async (force = false) => {
         elements.llmMaxContext.value = String(result.max_context);
         lastAutoContext = result.max_context;
         lastProbeKey = probeKey;
-        appendLog(`已自动获取最大上下文：${result.max_context}`);
+        appendLog(t("llm.contextProbe.auto", { value: result.max_context }));
         if (force) {
-          notify(`已自动获取最大上下文：${result.max_context}`, "info");
+          notify(t("llm.contextProbe.auto", { value: result.max_context }), "info");
         }
       }
       return;
     }
     lastProbeKey = probeKey;
     if (result.message) {
-      appendLog(`上下文探测结果：${result.message}`);
+      appendLog(t("llm.contextProbe.result", { message: result.message }));
     }
   } catch (error) {
-    appendLog(`上下文探测失败：${error.message}`);
+    appendLog(t("llm.contextProbe.failed", { message: error.message }));
   } finally {
     probeInFlight = false;
     if (pendingProbe) {
@@ -396,8 +397,8 @@ const renderDebugModelOptions = () => {
   select.textContent = "";
   const defaultOption = document.createElement("option");
   const defaultLabel = state.llm.defaultName
-    ? `默认模型（${state.llm.defaultName}）`
-    : "默认模型";
+    ? t("llm.defaultWithName", { name: state.llm.defaultName })
+    : t("llm.default");
   defaultOption.value = "";
   defaultOption.textContent = defaultLabel;
   select.appendChild(defaultOption);
@@ -416,7 +417,7 @@ const applyLlmSet = (raw, options = {}) => {
   const normalized = normalizeLlmSet(raw || {});
   if (!normalized.order.length) {
     // 首次无模型配置时，模拟点击新增的状态，避免表单无法保存。
-    const baseName = "新模型";
+    const baseName = t("llm.newName");
     let name = baseName;
     let index = 1;
     while (normalized.models[name]) {
@@ -466,7 +467,7 @@ export const loadLlmConfig = async (options = {}) => {
   const endpoint = `${wunderBase}/admin/llm`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   applyLlmSet(result.llm || {}, { syncDebug: true });
@@ -483,14 +484,14 @@ export const ensureLlmConfigLoaded = async () => {
 const commitActiveConfigEdits = () => {
   const activeName = state.llm.activeName;
   if (!activeName) {
-    throw new Error("请先选择模型配置。");
+    throw new Error(t("llm.error.selectFirst"));
   }
   const desiredName = String(elements.llmConfigName?.value || "").trim();
   if (!desiredName) {
-    throw new Error("请填写配置名称。");
+    throw new Error(t("llm.error.nameRequired"));
   }
   if (desiredName !== activeName && state.llm.configs[desiredName]) {
-    throw new Error("配置名称已存在。");
+    throw new Error(t("llm.error.nameExists"));
   }
   syncActiveConfigToState();
   const currentConfig = state.llm.configs[activeName] || normalizeLlmConfig({});
@@ -539,7 +540,7 @@ export const saveLlmConfig = async () => {
     body: JSON.stringify({ llm: payload }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   applyLlmSet(result.llm || {}, { syncDebug: true });
@@ -547,7 +548,7 @@ export const saveLlmConfig = async () => {
 
 const handleAddConfig = () => {
   syncActiveConfigToState();
-  const baseName = "新模型";
+  const baseName = t("llm.newName");
   let name = baseName;
   let index = 1;
   while (state.llm.configs[name]) {
@@ -564,7 +565,7 @@ const handleAddConfig = () => {
   renderLlmList();
   applyLlmConfigToForm(name, state.llm.configs[name]);
   updateDetailHeader();
-  appendLog(`已新增模型配置 ${name}，请填写后保存。`);
+  appendLog(t("llm.added", { name }));
 };
 
 const handleDeleteConfig = () => {
@@ -573,10 +574,10 @@ const handleDeleteConfig = () => {
     return;
   }
   if (state.llm.order.length <= 1) {
-    notify("至少保留一套模型配置。", "warn");
+    notify(t("llm.error.keepOne"), "warn");
     return;
   }
-  const confirmed = window.confirm(`确定删除模型配置 ${activeName} 吗？`);
+  const confirmed = window.confirm(t("llm.deleteConfirm", { name: activeName }));
   if (!confirmed) {
     return;
   }
@@ -595,7 +596,7 @@ const handleDeleteConfig = () => {
     clearLlmForm();
   }
   updateDetailHeader();
-  appendLog(`已移除模型配置 ${activeName}，请保存配置。`);
+  appendLog(t("llm.removed", { name: activeName }));
 };
 
 const handleSetDefault = () => {
@@ -606,8 +607,8 @@ const handleSetDefault = () => {
   state.llm.defaultName = activeName;
   renderLlmList();
   updateDetailHeader();
-  appendLog(`已设置默认模型：${activeName}，请保存配置。`);
-  notify(`已设置默认模型：${activeName}，请保存配置。`, "info");
+  appendLog(t("llm.setDefault", { name: activeName }));
+  notify(t("llm.setDefault", { name: activeName }), "info");
 };
 
 const handleNameEdit = () => {
@@ -630,11 +631,11 @@ export const initLlmPanel = () => {
   elements.saveLlmBtn.addEventListener("click", async () => {
     try {
       await saveLlmConfig();
-      appendLog("模型配置已保存。");
-      notify("模型配置已保存。", "success");
+      appendLog(t("llm.saved"));
+      notify(t("llm.saved"), "success");
     } catch (error) {
-      appendLog(`模型配置保存失败：${error.message}`);
-      notify(`模型配置保存失败：${error.message}`, "error");
+      appendLog(t("llm.saveFailed", { message: error.message }));
+      notify(t("llm.saveFailed", { message: error.message }), "error");
     }
   });
 
@@ -645,7 +646,7 @@ export const initLlmPanel = () => {
   elements.llmProbeContextBtn?.addEventListener("click", () => {
     // 手动触发最大上下文探测，缺少必要字段时给出提示
     if (!buildContextProbePayload()) {
-      notify("请先填写 Base URL 与模型名称。", "warn");
+      notify(t("llm.error.probeMissing"), "warn");
       return;
     }
     requestContextWindow(true);

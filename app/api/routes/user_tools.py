@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from app.api.deps import get_config_path, get_orchestrator
 from app.api.responses import json_response
 from app.core.config import KnowledgeBaseConfig, load_config
+from app.core.i18n import t
 from app.knowledge.converter import (
     convert_to_markdown,
     get_supported_extensions,
@@ -48,10 +49,16 @@ def _resolve_knowledge_path(root: Path, relative_path: str) -> Path:
     """解析知识库文件路径，阻止目录穿越。"""
     rel = Path(relative_path)
     if rel.is_absolute():
-        raise HTTPException(status_code=400, detail={"message": "不允许使用绝对路径"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.absolute_path_forbidden")},
+        )
     target = (root / rel).resolve()
     if target != root and root not in target.parents:
-        raise HTTPException(status_code=400, detail={"message": "路径越界访问被禁止"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.path_out_of_bounds")},
+        )
     return target
 
 
@@ -72,7 +79,9 @@ async def wunder_user_mcp_list(user_id: str = Query(..., description="用户唯�
     """获取用户 MCP 服务配置。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     payload = get_orchestrator().user_tool_store.load_user_tools(cleaned)
     servers = [
         UserMcpServerItem(
@@ -98,7 +107,9 @@ async def wunder_user_mcp_update(request: UserMcpUpdateRequest):
     """更新用户 MCP 服务配置。"""
     cleaned = str(request.user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     raw_servers = [server.model_dump() for server in request.servers or []]
     payload = get_orchestrator().user_tool_store.update_mcp_servers(cleaned, raw_servers)
     servers = [
@@ -135,7 +146,9 @@ async def wunder_user_skills_list(user_id: str = Query(..., description="用户�
     """获取用户技能清单与启用状态。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     orchestrator = get_orchestrator()
     payload = orchestrator.user_tool_store.load_user_tools(cleaned)
     skill_root = orchestrator.user_tool_store.get_skill_root(cleaned)
@@ -176,9 +189,13 @@ async def wunder_user_skills_content(
     cleaned = str(user_id or "").strip()
     name = name.strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     if not name:
-        raise HTTPException(status_code=400, detail={"message": "技能名称不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skill_name_required")}
+        )
     orchestrator = get_orchestrator()
     skill_root = orchestrator.user_tool_store.get_skill_root(cleaned)
     scan_config = load_config(get_config_path())
@@ -193,14 +210,19 @@ async def wunder_user_skills_content(
             skill_spec = spec
             break
     if not skill_spec:
-        raise HTTPException(status_code=404, detail={"message": "技能不存在"})
+        raise HTTPException(status_code=404, detail={"message": t("error.skill_not_found")})
     skill_path = Path(skill_spec.path)
     if not skill_path.exists() or not skill_path.is_file():
-        raise HTTPException(status_code=404, detail={"message": "技能文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.skill_file_not_found")}
+        )
     try:
         content = skill_path.read_text(encoding="utf-8")
     except Exception as exc:
-        raise HTTPException(status_code=400, detail={"message": f"读取技能文件失败: {exc}"}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.skill_file_read_failed", detail=str(exc))},
+        ) from exc
 
     response = SkillContentResponse(
         name=skill_spec.name,
@@ -215,7 +237,9 @@ async def wunder_user_skills_update(request: UserSkillsUpdateRequest):
     """更新用户技能启用状态。"""
     cleaned = str(request.user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     orchestrator = get_orchestrator()
     payload = orchestrator.user_tool_store.update_skills(
         cleaned, request.enabled, request.shared
@@ -259,10 +283,14 @@ async def wunder_user_skills_upload(
     """上传技能压缩包并解压到用户技能目录。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     filename = file.filename or ""
     if not filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail={"message": "仅支持上传 .zip 压缩包"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.skill_upload_zip_only")}
+        )
 
     target_root = get_orchestrator().user_tool_store.get_skill_root(cleaned).resolve()
     target_root.mkdir(parents=True, exist_ok=True)
@@ -276,26 +304,37 @@ async def wunder_user_skills_upload(
                     continue
                 raw_name = info.filename.replace("\\", "/")
                 if not raw_name or raw_name.startswith("/") or raw_name.startswith("\\"):
-                    raise HTTPException(status_code=400, detail={"message": "压缩包路径非法"})
+                    raise HTTPException(
+                        status_code=400, detail={"message": t("error.zip_path_invalid")}
+                    )
                 path = Path(raw_name)
                 if any(part == ".." for part in path.parts):
-                    raise HTTPException(status_code=400, detail={"message": "压缩包包含非法路径"})
+                    raise HTTPException(
+                        status_code=400, detail={"message": t("error.zip_path_illegal")}
+                    )
                 dest = (target_root / path).resolve()
                 if dest != target_root and target_root not in dest.parents:
-                    raise HTTPException(status_code=400, detail={"message": "压缩包包含越界路径"})
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"message": t("error.zip_path_out_of_bounds")},
+                    )
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zip_file.open(info) as src, dest.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 extracted += 1
     except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail={"message": "压缩包格式错误"}) from exc
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.zip_invalid")}
+        ) from exc
     finally:
         await file.close()
 
     # 上传技能包会改变技能目录内容，清理缓存避免读取旧的技能信息
     get_orchestrator().user_tool_manager.clear_skill_cache(cleaned)
     return json_response(
-        SkillsUploadResponse(ok=True, extracted=extracted, message="上传成功")
+        SkillsUploadResponse(
+            ok=True, extracted=extracted, message=t("message.upload_success")
+        )
     )
 
 
@@ -304,7 +343,9 @@ async def wunder_user_knowledge_get(user_id: str = Query(..., description="用�
     """获取用户知识库配置。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     payload = get_orchestrator().user_tool_store.load_user_tools(cleaned)
     bases = []
     for base in payload.knowledge_bases:
@@ -336,7 +377,9 @@ async def wunder_user_knowledge_update(request: UserKnowledgeConfigUpdateRequest
     """更新用户知识库配置。"""
     cleaned = str(request.user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     raw_bases = [base.model_dump() for base in request.knowledge.bases or []]
     payload = get_orchestrator().user_tool_store.update_knowledge_bases(cleaned, raw_bases)
     bases = []
@@ -373,10 +416,15 @@ async def wunder_user_knowledge_upload(
     """上传文件并转换为 Markdown 保存到用户知识库。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     base_name = str(base or "").strip()
     if not base_name:
-        raise HTTPException(status_code=400, detail={"message": "知识库名称不能为空"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.knowledge_base_name_required")},
+        )
     try:
         root = get_orchestrator().user_tool_store.resolve_knowledge_base_root(
             cleaned, base_name, create=True
@@ -387,11 +435,13 @@ async def wunder_user_knowledge_upload(
     extension = Path(filename).suffix.lower()
     supported = set(get_supported_extensions())
     if not extension:
-        raise HTTPException(status_code=400, detail={"message": "文件缺少扩展名"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.file_extension_missing")}
+        )
     if extension not in supported:
         raise HTTPException(
             status_code=400,
-            detail={"message": f"不支持的文件类型: {extension}"},
+            detail={"message": t("error.unsupported_file_type", extension=extension)},
         )
     stem = sanitize_filename_stem(Path(filename).stem) or "document"
     output_path = resolve_unique_markdown_path(root, stem)
@@ -417,7 +467,7 @@ async def wunder_user_knowledge_upload(
     relative_path = output_path.relative_to(root).as_posix()
     response = KnowledgeUploadResponse(
         ok=True,
-        message="上传并转换完成",
+        message=t("message.upload_converted"),
         path=relative_path,
         converter=result.converter,
         warnings=result.warnings,
@@ -433,7 +483,9 @@ async def wunder_user_knowledge_files(
     """列出用户知识库目录下的 Markdown 文件。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     try:
         root = get_orchestrator().user_tool_store.resolve_knowledge_base_root(cleaned, base)
     except Exception as exc:
@@ -461,16 +513,22 @@ async def wunder_user_knowledge_file(
     """读取用户知识库文件内容。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     try:
         root = get_orchestrator().user_tool_store.resolve_knowledge_base_root(cleaned, base)
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     target = _resolve_knowledge_path(root, path)
     if target.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail={"message": "文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.file_not_found")}
+        )
     content = target.read_text(encoding="utf-8", errors="ignore")
     response = KnowledgeFileResponse(base=base, path=path, content=content)
     return json_response(response)
@@ -481,7 +539,9 @@ async def wunder_user_knowledge_file_update(request: UserKnowledgeFileUpdateRequ
     """保存用户知识库文件内容。"""
     cleaned = str(request.user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     try:
         root = get_orchestrator().user_tool_store.resolve_knowledge_base_root(
             cleaned, request.base, create=True
@@ -490,13 +550,17 @@ async def wunder_user_knowledge_file_update(request: UserKnowledgeFileUpdateRequ
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     target = _resolve_knowledge_path(root, request.path)
     if target.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(request.content or "", encoding="utf-8")
     await refresh_knowledge_cache(
         KnowledgeBaseConfig(name=request.base, description="", root=str(root))
     )
-    response = KnowledgeActionResponse(ok=True, message="已保存并刷新索引")
+    response = KnowledgeActionResponse(
+        ok=True, message=t("message.saved_and_reindexed")
+    )
     return json_response(response)
 
 
@@ -509,20 +573,24 @@ async def wunder_user_knowledge_file_delete(
     """删除用户知识库文件。"""
     cleaned = str(user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     try:
         root = get_orchestrator().user_tool_store.resolve_knowledge_base_root(cleaned, base)
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     target = _resolve_knowledge_path(root, path)
     if target.suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail={"message": "仅支持 Markdown 文件"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.markdown_only")}
+        )
     if target.exists() and target.is_file():
         target.unlink()
         await refresh_knowledge_cache(
             KnowledgeBaseConfig(name=base, description="", root=str(root))
         )
-    response = KnowledgeActionResponse(ok=True, message="已删除")
+    response = KnowledgeActionResponse(ok=True, message=t("message.deleted"))
     return json_response(response)
 
 
@@ -531,7 +599,9 @@ async def wunder_user_extra_prompt_update(request: UserExtraPromptUpdateRequest)
     """更新用户附加提示词。"""
     cleaned = str(request.user_id or "").strip()
     if not cleaned:
-        raise HTTPException(status_code=400, detail={"message": "用户不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.user_id_required")}
+        )
     payload = get_orchestrator().user_tool_store.update_extra_prompt(
         cleaned, str(request.extra_prompt or "")
     )

@@ -1,0 +1,17 @@
+Context length has reached the threshold. Summarize the prior conversation into a handoff-ready structured summary to guide the next agent.
+Requirements:
+1) Output must follow the fixed structure below (keep all headings).
+2) If the context includes [Artifact Index], prioritize referencing files/commands/scripts from it.
+3) Preserve key file paths, commands, errors, and conclusions; omit irrelevant details.
+4) If a section has no content, write "None".
+
+Output structure:
+## Goal
+## Progress
+## Decisions and Constraints
+## Key Data and Artifacts
+- File changes:
+- Files read:
+- Commands / Scripts:
+- Key outputs / Errors:
+## Next Steps

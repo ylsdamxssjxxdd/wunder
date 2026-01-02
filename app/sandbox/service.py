@@ -7,6 +7,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException
 
+from app.core.i18n import resolve_language, reset_language, set_language, t
 from app.sandbox.runner import execute_payload
 from app.sandbox.schemas import (
     SandboxReleaseRequest,
@@ -20,7 +21,7 @@ def _normalize_container_path(raw_path: str, container_root: PurePosixPath) -> P
     """规范化容器内路径，确保位于 container_root 下。"""
     raw = str(raw_path).strip()
     if not raw:
-        raise ValueError("路径不能为空。")
+        raise ValueError(t("sandbox.error.path_required"))
     path = PurePosixPath(raw)
     if not path.is_absolute():
         path = container_root / path
@@ -28,7 +29,7 @@ def _normalize_container_path(raw_path: str, container_root: PurePosixPath) -> P
     try:
         normalized.relative_to(container_root)
     except ValueError as exc:
-        raise ValueError("沙盒路径越界，已拒绝。") from exc
+        raise ValueError(t("sandbox.error.path_out_of_bounds")) from exc
     return normalized
 
 
@@ -60,31 +61,45 @@ def create_app() -> FastAPI:
     @app.post("/sandboxes/execute_tool", response_model=SandboxToolResponse)
     async def execute_tool(request: SandboxToolRequest) -> SandboxToolResponse:
         """在共享沙盒中执行内置工具。"""
-        container_root = PurePosixPath(request.container_root)
+        language = resolve_language([request.language])
+        token = set_language(language)
         try:
-            workspace_root = _normalize_container_path(
-                request.workspace_root, container_root
+            container_root = PurePosixPath(request.container_root)
+            try:
+                workspace_root = _normalize_container_path(
+                    request.workspace_root, container_root
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400, detail={"message": str(exc)}
+                ) from exc
+
+            payload = request.model_dump()
+            payload["workspace_root"] = workspace_root.as_posix()
+            payload["allow_paths"] = _filter_allow_paths(request.allow_paths, container_root)
+
+            result, debug_events = await asyncio.to_thread(execute_payload, payload)
+            return SandboxToolResponse(
+                ok=result.ok,
+                data=result.data,
+                error=result.error,
+                debug_events=debug_events,
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
-
-        payload = request.model_dump()
-        payload["workspace_root"] = workspace_root.as_posix()
-        payload["allow_paths"] = _filter_allow_paths(request.allow_paths, container_root)
-
-        result, debug_events = await asyncio.to_thread(execute_payload, payload)
-        return SandboxToolResponse(
-            ok=result.ok,
-            data=result.data,
-            error=result.error,
-            debug_events=debug_events,
-        )
+        finally:
+            reset_language(token)
 
     @app.post("/sandboxes/release", response_model=SandboxReleaseResponse)
     async def release_sandbox(request: SandboxReleaseRequest) -> SandboxReleaseResponse:
         """释放沙盒资源，共享沙盒下为幂等空操作。"""
-        _ = request  # 共享沙盒不区分用户容器，释放为幂等空操作
-        return SandboxReleaseResponse(ok=True, message="共享沙盒无需释放。")
+        language = resolve_language([request.language])
+        token = set_language(language)
+        try:
+            _ = request  # 共享沙盒不区分用户容器，释放为幂等空操作
+            return SandboxReleaseResponse(
+                ok=True, message=t("sandbox.message.release_not_required")
+            )
+        finally:
+            reset_language(token)
 
     return app
 

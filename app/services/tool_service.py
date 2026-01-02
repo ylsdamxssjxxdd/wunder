@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import WunderConfig
+from app.core.i18n import t
 from app.tools.availability import (
     build_enabled_builtin_specs,
     build_knowledge_tool_specs_filtered,
@@ -85,11 +86,14 @@ def build_available_tools(
         knowledge_schema = {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "查询内容"},
+                "query": {
+                    "type": "string",
+                    "description": t("knowledge.tool.query.description"),
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "返回条数（可选，默认使用系统内置上限）。",
+                    "description": t("knowledge.tool.limit.description"),
                 },
             },
             "required": ["query"],
@@ -205,7 +209,7 @@ def build_available_tools(
                     continue
                 description = str(getattr(base, "description", "") or "").strip()
                 if not description:
-                    description = f"检索知识库：{base_name}"
+                    description = t("knowledge.tool.description", name=base_name)
                 _append_tool(
                     bucket,
                     owner_id,

@@ -79,6 +79,7 @@ export const elements = {
   settingsDefaultPanel: document.getElementById("settingsDefaultPanel"),
   settingsMonitorInterval: document.getElementById("settingsMonitorInterval"),
   settingsPromptDelay: document.getElementById("settingsPromptDelay"),
+  settingsLanguage: document.getElementById("settingsLanguage"),
   settingsSaveBtn: document.getElementById("settingsSaveBtn"),
   settingsResetBtn: document.getElementById("settingsResetBtn"),
   monitorTimeFilterToggle: document.getElementById("monitorTimeFilterToggle"),

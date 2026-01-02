@@ -5,6 +5,7 @@ import { appendLog } from "./log.js?v=20251229-02";
 import { notify } from "./notify.js";
 import { loadMonitorData, setMonitorUserFilter } from "./monitor.js";
 import { formatTokenCount } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js";
 
 const DEFAULT_USER_STATS_PAGE_SIZE = 100;
 
@@ -61,7 +62,7 @@ const ensureUserElements = () => {
   ];
   const missing = requiredKeys.filter((key) => !elements[key]);
   if (missing.length) {
-    appendLog(`用户管理面板缺少 DOM 节点：${missing.join(", ")}`);
+    appendLog(t("users.domMissing", { nodes: missing.join(", ") }));
     return false;
   }
   return true;
@@ -127,7 +128,12 @@ const renderUserStatsPagination = (pageData) => {
     return;
   }
   userStatsPagination.style.display = "flex";
-  userStatsPageInfo.textContent = `共 ${pageData.total} 条 · 第 ${pageData.currentPage} / ${pageData.totalPages} 页 · 每页 ${pageData.pageSize} 条`;
+  userStatsPageInfo.textContent = t("pagination.info", {
+    total: pageData.total,
+    current: pageData.currentPage,
+    pages: pageData.totalPages,
+    size: pageData.pageSize,
+  });
   userStatsPrevBtn.disabled = pageData.currentPage <= 1;
   userStatsNextBtn.disabled = pageData.currentPage >= pageData.totalPages;
 };
@@ -182,18 +188,38 @@ const resolveAllUserStats = () => {
 const renderUserDetailHeader = () => {
   const allStats = resolveAllUserStats();
   if (!state.users.selectedId) {
-    elements.userDetailTitle.textContent = "全部用户";
-  elements.userDetailMeta.textContent = `用户 ${allStats.user_count} · 会话 ${allStats.total_sessions} · 历史记录 ${allStats.chat_records} · 工具 ${allStats.tool_calls} · 活动 ${allStats.active_sessions} · Token 占用 ${formatTokenCount(allStats.token_usage)}`;
+    elements.userDetailTitle.textContent = t("users.all");
+    elements.userDetailMeta.textContent = t("users.detail.allMeta", {
+      users: allStats.user_count,
+      sessions: allStats.total_sessions,
+      records: allStats.chat_records,
+      tools: allStats.tool_calls,
+      active: allStats.active_sessions,
+      tokens: formatTokenCount(allStats.token_usage),
+    });
     return;
   }
   const user = state.users.list.find((item) => item.user_id === state.users.selectedId);
   if (!user) {
-    elements.userDetailTitle.textContent = "全部用户";
-  elements.userDetailMeta.textContent = `用户 ${allStats.user_count} · 会话 ${allStats.total_sessions} · 历史记录 ${allStats.chat_records} · 工具 ${allStats.tool_calls} · 活动 ${allStats.active_sessions} · Token 占用 ${formatTokenCount(allStats.token_usage)}`;
+    elements.userDetailTitle.textContent = t("users.all");
+    elements.userDetailMeta.textContent = t("users.detail.allMeta", {
+      users: allStats.user_count,
+      sessions: allStats.total_sessions,
+      records: allStats.chat_records,
+      tools: allStats.tool_calls,
+      active: allStats.active_sessions,
+      tokens: formatTokenCount(allStats.token_usage),
+    });
     return;
   }
   elements.userDetailTitle.textContent = user.user_id || "-";
-  elements.userDetailMeta.textContent = `会话 ${user.total_sessions} · 历史记录 ${user.chat_records} · 工具 ${user.tool_calls} · 活动 ${user.active_sessions} · Token 占用 ${formatTokenCount(user.token_usage)}`;
+  elements.userDetailMeta.textContent = t("users.detail.meta", {
+    sessions: user.total_sessions,
+    records: user.chat_records,
+    tools: user.tool_calls,
+    active: user.active_sessions,
+    tokens: formatTokenCount(user.token_usage),
+  });
 };
 
 // 切换当前选中的用户，同时同步监控筛选
@@ -213,7 +239,7 @@ const renderUserStats = () => {
   elements.userStatsBody.textContent = "";
   const hasUsers = Array.isArray(state.users.list) && state.users.list.length > 0;
   if (!hasUsers) {
-    elements.userStatsEmpty.textContent = "暂无用户数据";
+    elements.userStatsEmpty.textContent = t("users.empty");
     elements.userStatsEmpty.style.display = "block";
     renderUserStatsPagination(null);
     return;
@@ -230,7 +256,7 @@ const renderUserStats = () => {
     }
 
     const userCell = document.createElement("td");
-    userCell.textContent = isAll ? "全部用户" : user.user_id || "-";
+    userCell.textContent = isAll ? t("users.all") : user.user_id || "-";
 
     const chatCell = document.createElement("td");
     const chatBtn = document.createElement("button");
@@ -261,7 +287,7 @@ const renderUserStats = () => {
       const allBtn = document.createElement("button");
       allBtn.type = "button";
       allBtn.className = "secondary";
-      allBtn.textContent = "全选";
+      allBtn.textContent = t("users.selectAll");
       allBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         selectAllUsers();
@@ -271,7 +297,7 @@ const renderUserStats = () => {
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "danger";
-      deleteBtn.textContent = "删除";
+      deleteBtn.textContent = t("common.delete");
       deleteBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         requestDeleteUser(user.user_id);
@@ -307,7 +333,9 @@ const renderUserStats = () => {
   );
 
   if (filteredUsers.length === 0) {
-    elements.userStatsEmpty.textContent = keyword ? "未找到匹配用户" : "暂无用户数据";
+    elements.userStatsEmpty.textContent = keyword
+      ? t("users.search.empty")
+      : t("users.empty");
     elements.userStatsEmpty.style.display = "block";
     renderUserStatsPagination(null);
     return;
@@ -329,12 +357,12 @@ export const loadUserStats = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/users`;
   elements.userStatsBody.textContent = "";
-  elements.userStatsEmpty.textContent = "加载中...";
+  elements.userStatsEmpty.textContent = t("common.loading");
   elements.userStatsEmpty.style.display = "block";
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.users.list = Array.isArray(result.users) ? result.users.map(normalizeUserStats) : [];
@@ -351,7 +379,9 @@ export const loadUserStats = async () => {
     setMonitorUserFilter(state.users.selectedId);
   } catch (error) {
     state.users.list = [];
-    elements.userStatsEmpty.textContent = `加载失败：${error.message}`;
+    elements.userStatsEmpty.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
     elements.userStatsEmpty.style.display = "block";
     throw error;
   }
@@ -379,7 +409,9 @@ const requestDeleteUser = async (userId) => {
   if (!targetId) {
     return;
   }
-  const confirmed = window.confirm(`确定删除用户 ${targetId} 吗？该用户历史记录与工作区将被清除。`);
+  const confirmed = window.confirm(
+    t("users.deleteConfirm", { userId: targetId })
+  );
   if (!confirmed) {
     return;
   }
@@ -387,13 +419,13 @@ const requestDeleteUser = async (userId) => {
   const endpoint = `${wunderBase}/admin/users/${encodeURIComponent(targetId)}`;
   const response = await fetch(endpoint, { method: "DELETE" });
   if (!response.ok) {
-    const message = `删除失败：${response.status}`;
+    const message = t("users.deleteFailed", { status: response.status });
     appendLog(message);
     notify(message, "error");
     return;
   }
   const result = await response.json();
-  notify(result.message || "已清除用户数据", "success");
+  notify(result.message || t("users.deleteSuccess"), "success");
   if (state.users.selectedId === targetId) {
     state.users.selectedId = "";
     renderUserDetailHeader();
@@ -404,7 +436,7 @@ const requestDeleteUser = async (userId) => {
     // 用户管理页仅需要会话列表，避免触发监控图表的完整刷新
     await loadMonitorData({ mode: "sessions" });
   } catch (error) {
-    appendLog(`用户数据刷新失败：${error.message}`);
+    appendLog(t("users.refreshFailed", { message: error.message }));
   }
 };
 
@@ -441,10 +473,10 @@ export const initUserManagementPanel = () => {
   elements.userRefreshBtn.addEventListener("click", async () => {
     try {
       await loadUserStats();
-      notify("用户统计已刷新", "success");
+      notify(t("users.refreshSuccess"), "success");
     } catch (error) {
-      appendLog(`用户统计刷新失败：${error.message}`);
-      notify(`用户统计刷新失败：${error.message}`, "error");
+      appendLog(t("users.refreshFailed", { message: error.message }));
+      notify(t("users.refreshFailed", { message: error.message }), "error");
     }
   });
 };

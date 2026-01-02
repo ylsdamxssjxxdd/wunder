@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List
 
 from app.core.errors import ErrorCodes, WunderError
+from app.core.i18n import t
 from app.tools.types import ToolContext, ToolResult
 
 
@@ -60,7 +61,7 @@ class ToolRegistry:
         if name not in self._tools:
             raise WunderError(
                 code=ErrorCodes.TOOL_NOT_FOUND,
-                message=f"未找到工具: {name}",
+                message=t("error.tool_not_found", name=name),
             )
         try:
             return await self._tools[name](context, args)
@@ -69,7 +70,7 @@ class ToolRegistry:
         except Exception as exc:
             raise WunderError(
                 code=ErrorCodes.TOOL_EXECUTION_ERROR,
-                message=f"工具执行失败: {name}",
+                message=t("error.tool_execution_failed", name=name),
                 detail={"error": str(exc)},
             ) from exc
 

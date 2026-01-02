@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 // 拉取技能清单与启用状态
 export const loadSkills = async () => {
@@ -11,7 +12,7 @@ export const loadSkills = async () => {
   const endpoint = `${wunderBase}/admin/skills`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
@@ -22,13 +23,13 @@ export const loadSkills = async () => {
 // 拉取指定技能的 SKILL.md 内容，供详情弹窗完整展示
 const loadSkillContent = async (skillName) => {
   if (!skillName) {
-    throw new Error("技能名称不能为空");
+    throw new Error(t("skills.nameRequired"));
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills/content?name=${encodeURIComponent(skillName)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   return String(result.content || "");
@@ -44,9 +45,9 @@ const isSkillDeletable = (skill) => {
 const deleteSkill = async (skill) => {
   const skillName = String(skill?.name || "").trim();
   if (!skillName) {
-    throw new Error("技能名称不能为空");
+    throw new Error(t("skills.nameRequired"));
   }
-  if (!window.confirm(`确认删除技能 ${skillName} 吗？`)) {
+  if (!window.confirm(t("skills.deleteConfirm", { name: skillName }))) {
     return null;
   }
   const wunderBase = getWunderBase();
@@ -61,12 +62,12 @@ const deleteSkill = async (skill) => {
       detail = "";
     }
     if (response.status === 404) {
-      throw new Error(detail || "技能不存在或已删除");
+      throw new Error(detail || t("skills.notFound"));
     }
     if (detail) {
       throw new Error(detail);
     }
-    throw new Error(`删除失败：${response.status}`);
+    throw new Error(t("skills.deleteFailed", { status: response.status }));
   }
   await loadSkills();
   syncPromptTools();
@@ -76,21 +77,23 @@ const deleteSkill = async (skill) => {
 // 打开技能详情弹窗，并按当前技能加载完整内容
 const openSkillDetailModal = async (skill) => {
   const currentVersion = ++state.skills.detailVersion;
-  elements.skillModalTitle.textContent = skill.name || "技能详情";
+  elements.skillModalTitle.textContent = skill.name || t("skills.detail.title");
   elements.skillModalMeta.textContent = skill.path || "";
-  elements.skillModalContent.textContent = "加载中...";
+  elements.skillModalContent.textContent = t("common.loading");
   elements.skillModal.classList.add("active");
   try {
     const content = await loadSkillContent(skill.name);
     if (currentVersion !== state.skills.detailVersion) {
       return;
     }
-    elements.skillModalContent.textContent = content || "（无内容）";
+    elements.skillModalContent.textContent = content || t("skills.detail.empty");
   } catch (error) {
     if (currentVersion !== state.skills.detailVersion) {
       return;
     }
-    elements.skillModalContent.textContent = `加载失败：${error.message}`;
+    elements.skillModalContent.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
   }
 };
 
@@ -103,7 +106,7 @@ const closeSkillDetailModal = () => {
 const renderSkills = () => {
   elements.skillsList.textContent = "";
   if (!state.skills.skills.length) {
-    elements.skillsList.textContent = "未发现技能，请检查目录配置。";
+    elements.skillsList.textContent = t("skills.list.empty");
     return;
   }
   state.skills.skills.forEach((skill) => {
@@ -115,8 +118,8 @@ const renderSkills = () => {
     checkbox.addEventListener("change", (event) => {
       skill.enabled = event.target.checked;
       saveSkills().catch((error) => {
-        console.error("技能启用状态保存失败:", error);
-        notify(`技能保存失败：${error.message}`, "error");
+        console.error(t("skills.saveFailed", { message: error.message }), error);
+        notify(t("skills.saveFailed", { message: error.message }), "error");
       });
     });
     const label = document.createElement("label");
@@ -128,12 +131,12 @@ const renderSkills = () => {
     const deletable = isSkillDeletable(skill);
     deleteButton.disabled = !deletable;
     deleteButton.title = deletable
-      ? "删除技能"
-      : "仅支持删除 EVA_SKILLS 目录内技能";
+      ? t("skills.delete.title")
+      : t("skills.delete.restricted");
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       if (!deletable) {
-        notify("仅支持删除 EVA_SKILLS 目录内技能。", "warn");
+        notify(t("skills.delete.restricted"), "warn");
         return;
       }
       deleteSkill(skill)
@@ -141,12 +144,12 @@ const renderSkills = () => {
           if (!deletedName) {
             return;
           }
-          appendLog(`技能已删除：${deletedName}`);
-          notify(`技能已删除：${deletedName}`, "success");
+          appendLog(t("skills.deleted", { name: deletedName }));
+          notify(t("skills.deleted", { name: deletedName }), "success");
         })
         .catch((error) => {
-          console.error("技能删除失败:", error);
-          notify(`技能删除失败：${error.message}`, "error");
+          console.error(t("skills.deleteFailedMessage", { message: error.message }), error);
+          notify(t("skills.deleteFailedMessage", { message: error.message }), "error");
         });
     });
     item.addEventListener("click", (event) => {
@@ -175,7 +178,7 @@ const saveSkills = async () => {
     body: JSON.stringify({ enabled, paths: state.skills.paths }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
@@ -191,7 +194,7 @@ const uploadSkillZip = async (file) => {
   }
   const filename = file.name || "";
   if (!filename.toLowerCase().endsWith(".zip")) {
-    throw new Error("仅支持上传.zip 压缩包");
+    throw new Error(t("skills.upload.zipOnly"));
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills/upload`;
@@ -202,7 +205,7 @@ const uploadSkillZip = async (file) => {
     body: form,
   });
   if (!response.ok) {
-    throw new Error(`上传失败：${response.status}`);
+    throw new Error(t("skills.upload.failed", { message: response.status }));
   }
   await loadSkills();
   syncPromptTools();
@@ -229,20 +232,22 @@ export const initSkillsPanel = () => {
     }
     try {
       await uploadSkillZip(file);
-      appendLog("技能上传完成并已刷新。");
-      notify("技能上传完成并已刷新。", "success");
+      appendLog(t("skills.upload.success"));
+      notify(t("skills.upload.success"), "success");
     } catch (error) {
-      appendLog(`技能上传失败：${error.message}`);
-      notify(`技能上传失败：${error.message}`, "error");
+      appendLog(t("skills.upload.failed", { message: error.message }));
+      notify(t("skills.upload.failed", { message: error.message }), "error");
     }
   });
   elements.refreshSkillsBtn.addEventListener("click", async () => {
     try {
       await loadSkills();
-      notify("技能列表已刷新。", "success");
+      notify(t("skills.refresh.success"), "success");
     } catch (error) {
-      elements.skillsList.textContent = `刷新失败：${error.message}`;
-      notify(`技能刷新失败：${error.message}`, "error");
+      elements.skillsList.textContent = t("common.loadFailedWithMessage", {
+        message: error.message,
+      });
+      notify(t("skills.refresh.failed", { message: error.message }), "error");
     }
   });
 };

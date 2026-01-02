@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, AsyncGenerator
 
 from app.core.config import LLMConfig
+from app.core.i18n import t
 from app.llm.base import LLMClient, LLMUnavailableError, LLMResponse, LLMStreamChunk
 from app.llm.openai_compatible import OpenAICompatibleClient
 
@@ -9,12 +10,12 @@ class MockLLMClient(LLMClient):
     """当模型未配置时的降级实现。"""
 
     async def complete(self, messages: List[Dict[str, Any]]) -> LLMResponse:
-        raise LLMUnavailableError("LLM 未配置，无法生成回复。")
+        raise LLMUnavailableError(t("error.llm_not_configured"))
 
     async def stream_complete(
         self, messages: List[Dict[str, Any]]
     ) -> AsyncGenerator[LLMStreamChunk, None]:
-        raise LLMUnavailableError("LLM 未配置，无法生成回复。")
+        raise LLMUnavailableError(t("error.llm_not_configured"))
 
 
 def build_llm_client(config: LLMConfig) -> LLMClient:

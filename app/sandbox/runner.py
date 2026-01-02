@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from app.core.i18n import reset_language, set_language, t
 from app.memory.workspace import WorkspaceContext
 from app.tools.catalog import build_sandbox_tool_handlers
 from app.tools.types import ToolContext, ToolResult
@@ -56,19 +57,32 @@ def _execute_tool(payload: Dict[str, Any]) -> Tuple[ToolResult, List[Dict[str, A
     context, debug_events = _build_context(payload)
     func = BUILTIN_TOOL_MAP.get(tool_name)
     if not func:
-        return ToolResult(ok=False, data={}, error="沙盒不支持该内置工具。"), debug_events
+        return (
+            ToolResult(ok=False, data={}, error=t("sandbox.error.unsupported_tool")),
+            debug_events,
+        )
     try:
         return func(context, args), debug_events
     except Exception as exc:  # noqa: BLE001
         return (
-            ToolResult(ok=False, data={}, error=f"沙盒内工具执行失败: {exc}"),
+            ToolResult(
+                ok=False,
+                data={},
+                error=t("sandbox.error.tool_failed", detail=str(exc)),
+            ),
             debug_events,
         )
 
 
 def execute_payload(payload: Dict[str, Any]) -> Tuple[ToolResult, List[Dict[str, Any]]]:
     """供共享沙盒服务调用的入口，直接执行工具并返回结果。"""
-    return _execute_tool(payload)
+    language = str(payload.get("language") or "").strip()
+    token = set_language(language) if language else None
+    try:
+        return _execute_tool(payload)
+    finally:
+        if token is not None:
+            reset_language(token)
 
 
 def _write_response(result: ToolResult, debug_events: List[Dict[str, Any]]) -> None:
@@ -88,7 +102,7 @@ def main() -> None:
     payload = _read_payload()
     if not payload:
         _write_response(
-            ToolResult(ok=False, data={}, error="沙盒请求为空或格式错误。"),
+            ToolResult(ok=False, data={}, error=t("sandbox.error.payload_invalid")),
             [],
         )
         return

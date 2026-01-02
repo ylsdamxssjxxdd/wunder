@@ -29,19 +29,23 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js";
 
 const patchApiFetch = () => {
   // 统一为前端请求补齐 API Key，避免每处调用手动添加。
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
-    const apiKey = String(elements.apiKey?.value || "").trim();
-    if (!apiKey) {
-      return originalFetch(input, init);
-    }
     const nextInit = { ...init };
     const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+    const language = getCurrentLanguage();
+    if (language && !headers.has("X-Wunder-Language")) {
+      headers.set("X-Wunder-Language", language);
+    }
+    const apiKey = String(elements.apiKey?.value || "").trim();
     if (!headers.has("X-API-Key") && !headers.has("Authorization")) {
-      headers.set("X-API-Key", apiKey);
+      if (apiKey) {
+        headers.set("X-API-Key", apiKey);
+      }
     }
     nextInit.headers = headers;
     return originalFetch(input, nextInit);
@@ -86,7 +90,7 @@ const bindNavigation = () => {
         await loadMonitorData();
         state.panelLoaded.monitor = true;
       } catch (error) {
-        appendLog(`监控加载失败：${error.message}`);
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.monitor"), message: error.message }));
       }
     }
   });
@@ -99,7 +103,7 @@ const bindNavigation = () => {
         state.panelLoaded.users = true;
         ready = true;
       } catch (error) {
-        appendLog(`用户统计加载失败：${error.message}`);
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.users"), message: error.message }));
       }
     }
     if (ready) {
@@ -114,7 +118,7 @@ const bindNavigation = () => {
         await loadMemoryStatus();
         state.panelLoaded.memory = true;
       } catch (error) {
-        appendLog(`记忆体加载失败：${error.message}`);
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.memory"), message: error.message }));
       }
     }
   });
@@ -133,7 +137,9 @@ const bindNavigation = () => {
         await loadMcpServers();
         state.panelLoaded.mcp = true;
       } catch (error) {
-        elements.mcpServerList.textContent = `加载失败：${error.message}`;
+        elements.mcpServerList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
       }
     }
   });
@@ -144,7 +150,9 @@ const bindNavigation = () => {
         await loadBuiltinTools();
         state.panelLoaded.builtin = true;
       } catch (error) {
-        elements.builtinToolsList.textContent = `加载失败：${error.message}`;
+        elements.builtinToolsList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
       }
     }
   });
@@ -155,7 +163,9 @@ const bindNavigation = () => {
         await loadSkills();
         state.panelLoaded.skills = true;
       } catch (error) {
-        elements.skillsList.textContent = `加载失败：${error.message}`;
+        elements.skillsList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
       }
     }
   });
@@ -166,7 +176,9 @@ const bindNavigation = () => {
         await loadKnowledgeConfig();
         state.panelLoaded.knowledge = true;
       } catch (error) {
-        elements.knowledgeBaseList.textContent = `加载失败：${error.message}`;
+        elements.knowledgeBaseList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
       }
     }
   });
@@ -177,7 +189,7 @@ const bindNavigation = () => {
         await loadLlmConfig();
         state.panelLoaded.llm = true;
       } catch (error) {
-        appendLog(`模型配置加载失败：${error.message}`);
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.llm"), message: error.message }));
       }
     }
   });
@@ -223,12 +235,16 @@ const bindGlobalInputs = () => {
         icon.classList.toggle("fa-eye", hidden);
         icon.classList.toggle("fa-eye-slash", !hidden);
       }
-      const label = hidden ? "显示 API Key" : "隐藏 API Key";
+      const label = hidden ? t("ui.apiKey.show") : t("ui.apiKey.hide");
       elements.apiKeyToggle.setAttribute("aria-label", label);
       elements.apiKeyToggle.title = label;
     };
     const initialHidden = elements.apiKey.type !== "text";
     syncApiKeyToggle(initialHidden);
+    window.addEventListener("wunder:language-changed", () => {
+      const hidden = elements.apiKey.type !== "text";
+      syncApiKeyToggle(hidden);
+    });
     elements.apiKeyToggle.addEventListener("click", () => {
       const hidden = elements.apiKey.type !== "text";
       elements.apiKey.type = hidden ? "text" : "password";
@@ -281,6 +297,7 @@ const bindGlobalInputs = () => {
 // 启动入口：初始化默认值、模块交互与首屏数据
 const bootstrap = () => {
   applyStoredConfig();
+  setLanguage(APP_CONFIG.language, { force: true });
   applyDefaultConfig(elements);
   patchApiFetch();
   initToolDetailModal();
@@ -304,7 +321,7 @@ const bootstrap = () => {
   switchPanel(initialPanel);
   if (initialPanel === "users") {
     loadUserStats().catch((error) => {
-      appendLog(`用户统计加载失败：${error.message}`);
+      appendLog(t("app.panelLoadFailed", { panel: t("panel.users"), message: error.message }));
     });
   }
   loadWorkspace();

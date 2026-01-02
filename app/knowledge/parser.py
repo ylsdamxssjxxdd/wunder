@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence
 
+from app.core.i18n import get_known_prefixes, t
 
 @dataclass(slots=True)
 class KnowledgeSection:
@@ -28,6 +29,8 @@ class KnowledgeSection:
             name = part.strip()
             if not name:
                 continue
+            if name in _FULL_TEXT_LABELS:
+                name = t("knowledge.section.full_text")
             if cleaned and name == cleaned[-1]:
                 continue
             cleaned.append(name)
@@ -47,6 +50,7 @@ class KnowledgeSection:
 
 H1_HEADING_PATTERN = re.compile(r"^#\s+(.+?)\s*$")
 MARKDOWN_CLEAN_PATTERN = re.compile(r"[#>`*_`]+")
+_FULL_TEXT_LABELS = set(get_known_prefixes("knowledge.section.full_text"))
 
 
 def load_knowledge_sections(root: Path) -> List[KnowledgeSection]:

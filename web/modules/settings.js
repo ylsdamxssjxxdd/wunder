@@ -8,6 +8,7 @@ import { elements } from "./elements.js?v=20251231-03";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20251231-01";
 import { notify } from "./notify.js";
+import { normalizeLanguage, setLanguage, t } from "./i18n.js";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 
 const MIN_MONITOR_INTERVAL_MS = 500;
@@ -86,6 +87,13 @@ const applySettingsForm = (config) => {
   if (elements.settingsPromptDelay) {
     elements.settingsPromptDelay.value = String(config.promptReloadDelayMs || "");
   }
+  if (elements.settingsLanguage) {
+    const resolved = resolveSelectValue(
+      elements.settingsLanguage,
+      String(config.language || "")
+    );
+    elements.settingsLanguage.value = resolved;
+  }
 };
 
 // 保存设置并应用到运行时
@@ -108,6 +116,9 @@ const handleSaveSettings = () => {
     APP_CONFIG.promptReloadDelayMs,
     MIN_PROMPT_DELAY_MS
   );
+  const nextLanguage = normalizeLanguage(
+    elements.settingsLanguage?.value || APP_CONFIG.language
+  );
   const updated = updateStoredConfig({
     defaultApiBase: nextApiBase,
     defaultApiKey: nextApiKey,
@@ -115,20 +126,26 @@ const handleSaveSettings = () => {
     defaultPanel: nextDefaultPanel,
     monitorPollIntervalMs: nextMonitorInterval,
     promptReloadDelayMs: nextPromptDelay,
+    language: nextLanguage,
   });
 
   applySettingsForm(updated);
   syncApiInputs(updated.defaultApiBase, updated.defaultApiKey);
   syncDefaultUserId(updated.defaultUserId, previous.defaultUserId);
 
+  if (updated.language !== previous.language) {
+    setLanguage(updated.language, { force: true });
+    state.runtime.promptNeedsRefresh = true;
+  }
+
   if (updated.monitorPollIntervalMs !== previous.monitorPollIntervalMs) {
     refreshMonitorInterval(updated.monitorPollIntervalMs);
   }
 
   if (!updated.defaultApiBase) {
-    notify("API 地址为空，可能导致调试请求失败。", "warn");
+    notify(t("settings.toast.apiBaseEmpty"), "warn");
   }
-  notify("系统设置已保存。", "success");
+  notify(t("settings.toast.saved"), "success");
 };
 
 // 恢复默认设置并同步到界面
@@ -139,7 +156,9 @@ const handleResetSettings = () => {
   syncApiInputs(defaults.defaultApiBase, defaults.defaultApiKey);
   syncDefaultUserId(defaults.defaultUserId, previous.defaultUserId);
   refreshMonitorInterval(defaults.monitorPollIntervalMs);
-  notify("已恢复默认设置。", "success");
+  setLanguage(defaults.language, { force: true });
+  state.runtime.promptNeedsRefresh = true;
+  notify(t("settings.toast.reset"), "success");
 };
 
 // 初始化设置面板交互

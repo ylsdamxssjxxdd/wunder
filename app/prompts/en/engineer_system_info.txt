@@ -1,0 +1,6 @@
+OS: {OS}
+Date: {DATE}
+Your current working directory (all commands run from here by default): {DIR}
+Workspace (max 2 levels):
+{WORKSPACE_TREE}
+All commands must stay within the working directory and its subdirectories.

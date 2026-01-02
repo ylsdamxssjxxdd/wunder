@@ -15,6 +15,7 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js";
 
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;
@@ -149,19 +150,19 @@ const setActiveTab = (tab) => {
 const openUserToolModal = async () => {
   const userId = getUserId();
   if (!userId) {
-    notify("请先输入 user_id 再配置自建工具。", "warn");
-    updateModalStatus("请先输入 user_id。");
+    notify(t("userTools.userIdRequired"), "warn");
+    updateModalStatus(t("common.userIdRequired"));
     return;
   }
   ensureUserToolsState();
   elements.userToolModal.classList.add("active");
   setActiveTab(state.userTools.modal.activeTab || "mcp");
-  updateModalStatus("正在加载...");
+  updateModalStatus(t("common.loading"));
   try {
     await Promise.all([loadUserMcpServers(), loadUserSkills(), loadUserKnowledgeConfig()]);
     updateModalStatus("");
   } catch (error) {
-    updateModalStatus(`加载失败：${error.message}`);
+    updateModalStatus(t("common.loadFailedWithMessage", { message: error.message }));
   }
 };
 
@@ -323,7 +324,7 @@ const closeUserMcpImportModal = () => {
 
 const openUserMcpModal = (title) => {
   if (elements.userMcpModalTitle) {
-    elements.userMcpModalTitle.textContent = title || "编辑 MCP 服务";
+    elements.userMcpModalTitle.textContent = title || t("userTools.mcp.modal.editTitle");
   }
   elements.userMcpModal.classList.add("active");
   updateUserMcpStructPreview();
@@ -335,27 +336,27 @@ const closeUserMcpModal = () => {
 
 const applyUserMcpModal = async () => {
   if (elements.userMcpHeadersError?.textContent) {
-    notify("Headers JSON 格式有误，请先修正。", "warn");
+    notify(t("userTools.mcp.headers.invalid"), "warn");
     return;
   }
   const saved = await saveUserMcpServers();
   if (saved) {
     closeUserMcpModal();
-    notify("MCP 服务已保存。", "success");
+    notify(t("userTools.mcp.saved"), "success");
   }
 };
 
 const importUserMcpServers = async (raw) => {
   const content = (raw || "").trim();
   if (!content) {
-    notify("请先输入 MCP 结构体。", "warn");
+    notify(t("userTools.mcp.struct.required"), "warn");
     return false;
   }
   let parsed = null;
   try {
     parsed = JSON.parse(content);
   } catch (error) {
-    notify("MCP 结构体 JSON 解析失败。", "error");
+    notify(t("userTools.mcp.struct.parseFailed"), "error");
     return false;
   }
   const imported = [];
@@ -374,7 +375,7 @@ const importUserMcpServers = async (raw) => {
     }
   }
   if (!imported.length) {
-    notify("未识别到可用的 MCP 服务结构。", "warn");
+    notify(t("userTools.mcp.struct.noValid"), "warn");
     return false;
   }
   let lastIndex = state.userTools.mcp.selectedIndex;
@@ -388,7 +389,7 @@ const importUserMcpServers = async (raw) => {
   if (!saved) {
     return false;
   }
-  notify("MCP 服务已导入并保存。", "success");
+  notify(t("userTools.mcp.import.success"), "success");
   return true;
 };
 
@@ -408,14 +409,14 @@ const updateUserMcpStructPreview = () => {
     return;
   }
   const preview = buildUserMcpStructPreview(server);
-  elements.userMcpStructPreview.value = preview || "填写服务名称与服务地址后生成结构体。";
+  elements.userMcpStructPreview.value = preview || t("mcp.struct.preview.empty");
 };
 
 const renderUserMcpServers = () => {
   elements.userMcpServerList.textContent = "";
   const servers = state.userTools.mcp.servers;
   if (!servers.length) {
-    elements.userMcpServerList.textContent = "暂无 MCP 服务，请新增或导入。";
+    elements.userMcpServerList.textContent = t("userTools.mcp.list.empty");
     renderUserMcpDetail();
     updateUserMcpConnectButton();
     updateUserMcpRefreshAllButton();
@@ -428,7 +429,7 @@ const renderUserMcpServers = () => {
     if (index === state.userTools.mcp.selectedIndex) {
       item.classList.add("active");
     }
-    const title = server.display_name || server.name || "(未命名服务)";
+    const title = server.display_name || server.name || t("mcp.server.unnamed");
     const subtitleParts = [];
     if (server.display_name && server.name) {
       subtitleParts.push(`ID: ${server.name}`);
@@ -485,10 +486,10 @@ const toggleUserMcpDetailDisabled = (disabled) => {
 const renderUserMcpDetail = () => {
   const server = getActiveUserMcpServer();
   if (!server) {
-    elements.userMcpDetailTitle.textContent = "未选择服务";
+    elements.userMcpDetailTitle.textContent = t("mcp.detail.none");
     elements.userMcpDetailMeta.textContent = "";
     elements.userMcpDetailDesc.textContent = "";
-    elements.userMcpToolList.textContent = "请选择一个服务。";
+    elements.userMcpToolList.textContent = t("userTools.mcp.tools.select");
     elements.userMcpName.value = "";
     elements.userMcpDisplayName.value = "";
     elements.userMcpEndpoint.value = "";
@@ -502,7 +503,7 @@ const renderUserMcpDetail = () => {
     updateUserMcpConnectButton();
     return;
   }
-  const title = server.display_name || server.name || "(未命名服务)";
+  const title = server.display_name || server.name || t("mcp.server.unnamed");
   const metaParts = [];
   if (server.display_name && server.name) {
     metaParts.push(`ID: ${server.name}`);
@@ -513,7 +514,9 @@ const renderUserMcpDetail = () => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
-  metaParts.push(server.enabled !== false ? "已启用" : "未启用");
+  metaParts.push(
+    server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
+  );
   elements.userMcpDetailTitle.textContent = title;
   elements.userMcpDetailMeta.textContent = metaParts.join(" · ");
   elements.userMcpDetailDesc.textContent = server.description || "";
@@ -546,7 +549,7 @@ const updateUserMcpConnectButton = () => {
   const server = getActiveUserMcpServer();
   const connected = server ? isUserMcpServerConnected(state.userTools.mcp.selectedIndex) : false;
   const iconClass = connected ? "fa-solid fa-arrows-rotate" : "fa-solid fa-link";
-  const label = connected ? "刷新" : "连接";
+  const label = connected ? t("mcp.connect.refresh") : t("mcp.connect.connect");
   elements.userMcpConnectBtn.innerHTML = `<i class="${iconClass}"></i>${label}`;
   elements.userMcpConnectBtn.disabled = !server;
 };
@@ -565,12 +568,12 @@ const renderUserMcpTools = () => {
   elements.userMcpToolList.textContent = "";
   const server = getActiveUserMcpServer();
   if (!server) {
-    elements.userMcpToolList.textContent = "请选择一个服务。";
+    elements.userMcpToolList.textContent = t("userTools.mcp.tools.select");
     return;
   }
   const tools = state.userTools.mcp.toolsByIndex[state.userTools.mcp.selectedIndex] || [];
   if (!tools.length) {
-    elements.userMcpToolList.textContent = "尚未加载工具，请先连接服务。";
+    elements.userMcpToolList.textContent = t("mcp.tools.notLoaded");
     return;
   }
   const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
@@ -586,7 +589,7 @@ const renderUserMcpTools = () => {
     const enabled = implicitAll || allowList.includes(tool.name);
     enableCheckbox.checked = enabled;
     const enableText = document.createElement("span");
-    enableText.textContent = "启用";
+    enableText.textContent = t("userTools.action.enable");
     enableLabel.appendChild(enableCheckbox);
     enableLabel.appendChild(enableText);
 
@@ -596,7 +599,7 @@ const renderUserMcpTools = () => {
     shareCheckbox.type = "checkbox";
     shareCheckbox.checked = sharedList.includes(tool.name);
     const shareText = document.createElement("span");
-    shareText.textContent = "共享";
+    shareText.textContent = t("userTools.action.share");
     shareLabel.appendChild(shareCheckbox);
     shareLabel.appendChild(shareText);
 
@@ -609,13 +612,22 @@ const renderUserMcpTools = () => {
       if (enableLabel.contains(event.target) || shareLabel.contains(event.target)) {
         return;
       }
-      const serverTitle = server.display_name || server.name || "未命名服务";
-      const metaParts = ["自建 MCP 工具", `服务: ${serverTitle}`];
-      metaParts.push(server.enabled !== false ? "服务已启用" : "服务未启用");
-      metaParts.push(enableCheckbox.checked ? "已启用" : "未启用");
-      metaParts.push(shareCheckbox.checked ? "已共享" : "未共享");
+      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+      const metaParts = [
+        t("userTools.mcp.tool.label"),
+        t("mcp.tool.server", { name: serverTitle }),
+      ];
+      metaParts.push(
+        server.enabled !== false ? t("mcp.tool.serverEnabled") : t("mcp.tool.serverDisabled")
+      );
+      metaParts.push(
+        enableCheckbox.checked ? t("mcp.status.enabled") : t("mcp.status.disabled")
+      );
+      metaParts.push(
+        shareCheckbox.checked ? t("userTools.shared.on") : t("userTools.shared.off")
+      );
       openToolDetailModal({
-        title: tool.name || "工具详情",
+        title: tool.name || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
@@ -689,7 +701,7 @@ const loadUserMcpServers = async () => {
   const endpoint = `${wunderBase}/user_tools/mcp?user_id=${encodeURIComponent(userId)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const servers = Array.isArray(result.servers) ? result.servers : [];
@@ -705,11 +717,11 @@ const loadUserMcpServers = async () => {
 const saveUserMcpServers = async () => {
   const userId = getUserId();
   if (!userId) {
-    updateModalStatus("请先输入 user_id。");
+    updateModalStatus(t("common.userIdRequired"));
     return false;
   }
   const saveVersion = ++state.userTools.mcp.saveVersion;
-  updateModalStatus("正在保存...");
+  updateModalStatus(t("userTools.saving"));
   const payload = {
     user_id: userId,
     servers: state.userTools.mcp.servers.map((server) => ({
@@ -735,7 +747,7 @@ const saveUserMcpServers = async () => {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     if (saveVersion !== state.userTools.mcp.saveVersion) {
       return;
@@ -752,12 +764,12 @@ const saveUserMcpServers = async () => {
       state.userTools.mcp.selectedIndex = 0;
     }
     renderUserMcpServers();
-    updateModalStatus("已自动保存。");
+    updateModalStatus(t("userTools.autoSaved"));
     syncPromptTools();
     return true;
   } catch (error) {
-    updateModalStatus(`保存失败：${error.message}`);
-    notify(`自建 MCP 保存失败：${error.message}`, "error");
+    updateModalStatus(t("userTools.saveFailed", { message: error.message }));
+    notify(t("userTools.mcp.saveFailed", { message: error.message }), "error");
     return false;
   }
 };
@@ -794,7 +806,7 @@ const connectUserMcpServerAtIndex = async (index, options = {}) => {
   });
   if (!response.ok) {
     if (updateUI) {
-      elements.userMcpToolList.textContent = `请求失败：${response.status}`;
+      elements.userMcpToolList.textContent = t("common.requestFailed", { status: response.status });
     }
     return false;
   }
@@ -816,10 +828,13 @@ const connectUserMcpServer = async () => {
   const wasConnected = index >= 0 ? isUserMcpServerConnected(index) : false;
   const ok = await connectUserMcpServerAtIndex(index, { updateUI: true });
   if (!ok) {
-    notify("MCP 连接失败，请检查服务信息。", "error");
+    notify(t("mcp.connect.failed"), "error");
     return;
   }
-  notify(wasConnected ? "MCP 工具已刷新。" : "MCP 工具已连接。", "success");
+  notify(
+    wasConnected ? t("mcp.connect.refreshed") : t("mcp.connect.connected"),
+    "success"
+  );
 };
 
 const refreshAllUserMcpServers = async () => {
@@ -838,12 +853,12 @@ const refreshAllUserMcpServers = async () => {
     }
   }
   if (!updated) {
-    notify("MCP 刷新失败，请检查服务信息。", "error");
+    notify(t("mcp.refresh.failed"), "error");
     return;
   }
   updateUserMcpConnectButton();
   updateUserMcpRefreshAllButton();
-  notify("已刷新所有已连接 MCP 服务。", "success");
+  notify(t("mcp.refresh.allSuccess"), "success");
 };
 
 const addUserMcpServer = () => {
@@ -873,8 +888,8 @@ const deleteUserMcpServer = () => {
     return;
   }
   const removed = state.userTools.mcp.servers[state.userTools.mcp.selectedIndex];
-  const removedName = removed?.display_name || removed?.name || "MCP 服务";
-  if (!window.confirm(`确认删除 ${removedName} 吗？`)) {
+  const removedName = removed?.display_name || removed?.name || t("mcp.server.defaultName");
+  if (!window.confirm(t("userTools.mcp.deleteConfirm", { name: removedName }))) {
     return;
   }
   state.userTools.mcp.servers.splice(state.userTools.mcp.selectedIndex, 1);
@@ -886,7 +901,7 @@ const deleteUserMcpServer = () => {
   }
   renderUserMcpServers();
   scheduleUserMcpSave();
-  notify(`已删除 ${removedName}`, "success");
+  notify(t("mcp.delete.success", { name: removedName }), "success");
 };
 
 const bindUserMcpInputs = () => {
@@ -977,7 +992,7 @@ const loadUserSkills = async () => {
   const endpoint = `${wunderBase}/user_tools/skills?user_id=${encodeURIComponent(userId)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.userTools.skills.enabled = Array.isArray(result.enabled) ? result.enabled : [];
@@ -993,9 +1008,9 @@ const openUserSkillDetailModal = async (skill) => {
     return;
   }
   const currentVersion = ++state.userTools.skills.detailVersion;
-  elements.skillModalTitle.textContent = skill.name || "技能详情";
+  elements.skillModalTitle.textContent = skill.name || t("skills.detail.title");
   elements.skillModalMeta.textContent = skill.path || "";
-  elements.skillModalContent.textContent = "加载中...";
+  elements.skillModalContent.textContent = t("common.loading");
   elements.skillModal.classList.add("active");
   try {
     const wunderBase = getWunderBase();
@@ -1004,25 +1019,27 @@ const openUserSkillDetailModal = async (skill) => {
     )}&name=${encodeURIComponent(skill.name)}`;
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     if (currentVersion !== state.userTools.skills.detailVersion) {
       return;
     }
-    elements.skillModalContent.textContent = result.content || "（无内容）";
+    elements.skillModalContent.textContent = result.content || t("skills.detail.empty");
   } catch (error) {
     if (currentVersion !== state.userTools.skills.detailVersion) {
       return;
     }
-    elements.skillModalContent.textContent = `加载失败：${error.message}`;
+    elements.skillModalContent.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
   }
 };
 
 const renderUserSkills = () => {
   elements.userSkillsList.textContent = "";
   if (!state.userTools.skills.skills.length) {
-    elements.userSkillsList.textContent = "未发现技能，请先上传技能包。";
+    elements.userSkillsList.textContent = t("userTools.skills.list.empty");
     return;
   }
   state.userTools.skills.skills.forEach((skill) => {
@@ -1034,7 +1051,7 @@ const renderUserSkills = () => {
     enableCheckbox.type = "checkbox";
     enableCheckbox.checked = Boolean(skill.enabled);
     const enableText = document.createElement("span");
-    enableText.textContent = "启用";
+    enableText.textContent = t("userTools.action.enable");
     enableLabel.appendChild(enableCheckbox);
     enableLabel.appendChild(enableText);
 
@@ -1044,7 +1061,7 @@ const renderUserSkills = () => {
     shareCheckbox.type = "checkbox";
     shareCheckbox.checked = Boolean(skill.shared);
     const shareText = document.createElement("span");
-    shareText.textContent = "共享";
+    shareText.textContent = t("userTools.action.share");
     shareLabel.appendChild(shareCheckbox);
     shareLabel.appendChild(shareText);
 
@@ -1088,10 +1105,10 @@ const renderUserSkills = () => {
 const saveUserSkills = async () => {
   const userId = getUserId();
   if (!userId) {
-    updateModalStatus("请先输入 user_id。");
+    updateModalStatus(t("common.userIdRequired"));
     return;
   }
-  updateModalStatus("正在保存...");
+  updateModalStatus(t("userTools.saving"));
   const enabled = state.userTools.skills.skills
     .filter((skill) => skill.enabled)
     .map((skill) => skill.name);
@@ -1108,18 +1125,18 @@ const saveUserSkills = async () => {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.userTools.skills.enabled = Array.isArray(result.enabled) ? result.enabled : [];
     state.userTools.skills.shared = Array.isArray(result.shared) ? result.shared : [];
     state.userTools.skills.skills = Array.isArray(result.skills) ? result.skills : [];
     renderUserSkills();
-    updateModalStatus("已自动保存。");
+    updateModalStatus(t("userTools.autoSaved"));
     syncPromptTools();
   } catch (error) {
-    updateModalStatus(`保存失败：${error.message}`);
-    notify(`自建技能保存失败：${error.message}`, "error");
+    updateModalStatus(t("userTools.saveFailed", { message: error.message }));
+    notify(t("userTools.skills.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -1139,11 +1156,11 @@ const uploadUserSkillZip = async (file) => {
   }
   const userId = getUserId();
   if (!userId) {
-    throw new Error("请先输入 user_id");
+    throw new Error(t("common.userIdRequired"));
   }
   const filename = file.name || "";
   if (!filename.toLowerCase().endsWith(".zip")) {
-    throw new Error("仅支持上传 .zip 压缩包");
+    throw new Error(t("skills.upload.zipOnly"));
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/user_tools/skills/upload`;
@@ -1155,7 +1172,7 @@ const uploadUserSkillZip = async (file) => {
     body: form,
   });
   if (!response.ok) {
-    throw new Error(`上传失败：${response.status}`);
+    throw new Error(t("userTools.skills.uploadFailed", { message: response.status }));
   }
   await loadUserSkills();
   syncPromptTools();
@@ -1224,7 +1241,9 @@ const openUserKnowledgeModal = (base = null, index = -1) => {
   const payload = base || { name: "", description: "", enabled: true, shared: false };
   if (elements.userKnowledgeModalTitle) {
     elements.userKnowledgeModalTitle.textContent =
-      userKnowledgeEditingIndex >= 0 ? "编辑知识库" : "新增知识库";
+      userKnowledgeEditingIndex >= 0
+        ? t("knowledge.modal.editTitle")
+        : t("knowledge.modal.addTitle");
   }
   if (elements.userKnowledgeModalName) {
     elements.userKnowledgeModalName.value = payload.name || "";
@@ -1264,14 +1283,14 @@ const getUserKnowledgeModalPayload = () => ({
 // 校验用户知识库配置，避免空值或重名
 const validateUserKnowledgeBase = (payload, index) => {
   if (!payload.name) {
-    return "请填写知识库名称。";
+    return t("knowledge.name.required");
   }
   for (let i = 0; i < state.userTools.knowledge.bases.length; i += 1) {
     if (i === index) {
       continue;
     }
     if (state.userTools.knowledge.bases[i].name.trim() === payload.name) {
-      return `知识库名称重复：${payload.name}`;
+      return t("knowledge.name.duplicate", { name: payload.name });
     }
   }
   return "";
@@ -1280,7 +1299,7 @@ const validateUserKnowledgeBase = (payload, index) => {
 const renderUserKnowledgeBaseList = () => {
   elements.userKnowledgeBaseList.textContent = "";
   if (!state.userTools.knowledge.bases.length) {
-    elements.userKnowledgeBaseList.textContent = "暂无知识库，请新增。";
+    elements.userKnowledgeBaseList.textContent = t("userTools.knowledge.list.empty");
     renderUserKnowledgeDetail();
     return;
   }
@@ -1291,8 +1310,8 @@ const renderUserKnowledgeBaseList = () => {
     if (index === state.userTools.knowledge.selectedIndex) {
       item.classList.add("active");
     }
-    const title = base.name || "(未命名知识库)";
-    const subtitle = base.root || "未生成目录";
+    const title = base.name || t("knowledge.name.unnamed");
+    const subtitle = base.root || t("userTools.knowledge.root.uncreated");
     item.innerHTML = `<div>${title}</div><small>${subtitle}</small>`;
     item.addEventListener("click", async () => {
       state.userTools.knowledge.selectedIndex = index;
@@ -1310,7 +1329,7 @@ const renderUserKnowledgeBaseList = () => {
 const renderUserKnowledgeDetailHeader = () => {
   const base = getActiveUserKnowledgeBase();
   if (!base) {
-    elements.userKnowledgeDetailTitle.textContent = "未选择知识库";
+    elements.userKnowledgeDetailTitle.textContent = t("knowledge.detail.empty");
     elements.userKnowledgeDetailMeta.textContent = "";
     if (elements.userKnowledgeDetailDesc) {
       elements.userKnowledgeDetailDesc.textContent = "";
@@ -1321,11 +1340,13 @@ const renderUserKnowledgeDetailHeader = () => {
     elements.userKnowledgeDeleteBtn.disabled = true;
     return;
   }
-  elements.userKnowledgeDetailTitle.textContent = base.name || "(未命名知识库)";
-  const metaParts = [base.root || "未生成目录"];
-  metaParts.push(base.enabled !== false ? "已启用" : "未启用");
+  elements.userKnowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
+  const metaParts = [base.root || t("userTools.knowledge.root.uncreated")];
+  metaParts.push(
+    base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled")
+  );
   if (base.shared) {
-    metaParts.push("已共享");
+    metaParts.push(t("userTools.shared.on"));
   }
   elements.userKnowledgeDetailMeta.textContent = metaParts.join(" · ");
   if (elements.userKnowledgeDetailDesc) {
@@ -1345,7 +1366,7 @@ const renderUserKnowledgeDetail = () => {
 const renderUserKnowledgeFiles = () => {
   elements.userKnowledgeFileList.textContent = "";
   if (!state.userTools.knowledge.files.length) {
-    elements.userKnowledgeFileList.textContent = "暂无文档，请先刷新列表。";
+    elements.userKnowledgeFileList.textContent = t("knowledge.file.empty");
   } else {
     state.userTools.knowledge.files.forEach((filePath) => {
       const item = document.createElement("div");
@@ -1359,14 +1380,14 @@ const renderUserKnowledgeFiles = () => {
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "knowledge-file-delete-btn";
-      deleteBtn.title = "删除文档";
+      deleteBtn.title = t("knowledge.file.delete");
       deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
       deleteBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
           await deleteUserKnowledgeFile(filePath);
         } catch (error) {
-          notify(`删除失败：${error.message}`, "error");
+          notify(t("knowledge.file.deleteFailed", { message: error.message }), "error");
         }
       });
       item.append(name, deleteBtn);
@@ -1377,7 +1398,7 @@ const renderUserKnowledgeFiles = () => {
     });
   }
   elements.userKnowledgeFileName.textContent =
-    state.userTools.knowledge.activeFile || "未选择文档";
+    state.userTools.knowledge.activeFile || t("knowledge.file.none");
   elements.userKnowledgeFileContent.value = state.userTools.knowledge.fileContent || "";
   updateUserKnowledgeEditorHighlight();
 };
@@ -1396,12 +1417,12 @@ const buildUserKnowledgePayload = () => ({
 const validateUserKnowledgePayload = (payload) => {
   const invalid = payload.bases.filter((base) => !base.name);
   if (invalid.length) {
-    return "存在未填写名称的知识库，请补全后再保存。";
+    return t("knowledge.payload.invalid");
   }
   const nameSet = new Set();
   for (const base of payload.bases) {
     if (nameSet.has(base.name)) {
-      return `知识库名称重复：${base.name}`;
+      return t("knowledge.name.duplicate", { name: base.name });
     }
     nameSet.add(base.name);
   }
@@ -1411,10 +1432,10 @@ const validateUserKnowledgePayload = (payload) => {
 const saveUserKnowledgeConfig = async () => {
   const userId = getUserId();
   if (!userId) {
-    updateModalStatus("请先输入 user_id。");
+    updateModalStatus(t("common.userIdRequired"));
     return false;
   }
-  updateModalStatus("正在保存...");
+  updateModalStatus(t("userTools.saving"));
   const payload = buildUserKnowledgePayload();
   const error = validateUserKnowledgePayload(payload);
   if (error) {
@@ -1431,7 +1452,7 @@ const saveUserKnowledgeConfig = async () => {
       body: JSON.stringify({ user_id: userId, knowledge: payload }),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     const normalized = normalizeUserKnowledgeConfig(result.knowledge || {});
@@ -1453,12 +1474,12 @@ const saveUserKnowledgeConfig = async () => {
     state.userTools.knowledge.fileContent = "";
     renderUserKnowledgeBaseList();
     renderUserKnowledgeDetail();
-    updateModalStatus("已保存。");
+    updateModalStatus(t("userTools.saved"));
     syncPromptTools();
     return true;
   } catch (error) {
-    updateModalStatus(`保存失败：${error.message}`);
-    notify(`知识库配置保存失败：${error.message}`, "error");
+    updateModalStatus(t("userTools.saveFailed", { message: error.message }));
+    notify(t("userTools.knowledge.saveFailed", { message: error.message }), "error");
     return false;
   }
 };
@@ -1473,7 +1494,7 @@ const loadUserKnowledgeConfig = async () => {
   const endpoint = `${wunderBase}/user_tools/knowledge?user_id=${encodeURIComponent(userId)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const normalized = normalizeUserKnowledgeConfig(result.knowledge || {});
@@ -1504,10 +1525,12 @@ const loadUserKnowledgeFiles = async () => {
   const endpoint = `${wunderBase}/user_tools/knowledge/files?user_id=${encodeURIComponent(
     userId
   )}&base=${encodeURIComponent(base.name)}`;
-  elements.userKnowledgeFileList.textContent = "加载中...";
+  elements.userKnowledgeFileList.textContent = t("common.loading");
   const response = await fetch(endpoint);
   if (!response.ok) {
-    elements.userKnowledgeFileList.textContent = `加载失败：${response.status}`;
+    elements.userKnowledgeFileList.textContent = t("common.loadFailedWithMessage", {
+      message: response.status,
+    });
     return;
   }
   const result = await response.json();
@@ -1523,17 +1546,17 @@ const selectUserKnowledgeFile = async (filePath) => {
   const base = getActiveUserKnowledgeBase();
   const userId = getUserId();
   if (!userId || !base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/user_tools/knowledge/file?user_id=${encodeURIComponent(
     userId
   )}&base=${encodeURIComponent(base.name)}&path=${encodeURIComponent(filePath)}`;
-  elements.userKnowledgeFileName.textContent = "加载中...";
+  elements.userKnowledgeFileName.textContent = t("common.loading");
   const response = await fetch(endpoint);
   if (!response.ok) {
-    notify(`读取失败：${response.status}`, "error");
+    notify(t("knowledge.file.readFailed", { status: response.status }), "error");
     return;
   }
   const result = await response.json();
@@ -1546,11 +1569,11 @@ const saveUserKnowledgeFile = async () => {
   const base = getActiveUserKnowledgeBase();
   const userId = getUserId();
   if (!userId || !base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   if (!state.userTools.knowledge.activeFile) {
-    notify("请先选择要保存的文档。", "warn");
+    notify(t("knowledge.file.saveRequired"), "warn");
     return;
   }
   const wunderBase = getWunderBase();
@@ -1566,10 +1589,10 @@ const saveUserKnowledgeFile = async () => {
     }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   await loadUserKnowledgeFiles();
-  notify("文档已保存并刷新索引。", "success");
+  notify(t("knowledge.file.saved"), "success");
 };
 
 // 支持从列表项直接删除指定文档
@@ -1577,15 +1600,15 @@ const deleteUserKnowledgeFile = async (targetPath = "") => {
   const base = getActiveUserKnowledgeBase();
   const userId = getUserId();
   if (!userId || !base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   const path = targetPath || state.userTools.knowledge.activeFile;
   if (!path) {
-    notify("请先选择要删除的文档。", "warn");
+    notify(t("knowledge.file.deleteRequired"), "warn");
     return;
   }
-  if (!window.confirm(`确认删除 ${path} 吗？`)) {
+  if (!window.confirm(t("knowledge.file.deleteConfirm", { name: path }))) {
     return;
   }
   const wunderBase = getWunderBase();
@@ -1594,33 +1617,33 @@ const deleteUserKnowledgeFile = async (targetPath = "") => {
   )}&base=${encodeURIComponent(base.name)}&path=${encodeURIComponent(path)}`;
   const response = await fetch(endpoint, { method: "DELETE" });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   if (path === state.userTools.knowledge.activeFile) {
     state.userTools.knowledge.activeFile = "";
     state.userTools.knowledge.fileContent = "";
   }
   await loadUserKnowledgeFiles();
-  notify("文档已删除并刷新索引。", "success");
+  notify(t("userTools.knowledge.file.deleted"), "success");
 };
 
 const createUserKnowledgeFile = async () => {
   const base = getActiveUserKnowledgeBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  const filename = window.prompt("请输入新文档文件名（.md）", "example.md");
+  const filename = window.prompt(t("knowledge.file.newPrompt"), "example.md");
   if (!filename) {
     return;
   }
   const trimmed = filename.trim();
   if (!trimmed) {
-    notify("文件名不能为空。", "warn");
+    notify(t("userTools.knowledge.file.nameRequired"), "warn");
     return;
   }
   if (!trimmed.toLowerCase().endsWith(".md")) {
-    notify("仅支持 .md 文档。", "warn");
+    notify(t("userTools.knowledge.file.mdOnly"), "warn");
     return;
   }
   state.userTools.knowledge.activeFile = trimmed;
@@ -1641,11 +1664,11 @@ const uploadUserKnowledgeFile = async (file) => {
   const base = getActiveUserKnowledgeBase();
   const userId = getUserId();
   if (!userId) {
-    notify("请先输入 user_id。", "warn");
+    notify(t("common.userIdRequired"), "warn");
     return;
   }
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   if (!file) {
@@ -1653,11 +1676,11 @@ const uploadUserKnowledgeFile = async (file) => {
   }
   const extension = normalizeUserKnowledgeUploadExtension(file.name);
   if (!extension) {
-    notify("文件缺少扩展名。", "warn");
+    notify(t("knowledge.file.extensionMissing"), "warn");
     return;
   }
   if (!USER_KNOWLEDGE_UPLOAD_EXTENSIONS.includes(extension)) {
-    notify(`不支持的文件类型：${extension}`, "warn");
+    notify(t("knowledge.file.unsupported", { extension }), "warn");
     return;
   }
   const wunderBase = getWunderBase();
@@ -1679,19 +1702,22 @@ const uploadUserKnowledgeFile = async (file) => {
         detail = "";
       }
       if (response.status === 404) {
-        throw new Error("上传接口不存在，请更新后端服务并重启。");
+        throw new Error(t("userTools.upload.endpointMissing"));
       }
-      throw new Error(`上传失败：${response.status}${detail ? `，${detail}` : ""}`);
+      const detailText = detail ? `, ${detail}` : "";
+      throw new Error(
+        t("userTools.knowledge.uploadFailed", { message: `${response.status}${detailText}` })
+      );
     }
   const result = await response.json();
   await loadUserKnowledgeFiles();
   if (result?.path) {
     await selectUserKnowledgeFile(result.path);
   }
-  notify(`上传完成：${result?.path || file.name}`, "success");
+  notify(t("knowledge.file.uploaded", { name: result?.path || file.name }), "success");
   const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
   if (warnings.length) {
-    notify(`转换警告：${warnings.join(" | ")}`, "warn");
+    notify(t("knowledge.file.warnings", { message: warnings.join(" | ") }), "warn");
   }
 };
 
@@ -1739,7 +1765,10 @@ const applyUserKnowledgeModal = async () => {
       return;
     }
     await loadUserKnowledgeFiles();
-    notify(userKnowledgeEditingIndex >= 0 ? "知识库已更新。" : "知识库已新增。", "success");
+    notify(
+      userKnowledgeEditingIndex >= 0 ? t("knowledge.base.updated") : t("knowledge.base.added"),
+      "success"
+    );
     closeUserKnowledgeModal();
   } catch (error) {
     state.userTools.knowledge.bases = snapshot.bases;
@@ -1749,7 +1778,7 @@ const applyUserKnowledgeModal = async () => {
     state.userTools.knowledge.fileContent = snapshot.fileContent;
     renderUserKnowledgeBaseList();
     renderUserKnowledgeDetail();
-    notify(`保存失败：${error.message}`, "error");
+    notify(t("knowledge.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -1760,7 +1789,7 @@ const addUserKnowledgeBase = () => {
 const editUserKnowledgeBase = () => {
   const base = getActiveUserKnowledgeBase();
   if (!base) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   openUserKnowledgeModal(base, state.userTools.knowledge.selectedIndex);
@@ -1771,8 +1800,8 @@ const deleteUserKnowledgeBase = async () => {
   if (!base) {
     return;
   }
-  const name = base.name || "(未命名知识库)";
-  if (!window.confirm(`确认删除知识库 ${name} 吗？`)) {
+  const name = base.name || t("knowledge.name.unnamed");
+  if (!window.confirm(t("knowledge.base.deleteConfirm", { name }))) {
     return;
   }
   const snapshot = {
@@ -1806,7 +1835,7 @@ const deleteUserKnowledgeBase = async () => {
       return;
     }
     await loadUserKnowledgeFiles();
-    notify("知识库已删除。", "success");
+    notify(t("knowledge.base.deleted"), "success");
   } catch (error) {
     state.userTools.knowledge.bases = snapshot.bases;
     state.userTools.knowledge.selectedIndex = snapshot.selectedIndex;
@@ -1815,7 +1844,7 @@ const deleteUserKnowledgeBase = async () => {
     state.userTools.knowledge.fileContent = snapshot.fileContent;
     renderUserKnowledgeBaseList();
     renderUserKnowledgeDetail();
-    notify(`删除失败：${error.message}`, "error");
+    notify(t("knowledge.deleteFailed", { message: error.message }), "error");
   }
 };
 
@@ -1823,10 +1852,10 @@ const deleteUserKnowledgeBase = async () => {
 const saveExtraPrompt = async () => {
   const userId = getUserId();
   if (!userId) {
-    updateExtraPromptStatus("请先输入 user_id。");
+    updateExtraPromptStatus(t("common.userIdRequired"));
     return;
   }
-  updateExtraPromptStatus("正在保存...");
+  updateExtraPromptStatus(t("userTools.saving"));
   const payload = {
     user_id: userId,
     extra_prompt: state.userTools.extraPrompt || "",
@@ -1840,14 +1869,14 @@ const saveExtraPrompt = async () => {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
-    updateExtraPromptStatus("已自动保存。");
+    updateExtraPromptStatus(t("userTools.autoSaved"));
     state.runtime.promptNeedsRefresh = true;
     schedulePromptReload();
   } catch (error) {
-    updateExtraPromptStatus(`保存失败：${error.message}`);
-    notify(`附加提示词保存失败：${error.message}`, "error");
+    updateExtraPromptStatus(t("userTools.saveFailed", { message: error.message }));
+    notify(t("userTools.extraPrompt.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -1879,7 +1908,7 @@ export const initUserTools = () => {
   if (elements.userMcpAddBtn) {
     elements.userMcpAddBtn.addEventListener("click", () => {
       addUserMcpServer();
-      openUserMcpModal("新增 MCP 服务");
+      openUserMcpModal(t("userTools.mcp.modal.addTitle"));
     });
   }
   elements.userMcpConnectBtn.addEventListener("click", connectUserMcpServer);
@@ -1889,7 +1918,7 @@ export const initUserTools = () => {
     if (!getActiveUserMcpServer()) {
       return;
     }
-    openUserMcpModal("编辑 MCP 服务");
+    openUserMcpModal(t("userTools.mcp.modal.editTitle"));
   });
   elements.userMcpEnableAllBtn.addEventListener("click", () => {
     const server = getActiveUserMcpServer();
@@ -1945,18 +1974,20 @@ export const initUserTools = () => {
     }
     try {
       await uploadUserSkillZip(file);
-      notify("技能上传完成并已刷新。", "success");
+      notify(t("userTools.skills.upload.success"), "success");
     } catch (error) {
-      notify(`技能上传失败：${error.message}`, "error");
+      notify(t("userTools.skills.upload.failed", { message: error.message }), "error");
     }
   });
   elements.userSkillRefreshBtn.addEventListener("click", async () => {
     try {
       await loadUserSkills();
-      notify("技能列表已刷新。", "success");
+      notify(t("userTools.skills.refresh.success"), "success");
     } catch (error) {
-      elements.userSkillsList.textContent = `刷新失败：${error.message}`;
-      notify(`技能刷新失败：${error.message}`, "error");
+      elements.userSkillsList.textContent = t("common.loadFailedWithMessage", {
+        message: error.message,
+      });
+      notify(t("userTools.skills.refresh.failed", { message: error.message }), "error");
     }
   });
 
@@ -1965,14 +1996,18 @@ export const initUserTools = () => {
   elements.userKnowledgeRefreshBtn.addEventListener("click", async () => {
     try {
       await loadUserKnowledgeConfig();
-      notify("知识库配置已刷新。", "success");
+      notify(t("userTools.knowledge.refresh.success"), "success");
     } catch (error) {
-      elements.userKnowledgeBaseList.textContent = `刷新失败：${error.message}`;
-      notify(`知识库刷新失败：${error.message}`, "error");
+      elements.userKnowledgeBaseList.textContent = t("common.loadFailedWithMessage", {
+        message: error.message,
+      });
+      notify(t("userTools.knowledge.refresh.failed", { message: error.message }), "error");
     }
   });
   elements.userKnowledgeDeleteBtn.addEventListener("click", () => {
-    deleteUserKnowledgeBase().catch((error) => notify(`删除失败：${error.message}`, "error"));
+    deleteUserKnowledgeBase().catch((error) =>
+      notify(t("knowledge.deleteFailed", { message: error.message }), "error")
+    );
   });
   elements.userKnowledgeModalSave?.addEventListener("click", () => {
     applyUserKnowledgeModal();
@@ -1996,7 +2031,7 @@ export const initUserTools = () => {
   elements.userKnowledgeFileUploadBtn.addEventListener("click", () => {
     const base = getActiveUserKnowledgeBase();
     if (!base || !base.name) {
-      notify("请先选择知识库。", "warn");
+      notify(t("knowledge.base.selectRequired"), "warn");
       return;
     }
     elements.userKnowledgeFileUploadInput.value = "";
@@ -2009,9 +2044,9 @@ export const initUserTools = () => {
     }
     try {
       await uploadUserKnowledgeFile(file);
-      notify("文档上传完成并已刷新索引。", "success");
+      notify(t("userTools.knowledge.file.uploaded"), "success");
     } catch (error) {
-      notify(`文档上传失败：${error.message}`, "error");
+      notify(t("userTools.knowledge.file.uploadFailed", { message: error.message }), "error");
     }
   });
   elements.userKnowledgeFileContent?.addEventListener("input", () => {

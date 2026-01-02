@@ -1,6 +1,7 @@
 ﻿from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from app.core.i18n import t
 
 SkillCallable = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
@@ -36,5 +37,5 @@ class SkillRegistry:
     def get(self, name: str) -> SkillCallable:
         """获取指定技能的执行函数。"""
         if name not in self._skills:
-            raise KeyError(f"技能不存在或不可执行: {name}")
+            raise KeyError(t("error.skill_not_executable", name=name))
         return self._skills[name]

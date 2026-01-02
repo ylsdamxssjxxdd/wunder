@@ -5,6 +5,7 @@ import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 // 规范化 MCP 服务字段，兼容后端与导入结构
 const normalizeMcpServer = (server) => {
@@ -104,7 +105,7 @@ const collectModalServer = () => {
 const updateMcpStructPreview = () => {
   const server = collectModalServer();
   const preview = buildMcpStructPreview(server);
-  elements.mcpStructPreview.value = preview || "填写服务名称与服务地址后生成结构体。";
+  elements.mcpStructPreview.value = preview || t("mcp.struct.preview.empty");
 };
 
 // 判断指定服务是否已有工具缓存，用于区分“连接/刷新”状态
@@ -118,7 +119,7 @@ const updateMcpConnectButton = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
   const connected = server ? isMcpServerConnected(state.mcp.selectedIndex) : false;
   const iconClass = connected ? "fa-solid fa-arrows-rotate" : "fa-solid fa-link";
-  const label = connected ? "刷新" : "连接";
+  const label = connected ? t("mcp.connect.refresh") : t("mcp.connect.connect");
   elements.mcpConnectBtn.innerHTML = `<i class="${iconClass}"></i>${label}`;
   elements.mcpConnectBtn.disabled = !server;
 };
@@ -133,7 +134,7 @@ const updateMcpRefreshAllButton = () => {
 const renderMcpServers = () => {
   elements.mcpServerList.textContent = "";
   if (!state.mcp.servers.length) {
-    elements.mcpServerList.textContent = "暂无 MCP 服务，请先新增。";
+    elements.mcpServerList.textContent = t("mcp.list.empty");
     updateMcpConnectButton();
     updateMcpRefreshAllButton();
     return;
@@ -145,7 +146,7 @@ const renderMcpServers = () => {
     if (index === state.mcp.selectedIndex) {
       item.classList.add("active");
     }
-    const title = server.display_name || server.name || "(未命名服务)";
+    const title = server.display_name || server.name || t("mcp.server.unnamed");
     const subtitleParts = [];
     if (server.display_name && server.name) {
       subtitleParts.push(`ID: ${server.name}`);
@@ -166,7 +167,7 @@ const renderMcpServers = () => {
 const renderMcpHeader = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
   if (!server) {
-    elements.mcpDetailTitle.textContent = "未选择服务";
+    elements.mcpDetailTitle.textContent = t("mcp.detail.none");
     elements.mcpDetailMeta.textContent = "";
     elements.mcpDetailDesc.textContent = "";
     elements.mcpEditBtn.disabled = true;
@@ -174,7 +175,7 @@ const renderMcpHeader = () => {
     updateMcpConnectButton();
     return;
   }
-  const title = server.display_name || server.name || "(未命名服务)";
+  const title = server.display_name || server.name || t("mcp.server.unnamed");
   const metaParts = [];
   if (server.display_name && server.name) {
     metaParts.push(`ID: ${server.name}`);
@@ -185,7 +186,9 @@ const renderMcpHeader = () => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
-  metaParts.push(server.enabled !== false ? "已启用" : "未启用");
+  metaParts.push(
+    server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
+  );
   elements.mcpDetailTitle.textContent = title;
   elements.mcpDetailMeta.textContent = metaParts.join(" · ");
   elements.mcpDetailDesc.textContent = server.description || "";
@@ -199,13 +202,13 @@ const renderMcpTools = () => {
   elements.mcpToolList.textContent = "";
   const server = state.mcp.servers[state.mcp.selectedIndex];
   if (!server) {
-    elements.mcpToolList.textContent = "请选择一个 MCP 服务。";
+    elements.mcpToolList.textContent = t("mcp.tools.select");
     renderMcpHeader();
     return;
   }
   const tools = state.mcp.toolsByIndex[state.mcp.selectedIndex];
   if (!tools || !tools.length) {
-    elements.mcpToolList.textContent = "尚未加载工具，请先连接服务。";
+    elements.mcpToolList.textContent = t("mcp.tools.notLoaded");
     renderMcpHeader();
     return;
   }
@@ -245,8 +248,8 @@ const renderMcpTools = () => {
       }
       // 勾选状态变更后立即保存，避免依赖手动保存按钮
       saveMcpServers({ refreshUI: false }).catch((error) => {
-        console.error("MCP 配置保存失败:", error);
-        notify(`MCP 配置保存失败：${error.message}`, "error");
+        console.error(t("mcp.saveFailed", { message: error.message }), error);
+        notify(t("mcp.saveFailed", { message: error.message }), "error");
       });
     });
     const label = document.createElement("label");
@@ -256,12 +259,19 @@ const renderMcpTools = () => {
       if (event.target === checkbox) {
         return;
       }
-      const serverTitle = server.display_name || server.name || "未命名服务";
-      const metaParts = ["MCP 工具", `服务: ${serverTitle}`];
-      metaParts.push(server.enabled !== false ? "服务已启用" : "服务未启用");
-      metaParts.push(checkbox.checked ? "已勾选" : "未勾选");
+      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+      const metaParts = [
+        t("mcp.tool.label"),
+        t("mcp.tool.server", { name: serverTitle }),
+      ];
+      metaParts.push(
+        server.enabled !== false ? t("mcp.tool.serverEnabled") : t("mcp.tool.serverDisabled")
+      );
+      metaParts.push(
+        checkbox.checked ? t("mcp.tool.selected") : t("mcp.tool.unselected")
+      );
       openToolDetailModal({
-        title: tool.name || "工具详情",
+        title: tool.name || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
@@ -278,7 +288,7 @@ const renderMcpTools = () => {
 const renderMcpDetail = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
   if (!server) {
-    elements.mcpToolList.textContent = "请选择一个 MCP 服务。";
+    elements.mcpToolList.textContent = t("mcp.tools.select");
     renderMcpHeader();
     return;
   }
@@ -291,7 +301,7 @@ export const loadMcpServers = async () => {
   const endpoint = `${wunderBase}/admin/mcp`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.mcp.servers = Array.isArray(result.servers) ? result.servers.map(normalizeMcpServer) : [];
@@ -330,7 +340,7 @@ const saveMcpServers = async (options = {}) => {
     body: JSON.stringify({ servers: payloadServers }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   if (saveVersion !== state.mcp.saveVersion) {
@@ -390,17 +400,19 @@ const connectMcpServerAtIndex = async (index, options = {}) => {
   const server = state.mcp.servers[index];
   if (!server || !server.name || !server.endpoint) {
     if (updateUI) {
-      elements.mcpToolList.textContent = "请先填写服务名称与地址。";
+      elements.mcpToolList.textContent = t("mcp.form.required");
     }
     return false;
   }
   if (updateUI) {
-    elements.mcpToolList.textContent = isMcpServerConnected(index) ? "刷新中..." : "连接中...";
+    elements.mcpToolList.textContent = isMcpServerConnected(index)
+      ? t("mcp.connect.refreshing")
+      : t("mcp.connect.connecting");
   }
   const result = await requestMcpTools(server);
   if (!result.ok) {
     if (updateUI) {
-      elements.mcpToolList.textContent = `请求失败：${result.status}`;
+      elements.mcpToolList.textContent = t("common.requestFailed", { status: result.status });
     }
     return false;
   }
@@ -420,13 +432,16 @@ const connectMcpServer = async () => {
   const wasConnected = index >= 0 ? isMcpServerConnected(index) : false;
   const ok = await connectMcpServerAtIndex(index, { updateUI: true });
   if (!ok) {
-    notify("MCP 连接失败，请检查服务信息。", "error");
+    notify(t("mcp.connect.failed"), "error");
     return;
   }
-  notify(wasConnected ? "MCP 工具已刷新。" : "MCP 工具已连接。", "success");
+  notify(
+    wasConnected ? t("mcp.connect.refreshed") : t("mcp.connect.connected"),
+    "success"
+  );
   saveMcpServers({ refreshUI: false }).catch((error) => {
-    console.error("MCP 工具缓存保存失败:", error);
-    notify(`MCP 工具缓存保存失败：${error.message}`, "error");
+    console.error(t("mcp.cache.saveFailed", { message: error.message }), error);
+    notify(t("mcp.cache.saveFailed", { message: error.message }), "error");
   });
 };
 
@@ -447,20 +462,20 @@ const refreshAllMcpServers = async () => {
     }
   }
   if (!updated) {
-    notify("MCP 刷新失败，请检查服务信息。", "error");
+    notify(t("mcp.refresh.failed"), "error");
     return;
   }
-  notify("已刷新所有已连接 MCP 服务。", "success");
+  notify(t("mcp.refresh.allSuccess"), "success");
   saveMcpServers({ refreshUI: false }).catch((error) => {
-    console.error("MCP 工具缓存保存失败:", error);
-    notify(`MCP 工具缓存保存失败：${error.message}`, "error");
+    console.error(t("mcp.cache.saveFailed", { message: error.message }), error);
+    notify(t("mcp.cache.saveFailed", { message: error.message }), "error");
   });
 };
 
 const openMcpModal = (index) => {
   state.mcpModal.index = index;
   const server = index !== null ? state.mcp.servers[index] : null;
-  elements.mcpModalTitle.textContent = "编辑 MCP 服务";
+  elements.mcpModalTitle.textContent = t("mcp.modal.editTitle");
   elements.mcpName.value = server?.name || "";
   elements.mcpDisplayName.value = server?.display_name || "";
   elements.mcpEndpoint.value = server?.endpoint || "";
@@ -501,7 +516,7 @@ const applyMcpModal = () => {
   const name = elements.mcpName.value.trim();
   const endpoint = elements.mcpEndpoint.value.trim();
   if (!name || !endpoint) {
-    notify("请填写服务名称与服务地址", "warn");
+    notify(t("mcp.form.required"), "warn");
     return false;
   }
   const headersResult = parseHeadersValue(elements.mcpHeaders.value);
@@ -573,7 +588,7 @@ const importMcpServers = async (raw) => {
   try {
     parsed = JSON.parse(content);
   } catch (error) {
-    notify("MCP 结构体 JSON 解析失败", "error");
+    notify(t("mcp.import.parseFailed"), "error");
     return false;
   }
   const imported = [];
@@ -592,7 +607,7 @@ const importMcpServers = async (raw) => {
     }
   }
   if (!imported.length) {
-    notify("未识别到可用的 MCP 服务结构", "warn");
+    notify(t("mcp.import.noValid"), "warn");
     return false;
   }
   let lastIndex = state.mcp.selectedIndex;
@@ -604,10 +619,10 @@ const importMcpServers = async (raw) => {
   renderMcpDetail();
   try {
     await saveMcpServers();
-    notify("MCP 服务已导入并保存。", "success");
+    notify(t("mcp.import.success"), "success");
   } catch (error) {
-    console.error("MCP 配置保存失败:", error);
-    notify(`MCP 配置保存失败：${error.message}`, "error");
+    console.error(t("mcp.saveFailed", { message: error.message }), error);
+    notify(t("mcp.saveFailed", { message: error.message }), "error");
     return false;
   }
   return true;
@@ -619,7 +634,7 @@ const deleteMcpServer = async () => {
     return;
   }
   const removed = state.mcp.servers[state.mcp.selectedIndex];
-  const removedName = removed?.display_name || removed?.name || "MCP 服务";
+  const removedName = removed?.display_name || removed?.name || t("mcp.server.defaultName");
   state.mcp.servers.splice(state.mcp.selectedIndex, 1);
   state.mcp.toolsByIndex.splice(state.mcp.selectedIndex, 1);
   if (!state.mcp.servers.length) {
@@ -631,10 +646,10 @@ const deleteMcpServer = async () => {
   renderMcpDetail();
   try {
     await saveMcpServers();
-    notify(`已删除 ${removedName}`, "success");
+    notify(t("mcp.delete.success", { name: removedName }), "success");
   } catch (error) {
-    console.error("MCP 配置保存失败:", error);
-    notify(`MCP 配置保存失败：${error.message}`, "error");
+    console.error(t("mcp.saveFailed", { message: error.message }), error);
+    notify(t("mcp.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -661,10 +676,10 @@ export const initMcpPanel = () => {
     renderMcpDetail();
     try {
       await saveMcpServers({ refreshUI: false });
-      notify("已启用全部工具。", "success");
+      notify(t("mcp.tools.enableAll"), "success");
     } catch (error) {
-      console.error("MCP 配置保存失败:", error);
-      notify(`MCP 配置保存失败：${error.message}`, "error");
+      console.error(t("mcp.saveFailed", { message: error.message }), error);
+      notify(t("mcp.saveFailed", { message: error.message }), "error");
     }
   });
   elements.mcpDisableAllBtn.addEventListener("click", async () => {
@@ -677,10 +692,10 @@ export const initMcpPanel = () => {
     renderMcpDetail();
     try {
       await saveMcpServers({ refreshUI: false });
-      notify("已禁用全部工具。", "success");
+      notify(t("mcp.tools.disableAll"), "success");
     } catch (error) {
-      console.error("MCP 配置保存失败:", error);
-      notify(`MCP 配置保存失败：${error.message}`, "error");
+      console.error(t("mcp.saveFailed", { message: error.message }), error);
+      notify(t("mcp.saveFailed", { message: error.message }), "error");
     }
   });
   elements.mcpModalSave.addEventListener("click", async () => {
@@ -690,10 +705,10 @@ export const initMcpPanel = () => {
     }
     try {
       await saveMcpServers();
-      notify("MCP 配置已保存。", "success");
+      notify(t("mcp.save.success"), "success");
     } catch (error) {
-      console.error("MCP 配置保存失败:", error);
-      notify(`MCP 配置保存失败：${error.message}`, "error");
+      console.error(t("mcp.saveFailed", { message: error.message }), error);
+      notify(t("mcp.saveFailed", { message: error.message }), "error");
     }
   });
   elements.mcpModalCancel.addEventListener("click", closeMcpModal);

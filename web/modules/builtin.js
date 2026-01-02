@@ -5,6 +5,7 @@ import { getToolInputSchema } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
+import { t } from "./i18n.js";
 
 // 拉取内置工具清单与启用状态
 export const loadBuiltinTools = async () => {
@@ -12,7 +13,7 @@ export const loadBuiltinTools = async () => {
   const endpoint = `${wunderBase}/admin/tools`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("builtin.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.builtin.tools = Array.isArray(result.tools) ? result.tools : [];
@@ -23,7 +24,7 @@ export const loadBuiltinTools = async () => {
 const renderBuiltinTools = () => {
   elements.builtinToolsList.textContent = "";
   if (!state.builtin.tools.length) {
-    elements.builtinToolsList.textContent = "未发现内置工具。";
+    elements.builtinToolsList.textContent = t("builtin.empty");
     return;
   }
   state.builtin.tools.forEach((tool) => {
@@ -35,8 +36,8 @@ const renderBuiltinTools = () => {
     checkbox.addEventListener("change", (event) => {
       tool.enabled = event.target.checked;
       saveBuiltinTools().catch((error) => {
-        console.error("内置工具启用状态保存失败:", error);
-        notify(`内置工具保存失败：${error.message}`, "error");
+        console.error(t("builtin.saveFailed", { message: error.message }), error);
+        notify(t("builtin.saveFailed", { message: error.message }), "error");
       });
     });
     const label = document.createElement("label");
@@ -48,9 +49,12 @@ const renderBuiltinTools = () => {
       if (event.target === checkbox) {
         return;
       }
-      const metaParts = ["内置工具", checkbox.checked ? "已启用" : "未启用"];
+      const metaParts = [
+        t("builtin.meta.label"),
+        checkbox.checked ? t("builtin.meta.enabled") : t("builtin.meta.disabled"),
+      ];
       openToolDetailModal({
-        title: tool.name || "工具详情",
+        title: tool.name || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
@@ -75,7 +79,7 @@ const saveBuiltinTools = async () => {
     body: JSON.stringify({ enabled }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("builtin.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.builtin.tools = Array.isArray(result.tools) ? result.tools : [];
@@ -88,10 +92,12 @@ export const initBuiltinPanel = () => {
   elements.refreshBuiltinBtn.addEventListener("click", async () => {
     try {
       await loadBuiltinTools();
-      notify("内置工具已刷新。", "success");
+      notify(t("builtin.refreshSuccess"), "success");
     } catch (error) {
-      elements.builtinToolsList.textContent = `刷新失败：${error.message}`;
-      notify(`内置工具刷新失败：${error.message}`, "error");
+      elements.builtinToolsList.textContent = t("builtin.refreshFailedList", {
+        message: error.message,
+      });
+      notify(t("builtin.refreshFailed", { message: error.message }), "error");
     }
   });
 };

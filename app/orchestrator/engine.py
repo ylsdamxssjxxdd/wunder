@@ -16,6 +16,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Set, Tup
 
 from app.core.config import LLMConfig, WunderConfig, load_config, resolve_llm_config
 from app.core.errors import ErrorCodes, WunderError
+from app.core.i18n import get_language, reset_language, set_language, t
 from app.core.token_utils import (
     approx_token_count,
     estimate_message_tokens,
@@ -91,6 +92,7 @@ class PreparedRequest:
     config_overrides: Optional[Dict[str, Any]]
     stream: bool
     attachments: Optional[List[WunderAttachment]]
+    language: str
 
 
 @dataclass
@@ -105,7 +107,8 @@ class MemorySummaryTask:
     model_name: Optional[str]
     attachments: Optional[List[WunderAttachment]]
     request_messages: Optional[List[Dict[str, Any]]]
-    status: str = "排队中"
+    language: str = "zh-CN"
+    status: str = ""
     start_time: float = 0.0
     end_time: float = 0.0
     request_payload: Optional[Dict[str, Any]] = None
@@ -335,14 +338,18 @@ class WunderOrchestrator:
         self, task: MemorySummaryTask
     ) -> Dict[str, Any]:
         """按当前配置重建记忆总结请求载荷，供管理端调试。"""
-        ctx, llm_name, summary_llm_config = self._build_memory_summary_context(task)
-        messages = await self._build_memory_summary_messages(
-            ctx, task, summary_llm_config
-        )
-        payload_messages = self._sanitize_messages_for_log(
-            copy.deepcopy(messages), task.attachments
-        )
-        return self._build_memory_summary_payload(task, llm_name, payload_messages)
+        token = set_language(task.language)
+        try:
+            ctx, llm_name, summary_llm_config = self._build_memory_summary_context(task)
+            messages = await self._build_memory_summary_messages(
+                ctx, task, summary_llm_config
+            )
+            payload_messages = self._sanitize_messages_for_log(
+                copy.deepcopy(messages), task.attachments
+            )
+            return self._build_memory_summary_payload(task, llm_name, payload_messages)
+        finally:
+            reset_language(token)
 
     def apply_config(self, config: WunderConfig) -> None:
         """更新运行时配置并刷新关联缓存。"""
@@ -395,7 +402,7 @@ class WunderOrchestrator:
         """构建指定用户的系统提示词。"""
         cleaned_user_id = str(user_id or "").strip()
         if not cleaned_user_id:
-            raise ValueError("user_id 不能为空")
+            raise ValueError(t("error.user_id_required"))
         config = self._resolve_config(config_overrides)
         llm_name, llm_config = resolve_llm_config(config)
         skills = self._skills if config is self._config else self._load_skill_registry(config)
@@ -544,9 +551,9 @@ class WunderOrchestrator:
         user_id = str(request.user_id or "").strip()
         question = str(request.question or "").strip()
         if not user_id:
-            raise WunderError(ErrorCodes.INVALID_REQUEST, "user_id 不能为空")
+            raise WunderError(ErrorCodes.INVALID_REQUEST, t("error.user_id_required"))
         if not question:
-            raise WunderError(ErrorCodes.INVALID_REQUEST, "问题不能为空")
+            raise WunderError(ErrorCodes.INVALID_REQUEST, t("error.question_required"))
         session_id = str(request.session_id or "").strip() or self._generate_session_id()
         tool_names: Optional[List[str]] = None
         if request.tool_names is not None:
@@ -585,6 +592,7 @@ class WunderOrchestrator:
             config_overrides=overrides,
             stream=stream,
             attachments=attachments,
+            language=get_language(),
         )
 
     async def _execute_request(
@@ -601,13 +609,16 @@ class WunderOrchestrator:
             # 使用跨进程会话锁控制用户互斥与全局并发。
             acquired = await limiter.acquire(session_id=session_id, user_id=user_id)
             if not acquired:
-                raise WunderError(ErrorCodes.USER_BUSY, "该用户已有会话正在执行")
+                raise WunderError(ErrorCodes.USER_BUSY, t("error.user_session_busy"))
             # 启动心跳续租，避免长任务被误判过期。
             heartbeat_task = asyncio.create_task(
                 self._keep_session_lock(limiter, session_id)
             )
             monitor.register(session_id, user_id, question)
-            emitter.emit("progress", {"stage": "received", "summary": "已接收请求"})
+            emitter.emit(
+                "progress",
+                {"stage": "received", "summary": t("monitor.summary.received")},
+            )
 
             config = self._resolve_config(prepared.config_overrides)
             llm_name, llm_config = resolve_llm_config(config, prepared.model_name)
@@ -650,6 +661,7 @@ class WunderOrchestrator:
                 system_prompt,
                 prepared.tool_names,
                 prepared.config_overrides,
+                prepared.language,
             )
             system_prompt = await self._append_memory_prompt(user_id, system_prompt)
             history_messages = await self._history_manager.load_history_messages(
@@ -686,7 +698,7 @@ class WunderOrchestrator:
                     "progress",
                     {
                         "stage": "llm_call",
-                        "summary": "调用模型",
+                        "summary": t("monitor.summary.model_call"),
                         "round": round_index,
                     },
                 )
@@ -765,7 +777,7 @@ class WunderOrchestrator:
                         safe_args = args if isinstance(args, dict) else {"raw": args}
                         emitter.emit("tool_call", {"tool": name, "args": safe_args})
                         result = self._build_tool_error_result(
-                            name, "工具未启用或不可用"
+                            name, t("error.tool_disabled_or_unavailable")
                         )
                         payload = {"tool": name, "ok": result.ok, "data": result.data}
                         if result.error:
@@ -822,7 +834,7 @@ class WunderOrchestrator:
                     last_response.content, last_response.reasoning
                 )
             if not answer:
-                answer = "未能在最大轮次内生成最终答复。"
+                answer = t("error.max_rounds_no_final_answer")
 
             # 仅在正常结束时排队长期记忆总结任务
             await self._enqueue_memory_summary(
@@ -850,13 +862,15 @@ class WunderOrchestrator:
         except Exception as exc:  # noqa: BLE001
             payload = {
                 "code": ErrorCodes.INTERNAL_ERROR,
-                "message": "内部错误",
+                "message": t("error.internal_error"),
                 "detail": {"error": str(exc)},
             }
             emitter.emit("error", payload)
             monitor.mark_error(session_id, str(exc))
             raise WunderError(
-                ErrorCodes.INTERNAL_ERROR, "内部错误", {"error": str(exc)}
+                ErrorCodes.INTERNAL_ERROR,
+                t("error.internal_error"),
+                {"error": str(exc)},
             ) from exc
         finally:
             if heartbeat_task:
@@ -900,16 +914,17 @@ class WunderOrchestrator:
         prompt: str,
         tool_names: Optional[List[str]],
         overrides: Optional[Dict[str, Any]],
+        language: Optional[str] = None,
     ) -> str:
         """会话级系统提示词优先复用历史记录。"""
         stored = await ctx.workspace_manager.load_session_system_prompt(
-            user_id, session_id
+            user_id, session_id, language=language
         )
         if stored and tool_names is None and not overrides:
             return stored
         if not stored:
             await ctx.workspace_manager.save_session_system_prompt(
-                user_id, session_id, prompt
+                user_id, session_id, prompt, language=language
             )
         return prompt
 
@@ -918,10 +933,7 @@ class WunderOrchestrator:
         try:
             return read_prompt_template(_MEMORY_SUMMARY_PROMPT_PATH).strip()
         except OSError:
-            return (
-                "请提取对后续对话长期有价值的核心信息，"
-                "仅输出纯文本列表，每行以“- ”开头，禁止标题与解释。"
-            )
+            return t("memory.summary_prompt_fallback")
 
     @staticmethod
     def _format_memory_task(
@@ -935,13 +947,33 @@ class WunderOrchestrator:
         start_ts = float(task.start_time or 0)
         end_ts = float(task.end_time or 0)
         status = str(task.status or "").strip()
+        status_map = {
+            "排队中": "queued",
+            "queued": "queued",
+            "正在处理": "running",
+            "processing": "running",
+            "已完成": "done",
+            "completed": "done",
+            "失败": "failed",
+            "failed": "failed",
+        }
         if not status:
             if end_ts > 0:
-                status = "已完成"
+                status = t("memory.status.done")
             elif start_ts > 0:
-                status = "正在处理"
+                status = t("memory.status.running")
             else:
-                status = "排队中"
+                status = t("memory.status.queued")
+        else:
+            normalized = status_map.get(status.lower(), status_map.get(status))
+            if normalized == "queued":
+                status = t("memory.status.queued")
+            elif normalized == "running":
+                status = t("memory.status.running")
+            elif normalized == "done":
+                status = t("memory.status.done")
+            elif normalized == "failed":
+                status = t("memory.status.failed")
 
         def _format_ts(value: float) -> str:
             if value <= 0:
@@ -1027,6 +1059,8 @@ class WunderOrchestrator:
             attachments=prepared.attachments,
             request_messages=request_messages,
             final_answer=str(final_answer or "").strip(),
+            language=prepared.language,
+            status=t("memory.status.queued"),
         )
         await self._memory_queue.put(
             (task.queued_time, self._memory_queue_seq, task)
@@ -1043,14 +1077,15 @@ class WunderOrchestrator:
                 self._memory_active_task = None
                 return
             stored = False
+            token = set_language(task.language)
             try:
                 task.start_time = time.time()
-                task.status = "正在处理"
+                task.status = t("memory.status.running")
                 self._memory_active_task = task
                 stored = await self._run_memory_summary_task(task)
-                task.status = "已完成"
+                task.status = t("memory.status.done")
             except Exception as exc:  # noqa: BLE001
-                task.status = "失败"
+                task.status = t("memory.status.failed")
                 task.error = str(exc)
                 self._log_memory_summary_error(task, exc)
             finally:
@@ -1078,6 +1113,7 @@ class WunderOrchestrator:
                         pass
                 self._memory_task_history.appendleft(task)
                 self._memory_queue.task_done()
+                reset_language(token)
 
     def _log_memory_summary_error(
         self, task: MemorySummaryTask, error: Exception
@@ -1170,6 +1206,9 @@ class WunderOrchestrator:
         self, messages: List[Dict[str, Any]], final_answer: str
     ) -> str:
         """将历史消息融合为单条总结输入内容，避免工具输出干扰。"""
+        separator = t("memory.summary.role.separator")
+        user_label = t("memory.summary.role.user")
+        assistant_label = t("memory.summary.role.assistant")
         lines: List[str] = []
         last_assistant = ""
         for message in messages:
@@ -1183,14 +1222,14 @@ class WunderOrchestrator:
             content = self._extract_memory_summary_text(message.get("content"))
             if not content:
                 continue
-            label = "用户" if role == "user" else "助手" if role == "assistant" else role
-            lines.append(f"{label}：{content}")
+            label = user_label if role == "user" else assistant_label if role == "assistant" else role
+            lines.append(f"{label}{separator}{content}")
             if role == "assistant":
                 last_assistant = content
 
         final_text = str(final_answer or "").strip()
         if final_text and final_text != last_assistant:
-            lines.append(f"助手：{final_text}")
+            lines.append(f"{assistant_label}{separator}{final_text}")
         return "\n".join(lines).strip()
 
     def _extract_memory_summary_text(self, content: Any) -> str:
@@ -1211,7 +1250,7 @@ class WunderOrchestrator:
                     if cleaned:
                         parts.append(cleaned)
                 elif part_type == "image_url":
-                    parts.append("[图片]")
+                    parts.append(t("memory.summary.image_placeholder"))
             return "\n".join([item for item in parts if item]).strip()
         return self._strip_tool_calls(str(content)).strip()
 
@@ -1235,44 +1274,48 @@ class WunderOrchestrator:
 
     async def _run_memory_summary_task(self, task: MemorySummaryTask) -> bool:
         """执行单条长期记忆总结任务。"""
-        if not await self._memory_store.is_enabled(task.user_id):
-            return False
-        ctx, llm_name, summary_llm_config = self._build_memory_summary_context(task)
-        messages = await self._build_memory_summary_messages(
-            ctx, task, summary_llm_config
-        )
-        # 预先保存可展示的总结请求载荷，便于管理端调试
-        payload_messages = self._sanitize_messages_for_log(
-            copy.deepcopy(messages), task.attachments
-        )
-        task.request_payload = self._build_memory_summary_payload(
-            task, llm_name, payload_messages
-        )
+        token = set_language(task.language)
+        try:
+            if not await self._memory_store.is_enabled(task.user_id):
+                return False
+            ctx, llm_name, summary_llm_config = self._build_memory_summary_context(task)
+            messages = await self._build_memory_summary_messages(
+                ctx, task, summary_llm_config
+            )
+            # 预先保存可展示的总结请求载荷，便于管理端调试
+            payload_messages = self._sanitize_messages_for_log(
+                copy.deepcopy(messages), task.attachments
+            )
+            task.request_payload = self._build_memory_summary_payload(
+                task, llm_name, payload_messages
+            )
 
-        emitter = _EventEmitter(task.session_id, task.user_id)
-        response, _ = await self._call_llm(
-            ctx,
-            messages,
-            emitter,
-            task.session_id,
-            stream=False,
-            round_index=1,
-            emit_events=False,
-            attachments=task.attachments,
-            llm_config_override=summary_llm_config,
-        )
-        summary_text = self._resolve_final_answer(
-            response.content, response.reasoning
-        )
-        normalized_summary = self._memory_store.normalize_summary(summary_text)
-        task.summary_result = normalized_summary
-        stored = await self._memory_store.upsert_record(
-            task.user_id,
-            task.session_id,
-            normalized_summary,
-            now_ts=task.queued_time,
-        )
-        return stored
+            emitter = _EventEmitter(task.session_id, task.user_id)
+            response, _ = await self._call_llm(
+                ctx,
+                messages,
+                emitter,
+                task.session_id,
+                stream=False,
+                round_index=1,
+                emit_events=False,
+                attachments=task.attachments,
+                llm_config_override=summary_llm_config,
+            )
+            summary_text = self._resolve_final_answer(
+                response.content, response.reasoning
+            )
+            normalized_summary = self._memory_store.normalize_summary(summary_text)
+            task.summary_result = normalized_summary
+            stored = await self._memory_store.upsert_record(
+                task.user_id,
+                task.session_id,
+                normalized_summary,
+                now_ts=task.queued_time,
+            )
+            return stored
+        finally:
+            reset_language(token)
 
     @staticmethod
     def _is_observation_message(message: Dict[str, Any]) -> bool:
@@ -1438,9 +1481,9 @@ class WunderOrchestrator:
         }
 
         summary_text = (
-            "历史 token 已达阈值，开始压缩"
+            t("compaction.reason.history_threshold")
             if should_compact_by_history
-            else "上下文过长，开始压缩"
+            else t("compaction.reason.context_too_long")
         )
         emitter.emit("progress", {"stage": "compacting", "summary": summary_text})
 
@@ -1591,7 +1634,7 @@ class WunderOrchestrator:
             summary_text = self._extract_llm_content(summary_response)
         except WunderError:
             summary_fallback = True
-            summary_text = "摘要生成失败，已自动裁剪历史。"
+            summary_text = t("compaction.summary_fallback")
         summary_text = self._history_manager.format_compaction_summary(summary_text)
         # 记录压缩总结回复，便于调试面板请求日志关联查看
         emitter.emit(
@@ -1649,6 +1692,9 @@ class WunderOrchestrator:
         if not attachments:
             return {"role": "user", "content": question}
         text_parts = [str(question or "")]
+        attachment_label = t("attachment.label")
+        attachment_separator = t("attachment.label.separator")
+        attachment_default_name = t("attachment.default_name")
         image_parts: List[Dict[str, Any]] = []
         for attachment in attachments:
             if not attachment:
@@ -1661,11 +1707,11 @@ class WunderOrchestrator:
                 # 多模态图片采用 OpenAI 兼容格式，使用 data URL 传递
                 image_parts.append({"type": "image_url", "image_url": {"url": content}})
                 continue
-            name = str(attachment.name or "附件")
-            text_parts.append(f"\n\n[附件：{name}]\n{content}")
+            name = str(attachment.name or attachment_default_name)
+            text_parts.append(f"\n\n[{attachment_label}{attachment_separator}{name}]\n{content}")
         text_content = "".join(text_parts)
         if image_parts:
-            text_payload = text_content.strip() or "请参考以下图片。"
+            text_payload = text_content.strip() or t("attachment.image_prompt")
             return {"role": "user", "content": [{"type": "text", "text": text_payload}, *image_parts]}
         return {"role": "user", "content": text_content}
 
@@ -1886,7 +1932,7 @@ class WunderOrchestrator:
                         self._ensure_not_cancelled(session_id)
                         await asyncio.sleep(delay)
                 else:
-                    raise LLMUnavailableError("流式重连失败，已达到最大重试次数。")
+                    raise LLMUnavailableError(t("error.llm_stream_retry_exhausted"))
             else:
                 response = await client.complete(messages)
                 # 非流式请求返回后检查取消状态，避免继续处理
@@ -1902,12 +1948,13 @@ class WunderOrchestrator:
         except LLMUnavailableError as exc:
             raise WunderError(
                 ErrorCodes.LLM_UNAVAILABLE,
-                f"模型不可用: {exc}",
+                t("error.llm_unavailable", detail=str(exc)),
                 getattr(exc, "detail", None),
             ) from exc
         except Exception as exc:  # noqa: BLE001
             raise WunderError(
-                ErrorCodes.INTERNAL_ERROR, f"模型调用失败: {exc}"
+                ErrorCodes.INTERNAL_ERROR,
+                t("error.llm_call_failed", detail=str(exc)),
             ) from exc
 
         if emit_events:
@@ -1964,13 +2011,13 @@ class WunderOrchestrator:
                 try:
                     return await task
                 except asyncio.CancelledError as exc:
-                    raise WunderError(ErrorCodes.CANCELLED, "会话已取消") from exc
+                    raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled")) from exc
             if monitor.is_cancelled(session_id):
                 # 取消时主动打断工具执行，避免线程一直挂起
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-                raise WunderError(ErrorCodes.CANCELLED, "会话已取消")
+                raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled"))
 
     async def _execute_tool_call(
         self,
@@ -2282,7 +2329,7 @@ class WunderOrchestrator:
     def _ensure_not_cancelled(session_id: str) -> None:
         """检测是否被取消，若取消则抛出异常。"""
         if monitor.is_cancelled(session_id):
-            raise WunderError(ErrorCodes.CANCELLED, "会话已取消")
+            raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled"))
 
     @staticmethod
     def _build_llm_payload(

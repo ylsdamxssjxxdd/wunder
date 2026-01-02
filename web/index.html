@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>测试调试</title>
+    <title data-i18n="page.title">测试调试</title>
     <link
       rel="icon"
       type="image/svg+xml"
@@ -26,86 +26,105 @@
     <div class="app">
       <aside class="sidebar">
         <div class="sidebar-title">
-          <i class="fa-solid fa-dragon"></i>WUNDER 终端
+          <i class="fa-solid fa-dragon"></i>
+          <span data-i18n="sidebar.title">WUNDER 终端</span>
         </div>
         <button id="navMonitor" class="nav-btn active">
-          <i class="fa-solid fa-heart"></i>内部状态
+          <i class="fa-solid fa-heart"></i>
+          <span data-i18n="panel.monitor">内部状态</span>
         </button>
         <button id="navUsers" class="nav-btn">
-          <i class="fa-solid fa-users"></i>用户管理
+          <i class="fa-solid fa-users"></i>
+          <span data-i18n="panel.users">用户管理</span>
         </button>
         <button id="navMemory" class="nav-btn">
-          <i class="fa-solid fa-brain"></i>记忆体
+          <i class="fa-solid fa-brain"></i>
+          <span data-i18n="panel.memory">记忆体</span>
         </button>
         <button id="navLlm" class="nav-btn">
-          <i class="fa-solid fa-sliders"></i>模型配置
+          <i class="fa-solid fa-sliders"></i>
+          <span data-i18n="panel.llm">模型配置</span>
         </button>
         <button id="navBuiltin" class="nav-btn">
-          <i class="fa-solid fa-tools"></i>内置工具链
+          <i class="fa-solid fa-tools"></i>
+          <span data-i18n="panel.builtin">内置工具链</span>
         </button>
         <button id="navMcp" class="nav-btn">
-          <i class="fa-solid fa-plug"></i>MCP 服务
+          <i class="fa-solid fa-plug"></i>
+          <span data-i18n="panel.mcp">MCP 服务</span>
         </button>
         <button id="navSkills" class="nav-btn">
-          <i class="fa-solid fa-wand-magic-sparkles"></i>技能管理
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span data-i18n="panel.skills">技能管理</span>
         </button>
         <button id="navKnowledge" class="nav-btn">
-          <i class="fa-solid fa-book"></i>字面知识库
+          <i class="fa-solid fa-book"></i>
+          <span data-i18n="panel.knowledge">字面知识库</span>
         </button>
         <button id="navPrompt" class="nav-btn">
-          <i class="fa-solid fa-file-lines"></i>系统提示词
+          <i class="fa-solid fa-file-lines"></i>
+          <span data-i18n="panel.prompt">系统提示词</span>
         </button>
         <button id="navDebug" class="nav-btn">
-          <i class="fa-solid fa-bug"></i>调试面板
+          <i class="fa-solid fa-bug"></i>
+          <span data-i18n="panel.debug">调试面板</span>
         </button>
         <button id="navSettings" class="nav-btn">
-          <i class="fa-solid fa-gear"></i>系统设置
+          <i class="fa-solid fa-gear"></i>
+          <span data-i18n="panel.settings">系统设置</span>
         </button>
         <button id="navIntro" class="nav-btn">
-          <i class="fa-solid fa-circle-info"></i>系统介绍
+          <i class="fa-solid fa-circle-info"></i>
+          <span data-i18n="panel.intro">系统介绍</span>
         </button>
       </aside>
 
       <main class="content">
         <section id="monitorPanel" class="panel active">
           <div class="list-header">
-            <h1>内部状态</h1>
+            <h1 data-i18n="panel.monitor">内部状态</h1>
             <div class="header-actions monitor-header-actions">
               <div class="header-input monitor-time-filter">
-                <label>筛选时间</label>
+                <label data-i18n="monitor.filter.title">筛选时间</label>
                 <label class="monitor-filter-toggle">
                   <input id="monitorTimeFilterToggle" type="checkbox" />
-                  <span>启用</span>
+                  <span data-i18n="monitor.filter.enable">启用</span>
                 </label>
                 <input id="monitorTimeStart" type="datetime-local" />
                 <span class="monitor-time-sep">-</span>
                 <input id="monitorTimeEnd" type="datetime-local" />
               </div>
               <div class="header-input monitor-time-range">
-                <label for="monitorTimeRange">监视时间</label>
+                <label for="monitorTimeRange" data-i18n="monitor.range.label">监视时间</label>
                 <input
                   id="monitorTimeRange"
                   type="number"
                   min="0.1"
                   step="0.1"
                   placeholder="默认 3"
+                  data-i18n-placeholder="monitor.range.placeholder"
                 />
-                <span class="monitor-time-unit">小时</span>
+                <span class="monitor-time-unit" data-i18n="monitor.range.unit">小时</span>
               </div>
               <button id="monitorRefreshBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i>刷新
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
               </button>
             </div>
           </div>
-          <div class="tips">展示系统资源占用与服务运行状态。</div>
+          <div class="tips" data-i18n="monitor.tip">展示系统资源占用与服务运行状态。</div>
 
           <div class="monitor-layout">
               <div class="monitor-dashboard">
                 <div class="monitor-block monitor-block-summary">
-                  <div class="monitor-block-title">系统与服务状态</div>
+                  <div class="monitor-block-title" data-i18n="monitor.block.summary.title">
+                    系统与服务状态
+                  </div>
                   <div class="monitor-summary">
                     <div>
-                      <div class="monitor-section-title">系统状态</div>
+                      <div class="monitor-section-title" data-i18n="monitor.section.system">
+                        系统状态
+                      </div>
                       <table class="monitor-kv-table">
                         <tbody>
                           <tr>
@@ -113,14 +132,14 @@
                             <td><strong id="metricCpu">-</strong></td>
                           </tr>
                           <tr>
-                            <th>内存</th>
+                            <th data-i18n="monitor.metric.memory">内存</th>
                             <td>
                               <strong id="metricMemory">-</strong>
                               <div id="metricMemoryDetail" class="monitor-subtext"></div>
                             </td>
                           </tr>
                           <tr>
-                            <th>负载 1/5/15</th>
+                            <th data-i18n="monitor.metric.load">负载 1/5/15</th>
                             <td>
                               <strong
                                 ><span id="metricLoad1">-</span> / <span id="metricLoad5">-</span> /
@@ -129,119 +148,135 @@
                             </td>
                           </tr>
                           <tr>
-                            <th>运行时长</th>
+                            <th data-i18n="monitor.metric.uptime">运行时长</th>
                             <td><strong id="metricUptime">-</strong></td>
                           </tr>
                           <tr>
-                            <th>磁盘</th>
+                            <th data-i18n="monitor.metric.disk">磁盘</th>
                             <td>
                               <strong id="metricDisk">-</strong>
                               <div id="metricDiskDetail" class="monitor-subtext"></div>
                             </td>
                           </tr>
                           <tr>
-                            <th>磁盘 IO</th>
+                            <th data-i18n="monitor.metric.diskIo">磁盘 IO</th>
                             <td>
                               <strong
                                 ><span id="metricDiskRead">-</span> / <span id="metricDiskWrite">-</span></strong
                               >
-                              <div class="monitor-subtext">读 / 写</div>
+                              <div class="monitor-subtext" data-i18n="monitor.metric.diskIo.detail">
+                                读 / 写
+                              </div>
                             </td>
                           </tr>
                           <tr>
-                            <th>网络 IO</th>
+                            <th data-i18n="monitor.metric.netIo">网络 IO</th>
                             <td>
                               <strong
                                 ><span id="metricNetSent">-</span> / <span id="metricNetRecv">-</span></strong
                               >
-                              <div class="monitor-subtext">上行 / 下行</div>
+                              <div class="monitor-subtext" data-i18n="monitor.metric.netIo.detail">
+                                上行 / 下行
+                              </div>
                             </td>
                           </tr>
                           <tr>
-                            <th>进程资源</th>
+                            <th data-i18n="monitor.metric.process">进程资源</th>
                             <td>
                               <strong
                                 ><span id="metricProcessMemory">-</span> /
                                 <span id="metricProcessCpu">-</span></strong
                               >
-                              <div class="monitor-subtext">内存 / CPU</div>
+                              <div class="monitor-subtext" data-i18n="monitor.metric.process.detail">
+                                内存 / CPU
+                              </div>
                             </td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                     <div>
-                      <div class="monitor-section-title">服务状态</div>
+                      <div class="monitor-section-title" data-i18n="monitor.section.service">
+                        服务状态
+                      </div>
                       <table class="monitor-kv-table">
                         <tbody>
                           <tr>
-                            <th>活动线程</th>
+                            <th data-i18n="monitor.metric.sessions.active">活动线程</th>
                             <td><strong id="metricServiceActive">-</strong></td>
                           </tr>
                           <tr>
-                            <th>历史线程</th>
+                            <th data-i18n="monitor.metric.sessions.history">历史线程</th>
                             <td><strong id="metricServiceHistory">-</strong></td>
                           </tr>
                           <tr>
-                            <th>已完成</th>
+                            <th data-i18n="monitor.metric.sessions.finished">已完成</th>
                             <td><strong id="metricServiceFinished">-</strong></td>
                           </tr>
                           <tr>
-                            <th>已失败</th>
+                            <th data-i18n="monitor.metric.sessions.failed">已失败</th>
                             <td><strong id="metricServiceError">-</strong></td>
                           </tr>
                           <tr>
-                            <th>已取消</th>
+                            <th data-i18n="monitor.metric.sessions.cancelled">已取消</th>
                             <td><strong id="metricServiceCancelled">-</strong></td>
                           </tr>
                           <tr>
-                            <th>总线程</th>
+                            <th data-i18n="monitor.metric.sessions.total">总线程</th>
                             <td><strong id="metricServiceTotal">-</strong></td>
                           </tr>
                           <tr>
-                            <th id="metricServiceRecentLabel">近 1 小时完成</th>
+                            <th id="metricServiceRecentLabel" data-i18n="monitor.metric.recentComplete.default">
+                              近 1 小时完成
+                            </th>
                             <td><strong id="metricServiceRecent">-</strong></td>
                           </tr>
                           <tr>
-                            <th>平均耗时</th>
+                            <th data-i18n="monitor.metric.sessions.avg">平均耗时</th>
                             <td><strong id="metricServiceAvg">-</strong></td>
                           </tr>
                           <tr>
-                            <th>Token 总占用</th>
+                            <th data-i18n="monitor.metric.sessions.tokens">Token 总占用</th>
                             <td><strong id="metricServiceTokenTotal">-</strong></td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                     <div>
-                      <div class="monitor-section-title">Sandbox 状态</div>
+                      <div class="monitor-section-title" data-i18n="monitor.section.sandbox">
+                        Sandbox 状态
+                      </div>
                       <table class="monitor-kv-table">
                         <tbody>
                           <tr>
-                            <th>模式</th>
+                            <th data-i18n="monitor.metric.sandbox.mode">模式</th>
                             <td><strong id="metricSandboxMode">-</strong></td>
                           </tr>
                           <tr>
-                            <th>网络</th>
+                            <th data-i18n="monitor.metric.sandbox.network">网络</th>
                             <td><strong id="metricSandboxNetwork">-</strong></td>
                           </tr>
                           <tr>
-                            <th>只读</th>
+                            <th data-i18n="monitor.metric.sandbox.readonly">只读</th>
                             <td><strong id="metricSandboxReadonly">-</strong></td>
                           </tr>
                           <tr>
-                            <th>资源限额</th>
+                            <th data-i18n="monitor.metric.sandbox.resources">资源限额</th>
                             <td>
                               <strong id="metricSandboxResources">-</strong>
                               <div id="metricSandboxResourcesDetail" class="monitor-subtext"></div>
                             </td>
                           </tr>
                           <tr>
-                            <th id="metricSandboxCallsLabel">近 3 小时调用</th>
+                            <th id="metricSandboxCallsLabel" data-i18n="monitor.metric.recentCalls.default">
+                              近 3 小时调用
+                            </th>
                             <td><strong id="metricSandboxCalls">-</strong></td>
                           </tr>
                           <tr>
-                            <th id="metricSandboxSessionsLabel">近 3 小时会话</th>
+                            <th id="metricSandboxSessionsLabel" data-i18n="monitor.metric.recentSessions.default">
+                              近 3 小时会话
+                            </th>
                             <td><strong id="metricSandboxSessions">-</strong></td>
                           </tr>
                         </tbody>
@@ -251,17 +286,19 @@
                 </div>
 
                 <div class="monitor-block monitor-block-tools">
-                  <div id="toolHeatmapTitle" class="monitor-block-title">
+                  <div id="toolHeatmapTitle" class="monitor-block-title" data-i18n="monitor.chart.toolHeatmap.default">
                     近 3 小时工具调用热力图
                   </div>
                   <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
                     <div id="toolHeatmapGrid" class="tool-heatmap"></div>
                   </div>
-                  <div id="toolHeatmapEmpty" class="tool-heatmap-empty">暂无工具调用</div>
+                  <div id="toolHeatmapEmpty" class="tool-heatmap-empty" data-i18n="monitor.toolHeatmap.empty">
+                    暂无工具调用
+                  </div>
                 </div>
 
               <div class="monitor-block monitor-block-token">
-                <div id="serviceTokenTitle" class="monitor-block-title">
+                <div id="serviceTokenTitle" class="monitor-block-title" data-i18n="monitor.chart.tokenTrend.default">
                   每 3 小时 Token 总占用趋势
                 </div>
                 <div id="serviceTokenChartWrap" class="monitor-chart-scroll">
@@ -270,7 +307,9 @@
               </div>
 
               <div class="monitor-block monitor-block-status">
-                <div id="serviceStatusTitle" class="monitor-block-title">近 3 小时线程状态占比</div>
+                <div id="serviceStatusTitle" class="monitor-block-title" data-i18n="monitor.chart.statusRatio.default">
+                  近 3 小时线程状态占比
+                </div>
                 <div id="serviceStatusChart" class="monitor-chart"></div>
               </div>
             </div>
@@ -279,20 +318,23 @@
 
         <section id="introPanel" class="panel">
           <div class="list-header">
-            <h1>系统介绍</h1>
+            <h1 data-i18n="intro.title">系统介绍</h1>
             <div class="header-actions">
               <button id="introFullscreenBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-expand"></i>全屏
+                <i class="fa-solid fa-expand"></i><span data-i18n="intro.fullscreen">全屏</span>
               </button>
             </div>
           </div>
-          <div class="tips">这里嵌入系统介绍 PPT，适合现场演示或全屏播放。</div>
+          <div class="tips" data-i18n="intro.tip">
+            这里嵌入系统介绍 PPT，适合现场演示或全屏播放。
+          </div>
           <div id="introFrameWrap" class="intro-frame-wrap">
             <iframe
               id="introFrame"
               class="intro-frame"
               src="/wunder/ppt/index.html"
               title="wunder 系统介绍"
+              data-i18n-title="intro.frame.title"
               loading="lazy"
               allowfullscreen
             ></iframe>
@@ -302,25 +344,31 @@
         <section id="usersPanel" class="panel">
           <div class="user-management">
             <div class="list-header">
-              <h1>用户管理</h1>
+              <h1 data-i18n="users.title">用户管理</h1>
               <div class="header-actions">
                 <div class="header-input">
-                  <label for="userSearchInput">搜索用户</label>
-                  <input id="userSearchInput" type="text" placeholder="输入用户ID" />
+                  <label for="userSearchInput" data-i18n="users.search.label">搜索用户</label>
+                  <input
+                    id="userSearchInput"
+                    type="text"
+                    placeholder="输入用户ID"
+                    data-i18n-placeholder="common.placeholder.userId"
+                  />
                 </div>
                 <button id="userRefreshBtn" class="secondary btn-with-icon">
-                  <i class="fa-solid fa-arrows-rotate"></i>刷新
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="common.refresh">刷新</span>
                 </button>
               </div>
             </div>
-            <div class="tips">
+            <div class="tips" data-i18n="users.tip">
               统计各用户历史对话记录、会话与工具调用次数，点击历史对话记录可查看该用户全部会话。
             </div>
 
             <div class="management-layout user-layout">
               <div class="management-list">
                 <div class="list-header">
-                  <label>用户统计</label>
+                  <label data-i18n="users.stats.title">用户统计</label>
                 </div>
                 <div class="monitor-section-body monitor-paged">
                   <div class="monitor-table-scroll">
@@ -335,23 +383,27 @@
                       </colgroup>
                       <thead>
                         <tr>
-                          <th>用户</th>
-                          <th>历史对话记录</th>
-                          <th>会话次数</th>
-                          <th>Token 占用</th>
-                          <th>活动线程</th>
-                          <th>操作</th>
+                          <th data-i18n="users.table.user">用户</th>
+                          <th data-i18n="users.table.records">历史对话记录</th>
+                          <th data-i18n="users.table.sessions">会话次数</th>
+                          <th data-i18n="users.table.tokens">Token 占用</th>
+                          <th data-i18n="users.table.active">活动线程</th>
+                          <th data-i18n="users.table.actions">操作</th>
                         </tr>
                       </thead>
                       <tbody id="userStatsBody"></tbody>
                     </table>
-                    <div id="userStatsEmpty" class="muted">暂无用户数据</div>
+                    <div id="userStatsEmpty" class="muted" data-i18n="users.empty">暂无用户数据</div>
                   </div>
                   <div id="userStatsPagination" class="monitor-pagination">
                     <div id="userStatsPageInfo" class="monitor-pagination-info"></div>
                     <div class="monitor-pagination-controls">
-                      <button id="userStatsPrevBtn" class="secondary" type="button">上一页</button>
-                      <button id="userStatsNextBtn" class="secondary" type="button">下一页</button>
+                      <button id="userStatsPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
+                        上一页
+                      </button>
+                      <button id="userStatsNextBtn" class="secondary" type="button" data-i18n="pagination.next">
+                        下一页
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -360,7 +412,7 @@
               <div class="management-detail user-detail">
                 <div class="detail-header">
                   <div>
-                    <div id="userDetailTitle" class="detail-title">全部用户</div>
+                    <div id="userDetailTitle" class="detail-title" data-i18n="users.all">全部用户</div>
                     <div id="userDetailMeta" class="muted"></div>
                   </div>
                 </div>
@@ -368,7 +420,7 @@
                 <div class="monitor-table-wrap">
                   <div class="monitor-sections">
                     <div class="monitor-section">
-                      <div class="monitor-section-title">活动线程</div>
+                      <div class="monitor-section-title" data-i18n="monitor.section.active">活动线程</div>
                       <div class="monitor-section-body monitor-paged">
                         <div class="monitor-table-scroll">
                           <table class="monitor-table">
@@ -385,30 +437,34 @@
                             </colgroup>
                             <thead>
                               <tr>
-                                <th>开始时间</th>
-                                <th>会话</th>
-                                <th>用户</th>
-                                <th>问题</th>
-                                <th>状态</th>
-                                <th>Token</th>
-                                <th>耗时</th>
-                                <th>阶段</th>
-                                <th>操作</th>
+                                <th data-i18n="monitor.table.start">开始时间</th>
+                                <th data-i18n="monitor.table.session">会话</th>
+                                <th data-i18n="monitor.table.user">用户</th>
+                                <th data-i18n="monitor.table.question">问题</th>
+                                <th data-i18n="monitor.table.status">状态</th>
+                                <th data-i18n="monitor.table.token">Token</th>
+                                <th data-i18n="monitor.table.elapsed">耗时</th>
+                                <th data-i18n="monitor.table.stage">阶段</th>
+                                <th data-i18n="monitor.table.action">操作</th>
                               </tr>
                             </thead>
                             <tbody id="monitorTableBody"></tbody>
                           </table>
-                          <div id="monitorEmpty" class="muted">暂无活动线程。</div>
+                          <div id="monitorEmpty" class="muted" data-i18n="monitor.empty.active">暂无活动线程。</div>
                         </div>
                         <div id="monitorActivePagination" class="monitor-pagination">
-                          <div id="monitorActivePageInfo" class="monitor-pagination-info">
+                          <div
+                            id="monitorActivePageInfo"
+                            class="monitor-pagination-info"
+                            data-i18n="pagination.info.empty"
+                          >
                             共 0 条 · 第 1 / 1 页 · 每页 100 条
                           </div>
                           <div class="monitor-pagination-controls">
-                            <button id="monitorActivePrevBtn" class="secondary" type="button">
+                            <button id="monitorActivePrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
                               上一页
                             </button>
-                            <button id="monitorActiveNextBtn" class="secondary" type="button">
+                            <button id="monitorActiveNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                               下一页
                             </button>
                           </div>
@@ -416,7 +472,7 @@
                       </div>
                     </div>
                     <div class="monitor-section">
-                      <div class="monitor-section-title">历史线程</div>
+                      <div class="monitor-section-title" data-i18n="monitor.section.history">历史线程</div>
                       <div class="monitor-section-body monitor-paged">
                         <div class="monitor-table-scroll">
                           <table class="monitor-table">
@@ -433,30 +489,34 @@
                             </colgroup>
                             <thead>
                               <tr>
-                                <th>开始时间</th>
-                                <th>会话</th>
-                                <th>用户</th>
-                                <th>问题</th>
-                                <th>状态</th>
-                                <th>Token</th>
-                                <th>耗时</th>
-                                <th>阶段</th>
-                                <th>操作</th>
+                                <th data-i18n="monitor.table.start">开始时间</th>
+                                <th data-i18n="monitor.table.session">会话</th>
+                                <th data-i18n="monitor.table.user">用户</th>
+                                <th data-i18n="monitor.table.question">问题</th>
+                                <th data-i18n="monitor.table.status">状态</th>
+                                <th data-i18n="monitor.table.token">Token</th>
+                                <th data-i18n="monitor.table.elapsed">耗时</th>
+                                <th data-i18n="monitor.table.stage">阶段</th>
+                                <th data-i18n="monitor.table.action">操作</th>
                               </tr>
                             </thead>
                             <tbody id="monitorHistoryBody"></tbody>
                           </table>
-                          <div id="monitorHistoryEmpty" class="muted">暂无历史线程。</div>
+                          <div id="monitorHistoryEmpty" class="muted" data-i18n="monitor.empty.history">暂无历史线程。</div>
                         </div>
                         <div id="monitorHistoryPagination" class="monitor-pagination">
-                          <div id="monitorHistoryPageInfo" class="monitor-pagination-info">
+                          <div
+                            id="monitorHistoryPageInfo"
+                            class="monitor-pagination-info"
+                            data-i18n="pagination.info.empty"
+                          >
                             共 0 条 · 第 1 / 1 页 · 每页 100 条
                           </div>
                           <div class="monitor-pagination-controls">
-                            <button id="monitorHistoryPrevBtn" class="secondary" type="button">
+                            <button id="monitorHistoryPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
                               上一页
                             </button>
-                            <button id="monitorHistoryNextBtn" class="secondary" type="button">
+                            <button id="monitorHistoryNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                               下一页
                             </button>
                           </div>
@@ -473,25 +533,31 @@
         <section id="memoryPanel" class="panel">
           <div class="user-management">
             <div class="list-header">
-              <h1>记忆体</h1>
+              <h1 data-i18n="memory.title">记忆体</h1>
               <div class="header-actions">
                 <div class="header-input">
-                  <label for="memorySearchInput">搜索用户</label>
-                  <input id="memorySearchInput" type="text" placeholder="输入用户ID" />
+                  <label for="memorySearchInput" data-i18n="memory.search.label">搜索用户</label>
+                  <input
+                    id="memorySearchInput"
+                    type="text"
+                    placeholder="输入用户ID"
+                    data-i18n-placeholder="common.placeholder.userId"
+                  />
                 </div>
                 <button id="memoryRefreshBtn" class="secondary btn-with-icon">
-                  <i class="fa-solid fa-arrows-rotate"></i>刷新
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="common.refresh">刷新</span>
                 </button>
               </div>
             </div>
-            <div class="tips">
+            <div class="tips" data-i18n="memory.tip">
               记忆体用于管理用户长期记忆数据，开启后会将历史记忆追加到系统提示词末尾，并在每次最终回复后自动总结。
             </div>
 
             <div class="management-layout memory-layout">
               <div class="management-list">
                 <div class="list-header">
-                  <label>用户列表</label>
+                  <label data-i18n="memory.users.title">用户列表</label>
                 </div>
                 <div class="monitor-section-body monitor-paged">
                   <div class="monitor-table-scroll">
@@ -505,22 +571,26 @@
                       </colgroup>
                       <thead>
                         <tr>
-                          <th>用户</th>
-                          <th>记录数</th>
-                          <th>更新时间</th>
-                          <th>启用</th>
-                          <th>操作</th>
+                          <th data-i18n="memory.table.user">用户</th>
+                          <th data-i18n="memory.table.count">记录数</th>
+                          <th data-i18n="memory.table.updatedAt">更新时间</th>
+                          <th data-i18n="memory.table.enabled">启用</th>
+                          <th data-i18n="memory.table.actions">操作</th>
                         </tr>
                       </thead>
                       <tbody id="memoryUsersBody"></tbody>
                     </table>
-                    <div id="memoryUsersEmpty" class="muted">暂无用户</div>
+                    <div id="memoryUsersEmpty" class="muted" data-i18n="memory.users.empty">暂无用户</div>
                   </div>
                   <div id="memoryUsersPagination" class="monitor-pagination">
                     <div id="memoryUsersPageInfo" class="monitor-pagination-info"></div>
                     <div class="monitor-pagination-controls">
-                      <button id="memoryUsersPrevBtn" class="secondary" type="button">上一页</button>
-                      <button id="memoryUsersNextBtn" class="secondary" type="button">下一页</button>
+                      <button id="memoryUsersPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
+                        上一页
+                      </button>
+                      <button id="memoryUsersNextBtn" class="secondary" type="button" data-i18n="pagination.next">
+                        下一页
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -529,7 +599,7 @@
               <div class="management-detail memory-status">
                 <div class="detail-header">
                   <div>
-                    <div class="detail-title">记忆体运行状态</div>
+                    <div class="detail-title" data-i18n="memory.status.title">记忆体运行状态</div>
                     <div id="memoryStatusMeta" class="muted"></div>
                   </div>
                 </div>
@@ -537,7 +607,7 @@
                 <div class="monitor-table-wrap">
                   <div class="monitor-sections memory-status-sections">
                     <div class="monitor-section">
-                      <div class="monitor-section-title">活动队列</div>
+                      <div class="monitor-section-title" data-i18n="memory.queue.active.title">活动队列</div>
                       <div class="monitor-section-body monitor-paged">
                         <div class="monitor-table-scroll">
                           <table class="monitor-table memory-queue-table">
@@ -551,25 +621,27 @@
                             </colgroup>
                             <thead>
                               <tr>
-                                <th>开始时间</th>
-                                <th>会话</th>
-                                <th>用户</th>
-                                <th>状态</th>
-                                <th>耗时</th>
-                                <th>操作</th>
+                                <th data-i18n="memory.queue.table.start">开始时间</th>
+                                <th data-i18n="memory.queue.table.session">会话</th>
+                                <th data-i18n="memory.queue.table.user">用户</th>
+                                <th data-i18n="memory.queue.table.status">状态</th>
+                                <th data-i18n="memory.queue.table.elapsed">耗时</th>
+                                <th data-i18n="memory.queue.table.action">操作</th>
                               </tr>
                             </thead>
                             <tbody id="memoryStatusActiveBody"></tbody>
                           </table>
-                          <div id="memoryStatusActiveEmpty" class="muted">暂无活动任务。</div>
+                          <div id="memoryStatusActiveEmpty" class="muted" data-i18n="memory.status.emptyActive">
+                            暂无活动任务。
+                          </div>
                         </div>
                         <div id="memoryStatusActivePagination" class="monitor-pagination">
                           <div id="memoryStatusActivePageInfo" class="monitor-pagination-info"></div>
                           <div class="monitor-pagination-controls">
-                            <button id="memoryStatusActivePrevBtn" class="secondary" type="button">
+                            <button id="memoryStatusActivePrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
                               上一页
                             </button>
-                            <button id="memoryStatusActiveNextBtn" class="secondary" type="button">
+                            <button id="memoryStatusActiveNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                               下一页
                             </button>
                           </div>
@@ -577,7 +649,7 @@
                       </div>
                     </div>
                     <div class="monitor-section">
-                      <div class="monitor-section-title">历史队列</div>
+                      <div class="monitor-section-title" data-i18n="memory.queue.history.title">历史队列</div>
                       <div class="monitor-section-body monitor-paged">
                         <div class="monitor-table-scroll">
                           <table class="monitor-table memory-queue-table">
@@ -591,25 +663,27 @@
                             </colgroup>
                             <thead>
                               <tr>
-                                <th>开始时间</th>
-                                <th>会话</th>
-                                <th>用户</th>
-                                <th>状态</th>
-                                <th>耗时</th>
-                                <th>操作</th>
+                                <th data-i18n="memory.queue.table.start">开始时间</th>
+                                <th data-i18n="memory.queue.table.session">会话</th>
+                                <th data-i18n="memory.queue.table.user">用户</th>
+                                <th data-i18n="memory.queue.table.status">状态</th>
+                                <th data-i18n="memory.queue.table.elapsed">耗时</th>
+                                <th data-i18n="memory.queue.table.action">操作</th>
                               </tr>
                             </thead>
                             <tbody id="memoryStatusHistoryBody"></tbody>
                           </table>
-                          <div id="memoryStatusHistoryEmpty" class="muted">暂无历史任务。</div>
+                          <div id="memoryStatusHistoryEmpty" class="muted" data-i18n="memory.status.emptyHistory">
+                            暂无历史任务。
+                          </div>
                         </div>
                         <div id="memoryStatusHistoryPagination" class="monitor-pagination">
                           <div id="memoryStatusHistoryPageInfo" class="monitor-pagination-info"></div>
                           <div class="monitor-pagination-controls">
-                            <button id="memoryStatusHistoryPrevBtn" class="secondary" type="button">
+                            <button id="memoryStatusHistoryPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
                               上一页
                             </button>
-                            <button id="memoryStatusHistoryNextBtn" class="secondary" type="button">
+                            <button id="memoryStatusHistoryNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                               下一页
                             </button>
                           </div>
@@ -625,20 +699,25 @@
 
         <section id="debugPanel" class="panel">
           <div class="list-header">
-            <h1>请求调试</h1>
+            <h1 data-i18n="debug.title">请求调试</h1>
             <div class="header-actions debug-header-actions">
               <div class="header-input">
-                <label for="userId">user_id</label>
+                <label for="userId" data-i18n="debug.label.userId">user_id</label>
                 <input id="userId" type="text" />
               </div>
               <div class="header-input">
-                <label for="sessionId">session_id（可选）</label>
-                <input id="sessionId" type="text" placeholder="留空自动生成" />
+                <label for="sessionId" data-i18n="debug.label.sessionId">session_id（可选）</label>
+                <input
+                  id="sessionId"
+                  type="text"
+                  placeholder="留空自动生成"
+                  data-i18n-placeholder="debug.placeholder.sessionId"
+                />
               </div>
               <div class="header-input">
-                <label for="debugModelName">模型配置</label>
+                <label for="debugModelName" data-i18n="debug.label.model">模型配置</label>
                 <select id="debugModelName">
-                  <option value="">默认模型</option>
+                  <option value="" data-i18n="llm.default">默认模型</option>
                 </select>
               </div>
               <button
@@ -647,12 +726,14 @@
                 type="button"
                 aria-label="历史"
                 title="历史"
+                data-i18n-aria-label="debug.history"
+                data-i18n-title="debug.history"
               >
                 <i class="fa-solid fa-clock-rotate-left"></i>
               </button>
             </div>
           </div>
-          <div class="tips">
+          <div class="tips" data-i18n="debug.tip">
             本页面用于快速测试 /wunder 接口（SSE 或非流式）。请确保后端服务已启动，并且地址可访问。
             如果使用 file:// 打开页面，浏览器可能拦截跨域请求，请使用本地静态服务或开启 CORS。
           </div>
@@ -662,7 +743,7 @@
               <div class="form-section debug-form-section">
                 <div class="form-row">
                   <div class="workspace-header">
-                    <label>临时工作区</label>
+                    <label data-i18n="workspace.temp.title">临时工作区</label>
                     <div class="workspace-actions">
                       <button
                         id="workspaceUpBtn"
@@ -670,6 +751,8 @@
                         type="button"
                         title="上级"
                         aria-label="上级"
+                        data-i18n-title="workspace.action.up"
+                        data-i18n-aria-label="workspace.action.up"
                       >
                         <i class="fa-solid fa-arrow-up"></i>
                       </button>
@@ -679,6 +762,8 @@
                         type="button"
                         title="新建文件"
                         aria-label="新建文件"
+                        data-i18n-title="workspace.action.newFile"
+                        data-i18n-aria-label="workspace.action.newFile"
                       >
                         <i class="fa-solid fa-file-circle-plus"></i>
                       </button>
@@ -688,6 +773,8 @@
                         type="button"
                         title="新建文件夹"
                         aria-label="新建文件夹"
+                        data-i18n-title="workspace.action.newFolder"
+                        data-i18n-aria-label="workspace.action.newFolder"
                       >
                         <i class="fa-solid fa-folder-plus"></i>
                       </button>
@@ -697,6 +784,8 @@
                         type="button"
                         title="刷新"
                         aria-label="刷新"
+                        data-i18n-title="common.refresh"
+                        data-i18n-aria-label="common.refresh"
                       >
                         <i class="fa-solid fa-arrows-rotate"></i>
                       </button>
@@ -706,6 +795,8 @@
                         type="button"
                         title="上传"
                         aria-label="上传"
+                        data-i18n-title="workspace.action.upload"
+                        data-i18n-aria-label="workspace.action.upload"
                       >
                         <i class="fa-solid fa-upload"></i>
                       </button>
@@ -715,6 +806,8 @@
                         type="button"
                         title="全下"
                         aria-label="全下"
+                        data-i18n-title="workspace.action.downloadAll"
+                        data-i18n-aria-label="workspace.action.downloadAll"
                       >
                         <i class="fa-solid fa-download"></i>
                       </button>
@@ -728,13 +821,14 @@
                         id="workspaceSearchInput"
                         type="text"
                         placeholder="搜索工作区（名称）"
+                        data-i18n-placeholder="workspace.search.placeholder"
                       />
                     </div>
                     <div class="workspace-sort">
                       <select id="workspaceSortSelect">
-                        <option value="name">名称排序</option>
-                        <option value="updated_time">更新时间</option>
-                        <option value="size">大小</option>
+                        <option value="name" data-i18n="workspace.sort.name">名称排序</option>
+                        <option value="updated_time" data-i18n="workspace.sort.updated">更新时间</option>
+                        <option value="size" data-i18n="workspace.sort.size">大小</option>
                       </select>
                       <button
                         id="workspaceSortOrderBtn"
@@ -742,6 +836,8 @@
                         type="button"
                         title="排序方向"
                         aria-label="排序方向"
+                        data-i18n-title="workspace.sort.order"
+                        data-i18n-aria-label="workspace.sort.order"
                       >
                         <i class="fa-solid fa-arrow-up-short-wide"></i>
                       </button>
@@ -753,18 +849,22 @@
 
               <div class="form-row debug-attachments">
                 <div class="debug-attachments-header">
-                  <label>附件</label>
+                  <label data-i18n="debug.attachments.title">附件</label>
                   <div id="debugAttachmentMeta" class="muted"></div>
                 </div>
-                <div id="debugAttachmentList" class="debug-attachments-list">
+                <div id="debugAttachmentList" class="debug-attachments-list" data-i18n="debug.attachments.empty">
                   暂未附加文件或图片
                 </div>
               </div>
 
               <!-- 问题输入区域 -->
               <div class="form-row question-row">
-                <label for="question">question</label>
-                <textarea id="question" placeholder="请输入需要测试的问题"></textarea>
+                <label for="question" data-i18n="debug.label.question">question</label>
+                <textarea
+                  id="question"
+                  placeholder="请输入需要测试的问题"
+                  data-i18n-placeholder="debug.question.placeholder"
+                ></textarea>
               </div>
 
               <!-- 操作按钮：发送、停止 -->
@@ -775,6 +875,8 @@
                   type="button"
                   title="新会话"
                   aria-label="新会话"
+                  data-i18n-title="debug.action.newSession"
+                  data-i18n-aria-label="debug.action.newSession"
                 >
                   <i class="fa-solid fa-plus"></i>
                 </button>
@@ -784,6 +886,8 @@
                   type="button"
                   title="上传附件"
                   aria-label="上传附件"
+                  data-i18n-title="debug.action.upload"
+                  data-i18n-aria-label="debug.action.upload"
                 >
                   <i class="fa-solid fa-paperclip"></i>
                 </button>
@@ -793,6 +897,8 @@
                   type="button"
                   title="发送"
                   aria-label="发送"
+                  data-i18n-title="debug.action.send"
+                  data-i18n-aria-label="debug.action.send"
                 >
                   <i class="fa-solid fa-paper-plane"></i>
                 </button>
@@ -803,25 +909,25 @@
             <div class="panel-logs">
               <div class="log-card">
                 <div class="log-card-header">
-                  <label>事件日志</label>
-                  <span class="log-waiting">进行中</span>
+                  <label data-i18n="debug.log.events">事件日志</label>
+                  <span class="log-waiting" data-i18n="debug.log.running">进行中</span>
                 </div>
                 <div id="eventLog" class="log log-collapsible"></div>
               </div>
 
               <div class="log-card">
                 <div class="log-card-header">
-                  <label>请求日志</label>
-                  <span class="log-waiting">进行中</span>
+                  <label data-i18n="debug.log.requests">请求日志</label>
+                  <span class="log-waiting" data-i18n="debug.log.running">进行中</span>
                 </div>
                 <div id="requestLog" class="log log-collapsible"></div>
               </div>
 
               <div class="log-card">
                 <div class="log-card-header">
-                  <label>模型输出</label>
+                  <label data-i18n="debug.log.output">模型输出</label>
                   <div class="header-input">
-                    <label for="modelOutputRoundSelect">轮次</label>
+                    <label for="modelOutputRoundSelect" data-i18n="debug.log.round">轮次</label>
                     <select id="modelOutputRoundSelect"></select>
                   </div>
                 </div>
@@ -829,7 +935,7 @@
               </div>
 
               <div class="log-card">
-                <label>统计信息</label>
+                <label data-i18n="debug.log.stats">统计信息</label>
                 <div id="finalAnswer" class="answer"></div>
               </div>
             </div>
@@ -838,105 +944,124 @@
 
         <section id="settingsPanel" class="panel">
           <div class="list-header">
-            <h1>系统设置</h1>
+            <h1 data-i18n="settings.title">系统设置</h1>
             <div class="header-actions">
               <button id="settingsResetBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-rotate-left"></i>恢复默认
+                <i class="fa-solid fa-rotate-left"></i>
+                <span data-i18n="settings.reset">恢复默认</span>
               </button>
               <button id="settingsSaveBtn" class="btn-with-icon" type="button">
-                <i class="fa-solid fa-floppy-disk"></i>保存设置
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span data-i18n="settings.save">保存设置</span>
               </button>
             </div>
           </div>
-          <div class="tips">设置仅保存在当前浏览器，用于控制调试面板与常用系统行为。</div>
+          <div class="tips" data-i18n="settings.tip">设置仅保存在当前浏览器，用于控制调试面板与常用系统行为。</div>
           <div class="settings-layout">
             <div class="settings-card">
               <div class="settings-card-title">
-                <i class="fa-solid fa-link"></i>接口与鉴权
+                <i class="fa-solid fa-link"></i>
+                <span data-i18n="settings.card.api">接口与鉴权</span>
               </div>
               <div class="settings-grid">
                 <div class="form-row">
-                  <label for="apiBase">API 地址</label>
+                  <label for="apiBase" data-i18n="settings.label.apiBase">API 地址</label>
                   <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000/wunder" />
                 </div>
                 <div class="form-row">
-                  <label for="apiKey">API Key</label>
+                  <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
                   <div class="api-key-field settings-api-key-field">
-                    <input id="apiKey" type="password" placeholder="可选" />
+                    <input id="apiKey" type="password" placeholder="可选" data-i18n-placeholder="settings.placeholder.optional" />
                     <button
                       id="apiKeyToggle"
                       class="api-key-toggle"
                       type="button"
                       aria-label="显示 API Key"
                       title="显示 API Key"
+                      data-i18n-aria-label="ui.apiKey.show"
+                      data-i18n-title="ui.apiKey.show"
                     >
                       <i class="fa-solid fa-eye"></i>
                     </button>
                   </div>
                 </div>
               </div>
-              <div class="settings-hint">用于调试面板与管理接口请求，支持本地或远程地址。</div>
+              <div class="settings-hint" data-i18n="settings.hint.api">
+                用于调试面板与管理接口请求，支持本地或远程地址。
+              </div>
             </div>
             <div class="settings-card">
               <div class="settings-card-title">
-                <i class="fa-solid fa-gear"></i>常用系统配置
+                <i class="fa-solid fa-gear"></i>
+                <span data-i18n="settings.card.general">常用系统配置</span>
               </div>
               <div class="settings-grid">
                 <div class="form-row">
-                  <label for="settingsDefaultUserId">默认 user_id</label>
+                  <label for="settingsDefaultUserId" data-i18n="settings.label.defaultUserId">默认 user_id</label>
                   <input id="settingsDefaultUserId" type="text" placeholder="demo_user" />
                 </div>
                 <div class="form-row">
-                  <label for="settingsDefaultPanel">默认进入面板</label>
+                  <label for="settingsDefaultPanel" data-i18n="settings.label.defaultPanel">默认进入面板</label>
                   <select id="settingsDefaultPanel">
-                    <option value="monitor">内部状态</option>
-                    <option value="users">用户管理</option>
-                    <option value="memory">记忆体</option>
-                    <option value="llm">模型配置</option>
-                    <option value="builtin">内置工具链</option>
-                    <option value="mcp">MCP 服务</option>
-                    <option value="skills">技能管理</option>
-                    <option value="knowledge">字面知识库</option>
-                    <option value="prompt">系统提示词</option>
-                    <option value="debug">调试面板</option>
-                    <option value="settings">系统设置</option>
-                    <option value="intro">系统介绍</option>
+                    <option value="monitor" data-i18n="panel.monitor">内部状态</option>
+                    <option value="users" data-i18n="panel.users">用户管理</option>
+                    <option value="memory" data-i18n="panel.memory">记忆体</option>
+                    <option value="llm" data-i18n="panel.llm">模型配置</option>
+                    <option value="builtin" data-i18n="panel.builtin">内置工具链</option>
+                    <option value="mcp" data-i18n="panel.mcp">MCP 服务</option>
+                    <option value="skills" data-i18n="panel.skills">技能管理</option>
+                    <option value="knowledge" data-i18n="panel.knowledge">字面知识库</option>
+                    <option value="prompt" data-i18n="panel.prompt">系统提示词</option>
+                    <option value="debug" data-i18n="panel.debug">调试面板</option>
+                    <option value="settings" data-i18n="panel.settings">系统设置</option>
+                    <option value="intro" data-i18n="panel.intro">系统介绍</option>
                   </select>
                 </div>
                 <div class="form-row">
-                  <label for="settingsMonitorInterval">监控刷新间隔（毫秒）</label>
+                  <label for="settingsLanguage" data-i18n="settings.label.language">系统语言</label>
+                  <select id="settingsLanguage">
+                    <option value="zh-CN" data-i18n="language.zh-CN">简体中文</option>
+                    <option value="en-US" data-i18n="language.en-US">English</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label for="settingsMonitorInterval" data-i18n="settings.label.monitorInterval">监控刷新间隔（毫秒）</label>
                   <input id="settingsMonitorInterval" type="number" min="500" step="100" />
                 </div>
                 <div class="form-row">
-                  <label for="settingsPromptDelay">提示词刷新延迟（毫秒）</label>
+                  <label for="settingsPromptDelay" data-i18n="settings.label.promptDelay">提示词刷新延迟（毫秒）</label>
                   <input id="settingsPromptDelay" type="number" min="50" step="50" />
                 </div>
               </div>
-              <div class="settings-hint">保存后立即更新轮询间隔，默认面板需刷新页面生效。</div>
+              <div class="settings-hint" data-i18n="settings.hint.general">
+                保存后立即更新轮询间隔，默认面板需刷新页面生效。
+              </div>
             </div>
           </div>
         </section>
 
           <section id="mcpPanel" class="panel">
             <div class="list-header">
-              <h1>MCP 服务管理</h1>
+              <h1 data-i18n="mcp.title">MCP 服务管理</h1>
               <div class="header-actions">
                 <button id="mcpRefreshAllBtn" class="secondary btn-with-icon">
-                  <i class="fa-solid fa-arrows-rotate"></i>全部刷新
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="mcp.refresh.all">全部刷新</span>
                 </button>
                 <button id="mcpImportBtn" class="secondary btn-with-icon">
-                  <i class="fa-solid fa-file-import"></i>导入服务
+                  <i class="fa-solid fa-file-import"></i>
+                  <span data-i18n="mcp.import.action">导入服务</span>
                 </button>
               </div>
             </div>
-          <div class="tips">
+          <div class="tips" data-i18n="mcp.tip">
             录入 MCP 服务后可连接列出工具，并选择是否启用。启用的工具会注入系统提示词。
           </div>
 
           <div class="management-layout">
             <div class="management-list">
               <div class="list-header">
-                <label>服务列表</label>
+                <label data-i18n="mcp.list.title">服务列表</label>
               </div>
               <div id="mcpServerList" class="list-body"></div>
             </div>
@@ -944,7 +1069,7 @@
             <div class="management-detail">
               <div class="detail-header">
                 <div>
-                  <div id="mcpDetailTitle" class="detail-title">未选择服务</div>
+                  <div id="mcpDetailTitle" class="detail-title" data-i18n="mcp.detail.none">未选择服务</div>
                   <div id="mcpDetailMeta" class="muted"></div>
                   <div id="mcpDetailDesc" class="muted"></div>
                 </div>
@@ -955,22 +1080,22 @@
                     <i class="fa-solid fa-link"></i>连接
                   </button>
                   <button id="mcpEnableAllBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-check-double"></i>全选
+                    <i class="fa-solid fa-check-double"></i><span data-i18n="mcp.tools.enableAll">全选</span>
                   </button>
                   <button id="mcpDisableAllBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-ban"></i>全不选
+                    <i class="fa-solid fa-ban"></i><span data-i18n="mcp.tools.disableAll">全不选</span>
                   </button>
                 </div>
                 <div class="actions">
                   <button id="mcpEditBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-pen-to-square"></i>编辑服务
+                    <i class="fa-solid fa-pen-to-square"></i><span data-i18n="mcp.action.edit">编辑服务</span>
                   </button>
                   <button id="mcpDeleteBtn" class="danger btn-with-icon">
-                    <i class="fa-solid fa-trash"></i>删除服务
+                    <i class="fa-solid fa-trash"></i><span data-i18n="mcp.action.delete">删除服务</span>
                   </button>
                 </div>
               </div>
-              <div class="muted">勾选后将写入 allow_tools，仅启用选中的工具。</div>
+              <div class="muted" data-i18n="mcp.tip.allowTools">勾选后将写入 allow_tools，仅启用选中的工具。</div>
               <div id="mcpToolList" class="tool-list"></div>
             </div>
           </div>
@@ -978,12 +1103,15 @@
 
         <section id="builtinPanel" class="panel">
           <div class="list-header">
-            <h1>内置工具链</h1>
+            <h1 data-i18n="builtin.title">内置工具链</h1>
             <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
-              <i class="fa-solid fa-arrows-rotate"></i>刷新工具
+              <i class="fa-solid fa-arrows-rotate"></i>
+              <span data-i18n="builtin.refresh">刷新工具</span>
             </button>
           </div>
-          <div class="tips">勾选后将注入系统提示词，不勾选则不加入。</div>
+          <div class="tips" data-i18n="builtin.tip">
+            勾选后将注入系统提示词，不勾选则不加入。
+          </div>
 
           <div class="skills-panel">
             <div id="builtinToolsList" class="tool-list"></div>
@@ -992,17 +1120,17 @@
 
         <section id="skillsPanel" class="panel">
           <div class="list-header">
-            <h1>技能管理</h1>
+            <h1 data-i18n="skills.title">技能管理</h1>
             <div class="header-actions">
               <button id="addSkillBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-plus"></i>添加技能
+                <i class="fa-solid fa-plus"></i><span data-i18n="skills.action.add">添加技能</span>
               </button>
               <button id="refreshSkillsBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i>刷新技能
+                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="skills.action.refresh">刷新技能</span>
               </button>
             </div>
           </div>
-          <div class="tips">从技能目录读取可用技能，勾选后会注入系统提示词。</div>
+          <div class="tips" data-i18n="skills.tip">从技能目录读取可用技能，勾选后会注入系统提示词。</div>
 
           <div class="skills-panel">
             <div id="skillsList" class="skills-list"></div>
@@ -1011,22 +1139,24 @@
 
         <section id="knowledgePanel" class="panel">
           <div class="list-header">
-            <h1>字面知识库</h1>
+            <h1 data-i18n="knowledge.title">字面知识库</h1>
             <div class="header-actions">
               <button id="knowledgeAddBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-plus"></i>新增
+                <i class="fa-solid fa-plus"></i><span data-i18n="knowledge.action.add">新增</span>
               </button>
               <button id="knowledgeRefreshBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i>刷新
+                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="knowledge.action.refresh">刷新</span>
               </button>
             </div>
           </div>
-          <div class="tips">配置不同知识库目录并提供检索工具，新增或编辑时在弹窗中完成。</div>
+          <div class="tips" data-i18n="knowledge.tip">
+            配置不同知识库目录并提供检索工具，新增或编辑时在弹窗中完成。
+          </div>
 
           <div class="management-layout knowledge-layout">
             <div class="management-list">
               <div class="list-header">
-                <label>知识库列表</label>
+                <label data-i18n="knowledge.list.title">知识库列表</label>
               </div>
               <div id="knowledgeBaseList" class="list-body"></div>
             </div>
@@ -1034,16 +1164,16 @@
             <div class="management-detail knowledge-detail">
               <div class="detail-header">
                 <div>
-                  <div id="knowledgeDetailTitle" class="detail-title">未选择知识库</div>
+                  <div id="knowledgeDetailTitle" class="detail-title" data-i18n="knowledge.detail.empty">未选择知识库</div>
                   <div id="knowledgeDetailMeta" class="muted"></div>
                   <div id="knowledgeDetailDesc" class="muted"></div>
                 </div>
                 <div class="detail-actions">
                   <button id="knowledgeEditBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-pen"></i>编辑
+                    <i class="fa-solid fa-pen"></i><span data-i18n="common.edit">编辑</span>
                   </button>
                   <button id="knowledgeDeleteBtn" class="danger btn-with-icon">
-                    <i class="fa-solid fa-trash"></i>删除知识库
+                    <i class="fa-solid fa-trash"></i><span data-i18n="knowledge.action.delete">删除知识库</span>
                   </button>
                 </div>
               </div>
@@ -1052,18 +1182,18 @@
                 <div class="knowledge-content">
                   <div class="llm-card knowledge-files-card">
                     <div class="knowledge-file-layout">
-                      <div class="knowledge-file-pane">
-                        <div class="knowledge-file-toolbar">
-                          <button id="knowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
-                            <i class="fa-solid fa-upload"></i>上传
-                          </button>
-                          <button id="knowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
-                            <i class="fa-solid fa-plus"></i>新建
-                          </button>
-                          <button id="knowledgeFileSaveBtn" class="btn-with-icon btn-compact">
-                            <i class="fa-solid fa-floppy-disk"></i>保存
-                          </button>
-                        </div>
+                        <div class="knowledge-file-pane">
+                          <div class="knowledge-file-toolbar">
+                            <button id="knowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
+                              <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
+                            </button>
+                            <button id="knowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
+                              <i class="fa-solid fa-plus"></i><span data-i18n="common.new">新建</span>
+                            </button>
+                            <button id="knowledgeFileSaveBtn" class="btn-with-icon btn-compact">
+                              <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+                            </button>
+                          </div>
                         <input
                           id="knowledgeFileUploadInput"
                           type="file"
@@ -1072,7 +1202,7 @@
                         <div id="knowledgeFileList" class="knowledge-file-list"></div>
                       </div>
                         <div class="knowledge-file-editor">
-                          <div id="knowledgeFileName" class="muted">未选择文档</div>
+                          <div id="knowledgeFileName" class="muted" data-i18n="knowledge.file.none">未选择文档</div>
                           <div class="knowledge-editor-wrapper">
                             <div
                               id="knowledgeFileHighlight"
@@ -1082,6 +1212,7 @@
                             <textarea
                               id="knowledgeFileContent"
                               placeholder="在此编辑 Markdown 内容"
+                              data-i18n-placeholder="knowledge.file.placeholder"
                             ></textarea>
                           </div>
                         </div>
@@ -1095,19 +1226,19 @@
 
         <section id="llmPanel" class="panel">
           <div class="list-header">
-            <h1>模型配置</h1>
+            <h1 data-i18n="panel.llm">模型配置</h1>
             <button id="saveLlmBtn" class="btn-with-icon">
-              <i class="fa-solid fa-floppy-disk"></i>保存配置
+              <i class="fa-solid fa-floppy-disk"></i><span data-i18n="llm.action.save">保存配置</span>
             </button>
           </div>
-          <div class="tips">配置模型服务地址、密钥与生成参数，保存后立即生效。</div>
+          <div class="tips" data-i18n="llm.tip">配置模型服务地址、密钥与生成参数，保存后立即生效。</div>
 
           <div class="management-layout llm-layout">
             <div class="management-list llm-list">
               <div class="list-header">
-                <label>配置列表</label>
+                <label data-i18n="llm.list.title">配置列表</label>
                 <button id="llmAddBtn" class="secondary btn-with-icon" type="button">
-                  <i class="fa-solid fa-plus"></i>新增
+                  <i class="fa-solid fa-plus"></i><span data-i18n="llm.action.add">新增</span>
                 </button>
               </div>
               <div id="llmConfigList" class="list-body"></div>
@@ -1116,15 +1247,15 @@
             <div class="management-detail llm-detail">
               <div class="detail-header">
                 <div>
-                  <div id="llmDetailTitle" class="detail-title">未选择配置</div>
+                  <div id="llmDetailTitle" class="detail-title" data-i18n="llm.detail.emptyTitle">未选择配置</div>
                   <div id="llmDetailMeta" class="muted"></div>
                 </div>
                 <div class="detail-actions">
                   <button id="llmSetDefaultBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-star"></i>设为默认
+                    <i class="fa-solid fa-star"></i><span data-i18n="llm.action.setDefault">设为默认</span>
                   </button>
                   <button id="llmDeleteBtn" class="danger btn-with-icon" type="button">
-                    <i class="fa-solid fa-trash"></i>删除
+                    <i class="fa-solid fa-trash"></i><span data-i18n="common.delete">删除</span>
                   </button>
                 </div>
               </div>
@@ -1132,81 +1263,93 @@
               <div class="llm-panel form-section">
                 <div class="llm-card">
                   <div class="llm-card-title">
-                    <i class="fa-solid fa-gear"></i>基础设置
+                    <i class="fa-solid fa-gear"></i><span data-i18n="llm.section.basic">基础设置</span>
                   </div>
                   <div class="form-row">
-                    <label for="llmConfigName">配置名称</label>
-                    <input id="llmConfigName" type="text" placeholder="例如：main" />
+                    <label for="llmConfigName" data-i18n="llm.field.name">配置名称</label>
+                    <input
+                      id="llmConfigName"
+                      type="text"
+                      placeholder="例如：main"
+                      data-i18n-placeholder="llm.placeholder.name"
+                    />
                   </div>
                   <div class="grid">
                     <div class="form-row">
-                      <label for="llmProvider">provider</label>
+                      <label for="llmProvider" data-i18n="llm.field.provider">provider</label>
                       <select id="llmProvider">
                         <option value="openai_compatible">openai_compatible</option>
                       </select>
                     </div>
                     <div class="form-row">
-                      <label for="llmModel">model</label>
-                      <input id="llmModel" type="text" placeholder="例如：gpt-4.1" />
+                      <label for="llmModel" data-i18n="llm.field.model">model</label>
+                      <input
+                        id="llmModel"
+                        type="text"
+                        placeholder="例如：gpt-4.1"
+                        data-i18n-placeholder="llm.placeholder.model"
+                      />
                     </div>
                   </div>
 
                   <div class="form-row">
-                    <label for="llmBaseUrl">base_url</label>
+                    <label for="llmBaseUrl" data-i18n="llm.field.baseUrl">base_url</label>
                     <input id="llmBaseUrl" type="text" placeholder="https://api.example.com" />
                   </div>
 
                   <div class="form-row">
-                    <label for="llmApiKey">api_key（选填）</label>
+                    <label for="llmApiKey" data-i18n="llm.field.apiKey">api_key（选填）</label>
                     <input id="llmApiKey" type="text" placeholder="sk-..." />
                   </div>
                 </div>
 
                 <div class="llm-card">
                   <div class="llm-card-title">
-                    <i class="fa-solid fa-sliders"></i>生成参数
+                    <i class="fa-solid fa-sliders"></i><span data-i18n="llm.section.generation">生成参数</span>
                   </div>
                   <div class="grid">
                     <div class="form-row">
-                      <label for="llmTemperature">temperature</label>
+                      <label for="llmTemperature" data-i18n="llm.field.temperature">temperature</label>
                       <input id="llmTemperature" type="number" min="0" max="2" step="0.1" />
                     </div>
                     <div class="form-row">
-                      <label for="llmTimeout">timeout_s</label>
+                      <label for="llmTimeout" data-i18n="llm.field.timeout">timeout_s</label>
                       <input id="llmTimeout" type="number" min="1" step="1" />
                     </div>
                   </div>
 
                   <div class="grid">
                     <div class="form-row">
-                      <label for="llmRetry">retry</label>
+                      <label for="llmRetry" data-i18n="llm.field.retry">retry</label>
                       <input id="llmRetry" type="number" min="0" step="1" />
                     </div>
                     <div class="form-row">
-                      <label for="llmMaxOutput">最大输出长度（选填）</label>
+                      <label for="llmMaxOutput" data-i18n="llm.field.maxOutput">最大输出长度（选填）</label>
                       <input
                         id="llmMaxOutput"
                         type="number"
                         min="1"
                         step="1"
                         placeholder="例如：4096"
+                        data-i18n-placeholder="llm.placeholder.maxOutput"
                       />
                     </div>
                   </div>
 
                   <div class="form-row">
-                    <label for="llmMaxRounds">最大执行轮次</label>
+                    <label for="llmMaxRounds" data-i18n="llm.field.maxRounds">最大执行轮次</label>
                     <input
                       id="llmMaxRounds"
                       type="number"
                       min="1"
                       step="1"
                       placeholder="例如：10"
+                      data-i18n-placeholder="llm.placeholder.maxRounds"
                     />
                   </div>
 
                   <div class="form-row">
-                    <label for="llmMaxContext">最大上下文（选填）</label>
+                    <label for="llmMaxContext" data-i18n="llm.field.maxContext">最大上下文（选填）</label>
                     <div class="form-row-inline">
                       <input
                         id="llmMaxContext"
@@ -1214,13 +1357,14 @@
                         min="1"
                         step="1"
                         placeholder="例如：128000"
+                        data-i18n-placeholder="llm.placeholder.maxContext"
                       />
                       <button
                         id="llmProbeContextBtn"
                         type="button"
                         class="secondary btn-with-icon"
                       >
-                        <i class="fa-solid fa-magnifying-glass"></i>自动探测
+                        <i class="fa-solid fa-magnifying-glass"></i><span data-i18n="llm.action.probeContext">自动探测</span>
                       </button>
                     </div>
                   </div>
@@ -1228,17 +1372,17 @@
 
                 <div class="llm-card">
                   <div class="llm-card-title">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i>能力选项
+                    <i class="fa-solid fa-wand-magic-sparkles"></i><span data-i18n="llm.section.capabilities">能力选项</span>
                   </div>
                   <div class="form-row">
                     <div class="checkbox-row-group">
                       <label class="checkbox-row checkbox-compact">
                         <input id="llmVision" type="checkbox" />
-                        <span>支持视觉</span>
+                        <span data-i18n="llm.option.vision">支持视觉</span>
                       </label>
                       <label class="checkbox-row checkbox-compact">
                         <input id="llmStreamIncludeUsage" type="checkbox" />
-                        <span>流式返回 usage</span>
+                        <span data-i18n="llm.option.streamUsage">流式返回 usage</span>
                       </label>
                     </div>
                   </div>
@@ -1246,11 +1390,11 @@
 
                 <div class="llm-card">
                   <div class="llm-card-title">
-                    <i class="fa-solid fa-compress"></i>上下文压缩
+                    <i class="fa-solid fa-compress"></i><span data-i18n="llm.section.compaction">上下文压缩</span>
                   </div>
                   <div class="grid">
                     <div class="form-row">
-                      <label for="llmHistoryCompactionRatio">历史压缩阈值比例</label>
+                      <label for="llmHistoryCompactionRatio" data-i18n="llm.field.historyRatio">历史压缩阈值比例</label>
                       <input
                         id="llmHistoryCompactionRatio"
                         type="number"
@@ -1258,14 +1402,15 @@
                         max="1"
                         step="0.05"
                         placeholder="0.8"
+                        data-i18n-placeholder="llm.placeholder.historyRatio"
                       />
                     </div>
                     <div class="form-row">
-                      <label for="llmHistoryCompactionReset">压缩重置策略</label>
+                      <label for="llmHistoryCompactionReset" data-i18n="llm.field.historyReset">压缩重置策略</label>
                       <select id="llmHistoryCompactionReset">
-                        <option value="zero">zero（清零）</option>
-                        <option value="current">current（重置为当前）</option>
-                        <option value="keep">keep（不重置）</option>
+                        <option value="zero" data-i18n="llm.compaction.reset.zero">zero（清零）</option>
+                        <option value="current" data-i18n="llm.compaction.reset.current">current（重置为当前）</option>
+                        <option value="keep" data-i18n="llm.compaction.reset.keep">keep（不重置）</option>
                       </select>
                     </div>
                   </div>
@@ -1277,19 +1422,19 @@
 
         <section id="promptPanel" class="panel">
           <div class="list-header">
-            <h1>系统提示词</h1>
+            <h1 data-i18n="panel.prompt">系统提示词</h1>
             <div class="header-actions">
               <div class="header-input">
-                <label for="promptUserId">user_id</label>
+                <label for="promptUserId" data-i18n="prompt.label.userId">user_id</label>
                 <input id="promptUserId" type="text" />
               </div>
               <button id="loadPromptBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i>刷新提示词
+                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="prompt.action.refresh">刷新提示词</span>
               </button>
-              <div id="promptBuildTime" class="muted">构建耗时：--</div>
+              <div id="promptBuildTime" class="muted" data-i18n="prompt.buildTime.empty">构建耗时：--</div>
             </div>
           </div>
-          <div class="tips">
+          <div class="tips" data-i18n="prompt.tip">
             用于查看当前智能体的系统提示词，左侧勾选工具会同步注入提示词并影响调试面板请求。
           </div>
 
@@ -1297,25 +1442,25 @@
             <div class="prompt-sidebar">
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-tools"></i>内置工具
+                  <i class="fa-solid fa-tools"></i><span data-i18n="prompt.section.builtin">内置工具</span>
                 </div>
                 <div id="promptBuiltinTools" class="prompt-tool-list"></div>
               </div>
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-plug"></i>MCP 工具
+                  <i class="fa-solid fa-plug"></i><span data-i18n="prompt.section.mcp">MCP 工具</span>
                 </div>
                 <div id="promptMcpTools" class="prompt-tool-list"></div>
               </div>
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-book"></i>知识库工具
+                  <i class="fa-solid fa-book"></i><span data-i18n="prompt.section.knowledge">知识库工具</span>
                 </div>
                 <div id="promptKnowledgeTools" class="prompt-tool-list"></div>
               </div>
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-wand-magic-sparkles"></i>技能
+                  <i class="fa-solid fa-wand-magic-sparkles"></i><span data-i18n="prompt.section.skills">技能</span>
                 </div>
                 <div id="promptSkills" class="prompt-tool-list"></div>
               </div>
@@ -1324,9 +1469,16 @@
               <div class="prompt-section">
                 <div class="prompt-section-header">
                   <div class="prompt-section-title">
-                    <i class="fa-solid fa-toolbox"></i>自建工具
+                    <i class="fa-solid fa-toolbox"></i><span data-i18n="prompt.section.userTools">自建工具</span>
                   </div>
-                  <button id="promptUserToolAdd" class="icon-btn" type="button" title="新增自建工具">
+                  <button
+                    id="promptUserToolAdd"
+                    class="icon-btn"
+                    type="button"
+                    title="新增自建工具"
+                    data-i18n-title="prompt.userTool.add"
+                    data-i18n-aria-label="prompt.userTool.add"
+                  >
                     <i class="fa-solid fa-plus"></i>
                   </button>
                 </div>
@@ -1334,18 +1486,19 @@
               </div>
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-infinity"></i>共享工具
+                  <i class="fa-solid fa-infinity"></i><span data-i18n="prompt.section.shared">共享工具</span>
                 </div>
                 <div id="promptSharedTools" class="prompt-tool-list"></div>
               </div>
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-star"></i>附加提示词
+                  <i class="fa-solid fa-star"></i><span data-i18n="prompt.section.extraPrompt">附加提示词</span>
                 </div>
                 <textarea
                   id="promptExtraPrompt"
                   class="prompt-extra-input"
                   placeholder="输入需要附加到系统提示词的内容"
+                  data-i18n-placeholder="prompt.extra.placeholder"
                 ></textarea>
                 <div id="promptExtraPromptStatus" class="muted"></div>
               </div>
@@ -1361,24 +1514,34 @@
     <div id="mcpModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="mcpModalTitle" class="detail-title">编辑 MCP 服务</div>
+          <div id="mcpModalTitle" class="detail-title" data-i18n="mcp.modal.editTitle">编辑 MCP 服务</div>
           <button id="mcpModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="mcpName">服务名称</label>
-            <input id="mcpName" type="text" placeholder="例如：local_tools" />
+            <label for="mcpName" data-i18n="mcp.form.name">服务名称</label>
+            <input
+              id="mcpName"
+              type="text"
+              placeholder="例如：local_tools"
+              data-i18n-placeholder="mcp.placeholder.name"
+            />
           </div>
           <div class="form-row">
-            <label for="mcpDisplayName">显示名称（可选）</label>
-            <input id="mcpDisplayName" type="text" placeholder="用于前端展示" />
+            <label for="mcpDisplayName" data-i18n="mcp.form.displayName">显示名称（可选）</label>
+            <input
+              id="mcpDisplayName"
+              type="text"
+              placeholder="用于前端展示"
+              data-i18n-placeholder="mcp.placeholder.displayName"
+            />
           </div>
           <div class="form-row">
-            <label for="mcpEndpoint">服务地址</label>
+            <label for="mcpEndpoint" data-i18n="mcp.form.endpoint">服务地址</label>
             <input id="mcpEndpoint" type="text" placeholder="http://127.0.0.1:9000/mcp" />
           </div>
           <div class="form-row">
-            <label for="mcpTransport">传输类型</label>
+            <label for="mcpTransport" data-i18n="mcp.form.transport">传输类型</label>
             <select id="mcpTransport">
               <option value="">auto</option>
               <option value="sse">sse</option>
@@ -1387,31 +1550,35 @@
             </select>
           </div>
           <div class="form-row">
-            <label for="mcpDescription">服务描述（可选）</label>
-            <textarea id="mcpDescription" placeholder="用于记录服务作用"></textarea>
+            <label for="mcpDescription" data-i18n="mcp.form.description">服务描述（可选）</label>
+            <textarea
+              id="mcpDescription"
+              placeholder="用于记录服务作用"
+              data-i18n-placeholder="mcp.placeholder.description"
+            ></textarea>
           </div>
           <div class="form-row">
-            <label for="mcpHeaders">请求头（JSON，可选）</label>
+            <label for="mcpHeaders" data-i18n="mcp.form.headers">请求头（JSON，可选）</label>
             <textarea id="mcpHeaders" placeholder='{"Authorization":"Bearer sk-..."}'></textarea>
             <div id="mcpHeadersError" class="error-text"></div>
           </div>
           <div class="form-row">
             <label>
               <input id="mcpEnabled" type="checkbox" checked />
-              启用服务
+              <span data-i18n="mcp.form.enabled">启用服务</span>
             </label>
           </div>
           <div class="form-row">
-            <label for="mcpStructPreview">JSON 结构体预览（可复制）</label>
+            <label for="mcpStructPreview" data-i18n="mcp.form.preview">JSON 结构体预览（可复制）</label>
             <textarea id="mcpStructPreview" class="code-preview" readonly></textarea>
           </div>
         </div>
         <div class="modal-actions">
           <button id="mcpModalCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="mcpModalSave" class="btn-with-icon">
-            <i class="fa-solid fa-check"></i>保存
+            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -1420,12 +1587,12 @@
     <div id="mcpImportModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div class="detail-title">导入 MCP 结构体</div>
+          <div class="detail-title" data-i18n="mcp.import.title">导入 MCP 结构体</div>
           <button id="mcpImportClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="mcpImportInput">MCP 结构体（JSON）</label>
+            <label for="mcpImportInput" data-i18n="mcp.import.label">MCP 结构体（JSON）</label>
             <textarea
               id="mcpImportInput"
               placeholder='{"mcpServers":{"WebSearch":{"type":"sse","baseUrl":"https://...","headers":{"Authorization":"Bearer sk-..."}}}}'
@@ -1434,10 +1601,10 @@
         </div>
         <div class="modal-actions">
           <button id="mcpImportCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="mcpImportConfirm" class="btn-with-icon">
-            <i class="fa-solid fa-file-import"></i>导入
+            <i class="fa-solid fa-file-import"></i><span data-i18n="common.import">导入</span>
           </button>
         </div>
       </div>
@@ -1446,7 +1613,7 @@
     <div id="skillModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="skillModalTitle" class="detail-title">技能详情</div>
+          <div id="skillModalTitle" class="detail-title" data-i18n="skills.detail.title">技能详情</div>
           <button id="skillModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
@@ -1455,7 +1622,7 @@
         </div>
         <div class="modal-actions">
           <button id="skillModalCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1464,39 +1631,49 @@
     <div id="knowledgeModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="knowledgeModalTitle" class="detail-title">知识库配置</div>
+          <div id="knowledgeModalTitle" class="detail-title" data-i18n="knowledge.modal.addTitle">知识库配置</div>
           <button id="knowledgeModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="knowledgeModalName">名称</label>
-            <input id="knowledgeModalName" type="text" placeholder="知识库工具名称" />
+            <label for="knowledgeModalName" data-i18n="knowledge.modal.field.name">名称</label>
+            <input
+              id="knowledgeModalName"
+              type="text"
+              placeholder="知识库工具名称"
+              data-i18n-placeholder="knowledge.modal.placeholder.name"
+            />
           </div>
           <div class="form-row">
-            <label for="knowledgeModalRoot">目录</label>
+            <label for="knowledgeModalRoot" data-i18n="knowledge.modal.field.root">目录</label>
             <input
               id="knowledgeModalRoot"
               type="text"
               placeholder="可留空，自动创建 ./knowledge/<名称>"
+              data-i18n-placeholder="knowledge.modal.placeholder.root"
             />
           </div>
           <div class="form-row">
-            <label for="knowledgeModalDesc">描述</label>
-            <textarea id="knowledgeModalDesc" placeholder="知识库用途说明"></textarea>
+            <label for="knowledgeModalDesc" data-i18n="knowledge.modal.field.description">描述</label>
+            <textarea
+              id="knowledgeModalDesc"
+              placeholder="知识库用途说明"
+              data-i18n-placeholder="knowledge.modal.placeholder.description"
+            ></textarea>
           </div>
           <div class="form-row">
             <label class="checkbox-row">
               <input id="knowledgeModalEnabled" type="checkbox" checked />
-              <span>启用</span>
+              <span data-i18n="common.enabled">启用</span>
             </label>
           </div>
         </div>
         <div class="modal-actions">
           <button id="knowledgeModalCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="knowledgeModalSave" class="btn-with-icon">
-            <i class="fa-solid fa-check"></i>保存
+            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -1505,38 +1682,49 @@
     <div id="userKnowledgeModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="userKnowledgeModalTitle" class="detail-title">知识库配置</div>
+          <div id="userKnowledgeModalTitle" class="detail-title" data-i18n="userTools.knowledge.modal.title">知识库配置</div>
           <button id="userKnowledgeModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="userKnowledgeModalName">名称</label>
-            <input id="userKnowledgeModalName" type="text" placeholder="知识库名称" />
+            <label for="userKnowledgeModalName" data-i18n="userTools.knowledge.modal.field.name">名称</label>
+            <input
+              id="userKnowledgeModalName"
+              type="text"
+              placeholder="知识库名称"
+              data-i18n-placeholder="userTools.knowledge.modal.placeholder.name"
+            />
           </div>
           <div class="form-row">
-            <label for="userKnowledgeModalDesc">描述</label>
-            <textarea id="userKnowledgeModalDesc" placeholder="知识库用途说明"></textarea>
+            <label for="userKnowledgeModalDesc" data-i18n="userTools.knowledge.modal.field.description">描述</label>
+            <textarea
+              id="userKnowledgeModalDesc"
+              placeholder="知识库用途说明"
+              data-i18n-placeholder="userTools.knowledge.modal.placeholder.description"
+            ></textarea>
           </div>
           <div class="form-row">
             <label class="checkbox-row">
               <input id="userKnowledgeModalEnabled" type="checkbox" checked />
-              <span>启用</span>
+              <span data-i18n="common.enabled">启用</span>
             </label>
           </div>
           <div class="form-row">
             <label class="checkbox-row">
               <input id="userKnowledgeModalShared" type="checkbox" />
-              <span>共享</span>
+              <span data-i18n="common.shared">共享</span>
             </label>
           </div>
-          <div class="muted">目录固定在 data/user_tools/&lt;user&gt;/knowledge/&lt;名称&gt;，保存后自动生成。</div>
+          <div class="muted" data-i18n="userTools.knowledge.modal.tip">
+            目录固定在 data/user_tools/&lt;user&gt;/knowledge/&lt;名称&gt;，保存后自动生成。
+          </div>
         </div>
         <div class="modal-actions">
           <button id="userKnowledgeModalCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="userKnowledgeModalSave" class="btn-with-icon">
-            <i class="fa-solid fa-check"></i>保存
+            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -1545,38 +1733,38 @@
     <div id="userToolModal" class="modal">
       <div class="modal-card modal-card-lg user-tool-modal-card">
         <div class="modal-header">
-          <div class="detail-title">自建工具</div>
+          <div class="detail-title" data-i18n="userTools.title">自建工具</div>
           <button id="userToolModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="user-tool-layout">
             <div class="user-tool-sidebar">
-              <div class="user-tool-sidebar-title">工具分类</div>
-              <button id="userToolTabMcp" class="tab-btn active" type="button">MCP 工具</button>
-              <button id="userToolTabSkills" class="tab-btn" type="button">技能工具</button>
-              <button id="userToolTabKnowledge" class="tab-btn" type="button">知识库工具</button>
+              <div class="user-tool-sidebar-title" data-i18n="userTools.category.title">工具分类</div>
+              <button id="userToolTabMcp" class="tab-btn active" type="button" data-i18n="userTools.tab.mcp">MCP 工具</button>
+              <button id="userToolTabSkills" class="tab-btn" type="button" data-i18n="userTools.tab.skills">技能工具</button>
+              <button id="userToolTabKnowledge" class="tab-btn" type="button" data-i18n="userTools.tab.knowledge">知识库工具</button>
             </div>
 
             <div class="user-tool-content">
               <div id="userToolPaneMcp" class="user-tool-pane active">
                 <div class="list-header">
-                  <label>我的 MCP 服务</label>
+                  <label data-i18n="userTools.mcp.title">我的 MCP 服务</label>
                   <div class="header-actions">
                     <button id="userMcpRefreshAllBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-arrows-rotate"></i>全部刷新
+                      <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="mcp.refresh.all">全部刷新</span>
                     </button>
                     <button id="userMcpImportBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-file-import"></i>导入服务
+                      <i class="fa-solid fa-file-import"></i><span data-i18n="mcp.import.action">导入服务</span>
                     </button>
                   </div>
                 </div>
-                <div class="tips">
+                <div class="tips" data-i18n="userTools.mcp.tip">
                   配置个人 MCP 服务并选择共享工具，工具会以 user_id@server@tool 形式注入系统提示词。
                 </div>
                 <div class="management-layout">
                   <div class="management-list">
                     <div class="list-header">
-                      <label>服务列表</label>
+                      <label data-i18n="mcp.list.title">服务列表</label>
                     </div>
                     <div id="userMcpServerList" class="list-body"></div>
                   </div>
@@ -1584,7 +1772,7 @@
                   <div class="management-detail">
                     <div class="detail-header">
                       <div>
-                        <div id="userMcpDetailTitle" class="detail-title">未选择服务</div>
+                        <div id="userMcpDetailTitle" class="detail-title" data-i18n="mcp.detail.none">未选择服务</div>
                         <div id="userMcpDetailMeta" class="muted"></div>
                         <div id="userMcpDetailDesc" class="muted"></div>
                       </div>
@@ -1596,22 +1784,22 @@
                           <i class="fa-solid fa-link"></i>连接
                         </button>
                         <button id="userMcpEnableAllBtn" class="secondary btn-with-icon">
-                          <i class="fa-solid fa-check-double"></i>全选
+                          <i class="fa-solid fa-check-double"></i><span data-i18n="mcp.tools.enableAll">全选</span>
                         </button>
                         <button id="userMcpDisableAllBtn" class="secondary btn-with-icon">
-                          <i class="fa-solid fa-ban"></i>全不选
+                          <i class="fa-solid fa-ban"></i><span data-i18n="mcp.tools.disableAll">全不选</span>
                         </button>
                       </div>
                       <div class="actions">
                         <button id="userMcpEditBtn" class="secondary btn-with-icon">
-                          <i class="fa-solid fa-pen-to-square"></i>编辑服务
+                          <i class="fa-solid fa-pen-to-square"></i><span data-i18n="mcp.action.edit">编辑服务</span>
                         </button>
                         <button id="userMcpDeleteBtn" class="danger btn-with-icon">
-                          <i class="fa-solid fa-trash"></i>删除服务
+                          <i class="fa-solid fa-trash"></i><span data-i18n="mcp.action.delete">删除服务</span>
                         </button>
                       </div>
                     </div>
-                    <div class="muted">勾选启用/共享后将出现在系统提示词工具列表中。</div>
+                    <div class="muted" data-i18n="userTools.mcp.tip.tools">勾选启用/共享后将出现在系统提示词工具列表中。</div>
                     <div id="userMcpToolList" class="tool-list"></div>
                   </div>
                 </div>
@@ -1619,17 +1807,17 @@
 
               <div id="userToolPaneSkills" class="user-tool-pane">
                 <div class="list-header">
-                  <label>技能管理</label>
+                  <label data-i18n="userTools.skills.title">技能管理</label>
                   <div class="header-actions">
                     <button id="userSkillUploadBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-plus"></i>上传技能包
+                      <i class="fa-solid fa-plus"></i><span data-i18n="userTools.skills.action.upload">上传技能包</span>
                     </button>
                     <button id="userSkillRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-arrows-rotate"></i>刷新
+                      <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
                     </button>
                   </div>
                 </div>
-                <div class="tips">
+                <div class="tips" data-i18n="userTools.skills.tip">
                   技能名称会以 user_id@技能名 展示，勾选共享即可让其他用户使用。
                 </div>
                 <input id="userSkillUploadInput" type="file" accept=".zip" hidden />
@@ -1638,24 +1826,24 @@
 
               <div id="userToolPaneKnowledge" class="user-tool-pane">
                 <div class="list-header">
-                  <label>知识库管理</label>
+                  <label data-i18n="userTools.knowledge.title">知识库管理</label>
                   <div class="header-actions">
                     <button id="userKnowledgeAddBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-plus"></i>新增
+                      <i class="fa-solid fa-plus"></i><span data-i18n="knowledge.action.add">新增</span>
                     </button>
                     <button id="userKnowledgeRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
-                      <i class="fa-solid fa-arrows-rotate"></i>刷新
+                      <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
                     </button>
                   </div>
                 </div>
-                <div class="tips">
+                <div class="tips" data-i18n="userTools.knowledge.tip">
                   知识库目录固定在 data/user_tools/&lt;user&gt;/knowledge，工具名称会以 user_id@知识库名 展示，新增或编辑在弹窗中完成。
                 </div>
 
                 <div class="management-layout knowledge-layout">
                   <div class="management-list">
                     <div class="list-header">
-                      <label>知识库列表</label>
+                      <label data-i18n="knowledge.list.title">知识库列表</label>
                     </div>
                     <div id="userKnowledgeBaseList" class="list-body"></div>
                   </div>
@@ -1663,16 +1851,16 @@
                   <div class="management-detail knowledge-detail">
                     <div class="detail-header">
                       <div>
-                        <div id="userKnowledgeDetailTitle" class="detail-title">未选择知识库</div>
+                        <div id="userKnowledgeDetailTitle" class="detail-title" data-i18n="knowledge.detail.empty">未选择知识库</div>
                         <div id="userKnowledgeDetailMeta" class="muted"></div>
                         <div id="userKnowledgeDetailDesc" class="muted"></div>
                       </div>
                       <div class="detail-actions">
                         <button id="userKnowledgeEditBtn" class="secondary btn-with-icon btn-compact">
-                          <i class="fa-solid fa-pen"></i>编辑
+                          <i class="fa-solid fa-pen"></i><span data-i18n="common.edit">编辑</span>
                         </button>
                         <button id="userKnowledgeDeleteBtn" class="danger btn-with-icon btn-compact">
-                          <i class="fa-solid fa-trash"></i>删除知识库
+                          <i class="fa-solid fa-trash"></i><span data-i18n="knowledge.action.delete">删除知识库</span>
                         </button>
                       </div>
                     </div>
@@ -1684,19 +1872,19 @@
                             <div class="knowledge-file-pane">
                               <div class="knowledge-file-toolbar">
                                 <button id="userKnowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
-                                  <i class="fa-solid fa-upload"></i>上传
+                                  <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
                                 </button>
                                 <button id="userKnowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
-                                  <i class="fa-solid fa-file-circle-plus"></i>新建
+                                  <i class="fa-solid fa-file-circle-plus"></i><span data-i18n="common.new">新建</span>
                                 </button>
                                 <button id="userKnowledgeFileSaveBtn" class="btn-with-icon btn-compact">
-                                  <i class="fa-solid fa-floppy-disk"></i>保存
+                                  <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
                                 </button>
                               </div>
                               <div id="userKnowledgeFileList" class="knowledge-file-list"></div>
                             </div>
                               <div class="knowledge-file-editor">
-                                <div id="userKnowledgeFileName" class="muted">未选择文档</div>
+                                <div id="userKnowledgeFileName" class="muted" data-i18n="knowledge.file.none">未选择文档</div>
                                 <div class="knowledge-editor-wrapper">
                                   <div
                                     id="userKnowledgeFileHighlight"
@@ -1721,7 +1909,7 @@
         </div>
         <div class="modal-actions">
           <button id="userToolModalCloseBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1730,24 +1918,34 @@
     <div id="userMcpModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="userMcpModalTitle" class="detail-title">编辑 MCP 服务</div>
+          <div id="userMcpModalTitle" class="detail-title" data-i18n="userTools.mcp.modal.editTitle">编辑 MCP 服务</div>
           <button id="userMcpModalClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="userMcpName">服务名称</label>
-            <input id="userMcpName" type="text" placeholder="例如：local_tools" />
+            <label for="userMcpName" data-i18n="mcp.form.name">服务名称</label>
+            <input
+              id="userMcpName"
+              type="text"
+              placeholder="例如：local_tools"
+              data-i18n-placeholder="mcp.placeholder.name"
+            />
           </div>
           <div class="form-row">
-            <label for="userMcpDisplayName">显示名称（可选）</label>
-            <input id="userMcpDisplayName" type="text" placeholder="用于前端展示" />
+            <label for="userMcpDisplayName" data-i18n="mcp.form.displayName">显示名称（可选）</label>
+            <input
+              id="userMcpDisplayName"
+              type="text"
+              placeholder="用于前端展示"
+              data-i18n-placeholder="mcp.placeholder.displayName"
+            />
           </div>
           <div class="form-row">
-            <label for="userMcpEndpoint">服务地址</label>
+            <label for="userMcpEndpoint" data-i18n="mcp.form.endpoint">服务地址</label>
             <input id="userMcpEndpoint" type="text" placeholder="http://127.0.0.1:9000/mcp" />
           </div>
           <div class="form-row">
-            <label for="userMcpTransport">传输类型</label>
+            <label for="userMcpTransport" data-i18n="mcp.form.transport">传输类型</label>
             <select id="userMcpTransport">
               <option value="">auto</option>
               <option value="sse">sse</option>
@@ -1756,31 +1954,35 @@
             </select>
           </div>
           <div class="form-row">
-            <label for="userMcpDescription">服务描述（可选）</label>
-            <textarea id="userMcpDescription" placeholder="用于记录服务作用"></textarea>
+            <label for="userMcpDescription" data-i18n="mcp.form.description">服务描述（可选）</label>
+            <textarea
+              id="userMcpDescription"
+              placeholder="用于记录服务作用"
+              data-i18n-placeholder="mcp.placeholder.description"
+            ></textarea>
           </div>
           <div class="form-row">
-            <label for="userMcpHeaders">Headers JSON（可选）</label>
+            <label for="userMcpHeaders" data-i18n="mcp.form.headers">Headers JSON（可选）</label>
             <textarea id="userMcpHeaders" placeholder='{"Authorization":"Bearer ..."}'></textarea>
             <div id="userMcpHeadersError" class="error-text"></div>
           </div>
           <div class="form-row">
             <label class="checkbox-row">
               <input id="userMcpEnabled" type="checkbox" />
-              <span>启用服务</span>
+              <span data-i18n="mcp.form.enabled">启用服务</span>
             </label>
           </div>
           <div class="form-row">
-            <label for="userMcpStructPreview">JSON 结构体预览（可复制）</label>
+            <label for="userMcpStructPreview" data-i18n="mcp.form.preview">JSON 结构体预览（可复制）</label>
             <textarea id="userMcpStructPreview" class="code-preview" readonly></textarea>
           </div>
         </div>
         <div class="modal-actions">
           <button id="userMcpModalCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="userMcpModalSave" class="btn-with-icon">
-            <i class="fa-solid fa-floppy-disk"></i>保存
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -1789,12 +1991,12 @@
     <div id="userMcpImportModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div class="detail-title">导入 MCP 服务</div>
+          <div class="detail-title" data-i18n="userTools.mcp.import.title">导入 MCP 服务</div>
           <button id="userMcpImportClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="userMcpImportInput">MCP 结构体（JSON）</label>
+            <label for="userMcpImportInput" data-i18n="mcp.import.label">MCP 结构体（JSON）</label>
             <textarea
               id="userMcpImportInput"
               placeholder='{"mcpServers":{"WebSearch":{"type":"sse","baseUrl":"https://...","headers":{"Authorization":"Bearer sk-..."}}}}'
@@ -1803,10 +2005,10 @@
         </div>
         <div class="modal-actions">
           <button id="userMcpImportCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>取消
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
           </button>
           <button id="userMcpImportConfirm" class="btn-with-icon">
-            <i class="fa-solid fa-file-import"></i>导入
+            <i class="fa-solid fa-file-import"></i><span data-i18n="common.import">导入</span>
           </button>
         </div>
       </div>
@@ -1815,23 +2017,24 @@
     <div id="toolDetailModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="toolDetailTitle" class="detail-title">工具详情</div>
+          <div id="toolDetailTitle" class="detail-title" data-i18n="tool.detail.title">工具详情</div>
           <button id="toolDetailClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div id="toolDetailMeta" class="muted"></div>
           <div class="form-row">
-            <label>描述</label>
+            <label data-i18n="tool.detail.label.description">描述</label>
             <div id="toolDetailDesc" class="tool-desc"></div>
           </div>
           <div class="form-row">
-            <label>输入结构</label>
+            <label data-i18n="tool.detail.label.schema">输入结构</label>
             <pre id="toolDetailSchema" class="tool-schema"></pre>
           </div>
         </div>
         <div class="modal-actions">
           <button id="toolDetailCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i>
+            <span data-i18n="tool.detail.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1840,7 +2043,7 @@
     <div id="workspacePreviewModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
-          <div id="workspacePreviewTitle" class="detail-title">文件预览</div>
+          <div id="workspacePreviewTitle" class="detail-title" data-i18n="workspace.preview.title">文件预览</div>
           <button id="workspacePreviewClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
@@ -1850,10 +2053,10 @@
         </div>
         <div class="modal-actions">
           <button id="workspacePreviewDownload" class="secondary btn-with-icon">
-            <i class="fa-solid fa-download"></i>下载
+            <i class="fa-solid fa-download"></i><span data-i18n="workspace.action.download">下载</span>
           </button>
           <button id="workspacePreviewCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1865,28 +2068,28 @@
 
     <div id="workspaceMenu" class="context-menu">
       <button id="workspaceNewFileMenuBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-file-circle-plus"></i>新建文件
+        <i class="fa-solid fa-file-circle-plus"></i><span data-i18n="workspace.action.newFile">新建文件</span>
       </button>
       <button id="workspaceEditBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-pen-to-square"></i>编辑
+        <i class="fa-solid fa-pen-to-square"></i><span data-i18n="common.edit">编辑</span>
       </button>
       <button id="workspaceRenameBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-i-cursor"></i>重命名
+        <i class="fa-solid fa-i-cursor"></i><span data-i18n="workspace.action.rename">重命名</span>
       </button>
       <button id="workspaceMoveBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-arrow-right-arrow-left"></i>移动到
+        <i class="fa-solid fa-arrow-right-arrow-left"></i><span data-i18n="workspace.action.move">移动</span>
       </button>
       <button id="workspaceCopyBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-copy"></i>复制到
+        <i class="fa-solid fa-copy"></i><span data-i18n="workspace.action.copy">复制</span>
       </button>
       <button id="workspaceNewFolderBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-folder-plus"></i>新建文件夹
+        <i class="fa-solid fa-folder-plus"></i><span data-i18n="workspace.action.newFolder">新建文件夹</span>
       </button>
       <button id="workspaceDownloadBtn" class="btn-with-icon" type="button">
-        <i class="fa-solid fa-download"></i>下载
+        <i class="fa-solid fa-download"></i><span data-i18n="workspace.action.download">下载</span>
       </button>
       <button id="workspaceDeleteBtn" class="danger btn-with-icon" type="button">
-        <i class="fa-solid fa-trash"></i>删除
+        <i class="fa-solid fa-trash"></i><span data-i18n="workspace.action.delete">删除</span>
       </button>
     </div>
 
@@ -1896,20 +2099,20 @@
       <div class="modal-card">
         <div class="modal-header">
           <div>
-            <div class="detail-title">调试历史</div>
+            <div class="detail-title" data-i18n="debug.history.title">调试历史</div>
             <div id="debugHistoryMeta" class="muted"></div>
           </div>
           <button id="debugHistoryClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="list-header">
-            <label>会话列表</label>
+            <label data-i18n="debug.history.list.title">会话列表</label>
           </div>
           <div id="debugHistoryList" class="list-body"></div>
         </div>
         <div class="modal-actions">
           <button id="debugHistoryCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1924,17 +2127,17 @@
         <div class="modal-body">
           <div id="monitorDetailMeta" class="muted"></div>
           <div class="form-row">
-            <label>问题</label>
+            <label data-i18n="monitor.detail.question">问题</label>
             <div id="monitorDetailQuestion" class="log"></div>
           </div>
           <div class="form-row">
-            <label>事件详情</label>
+            <label data-i18n="monitor.detail.events">事件详情</label>
             <div id="monitorDetailEvents" class="log"></div>
           </div>
         </div>
         <div class="modal-actions">
           <button id="monitorDetailCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1951,13 +2154,13 @@
         </div>
         <div class="modal-body">
           <div class="list-header">
-            <label>线程列表</label>
+            <label data-i18n="monitor.status.list.title">线程列表</label>
           </div>
           <div id="monitorStatusList" class="list-body monitor-status-list"></div>
         </div>
         <div class="modal-actions">
           <button id="monitorStatusCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -1967,7 +2170,7 @@
       <div class="modal-card modal-card-lg">
         <div class="modal-header">
           <div>
-            <div id="memoryModalTitle" class="detail-title">记忆记录</div>
+            <div id="memoryModalTitle" class="detail-title" data-i18n="memory.modal.title">记忆记录</div>
             <div id="memoryModalMeta" class="muted"></div>
           </div>
           <button id="memoryModalClose" class="icon-btn" type="button">×</button>
@@ -1977,10 +2180,10 @@
             <div class="detail-actions">
               <label class="checkbox-row">
                 <input id="memoryModalEnableToggle" type="checkbox" />
-                <span>启用长期记忆</span>
+                <span data-i18n="memory.modal.enable">启用长期记忆</span>
               </label>
               <button id="memoryModalClearBtn" class="danger btn-with-icon btn-compact">
-                <i class="fa-solid fa-trash"></i>清空
+                <i class="fa-solid fa-trash"></i><span data-i18n="common.clear">清空</span>
               </button>
             </div>
           </div>
@@ -1995,21 +2198,21 @@
                 </colgroup>
                 <thead>
                   <tr>
-                    <th>会话</th>
-                    <th>更新时间</th>
-                    <th>记忆内容</th>
-                    <th>操作</th>
+                    <th data-i18n="memory.modal.table.session">会话</th>
+                    <th data-i18n="memory.modal.table.updatedAt">更新时间</th>
+                    <th data-i18n="memory.modal.table.content">记忆内容</th>
+                    <th data-i18n="memory.modal.table.action">操作</th>
                   </tr>
                 </thead>
                 <tbody id="memoryModalRecordBody"></tbody>
               </table>
-              <div id="memoryModalRecordEmpty" class="muted">暂无记忆记录</div>
+              <div id="memoryModalRecordEmpty" class="muted" data-i18n="memory.records.empty">暂无记忆记录</div>
             </div>
           </div>
         </div>
         <div class="modal-actions">
           <button id="memoryModalCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -2026,16 +2229,16 @@
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label for="memoryRecordEditInput">记忆内容</label>
+            <label for="memoryRecordEditInput" data-i18n="memory.record.content">记忆内容</label>
             <textarea id="memoryRecordEditInput" class="memory-record-editor"></textarea>
           </div>
         </div>
         <div class="modal-actions">
           <button id="memoryRecordEditCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
           <button id="memoryRecordEditSave" class="btn-with-icon">
-            <i class="fa-solid fa-floppy-disk"></i>保存
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -2052,17 +2255,17 @@
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label>请求内容</label>
+            <label data-i18n="memory.queue.request">请求内容</label>
             <div id="memoryQueueRequest" class="log"></div>
           </div>
           <div class="form-row">
-            <label>总结结果</label>
+            <label data-i18n="memory.queue.result">总结结果</label>
             <div id="memoryQueueResult" class="log"></div>
           </div>
         </div>
         <div class="modal-actions">
           <button id="memoryQueueCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -2079,13 +2282,13 @@
         </div>
         <div class="modal-body">
           <div class="list-header">
-            <label>调用线程</label>
+            <label data-i18n="monitor.toolModal.list.title">调用线程</label>
           </div>
           <div id="monitorToolList" class="list-body monitor-status-list"></div>
         </div>
         <div class="modal-actions">
           <button id="monitorToolCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -2105,10 +2308,10 @@
         </div>
         <div class="modal-actions">
           <button id="workspaceEditorCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>关闭
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
           <button id="workspaceEditorSave" class="btn-with-icon">
-            <i class="fa-solid fa-floppy-disk"></i>保存
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>

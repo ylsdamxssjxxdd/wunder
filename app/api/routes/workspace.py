@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from app.api.deps import get_orchestrator
 from app.api.responses import json_response
+from app.core.i18n import t
 from app.schemas.wunder import (
     WorkspaceActionResponse,
     WorkspaceBatchRequest,
@@ -121,7 +122,9 @@ async def wunder_workspace_content(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if not target.exists():
-        raise HTTPException(status_code=404, detail={"message": "路径不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("workspace.error.path_not_found")}
+        )
 
     stat = target.stat()
     updated_time = datetime.fromtimestamp(stat.st_mtime).isoformat()
@@ -244,7 +247,9 @@ async def wunder_workspace_upload(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if target_dir.exists() and not target_dir.is_dir():
-        raise HTTPException(status_code=400, detail={"message": "目标不是目录"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.target_not_dir")}
+        )
     target_dir.mkdir(parents=True, exist_ok=True)
 
     uploaded: List[str] = []
@@ -274,7 +279,7 @@ async def wunder_workspace_upload(
     manager.refresh_workspace_tree(user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="上传成功",
+        message=t("message.upload_success"),
         tree_version=manager.get_tree_version(user_id),
         files=uploaded,
     )
@@ -286,7 +291,9 @@ async def wunder_workspace_dir(request: WorkspaceDirRequest):
     """新建工作区目录。"""
     normalized_path = request.path.replace("\\", "/").strip()
     if not normalized_path or normalized_path in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "目录路径不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.dir_path_required")}
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(request.user_id)
     try:
@@ -295,13 +302,16 @@ async def wunder_workspace_dir(request: WorkspaceDirRequest):
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     # 已存在文件时禁止创建目录，避免覆盖
     if target_dir.exists() and not target_dir.is_dir():
-        raise HTTPException(status_code=400, detail={"message": "目标已存在且不是目录"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.target_exists_not_dir")},
+        )
     target_dir.mkdir(parents=True, exist_ok=True)
 
     manager.refresh_workspace_tree(request.user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="已创建目录",
+        message=t("workspace.message.dir_created"),
         tree_version=manager.get_tree_version(request.user_id),
         files=[normalized_path],
     )
@@ -314,15 +324,20 @@ async def wunder_workspace_move(request: WorkspaceMoveRequest):
     source = request.source.replace("\\", "/").strip()
     destination = request.destination.replace("\\", "/").strip()
     if not source or source in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "源路径不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.source_path_required")}
+        )
     if not destination or destination in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "目标路径不能为空"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_path_required")},
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(request.user_id)
     if source == destination:
         response = WorkspaceActionResponse(
             ok=True,
-            message="路径未变化",
+            message=t("workspace.message.path_unchanged"),
             tree_version=manager.get_tree_version(request.user_id),
             files=[destination],
         )
@@ -333,12 +348,20 @@ async def wunder_workspace_move(request: WorkspaceMoveRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if not source_path.exists():
-        raise HTTPException(status_code=404, detail={"message": "源路径不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("workspace.error.source_not_found")}
+        )
     if destination_path.exists():
-        raise HTTPException(status_code=400, detail={"message": "目标路径已存在"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_exists")},
+        )
     destination_parent = destination_path.parent
     if not destination_parent.exists() or not destination_parent.is_dir():
-        raise HTTPException(status_code=400, detail={"message": "目标父目录不存在"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_parent_missing")},
+        )
     # 禁止目录移动到自身或子目录，避免递归错误
     if source_path.is_dir():
         try:
@@ -346,13 +369,16 @@ async def wunder_workspace_move(request: WorkspaceMoveRequest):
         except ValueError:
             pass
         else:
-            raise HTTPException(status_code=400, detail={"message": "禁止移动到自身或子目录"})
+            raise HTTPException(
+                status_code=400,
+                detail={"message": t("workspace.error.move_to_self_or_child")},
+            )
 
     shutil.move(str(source_path), str(destination_path))
     manager.refresh_workspace_tree(request.user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="已移动",
+        message=t("workspace.message.moved"),
         tree_version=manager.get_tree_version(request.user_id),
         files=[destination],
     )
@@ -365,32 +391,51 @@ async def wunder_workspace_copy(request: WorkspaceCopyRequest):
     source = request.source.replace("\\", "/").strip()
     destination = request.destination.replace("\\", "/").strip()
     if not source or source in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "源路径不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.source_path_required")}
+        )
     if not destination or destination in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "目标路径不能为空"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_path_required")},
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(request.user_id)
     if source == destination:
-        raise HTTPException(status_code=400, detail={"message": "源路径与目标路径相同"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.source_destination_same")},
+        )
     try:
         source_path = manager.resolve_path(request.user_id, source)
         destination_path = manager.resolve_path(request.user_id, destination)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if not source_path.exists():
-        raise HTTPException(status_code=404, detail={"message": "源路径不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("workspace.error.source_not_found")}
+        )
     if destination_path.exists():
-        raise HTTPException(status_code=400, detail={"message": "目标路径已存在"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_exists")},
+        )
     destination_parent = destination_path.parent
     if not destination_parent.exists() or not destination_parent.is_dir():
-        raise HTTPException(status_code=400, detail={"message": "目标父目录不存在"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.destination_parent_missing")},
+        )
     if source_path.is_dir():
         try:
             destination_path.relative_to(source_path)
         except ValueError:
             pass
         else:
-            raise HTTPException(status_code=400, detail={"message": "禁止复制到自身或子目录"})
+            raise HTTPException(
+                status_code=400,
+                detail={"message": t("workspace.error.copy_to_self_or_child")},
+            )
         shutil.copytree(source_path, destination_path)
     else:
         shutil.copy2(source_path, destination_path)
@@ -398,7 +443,7 @@ async def wunder_workspace_copy(request: WorkspaceCopyRequest):
     manager.refresh_workspace_tree(request.user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="已复制",
+        message=t("workspace.message.copied"),
         tree_version=manager.get_tree_version(request.user_id),
         files=[destination],
     )
@@ -411,7 +456,10 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
     action = request.action
     raw_paths = request.paths or []
     if not raw_paths:
-        raise HTTPException(status_code=400, detail={"message": "未提供批量路径"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.batch_paths_missing")},
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(request.user_id)
 
@@ -426,7 +474,10 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
         if not destination_path.exists() or not destination_path.is_dir():
-            raise HTTPException(status_code=400, detail={"message": "目标目录不存在"})
+            raise HTTPException(
+                status_code=400,
+                detail={"message": t("workspace.error.destination_dir_missing")},
+            )
 
     succeeded: List[str] = []
     failed: List[dict] = []
@@ -434,7 +485,9 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
     for raw_path in raw_paths:
         normalized = str(raw_path or "").replace("\\", "/").strip()
         if not normalized or normalized in {".", "/"}:
-            failed.append({"path": normalized or "/", "message": "路径不能为空"})
+            failed.append(
+                {"path": normalized or "/", "message": t("workspace.error.path_required")}
+            )
             continue
         try:
             source_path = manager.resolve_path(request.user_id, normalized)
@@ -442,7 +495,9 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
             failed.append({"path": normalized, "message": str(exc)})
             continue
         if not source_path.exists():
-            failed.append({"path": normalized, "message": "路径不存在"})
+            failed.append(
+                {"path": normalized, "message": t("workspace.error.path_not_found")}
+            )
             continue
 
         if action == "delete":
@@ -457,15 +512,27 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
             continue
 
         if action not in {"move", "copy"}:
-            failed.append({"path": normalized, "message": "不支持的批量操作"})
+            failed.append(
+                {
+                    "path": normalized,
+                    "message": t("workspace.error.batch_action_unsupported"),
+                }
+            )
             continue
         if not destination_path:
-            failed.append({"path": normalized, "message": "目标目录未准备好"})
+            failed.append(
+                {"path": normalized, "message": t("workspace.error.destination_unready")}
+            )
             continue
         entry_name = source_path.name
         target_path = destination_path / entry_name
         if target_path.exists():
-            failed.append({"path": normalized, "message": "目标路径已存在"})
+            failed.append(
+                {
+                    "path": normalized,
+                    "message": t("workspace.error.destination_exists"),
+                }
+            )
             continue
         if source_path.is_dir():
             try:
@@ -473,7 +540,12 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
             except ValueError:
                 pass
             else:
-                failed.append({"path": normalized, "message": "禁止移动到自身或子目录"})
+                failed.append(
+                    {
+                        "path": normalized,
+                        "message": t("workspace.error.move_to_self_or_child"),
+                    }
+                )
                 continue
         try:
             if action == "move":
@@ -489,7 +561,11 @@ async def wunder_workspace_batch(request: WorkspaceBatchRequest):
 
     manager.refresh_workspace_tree(request.user_id)
     ok = len(failed) == 0
-    message = "批量操作完成" if ok else "批量操作部分失败"
+    message = (
+        t("workspace.message.batch_success")
+        if ok
+        else t("workspace.message.batch_partial")
+    )
     response = WorkspaceBatchResponse(
         ok=ok,
         message=message,
@@ -505,7 +581,9 @@ async def wunder_workspace_file_update(request: WorkspaceFileUpdateRequest):
     """保存工作区文件内容。"""
     normalized_path = request.path.replace("\\", "/").strip()
     if not normalized_path:
-        raise HTTPException(status_code=400, detail={"message": "文件路径不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.file_path_required")}
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(request.user_id)
     try:
@@ -514,19 +592,27 @@ async def wunder_workspace_file_update(request: WorkspaceFileUpdateRequest):
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if target.exists():
         if not target.is_file():
-            raise HTTPException(status_code=400, detail={"message": "目标不是文件"})
+            raise HTTPException(
+                status_code=400,
+                detail={"message": t("workspace.error.target_not_file")},
+            )
     else:
         if not request.create_if_missing:
-            raise HTTPException(status_code=404, detail={"message": "文件不存在"})
+            raise HTTPException(
+                status_code=404, detail={"message": t("error.file_not_found")}
+            )
         # 仅允许在目标父目录存在时创建文件，避免隐式创建目录结构
         if not target.parent.exists() or not target.parent.is_dir():
-            raise HTTPException(status_code=400, detail={"message": "目标父目录不存在"})
+            raise HTTPException(
+                status_code=400,
+                detail={"message": t("workspace.error.destination_parent_missing")},
+            )
     target.write_text(request.content or "", encoding="utf-8")
 
     manager.refresh_workspace_tree(request.user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="已保存文件",
+        message=t("workspace.message.file_saved"),
         tree_version=manager.get_tree_version(request.user_id),
         files=[normalized_path],
     )
@@ -544,7 +630,9 @@ async def wunder_workspace_archive(
     manager.ensure_workspace(user_id)
     root = manager.workspace_files_root(user_id)
     if not root.exists() or not root.is_dir():
-        raise HTTPException(status_code=404, detail={"message": "工作区不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("workspace.error.workspace_not_found")}
+        )
 
     normalized_path = path.replace("\\", "/").strip()
     if not normalized_path or normalized_path in {".", "/"}:
@@ -557,7 +645,10 @@ async def wunder_workspace_archive(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
         if not target.exists():
-            raise HTTPException(status_code=404, detail={"message": "路径不存在"})
+            raise HTTPException(
+                status_code=404,
+                detail={"message": t("workspace.error.path_not_found")},
+            )
         base_root = target.parent
         filename_prefix = target.name or f"workspace_{user_id}"
 
@@ -591,13 +682,17 @@ async def wunder_workspace_download(
     manager.ensure_workspace(user_id)
     normalized_path = path.replace("\\", "/").strip()
     if not normalized_path:
-        raise HTTPException(status_code=400, detail={"message": "路径不能为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("workspace.error.path_required")}
+        )
     try:
         target = manager.resolve_path(user_id, normalized_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail={"message": "文件不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("error.file_not_found")}
+        )
     return FileResponse(target, filename=target.name)
 
 
@@ -609,7 +704,10 @@ async def wunder_workspace_delete(
     """删除工作区文件或目录。"""
     normalized_path = path.replace("\\", "/").strip()
     if not normalized_path or normalized_path in {".", "/"}:
-        raise HTTPException(status_code=400, detail={"message": "禁止删除根目录"})
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("workspace.error.delete_root_forbidden")},
+        )
     manager = get_orchestrator().workspace_manager
     manager.ensure_workspace(user_id)
     try:
@@ -617,7 +715,9 @@ async def wunder_workspace_delete(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     if not target.exists():
-        raise HTTPException(status_code=404, detail={"message": "路径不存在"})
+        raise HTTPException(
+            status_code=404, detail={"message": t("workspace.error.path_not_found")}
+        )
     if target.is_dir():
         shutil.rmtree(target)
     else:
@@ -626,7 +726,7 @@ async def wunder_workspace_delete(
     manager.refresh_workspace_tree(user_id)
     response = WorkspaceActionResponse(
         ok=True,
-        message="已删除",
+        message=t("message.deleted"),
         tree_version=manager.get_tree_version(user_id),
     )
     return json_response(response)

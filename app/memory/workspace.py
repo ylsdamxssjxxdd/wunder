@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.core.config import WunderConfig
+from app.core.i18n import t
 from app.storage.sqlite import SQLiteStorage, get_storage
 
 
@@ -26,7 +27,7 @@ class WorkspaceContext:
 def build_workspace_tree(root: Path, max_depth: int = 2) -> str:
     """生成工作区目录树（最多两层）。"""
     if not root.exists():
-        return "(empty)"
+        return t("workspace.tree.empty")
 
     lines: List[str] = []
     root_parts = len(root.parts)
@@ -40,7 +41,7 @@ def build_workspace_tree(root: Path, max_depth: int = 2) -> str:
             lines.append(f"{prefix}{name}/")
         for name in sorted(files):
             lines.append(f"{prefix}{name}")
-    return "\n".join(lines) if lines else "(empty)"
+    return "\n".join(lines) if lines else t("workspace.tree.empty")
 
 
 class WorkspaceManager:
@@ -275,10 +276,10 @@ class WorkspaceManager:
         root = self.workspace_files_root(user_id)
         rel = Path(relative_path)
         if rel.is_absolute():
-            raise ValueError("不允许使用绝对路径。")
+            raise ValueError(t("error.absolute_path_forbidden"))
         target = (root / rel).resolve()
         if root not in target.parents and target != root:
-            raise ValueError("路径越界访问被禁止。")
+            raise ValueError(t("error.path_out_of_bounds"))
         return target
 
     def list_workspace_entries(
@@ -299,9 +300,9 @@ class WorkspaceManager:
             normalized = normalized.lstrip("/")
         target = self.resolve_path(user_id, normalized or ".")
         if not target.exists():
-            raise ValueError("路径不存在")
+            raise ValueError(t("workspace.error.path_not_found"))
         if not target.is_dir():
-            raise ValueError("路径不是目录")
+            raise ValueError(t("workspace.error.path_not_dir"))
 
         root = self.workspace_files_root(user_id)
         keyword_lower = str(keyword or "").strip().lower()
@@ -437,11 +438,11 @@ class WorkspaceManager:
         )
 
     async def load_session_system_prompt(
-        self, user_id: str, session_id: str
+        self, user_id: str, session_id: str, *, language: Optional[str] = None
     ) -> Optional[str]:
         """读取指定会话固定系统提示词。"""
         return await asyncio.to_thread(
-            self._storage.get_session_system_prompt, user_id, session_id
+            self._storage.get_session_system_prompt, user_id, session_id, language
         )
 
     async def load_session_token_usage(self, user_id: str, session_id: str) -> int:
@@ -477,7 +478,7 @@ class WorkspaceManager:
         return await asyncio.to_thread(self._storage.incr_meta, key, delta_tokens)
 
     async def save_session_system_prompt(
-        self, user_id: str, session_id: str, prompt: str
+        self, user_id: str, session_id: str, prompt: str, *, language: Optional[str] = None
     ) -> None:
         """保存会话固定系统提示词，便于后续审查与恢复。"""
         content = str(prompt or "").strip()
@@ -488,7 +489,10 @@ class WorkspaceManager:
             "content": content,
             "session_id": session_id,
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "meta": {"type": "system_prompt"},
+            "meta": {
+                "type": "system_prompt",
+                "language": str(language or "").strip(),
+            },
         }
         await self.append_chat(user_id, payload)
 

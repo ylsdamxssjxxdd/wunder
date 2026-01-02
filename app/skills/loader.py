@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from app.core.config import WunderConfig
+from app.core.i18n import t
 from app.skills.registry import SkillRegistry, SkillSpec
 
 
@@ -137,7 +138,7 @@ def load_skills(
                 or meta.get("描述")
                 or meta.get("技能描述")
                 or ""
-            ).strip() or "未提供描述"
+            ).strip() or t("skill.description.missing")
             input_schema = _build_input_schema(meta)
             spec = SkillSpec(
                 name=name,

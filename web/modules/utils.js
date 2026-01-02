@@ -1,3 +1,5 @@
+import { getCurrentLanguage, t } from "./i18n.js";
+
 // 工具函数：纯逻辑处理，便于多模块复用
 
 // 判断是否为普通对象，避免数组或空值影响解析
@@ -11,11 +13,11 @@ export const parseHeadersValue = (raw) => {
   try {
     const parsed = JSON.parse(raw);
     if (!isPlainObject(parsed)) {
-      return { headers: null, error: "请求头 JSON 必须是对象" };
+      return { headers: null, error: t("utils.headers.notObject") };
     }
     return { headers: parsed, error: "" };
   } catch (error) {
-    return { headers: null, error: "请求头 JSON 解析失败" };
+    return { headers: null, error: t("utils.headers.parseFailed") };
   }
 };
 
@@ -47,17 +49,17 @@ export const buildHeadingHighlightHtml = (text) => {
 // 统一格式化工具输入结构，避免空值或异常结构导致展示混乱
 export const formatToolSchema = (schema) => {
   if (schema === null || schema === undefined) {
-    return "（无输入结构）";
+    return t("utils.toolSchema.empty");
   }
   if (typeof schema === "string") {
     const trimmed = schema.trim();
-    return trimmed ? trimmed : "（无输入结构）";
+    return trimmed ? trimmed : t("utils.toolSchema.empty");
   }
   if (Array.isArray(schema) && schema.length === 0) {
-    return "（无输入结构）";
+    return t("utils.toolSchema.empty");
   }
   if (isPlainObject(schema) && Object.keys(schema).length === 0) {
-    return "（无输入结构）";
+    return t("utils.toolSchema.empty");
   }
   try {
     return JSON.stringify(schema, null, 2);
@@ -110,15 +112,15 @@ export const formatDurationLong = (seconds) => {
   const mins = Math.floor((total % 3600) / 60);
   const secs = total % 60;
   if (days > 0) {
-    return `${days}天 ${hours}小时`;
+    return t("time.format.daysHours", { days, hours });
   }
   if (hours > 0) {
-    return `${hours}小时 ${mins}分钟`;
+    return t("time.format.hoursMinutes", { hours, minutes: mins });
   }
   if (mins > 0) {
-    return `${mins}分钟 ${secs}秒`;
+    return t("time.format.minutesSeconds", { minutes: mins, seconds: secs });
   }
-  return `${secs}秒`;
+  return t("time.format.seconds", { seconds: secs });
 };
 
 // 格式化 token 数量：小于 100 万用 k，达到 100 万及以上用 m
@@ -149,7 +151,7 @@ export const formatTimestamp = (value) => {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString();
+  return parsed.toLocaleString(getCurrentLanguage());
 };
 
 // 规范化 API 地址，确保以 /wunder 结尾并清理重复路径

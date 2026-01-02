@@ -7,6 +7,7 @@ import httpx
 
 from app.core.config import SandboxConfig
 from app.core.http_client import get_async_client
+from app.core.i18n import get_language, t
 from app.memory.workspace import WorkspaceContext
 from app.tools.types import ToolResult
 
@@ -33,10 +34,11 @@ class SandboxClient:
     ) -> Dict[str, Any]:
         """拼装沙盒执行请求，保持工具参数格式不变。"""
         if not self._config.image:
-            raise SandboxClientError("沙盒镜像未配置，无法执行工具。")
+            raise SandboxClientError(t("sandbox.error.image_missing"))
         return {
             "user_id": workspace.user_id,
             "session_id": workspace.session_id,
+            "language": get_language(),
             "tool": tool_name,
             "args": args,
             "workspace_root": str(workspace.root),
@@ -82,18 +84,26 @@ class SandboxClient:
                 timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001
-            raise SandboxClientError(f"沙盒请求失败: {exc}") from exc
+            raise SandboxClientError(
+                t("sandbox.error.request_failed", detail=str(exc))
+            ) from exc
 
         if response.status_code != 200:
             detail = response.text.strip()
             raise SandboxClientError(
-                f"沙盒返回异常: status={response.status_code} detail={detail}"
+                t(
+                    "sandbox.error.response_error",
+                    status=response.status_code,
+                    detail=detail,
+                )
             )
 
         try:
             body = response.json()
         except json.JSONDecodeError as exc:
-            raise SandboxClientError(f"沙盒返回非 JSON 响应: {exc}") from exc
+            raise SandboxClientError(
+                t("sandbox.error.response_not_json", detail=str(exc))
+            ) from exc
 
         ok = bool(body.get("ok"))
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
@@ -106,7 +116,11 @@ class SandboxClient:
     async def release_sandbox(self, user_id: str, session_id: str = "") -> None:
         """请求释放沙盒资源，兼容共享沙盒的幂等释放。"""
         timeout = httpx.Timeout(self._config.timeout_s)
-        payload = {"user_id": user_id, "session_id": session_id}
+        payload = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "language": get_language(),
+        }
         try:
             client = await get_async_client()
             response = await client.post(
@@ -115,10 +129,16 @@ class SandboxClient:
                 timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001
-            raise SandboxClientError(f"沙盒释放请求失败: {exc}") from exc
+            raise SandboxClientError(
+                t("sandbox.error.release_failed", detail=str(exc))
+            ) from exc
 
         if response.status_code != 200:
             detail = response.text.strip()
             raise SandboxClientError(
-                f"沙盒释放失败: status={response.status_code} detail={detail}"
+                t(
+                    "sandbox.error.release_response_error",
+                    status=response.status_code,
+                    detail=detail,
+                )
             )

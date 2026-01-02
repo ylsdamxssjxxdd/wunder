@@ -11,6 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
+import { getCurrentLanguage, t } from "./i18n.js";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -47,23 +48,39 @@ const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "列出文件", icon: "fa-folder-open" },
+  { keyword: "list files", icon: "fa-folder-open" },
+  { keyword: "list_file", icon: "fa-folder-open" },
+  { keyword: "list_files", icon: "fa-folder-open" },
   { keyword: "读取文件", icon: "fa-file-lines" },
+  { keyword: "read file", icon: "fa-file-lines" },
+  { keyword: "read_file", icon: "fa-file-lines" },
   { keyword: "写入文件", icon: "fa-file-circle-plus" },
+  { keyword: "write file", icon: "fa-file-circle-plus" },
+  { keyword: "write_file", icon: "fa-file-circle-plus" },
   { keyword: "编辑文件", icon: "fa-pen-to-square" },
+  { keyword: "edit file", icon: "fa-pen-to-square" },
+  { keyword: "edit_file", icon: "fa-pen-to-square" },
   { keyword: "替换文本", icon: "fa-arrow-right-arrow-left" },
+  { keyword: "replace text", icon: "fa-arrow-right-arrow-left" },
+  { keyword: "replace_text", icon: "fa-arrow-right-arrow-left" },
 ];
 // 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
 const STATUS_CHART_EMPTY_COLOR = "#ffffff";
-const STATUS_CHART_LEGEND = ["活动", "已完成", "已失败", "已取消"];
+const getStatusLegend = () => [
+  t("monitor.status.active"),
+  t("monitor.status.finished"),
+  t("monitor.status.failed"),
+  t("monitor.status.cancelled"),
+];
 const STATUS_CHART_EMPTY_NAME = "__empty__";
 // 线程状态图例与后端状态字段的映射，便于点击后过滤记录
-const STATUS_LABEL_TO_KEY = {
-  [STATUS_CHART_LEGEND[0]]: "active",
-  [STATUS_CHART_LEGEND[1]]: "finished",
-  [STATUS_CHART_LEGEND[2]]: "error",
-  [STATUS_CHART_LEGEND[3]]: "cancelled",
-};
+const getStatusLabelToKey = () => ({
+  [t("monitor.status.active")]: "active",
+  [t("monitor.status.finished")]: "finished",
+  [t("monitor.status.failed")]: "error",
+  [t("monitor.status.cancelled")]: "cancelled",
+});
 
 // 兼容旧版本状态结构，避免缓存旧 state.js 时导致监控图表异常
 const ensureMonitorState = () => {
@@ -235,20 +252,21 @@ const resolveMonitorTimeFilterRange = () => {
 
 // 格式化筛选区间标签，便于图表标题提示
 const formatMonitorFilterLabel = (range) => {
+  const locale = getCurrentLanguage();
   const format = (timestamp) =>
-    new Date(timestamp).toLocaleString("zh-CN", {
+    new Date(timestamp).toLocaleString(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
     });
-  return `区间 ${format(range.start)} ~ ${format(range.end)}`;
+  return t("monitor.filter.range", { start: format(range.start), end: format(range.end) });
 };
 
 // 生成监视时间范围的文案标签
 const getMonitorTimeRangeLabel = () => {
   const hours = getMonitorTimeRangeHours();
-  return `每 ${formatMonitorHours(hours)} 小时`;
+  return t("monitor.window.everyHours", { hours: formatMonitorHours(hours) });
 };
 
 // 生成监视时间窗口的文案标签，用于近况统计
@@ -258,34 +276,44 @@ const getMonitorTimeWindowLabel = () => {
     return formatMonitorFilterLabel(range);
   }
   const hours = getMonitorTimeRangeHours();
-  return `近 ${formatMonitorHours(hours)} 小时`;
+  return t("monitor.window.recentHours", { hours: formatMonitorHours(hours) });
 };
 
 // 同步监视时间标题文案，保持图表描述一致
 const updateMonitorChartTitles = () => {
   const label = getMonitorTimeRangeLabel();
   if (elements.serviceTokenTitle) {
-    elements.serviceTokenTitle.textContent = `${label} Token 总占用趋势`;
+    elements.serviceTokenTitle.textContent = t("monitor.chart.tokenTrend", { label });
   }
   if (elements.serviceStatusTitle) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.serviceStatusTitle.textContent = `${windowLabel} 线程状态占比`;
+    elements.serviceStatusTitle.textContent = t("monitor.chart.statusRatio", {
+      label: windowLabel,
+    });
   }
   if (elements.metricServiceRecentLabel) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricServiceRecentLabel.textContent = `${windowLabel} 完成`;
+    elements.metricServiceRecentLabel.textContent = t("monitor.metric.recentComplete", {
+      label: windowLabel,
+    });
   }
   if (elements.toolHeatmapTitle) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.toolHeatmapTitle.textContent = `${windowLabel} 工具调用热力图`;
+    elements.toolHeatmapTitle.textContent = t("monitor.chart.toolHeatmap", {
+      label: windowLabel,
+    });
   }
   if (elements.metricSandboxCallsLabel) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricSandboxCallsLabel.textContent = `${windowLabel} 调用`;
+    elements.metricSandboxCallsLabel.textContent = t("monitor.metric.recentCalls", {
+      label: windowLabel,
+    });
   }
   if (elements.metricSandboxSessionsLabel) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricSandboxSessionsLabel.textContent = `${windowLabel} 会话`;
+    elements.metricSandboxSessionsLabel.textContent = t("monitor.metric.recentSessions", {
+      label: windowLabel,
+    });
   }
 };
 
@@ -344,15 +372,20 @@ const applyMonitorTimeFilter = async (options = {}) => {
   syncMonitorTimeFilterInputs();
   updateMonitorChartTitles();
   const range = resolveMonitorTimeFilterRange();
-  if (state.monitor.timeFilter.enabled && state.monitor.timeFilter.start && state.monitor.timeFilter.end && !range) {
-    notify("筛选时间需保证开始早于结束。", "warning");
+  if (
+    state.monitor.timeFilter.enabled &&
+    state.monitor.timeFilter.start &&
+    state.monitor.timeFilter.end &&
+    !range
+  ) {
+    notify(t("monitor.filter.invalidRange"), "warning");
     return;
   }
   if (refresh) {
     try {
       await loadMonitorData();
     } catch (error) {
-      appendLog(`监控刷新失败：${error.message}`);
+      appendLog(t("monitor.refreshFailed", { message: error.message }));
     }
     return;
   }
@@ -416,7 +449,7 @@ const bindTokenTrendZoom = () => {
 
 // 格式化趋势图时间标签，保留日期便于跨天对比
 const formatTokenTrendLabel = (timestamp) =>
-  new Date(timestamp).toLocaleString("zh-CN", {
+  new Date(timestamp).toLocaleString(getCurrentLanguage(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -622,7 +655,7 @@ const loadAvailableTools = async (options = {}) => {
   const endpoint = `${wunderBase}/tools`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   state.monitor.availableTools = normalizeAvailableTools(result);
@@ -713,7 +746,7 @@ const resolveToolIcon = (name, category) => {
     return "fa-dragon";
   }
   for (const rule of TOOL_HEATMAP_ICON_RULES) {
-    if (toolName.includes(rule.keyword)) {
+    if (lowerName.includes(rule.keyword)) {
       return rule.icon;
     }
   }
@@ -736,28 +769,44 @@ const resolveToolIcon = (name, category) => {
   if (category === "user" || category === "shared") {
     return "fa-wrench";
   }
-  if (toolName.includes("执行命令")) {
+  if (
+    lowerName.includes("执行命令") ||
+    lowerName.includes("run command") ||
+    lowerName.includes("execute command") ||
+    lowerName.includes("shell")
+  ) {
     return "fa-terminal";
   }
   if (toolName.toLowerCase().includes("ptc")) {
     return "fa-code";
   }
-  if (toolName.includes("搜索") || toolName.includes("检索")) {
+  if (
+    lowerName.includes("搜索") ||
+    lowerName.includes("检索") ||
+    lowerName.includes("search") ||
+    lowerName.includes("query") ||
+    lowerName.includes("retrieve")
+  ) {
     return "fa-magnifying-glass";
   }
   if (
-    toolName.includes("读取") ||
-    toolName.includes("写入") ||
-    toolName.includes("编辑") ||
-    toolName.includes("替换") ||
-    toolName.includes("列出")
+    lowerName.includes("读取") ||
+    lowerName.includes("写入") ||
+    lowerName.includes("编辑") ||
+    lowerName.includes("替换") ||
+    lowerName.includes("列出") ||
+    lowerName.includes("read") ||
+    lowerName.includes("write") ||
+    lowerName.includes("edit") ||
+    lowerName.includes("replace") ||
+    lowerName.includes("list")
   ) {
     return "fa-file-lines";
   }
-  if (toolName.includes("知识")) {
+  if (lowerName.includes("知识") || lowerName.includes("knowledge")) {
     return "fa-book";
   }
-  if (toolName.includes("最终回复")) {
+  if (lowerName.includes("最终回复") || lowerName.includes("final answer") || lowerName.includes("final_response")) {
     return "fa-flag-checkered";
   }
   if (category === "builtin") {
@@ -838,7 +887,10 @@ const renderToolHeatmap = (toolStats) => {
     tile.className = "tool-heatmap-item";
     tile.style.backgroundColor = color;
     tile.style.color = resolveHeatmapTextColor(rgb);
-    tile.title = `${item.name}\n调用 ${formatHeatmapCount(item.calls)}`;
+    tile.title = t("monitor.toolHeatmap.tileTitle", {
+      name: item.name,
+      count: formatHeatmapCount(item.calls),
+    });
     const icon = document.createElement("i");
     icon.className = `fa-solid ${resolveToolIcon(item.name, item.category)}`;
     const name = document.createElement("span");
@@ -876,9 +928,10 @@ const renderMonitorMetrics = (system) => {
   }
   elements.metricCpu.textContent = `${system.cpu_percent.toFixed(1)}%`;
   elements.metricMemory.textContent = formatBytes(system.memory_used);
-  elements.metricMemoryDetail.textContent = `总计 ${formatBytes(system.memory_total)} / 可用 ${formatBytes(
-    system.memory_available
-  )}`;
+  elements.metricMemoryDetail.textContent = t("monitor.metric.memory.detail", {
+    total: formatBytes(system.memory_total),
+    available: formatBytes(system.memory_available),
+  });
   elements.metricProcessMemory.textContent = formatBytes(system.process_rss);
   elements.metricProcessCpu.textContent = `${system.process_cpu_percent.toFixed(1)}%`;
   const loadValues = [
@@ -895,9 +948,11 @@ const renderMonitorMetrics = (system) => {
       ? `${system.disk_percent.toFixed(1)}%`
       : "-";
   elements.metricDiskDetail.textContent = hasDisk
-    ? `已用 ${formatBytes(system.disk_used)} / 总计 ${formatBytes(system.disk_total)} · 可用 ${formatBytes(
-        system.disk_free
-      )}`
+    ? t("monitor.metric.disk.detail", {
+        used: formatBytes(system.disk_used),
+        total: formatBytes(system.disk_total),
+        free: formatBytes(system.disk_free),
+      })
     : "";
   elements.metricDiskRead.textContent = formatBytes(system.disk_read_bytes);
   elements.metricDiskWrite.textContent = formatBytes(system.disk_write_bytes);
@@ -945,9 +1000,15 @@ const renderSandboxMetrics = (sandbox) => {
   }
   const mode = String(sandbox.mode || "").toLowerCase();
   elements.metricSandboxMode.textContent =
-    mode === "sandbox" ? "沙盒" : mode ? "本地" : "-";
+    mode === "sandbox"
+      ? t("monitor.sandbox.mode.sandbox")
+      : mode
+        ? t("monitor.sandbox.mode.local")
+        : "-";
   elements.metricSandboxNetwork.textContent = sandbox.network || "-";
-  elements.metricSandboxReadonly.textContent = sandbox.readonly_rootfs ? "是" : "否";
+  elements.metricSandboxReadonly.textContent = sandbox.readonly_rootfs
+    ? t("common.yes")
+    : t("common.no");
   const cpuValue = Number(sandbox.resources?.cpu);
   const cpuText =
     Number.isFinite(cpuValue) && cpuValue > 0
@@ -959,7 +1020,10 @@ const renderSandboxMetrics = (sandbox) => {
   const memoryBytes = Number.isFinite(memoryMb) ? memoryMb * 1024 * 1024 : NaN;
   const memoryText =
     Number.isFinite(memoryMb) && memoryMb > 0 ? formatBytes(memoryBytes) : "-";
-  elements.metricSandboxResources.textContent = `CPU ${cpuText} / 内存 ${memoryText}`;
+  elements.metricSandboxResources.textContent = t("monitor.metric.sandbox.resources.detail", {
+    cpu: cpuText,
+    memory: memoryText,
+  });
   const pids = Number(sandbox.resources?.pids);
   elements.metricSandboxResourcesDetail.textContent =
     Number.isFinite(pids) && pids > 0 ? `PID ${pids}` : "";
@@ -1122,11 +1186,12 @@ const resolveStatusCounts = (sessions) => {
 
 // 生成状态环图数据，空数据时返回白色空心环占位
 const buildStatusChartData = (counts) => {
+  const [activeLabel, finishedLabel, failedLabel, cancelledLabel] = getStatusLegend();
   const raw = [
-    { value: counts.active, name: "活动" },
-    { value: counts.finished, name: "已完成" },
-    { value: counts.error, name: "已失败" },
-    { value: counts.cancelled, name: "已取消" },
+    { value: counts.active, name: activeLabel },
+    { value: counts.finished, name: finishedLabel },
+    { value: counts.error, name: failedLabel },
+    { value: counts.cancelled, name: cancelledLabel },
   ];
   const total = raw.reduce((sum, item) => sum + item.value, 0);
   const visibleCount = raw.filter((item) => item.value > 0).length;
@@ -1207,7 +1272,7 @@ const renderServiceStatusChart = (service, sessions) => {
         icon: "circle",
         itemWidth: 8,
         itemHeight: 8,
-        data: STATUS_CHART_LEGEND,
+        data: getStatusLegend(),
         textStyle: {
           color: "#64748b",
           fontSize: 13,
@@ -1268,10 +1333,22 @@ const resizeMonitorCharts = () => {
   renderToolHeatmap(state.monitor.toolStats);
 };
 
+const getSessionStatusLabel = (status) => {
+  const normalized = String(status || "");
+  const mapping = {
+    running: t("monitor.sessionStatus.running"),
+    cancelling: t("monitor.sessionStatus.cancelling"),
+    finished: t("monitor.sessionStatus.finished"),
+    error: t("monitor.sessionStatus.error"),
+    cancelled: t("monitor.sessionStatus.cancelled"),
+  };
+  return mapping[normalized] || normalized || "-";
+};
+
 const buildStatusBadge = (status) => {
   const span = document.createElement("span");
   span.className = `monitor-status ${status}`;
-  span.textContent = status;
+  span.textContent = getSessionStatusLabel(status);
   return span;
 };
 
@@ -1370,7 +1447,12 @@ const renderMonitorPagination = (type, pageData) => {
     return;
   }
   controls.container.style.display = "flex";
-  controls.info.textContent = `共 ${pageData.total} 条 · 第 ${pageData.currentPage} / ${pageData.totalPages} 页 · 每页 ${pageData.pageSize} 条`;
+  controls.info.textContent = t("pagination.info", {
+    total: pageData.total,
+    current: pageData.currentPage,
+    pages: pageData.totalPages,
+    size: pageData.pageSize,
+  });
   controls.prev.disabled = pageData.currentPage <= 1;
   controls.next.disabled = pageData.currentPage >= pageData.totalPages;
 };
@@ -1379,7 +1461,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
   const {
     showCancel = false,
     showDelete = false,
-    emptyText = "暂无数据",
+    emptyText = t("common.noData"),
     skipSort = false,
   } = options;
   body.textContent = "";
@@ -1413,7 +1495,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     if (showCancel && ACTIVE_STATUSES.has(session.status)) {
       const btn = document.createElement("button");
       btn.className = "danger";
-      btn.textContent = "终止";
+      btn.textContent = t("monitor.actions.cancel");
       btn.addEventListener("click", (event) => {
         event.stopPropagation();
         requestCancelSession(session.session_id);
@@ -1423,7 +1505,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     if (showDelete && !ACTIVE_STATUSES.has(session.status)) {
       const btn = document.createElement("button");
       btn.className = "danger";
-      btn.textContent = "删除";
+      btn.textContent = t("monitor.actions.delete");
       btn.addEventListener("click", (event) => {
         event.stopPropagation();
         requestDeleteSession(session.session_id);
@@ -1465,7 +1547,7 @@ const renderMonitorSessions = (sessions) => {
   const activePage = resolveMonitorPageSlice(active, "activePage", { sorted: true });
   renderMonitorTable(elements.monitorTableBody, elements.monitorEmpty, activePage.sessions, {
     showCancel: true,
-    emptyText: "暂无活动线程",
+    emptyText: t("monitor.empty.active"),
     skipSort: true,
   });
   renderMonitorPagination("active", activePage);
@@ -1478,7 +1560,7 @@ const renderMonitorSessions = (sessions) => {
     historyPage.sessions,
     {
       showDelete: true,
-      emptyText: "暂无历史线程",
+      emptyText: t("monitor.empty.history"),
       skipSort: true,
     }
   );
@@ -1521,7 +1603,7 @@ const bindMonitorPagination = () => {
 };
 
 // 根据图例标签解析对应的状态 key
-const resolveStatusKey = (label) => STATUS_LABEL_TO_KEY[label] || "";
+const resolveStatusKey = (label) => getStatusLabelToKey()[label] || "";
 
 // 判断会话是否属于指定状态分组
 const matchSessionByStatusKey = (session, key) => {
@@ -1548,7 +1630,7 @@ const renderMonitorStatusList = (sessions) => {
   }
   elements.monitorStatusList.textContent = "";
   if (!Array.isArray(sessions) || sessions.length === 0) {
-    elements.monitorStatusList.textContent = "暂无记录";
+    elements.monitorStatusList.textContent = t("common.noRecords");
     return;
   }
   sortSessionsByUpdate(sessions).forEach((session) => {
@@ -1560,7 +1642,7 @@ const renderMonitorStatusList = (sessions) => {
     header.className = "monitor-status-item-header";
     const title = document.createElement("div");
     title.className = "monitor-status-item-title";
-    title.textContent = session?.question || "（无问题）";
+    title.textContent = session?.question || t("monitor.session.noQuestion");
     const badge = buildStatusBadge(session?.status || "");
     header.appendChild(title);
     header.appendChild(badge);
@@ -1578,14 +1660,14 @@ const renderMonitorStatusList = (sessions) => {
     const detailParts = [];
     const tokenText = formatTokenCount(session?.token_usage);
     if (tokenText && tokenText !== "-") {
-      detailParts.push(`Token ${tokenText}`);
+      detailParts.push(t("monitor.session.token", { token: tokenText }));
     }
     const elapsedText = formatDuration(session?.elapsed_s);
     if (elapsedText && elapsedText !== "-") {
-      detailParts.push(`耗时 ${elapsedText}`);
+      detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
     }
     if (session?.stage) {
-      detailParts.push(`阶段 ${session.stage}`);
+      detailParts.push(t("monitor.session.stage", { stage: session.stage }));
     }
     const detail = document.createElement("small");
     detail.textContent = detailParts.join(" · ");
@@ -1619,7 +1701,7 @@ const renderMonitorToolList = (sessions) => {
   }
   elements.monitorToolList.textContent = "";
   if (!Array.isArray(sessions) || sessions.length === 0) {
-    elements.monitorToolList.textContent = "暂无记录";
+    elements.monitorToolList.textContent = t("common.noRecords");
     return;
   }
   [...sessions]
@@ -1633,7 +1715,7 @@ const renderMonitorToolList = (sessions) => {
       header.className = "monitor-status-item-header";
       const title = document.createElement("div");
       title.className = "monitor-status-item-title";
-      title.textContent = session?.question || "（无问题）";
+    title.textContent = session?.question || t("monitor.session.noQuestion");
       const badge = buildStatusBadge(session?.status || "");
       header.appendChild(title);
       header.appendChild(badge);
@@ -1651,17 +1733,19 @@ const renderMonitorToolList = (sessions) => {
       meta.textContent = metaParts.join(" · ");
 
       const detailParts = [];
-      detailParts.push(`调用 ${formatHeatmapCount(session?.tool_calls)} 次`);
+      detailParts.push(
+        t("monitor.tool.calls", { count: formatHeatmapCount(session?.tool_calls) })
+      );
       const tokenText = formatTokenCount(session?.token_usage);
       if (tokenText && tokenText !== "-") {
         detailParts.push(`Token ${tokenText}`);
       }
       const elapsedText = formatDuration(session?.elapsed_s);
       if (elapsedText && elapsedText !== "-") {
-        detailParts.push(`耗时 ${elapsedText}`);
+        detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
       }
       if (session?.stage) {
-        detailParts.push(`阶段 ${session.stage}`);
+        detailParts.push(t("monitor.session.stage", { stage: session.stage }));
       }
       const detail = document.createElement("small");
       detail.textContent = detailParts.join(" · ");
@@ -1695,7 +1779,7 @@ const fetchMonitorToolSessions = async (toolName) => {
   const endpoint = `${wunderBase}/admin/monitor/tool_usage?${params.toString()}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   return Array.isArray(result.sessions) ? result.sessions : [];
@@ -1711,27 +1795,32 @@ const openMonitorToolModal = async (toolName) => {
     return;
   }
   if (elements.monitorToolTitle) {
-    elements.monitorToolTitle.textContent = `工具调用：${cleaned}`;
+    elements.monitorToolTitle.textContent = t("monitor.toolModal.title", { tool: cleaned });
   }
   if (elements.monitorToolMeta) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.monitorToolMeta.textContent = `${windowLabel} · 加载中`;
+    elements.monitorToolMeta.textContent = t("monitor.toolModal.meta.loading", {
+      label: windowLabel,
+    });
   }
   if (elements.monitorToolList) {
-    elements.monitorToolList.textContent = "加载中...";
+    elements.monitorToolList.textContent = t("common.loading");
   }
   elements.monitorToolModal.classList.add("active");
   try {
     const sessions = await fetchMonitorToolSessions(cleaned);
     if (elements.monitorToolMeta) {
       const windowLabel = getMonitorTimeWindowLabel();
-      elements.monitorToolMeta.textContent = `${windowLabel} · 共 ${sessions.length} 条`;
+      elements.monitorToolMeta.textContent = t("monitor.toolModal.meta.total", {
+        label: windowLabel,
+        total: sessions.length,
+      });
     }
     renderMonitorToolList(sessions);
   } catch (error) {
-    appendLog(`工具调用详情加载失败：${error.message}`);
+    appendLog(t("monitor.toolDetailLoadFailed", { message: error.message }));
     if (elements.monitorToolList) {
-      elements.monitorToolList.textContent = "加载失败";
+      elements.monitorToolList.textContent = t("common.loadFailed");
     }
   }
 };
@@ -1753,11 +1842,14 @@ const openMonitorStatusModal = (label) => {
   const scopedSessions = filterSessionsByInterval(state.monitor.sessions || []);
   const matchedSessions = scopedSessions.filter((session) => matchSessionByStatusKey(session, key));
   if (elements.monitorStatusTitle) {
-    elements.monitorStatusTitle.textContent = `线程状态：${label}`;
+    elements.monitorStatusTitle.textContent = t("monitor.statusModal.title", { status: label });
   }
   if (elements.monitorStatusMeta) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.monitorStatusMeta.textContent = `${windowLabel} · 共 ${matchedSessions.length} 条`;
+    elements.monitorStatusMeta.textContent = t("monitor.statusModal.meta.total", {
+      label: windowLabel,
+      total: matchedSessions.length,
+    });
   }
   renderMonitorStatusList(matchedSessions);
   elements.monitorStatusModal.classList.add("active");
@@ -1776,7 +1868,7 @@ export const loadMonitorData = async (options = {}) => {
   const toolListPromise =
     mode === "full"
       ? loadAvailableTools().catch((error) => {
-          appendLog(`工具清单加载失败：${error.message}`);
+          appendLog(t("monitor.toolListLoadFailed", { message: error.message }));
           return [];
         })
       : Promise.resolve([]);
@@ -1792,7 +1884,7 @@ export const loadMonitorData = async (options = {}) => {
   const endpoint = `${wunderBase}/admin/monitor?${params.toString()}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const sessions = Array.isArray(result.sessions) ? result.sessions : [];
@@ -1848,7 +1940,7 @@ export const toggleMonitorPolling = (enabled, options = {}) => {
     if (!state.runtime.monitorPollTimer) {
       if (immediate) {
         loadMonitorData({ mode }).catch((error) => {
-          appendLog(`监控刷新失败：${error.message}`);
+          appendLog(t("monitor.refreshFailed", { message: error.message }));
         });
       }
       // 用户管理页使用 sessions 模式轮询，降低对图表渲染的影响
@@ -1887,15 +1979,17 @@ export const openMonitorDetail = async (sessionId) => {
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     const session = result.session || {};
     state.monitor.selected = session.session_id;
-    elements.monitorDetailTitle.textContent = `线程详情：${session.session_id || "-"}`;
-    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} · ${
-      session.status || "-"
-    } · ${formatDuration(session.elapsed_s)}`;
+    elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
+      sessionId: session.session_id || "-",
+    });
+    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} · ${getSessionStatusLabel(
+      session.status
+    )} · ${formatDuration(session.elapsed_s)}`;
     elements.monitorDetailQuestion.textContent = session.question || "";
     const events = Array.isArray(result.events) ? result.events : [];
     const detailText = events
@@ -1904,11 +1998,11 @@ export const openMonitorDetail = async (sessionId) => {
     if (detailText) {
       elements.monitorDetailEvents.innerHTML = highlightMonitorTimestamps(detailText);
     } else {
-      elements.monitorDetailEvents.textContent = "暂无事件";
+      elements.monitorDetailEvents.textContent = t("monitor.detail.noEvents");
     }
     elements.monitorDetailModal.classList.add("active");
   } catch (error) {
-    appendLog(`监控详情加载失败：${error.message}`);
+    appendLog(t("monitor.detailLoadFailed", { message: error.message }));
   }
 };
 
@@ -1920,7 +2014,7 @@ const requestDeleteSession = async (sessionId) => {
   if (!sessionId) {
     return;
   }
-  const confirmed = window.confirm(`确定删除历史线程 ${sessionId} 吗？`);
+  const confirmed = window.confirm(t("monitor.deleteConfirm", { sessionId }));
   if (!confirmed) {
     return;
   }
@@ -1928,11 +2022,11 @@ const requestDeleteSession = async (sessionId) => {
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
   const response = await fetch(endpoint, { method: "DELETE" });
   if (!response.ok) {
-    appendLog(`删除失败：${response.status}`);
+    appendLog(t("monitor.deleteFailed", { status: response.status }));
     return;
   }
   const result = await response.json();
-  appendLog(result.message || "已删除");
+  appendLog(result.message || t("monitor.deleted"));
   await loadMonitorData();
   if (state.monitor.selected === sessionId) {
     state.monitor.selected = null;
@@ -1948,13 +2042,13 @@ const requestCancelSession = async (sessionId) => {
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/cancel`;
   const response = await fetch(endpoint, { method: "POST" });
   if (!response.ok) {
-    appendLog(`终止失败：${response.status}`);
-    notify(`终止失败：${response.status}`, "error");
+    appendLog(t("monitor.cancelFailed", { status: response.status }));
+    notify(t("monitor.cancelFailed", { status: response.status }), "error");
     return;
   }
   const result = await response.json();
-  appendLog(result.message || "已请求终止");
-  notify(result.message || "已请求终止", "info");
+  appendLog(result.message || t("monitor.cancelRequested"));
+  notify(result.message || t("monitor.cancelRequested"), "info");
   await loadMonitorData();
   if (state.monitor.selected === sessionId) {
     await openMonitorDetail(sessionId);
@@ -1991,10 +2085,10 @@ export const initMonitorPanel = () => {
   elements.monitorRefreshBtn.addEventListener("click", async () => {
     try {
       await loadMonitorData();
-      notify("监控数据已刷新。", "success");
+      notify(t("monitor.refreshSuccess"), "success");
     } catch (error) {
-      appendLog(`监控刷新失败：${error.message}`);
-      notify(`监控刷新失败：${error.message}`, "error");
+      appendLog(t("monitor.refreshFailed", { message: error.message }));
+      notify(t("monitor.refreshFailed", { message: error.message }), "error");
     }
   });
   elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);

@@ -11,6 +11,7 @@ from app.api.deps import get_config_path, get_orchestrator
 from app.api.responses import json_response
 from app.core.config import load_config
 from app.core.errors import ErrorCodes, WunderError
+from app.core.i18n import t
 from app.knowledge.converter import (
     convert_to_markdown,
     get_supported_extensions,
@@ -68,11 +69,13 @@ async def wunder_attachment_convert(
     extension = Path(filename).suffix.lower()
     supported = set(get_supported_extensions())
     if not extension:
-        raise HTTPException(status_code=400, detail={"message": "文件缺少扩展名"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.file_extension_missing")}
+        )
     if extension not in supported:
         raise HTTPException(
             status_code=400,
-            detail={"message": f"不支持的文件类型: {extension}"},
+            detail={"message": t("error.unsupported_file_type", extension=extension)},
         )
     stem = sanitize_filename_stem(Path(filename).stem) or "document"
     try:
@@ -90,7 +93,9 @@ async def wunder_attachment_convert(
     finally:
         await file.close()
     if not content.strip():
-        raise HTTPException(status_code=400, detail={"message": "解析结果为空"})
+        raise HTTPException(
+            status_code=400, detail={"message": t("error.empty_parse_result")}
+        )
     response = AttachmentConvertResponse(
         ok=True,
         name=filename,
@@ -112,7 +117,10 @@ async def wunder_system_prompt(request: WunderPromptRequest):
             request.user_id, request.config_overrides, request.tool_names
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": t("error.system_prompt_failed", detail=str(exc))},
+        ) from exc
     build_time_ms = (time.perf_counter() - start_time) * 1000
     return json_response(
         WunderPromptResponse(prompt=prompt, build_time_ms=round(build_time_ms, 2))

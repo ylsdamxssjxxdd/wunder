@@ -5,6 +5,7 @@ from fastmcp.client.client import Client
 
 from app.core.auth import API_KEY_HEADER, AUTHORIZATION_HEADER, normalize_api_key
 from app.core.config import WunderConfig
+from app.core.i18n import t
 
 
 class MCPClient:
@@ -72,10 +73,10 @@ class MCPClient:
 
     def _get_server(self, server_name: str):
         if server_name not in self._servers:
-            raise ValueError(f"MCP Server 不存在: {server_name}")
+            raise ValueError(t("error.mcp_server_not_found", name=server_name))
         server = self._servers[server_name]
         if not getattr(server, "enabled", True):
-            raise ValueError(f"MCP Server 未启用: {server_name}")
+            raise ValueError(t("error.mcp_server_disabled", name=server_name))
         return server
 
     @staticmethod
@@ -93,7 +94,7 @@ class MCPClient:
         """调用指定 MCP Server 的工具。"""
         server = self._get_server(server_name)
         if server.allow_tools and tool_name not in server.allow_tools:
-            raise ValueError("该工具未被允许调用。")
+            raise ValueError(t("error.mcp_tool_not_allowed"))
 
         transport_config = self._build_transport_config(server)
         async with Client(transport_config, timeout=self._timeout_s) as client:

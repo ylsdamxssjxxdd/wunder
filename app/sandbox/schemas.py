@@ -18,6 +18,7 @@ class SandboxToolRequest(BaseModel):
 
     user_id: str
     session_id: Optional[str] = ""
+    language: str = ""
     tool: str
     args: Dict[str, Any] = Field(default_factory=dict)
     workspace_root: str
@@ -46,6 +47,7 @@ class SandboxReleaseRequest(BaseModel):
 
     user_id: str
     session_id: str = ""
+    language: str = ""
 
 
 class SandboxReleaseResponse(BaseModel):

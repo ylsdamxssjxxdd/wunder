@@ -9,6 +9,7 @@ from app.orchestrator.context import RequestContext, UserToolBindings
 from app.orchestrator.prompt_builder import build_system_prompt, read_prompt_template
 from app.skills.registry import SkillSpec
 from app.tools.registry import ToolSpec
+from app.core.i18n import t
 
 
 class PromptComposer:
@@ -75,18 +76,15 @@ class PromptComposer:
         if not skills:
             return ""
         lines: List[str] = []
-        lines.append("[技能使用协议]")
-        lines.append("1) 技能是可选流程手册，仅在任务匹配其 YAML 前置信息时使用。")
-        lines.append("2) 使用下方列出的 SKILL.md 路径，先用`读取文件`阅读后再使用技能。")
-        lines.append("3) 严格遵循技能流程，不要编造缺失步骤。优先使用随附脚本/模板/资产。")
-        lines.append("4) 特别注意，随附的脚本/模板/资产默认与 SKILL.md 位于同一目录下。")
-        lines.append("5) 只有在实际执行了技能步骤后，才可以声明已使用该技能。")
-        lines.append(
-            "6) 使用 `执行命令` 运行相关技能脚本，"
-            f"并将输出写回工程师工作区（{workdir}）。"
-        )
+        lines.append(t("prompt.skills.header"))
+        lines.append(t("prompt.skills.rule1"))
+        lines.append(t("prompt.skills.rule2"))
+        lines.append(t("prompt.skills.rule3"))
+        lines.append(t("prompt.skills.rule4"))
+        lines.append(t("prompt.skills.rule5"))
+        lines.append(t("prompt.skills.rule6", workdir=workdir))
         lines.append("")
-        lines.append("[已挂载技能]")
+        lines.append(t("prompt.skills.list_header"))
         for spec in sorted(skills, key=lambda item: item.name.lower()):
             lines.append("")
             lines.append(f"- {spec.name}")

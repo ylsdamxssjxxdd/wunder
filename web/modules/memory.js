@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js";
 
 const MEMORY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_MEMORY_USERS_PAGE_SIZE = 100;
@@ -261,7 +262,12 @@ const renderMemoryUsersPagination = (pageData) => {
     return;
   }
   memoryUsersPagination.style.display = "flex";
-  memoryUsersPageInfo.textContent = `共 ${pageData.total} 条 · 第 ${pageData.currentPage} / ${pageData.totalPages} 页 · 每页 ${pageData.pageSize} 条`;
+  memoryUsersPageInfo.textContent = t("pagination.info", {
+    total: pageData.total,
+    current: pageData.currentPage,
+    pages: pageData.totalPages,
+    size: pageData.pageSize,
+  });
   memoryUsersPrevBtn.disabled = pageData.currentPage <= 1;
   memoryUsersNextBtn.disabled = pageData.currentPage >= pageData.totalPages;
 };
@@ -334,7 +340,12 @@ const renderMemoryQueuePagination = (kind, pageData) => {
     return;
   }
   target.wrapper.style.display = "flex";
-  target.info.textContent = `共 ${pageData.total} 条 · 第 ${pageData.currentPage} / ${pageData.totalPages} 页 · 每页 ${pageData.pageSize} 条`;
+  target.info.textContent = t("pagination.info", {
+    total: pageData.total,
+    current: pageData.currentPage,
+    pages: pageData.totalPages,
+    size: pageData.pageSize,
+  });
   target.prev.disabled = pageData.currentPage <= 1;
   target.next.disabled = pageData.currentPage >= pageData.totalPages;
 };
@@ -354,14 +365,14 @@ const renderMemoryUsers = () => {
   elements.memoryUsersBody.textContent = "";
   const hasUsers = Array.isArray(state.memory.users) && state.memory.users.length > 0;
   if (!hasUsers) {
-    elements.memoryUsersEmpty.textContent = "暂无用户";
+    elements.memoryUsersEmpty.textContent = t("memory.users.empty");
     elements.memoryUsersEmpty.style.display = "block";
     renderMemoryUsersPagination(null);
     return;
   }
   const filtered = getFilteredMemoryUsers();
   if (!filtered.length) {
-    elements.memoryUsersEmpty.textContent = "未找到匹配用户";
+    elements.memoryUsersEmpty.textContent = t("memory.users.search.empty");
     elements.memoryUsersEmpty.style.display = "block";
     renderMemoryUsersPagination(null);
     return;
@@ -403,8 +414,8 @@ const renderMemoryUsers = () => {
     viewBtn.type = "button";
     viewBtn.className = "secondary btn-with-icon icon-only";
     viewBtn.innerHTML = '<i class="fa-solid fa-eye"></i>';
-    viewBtn.title = "查看";
-    viewBtn.setAttribute("aria-label", "查看");
+    viewBtn.title = t("common.view");
+    viewBtn.setAttribute("aria-label", t("common.view"));
     viewBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       openMemoryModal(user.user_id);
@@ -425,18 +436,18 @@ const renderMemoryUsers = () => {
 const renderMemoryModalHeader = () => {
   const userId = state.memory.selectedId;
   if (!userId) {
-    elements.memoryModalTitle.textContent = "记忆记录";
-    elements.memoryModalMeta.textContent = "请选择用户查看记忆记录。";
+    elements.memoryModalTitle.textContent = t("memory.modal.title");
+    elements.memoryModalMeta.textContent = t("memory.modal.selectUser");
     elements.memoryModalEnableToggle.disabled = true;
     elements.memoryModalEnableToggle.checked = false;
     elements.memoryModalClearBtn.disabled = true;
     return;
   }
-  elements.memoryModalTitle.textContent = `记忆记录：${userId}`;
+  elements.memoryModalTitle.textContent = t("memory.modal.titleWithUser", { userId });
   const recordCount = Array.isArray(state.memory.records)
     ? state.memory.records.length
     : 0;
-  elements.memoryModalMeta.textContent = `记忆记录 ${recordCount} 条`;
+  elements.memoryModalMeta.textContent = t("memory.modal.count", { count: recordCount });
   elements.memoryModalEnableToggle.disabled = false;
   elements.memoryModalEnableToggle.checked = Boolean(state.memory.enabled);
   elements.memoryModalClearBtn.disabled = recordCount <= 0;
@@ -447,7 +458,7 @@ const renderMemoryRecords = () => {
   elements.memoryModalRecordBody.textContent = "";
   const records = Array.isArray(state.memory.records) ? state.memory.records : [];
   if (!records.length) {
-    elements.memoryModalRecordEmpty.textContent = "暂无记忆记录";
+    elements.memoryModalRecordEmpty.textContent = t("memory.records.empty");
     elements.memoryModalRecordEmpty.style.display = "block";
     return;
   }
@@ -476,8 +487,8 @@ const renderMemoryRecords = () => {
     editBtn.type = "button";
     editBtn.className = "secondary btn-with-icon icon-only";
     editBtn.innerHTML = '<i class="fa-solid fa-pen"></i>';
-    editBtn.title = "编辑";
-    editBtn.setAttribute("aria-label", "编辑");
+    editBtn.title = t("common.edit");
+    editBtn.setAttribute("aria-label", t("common.edit"));
     editBtn.addEventListener("click", () => {
       openMemoryRecordEditor(record);
     });
@@ -485,8 +496,8 @@ const renderMemoryRecords = () => {
     deleteBtn.type = "button";
     deleteBtn.className = "danger btn-with-icon icon-only";
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
-    deleteBtn.title = "删除";
-    deleteBtn.setAttribute("aria-label", "删除");
+    deleteBtn.title = t("common.delete");
+    deleteBtn.setAttribute("aria-label", t("common.delete"));
     deleteBtn.addEventListener("click", () => {
       requestDeleteMemoryRecord(record.session_id);
     });
@@ -513,13 +524,13 @@ const openMemoryRecordEditor = (record) => {
     user_id: userId,
     session_id: sessionId,
   };
-  elements.memoryRecordEditTitle.textContent = `编辑记忆：${sessionId}`;
+  elements.memoryRecordEditTitle.textContent = t("memory.record.editTitle", { sessionId });
   const metaParts = [];
   metaParts.push(userId);
   if (record?.updated_time) {
-    metaParts.push(`更新 ${formatTimestamp(record.updated_time)}`);
+    metaParts.push(t("memory.record.updatedAt", { time: formatTimestamp(record.updated_time) }));
   } else if (record?.created_time) {
-    metaParts.push(`创建 ${formatTimestamp(record.created_time)}`);
+    metaParts.push(t("memory.record.createdAt", { time: formatTimestamp(record.created_time) }));
   }
   elements.memoryRecordEditMeta.textContent = metaParts.join(" · ");
   elements.memoryRecordEditInput.value = String(record?.summary || "");
@@ -543,7 +554,7 @@ const requestUpdateMemoryRecord = async () => {
   const rawSummary = String(elements.memoryRecordEditInput.value || "");
   const trimmed = rawSummary.trim();
   if (!trimmed) {
-    const confirmed = window.confirm("记忆内容为空，确定要保存吗？");
+    const confirmed = window.confirm(t("memory.record.emptyConfirm"));
     if (!confirmed) {
       return;
     }
@@ -560,14 +571,14 @@ const requestUpdateMemoryRecord = async () => {
       body: JSON.stringify({ summary: rawSummary }),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     await loadMemoryRecords(editing.user_id);
     await loadMemoryUsers();
     closeMemoryRecordEditor();
-    notify("记忆已更新", "success");
+    notify(t("memory.record.updated"), "success");
   } catch (error) {
-    notify(`更新失败：${error.message}`, "error");
+    notify(t("memory.record.updateFailed", { message: error.message }), "error");
   }
 };
 
@@ -582,11 +593,11 @@ const openMemoryModal = async (userId) => {
   state.memory.enabled = false;
   renderMemoryUsers();
   elements.memoryModalRecordBody.textContent = "";
-  elements.memoryModalRecordEmpty.textContent = "加载中...";
+  elements.memoryModalRecordEmpty.textContent = t("common.loading");
   elements.memoryModalRecordEmpty.style.display = "block";
   elements.memoryModalEnableToggle.disabled = true;
   elements.memoryModalClearBtn.disabled = true;
-  elements.memoryModalMeta.textContent = "加载中...";
+  elements.memoryModalMeta.textContent = t("common.loading");
   elements.memoryModal.classList.add("active");
   await loadMemoryRecords(cleaned);
 };
@@ -605,13 +616,13 @@ export const loadMemoryUsers = async () => {
   state.memory.search = String(elements.memorySearchInput.value || "").trim();
   const endpoint = `${getWunderBase()}/admin/memory/users`;
   elements.memoryUsersBody.textContent = "";
-  elements.memoryUsersEmpty.textContent = "加载中...";
+  elements.memoryUsersEmpty.textContent = t("common.loading");
   elements.memoryUsersEmpty.style.display = "block";
   renderMemoryUsersPagination(null);
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.memory.users = Array.isArray(result.users)
@@ -630,7 +641,9 @@ export const loadMemoryUsers = async () => {
     renderMemoryUsers();
   } catch (error) {
     state.memory.users = [];
-    elements.memoryUsersEmpty.textContent = `加载失败：${error.message}`;
+    elements.memoryUsersEmpty.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
     elements.memoryUsersEmpty.style.display = "block";
     renderMemoryUsersPagination(null);
     throw error;
@@ -647,7 +660,7 @@ const loadMemoryRecords = async (userId) => {
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.memory.enabled = Boolean(result.enabled);
@@ -658,9 +671,11 @@ const loadMemoryRecords = async (userId) => {
     renderMemoryRecords();
   } catch (error) {
     state.memory.records = [];
-    elements.memoryModalRecordEmpty.textContent = `加载失败：${error.message}`;
+    elements.memoryModalRecordEmpty.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
     elements.memoryModalRecordEmpty.style.display = "block";
-    notify(`记忆记录加载失败：${error.message}`, "error");
+    notify(t("memory.records.loadFailed", { message: error.message }), "error");
   }
 };
 
@@ -680,7 +695,7 @@ const updateMemoryEnabled = async (userId, enabled) => {
       body: JSON.stringify({ enabled }),
     });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     const nextEnabled = Boolean(result.enabled);
@@ -693,9 +708,12 @@ const updateMemoryEnabled = async (userId, enabled) => {
     }
     renderMemoryUsers();
     renderMemoryModalHeader();
-    notify(nextEnabled ? "已开启长期记忆" : "已关闭长期记忆", "success");
+    notify(
+      nextEnabled ? t("memory.enabled.on") : t("memory.enabled.off"),
+      "success"
+    );
   } catch (error) {
-    notify(`更新失败：${error.message}`, "error");
+    notify(t("memory.enabled.updateFailed", { message: error.message }), "error");
     renderMemoryUsers();
   }
 };
@@ -712,13 +730,13 @@ const requestDeleteMemoryRecord = async (sessionId) => {
   try {
     const response = await fetch(endpoint, { method: "DELETE" });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     await loadMemoryRecords(userId);
     await loadMemoryUsers();
-    notify("记忆已删除", "success");
+    notify(t("memory.record.deleted"), "success");
   } catch (error) {
-    notify(`删除失败：${error.message}`, "error");
+    notify(t("memory.record.deleteFailed", { message: error.message }), "error");
   }
 };
 
@@ -732,13 +750,13 @@ const requestClearMemoryRecords = async () => {
   try {
     const response = await fetch(endpoint, { method: "DELETE" });
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     await loadMemoryRecords(userId);
     await loadMemoryUsers();
-    notify("记忆记录已清空", "success");
+    notify(t("memory.records.cleared"), "success");
   } catch (error) {
-    notify(`清空失败：${error.message}`, "error");
+    notify(t("memory.records.clearFailed", { message: error.message }), "error");
   }
 };
 
@@ -746,13 +764,14 @@ const buildMemoryStatusBadge = (status) => {
   const label = String(status || "").trim() || "-";
   const badge = document.createElement("span");
   badge.className = "monitor-status";
-  if (label === "正在处理") {
+  const lower = label.toLowerCase();
+  if (label === t("memory.status.running") || lower === "running") {
     badge.classList.add("running");
-  } else if (label === "排队中") {
+  } else if (label === t("memory.status.queued") || lower === "queued") {
     badge.classList.add("waiting");
-  } else if (label === "已完成") {
+  } else if (label === t("memory.status.done") || lower === "done" || lower === "finished") {
     badge.classList.add("finished");
-  } else if (label === "失败") {
+  } else if (label === t("memory.status.failed") || lower === "failed" || lower === "error") {
     badge.classList.add("error");
   }
   badge.textContent = label;
@@ -793,8 +812,8 @@ const renderMemoryQueueTable = (body, emptyElement, items, emptyText) => {
     viewBtn.type = "button";
     viewBtn.className = "secondary btn-with-icon icon-only";
     viewBtn.innerHTML = '<i class="fa-solid fa-eye"></i>';
-    viewBtn.title = "查看";
-    viewBtn.setAttribute("aria-label", "查看");
+    viewBtn.title = t("common.view");
+    viewBtn.setAttribute("aria-label", t("common.view"));
     viewBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       openMemoryQueueDetail(item.task_id);
@@ -819,22 +838,28 @@ const renderMemoryStatus = () => {
   const active = Array.isArray(status.active) ? status.active : [];
   const history = Array.isArray(status.history) ? status.history : [];
   const updatedAt = status.updatedAt;
-  const updatedText = updatedAt ? ` · 更新于 ${formatTimestamp(updatedAt)}` : "";
-  elements.memoryStatusMeta.textContent = `活动队列 ${active.length} · 历史队列 ${history.length}${updatedText}`;
+  const updatedText = updatedAt
+    ? t("memory.status.updatedAt", { time: formatTimestamp(updatedAt) })
+    : "";
+  elements.memoryStatusMeta.textContent = t("memory.status.meta", {
+    active: active.length,
+    history: history.length,
+    updated: updatedText,
+  });
   const activePage = resolveMemoryQueuePageSlice(active, "activePage");
   const historyPage = resolveMemoryQueuePageSlice(history, "historyPage");
   renderMemoryQueueTable(
     elements.memoryStatusActiveBody,
     elements.memoryStatusActiveEmpty,
     activePage.items,
-    "暂无活动任务。"
+    t("memory.status.emptyActive")
   );
   renderMemoryQueuePagination("active", activePage);
   renderMemoryQueueTable(
     elements.memoryStatusHistoryBody,
     elements.memoryStatusHistoryEmpty,
     historyPage.items,
-    "暂无历史任务。"
+    t("memory.status.emptyHistory")
   );
   renderMemoryQueuePagination("history", historyPage);
 };
@@ -842,13 +867,15 @@ const renderMemoryStatus = () => {
 const renderMemoryQueueDetail = () => {
   const detail = state.memory.queueDetail;
   if (!detail) {
-    elements.memoryQueueTitle.textContent = "记忆任务详情";
-    elements.memoryQueueMeta.textContent = "未加载任务详情。";
+    elements.memoryQueueTitle.textContent = t("memory.queue.title");
+    elements.memoryQueueMeta.textContent = t("memory.queue.notLoaded");
     elements.memoryQueueRequest.textContent = "";
     elements.memoryQueueResult.textContent = "";
     return;
   }
-  elements.memoryQueueTitle.textContent = `记忆任务详情：${detail.task_id || "-"}`;
+  elements.memoryQueueTitle.textContent = t("memory.queue.titleWithId", {
+    taskId: detail.task_id || "-",
+  });
   const metaParts = [];
   if (detail.user_id) {
     metaParts.push(detail.user_id);
@@ -860,18 +887,18 @@ const renderMemoryQueueDetail = () => {
     metaParts.push(detail.status);
   }
   if (Number.isFinite(detail.elapsed_s)) {
-    metaParts.push(`耗时 ${formatDuration(detail.elapsed_s)}`);
+    metaParts.push(t("memory.queue.elapsed", { duration: formatDuration(detail.elapsed_s) }));
   }
   if (detail.started_time) {
-    metaParts.push(`开始 ${formatTimestamp(detail.started_time)}`);
+    metaParts.push(t("memory.queue.startedAt", { time: formatTimestamp(detail.started_time) }));
   } else if (detail.queued_time) {
-    metaParts.push(`入队 ${formatTimestamp(detail.queued_time)}`);
+    metaParts.push(t("memory.queue.queuedAt", { time: formatTimestamp(detail.queued_time) }));
   }
   if (detail.finished_time) {
-    metaParts.push(`完成 ${formatTimestamp(detail.finished_time)}`);
+    metaParts.push(t("memory.queue.finishedAt", { time: formatTimestamp(detail.finished_time) }));
   }
   if (detail.error) {
-    metaParts.push(`错误 ${detail.error}`);
+    metaParts.push(t("memory.queue.error", { message: detail.error }));
   }
   elements.memoryQueueMeta.textContent = metaParts.join(" · ");
   const payload =
@@ -891,7 +918,7 @@ const loadMemoryQueueDetail = async (taskId) => {
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.memory.queueDetailId = cleaned;
@@ -900,9 +927,11 @@ const loadMemoryQueueDetail = async (taskId) => {
   } catch (error) {
     state.memory.queueDetail = null;
     elements.memoryQueueMeta.textContent = "";
-    elements.memoryQueueRequest.textContent = `加载失败：${error.message}`;
+    elements.memoryQueueRequest.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
     elements.memoryQueueResult.textContent = "-";
-    notify(`记忆任务详情加载失败：${error.message}`, "error");
+    notify(t("memory.queue.loadFailed", { message: error.message }), "error");
   }
 };
 
@@ -911,9 +940,9 @@ const openMemoryQueueDetail = async (taskId) => {
   if (!cleaned) {
     return;
   }
-  elements.memoryQueueTitle.textContent = "记忆任务详情";
-  elements.memoryQueueMeta.textContent = "加载中...";
-  elements.memoryQueueRequest.textContent = "加载中...";
+  elements.memoryQueueTitle.textContent = t("memory.queue.title");
+  elements.memoryQueueMeta.textContent = t("common.loading");
+  elements.memoryQueueRequest.textContent = t("common.loading");
   elements.memoryQueueResult.textContent = "";
   elements.memoryQueueModal.classList.add("active");
   await loadMemoryQueueDetail(cleaned);
@@ -937,7 +966,7 @@ export const loadMemoryStatus = async () => {
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     state.memory.status = {
@@ -952,7 +981,9 @@ export const loadMemoryStatus = async () => {
     };
     renderMemoryStatus();
   } catch (error) {
-    elements.memoryStatusMeta.textContent = `加载失败：${error.message}`;
+    elements.memoryStatusMeta.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
   }
 };
 

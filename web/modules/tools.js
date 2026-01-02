@@ -2,6 +2,7 @@
 import { elements } from "./elements.js?v=20251231-03";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
+import { t } from "./i18n.js";
 
 // 工具勾选状态使用本地缓存，按 user_id 隔离
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
@@ -268,7 +269,7 @@ const renderPromptToolList = (container, items, emptyText) => {
       metaParts.push(item.description);
     }
     if (item.owner_id) {
-      metaParts.push(`来自 ${item.owner_id}`);
+      metaParts.push(t("tools.owner", { owner: item.owner_id }));
     }
     const description = metaParts.length ? `<span class="muted">${metaParts.join(" · ")}</span>` : "";
     label.innerHTML = `<strong>${item.name}</strong>${description}`;
@@ -280,28 +281,34 @@ const renderPromptToolList = (container, items, emptyText) => {
 
 export const renderPromptTools = () => {
   ensureToolSelectionState();
-  renderPromptToolList(elements.promptBuiltinTools, state.toolSelection.builtin, "暂无内置工具");
-  renderPromptToolList(elements.promptMcpTools, state.toolSelection.mcp, "暂无 MCP 工具");
-  renderPromptToolList(elements.promptSkills, state.toolSelection.skills, "暂无技能");
+  renderPromptToolList(
+    elements.promptBuiltinTools,
+    state.toolSelection.builtin,
+    t("tools.empty.builtin")
+  );
+  renderPromptToolList(elements.promptMcpTools, state.toolSelection.mcp, t("tools.empty.mcp"));
+  renderPromptToolList(elements.promptSkills, state.toolSelection.skills, t("tools.empty.skills"));
   renderPromptToolList(
     elements.promptKnowledgeTools,
     state.toolSelection.knowledge,
-    "暂无知识库工具"
+    t("tools.empty.knowledge")
   );
   renderPromptToolList(
     elements.promptUserTools,
     state.toolSelection.userTools,
-    "暂无自建工具"
+    t("tools.empty.user")
   );
   renderPromptToolList(
     elements.promptSharedTools,
     state.toolSelection.sharedTools,
-    "暂无共享工具"
+    t("tools.empty.shared")
   );
 };
 
 export const applyPromptToolError = (message) => {
-  const text = message ? `加载失败：${message}` : "加载失败";
+  const text = message
+    ? t("common.loadFailedWithMessage", { message })
+    : t("common.loadFailed");
   elements.promptBuiltinTools.textContent = text;
   elements.promptMcpTools.textContent = text;
   elements.promptSkills.textContent = text;
@@ -327,7 +334,7 @@ export const loadAvailableTools = async () => {
     : `${wunderBase}/tools`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const builtin = Array.isArray(result.builtin_tools) ? result.builtin_tools : [];

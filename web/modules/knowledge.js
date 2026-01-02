@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { buildHeadingHighlightHtml } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js";
 
 const knowledgeModal = document.getElementById("knowledgeModal");
 const knowledgeModalTitle = document.getElementById("knowledgeModalTitle");
@@ -168,7 +169,10 @@ const openKnowledgeModal = (base = null, index = -1) => {
   knowledgeEditingIndex = Number.isInteger(index) ? index : -1;
   const payload = base || { name: "", description: "", root: "", enabled: true };
   if (knowledgeModalTitle) {
-    knowledgeModalTitle.textContent = knowledgeEditingIndex >= 0 ? "编辑知识库" : "新增知识库";
+    knowledgeModalTitle.textContent =
+      knowledgeEditingIndex >= 0
+        ? t("knowledge.modal.editTitle")
+        : t("knowledge.modal.addTitle");
   }
   if (knowledgeModalName) {
     knowledgeModalName.value = payload.name || "";
@@ -206,14 +210,14 @@ const getKnowledgeModalPayload = () => ({
 // 校验单个知识库配置，避免空值或重名
 const validateKnowledgeBase = (payload, index) => {
   if (!payload.name) {
-    return "请填写知识库名称。";
+    return t("knowledge.name.required");
   }
   for (let i = 0; i < state.knowledge.bases.length; i += 1) {
     if (i === index) {
       continue;
     }
     if (state.knowledge.bases[i].name.trim() === payload.name) {
-      return `知识库名称重复：${payload.name}`;
+      return t("knowledge.name.duplicate", { name: payload.name });
     }
   }
   return "";
@@ -222,7 +226,7 @@ const validateKnowledgeBase = (payload, index) => {
 const renderKnowledgeBaseList = () => {
   elements.knowledgeBaseList.textContent = "";
   if (!state.knowledge.bases.length) {
-    elements.knowledgeBaseList.textContent = "暂无知识库配置，请先新增。";
+    elements.knowledgeBaseList.textContent = t("knowledge.list.empty");
     return;
   }
   state.knowledge.bases.forEach((base, index) => {
@@ -232,8 +236,8 @@ const renderKnowledgeBaseList = () => {
     if (index === state.knowledge.selectedIndex) {
       item.classList.add("active");
     }
-    const title = base.name || "(未命名知识库)";
-    const subtitle = base.root || "未设置目录";
+    const title = base.name || t("knowledge.name.unnamed");
+    const subtitle = base.root || t("knowledge.root.unset");
     item.innerHTML = `<div>${title}</div><small>${subtitle}</small>`;
     item.addEventListener("click", async () => {
       state.knowledge.selectedIndex = index;
@@ -251,7 +255,7 @@ const renderKnowledgeBaseList = () => {
 const renderKnowledgeDetailHeader = () => {
   const base = getActiveBase();
   if (!base) {
-    elements.knowledgeDetailTitle.textContent = "未选择知识库";
+    elements.knowledgeDetailTitle.textContent = t("knowledge.detail.empty");
     elements.knowledgeDetailMeta.textContent = "";
     if (knowledgeDetailDesc) {
       knowledgeDetailDesc.textContent = "";
@@ -262,9 +266,9 @@ const renderKnowledgeDetailHeader = () => {
     elements.knowledgeDeleteBtn.disabled = true;
     return;
   }
-  elements.knowledgeDetailTitle.textContent = base.name || "(未命名知识库)";
-  const metaParts = [base.root || "未设置目录"];
-  metaParts.push(base.enabled !== false ? "已启用" : "未启用");
+  elements.knowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
+  const metaParts = [base.root || t("knowledge.root.unset")];
+  metaParts.push(base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled"));
   elements.knowledgeDetailMeta.textContent = metaParts.join(" · ");
   if (knowledgeDetailDesc) {
     knowledgeDetailDesc.textContent = base.description || "";
@@ -283,7 +287,7 @@ const renderKnowledgeDetail = () => {
 const renderKnowledgeFiles = () => {
   elements.knowledgeFileList.textContent = "";
   if (!state.knowledge.files.length) {
-    elements.knowledgeFileList.textContent = "暂无文档，请先刷新列表。";
+    elements.knowledgeFileList.textContent = t("knowledge.file.empty");
   } else {
     state.knowledge.files.forEach((filePath) => {
       const item = document.createElement("div");
@@ -297,14 +301,14 @@ const renderKnowledgeFiles = () => {
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "knowledge-file-delete-btn";
-      deleteBtn.title = "删除文档";
+      deleteBtn.title = t("knowledge.file.delete");
       deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
       deleteBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         try {
           await deleteKnowledgeFile(filePath);
         } catch (error) {
-          notify(`删除失败：${error.message}`, "error");
+          notify(t("knowledge.file.deleteFailed", { message: error.message }), "error");
         }
       });
       item.append(name, deleteBtn);
@@ -314,7 +318,7 @@ const renderKnowledgeFiles = () => {
       elements.knowledgeFileList.appendChild(item);
     });
   }
-  elements.knowledgeFileName.textContent = state.knowledge.activeFile || "未选择文档";
+  elements.knowledgeFileName.textContent = state.knowledge.activeFile || t("knowledge.file.none");
   elements.knowledgeFileContent.value = state.knowledge.fileContent || "";
   updateKnowledgeEditorHighlight();
 };
@@ -331,12 +335,12 @@ const buildKnowledgePayload = () => ({
 const validateKnowledgePayload = (payload) => {
   const invalid = payload.bases.filter((base) => !base.name);
   if (invalid.length) {
-    return "存在未填写名称的知识库，请补全后再保存。";
+    return t("knowledge.payload.invalid");
   }
   const nameSet = new Set();
   for (const base of payload.bases) {
     if (nameSet.has(base.name)) {
-      return `知识库名称重复：${base.name}`;
+      return t("knowledge.name.duplicate", { name: base.name });
     }
     nameSet.add(base.name);
   }
@@ -360,7 +364,7 @@ const saveKnowledgeConfig = async () => {
     body: JSON.stringify({ knowledge: payload }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const normalized = normalizeKnowledgeConfig(result.knowledge || {});
@@ -387,7 +391,7 @@ const normalizeUploadExtension = (filename) => {
 const uploadKnowledgeFile = async (file) => {
   const base = getActiveBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   if (!file) {
@@ -395,11 +399,11 @@ const uploadKnowledgeFile = async (file) => {
   }
   const extension = normalizeUploadExtension(file.name);
   if (!extension) {
-    notify("文件缺少扩展名。", "warn");
+    notify(t("knowledge.file.extensionMissing"), "warn");
     return;
   }
   if (!SUPPORTED_UPLOAD_EXTENSIONS.includes(extension)) {
-    notify(`不支持的文件类型：${extension}`, "warn");
+    notify(t("knowledge.file.unsupported", { extension }), "warn");
     return;
   }
   const wunderBase = getWunderBase();
@@ -412,17 +416,17 @@ const uploadKnowledgeFile = async (file) => {
     body: formData,
   });
   if (!response.ok) {
-    throw new Error(`上传失败：${response.status}`);
+    throw new Error(t("knowledge.file.uploadFailed", { status: response.status }));
   }
   const result = await response.json();
   await loadKnowledgeFiles();
   if (result?.path) {
     await selectKnowledgeFile(result.path);
   }
-  notify(`上传完成：${result?.path || file.name}`, "success");
+  notify(t("knowledge.file.uploaded", { name: result?.path || file.name }), "success");
   const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
   if (warnings.length) {
-    notify(`转换警告：${warnings.join(" | ")}`, "warn");
+    notify(t("knowledge.file.warnings", { message: warnings.join(" | ") }), "warn");
   }
 };
 
@@ -437,10 +441,12 @@ const loadKnowledgeFiles = async () => {
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/knowledge/files?base=${encodeURIComponent(base.name)}`;
-  elements.knowledgeFileList.textContent = "加载中...";
+  elements.knowledgeFileList.textContent = t("common.loading");
   const response = await fetch(endpoint);
   if (!response.ok) {
-    elements.knowledgeFileList.textContent = `加载失败：${response.status}`;
+    elements.knowledgeFileList.textContent = t("common.loadFailedWithMessage", {
+      message: response.status,
+    });
     return;
   }
   const result = await response.json();
@@ -455,17 +461,17 @@ const loadKnowledgeFiles = async () => {
 const selectKnowledgeFile = async (filePath) => {
   const base = getActiveBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/knowledge/file?base=${encodeURIComponent(
     base.name
   )}&path=${encodeURIComponent(filePath)}`;
-  elements.knowledgeFileName.textContent = "加载中...";
+  elements.knowledgeFileName.textContent = t("common.loading");
   const response = await fetch(endpoint);
   if (!response.ok) {
-    notify(`读取失败：${response.status}`, "error");
+    notify(t("knowledge.file.readFailed", { status: response.status }), "error");
     return;
   }
   const result = await response.json();
@@ -477,11 +483,11 @@ const selectKnowledgeFile = async (filePath) => {
 const saveKnowledgeFile = async () => {
   const base = getActiveBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   if (!state.knowledge.activeFile) {
-    notify("请先选择要保存的文档。", "warn");
+    notify(t("knowledge.file.saveRequired"), "warn");
     return;
   }
   const wunderBase = getWunderBase();
@@ -498,19 +504,19 @@ const saveKnowledgeFile = async () => {
     }),
   });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   await loadKnowledgeFiles();
-  notify("文档已保存并刷新索引。", "success");
+  notify(t("knowledge.file.saved"), "success");
 };
 
 const createKnowledgeFile = async () => {
   const base = getActiveBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  const filename = window.prompt("请输入新文档文件名（.md）", "example.md");
+  const filename = window.prompt(t("knowledge.file.newPrompt"), "example.md");
   if (!filename) {
     return;
   }
@@ -529,15 +535,15 @@ const createKnowledgeFile = async () => {
 const deleteKnowledgeFile = async (targetPath = "") => {
   const base = getActiveBase();
   if (!base || !base.name) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   const path = targetPath || state.knowledge.activeFile;
   if (!path) {
-    notify("请先选择要删除的文档。", "warn");
+    notify(t("knowledge.file.deleteRequired"), "warn");
     return;
   }
-  if (!window.confirm(`确认删除文档 ${path}？`)) {
+  if (!window.confirm(t("knowledge.file.deleteConfirm", { name: path }))) {
     return;
   }
   const wunderBase = getWunderBase();
@@ -546,14 +552,14 @@ const deleteKnowledgeFile = async (targetPath = "") => {
   )}&path=${encodeURIComponent(path)}`;
   const response = await fetch(endpoint, { method: "DELETE" });
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   if (path === state.knowledge.activeFile) {
     state.knowledge.activeFile = "";
     state.knowledge.fileContent = "";
   }
   await loadKnowledgeFiles();
-  notify("文档已删除。", "success");
+  notify(t("knowledge.file.deleted"), "success");
 };
 
 const addKnowledgeBase = () => {
@@ -563,7 +569,7 @@ const addKnowledgeBase = () => {
 const editKnowledgeBase = () => {
   const base = getActiveBase();
   if (!base) {
-    notify("请先选择知识库。", "warn");
+    notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
   openKnowledgeModal(base, state.knowledge.selectedIndex);
@@ -608,7 +614,10 @@ const applyKnowledgeModal = async () => {
       return;
     }
     await loadKnowledgeFiles();
-    notify(knowledgeEditingIndex >= 0 ? "知识库已更新。" : "知识库已新增。", "success");
+    notify(
+      knowledgeEditingIndex >= 0 ? t("knowledge.base.updated") : t("knowledge.base.added"),
+      "success"
+    );
     closeKnowledgeModal();
   } catch (error) {
     state.knowledge.bases = snapshot.bases;
@@ -618,7 +627,7 @@ const applyKnowledgeModal = async () => {
     state.knowledge.fileContent = snapshot.fileContent;
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
-    notify(`保存失败：${error.message}`, "error");
+    notify(t("knowledge.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -627,8 +636,8 @@ const deleteKnowledgeBase = async () => {
     return;
   }
   const base = getActiveBase();
-  const baseName = base && base.name ? base.name : "未命名知识库";
-  if (!window.confirm(`确认删除知识库 ${baseName}？`)) {
+  const baseName = base && base.name ? base.name : t("knowledge.name.unnamed");
+  if (!window.confirm(t("knowledge.base.deleteConfirm", { name: baseName }))) {
     return;
   }
   const snapshot = {
@@ -662,7 +671,7 @@ const deleteKnowledgeBase = async () => {
       return;
     }
     await loadKnowledgeFiles();
-    notify("知识库已删除。", "success");
+    notify(t("knowledge.base.deleted"), "success");
   } catch (error) {
     state.knowledge.bases = snapshot.bases;
     state.knowledge.selectedIndex = snapshot.selectedIndex;
@@ -671,7 +680,7 @@ const deleteKnowledgeBase = async () => {
     state.knowledge.fileContent = snapshot.fileContent;
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
-    notify(`删除失败：${error.message}`, "error");
+    notify(t("knowledge.deleteFailed", { message: error.message }), "error");
   }
 };
 
@@ -680,7 +689,7 @@ export const loadKnowledgeConfig = async () => {
   const endpoint = `${wunderBase}/admin/knowledge`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   const normalized = normalizeKnowledgeConfig(result.knowledge || {});
@@ -698,14 +707,16 @@ export const initKnowledgePanel = () => {
   elements.knowledgeAddBtn?.addEventListener("click", addKnowledgeBase);
   knowledgeEditBtn?.addEventListener("click", editKnowledgeBase);
   elements.knowledgeDeleteBtn?.addEventListener("click", () => {
-    deleteKnowledgeBase().catch((error) => notify(`删除失败：${error.message}`, "error"));
+    deleteKnowledgeBase().catch((error) =>
+      notify(t("knowledge.deleteFailed", { message: error.message }), "error")
+    );
   });
   elements.knowledgeRefreshBtn?.addEventListener("click", async () => {
     try {
       await loadKnowledgeConfig();
-      notify("知识库配置已刷新。", "success");
+      notify(t("knowledge.refreshSuccess"), "success");
     } catch (error) {
-      notify(`刷新失败：${error.message}`, "error");
+      notify(t("knowledge.refreshFailed", { message: error.message }), "error");
     }
   });
   knowledgeModalSave?.addEventListener("click", () => {
@@ -725,7 +736,7 @@ export const initKnowledgePanel = () => {
   knowledgeFileUploadBtn?.addEventListener("click", () => {
     const base = getActiveBase();
     if (!base || !base.name) {
-      notify("请先选择知识库。", "warn");
+      notify(t("knowledge.base.selectRequired"), "warn");
       return;
     }
     if (knowledgeFileUploadInput) {
@@ -741,7 +752,7 @@ export const initKnowledgePanel = () => {
     try {
       await uploadKnowledgeFile(file);
     } catch (error) {
-      notify(`上传失败：${error.message}`, "error");
+      notify(t("knowledge.file.uploadFailedMessage", { message: error.message }), "error");
     }
   });
   elements.knowledgeFileContent?.addEventListener("input", () => {
@@ -755,14 +766,14 @@ export const initKnowledgePanel = () => {
     try {
       await saveKnowledgeFile();
     } catch (error) {
-      notify(`保存失败：${error.message}`, "error");
+      notify(t("knowledge.file.saveFailed", { message: error.message }), "error");
     }
   });
   elements.knowledgeFileNewBtn?.addEventListener("click", async () => {
     try {
       await createKnowledgeFile();
     } catch (error) {
-      notify(`新建失败：${error.message}`, "error");
+      notify(t("knowledge.file.createFailed", { message: error.message }), "error");
     }
   });
 };

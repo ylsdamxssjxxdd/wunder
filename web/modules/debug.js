@@ -8,12 +8,10 @@ import { loadWorkspace } from "./workspace.js?v=20260101-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
+import { getCurrentLanguage, t } from "./i18n.js";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
-const DEBUG_HISTORY_EMPTY_TEXT = "暂无会话";
-const DEBUG_HISTORY_LOADING_TEXT = "加载中...";
-const DEBUG_STATS_EMPTY_TEXT = "暂无统计信息";
 // 调试面板附件支持：图片走多模态，文件走 doc2md 解析
 const DEBUG_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"]);
 const DEBUG_DOC_EXTENSIONS = [
@@ -47,10 +45,25 @@ const DEBUG_DOC_EXTENSIONS = [
   ".dps",
 ];
 const DEBUG_UPLOAD_ACCEPT = ["image/*", ...DEBUG_DOC_EXTENSIONS].join(",");
-const DEBUG_QUESTION_PRESETS = Array.isArray(APP_CONFIG.debugQuestionPresets)
-  ? APP_CONFIG.debugQuestionPresets
-  : [];
-const DEBUG_QUESTION_EMPTY_TEXT = "暂无预设问题";
+const resolveQuestionPresets = () => {
+  const raw = APP_CONFIG.debugQuestionPresets;
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+  if (raw && typeof raw === "object") {
+    const language = getCurrentLanguage();
+    if (Array.isArray(raw[language])) {
+      return raw[language];
+    }
+    if (Array.isArray(raw["zh-CN"])) {
+      return raw["zh-CN"];
+    }
+    if (Array.isArray(raw["en-US"])) {
+      return raw["en-US"];
+    }
+  }
+  return [];
+};
 const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "progress",
   "compaction",
@@ -88,19 +101,19 @@ const resetPendingRequestLogs = () => {
 
 const buildResponseText = (data) => {
   if (!data || typeof data !== "object") {
-    return "（无回复内容）";
+    return t("debug.response.empty");
   }
   const content = data.content ? String(data.content) : "";
   const reasoning = data.reasoning ? String(data.reasoning) : data.reasoning_content ? String(data.reasoning_content) : "";
   const sections = [];
   if (reasoning) {
-    sections.push(`【思考】\n${reasoning}`);
+    sections.push(`${t("debug.response.thought")}\n${reasoning}`);
   }
   if (content) {
     sections.push(content);
   }
   if (!sections.length) {
-    return "（无回复内容）";
+    return t("debug.response.empty");
   }
   return sections.join("\n\n");
 };
@@ -126,7 +139,7 @@ const appendRequestDurationBadge = (item, durationText) => {
     durationNode.className = "log-duration";
     const durationLabel = document.createElement("span");
     durationLabel.className = "log-duration-label";
-    durationLabel.textContent = "耗时";
+    durationLabel.textContent = t("log.duration");
     const durationValue = document.createElement("span");
     durationValue.className = "log-duration-value";
     durationValue.textContent = durationText;
@@ -166,7 +179,7 @@ const attachResponseToRequest = (response, options = {}) => {
   }
   const responseNode = document.createElement("div");
   responseNode.className = "log-response";
-  responseNode.textContent = `【模型回复】\n${responseText}`;
+  responseNode.textContent = `${t("debug.response.title")}\n${responseText}`;
   detailNode.appendChild(responseNode);
 };
 
@@ -174,7 +187,9 @@ const flushPendingRequests = (message, options = {}) => {
   if (!pendingRequestLogs.length) {
     return;
   }
-  const content = message ? `请求异常：${message}` : "请求异常，未返回回复。";
+  const content = message
+    ? t("debug.request.error", { message })
+    : t("debug.request.errorNoResponse");
   while (pendingRequestLogs.length) {
     attachResponseToRequest({ content, reasoning: "" }, options);
   }
@@ -204,7 +219,7 @@ const setSendToggleState = (active) => {
     icon.className = isStop ? "fa-solid fa-stop" : "fa-solid fa-paper-plane";
   }
   elements.sendBtn.classList.toggle("danger", isStop);
-  const label = isStop ? "停止" : "发送";
+  const label = isStop ? t("debug.send.stop") : t("debug.send.send");
   elements.sendBtn.setAttribute("aria-label", label);
   elements.sendBtn.title = label;
 };
@@ -316,7 +331,7 @@ const renderDebugStats = () => {
     return;
   }
   if (!debugStats) {
-    elements.finalAnswer.textContent = DEBUG_STATS_EMPTY_TEXT;
+    elements.finalAnswer.textContent = t("debug.stats.empty");
     return;
   }
   const outputState = getModelOutputState();
@@ -328,15 +343,17 @@ const renderDebugStats = () => {
     : 0;
   const sessionId = String(state.runtime.debugSessionId || "").trim();
   const tokenText = debugStats.hasTokenUsage
-    ? `${formatStatNumber(debugStats.tokenTotal, "0")}（输入 ${formatStatNumber(
-        debugStats.tokenInput,
-        "0"
-      )} / 输出 ${formatStatNumber(debugStats.tokenOutput, "0")}）`
+    ? t("debug.stats.tokenUsage", {
+        total: formatStatNumber(debugStats.tokenTotal, "0"),
+        input: formatStatNumber(debugStats.tokenInput, "0"),
+        output: formatStatNumber(debugStats.tokenOutput, "0"),
+      })
     : "-";
-  const toolText = `${formatStatNumber(debugStats.toolCalls, "0")}（成功 ${formatStatNumber(
-    debugStats.toolOk,
-    "0"
-  )} / 失败 ${formatStatNumber(debugStats.toolFailed, "0")}）`;
+  const toolText = t("debug.stats.toolCalls", {
+    total: formatStatNumber(debugStats.toolCalls, "0"),
+    ok: formatStatNumber(debugStats.toolOk, "0"),
+    failed: formatStatNumber(debugStats.toolFailed, "0"),
+  });
   const startMs = Number.isFinite(debugStats.timeRangeStartMs)
     ? debugStats.timeRangeStartMs
     : debugStats.requestStartMs;
@@ -349,16 +366,16 @@ const renderDebugStats = () => {
 
   // 使用表格呈现统计信息，提升可读性与对齐效果
   const rows = [
-    { label: "会话 ID", value: sessionId || "-" },
-    { label: "会话耗时", value: durationText },
-    { label: "Token 占用", value: tokenText },
-    { label: "模型请求次数", value: formatStatNumber(debugStats.llmRequests, "0") },
-    { label: "知识库请求次数", value: formatStatNumber(debugStats.knowledgeRequests, "0") },
-    { label: "工具调用次数", value: toolText },
-    { label: "Sandbox 工具调用", value: formatStatNumber(debugStats.sandboxCalls, "0") },
-    { label: "模型输出字数", value: formatStatNumber(outputChars, "0") },
-    { label: "错误次数", value: formatStatNumber(debugStats.errorCount, "0") },
-    { label: "事件条数", value: formatStatNumber(debugStats.eventCount, "0") },
+    { label: t("debug.stats.sessionId"), value: sessionId || "-" },
+    { label: t("debug.stats.duration"), value: durationText },
+    { label: t("debug.stats.tokenUsageLabel"), value: tokenText },
+    { label: t("debug.stats.llmRequests"), value: formatStatNumber(debugStats.llmRequests, "0") },
+    { label: t("debug.stats.knowledgeRequests"), value: formatStatNumber(debugStats.knowledgeRequests, "0") },
+    { label: t("debug.stats.toolCallsLabel"), value: toolText },
+    { label: t("debug.stats.sandboxCalls"), value: formatStatNumber(debugStats.sandboxCalls, "0") },
+    { label: t("debug.stats.outputChars"), value: formatStatNumber(outputChars, "0") },
+    { label: t("debug.stats.errorCount"), value: formatStatNumber(debugStats.errorCount, "0") },
+    { label: t("debug.stats.eventCount"), value: formatStatNumber(debugStats.eventCount, "0") },
   ];
 
   const table = document.createElement("table");
@@ -366,9 +383,9 @@ const renderDebugStats = () => {
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   const headLabel = document.createElement("th");
-  headLabel.textContent = "指标";
+  headLabel.textContent = t("debug.stats.header.metric");
   const headValue = document.createElement("th");
-  headValue.textContent = "数值";
+  headValue.textContent = t("debug.stats.header.value");
   headRow.appendChild(headLabel);
   headRow.appendChild(headValue);
   thead.appendChild(headRow);
@@ -453,11 +470,15 @@ const updateAttachmentMeta = () => {
     return;
   }
   if (debugAttachmentBusy > 0) {
-    elements.debugAttachmentMeta.textContent = `正在处理 ${debugAttachmentBusy} 个附件...`;
+    elements.debugAttachmentMeta.textContent = t("debug.attachments.processing", {
+      count: debugAttachmentBusy,
+    });
     return;
   }
   const total = debugAttachments.length;
-  elements.debugAttachmentMeta.textContent = total ? `已附加 ${total} 个附件` : "暂未附加";
+  elements.debugAttachmentMeta.textContent = total
+    ? t("debug.attachments.added", { count: total })
+    : t("debug.attachments.none");
 };
 
 // 渲染附件列表，提供删除入口与状态提示
@@ -467,7 +488,7 @@ const renderAttachmentList = () => {
   }
   elements.debugAttachmentList.textContent = "";
   if (!debugAttachments.length) {
-    elements.debugAttachmentList.textContent = "暂未附加文件或图片";
+    elements.debugAttachmentList.textContent = t("debug.attachments.empty");
     updateAttachmentMeta();
     return;
   }
@@ -485,16 +506,18 @@ const renderAttachmentList = () => {
 
     const name = document.createElement("div");
     name.className = "debug-attachment-name";
-    name.textContent = attachment.name || "未命名附件";
+    name.textContent = attachment.name || t("debug.attachments.unnamed");
 
     const meta = document.createElement("div");
     meta.className = "debug-attachment-meta";
     if (attachment.type === "image") {
-      meta.textContent = "图片";
+      meta.textContent = t("debug.attachments.type.image");
     } else if (attachment.converter) {
-      meta.textContent = `文件 · ${attachment.converter}`;
+      meta.textContent = t("debug.attachments.type.fileWithConverter", {
+        converter: attachment.converter,
+      });
     } else {
-      meta.textContent = "文件";
+      meta.textContent = t("debug.attachments.type.file");
     }
 
     info.appendChild(name);
@@ -503,7 +526,7 @@ const renderAttachmentList = () => {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "danger btn-with-icon btn-compact debug-attachment-remove";
-    removeBtn.innerHTML = '<i class="fa-solid fa-trash"></i>删除';
+    removeBtn.innerHTML = `<i class="fa-solid fa-trash"></i>${t("common.delete")}`;
     removeBtn.addEventListener("click", () => {
       removeDebugAttachment(attachment.id);
     });
@@ -538,13 +561,13 @@ const renderQuestionPresetMenu = () => {
     return;
   }
   const menu = elements.debugQuestionMenu;
-  const presets = normalizeQuestionPresets(DEBUG_QUESTION_PRESETS);
+  const presets = normalizeQuestionPresets(resolveQuestionPresets());
   menu.textContent = "";
   if (!presets.length) {
     const empty = document.createElement("button");
     empty.type = "button";
     empty.disabled = true;
-    empty.textContent = DEBUG_QUESTION_EMPTY_TEXT;
+    empty.textContent = t("debug.question.presets.empty");
     menu.appendChild(empty);
     return;
   }
@@ -618,7 +641,7 @@ const readFileAsDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(new Error(t("debug.attachment.imageReadFailed")));
     reader.readAsDataURL(file);
   });
 
@@ -643,7 +666,7 @@ const buildAttachmentPayload = () => {
 const convertAttachmentFile = async (file) => {
   const wunderBase = getWunderBase();
   if (!wunderBase) {
-    throw new Error("API 地址为空");
+    throw new Error(t("debug.apiBaseEmpty"));
   }
   const endpoint = `${wunderBase}/attachments/convert`;
   const formData = new FormData();
@@ -660,7 +683,7 @@ const convertAttachmentFile = async (file) => {
     } catch (error) {
       detail = "";
     }
-    throw new Error(detail || `请求失败：${response.status}`);
+    throw new Error(detail || t("common.requestFailed", { status: response.status }));
   }
   return response.json();
 };
@@ -677,7 +700,7 @@ const handleAttachmentSelection = async (file) => {
     if (isImageFile(file)) {
       const dataUrl = await readFileAsDataUrl(file);
       if (!dataUrl) {
-        throw new Error("图片内容为空");
+        throw new Error(t("debug.attachment.imageEmpty"));
       }
       debugAttachments.push({
         id: buildAttachmentId(),
@@ -687,17 +710,21 @@ const handleAttachmentSelection = async (file) => {
         mimeType: file.type || "",
       });
       renderAttachmentList();
-      notify(`已附加图片：${filename}`, "success");
+      notify(t("debug.attachment.imageAdded", { name: filename }), "success");
       return;
     }
     const extension = resolveFileExtension(filename);
     if (!extension || !DEBUG_DOC_EXTENSIONS.includes(`.${extension}`)) {
-      throw new Error(`不支持的文件类型: .${extension || "未知"}`);
+      throw new Error(
+        t("debug.attachment.unsupportedType", {
+          ext: extension || t("debug.attachment.unknownExt"),
+        })
+      );
     }
     const result = await convertAttachmentFile(file);
     const content = typeof result?.content === "string" ? result.content : "";
     if (!content.trim()) {
-      throw new Error("解析结果为空");
+      throw new Error(t("debug.attachment.emptyResult"));
     }
     debugAttachments.push({
       id: buildAttachmentId(),
@@ -710,9 +737,9 @@ const handleAttachmentSelection = async (file) => {
     renderAttachmentList();
     const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
     if (warnings.length) {
-      notify(`文件转换存在警告：${warnings[0]}`, "warn");
+      notify(t("debug.attachment.convertWarning", { message: warnings[0] }), "warn");
     } else {
-      notify(`已解析文件：${result?.name || filename}`, "success");
+      notify(t("debug.attachment.fileParsed", { name: result?.name || filename }), "success");
     }
   } finally {
     debugAttachmentBusy = Math.max(0, debugAttachmentBusy - 1);
@@ -1011,7 +1038,9 @@ const buildRoundLabel = (entry) => {
   if (!entry) {
     return "";
   }
-  return entry.timeText ? `第 ${entry.id} 轮 · ${entry.timeText}` : `第 ${entry.id} 轮`;
+  return entry.timeText
+    ? t("debug.round.labelWithTime", { id: entry.id, time: entry.timeText })
+    : t("debug.round.label", { id: entry.id });
 };
 
 // 获取轮次输出文本，切换轮次时用于重建可视区域
@@ -1033,7 +1062,7 @@ const renderRoundSelectOptions = (outputState) => {
   if (!rounds.length) {
     const emptyOption = document.createElement("option");
     emptyOption.value = "";
-    emptyOption.textContent = "暂无轮次";
+    emptyOption.textContent = t("debug.round.empty");
     emptyOption.disabled = true;
     emptyOption.selected = true;
     select.appendChild(emptyOption);
@@ -1160,7 +1189,11 @@ const ensureRoundHeader = (outputState, entry, timestamp) => {
     renderRoundSelectOptions(outputState);
   }
   const timeText = entry.timeText ? `[${entry.timeText}] ` : "";
-  appendRoundText(outputState, entry, `${timeText}第 ${entry.id} 轮\n`);
+  appendRoundText(
+    outputState,
+    entry,
+    t("debug.round.title", { time: timeText, id: entry.id }) + "\n"
+  );
   entry.headerWritten = true;
   entry.section = null;
 };
@@ -1243,12 +1276,12 @@ const appendModelOutputDelta = (data, timestamp) => {
   const entry = ensureRoundEntry(outputState, displayRound, timestamp, { autoSelect: true });
   ensureRoundHeader(outputState, entry, timestamp);
   if (reasoningDelta) {
-    ensureRoundSection(outputState, entry, "思考过程");
+    ensureRoundSection(outputState, entry, t("debug.output.thoughtSection"));
     appendRoundText(outputState, entry, reasoningDelta);
     entry.reasoningStreaming = true;
   }
   if (delta) {
-    ensureRoundSection(outputState, entry, "模型输出");
+    ensureRoundSection(outputState, entry, t("debug.output.answerSection"));
     appendRoundText(outputState, entry, delta, { countContent: true });
     entry.streaming = true;
   }
@@ -1296,7 +1329,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   try {
     payload = JSON.parse(dataText);
   } catch (error) {
-    appendLog(`未能解析事件 JSON: ${dataText}`);
+    appendLog(t("debug.event.parseFailed", { message: dataText }));
     return;
   }
   const eventTimestamp = options.timestamp || payload.timestamp;
@@ -1312,7 +1345,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     // 最终事件里包含的 usage 也要写入事件日志，避免漏看整体用量
     applyTokenUsageSnapshot(usage, { override: true });
     renderDebugStats();
-    const summary = "收到最终回复。";
+    const summary = t("debug.event.final");
     const detail =
       usage && typeof usage === "object"
         ? JSON.stringify({ usage }, null, 2)
@@ -1329,7 +1362,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const errorMessage =
       payload?.data?.message || payload?.message || payload?.data?.detail?.error || "";
     flushPendingRequests(errorMessage, { timestamp: eventTimestamp });
-    appendLog("发生错误。", {
+    appendLog(t("debug.event.error"), {
       detail: JSON.stringify(payload.data || payload, null, 2),
       timestamp: eventTimestamp,
     });
@@ -1345,7 +1378,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const showStageBadge = stage && !["received", "llm_call", "compacting"].includes(stage);
     if (stage === "llm_call") {
       const roundNumber = advanceModelRound(eventTimestamp);
-      summary = `调用模型（第 ${roundNumber} 轮）`;
+      summary = t("debug.event.llmCall", { round: roundNumber });
       if (Number.isFinite(data?.round)) {
         if (data.round !== roundNumber) {
           detailData = { ...data, request_round: data.round, round: roundNumber };
@@ -1357,7 +1390,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
       }
       renderDebugStats();
     }
-    appendLog(summary || "进度更新。", {
+    appendLog(summary || t("debug.event.progress"), {
       stage: showStageBadge ? stage : "",
       detail: JSON.stringify(detailData, null, 2),
       timestamp: eventTimestamp,
@@ -1367,9 +1400,14 @@ const handleEvent = (eventType, dataText, options = {}) => {
 
   if (eventType === "compaction") {
     const data = payload.data || payload;
-    const reason = data?.reason === "history" ? "历史阈值" : "上下文超限";
+    const reason =
+      data?.reason === "history"
+        ? t("debug.compaction.reason.history")
+        : t("debug.compaction.reason.context");
     const status = typeof data?.status === "string" ? data.status : "";
-    const title = status ? `上下文压缩（${reason} / ${status}）` : `上下文压缩（${reason}）`;
+    const title = status
+      ? t("debug.compaction.titleWithStatus", { reason, status })
+      : t("debug.compaction.title", { reason });
     const detail = JSON.stringify(data, null, 2);
     appendLog(title, {
       detail,
@@ -1427,9 +1465,11 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const hasPayload = data && typeof data === "object" && "payload" in data;
     const hasSummary = data && typeof data === "object" && "payload_summary" in data;
     const purpose = typeof data?.purpose === "string" ? data.purpose : "";
-    let title = hasSummary && !hasPayload ? "模型请求摘要" : "模型请求体";
+    let title = hasSummary && !hasPayload
+      ? t("debug.llm.requestSummary")
+      : t("debug.llm.requestPayload");
     if (purpose === "compaction_summary") {
-      title = "上下文压缩请求体";
+      title = t("debug.llm.compactionPayload");
     }
     const detail = JSON.stringify(data, null, 2);
     debugStats.llmRequests += 1;
@@ -1457,7 +1497,9 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "knowledge_request") {
     const data = payload.data || payload;
     const detail = JSON.stringify(data, null, 2);
-    const title = data?.knowledge_base ? `知识库请求体（${data.knowledge_base}）` : "知识库请求体";
+    const title = data?.knowledge_base
+      ? t("debug.knowledge.requestWithBase", { base: data.knowledge_base })
+      : t("debug.knowledge.request");
     debugStats.knowledgeRequests += 1;
     renderDebugStats();
     appendRequestLog(title, detail, { eventType: "knowledge_request", timestamp: eventTimestamp });
@@ -1475,15 +1517,20 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const data = payload.data || payload;
     const attempt = Number.isFinite(data?.attempt) ? data.attempt : 0;
     const maxAttempts = Number.isFinite(data?.max_attempts) ? data.max_attempts : 0;
-    const delayText = Number.isFinite(data?.delay_s) ? `${data.delay_s}s` : "";
+    const delayValue = Number.isFinite(data?.delay_s) ? `${data.delay_s}s` : "";
+    const delayNote = delayValue ? t("debug.streamRetry.delay", { delay: delayValue }) : "";
     const willRetry = data?.will_retry !== false;
-    let summary = "流式重连中";
+    let summary = t("debug.streamRetry.pending");
     if (maxAttempts) {
       summary = willRetry
-        ? `流式重连：${attempt}/${maxAttempts}${delayText ? `（等待 ${delayText}）` : ""}`
-        : `流式重连失败：${attempt}/${maxAttempts}`;
+        ? t("debug.streamRetry.retrying", {
+            attempt,
+            max: maxAttempts,
+            delay: delayNote,
+          })
+        : t("debug.streamRetry.failed", { attempt, max: maxAttempts });
     } else if (!willRetry) {
-      summary = "流式重连失败";
+      summary = t("debug.streamRetry.failedSimple");
     }
     if (data?.reset_output === true) {
       resetRoundOutput(data?.round);
@@ -1528,11 +1575,11 @@ const handleEvent = (eventType, dataText, options = {}) => {
     }
 
     if (hasReasoning && !isReasoningStreaming) {
-      ensureRoundSection(outputState, entry, "思考过程");
+      ensureRoundSection(outputState, entry, t("debug.output.thoughtSection"));
       appendRoundText(outputState, entry, reasoning);
     }
     if (hasContent && !isContentStreaming) {
-      ensureRoundSection(outputState, entry, "模型输出");
+      ensureRoundSection(outputState, entry, t("debug.output.answerSection"));
       appendRoundText(outputState, entry, content, { countContent: true });
     }
 
@@ -1614,7 +1661,7 @@ const fetchDebugSessions = async () => {
     : `${wunderBase}/admin/monitor?active_only=false`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
   return {
@@ -1630,7 +1677,7 @@ const renderDebugHistoryList = (sessions, options = {}) => {
   }
   elements.debugHistoryList.textContent = "";
   if (!Array.isArray(sessions) || sessions.length === 0) {
-    elements.debugHistoryList.textContent = DEBUG_HISTORY_EMPTY_TEXT;
+    elements.debugHistoryList.textContent = t("debug.history.empty");
     return;
   }
   const userId = options.userId || "";
@@ -1644,7 +1691,7 @@ const renderDebugHistoryList = (sessions, options = {}) => {
     }
 
     const title = document.createElement("div");
-    title.textContent = session?.question || "（无问题）";
+    title.textContent = session?.question || t("debug.question.noQuestion");
 
     const metaParts = [];
     metaParts.push(sessionId || "-");
@@ -1661,11 +1708,11 @@ const renderDebugHistoryList = (sessions, options = {}) => {
     item.appendChild(meta);
     item.addEventListener("click", async () => {
       if (!sessionId) {
-        notify("会话编号缺失，无法恢复。", "warn");
+        notify(t("debug.history.missingSessionId"), "warn");
         return;
       }
       if (state.runtime.debugStreaming) {
-        notify("当前正在请求中，请先停止后再恢复历史。", "warn");
+        notify(t("debug.history.restoreBusy"), "warn");
         return;
       }
       if (elements.userId) {
@@ -1684,10 +1731,10 @@ const renderDebugHistoryList = (sessions, options = {}) => {
       closeDebugHistoryModal();
       const status = await restoreDebugPanel({ refresh: true, syncInputs: false });
       if (!status) {
-        notify("历史会话恢复失败，请稍后重试。", "error");
+        notify(t("debug.history.restoreFailed"), "error");
         return;
       }
-      notify("已恢复历史会话。", "success");
+      notify(t("debug.history.restoreSuccess"), "success");
     });
     elements.debugHistoryList.appendChild(item);
   });
@@ -1699,21 +1746,23 @@ const updateDebugHistoryMeta = (sessions, userId) => {
   }
   const count = Array.isArray(sessions) ? sessions.length : 0;
   elements.debugHistoryMeta.textContent = userId
-    ? `用户 ${userId} · 共 ${count} 条`
-    : `全部会话 · 共 ${count} 条`;
+    ? t("debug.history.metaWithUser", { userId, count })
+    : t("debug.history.metaAll", { count });
 };
 
 const loadDebugHistory = async () => {
   if (!elements.debugHistoryList) {
     return;
   }
-  elements.debugHistoryList.textContent = DEBUG_HISTORY_LOADING_TEXT;
+  elements.debugHistoryList.textContent = t("common.loading");
   try {
     const { sessions, userId } = await fetchDebugSessions();
     updateDebugHistoryMeta(sessions, userId);
     renderDebugHistoryList(sessions, { userId });
   } catch (error) {
-    elements.debugHistoryList.textContent = `加载失败：${error.message}`;
+    elements.debugHistoryList.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
   }
 };
 
@@ -1735,7 +1784,7 @@ const fetchMonitorDetail = async (sessionId) => {
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
-    const error = new Error(`请求失败：${response.status}`);
+    const error = new Error(t("common.requestFailed", { status: response.status }));
     error.status = response.status;
     throw error;
   }
@@ -1802,7 +1851,7 @@ export const restoreDebugPanel = async (options = {}) => {
       writeDebugState({ sessionId: "" });
       state.runtime.debugSessionId = "";
     }
-    appendLog(`工具列表加载失败：${error.message}`);
+    appendLog(t("debug.tools.loadFailed", { message: error.message }));
     return null;
   }
 };
@@ -1860,10 +1909,10 @@ const sendStreamRequest = async (endpoint, payload) => {
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(`请求失败：${response.status}`);
+      throw new Error(t("common.requestFailed", { status: response.status }));
     }
 
-    appendLog("SSE 连接已建立，开始接收事件..");
+    appendLog(t("debug.sse.connected"));
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
@@ -1886,7 +1935,7 @@ const sendStreamRequest = async (endpoint, payload) => {
       });
     }
 
-    appendLog("SSE 连接已结束。");
+    appendLog(t("debug.sse.closed"));
   } finally {
     state.runtime.debugStreaming = false;
     updateDebugLogWaiting();
@@ -1916,7 +1965,7 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   });
 
   if (!response.ok) {
-    throw new Error(`请求失败：${response.status}`);
+    throw new Error(t("common.requestFailed", { status: response.status }));
   }
 
   const result = await response.json();
@@ -1929,18 +1978,18 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   markRequestEnd();
   applyTokenUsageSnapshot(result?.usage, { override: true });
   renderDebugStats();
-  appendLog(`非流式响应：${JSON.stringify(result)}`);
+  appendLog(t("debug.nonStream.response", { payload: JSON.stringify(result) }));
 };
 
 // 统一入口：根据是否开启 SSE 选择请求方式
 const handleSend = async () => {
   if (!elements.question.value.trim()) {
-    appendLog("请先填写 question。");
+    appendLog(t("debug.question.empty"));
     return;
   }
   if (debugAttachmentBusy > 0) {
-    appendLog("附件解析中，请稍后再发送。");
-    notify("附件解析中，请稍后再发送。", "warn");
+    appendLog(t("debug.attachments.busy"));
+    notify(t("debug.attachments.busy"), "warn");
     return;
   }
 
@@ -1949,7 +1998,7 @@ const handleSend = async () => {
     try {
       await ensureToolSelectionLoaded();
     } catch (error) {
-      appendLog(`工具列表加载失败：${error.message}`);
+      appendLog(t("debug.tools.loadFailed", { message: error.message }));
       applyPromptToolError(error.message);
     }
     payload = buildPayload();
@@ -2007,7 +2056,7 @@ const handleSend = async () => {
       await sendNonStreamRequest(endpoint, payload);
     }
   } catch (error) {
-    appendLog(`请求异常：${error.message}`);
+    appendLog(t("debug.request.error", { message: error.message }));
   } finally {
     updateDebugLogWaiting();
   }
@@ -2022,28 +2071,28 @@ const requestCancelSession = async (sessionId) => {
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/cancel`;
   const response = await fetch(endpoint, { method: "POST" });
   if (!response.ok) {
-    throw new Error(`终止请求失败：${response.status}`);
+    throw new Error(t("debug.stopFailed", { status: response.status }));
   }
   const result = await response.json();
-  appendLog(result.message || "已请求终止。");
+  appendLog(result.message || t("debug.stopRequested"));
 };
 
 // 停止流式请求：前端中断连接并通知后端取消执行
 const handleStop = async () => {
   if (state.runtime.activeController) {
     state.runtime.activeController.abort();
-    appendLog("已请求停止 SSE 流。");
+    appendLog(t("debug.sse.stopRequested"));
   }
   const sessionId = String(state.runtime.debugSessionId || elements.sessionId?.value || "").trim();
   if (!sessionId) {
-    appendLog("未找到会话 ID，无法请求终止。");
+    appendLog(t("debug.stopMissingSession"));
     return;
   }
   try {
     await requestCancelSession(sessionId);
   } catch (error) {
-    appendLog(`终止请求失败：${error.message}`);
-    notify(`终止请求失败：${error.message}`, "error");
+    appendLog(t("debug.stopFailedWithMessage", { message: error.message }));
+    notify(t("debug.stopFailedWithMessage", { message: error.message }), "error");
   }
 };
 
@@ -2113,7 +2162,7 @@ export const initDebugPanel = () => {
   resetDebugStats();
   applyStoredDebugInputs();
   ensureLlmConfigLoaded().catch((error) => {
-    appendLog(`模型配置加载失败：${error.message}`);
+    appendLog(t("debug.llm.loadFailed", { message: error.message }));
   });
 
   let syncTimer = null;
@@ -2172,7 +2221,7 @@ export const initDebugPanel = () => {
         try {
           await handleAttachmentSelection(file);
         } catch (error) {
-          notify(`附件处理失败：${error.message}`, "error");
+          notify(t("debug.attachments.failed", { message: error.message }), "error");
         }
       }
     });
@@ -2225,5 +2274,3 @@ export const initDebugPanel = () => {
   renderAttachmentList();
   renderRoundSelectOptions(getModelOutputState());
 };
-
-

@@ -11,6 +11,7 @@ from app.api.wunder import router as wunder_router
 from app.core.auth import extract_api_key, normalize_api_key
 from app.core.config import get_config
 from app.core.http_client import close_async_client
+from app.core.i18n import resolve_language, reset_language, set_language, t
 from app.core.logging import setup_logging
 from app.mcp.server import create_wunder_mcp_app
 from app.monitor.registry import set_app_start_time, warm_monitor_history
@@ -98,11 +99,34 @@ def create_app() -> FastAPI:
             return await call_next(request)
         expected_api_key = getattr(request.app.state, "api_key", "")
         if not expected_api_key:
-            raise HTTPException(status_code=500, detail="API key 未配置")
+            raise HTTPException(
+                status_code=500, detail={"message": t("error.api_key_missing")}
+            )
         provided_api_key = extract_api_key(request.headers)
         if provided_api_key != expected_api_key:
-            raise HTTPException(status_code=401, detail="API key 无效")
+            raise HTTPException(
+                status_code=401, detail={"message": t("error.api_key_invalid")}
+            )
         return await call_next(request)
+
+    @app.middleware("http")
+    async def language_context(request: Request, call_next):
+        """为每个请求设置语言上下文，并写回响应头。"""
+        language = resolve_language(
+            [
+                request.headers.get("X-Wunder-Language"),
+                request.headers.get("Accept-Language"),
+                request.query_params.get("lang"),
+                request.query_params.get("language"),
+            ]
+        )
+        token = set_language(language)
+        try:
+            response = await call_next(request)
+        finally:
+            reset_language(token)
+        response.headers.setdefault("Content-Language", language)
+        return response
     # 调试期默认开放跨域，避免前端测试被浏览器拦截。
     app.add_middleware(
         CORSMiddleware,

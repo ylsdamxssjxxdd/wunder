@@ -1,4 +1,5 @@
 ﻿import { elements } from "./elements.js?v=20251231-03";
+import { getCurrentLanguage, t } from "./i18n.js";
 
 // 控制日志数量上限，避免详情节点堆积导致页面卡顿
 const MAX_LOG_ITEMS = 300;
@@ -31,23 +32,23 @@ const buildDetailText = (detail, fallback) => {
 const resolveLogTimestamp = (value, fallbackMs) => {
   const fallbackTime = Number.isFinite(fallbackMs) ? new Date(fallbackMs) : new Date();
   if (!value) {
-    return fallbackTime.toLocaleTimeString();
+    return fallbackTime.toLocaleTimeString(getCurrentLanguage());
   }
   if (value instanceof Date) {
-    return value.toLocaleTimeString();
+    return value.toLocaleTimeString(getCurrentLanguage());
   }
   if (typeof value === "number") {
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? fallbackTime.toLocaleTimeString() : parsed.toLocaleTimeString();
+    return Number.isNaN(parsed.getTime()) ? fallbackTime.toLocaleTimeString(getCurrentLanguage()) : parsed.toLocaleTimeString(getCurrentLanguage());
   }
   if (typeof value === "string") {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleTimeString();
+      return parsed.toLocaleTimeString(getCurrentLanguage());
     }
     return value;
   }
-  return fallbackTime.toLocaleTimeString();
+  return fallbackTime.toLocaleTimeString(getCurrentLanguage());
 };
 
 // 解析日志时间为毫秒时间戳，便于统计相邻事件间隔
@@ -184,7 +185,7 @@ const appendLogItem = (container, title, options = {}) => {
     durationNode.className = "log-duration";
     const durationLabel = document.createElement("span");
     durationLabel.className = "log-duration-label";
-    durationLabel.textContent = "耗时";
+    durationLabel.textContent = t("log.duration");
     const durationValue = document.createElement("span");
     durationValue.className = "log-duration-value";
     durationValue.textContent = durationText;

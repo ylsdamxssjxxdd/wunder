@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 from app.core.config import LLMConfig, WunderConfig, resolve_llm_config
+from app.core.i18n import t
 from app.tools.catalog import build_builtin_tool_handlers
 from app.tools.registry import ToolRegistry
 from app.tools.specs import build_eva_tool_specs
@@ -44,7 +45,9 @@ def build_tool_registry(
             """触发知识库检索并返回命中结果。"""
             query = str(args.get("query", "")).strip()
             if not query:
-                return ToolResult(ok=False, data={}, error="查询内容不能为空。")
+                return ToolResult(
+                    ok=False, data={}, error=t("error.knowledge_query_required")
+                )
             limit = args.get("limit")
 
             def _log_request(payload: Dict[str, Any]) -> None:
