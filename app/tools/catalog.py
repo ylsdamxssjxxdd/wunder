@@ -25,11 +25,12 @@ class ToolDescriptor:
     runtime: bool = False
     sandbox: bool = False
     mutates_workspace: bool = False
+    aliases: tuple[str, ...] = ()
 
-    def to_spec(self) -> ToolSpec:
+    def to_spec(self, name_override: Optional[str] = None) -> ToolSpec:
         """转换为提示词注入使用的工具规格对象。"""
         return ToolSpec(
-            name=self.name,
+            name=name_override or self.name,
             description=self.description,
             args_schema=self.args_schema,
         )
@@ -60,6 +61,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             },
             handler=None,
             runtime=False,
+            aliases=("final_response",),
         ),
         ToolDescriptor(
             name="执行命令",
@@ -90,6 +92,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=True,
             sandbox=True,
             mutates_workspace=True,
+            aliases=("execute_command",),
         ),
         ToolDescriptor(
             name="ptc",
@@ -116,6 +119,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=True,
             sandbox=True,
             mutates_workspace=True,
+            aliases=("programmatic_tool_call",),
         ),
         ToolDescriptor(
             name="列出文件",
@@ -132,6 +136,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             handler=builtin.list_files,
             runtime=True,
             sandbox=False,
+            aliases=("list_files",),
         ),
         ToolDescriptor(
             name="搜索内容",
@@ -157,6 +162,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             handler=builtin.search_content,
             runtime=True,
             sandbox=False,
+            aliases=("search_content",),
         ),
         ToolDescriptor(
             name="读取文件",
@@ -205,6 +211,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             handler=builtin.read_file,
             runtime=True,
             sandbox=False,
+            aliases=("read_file",),
         ),
         ToolDescriptor(
             name="写入文件",
@@ -227,6 +234,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=True,
             sandbox=False,
             mutates_workspace=True,
+            aliases=("write_file",),
         ),
         ToolDescriptor(
             name="替换文本",
@@ -258,6 +266,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=True,
             sandbox=False,
             mutates_workspace=True,
+            aliases=("replace_text",),
         ),
         ToolDescriptor(
             name="编辑文件",
@@ -315,6 +324,7 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=True,
             sandbox=False,
             mutates_workspace=True,
+            aliases=("edit_file",),
         ),
     )
 
@@ -337,6 +347,45 @@ def list_sandbox_tool_names() -> List[str]:
         for descriptor in list_builtin_tool_descriptors()
         if descriptor.sandbox
     ]
+
+
+@lru_cache(maxsize=1)
+def build_builtin_tool_aliases() -> Dict[str, tuple[str, ...]]:
+    """构建内置工具别名列表映射，供英文调用与校验复用。"""
+    output: Dict[str, tuple[str, ...]] = {}
+    for descriptor in list_builtin_tool_descriptors():
+        aliases: List[str] = []
+        for raw_alias in descriptor.aliases:
+            alias = str(raw_alias or "").strip()
+            if not alias or alias == descriptor.name:
+                continue
+            if alias in aliases:
+                continue
+            aliases.append(alias)
+        output[descriptor.name] = tuple(aliases)
+    return output
+
+
+@lru_cache(maxsize=1)
+def build_builtin_tool_alias_map() -> Dict[str, str]:
+    """构建内置工具别名到标准名称的映射，便于统一解析。"""
+    alias_map: Dict[str, str] = {}
+    aliases_by_name = build_builtin_tool_aliases()
+    for canonical_name, aliases in aliases_by_name.items():
+        alias_map.setdefault(canonical_name, canonical_name)
+        for alias in aliases:
+            if alias in alias_map:
+                continue
+            alias_map[alias] = canonical_name
+    return alias_map
+
+
+def resolve_builtin_tool_name(raw_name: str) -> str:
+    """解析内置工具别名为标准名称，未命中则原样返回。"""
+    name = str(raw_name or "").strip()
+    if not name:
+        return ""
+    return build_builtin_tool_alias_map().get(name, name)
 
 
 def build_builtin_tool_specs() -> Dict[str, ToolSpec]:
@@ -369,7 +418,8 @@ def build_sandbox_tool_handlers() -> Dict[str, ToolHandler]:
 
 def is_workspace_mutation_tool(tool_name: str) -> bool:
     """判断工具是否可能改写工作区内容，用于刷新目录树缓存。"""
+    canonical_name = resolve_builtin_tool_name(tool_name)
     for descriptor in list_builtin_tool_descriptors():
-        if descriptor.name == tool_name:
+        if descriptor.name == canonical_name:
             return descriptor.mutates_workspace
     return False

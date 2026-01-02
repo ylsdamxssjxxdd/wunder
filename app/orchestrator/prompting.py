@@ -8,8 +8,9 @@ from app.tools.availability import collect_available_tool_names, collect_prompt_
 from app.orchestrator.context import RequestContext, UserToolBindings
 from app.orchestrator.prompt_builder import build_system_prompt, read_prompt_template
 from app.skills.registry import SkillSpec
+from app.tools.catalog import build_builtin_tool_alias_map, build_builtin_tool_aliases
 from app.tools.registry import ToolSpec
-from app.core.i18n import t
+from app.core.i18n import get_language, t
 
 
 class PromptComposer:
@@ -36,9 +37,26 @@ class PromptComposer:
             return []
         normalized: List[str] = []
         seen: set[str] = set()
+        # 内置工具需要同时支持中文名与英文别名，统一在此处展开便于后续过滤。
+        alias_map = build_builtin_tool_alias_map()
+        aliases_by_name = build_builtin_tool_aliases()
         for raw in tool_names:
             name = str(raw).strip()
             if not name or name in seen:
+                continue
+            canonical_name = alias_map.get(name)
+            if canonical_name:
+                if canonical_name not in seen:
+                    normalized.append(canonical_name)
+                    seen.add(canonical_name)
+                for alias in aliases_by_name.get(canonical_name, ()):
+                    if alias in seen:
+                        continue
+                    normalized.append(alias)
+                    seen.add(alias)
+                if name not in seen:
+                    normalized.append(name)
+                    seen.add(name)
                 continue
             normalized.append(name)
             seen.add(name)
@@ -129,6 +147,7 @@ class PromptComposer:
         tool_key: str,
         user_tool_version: float,
         shared_tool_version: float,
+        language: str,
     ) -> str:
         """生成系统提示词缓存键，避免重复构建。"""
         if overrides:
@@ -140,7 +159,8 @@ class PromptComposer:
             overrides_key = ""
         return (
             f"{user_id}|{self._config_version}|{workspace_version}|{workdir}|"
-            f"{overrides_key}|{tool_key}|{user_tool_version}|{shared_tool_version}"
+            f"{overrides_key}|{tool_key}|{user_tool_version}|{shared_tool_version}|"
+            f"{language}"
         )
 
     async def build_system_prompt_cached(
@@ -154,6 +174,7 @@ class PromptComposer:
     ) -> str:
         """带缓存地构建系统提示词，降低重复计算开销。"""
         tool_key = ",".join(sorted(allowed_tool_names))
+        language = get_language()
         workspace_version = ctx.workspace_manager.get_tree_version(user_id)
         user_tool_version = user_tool_bindings.user_version if user_tool_bindings else 0.0
         shared_tool_version = user_tool_bindings.shared_version if user_tool_bindings else 0.0
@@ -165,6 +186,7 @@ class PromptComposer:
             tool_key,
             user_tool_version,
             shared_tool_version,
+            language,
         )
         cached = self._cache.get(cache_key)
         if cached and time.time() - cached.get("timestamp", 0) < self._cache_ttl_s:
@@ -200,6 +222,7 @@ class PromptComposer:
             tool_key,
             user_tool_version,
             shared_tool_version,
+            language,
         )
         prompt = self._build_system_prompt(
             workdir,

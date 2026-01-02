@@ -19,7 +19,7 @@ import {
 } from "./modules/tools.js?v=20251231-01";
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260101-02";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20251231-01";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260102-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20251231-01";
 import {
   initMemoryPanel,
@@ -253,6 +253,36 @@ const bindIntroPanel = () => {
   });
 };
 
+const bindLanguageRefresh = () => {
+  window.addEventListener("wunder:language-changed", () => {
+    state.runtime.promptNeedsRefresh = true;
+    loadAvailableTools()
+      .then(() => {
+        if (state.runtime.activePanel === "prompt") {
+          loadSystemPrompt();
+        }
+      })
+      .catch((error) => {
+        applyPromptToolError(error.message);
+      });
+
+    if (state.panelLoaded.builtin) {
+      loadBuiltinTools().catch((error) => {
+        elements.builtinToolsList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
+      });
+    }
+
+    if (state.panelLoaded.monitor || state.panelLoaded.users) {
+      const mode = state.runtime.activePanel === "users" ? "sessions" : "full";
+      loadMonitorData({ mode }).catch((error) => {
+        appendLog(t("monitor.refreshFailed", { message: error.message }));
+      });
+    }
+  });
+};
+
 // 绑定基础输入与全局行为
 const bindGlobalInputs = () => {
   // API Key 显示/隐藏切换，便于确认输入是否正确。
@@ -353,6 +383,7 @@ const bootstrap = async () => {
   initSettingsPanel();
   bindNavigation();
   bindIntroPanel();
+  bindLanguageRefresh();
   bindGlobalInputs();
   const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
   switchPanel(initialPanel);

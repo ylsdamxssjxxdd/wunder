@@ -6,7 +6,7 @@ Each tool call must follow these rules:
 1. Wrap the call in a <tool_call>...</tool_call> block.
 2. Output valid JSON with only two keys: "name" (string) and "arguments" (object). Example:
 <tool_call>
-{"name":"最终回复","arguments":{"content":"Task is complete. How else can I help?"}}
+{"name":"final_response","arguments":{"content":"Task is complete. How else can I help?"}}
 </tool_call>
 
 Tool results will be returned as a user message prefixed with "tool_response: ".

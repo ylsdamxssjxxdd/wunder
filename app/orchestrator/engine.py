@@ -25,6 +25,7 @@ from app.core.token_utils import (
     trim_messages_to_budget,
 )
 from app.tools.availability import collect_available_tool_names
+from app.tools.catalog import resolve_builtin_tool_name
 from app.llm.base import LLMResponse, LLMStreamChunk, LLMUnavailableError
 from app.llm.factory import build_llm_client as _build_llm_client
 from app.memory.workspace import WorkspaceContext, WorkspaceManager
@@ -761,6 +762,8 @@ class WunderOrchestrator:
                     args = call.get("arguments", {})
                     if not name:
                         continue
+                    # 兼容内置工具英文别名，确保允许名单与执行入口一致。
+                    name = resolve_builtin_tool_name(name)
                     # 工具调用前检查取消状态，避免继续执行耗时步骤
                     self._ensure_not_cancelled(session_id)
                     if name == "最终回复":

@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from app.api.deps import get_config_path, get_orchestrator, get_orchestrator_if_ready
 from app.api.responses import json_response
 from app.core.config import KnowledgeBaseConfig, WunderConfig, load_config
-from app.core.i18n import t
+from app.core.i18n import get_language, t
 from app.core.config_store import (
     update_builtin_tools,
     update_knowledge_config,
@@ -75,6 +75,7 @@ from app.schemas.wunder import (
 from app.services.config_service import apply_config_update
 from app.services.mcp_service import fetch_mcp_tools
 from app.skills.loader import load_skills
+from app.tools.catalog import build_builtin_tool_aliases, resolve_builtin_tool_name
 from app.tools.constants import BUILTIN_TOOL_NAMES
 from app.tools.specs import build_eva_tool_specs
 
@@ -115,6 +116,106 @@ def _resolve_knowledge_root(base: KnowledgeBaseConfig, *, create: bool = False) 
             detail={"message": t("error.knowledge_root_not_dir")},
         )
     return root
+
+
+def _build_builtin_tools_payload(config: WunderConfig) -> tuple[list[str], list[dict]]:
+    """按当前语言构建内置工具展示清单与启用列表。"""
+    enabled = list(config.tools.builtin.enabled or [])
+    enabled_set = set(enabled)
+    specs = build_eva_tool_specs()
+    aliases_by_name = build_builtin_tool_aliases()
+    language = get_language()
+    prefer_alias = language.startswith("en")
+    tools = []
+    for name in BUILTIN_TOOL_NAMES:
+        spec = specs.get(name)
+        if not spec:
+            continue
+        display_name = name
+        if prefer_alias:
+            aliases = aliases_by_name.get(name, ())
+            if aliases:
+                display_name = aliases[0]
+        canonical_name = resolve_builtin_tool_name(display_name) or name
+        tools.append(
+            {
+                "name": display_name,
+                "description": spec.description,
+                "input_schema": spec.args_schema,
+                "enabled": canonical_name in enabled_set,
+            }
+        )
+    enabled_display = [tool["name"] for tool in tools if tool.get("enabled")]
+    return enabled_display, tools
+
+
+def _build_builtin_tool_display_map() -> dict[str, str]:
+    """按当前语言输出内置工具的展示名称映射。"""
+    aliases_by_name = build_builtin_tool_aliases()
+    prefer_alias = get_language().startswith("en")
+    display_map: dict[str, str] = {}
+    for name in BUILTIN_TOOL_NAMES:
+        display_name = name
+        if prefer_alias:
+            aliases = aliases_by_name.get(name, ())
+            if aliases:
+                display_name = aliases[0]
+        display_map[name] = display_name
+    return display_map
+
+
+def _normalize_tool_stats(tool_stats: list[dict]) -> list[dict]:
+    """合并内置工具别名统计并按当前语言返回展示名称。"""
+    display_map = _build_builtin_tool_display_map()
+    merged: dict[str, int] = {}
+    for item in tool_stats or []:
+        raw_name = str(item.get("tool") or item.get("name") or "").strip()
+        if not raw_name:
+            continue
+        try:
+            calls = int(item.get("calls") or item.get("count") or item.get("tool_calls") or 0)
+        except (TypeError, ValueError):
+            calls = 0
+        canonical = resolve_builtin_tool_name(raw_name)
+        key = canonical if canonical in BUILTIN_TOOL_NAMES else raw_name
+        merged[key] = merged.get(key, 0) + max(0, calls)
+    if not merged:
+        return []
+    return [
+        {"tool": display_map.get(name, name), "calls": count}
+        for name, count in sorted(merged.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+
+def _merge_tool_session_usage(records: list[dict]) -> list[dict]:
+    """合并同一会话的工具调用统计，避免别名拆分。"""
+    merged: dict[tuple[str, str], dict] = {}
+    for record in records or []:
+        session_id = str(record.get("session_id", "")).strip()
+        if not session_id:
+            continue
+        user_id = str(record.get("user_id", "")).strip()
+        key = (session_id, user_id)
+        entry = merged.get(key)
+        if not entry:
+            entry = {
+                "session_id": session_id,
+                "user_id": user_id,
+                "tool_calls": 0,
+                "last_time": 0,
+            }
+            merged[key] = entry
+        if not entry.get("user_id") and user_id:
+            entry["user_id"] = user_id
+        try:
+            calls = int(record.get("tool_calls", 0) or 0)
+        except (TypeError, ValueError):
+            calls = 0
+        entry["tool_calls"] = int(entry.get("tool_calls", 0) or 0) + max(0, calls)
+        last_time = record.get("last_time") or 0
+        if isinstance(last_time, (int, float)) and last_time > float(entry.get("last_time", 0) or 0):
+            entry["last_time"] = float(last_time)
+    return list(merged.values())
 
 
 def _resolve_knowledge_path(root: Path, relative_path: str) -> Path:
@@ -535,22 +636,7 @@ async def wunder_skills_upload(file: UploadFile = File(...)):
 async def wunder_builtin_tools():
     """获取内置工具启用列表。"""
     config = load_config(get_config_path())
-    enabled = list(config.tools.builtin.enabled or [])
-    enabled_set = set(enabled)
-    specs = build_eva_tool_specs()
-    tools = []
-    for name in BUILTIN_TOOL_NAMES:
-        spec = specs.get(name)
-        if not spec:
-            continue
-        tools.append(
-            {
-                "name": spec.name,
-                "description": spec.description,
-                "input_schema": spec.args_schema,
-                "enabled": name in enabled_set,
-            }
-        )
+    enabled, tools = _build_builtin_tools_payload(config)
     return json_response(BuiltinToolsResponse(enabled=enabled, tools=tools))
 
 
@@ -566,22 +652,7 @@ async def wunder_builtin_tools_update(request: BuiltinToolsUpdateRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
-    enabled = list(updated.tools.builtin.enabled or [])
-    enabled_set = set(enabled)
-    specs = build_eva_tool_specs()
-    tools = []
-    for name in BUILTIN_TOOL_NAMES:
-        spec = specs.get(name)
-        if not spec:
-            continue
-        tools.append(
-            {
-                "name": spec.name,
-                "description": spec.description,
-                "input_schema": spec.args_schema,
-                "enabled": name in enabled_set,
-            }
-        )
+    enabled, tools = _build_builtin_tools_payload(updated)
     return json_response(BuiltinToolsResponse(enabled=enabled, tools=tools))
 
 
@@ -828,8 +899,8 @@ async def wunder_monitor(
     orchestrator = get_orchestrator_if_ready()
     tool_stats = []
     if orchestrator is not None:
-        tool_stats = orchestrator.workspace_manager.get_tool_usage_stats(
-            since_time, until_time
+        tool_stats = _normalize_tool_stats(
+            orchestrator.workspace_manager.get_tool_usage_stats(since_time, until_time)
         )
     return json_response(
         MonitorListResponse(
@@ -879,9 +950,28 @@ async def wunder_monitor_tool_usage(
     orchestrator = get_orchestrator_if_ready()
     if orchestrator is None:
         return json_response(MonitorToolUsageResponse(tool=cleaned, sessions=[]))
-    usage_records = orchestrator.workspace_manager.get_tool_session_usage(
-        cleaned, since_time, until_time
-    )
+    canonical_name = resolve_builtin_tool_name(cleaned)
+    display_map = _build_builtin_tool_display_map()
+    if canonical_name in BUILTIN_TOOL_NAMES:
+        aliases = build_builtin_tool_aliases().get(canonical_name, ())
+        names = [canonical_name]
+        for alias in aliases:
+            if alias and alias not in names:
+                names.append(alias)
+        usage_records: list[dict] = []
+        for name in names:
+            usage_records.extend(
+                orchestrator.workspace_manager.get_tool_session_usage(
+                    name, since_time, until_time
+                )
+            )
+        usage_records = _merge_tool_session_usage(usage_records)
+        display_name = display_map.get(canonical_name, canonical_name)
+    else:
+        usage_records = orchestrator.workspace_manager.get_tool_session_usage(
+            cleaned, since_time, until_time
+        )
+        display_name = cleaned
     session_map = {
         session.get("session_id", ""): session
         for session in monitor.list_sessions(active_only=False)
@@ -914,7 +1004,7 @@ async def wunder_monitor_tool_usage(
             }
         )
 
-    return json_response(MonitorToolUsageResponse(tool=cleaned, sessions=sessions))
+    return json_response(MonitorToolUsageResponse(tool=display_name, sessions=sessions))
 
 
 @router.get("/wunder/admin/monitor/{session_id}", response_model=MonitorDetailResponse)

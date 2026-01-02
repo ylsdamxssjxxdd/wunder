@@ -94,6 +94,7 @@ const ensureMonitorState = () => {
       toolStats: [],
       availableTools: [],
       availableToolsUpdatedAt: 0,
+      availableToolsLanguage: "",
       tokenZoomLocked: false,
       tokenZoomInitialized: false,
       userFilter: "",
@@ -128,6 +129,9 @@ const ensureMonitorState = () => {
   }
   if (!Number.isFinite(state.monitor.availableToolsUpdatedAt)) {
     state.monitor.availableToolsUpdatedAt = 0;
+  }
+  if (typeof state.monitor.availableToolsLanguage !== "string") {
+    state.monitor.availableToolsLanguage = "";
   }
   if (!Array.isArray(state.monitor.sessions)) {
     state.monitor.sessions = [];
@@ -419,7 +423,8 @@ const handleStatusChartClick = (params) => {
   if (!label || label === STATUS_CHART_EMPTY_NAME) {
     return;
   }
-  if (!STATUS_LABEL_TO_KEY[label]) {
+  const statusKey = getStatusLabelToKey()[label];
+  if (!statusKey) {
     return;
   }
   openMonitorStatusModal(label);
@@ -644,8 +649,11 @@ const normalizeAvailableTools = (payload) => {
 const loadAvailableTools = async (options = {}) => {
   const { force = false } = options;
   const now = Date.now();
+  const language = getCurrentLanguage();
+  const languageChanged = state.monitor.availableToolsLanguage !== language;
   if (
     !force &&
+    !languageChanged &&
     state.monitor.availableTools.length &&
     now - state.monitor.availableToolsUpdatedAt < TOOL_LIST_CACHE_MS
   ) {
@@ -660,6 +668,7 @@ const loadAvailableTools = async (options = {}) => {
   const result = await response.json();
   state.monitor.availableTools = normalizeAvailableTools(result);
   state.monitor.availableToolsUpdatedAt = now;
+  state.monitor.availableToolsLanguage = language;
   return state.monitor.availableTools;
 };
 

@@ -6,6 +6,7 @@ from typing import List
 
 from app.core.i18n import get_language, t
 from app.memory.workspace import build_workspace_tree
+from app.tools.catalog import resolve_builtin_tool_name
 from app.tools.registry import ToolSpec
 
 
@@ -106,7 +107,7 @@ def build_system_prompt(
         return base_prompt.strip() + "\n\n" + engineer_info.strip()
 
     tools_text = "\n".join([spec.to_prompt_text() for spec in tools])
-    include_ptc = any(spec.name == "ptc" for spec in tools)
+    include_ptc = any(resolve_builtin_tool_name(spec.name) == "ptc" for spec in tools)
     extra_path = Path(__file__).resolve().parent.parent / "prompts" / "extra_prompt_template.txt"
     extra_template = _read_prompt_file(extra_path)
     extra_prompt = _render_template(

@@ -6,7 +6,7 @@ import {
 } from "../app.config.js";
 import { elements } from "./elements.js?v=20251231-03";
 import { state } from "./state.js";
-import { toggleMonitorPolling } from "./monitor.js?v=20251231-01";
+import { toggleMonitorPolling } from "./monitor.js?v=20260102-01";
 import { notify } from "./notify.js";
 import {
   getLanguageLabel,

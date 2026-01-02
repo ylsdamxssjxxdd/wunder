@@ -33,7 +33,7 @@
 - 入参（JSON）：
   - `user_id`：字符串，用户唯一标识
   - `session_id`：字符串，可选，会话标识
-  - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称
+  - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称（内置工具支持英文别名）
   - `config_overrides`：对象，可选，用于临时覆盖配置
 - 返回（JSON）：
   - `prompt`：字符串，当前系统提示词
@@ -54,6 +54,7 @@
   - `extra_prompt`：附加提示词文本（与用户自建工具配置关联）
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 

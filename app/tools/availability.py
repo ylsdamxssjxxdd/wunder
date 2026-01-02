@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from app.core.config import WunderConfig
+from app.core.i18n import get_language
 from app.knowledge.service import build_knowledge_tool_specs, get_knowledge_tool_names
 from app.skills.registry import SkillSpec
+from app.tools.catalog import build_builtin_tool_aliases
 from app.tools.constants import BUILTIN_TOOL_NAMES
 from app.tools.registry import ToolSpec
 from app.tools.specs import build_eva_tool_specs
@@ -78,14 +80,40 @@ def build_enabled_builtin_specs(
     specs = build_eva_tool_specs()
     enabled = set(config.tools.builtin.enabled or [])
     output: List[ToolSpec] = []
+    # 内置工具支持英文别名，按语言选择展示名称。
+    aliases_by_name = build_builtin_tool_aliases()
+    language = get_language()
+    prefer_alias = language.startswith("en")
     for name in BUILTIN_TOOL_NAMES:
         if name not in enabled:
             continue
         if name not in specs:
             continue
-        if allowed_names is not None and name not in allowed_names:
+        aliases = aliases_by_name.get(name, ())
+        candidates: List[str] = []
+        if prefer_alias and aliases:
+            candidates.extend(aliases)
+        candidates.append(name)
+        selected_name = ""
+        if allowed_names is None:
+            selected_name = candidates[0]
+        else:
+            for candidate in candidates:
+                if candidate in allowed_names:
+                    selected_name = candidate
+                    break
+        if not selected_name:
             continue
-        output.append(specs[name])
+        if selected_name == name:
+            output.append(specs[name])
+        else:
+            output.append(
+                ToolSpec(
+                    name=selected_name,
+                    description=specs[name].description,
+                    args_schema=specs[name].args_schema,
+                )
+            )
     return output
 
 
@@ -150,7 +178,8 @@ def collect_available_tool_names(
 ) -> Set[str]:
     """汇总当前可用的工具名称集合，统一内置/MCP/技能/知识库/自建工具策略。"""
     names: Set[str] = set()
-    names.update(build_enabled_builtin_spec_map(config).keys())
+    enabled_builtin = set(build_enabled_builtin_spec_map(config).keys())
+    names.update(enabled_builtin)
     names.update(build_mcp_tool_spec_map(config).keys())
 
     skill_names = {spec.name for spec in skill_specs}
@@ -170,6 +199,13 @@ def collect_available_tool_names(
                     if getattr(spec, "name", "")
                 }
             )
+    # 内置工具别名仅在未与其他工具名冲突时加入可用集合。
+    aliases_by_name = build_builtin_tool_aliases()
+    for canonical_name in enabled_builtin:
+        for alias in aliases_by_name.get(canonical_name, ()):
+            if alias in names:
+                continue
+            names.add(alias)
     return names
 
 

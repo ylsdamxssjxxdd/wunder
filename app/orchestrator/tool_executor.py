@@ -10,7 +10,7 @@ from app.orchestrator.context import RequestContext, UserToolBindings
 from app.orchestrator.user_tools import UserToolManager
 from app.sandbox.client import SandboxClient, SandboxClientError
 from app.schemas.wunder import StreamEvent
-from app.tools.catalog import is_workspace_mutation_tool
+from app.tools.catalog import is_workspace_mutation_tool, resolve_builtin_tool_name
 from app.tools.constants import SANDBOX_TOOL_NAMES
 from app.tools.mcp import MCPClient
 from app.tools.types import ToolContext, ToolResult
@@ -466,6 +466,11 @@ class ToolExecutor:
                         error=t("tool.invoke.mcp_call_failed", detail=str(exc)),
                     )
                 )
+
+        # 内置工具支持英文别名，执行前统一转为标准名称。
+        resolved_name = resolve_builtin_tool_name(name)
+        if resolved_name:
+            name = resolved_name
 
         if (
             str(ctx.config.sandbox.mode).lower() == "sandbox"

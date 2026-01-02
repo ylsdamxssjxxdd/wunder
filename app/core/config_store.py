@@ -7,6 +7,7 @@ import yaml
 
 from app.core.config import WunderConfig, get_config, load_config, resolve_override_config_path
 from app.core.i18n import t
+from app.tools.catalog import resolve_builtin_tool_name
 from app.tools.constants import BUILTIN_TOOL_NAMES
 
 _SAFE_KNOWLEDGE_DIR_PATTERN = re.compile(r"[\\/:*?\"<>|]+")
@@ -187,7 +188,8 @@ def update_builtin_tools(path: Path, enabled: List[str]) -> WunderConfig:
     raw = _read_raw_config(override_path)
     tools = raw.setdefault("tools", {})
     builtin = tools.setdefault("builtin", {})
-    cleaned = _clean_strings(enabled)
+    # 允许使用英文别名更新内置工具开关，统一回写为标准名称。
+    cleaned = [resolve_builtin_tool_name(name) for name in _clean_strings(enabled)]
     allowed = set(BUILTIN_TOOL_NAMES)
     builtin["enabled"] = [name for name in cleaned if name in allowed]
     _write_raw_config(override_path, raw)
