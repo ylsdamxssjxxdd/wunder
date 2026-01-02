@@ -10,7 +10,7 @@
 - 轻量入口：推荐使用 `uvicorn app.asgi:app` 启动，可通过 `WUNDER_LAZY_WARMUP_S` 控制后台预热延迟（秒，负数/关闭值表示禁用预热）。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 鉴权：所有 `/wunder` 与 `/wunder/mcp` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
-- 多语言：请求头可携带 `X-Wunder-Language` 或 `Accept-Language`（也支持 query 参数 `lang`/`language`），支持 `zh-CN`/`en-US`，响应会返回 `Content-Language`，并影响系统提示词与返回消息语言。
+- 多语言：请求头可携带 `X-Wunder-Language` 或 `Accept-Language`（也支持 query 参数 `lang`/`language`），支持语言以 `i18n.supported_languages` 为准，响应会返回 `Content-Language` 并影响系统提示词与返回消息语言。
 
 ### 4.1 `/wunder` 请求
 
@@ -213,6 +213,14 @@
   - 返回：`answer`/`session_id`/`usage`
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:8000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
+
+### 4.1.2.13 `/wunder/i18n`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `default_language`：默认语言
+  - `supported_languages`：支持语言列表
+  - `aliases`：语言别名映射
 
 ### 4.1.3 `/wunder/admin/mcp`
 
@@ -522,6 +530,11 @@
 
 - 方法：`GET`
 - 说明：提供系统介绍 PPT 静态资源（`docs/ppt` 目录，页面拆分为 `slides/*.js`，顺序由 `slides/manifest.js` 维护），用于前端系统介绍页面嵌入或独立打开。
+
+### 4.1.24.2 `/wunder/ppt-en`
+
+- 方法：`GET`
+- 说明：提供系统介绍 PPT 英文版静态资源（`docs/ppt-en` 目录，页面拆分为 `slides/*.js`，顺序由 `slides/manifest.js` 维护），用于前端系统介绍页面嵌入或独立打开。
 
 ### 4.1.25 `/wunder/admin/tools`
 

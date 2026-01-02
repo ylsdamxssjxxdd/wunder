@@ -4,6 +4,19 @@
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 30 # 全局最大并发会话数，超过后请求排队
 
+i18n: # 多语言配置
+  default_language: zh-CN # 默认语言
+  supported_languages: # 支持语言列表
+    - zh-CN
+    - en-US
+  aliases: # 语言别名映射（兼容简写与大小写）
+    zh: zh-CN
+    zh-cn: zh-CN
+    zh-hans: zh-CN
+    zh-hans-cn: zh-CN
+    en: en-US
+    en-us: en-US
+
 security: # 安全与权限配置
   api_key: ylsdamxssjxxdd # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）

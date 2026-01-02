@@ -1,0 +1,44 @@
+"use strict";
+
+import { createSlide } from "./utils.js";
+
+// 第 6 页：MCP 工具，用于拆分维护本页内容。
+export default function buildSlide() {
+  return createSlide(`
+<section class="slide" data-title="MCP tools">
+        <div class="slide-meta">
+          <span class="section-tag">Section 2 Tool system</span>
+          <div class="section-map">
+            <span class="section-chip">Overview</span>
+            <span class="section-chip">Built-in</span>
+            <span class="section-chip active">MCP</span>
+            <span class="section-chip">Skills</span>
+            <span class="section-chip">Knowledge</span>
+            <span class="section-chip">Custom</span>
+            <span class="section-chip">Shared</span>
+          </div>
+        </div>
+        <h2>MCP tools: connect external systems</h2>
+        <p class="section-lead">When built-ins are not enough, bring in external capabilities</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">What it is</span>
+            <ul>
+              <li>Connect external services via MCP</li>
+              <li>Call as server@tool</li>
+              <li>Auto included in the tool catalog</li>
+            </ul>
+          </div>
+          <div class="card soft stack">
+            <span class="pill">Why it matters</span>
+            <ul>
+              <li>Connect enterprise systems, search, BI, and more</li>
+              <li>Build cross-system execution chains</li>
+            </ul>
+            <span class="pill">Governance</span>
+            <p>allow_tools allowlist + unified timeout control</p>
+          </div>
+        </div>
+      </section>
+  `);
+}

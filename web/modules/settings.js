@@ -8,7 +8,13 @@ import { elements } from "./elements.js?v=20251231-03";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20251231-01";
 import { notify } from "./notify.js";
-import { normalizeLanguage, setLanguage, t } from "./i18n.js";
+import {
+  getLanguageLabel,
+  getSupportedLanguages,
+  normalizeLanguage,
+  setLanguage,
+  t,
+} from "./i18n.js";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 
 const MIN_MONITOR_INTERVAL_MS = 500;
@@ -34,6 +40,24 @@ const resolveSelectValue = (select, value) => {
     return value;
   }
   return options[0] || "";
+};
+
+// 渲染语言下拉选项，保持与后端 i18n 配置一致
+const renderLanguageOptions = () => {
+  if (!elements.settingsLanguage) {
+    return;
+  }
+  const currentValue = elements.settingsLanguage.value || APP_CONFIG.language;
+  const languages = getSupportedLanguages();
+  elements.settingsLanguage.innerHTML = "";
+  languages.forEach((code) => {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = getLanguageLabel(code);
+    elements.settingsLanguage.appendChild(option);
+  });
+  const resolved = resolveSelectValue(elements.settingsLanguage, normalizeLanguage(currentValue));
+  elements.settingsLanguage.value = resolved;
 };
 
 // 默认 user_id 变更时同步到调试与提示词输入
@@ -164,6 +188,7 @@ const handleResetSettings = () => {
 // 初始化设置面板交互
 export const initSettingsPanel = () => {
   applyStoredConfig();
+  renderLanguageOptions();
   applySettingsForm(APP_CONFIG);
   if (elements.settingsSaveBtn) {
     elements.settingsSaveBtn.addEventListener("click", handleSaveSettings);
@@ -171,4 +196,5 @@ export const initSettingsPanel = () => {
   if (elements.settingsResetBtn) {
     elements.settingsResetBtn.addEventListener("click", handleResetSettings);
   }
+  window.addEventListener("wunder:language-changed", renderLanguageOptions);
 };

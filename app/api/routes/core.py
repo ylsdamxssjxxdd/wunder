@@ -11,7 +11,7 @@ from app.api.deps import get_config_path, get_orchestrator
 from app.api.responses import json_response
 from app.core.config import load_config
 from app.core.errors import ErrorCodes, WunderError
-from app.core.i18n import t
+from app.core.i18n import get_i18n_config, t
 from app.knowledge.converter import (
     convert_to_markdown,
     get_supported_extensions,
@@ -20,6 +20,7 @@ from app.knowledge.converter import (
 from app.schemas.wunder import (
     AvailableToolsResponse,
     AttachmentConvertResponse,
+    I18nConfigResponse,
     WunderPromptRequest,
     WunderPromptResponse,
     WunderRequest,
@@ -136,3 +137,11 @@ async def wunder_tools_list(
     orchestrator = get_orchestrator()
     response = build_available_tools(config, orchestrator, user_id=user_id)
     return json_response(response)
+
+
+@router.get("/wunder/i18n", response_model=I18nConfigResponse)
+async def wunder_i18n_config():
+    """获取 i18n 配置，供前端同步。"""
+    load_config(get_config_path())
+    payload = get_i18n_config()
+    return json_response(I18nConfigResponse(**payload))

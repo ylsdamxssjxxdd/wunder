@@ -1499,22 +1499,148 @@ const LOCALES = {
 };
 
 const DEFAULT_LANGUAGE = "zh-CN";
+const DEFAULT_LANGUAGE_ALIASES = {
+  zh: "zh-CN",
+  "zh-cn": "zh-CN",
+  "zh-hans": "zh-CN",
+  "zh-hans-cn": "zh-CN",
+  en: "en-US",
+  "en-us": "en-US",
+};
+const DEFAULT_LANGUAGE_LABELS = {
+  "zh-CN": "简体中文",
+  "en-US": "English",
+};
 
-let currentLanguage = DEFAULT_LANGUAGE;
+let defaultLanguage = DEFAULT_LANGUAGE;
+let supportedLanguages = Object.keys(LOCALES);
+let languageAliases = { ...DEFAULT_LANGUAGE_ALIASES };
+let languageLabels = { ...DEFAULT_LANGUAGE_LABELS };
+let currentLanguage = defaultLanguage;
+
+const resolveLocale = (language) => {
+  if (language && LOCALES[language]) {
+    return LOCALES[language];
+  }
+  if (defaultLanguage && LOCALES[defaultLanguage]) {
+    return LOCALES[defaultLanguage];
+  }
+  const fallbackKey = Object.keys(LOCALES)[0];
+  return fallbackKey ? LOCALES[fallbackKey] : {};
+};
+
+const resolveLanguageCode = (raw) => {
+  const cleaned = String(raw || "").trim();
+  if (!cleaned) {
+    return "";
+  }
+  const lowered = cleaned.toLowerCase();
+  const mapped = languageAliases[lowered];
+  if (mapped) {
+    return mapped;
+  }
+  if (supportedLanguages.includes(cleaned)) {
+    return cleaned;
+  }
+  for (const lang of supportedLanguages) {
+    if (lang.toLowerCase() === lowered) {
+      return lang;
+    }
+  }
+  return "";
+};
 
 // 规范化语言输入，兼容 zh/en 等简写
-export const normalizeLanguage = (value) => {
-  const raw = String(value || "").trim().toLowerCase();
-  if (!raw) {
-    return DEFAULT_LANGUAGE;
+export const normalizeLanguage = (value, options = {}) => {
+  const fallback = options.fallback !== false;
+  if (!value) {
+    return fallback ? defaultLanguage : "";
   }
-  if (raw.startsWith("en")) {
-    return "en-US";
+  const parts = String(value).split(",");
+  for (const part of parts) {
+    const code = part.split(";")[0].trim();
+    const resolved = resolveLanguageCode(code);
+    if (resolved) {
+      return resolved;
+    }
   }
-  if (raw.startsWith("zh")) {
-    return "zh-CN";
+  return fallback ? defaultLanguage : "";
+};
+
+// 更新 i18n 配置，避免前后端配置割裂
+export const configureI18n = (config = {}) => {
+  const nextSupported = Array.isArray(config.supported_languages)
+    ? config.supported_languages
+        .map((item) => String(item || "").trim())
+        .filter((item) => item)
+    : [];
+  supportedLanguages = nextSupported.length ? Array.from(new Set(nextSupported)) : Object.keys(LOCALES);
+  const mergedAliases = { ...DEFAULT_LANGUAGE_ALIASES };
+  if (config && typeof config.aliases === "object") {
+    Object.entries(config.aliases).forEach(([key, value]) => {
+      const aliasKey = String(key || "").trim().toLowerCase();
+      const aliasValue = resolveLanguageCode(value);
+      if (!aliasKey || !aliasValue) {
+        return;
+      }
+      mergedAliases[aliasKey] = aliasValue;
+    });
   }
-  return DEFAULT_LANGUAGE;
+  supportedLanguages.forEach((lang) => {
+    mergedAliases[lang.toLowerCase()] = lang;
+  });
+  languageAliases = mergedAliases;
+  if (config && typeof config.labels === "object") {
+    const nextLabels = { ...languageLabels };
+    Object.entries(config.labels).forEach(([key, value]) => {
+      const lang = String(key || "").trim();
+      const label = String(value || "").trim();
+      if (!lang || !label) {
+        return;
+      }
+      nextLabels[lang] = label;
+    });
+    languageLabels = nextLabels;
+  }
+  const resolvedDefault =
+    resolveLanguageCode(config?.default_language) ||
+    (supportedLanguages.includes(defaultLanguage) ? defaultLanguage : "");
+  if (resolvedDefault) {
+    defaultLanguage = resolvedDefault;
+  } else if (supportedLanguages.length) {
+    defaultLanguage = supportedLanguages[0];
+  }
+  if (!supportedLanguages.includes(defaultLanguage)) {
+    supportedLanguages = [defaultLanguage, ...supportedLanguages];
+  }
+  if (!supportedLanguages.includes(currentLanguage)) {
+    currentLanguage = defaultLanguage;
+  }
+  return {
+    default_language: defaultLanguage,
+    supported_languages: [...supportedLanguages],
+    aliases: { ...languageAliases },
+  };
+};
+
+// 获取默认语言
+export const getDefaultLanguage = () => defaultLanguage;
+
+// 获取支持语言列表
+export const getSupportedLanguages = () => [...supportedLanguages];
+
+// 获取语言显示文本
+export const getLanguageLabel = (language) => {
+  const code = String(language || "").trim();
+  if (!code) {
+    return "";
+  }
+  const key = `language.${code}`;
+  const translated = t(key);
+  if (translated && translated !== key) {
+    return translated;
+  }
+  return languageLabels[code] || code;
 };
 
 // 获取当前语言，供其他模块读取
@@ -1525,8 +1651,9 @@ export const t = (key, params = {}) => {
   if (!key) {
     return "";
   }
-  const locale = LOCALES[currentLanguage] || LOCALES[DEFAULT_LANGUAGE];
-  const template = locale[key] || LOCALES[DEFAULT_LANGUAGE][key] || key;
+  const locale = resolveLocale(currentLanguage);
+  const fallbackLocale = resolveLocale(defaultLanguage);
+  const template = locale[key] || fallbackLocale[key] || key;
   return Object.keys(params).reduce(
     (result, paramKey) => result.replace(new RegExp(`\\{${paramKey}\\}`, "g"), params[paramKey]),
     template

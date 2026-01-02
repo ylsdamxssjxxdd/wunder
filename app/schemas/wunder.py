@@ -74,6 +74,14 @@ class WunderPromptResponse(BaseModel):
     )
 
 
+class I18nConfigResponse(BaseModel):
+    """多语言配置响应。"""
+
+    default_language: str = Field(default="zh-CN", description="默认语言")
+    supported_languages: List[str] = Field(default_factory=list, description="支持语言列表")
+    aliases: Dict[str, str] = Field(default_factory=dict, description="语言别名映射")
+
+
 class LlmConfigItem(BaseModel):
     """LLM 配置项。"""
 

@@ -11,7 +11,8 @@ _LANGUAGE_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
 # 语言支持与别名映射，确保输入更宽松但输出更规范
 DEFAULT_LANGUAGE = "zh-CN"
 SUPPORTED_LANGUAGES = {"zh-CN", "en-US"}
-_LANGUAGE_ALIASES = {
+_SUPPORTED_LANGUAGE_LIST = ["zh-CN", "en-US"]
+_DEFAULT_LANGUAGE_ALIASES = {
     "zh": "zh-CN",
     "zh-cn": "zh-CN",
     "zh-hans": "zh-CN",
@@ -19,6 +20,7 @@ _LANGUAGE_ALIASES = {
     "en": "en-US",
     "en-us": "en-US",
 }
+_LANGUAGE_ALIASES = dict(_DEFAULT_LANGUAGE_ALIASES)
 
 # 统一消息字典：按语言存储，便于集中维护翻译
 _MESSAGES: Dict[str, Dict[str, str]] = {
@@ -1131,6 +1133,100 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "This tool is not allowed.",
     },
 }
+
+
+def _normalize_language_list(values: Optional[Iterable[str]]) -> list[str]:
+    """整理语言列表，保持顺序并去重。"""
+    if not values:
+        return list(_SUPPORTED_LANGUAGE_LIST)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in values:
+        cleaned = str(raw or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        ordered.append(cleaned)
+        seen.add(cleaned)
+    return ordered or list(_SUPPORTED_LANGUAGE_LIST)
+
+
+def _normalize_alias_target(value: Optional[str], supported: set[str]) -> Optional[str]:
+    """将别名目标映射为受支持的语言码。"""
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    if cleaned in supported:
+        return cleaned
+    lowered = cleaned.lower()
+    for lang in supported:
+        if lang.lower() == lowered:
+            return lang
+    return None
+
+
+def configure_i18n(
+    *,
+    default_language: Optional[str] = None,
+    supported_languages: Optional[Iterable[str]] = None,
+    aliases: Optional[Dict[str, str]] = None,
+) -> None:
+    """更新 i18n 配置，便于与配置文件保持一致。"""
+    global DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, _SUPPORTED_LANGUAGE_LIST, _LANGUAGE_ALIASES
+    supported_list = _normalize_language_list(supported_languages)
+    supported_set = set(supported_list)
+    merged_aliases = dict(_DEFAULT_LANGUAGE_ALIASES)
+    if isinstance(aliases, dict):
+        for key, value in aliases.items():
+            alias_key = str(key or "").strip().lower()
+            alias_target = _normalize_alias_target(value, supported_set)
+            if not alias_key or not alias_target:
+                continue
+            merged_aliases[alias_key] = alias_target
+    cleaned_default = str(default_language or "").strip()
+    if cleaned_default:
+        lowered_default = cleaned_default.lower()
+        if lowered_default in merged_aliases:
+            cleaned_default = merged_aliases[lowered_default]
+        else:
+            for lang in supported_list:
+                if lang.lower() == lowered_default:
+                    cleaned_default = lang
+                    break
+    if not cleaned_default:
+        cleaned_default = DEFAULT_LANGUAGE
+    if cleaned_default not in supported_set:
+        supported_list.insert(0, cleaned_default)
+        supported_set.add(cleaned_default)
+    DEFAULT_LANGUAGE = cleaned_default
+    SUPPORTED_LANGUAGES = supported_set
+    _SUPPORTED_LANGUAGE_LIST = supported_list
+    for lang in supported_list:
+        merged_aliases[lang.lower()] = lang
+    _LANGUAGE_ALIASES = merged_aliases
+
+
+def get_default_language() -> str:
+    """读取默认语言码。"""
+    return DEFAULT_LANGUAGE
+
+
+def get_supported_languages() -> list[str]:
+    """读取支持语言列表。"""
+    return list(_SUPPORTED_LANGUAGE_LIST)
+
+
+def get_language_aliases() -> Dict[str, str]:
+    """读取语言别名映射。"""
+    return dict(_LANGUAGE_ALIASES)
+
+
+def get_i18n_config() -> Dict[str, object]:
+    """导出当前 i18n 配置，用于接口响应。"""
+    return {
+        "default_language": DEFAULT_LANGUAGE,
+        "supported_languages": list(_SUPPORTED_LANGUAGE_LIST),
+        "aliases": dict(_LANGUAGE_ALIASES),
+    }
 
 
 def _normalize_language_code(value: str) -> Optional[str]:

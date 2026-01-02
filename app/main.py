@@ -143,6 +143,14 @@ def create_app() -> FastAPI:
     ppt_root = Path(__file__).resolve().parents[1] / "docs" / "ppt"
     if ppt_root.exists():
         app.mount("/wunder/ppt", StaticFiles(directory=str(ppt_root), html=True), name="wunder-ppt")
+    # 通过 /wunder/ppt-en 暴露英文版系统介绍 PPT。
+    ppt_en_root = Path(__file__).resolve().parents[1] / "docs" / "ppt-en"
+    if ppt_en_root.exists():
+        app.mount(
+            "/wunder/ppt-en",
+            StaticFiles(directory=str(ppt_en_root), html=True),
+            name="wunder-ppt-en",
+        )
     app.include_router(wunder_router)
     # 挂载自托管 MCP 服务，供外部或自调用使用。
     app.mount("/wunder/mcp", mcp_app, name="wunder-mcp")

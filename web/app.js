@@ -1,9 +1,14 @@
 ﻿import { APP_CONFIG, applyDefaultConfig } from "./app.config.js";
-import { applyStoredConfig } from "./app.config.js";
+import {
+  applyStoredConfig,
+  readStoredConfig,
+  updateDefaultConfig,
+} from "./app.config.js";
 import { elements } from "./modules/elements.js?v=20260101-01";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
+import { loadI18nConfig } from "./modules/i18n-config.js";
 import { initToolDetailModal } from "./modules/tool-detail.js";
 import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260101-02";
 import {
@@ -79,6 +84,25 @@ const switchPanel = (panel) => {
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
   toggleDebugPolling(panel === "debug");
   toggleMemoryPolling(panel === "memory");
+};
+
+// 根据语言切换系统介绍 PPT 地址
+const resolveIntroSrc = (language) => {
+  const normalized = String(language || "").toLowerCase();
+  if (normalized.startsWith("en")) {
+    return "/wunder/ppt-en/index.html";
+  }
+  return "/wunder/ppt/index.html";
+};
+
+const syncIntroFrameLanguage = (language) => {
+  if (!elements.introFrame) {
+    return;
+  }
+  const nextSrc = resolveIntroSrc(language);
+  if (elements.introFrame.getAttribute("src") !== nextSrc) {
+    elements.introFrame.setAttribute("src", nextSrc);
+  }
 };
 
 // 绑定导航事件与跨页面交互
@@ -223,6 +247,10 @@ const bindIntroPanel = () => {
       target.requestFullscreen().catch(() => {});
     }
   });
+  syncIntroFrameLanguage(getCurrentLanguage());
+  window.addEventListener("wunder:language-changed", (event) => {
+    syncIntroFrameLanguage(event.detail?.language);
+  });
 };
 
 // 绑定基础输入与全局行为
@@ -295,7 +323,16 @@ const bindGlobalInputs = () => {
 };
 
 // 启动入口：初始化默认值、模块交互与首屏数据
-const bootstrap = () => {
+const bootstrap = async () => {
+  const stored = readStoredConfig();
+  const i18nConfig = await loadI18nConfig({
+    apiBase: stored.defaultApiBase || APP_CONFIG.defaultApiBase,
+    apiKey: stored.defaultApiKey || APP_CONFIG.defaultApiKey,
+    language: stored.language || APP_CONFIG.language,
+  });
+  if (i18nConfig?.default_language) {
+    updateDefaultConfig({ language: i18nConfig.default_language });
+  }
   applyStoredConfig();
   setLanguage(APP_CONFIG.language, { force: true });
   applyDefaultConfig(elements);

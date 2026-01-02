@@ -114,6 +114,13 @@ export const resetStoredConfig = () => {
 
 export const getDefaultConfig = () => ({ ...APP_CONFIG_DEFAULTS });
 
+// 更新默认配置（不覆盖已存储配置）
+export const updateDefaultConfig = (patch) => {
+  const nextDefaults = sanitizeConfig({ ...APP_CONFIG_DEFAULTS, ...(patch || {}) });
+  Object.assign(APP_CONFIG_DEFAULTS, nextDefaults);
+  return { ...APP_CONFIG_DEFAULTS };
+};
+
 // 应用默认配置到界面输入框，避免在 HTML 中硬编码默认值
 export const applyDefaultConfig = (elements) => {
   if (elements.apiBase && !elements.apiBase.value.trim()) {

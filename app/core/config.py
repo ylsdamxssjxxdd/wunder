@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.i18n import t
+from app.core.i18n import configure_i18n, t
 DEFAULT_CONFIG_PATH = Path("config/wunder.yaml")
 DEFAULT_OVERRIDE_PATH = Path("data/config/wunder.override.yaml")
 LEGACY_OVERRIDE_PATH = Path("data/config/wunder.yaml")
@@ -28,6 +28,23 @@ class ServerConfig(BaseModel):
     stream_chunk_size: int = 1024
     max_active_sessions: int = Field(
         default=30, description="全局最大并发会话数，超过后进入排队等待"
+    )
+
+
+class I18nConfig(BaseModel):
+    """多语言配置。"""
+
+    default_language: str = "zh-CN"
+    supported_languages: List[str] = Field(default_factory=lambda: ["zh-CN", "en-US"])
+    aliases: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "zh": "zh-CN",
+            "zh-cn": "zh-CN",
+            "zh-hans": "zh-CN",
+            "zh-hans-cn": "zh-CN",
+            "en": "en-US",
+            "en-us": "en-US",
+        }
     )
 
 
@@ -211,6 +228,7 @@ class WunderConfig(BaseModel):
     """wunder 统一配置模型。"""
 
     server: ServerConfig = Field(default_factory=ServerConfig)
+    i18n: I18nConfig = Field(default_factory=I18nConfig)
     llm: LLMGroupConfig = Field(default_factory=LLMGroupConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
@@ -318,7 +336,13 @@ def load_config(path: Path, overrides: Optional[Dict[str, Any]] = None) -> Wunde
     if overrides:
         raw = _deep_update(raw, overrides)
     raw = _expand_env(raw)
-    return WunderConfig.model_validate(raw)
+    config = WunderConfig.model_validate(raw)
+    configure_i18n(
+        default_language=config.i18n.default_language,
+        supported_languages=config.i18n.supported_languages,
+        aliases=config.i18n.aliases,
+    )
+    return config
 
 
 @lru_cache(maxsize=1)
