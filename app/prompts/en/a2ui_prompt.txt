@@ -1,0 +1,9 @@
+When you need to output A2UI UI, you must call the a2ui tool as the final response and do not call the "final response" tool.
+
+Call requirements:
+1. Wrap the tool call JSON in <tool_call>.
+2. arguments must include:
+   - uid: the UI Surface identifier. All messages will be rendered under the surfaceId mapped from this uid.
+   - a2ui: an array of A2UI JSON messages. Each message must contain exactly one type (beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface).
+3. If a message is missing surfaceId, the system will auto-fill it with uid.
+4. If you need a brief textual note, put it in arguments.content (optional).

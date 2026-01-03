@@ -6,6 +6,9 @@ import { t } from "./i18n.js";
 
 // 工具勾选状态使用本地缓存，按 user_id 隔离
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
+const A2UI_TOOL_NAME = "a2ui";
+const FINAL_TOOL_NAMES = new Set(["最终回复", "final_response"]);
+const DEFAULT_UNSELECTED_TOOLS = new Set([A2UI_TOOL_NAME]);
 
 // 兼容系统提示词/调试面板两处 user_id 输入
 const getToolSelectionUserId = () =>
@@ -254,12 +257,23 @@ const renderPromptToolList = (container, items, emptyText) => {
     checkbox.type = "checkbox";
     checkbox.checked = state.toolSelection.selected.has(item.name);
     checkbox.addEventListener("change", (event) => {
+      let needsRerender = false;
       if (event.target.checked) {
         state.toolSelection.selected.add(item.name);
+        if (item.name === A2UI_TOOL_NAME) {
+          FINAL_TOOL_NAMES.forEach((name) => state.toolSelection.selected.delete(name));
+          needsRerender = true;
+        } else if (FINAL_TOOL_NAMES.has(item.name)) {
+          state.toolSelection.selected.delete(A2UI_TOOL_NAME);
+          needsRerender = true;
+        }
       } else {
         state.toolSelection.selected.delete(item.name);
       }
       state.runtime.promptNeedsRefresh = true;
+      if (needsRerender) {
+        renderPromptTools();
+      }
       schedulePromptReload();
       persistToolSelection();
     });
@@ -373,14 +387,14 @@ export const loadAvailableTools = async () => {
         }
       });
       allNames.forEach((name) => {
-        if (!cached.known.has(name) && !sharedSet.has(name)) {
+        if (!cached.known.has(name) && !sharedSet.has(name) && !DEFAULT_UNSELECTED_TOOLS.has(name)) {
           keep.add(name);
         }
       });
       state.toolSelection.selected = keep;
     } else {
       state.toolSelection.selected = new Set(
-        allNames.filter((name) => !sharedSet.has(name))
+        allNames.filter((name) => !sharedSet.has(name) && !DEFAULT_UNSELECTED_TOOLS.has(name))
       );
     }
   } else {
@@ -391,7 +405,7 @@ export const loadAvailableTools = async () => {
       }
     });
     allNames.forEach((name) => {
-      if (!previousKnown.has(name) && !sharedSet.has(name)) {
+      if (!previousKnown.has(name) && !sharedSet.has(name) && !DEFAULT_UNSELECTED_TOOLS.has(name)) {
         keep.add(name);
       }
     });

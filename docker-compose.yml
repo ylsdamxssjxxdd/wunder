@@ -13,7 +13,7 @@ services:
     depends_on:
       - SANDBOX
     command: uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --reload
-    restart: unless-stopped
+    restart: always 
 
   SANDBOX:
     image: wunder:20251224-x86
@@ -27,4 +27,4 @@ services:
       - ./data/workspaces:/workspaces/data/workspaces
       - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
     command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001
-    restart: unless-stopped
+    restart: always 

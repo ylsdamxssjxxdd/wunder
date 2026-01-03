@@ -604,6 +604,10 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "zh-CN": "未能在最大轮次内生成最终答复。",
         "en-US": "Unable to produce a final answer within the maximum rounds.",
     },
+    "response.a2ui_fallback": {
+        "zh-CN": "已生成 A2UI 界面并完成渲染。",
+        "en-US": "A2UI UI has been generated and rendered.",
+    },
     "error.internal_error": {
         "zh-CN": "内部错误",
         "en-US": "Internal error",
@@ -755,6 +759,22 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
     "tool.spec.final.args.content": {
         "zh-CN": "最终回复内容。",
         "en-US": "Final response content.",
+    },
+    "tool.spec.a2ui.description": {
+        "zh-CN": "生成 A2UI 界面并返回给客户端渲染。",
+        "en-US": "Generate A2UI UI and send it to the client for rendering.",
+    },
+    "tool.spec.a2ui.args.uid": {
+        "zh-CN": "UI Surface 标识，用于绑定渲染区域。",
+        "en-US": "UI Surface identifier used to bind the rendering area.",
+    },
+    "tool.spec.a2ui.args.messages": {
+        "zh-CN": "A2UI JSON 消息数组（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。",
+        "en-US": "Array of A2UI JSON messages (beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface).",
+    },
+    "tool.spec.a2ui.args.content": {
+        "zh-CN": "可选的简短文本说明。",
+        "en-US": "Optional short textual note.",
     },
     "tool.spec.exec.description": {
         "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。",

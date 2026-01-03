@@ -1,0 +1,9 @@
+当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用“最终回复”工具。
+
+调用要求：
+1. 使用 <tool_call> 包裹工具调用 JSON。
+2. arguments 里必须包含：
+   - uid：用于 UI Surface 标识，后续所有消息会以该 uid 对应的 surfaceId 展示。
+   - a2ui：A2UI JSON 消息数组，每条消息仅包含一种类型（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。
+3. 如果消息里缺少 surfaceId，系统会自动使用 uid 补齐。
+4. 若需要额外文本说明，可在 arguments.content 中提供简短说明（可选）。

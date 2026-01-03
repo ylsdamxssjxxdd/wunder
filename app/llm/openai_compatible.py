@@ -199,6 +199,11 @@ class OpenAICompatibleClient(LLMClient):
                     timeout=timeout,
                 ) as resp:
                     if resp.status_code != 200:
+                        # 流式响应需先读取内容再解析错误细节，避免触发 ResponseNotRead 异常。
+                        try:
+                            await resp.aread()
+                        except httpx.HTTPError:
+                            pass
                         detail = self._extract_error_detail(resp)
                         if usage_fallback and include_usage and resp.status_code in {400, 422}:
                             # 部分服务端不支持 stream_options，尝试去掉 usage 参数后重试

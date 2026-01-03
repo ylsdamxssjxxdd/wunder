@@ -40,6 +40,10 @@ class WunderResponse(BaseModel):
     session_id: str
     answer: str
     usage: Optional[Dict[str, Any]] = None
+    uid: Optional[str] = Field(default=None, description="A2UI Surface 标识")
+    a2ui: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="A2UI 消息列表"
+    )
 
 
 class AttachmentConvertResponse(BaseModel):

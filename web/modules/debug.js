@@ -2,6 +2,7 @@
 import { elements } from "./elements.js?v=20251231-03";
 import { state } from "./state.js";
 import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20251229-02";
+import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
 import { loadWorkspace } from "./workspace.js?v=20260101-02";
@@ -77,9 +78,13 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "llm_stream_retry",
   // Token 用量事件在刷新后也需要保留，避免调试日志丢失
   "token_usage",
+  "a2ui",
   "final",
   "error",
 ]);
+
+// 模型输出文本区可能拆成独立容器，优先使用专用节点。
+const resolveModelOutputText = () => elements.modelOutputText || elements.modelOutput;
 // 缓冲模型输出，降低频繁 DOM 拼接导致的卡顿
 const modelOutputBuffer = {
   chunks: [],
@@ -880,9 +885,12 @@ const resetModelOutputState = (options = {}) => {
     outputState.selectedRound = null;
     outputState.userSelectedRound = false;
     resetModelOutputBuffer();
-    if (elements.modelOutput) {
-      elements.modelOutput.textContent = "";
+    const outputContainer = resolveModelOutputText();
+    if (outputContainer) {
+      outputContainer.textContent = "";
     }
+    // 清空 A2UI 渲染状态，避免旧 UI 残留。
+    resetA2uiState(elements.modelOutputA2ui);
     renderRoundSelectOptions(outputState);
   }
 };
@@ -909,8 +917,9 @@ const resetRoundOutput = (roundId) => {
   entry.reasoningStreaming = false;
   if (outputState.selectedRound === entry.id) {
     resetModelOutputBuffer();
-    if (elements.modelOutput) {
-      elements.modelOutput.textContent = "";
+    const outputContainer = resolveModelOutputText();
+    if (outputContainer) {
+      outputContainer.textContent = "";
     }
   }
   renderRoundSelectOptions(outputState);
@@ -966,21 +975,22 @@ const resetModelOutputBuffer = () => {
 
 // 合并缓冲并刷新到 DOM，集中处理滚动
 const flushModelOutput = () => {
-  if (!elements.modelOutput) {
+  const outputContainer = resolveModelOutputText();
+  if (!outputContainer) {
     return;
   }
   if (modelOutputBuffer.chunks.length) {
     const text = modelOutputBuffer.chunks.join("");
     modelOutputBuffer.chunks = [];
-    const lastNode = elements.modelOutput.lastChild;
+    const lastNode = outputContainer.lastChild;
     if (lastNode && lastNode.nodeType === Node.TEXT_NODE) {
       lastNode.appendData(text);
     } else {
-      elements.modelOutput.appendChild(document.createTextNode(text));
+      outputContainer.appendChild(document.createTextNode(text));
     }
   }
   if (modelOutputBuffer.pendingScroll) {
-    elements.modelOutput.scrollTop = elements.modelOutput.scrollHeight;
+    outputContainer.scrollTop = outputContainer.scrollHeight;
     modelOutputBuffer.pendingScroll = false;
   }
 };
@@ -1120,16 +1130,17 @@ const shouldAutoSelectRound = (outputState, roundId) => {
 
 // 渲染指定轮次的输出内容
 const renderSelectedRound = (outputState, entry, options = {}) => {
-  if (!elements.modelOutput) {
+  const outputContainer = resolveModelOutputText();
+  if (!outputContainer) {
     return;
   }
   resetModelOutputBuffer();
-  elements.modelOutput.textContent = entry ? buildRoundText(entry) : "";
+  outputContainer.textContent = entry ? buildRoundText(entry) : "";
   const scrollTo = options.scrollTo || (entry && entry.id === outputState.currentRound ? "bottom" : "top");
   if (scrollTo === "bottom") {
     scheduleModelOutputScroll();
   } else {
-    elements.modelOutput.scrollTop = 0;
+    outputContainer.scrollTop = 0;
   }
 };
 
@@ -1353,6 +1364,22 @@ const handleEvent = (eventType, dataText, options = {}) => {
     appendLog(summary, { detail, timestamp: eventTimestamp });
     resetPendingRequestLogs();
     loadWorkspace({ refreshTree: true });
+    return;
+  }
+
+  if (eventType === "a2ui") {
+    const data = payload.data || payload;
+    applyA2uiMessages(elements.modelOutputA2ui, data);
+    const messageCount = Array.isArray(data?.messages) ? data.messages.length : 0;
+    const detail = JSON.stringify(
+      {
+        uid: data?.uid || "",
+        message_count: messageCount,
+      },
+      null,
+      2
+    );
+    appendLog(t("debug.event.a2ui"), { detail, timestamp: eventTimestamp });
     return;
   }
 
@@ -1978,6 +2005,12 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   markRequestEnd();
   applyTokenUsageSnapshot(result?.usage, { override: true });
   renderDebugStats();
+  if (Array.isArray(result?.a2ui)) {
+    applyA2uiMessages(elements.modelOutputA2ui, {
+      uid: result?.uid || "",
+      messages: result.a2ui,
+    });
+  }
   appendLog(t("debug.nonStream.response", { payload: JSON.stringify(result) }));
 };
 

@@ -64,6 +64,31 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             aliases=("final_response",),
         ),
         ToolDescriptor(
+            name="a2ui",
+            description=t("tool.spec.a2ui.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "description": t("tool.spec.a2ui.args.uid"),
+                    },
+                    "a2ui": {
+                        "type": "array",
+                        "description": t("tool.spec.a2ui.args.messages"),
+                        "items": {"type": "object"},
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": t("tool.spec.a2ui.args.content"),
+                    },
+                },
+                "required": ["uid", "a2ui"],
+            },
+            handler=None,
+            runtime=False,
+        ),
+        ToolDescriptor(
             name="执行命令",
             description=t("tool.spec.exec.description"),
             args_schema={

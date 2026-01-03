@@ -225,7 +225,14 @@ export const appendRequestLog = (title, detail, options = {}) => {
 export const clearOutput = () => {
   elements.eventLog.innerHTML = "";
   elements.requestLog.innerHTML = "";
-  elements.modelOutput.textContent = "";
+  if (elements.modelOutputText) {
+    elements.modelOutputText.textContent = "";
+  } else if (elements.modelOutput) {
+    elements.modelOutput.textContent = "";
+  }
+  if (elements.modelOutputA2ui) {
+    elements.modelOutputA2ui.innerHTML = "";
+  }
   elements.finalAnswer.textContent = "";
   if (elements.eventLog) {
     lastLogTimestamps.delete(elements.eventLog);
@@ -234,7 +241,6 @@ export const clearOutput = () => {
     lastLogTimestamps.delete(elements.requestLog);
   }
 };
-
 
 
 

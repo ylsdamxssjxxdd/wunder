@@ -26,6 +26,7 @@
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
 - 约束：同一 `user_id` 若已有运行中的会话，接口返回 429 并提示稍后再试。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
+- 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 
 ### 4.1.1 `/wunder/system_prompt`
 
@@ -744,6 +745,7 @@
 - `event: token_usage`：单轮 token 统计（input/output/total）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_result`：工具执行结果
+- `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态）
 - `event: final`：最终回复
 - `event: error`：错误信息（包含错误码与建议）
@@ -770,6 +772,8 @@
   - `session_id`
   - `answer`
   - `usage`（可选）
+  - `uid`（可选，A2UI Surface 标识）
+  - `a2ui`（可选，A2UI 消息数组）
 
 ### 4.4 工具协议（EVA 风格）
 

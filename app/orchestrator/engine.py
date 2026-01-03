@@ -679,6 +679,8 @@ class WunderOrchestrator:
             # 仅保留最新一次模型调用的用量，避免跨轮次累加
             last_usage: Optional[Dict[str, int]] = None
             answer = ""
+            a2ui_uid: Optional[str] = None
+            a2ui_messages: Optional[List[Dict[str, Any]]] = None
             last_response: Optional[LLMResponse] = None
             # 记录最后一次模型调用的请求消息，供长期记忆总结复用
             last_request_messages: Optional[List[Dict[str, Any]]] = None
@@ -766,6 +768,36 @@ class WunderOrchestrator:
                     name = resolve_builtin_tool_name(name)
                     # 工具调用前检查取消状态，避免继续执行耗时步骤
                     self._ensure_not_cancelled(session_id)
+                    if name == "a2ui":
+                        uid, messages, content = self._resolve_a2ui_tool_payload(
+                            args, user_id, session_id
+                        )
+                        if messages:
+                            emitter.emit(
+                                "a2ui",
+                                {
+                                    "uid": uid,
+                                    "messages": messages,
+                                    "content": content,
+                                },
+                            )
+                        a2ui_uid = uid or None
+                        a2ui_messages = messages or None
+                        answer = content or t("response.a2ui_fallback")
+                        await self._log_a2ui_tool_call(
+                            user_id,
+                            session_id,
+                            name,
+                            args,
+                            uid,
+                            len(messages),
+                            content,
+                        )
+                        if answer:
+                            await self._append_chat(
+                                user_id, session_id, "assistant", answer
+                            )
+                        break
                     if name == "最终回复":
                         answer = self._resolve_final_answer_from_tool(args)
                         await self._log_final_tool_call(
@@ -851,6 +883,8 @@ class WunderOrchestrator:
                 session_id=session_id,
                 answer=answer,
                 usage=usage_payload,
+                uid=a2ui_uid,
+                a2ui=a2ui_messages,
             )
             emitter.emit("final", {"answer": answer, "usage": usage_payload or {}})
             monitor.mark_finished(session_id)
@@ -892,10 +926,28 @@ class WunderOrchestrator:
     ) -> Set[str]:
         """解析可用工具名称集合，支持空值代表全量工具。"""
         if tool_names is None:
-            return self._collect_available_tool_names(ctx, user_tool_bindings)
-        return self._prompt_composer.resolve_allowed_tool_names(
-            ctx, tool_names, user_tool_bindings
-        )
+            allowed = self._collect_available_tool_names(ctx, user_tool_bindings)
+        else:
+            allowed = self._prompt_composer.resolve_allowed_tool_names(
+                ctx, tool_names, user_tool_bindings
+            )
+        return self._apply_a2ui_tool_policy(allowed, tool_names)
+
+    @staticmethod
+    def _apply_a2ui_tool_policy(
+        allowed_tool_names: Set[str],
+        tool_names: Optional[List[str]],
+    ) -> Set[str]:
+        """应用 a2ui 与最终回复的互斥策略，避免默认流程被强制切换。"""
+        normalized = set(allowed_tool_names)
+        # a2ui 仅在显式勾选时开放，避免默认请求被 UI 输出打断。
+        if tool_names is None:
+            normalized.discard("a2ui")
+        if "a2ui" in normalized:
+            # 启用 a2ui 时移除最终回复工具，避免模型双重收尾。
+            normalized.discard("最终回复")
+            normalized.discard("final_response")
+        return normalized
 
     @staticmethod
     def _collect_available_tool_names(
@@ -2298,6 +2350,26 @@ class WunderOrchestrator:
         result = ToolResult(ok=True, data=data)
         await self._append_tool_log(user_id, session_id, name, args, result)
 
+    async def _log_a2ui_tool_call(
+        self,
+        user_id: str,
+        session_id: str,
+        name: str,
+        args: Any,
+        uid: str,
+        message_count: int,
+        content: str,
+    ) -> None:
+        """记录 a2ui 工具调用日志，避免完整消息体写入导致膨胀。"""
+        data: Dict[str, Any] = {
+            "uid": uid,
+            "message_count": int(message_count),
+        }
+        if content:
+            data["content"] = content
+        result = ToolResult(ok=True, data=data)
+        await self._append_tool_log(user_id, session_id, name, args, result)
+
     async def _release_sandbox_if_needed(
         self, ctx: RequestContext, user_id: str, session_id: str, tool_name: str
     ) -> None:
@@ -2437,6 +2509,53 @@ class WunderOrchestrator:
         if isinstance(args, str):
             return args.strip()
         return ""
+
+    def _resolve_a2ui_tool_payload(
+        self, args: Any, user_id: str, session_id: str
+    ) -> Tuple[str, List[Dict[str, Any]], str]:
+        """解析 a2ui 工具参数，输出 uid、消息列表与文本说明。"""
+        uid = ""
+        content = ""
+        raw_messages: Any = None
+        if isinstance(args, dict):
+            uid = str(args.get("uid") or "").strip()
+            content = str(args.get("content") or "").strip()
+            raw_messages = args.get("a2ui")
+            if raw_messages is None:
+                raw_messages = args.get("messages")
+        else:
+            raw_messages = args
+
+        if not uid:
+            # 兜底使用会话 ID，保证 UI Surface 有稳定标识。
+            uid = str(session_id or user_id or "").strip()
+
+        if isinstance(raw_messages, str):
+            try:
+                raw_messages = json.loads(raw_messages)
+            except json.JSONDecodeError:
+                raw_messages = []
+        if isinstance(raw_messages, dict):
+            raw_messages = [raw_messages]
+        if not isinstance(raw_messages, list):
+            raw_messages = []
+
+        messages: List[Dict[str, Any]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            normalized = dict(item)
+            for key in ("beginRendering", "surfaceUpdate", "dataModelUpdate", "deleteSurface"):
+                payload = normalized.get(key)
+                if isinstance(payload, dict):
+                    if uid and not payload.get("surfaceId"):
+                        payload = dict(payload)
+                        payload["surfaceId"] = uid
+                        normalized[key] = payload
+                    break
+            messages.append(normalized)
+
+        return uid, messages, content
 
     @staticmethod
     def _strip_tool_calls(content: str) -> str:

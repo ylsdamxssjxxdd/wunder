@@ -24,6 +24,8 @@ export const elements = {
   eventLog: document.getElementById("eventLog"),
   requestLog: document.getElementById("requestLog"),
   modelOutput: document.getElementById("modelOutput"),
+  modelOutputA2ui: document.getElementById("modelOutputA2ui"),
+  modelOutputText: document.getElementById("modelOutputText"),
   modelOutputRoundSelect: document.getElementById("modelOutputRoundSelect"),
   finalAnswer: document.getElementById("finalAnswer"),
   workspaceList: document.getElementById("workspaceList"),

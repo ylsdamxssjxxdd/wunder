@@ -22,6 +22,8 @@ def _build_allowed_tool_names() -> List[str]:
         orchestrator.skills.list_specs(),
     )
     available.discard(MCP_TOOL_FULL_NAME)
+    # a2ui 仅在显式勾选时开放，MCP 默认不注入该工具。
+    available.discard("a2ui")
     return sorted(available)
 
 
@@ -43,6 +45,8 @@ async def run_wunder_task(task: str) -> dict:
         "answer": result.answer,
         "session_id": result.session_id,
         "usage": result.usage,
+        "uid": getattr(result, "uid", None),
+        "a2ui": getattr(result, "a2ui", None),
     }
 
 

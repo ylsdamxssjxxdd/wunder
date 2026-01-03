@@ -138,6 +138,18 @@ class PromptComposer:
             return prompt.rstrip() + "\n\n" + skill_block.strip()
         return prompt
 
+    def _build_a2ui_prompt(self) -> str:
+        """构建 A2UI 专用提示词块，仅在勾选 a2ui 工具时注入。"""
+        prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "a2ui_prompt.txt"
+        schema_path = Path(__file__).resolve().parent.parent / "prompts" / "a2ui_schema.json"
+        # 提示词模板支持多语言，Schema 固定读取中文路径以保持一致。
+        template = read_prompt_template(prompt_path)
+        try:
+            schema_text = schema_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            schema_text = "{}"
+        return template.replace("{a2ui_schema}", schema_text).strip()
+
     def _build_prompt_cache_key(
         self,
         user_id: str,
@@ -234,6 +246,9 @@ class PromptComposer:
         extra_prompt = user_tool_bindings.extra_prompt.strip() if user_tool_bindings else ""
         if extra_prompt:
             prompt = prompt.rstrip() + "\n\n" + extra_prompt
+        if "a2ui" in allowed_tool_names:
+            # 仅在显式启用 a2ui 工具时注入 A2UI 说明与 Schema，避免提示词膨胀。
+            prompt = prompt.rstrip() + "\n\n" + self._build_a2ui_prompt()
         self._cache[cache_key] = {"prompt": prompt, "timestamp": time.time()}
         self._cache.move_to_end(cache_key)
         while len(self._cache) > self._cache_max_items:
