@@ -2,15 +2,15 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 17 页：快速开始，用于拆分维护本页内容。
+// 第 18 页：快速开始，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
 <section class="slide" data-title="Quick start">
         <div class="slide-meta">
           <span class="section-tag">Section 6 Quick start</span>
           <div class="section-map">
-            <a class="section-chip active" href="#17">Quick start</a>
-            <a class="section-chip" href="#18">Closing</a>
+            <a class="section-chip active" href="#18">Quick start</a>
+            <a class="section-chip" href="#19">Closing</a>
           </div>
         </div>
         <h2>Quick start: three steps</h2>

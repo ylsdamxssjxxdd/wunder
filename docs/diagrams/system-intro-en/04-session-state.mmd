@@ -1,0 +1,6 @@
+﻿stateDiagram-v2
+  [*] --> running: register session
+  running --> cancelling: cancel requested
+  cancelling --> cancelled: interrupted
+  running --> finished: final output
+  running --> error: exception/timeout

@@ -1,0 +1,18 @@
+﻿sequenceDiagram
+  participant U as User/Frontend
+  participant API as API Layer
+  participant O as Orchestrator
+  participant P as Prompt Builder
+  participant L as LLM
+  participant T as Tool Execution
+  participant S as Storage/Monitor
+
+  U->>API: POST /wunder (user_id, question, tool_names, stream)
+  API->>O: create session and register
+  O->>P: build system prompt (tools/skills/workspace)
+  O->>L: call model (streaming optional)
+  L-->>O: tool calls or answer
+  O->>T: execute tools (built-in/MCP/skills/knowledge/custom)
+  T-->>O: tool results
+  O->>S: write chat/tool/monitor records
+  O-->>U: SSE events or final response

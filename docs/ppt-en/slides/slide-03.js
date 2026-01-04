@@ -10,6 +10,7 @@ export default function buildSlide() {
           <span class="section-tag">Section 1 Core idea</span>
           <div class="section-map">
             <a class="section-chip active" href="#3">Core idea</a>
+            <a class="section-chip" href="#4">Runtime flow</a>
           </div>
         </div>
         <h2>From chatting to getting things done</h2>
@@ -26,29 +27,14 @@ export default function buildSlide() {
             <p>/wunder supports streaming progress and final replies</p>
           </div>
           <div class="card soft stack">
-            <span class="pill">Runtime flow</span>
-            <!-- 运行流程图：对应 docs/系统介绍.md 的“从请求到回复” -->
-            <div class="flow">
-              <div class="flow-item">User/Client</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">API layer</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">Orchestrator</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">Prompt Builder</div>
-            </div>
-            <div class="flow">
-              <div class="flow-item">LLM</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">Tool executor</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">Storage/Monitor</div>
-              <div class="flow-arrow">→</div>
-              <div class="flow-item">SSE/Final reply</div>
-            </div>
-            <p class="hint">Request: POST /wunder (user_id, question, tool_names, stream)</p>
+            <span class="pill">Core idea</span>
+            <ul>
+              <li>For developers: everything is an interface (API/config/tools)</li>
+              <li>For the model: everything is a tool (callable, composable, governable)</li>
+              <li>One question drives the full execution chain</li>
+            </ul>
             <div class="note">
-              <strong>Principle:</strong> for developers everything is an interface, for the model everything is a tool
+              <strong>Outcome:</strong> answers become reusable deliverables
             </div>
           </div>
         </div>

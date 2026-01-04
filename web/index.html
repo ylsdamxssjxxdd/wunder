@@ -993,17 +993,27 @@
                   ></textarea>
                 </div>
                 <div class="actions a2a-actions">
-                  <button id="a2aNewSessionBtn" class="secondary btn-with-icon" type="button">
+                  <button
+                    id="a2aNewSessionBtn"
+                    class="secondary btn-with-icon icon-only"
+                    type="button"
+                    title="新会话"
+                    aria-label="新会话"
+                    data-i18n-title="a2a.action.newSession"
+                    data-i18n-aria-label="a2a.action.newSession"
+                  >
                     <i class="fa-solid fa-plus"></i>
-                    <span data-i18n="a2a.action.newSession">新会话</span>
                   </button>
-                  <button id="a2aStopBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-stop"></i>
-                    <span data-i18n="a2a.action.stop">停止</span>
-                  </button>
-                  <button id="a2aSendBtn" class="btn-with-icon" type="button">
+                  <button
+                    id="a2aSendBtn"
+                    class="btn-with-icon icon-only"
+                    type="button"
+                    title="发送"
+                    aria-label="发送"
+                    data-i18n-title="a2a.action.send"
+                    data-i18n-aria-label="a2a.action.send"
+                  >
                     <i class="fa-solid fa-paper-plane"></i>
-                    <span data-i18n="a2a.action.send">发送</span>
                   </button>
                 </div>
               </div>
@@ -1022,6 +1032,7 @@
               <div id="a2aRequestCard" class="log-card">
                 <div class="log-card-header">
                   <label data-i18n="debug.log.requests">请求日志</label>
+                  <span class="log-waiting" data-i18n="debug.log.running">进行中</span>
                 </div>
                 <div id="a2aRequestLog" class="log log-collapsible"></div>
               </div>

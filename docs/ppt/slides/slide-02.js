@@ -7,7 +7,6 @@ export default function buildSlide() {
   return createSlide(`
 <section class="slide toc" data-title="目录">
         <div class="eyebrow">目录</div>
-        <h2>今天的 6 个部分</h2>
         <div class="toc-grid">
           <!-- 目录项通过 hash 跳转到对应章节 -->
           <a class="toc-item toc-link" href="#3">

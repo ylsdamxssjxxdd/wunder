@@ -2,16 +2,16 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 14 页：A2UI，用于拆分维护本页内容。
+// 第 15 页：A2UI，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
 <section class="slide" data-title="A2UI">
         <div class="slide-meta">
           <span class="section-tag">Section 4 Frontier features</span>
           <div class="section-map">
-            <a class="section-chip" href="#13">Memory & compaction</a>
-            <a class="section-chip active" href="#14">A2UI</a>
-            <a class="section-chip" href="#15">A2A</a>
+            <a class="section-chip" href="#14">Memory & compaction</a>
+            <a class="section-chip active" href="#15">A2UI</a>
+            <a class="section-chip" href="#16">A2A</a>
           </div>
         </div>
         <h2>A2UI: turn answers into UI</h2>
@@ -24,8 +24,6 @@ export default function buildSlide() {
               <li>Front-end renders cards, forms, buttons</li>
               <li>Structured display for process and results</li>
             </ul>
-          </div>
-          <div class="card soft stack">
             <span class="pill">How to use</span>
             <ul>
               <li>Explicitly enable the a2ui tool</li>
@@ -34,6 +32,11 @@ export default function buildSlide() {
             </ul>
             <span class="pill">Value</span>
             <p>Lower UI integration cost, clearer UX</p>
+          </div>
+          <div class="card media-panel stack">
+            <h3>Image placeholder</h3>
+            <p>Suggested: A2UI card/form rendering screenshot</p>
+            <span class="tag">assets/feature-a2ui.png</span>
           </div>
         </div>
       </section>

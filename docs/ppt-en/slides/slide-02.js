@@ -17,35 +17,35 @@ export default function buildSlide() {
               <div class="toc-desc">From chat to action</div>
             </div>
           </a>
-          <a class="toc-item toc-link" href="#4">
+          <a class="toc-item toc-link" href="#5">
             <div class="toc-index">02</div>
             <div>
               <div class="toc-title">Tool system</div>
               <div class="toc-desc">Six tool types and unified governance</div>
             </div>
           </a>
-          <a class="toc-item toc-link" href="#11">
+          <a class="toc-item toc-link" href="#12">
             <div class="toc-index">03</div>
             <div>
               <div class="toc-title">Workspace</div>
               <div class="toc-desc">Deliverables and reusable assets</div>
             </div>
           </a>
-          <a class="toc-item toc-link" href="#13">
+          <a class="toc-item toc-link" href="#14">
             <div class="toc-index">04</div>
             <div>
               <div class="toc-title">Frontier features</div>
               <div class="toc-desc">Memory/compaction + A2UI + A2A</div>
             </div>
           </a>
-          <a class="toc-item toc-link" href="#16">
+          <a class="toc-item toc-link" href="#17">
             <div class="toc-index">05</div>
             <div>
               <div class="toc-title">Agent session management</div>
               <div class="toc-desc">Stable, observable, cancelable</div>
             </div>
           </a>
-          <a class="toc-item toc-link" href="#17">
+          <a class="toc-item toc-link" href="#18">
             <div class="toc-index">06</div>
             <div>
               <div class="toc-title">Quick start</div>

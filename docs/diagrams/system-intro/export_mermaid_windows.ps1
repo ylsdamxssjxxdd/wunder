@@ -1,21 +1,44 @@
-<#
+﻿﻿<#
 使用说明（Windows）：
-1) 将 docs/系统介绍.md 中的 Mermaid 代码块导出为 .mmd 源文件
+1) 将指定 Markdown 中的 Mermaid 代码块导出为 .mmd 源文件
 2) 使用 mermaid-cli 渲染为 svg 或 png
-3) 默认输出到当前脚本所在目录
+3) 默认输入 docs/系统介绍.md，输出到当前脚本所在目录
 #>
 
 [CmdletBinding()]
 param(
   [ValidateSet('svg', 'png')]
-  [string]$Format = 'svg'
+  [string]$Format = 'svg',
+  # 可选：指定输入文件路径（相对仓库根目录或绝对路径）
+  [string]$InputPath = '',
+  # 可选：指定输出目录（相对仓库根目录或绝对路径）
+  [string]$OutputDir = '',
+  # 可选：允许输入文档的 Mermaid 块数量少于默认清单
+  [switch]$AllowPartial
 )
 
 # 解析脚本目录与仓库根目录，避免依赖当前工作目录
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDir '..\..\..')
-$inputPath = Join-Path $repoRoot 'docs\系统介绍.md'
-$outDir = $scriptDir
+# 计算输入路径：默认使用 docs/系统介绍.md
+if ([string]::IsNullOrWhiteSpace($InputPath)) {
+  $inputPath = Join-Path $repoRoot 'docs\系统介绍.md'
+} else {
+  $inputPath = $InputPath
+  if (-not (Split-Path $inputPath -IsAbsolute)) {
+    $inputPath = Join-Path $repoRoot $inputPath
+  }
+}
+# 计算输出路径：默认输出到脚本目录
+if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+  $outDir = $scriptDir
+} else {
+  $outDir = $OutputDir
+  if (-not (Split-Path $outDir -IsAbsolute)) {
+    $outDir = Join-Path $repoRoot $outDir
+  }
+  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+}
 
 # Mermaid 块顺序与命名（与文档内出现顺序一致）
 $names = @(
@@ -43,7 +66,7 @@ foreach ($line in $lines) {
   }
   if ($inside -and $line.Trim() -eq '```') {
     if ($index -ge $names.Count) {
-      throw "Mermaid 代码块数量超过预期，检查 docs/系统介绍.md"
+      throw "Mermaid 代码块数量超过预期，检查输入文件：$inputPath"
     }
     $path = Join-Path $outDir ($names[$index] + '.mmd')
     Set-Content -Path $path -Value $current -Encoding UTF8
@@ -59,7 +82,11 @@ if ($inside) {
   throw 'Mermaid 代码块未闭合，请检查输入文档'
 }
 if ($index -ne $names.Count) {
-  throw ("Mermaid 代码块数量不一致，期望 {0} 实际 {1}" -f $names.Count, $index)
+  if ($AllowPartial -and $index -lt $names.Count) {
+    Write-Warning ("Mermaid 代码块数量少于默认清单：期望 {0} 实际 {1}" -f $names.Count, $index)
+  } else {
+    throw ("Mermaid 代码块数量不一致，期望 {0} 实际 {1}" -f $names.Count, $index)
+  }
 }
 
 # 设置本机浏览器路径（优先 Edge/Chrome），避免 puppeteer 自动下载
