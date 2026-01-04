@@ -93,7 +93,7 @@ const switchPanel = (panel) => {
 };
 
 // 根据语言切换系统介绍 PPT 地址，同时附带版本号避免浏览器缓存旧页
-const INTRO_PPT_VERSION = "20260104-06";
+const INTRO_PPT_VERSION = "20260104-07";
 const appendIntroVersion = (src) => `${src}?v=${INTRO_PPT_VERSION}`;
 const resolveIntroSrc = (language) => {
   const normalized = String(language || "").toLowerCase();

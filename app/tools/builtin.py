@@ -622,14 +622,18 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             error=t("tool.a2a.method_unsupported", method=method),
         )
 
-    # 统一读取会话标识，默认跟随当前会话，便于多轮对话衔接
-    session_id = str(
-        args.get("session_id")
-        or args.get("context_id")
-        or args.get("task_id")
-        or context.workspace.session_id
-        or ""
+    # 统一读取会话标识：显式传入优先，跨用户委派时避免复用当前会话导致锁冲突
+    explicit_session_id = str(
+        args.get("session_id") or args.get("context_id") or args.get("task_id") or ""
     ).strip()
+    user_id = str(
+        args.get("user_id") or args.get("userId") or context.workspace.user_id or ""
+    ).strip()
+    session_id = explicit_session_id
+    if not session_id:
+        context_user = str(context.workspace.user_id or "").strip()
+        if not user_id or user_id == context_user:
+            session_id = str(context.workspace.session_id or "").strip()
     request_id = str(
         args.get("jsonrpc_id") or args.get("request_id") or session_id or uuid.uuid4().hex
     ).strip()

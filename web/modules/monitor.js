@@ -47,6 +47,7 @@ const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
+  { keyword: "a2a@", icon: "fa-diagram-project" },
   { keyword: "a2ui", icon: "fa-image" },
   { keyword: "列出文件", icon: "fa-folder-open" },
   { keyword: "list files", icon: "fa-folder-open" },
