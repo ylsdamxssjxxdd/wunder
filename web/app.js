@@ -4,7 +4,7 @@ import {
   readStoredConfig,
   updateDefaultConfig,
 } from "./app.config.js";
-import { elements } from "./modules/elements.js?v=20260104-02";
+import { elements } from "./modules/elements.js?v=20260104-03";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
@@ -34,8 +34,8 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
-import { initA2aPanel } from "./modules/a2a.js?v=20260104-02";
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-02";
+import { initA2aPanel } from "./modules/a2a.js?v=20260104-03";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-03";
 
 const patchApiFetch = () => {
   // 统一为前端请求补齐 API Key，避免每处调用手动添加。
@@ -61,7 +61,7 @@ const patchApiFetch = () => {
 // 切换侧边栏面板，保持单页无整体滚动
 const panelMap = {
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
-  intro: { panel: elements.introPanel, nav: elements.navIntro },
+  intro: { panel: elements.introPanel, nav: elements.sidebarTitle },
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
@@ -80,7 +80,9 @@ const switchPanel = (panel) => {
     const entry = panelMap[key];
     const isActive = key === panel;
     entry.panel.classList.toggle("active", isActive);
-    entry.nav.classList.toggle("active", isActive);
+    if (entry.nav) {
+      entry.nav.classList.toggle("active", isActive);
+    }
   });
   state.runtime.activePanel = panel;
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
@@ -148,9 +150,12 @@ const bindNavigation = () => {
       }
     }
   });
-  elements.navIntro.addEventListener("click", () => {
-    switchPanel("intro");
-  });
+  // 点击侧边栏标题进入系统介绍面板
+  if (elements.sidebarTitle) {
+    elements.sidebarTitle.addEventListener("click", () => {
+      switchPanel("intro");
+    });
+  }
   elements.navDebug.addEventListener("click", () => switchPanel("debug"));
   elements.navDebug.addEventListener("click", () => {
     loadWorkspace();

@@ -27,6 +27,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow: hidden;
 }
 
 .sidebar-title {
@@ -36,10 +37,34 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font: inherit;
 }
 
 .sidebar-title i {
   font-size: 18px;
+}
+
+.sidebar-title:focus-visible {
+  outline: 2px solid #3a7afe;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .nav-btn {
@@ -2729,6 +2754,10 @@ button.danger {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.a2a-connection-actions {
+  justify-content: space-between;
 }
 
 .modal-card.model-output-preview-card {

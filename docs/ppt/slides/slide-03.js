@@ -26,16 +26,27 @@ export default function buildSlide() {
             <p>/wunder 支持流式返回过程与最终回复</p>
           </div>
           <div class="card soft stack">
-            <span class="pill">执行链路</span>
+            <span class="pill">运行流程</span>
+            <!-- 运行流程图：对应 docs/系统介绍.md 的“从请求到回复” -->
             <div class="flow">
-              <div class="flow-item">提问</div>
+              <div class="flow-item">用户/前端</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">任务规划</div>
+              <div class="flow-item">API 层</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">工具执行</div>
+              <div class="flow-item">Orchestrator</div>
               <div class="flow-arrow">→</div>
-              <div class="flow-item">产物沉淀</div>
+              <div class="flow-item">Prompt Builder</div>
             </div>
+            <div class="flow">
+              <div class="flow-item">LLM</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-item">工具执行层</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-item">存储/监控</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-item">SSE/最终回复</div>
+            </div>
+            <p class="hint">请求：POST /wunder（user_id, question, tool_names, stream）</p>
             <div class="note">
               <strong>理念：</strong>对开发者一切是接口，对模型一切皆工具
             </div>

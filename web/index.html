@@ -25,62 +25,60 @@
   <body>
     <div class="app">
       <aside class="sidebar">
-        <div class="sidebar-title">
+        <button id="sidebarTitle" class="sidebar-title" type="button">
           <i class="fa-solid fa-dragon"></i>
           <span data-i18n="sidebar.title">WUNDER 终端</span>
+        </button>
+        <div class="sidebar-nav">
+          <button id="navMonitor" class="nav-btn active">
+            <i class="fa-solid fa-heart"></i>
+            <span data-i18n="panel.monitor">内部状态</span>
+          </button>
+          <button id="navUsers" class="nav-btn">
+            <i class="fa-solid fa-users"></i>
+            <span data-i18n="panel.users">用户管理</span>
+          </button>
+          <button id="navMemory" class="nav-btn">
+            <i class="fa-solid fa-brain"></i>
+            <span data-i18n="panel.memory">记忆体</span>
+          </button>
+          <button id="navLlm" class="nav-btn">
+            <i class="fa-solid fa-sliders"></i>
+            <span data-i18n="panel.llm">模型配置</span>
+          </button>
+          <button id="navBuiltin" class="nav-btn">
+            <i class="fa-solid fa-tools"></i>
+            <span data-i18n="panel.builtin">内置工具链</span>
+          </button>
+          <button id="navMcp" class="nav-btn">
+            <i class="fa-solid fa-plug"></i>
+            <span data-i18n="panel.mcp">MCP 服务</span>
+          </button>
+          <button id="navSkills" class="nav-btn">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span data-i18n="panel.skills">技能管理</span>
+          </button>
+          <button id="navKnowledge" class="nav-btn">
+            <i class="fa-solid fa-book"></i>
+            <span data-i18n="panel.knowledge">字面知识库</span>
+          </button>
+          <button id="navPrompt" class="nav-btn">
+            <i class="fa-solid fa-file-lines"></i>
+            <span data-i18n="panel.prompt">系统提示词</span>
+          </button>
+          <button id="navDebug" class="nav-btn">
+            <i class="fa-solid fa-bug"></i>
+            <span data-i18n="panel.debug">调试面板</span>
+          </button>
+          <button id="navA2a" class="nav-btn">
+            <i class="fa-solid fa-network-wired"></i>
+            <span data-i18n="panel.a2a">A2A 测试</span>
+          </button>
+          <button id="navSettings" class="nav-btn">
+            <i class="fa-solid fa-gear"></i>
+            <span data-i18n="panel.settings">系统设置</span>
+          </button>
         </div>
-        <button id="navMonitor" class="nav-btn active">
-          <i class="fa-solid fa-heart"></i>
-          <span data-i18n="panel.monitor">内部状态</span>
-        </button>
-        <button id="navUsers" class="nav-btn">
-          <i class="fa-solid fa-users"></i>
-          <span data-i18n="panel.users">用户管理</span>
-        </button>
-        <button id="navMemory" class="nav-btn">
-          <i class="fa-solid fa-brain"></i>
-          <span data-i18n="panel.memory">记忆体</span>
-        </button>
-        <button id="navLlm" class="nav-btn">
-          <i class="fa-solid fa-sliders"></i>
-          <span data-i18n="panel.llm">模型配置</span>
-        </button>
-        <button id="navBuiltin" class="nav-btn">
-          <i class="fa-solid fa-tools"></i>
-          <span data-i18n="panel.builtin">内置工具链</span>
-        </button>
-        <button id="navMcp" class="nav-btn">
-          <i class="fa-solid fa-plug"></i>
-          <span data-i18n="panel.mcp">MCP 服务</span>
-        </button>
-        <button id="navSkills" class="nav-btn">
-          <i class="fa-solid fa-wand-magic-sparkles"></i>
-          <span data-i18n="panel.skills">技能管理</span>
-        </button>
-        <button id="navKnowledge" class="nav-btn">
-          <i class="fa-solid fa-book"></i>
-          <span data-i18n="panel.knowledge">字面知识库</span>
-        </button>
-        <button id="navPrompt" class="nav-btn">
-          <i class="fa-solid fa-file-lines"></i>
-          <span data-i18n="panel.prompt">系统提示词</span>
-        </button>
-        <button id="navDebug" class="nav-btn">
-          <i class="fa-solid fa-bug"></i>
-          <span data-i18n="panel.debug">调试面板</span>
-        </button>
-        <button id="navA2a" class="nav-btn">
-          <i class="fa-solid fa-network-wired"></i>
-          <span data-i18n="panel.a2a">A2A 测试</span>
-        </button>
-        <button id="navSettings" class="nav-btn">
-          <i class="fa-solid fa-gear"></i>
-          <span data-i18n="panel.settings">系统设置</span>
-        </button>
-        <button id="navIntro" class="nav-btn">
-          <i class="fa-solid fa-circle-info"></i>
-          <span data-i18n="panel.intro">系统介绍</span>
-        </button>
       </aside>
 
       <main class="content">
@@ -1008,26 +1006,32 @@
             </div>
 
             <div class="panel-logs a2a-logs">
-              <div id="a2aRequestCard" class="log-card">
+              <div id="a2aEventCard" class="log-card">
                 <div class="log-card-header">
-                  <strong data-i18n="a2a.log.request">请求体</strong>
+                  <label data-i18n="debug.log.events">事件日志</label>
                   <span id="a2aStatus" class="log-waiting" data-i18n="a2a.status.idle">
                     空闲
                   </span>
                 </div>
-                <div id="a2aRequestPreview" class="log"></div>
+                <div id="a2aEventLog" class="log log-collapsible"></div>
+              </div>
+              <div id="a2aRequestCard" class="log-card">
+                <div class="log-card-header">
+                  <label data-i18n="debug.log.requests">请求日志</label>
+                </div>
+                <div id="a2aRequestLog" class="log log-collapsible"></div>
               </div>
               <div class="log-card">
                 <div class="log-card-header">
-                  <strong data-i18n="a2a.log.events">事件流</strong>
+                  <label data-i18n="debug.log.output">模型输出</label>
                 </div>
-                <div id="a2aEventLog" class="log"></div>
+                <div id="a2aModelOutput" class="log">
+                  <pre id="a2aModelOutputText" class="model-output-text"></pre>
+                </div>
               </div>
-              <div class="log-card log-card-wide">
-                <div class="log-card-header">
-                  <strong data-i18n="a2a.log.response">响应结果</strong>
-                </div>
-                <div id="a2aResponse" class="answer"></div>
+              <div class="log-card">
+                <label data-i18n="debug.log.stats">统计信息</label>
+                <div id="a2aStats" class="answer"></div>
               </div>
             </div>
           </div>
@@ -1081,7 +1085,7 @@
                 <div id="a2aHeadersError" class="error-text"></div>
               </div>
             </div>
-            <div class="modal-actions">
+            <div class="modal-actions a2a-connection-actions">
               <button id="a2aAgentCardBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-id-card"></i>
                 <span data-i18n="a2a.action.agentCard">加载 AgentCard</span>
@@ -2611,6 +2615,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260104-02"></script>
+    <script type="module" src="./app.js?v=20260104-03"></script>
   </body>
 </html>
