@@ -626,12 +626,18 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     explicit_session_id = str(
         args.get("session_id") or args.get("context_id") or args.get("task_id") or ""
     ).strip()
-    user_id = str(
-        args.get("user_id") or args.get("userId") or context.workspace.user_id or ""
-    ).strip()
+    explicit_user_id = str(args.get("user_id") or args.get("userId") or "").strip()
+    context_user = str(context.workspace.user_id or "").strip()
+    user_id = explicit_user_id or context_user
+    local_endpoint = ""
+    local_port = context.config.get("server_port")
+    if local_port:
+        local_endpoint = _normalize_a2a_endpoint(f"http://127.0.0.1:{local_port}/a2a")
+    # 本地自调用时默认隔离 user_id，避免与当前会话互斥导致 USER_BUSY
+    if local_endpoint and endpoint == local_endpoint and not explicit_user_id and context_user:
+        user_id = f"a2a:{context_user}"
     session_id = explicit_session_id
     if not session_id:
-        context_user = str(context.workspace.user_id or "").strip()
         if not user_id or user_id == context_user:
             session_id = str(context.workspace.session_id or "").strip()
     request_id = str(
@@ -669,10 +675,6 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
 
     allow_self = bool(args.get("allow_self", False))
     max_depth = int(args.get("max_depth") or 0)
-    local_endpoint = ""
-    local_port = context.config.get("server_port")
-    if local_port:
-        local_endpoint = _normalize_a2a_endpoint(f"http://127.0.0.1:{local_port}/a2a")
     if local_endpoint and endpoint == local_endpoint and not allow_self:
         return ToolResult(ok=False, data={}, error=t("tool.a2a.loop_detected"))
 
@@ -701,7 +703,6 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     message["metadata"] = metadata
 
     params: Dict[str, Any] = {"message": message}
-    user_id = str(args.get("user_id") or args.get("userId") or context.workspace.user_id or "").strip()
     if user_id:
         params["userId"] = user_id
 
