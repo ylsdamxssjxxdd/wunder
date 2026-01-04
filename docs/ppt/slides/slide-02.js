@@ -2,55 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 2 页：目录页（明确章节结构），用于拆分维护本页内容。
+// 第 2 页：核心理念，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide toc" data-title="目录">
-        <div class="eyebrow">目录</div>
-        <div class="toc-grid">
-          <!-- 目录项通过 hash 跳转到对应章节 -->
-          <a class="toc-item toc-link" href="#3">
-            <div class="toc-index">01</div>
-            <div>
-              <div class="toc-title">核心理念</div>
-              <div class="toc-desc">从“会聊”到“会做事”</div>
+<section class="slide" data-title="核心理念">
+        <div class="slide-meta">
+          <span class="section-tag">第1节 核心理念</span>
+          <div class="section-map">
+            <a class="section-chip active" href="#2">核心理念</a>
+            <a class="section-chip" href="#3">运行流程</a>
+          </div>
+        </div>
+        <h2>从“会聊”到“会做事”</h2>
+        <p class="section-lead">一次提问，跑通从理解到落地的链路</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">用户看到的</span>
+            <ul>
+              <li>只需提出问题</li>
+              <li>过程清晰可追踪</li>
+              <li>结果能落成产物</li>
+            </ul>
+            <span class="pill">统一入口</span>
+            <p>/wunder 支持流式返回过程与最终回复</p>
+          </div>
+          <div class="card soft stack">
+            <span class="pill">核心理念</span>
+            <ul>
+              <li>对开发者：一切是接口（API/配置/工具）</li>
+              <li>对大模型：一切皆工具（可调用、可组合、可治理）</li>
+              <li>一次提问即可驱动完整执行链路</li>
+            </ul>
+            <div class="note">
+              <strong>结果导向：</strong>让答案沉淀为可复用的产物
             </div>
-          </a>
-          <a class="toc-item toc-link" href="#5">
-            <div class="toc-index">02</div>
-            <div>
-              <div class="toc-title">工具体系</div>
-              <div class="toc-desc">六类工具与统一治理</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#12">
-            <div class="toc-index">03</div>
-            <div>
-              <div class="toc-title">工作区</div>
-              <div class="toc-desc">产出沉淀与可复用资产</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#14">
-            <div class="toc-index">04</div>
-            <div>
-              <div class="toc-title">前沿特性</div>
-              <div class="toc-desc">记忆/压缩 + A2UI + A2A</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#17">
-            <div class="toc-index">05</div>
-            <div>
-              <div class="toc-title">智能体线程管理</div>
-              <div class="toc-desc">稳定、可监控、可取消</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#18">
-            <div class="toc-index">06</div>
-            <div>
-              <div class="toc-title">快速开始</div>
-              <div class="toc-desc">从一个场景做起</div>
-            </div>
-          </a>
+          </div>
         </div>
       </section>
   `);

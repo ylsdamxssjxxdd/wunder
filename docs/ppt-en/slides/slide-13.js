@@ -2,35 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 13 页：智能体功能演示，用于拆分维护本页内容。
+// 第 13 页：前沿特性（记忆与上下文压缩），用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Agent demo">
+<section class="slide" data-title="Frontier features">
         <div class="slide-meta">
-          <span class="section-tag">Section 3 Workspace</span>
+          <span class="section-tag">Section 4 Frontier features</span>
           <div class="section-map">
-            <a class="section-chip" href="#12">Workspace</a>
-            <a class="section-chip active" href="#13">Demo</a>
+            <a class="section-chip active" href="#13">Memory & compaction</a>
+            <a class="section-chip" href="#14">A2UI</a>
+            <a class="section-chip" href="#15">A2A</a>
           </div>
         </div>
-        <h2>Agent demo: draw a heart and save it</h2>
-        <p class="section-lead">Prove the tools + workspace loop</p>
+        <h2>Frontier features: memory & context compaction</h2>
+        <p class="section-lead">Keep long chats stable and carry key conclusions forward</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">Steps</span>
+            <span class="pill">Context compaction</span>
             <ul>
-              <li>Ask: draw a heart in Python</li>
-              <li>Run: generate and save in the workspace</li>
-              <li>Download: user saves the result locally</li>
+              <li>Trigger: context usage hits threshold</li>
+              <li>Keep system prompt + recent messages</li>
+              <li>Generate a structured summary and continue</li>
             </ul>
-            <div class="note">
-              <strong>Result:</strong> from one sentence to a deliverable file
-            </div>
+            <span class="pill">Long-term memory</span>
+            <ul>
+              <li>Auto summarize after the final reply</li>
+              <li>Write to long-term memory with timestamp</li>
+              <li>Injected as [Long-term memory] later</li>
+            </ul>
+            <span class="pill">Metric note</span>
+            <p>Counts context tokens, not total usage</p>
           </div>
           <div class="card media-panel stack">
             <h3>Image placeholder</h3>
-            <p>Suggested: heart output or download result screenshot</p>
-            <span class="tag">assets/demo-heart.png</span>
+            <p>Suggested: compaction flow or memory injection diagram</p>
+            <span class="tag">assets/feature-memory.png</span>
           </div>
         </div>
       </section>

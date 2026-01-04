@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title data-i18n="page.title">测试调试</title>
+    <title data-i18n="page.title">WUNDER 终端</title>
     <link
       rel="icon"
       type="image/svg+xml"
@@ -974,6 +974,17 @@
                 <i class="fa-solid fa-sliders"></i>
                 <span data-i18n="a2a.action.advanced">高级设置</span>
               </button>
+              <button
+                id="a2aHistoryBtn"
+                class="secondary btn-with-icon icon-only"
+                type="button"
+                aria-label="历史"
+                title="历史"
+                data-i18n-aria-label="a2a.history"
+                data-i18n-title="a2a.history"
+              >
+                <i class="fa-solid fa-clock-rotate-left"></i>
+              </button>
             </div>
           </div>
           <div class="tips" data-i18n="a2a.tip">
@@ -1023,8 +1034,8 @@
               <div id="a2aEventCard" class="log-card">
                 <div class="log-card-header">
                   <label data-i18n="debug.log.events">事件日志</label>
-                  <span id="a2aStatus" class="log-waiting" data-i18n="a2a.status.idle">
-                    空闲
+                  <span id="a2aStatus" class="log-waiting" data-i18n="debug.log.running">
+                    进行中
                   </span>
                 </div>
                 <div id="a2aEventLog" class="log log-collapsible"></div>
@@ -1281,6 +1292,29 @@
             </div>
             <div class="modal-actions">
               <button id="a2aAgentCardCloseBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="a2aHistoryModal" class="modal">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div>
+                <div class="detail-title" data-i18n="a2a.history.title">A2A 历史</div>
+                <div id="a2aHistoryMeta" class="muted"></div>
+              </div>
+              <button id="a2aHistoryClose" class="icon-btn" type="button">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="list-header">
+                <label data-i18n="a2a.history.list.title">任务列表</label>
+              </div>
+              <div id="a2aHistoryList" class="list-body"></div>
+            </div>
+            <div class="modal-actions">
+              <button id="a2aHistoryCloseBtn" class="secondary btn-with-icon">
                 <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
               </button>
             </div>
@@ -2687,6 +2721,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260104-09"></script>
+    <script type="module" src="./app.js?v=20260104-11"></script>
   </body>
 </html>

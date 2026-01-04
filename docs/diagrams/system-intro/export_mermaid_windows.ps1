@@ -1,4 +1,4 @@
-﻿﻿<#
+﻿<#
 使用说明（Windows）：
 1) 将指定 Markdown 中的 Mermaid 代码块导出为 .mmd 源文件
 2) 使用 mermaid-cli 渲染为 svg 或 png

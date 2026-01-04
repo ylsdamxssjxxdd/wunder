@@ -2,44 +2,44 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 6 页：内置工具，用于拆分维护本页内容。
+// 第 6 页：MCP 工具，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Built-in tools">
+<section class="slide" data-title="MCP tools">
         <div class="slide-meta">
           <span class="section-tag">Section 2 Tool system</span>
           <div class="section-map">
-            <a class="section-chip" href="#5">Overview</a>
-            <a class="section-chip active" href="#6">Built-in</a>
-            <a class="section-chip" href="#7">MCP</a>
-            <a class="section-chip" href="#8">Skills</a>
-            <a class="section-chip" href="#9">Knowledge</a>
-            <a class="section-chip" href="#10">Custom</a>
-            <a class="section-chip" href="#11">Shared</a>
+            <a class="section-chip" href="#4">Overview</a>
+            <a class="section-chip" href="#5">Built-in</a>
+            <a class="section-chip active" href="#6">MCP</a>
+            <a class="section-chip" href="#7">Skills</a>
+            <a class="section-chip" href="#8">Knowledge</a>
+            <a class="section-chip" href="#9">Custom</a>
+            <a class="section-chip" href="#10">Shared</a>
           </div>
         </div>
-        <h2>Built-in tools: core actions</h2>
-        <p class="section-lead">Standardize common actions first</p>
+        <h2>MCP tools: connect external systems</h2>
+        <p class="section-lead">When built-ins are not enough, bring in external capabilities</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">What it is</span>
             <ul>
-              <li>File read/write, search, replace</li>
-              <li>Command execution and script running</li>
-              <li>ptc temporary scripts</li>
+              <li>Connect external services via MCP</li>
+              <li>Call as server@tool</li>
+              <li>Auto included in the tool catalog</li>
             </ul>
             <span class="pill">Why it matters</span>
             <ul>
-              <li>Write answers directly into files</li>
-              <li>Batch clean, process, and generate outputs</li>
+              <li>Connect enterprise systems, search, BI, and more</li>
+              <li>Build cross-system execution chains</li>
             </ul>
             <span class="pill">Governance</span>
-            <p>allow_paths / allow_commands control access scope</p>
+            <p>allow_tools allowlist + unified timeout control</p>
           </div>
           <div class="card media-panel stack">
             <h3>Image placeholder</h3>
-            <p>Suggested: built-in tool list or file operations</p>
-            <span class="tag">assets/tool-builtin.png</span>
+            <p>Suggested: MCP topology or external services map</p>
+            <span class="tag">assets/tool-mcp.png</span>
           </div>
         </div>
       </section>

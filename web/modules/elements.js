@@ -442,6 +442,7 @@ export const elements = {
   a2aStopBtn: document.getElementById("a2aStopBtn"),
   a2aNewSessionBtn: document.getElementById("a2aNewSessionBtn"),
   a2aAgentCardBtn: document.getElementById("a2aAgentCardBtn"),
+  a2aHistoryBtn: document.getElementById("a2aHistoryBtn"),
   a2aEventCard: document.getElementById("a2aEventCard"),
   a2aRequestCard: document.getElementById("a2aRequestCard"),
   a2aStatus: document.getElementById("a2aStatus"),
@@ -462,4 +463,9 @@ export const elements = {
   a2aAgentCardTools: document.getElementById("a2aAgentCardTools"),
   a2aAgentCardClose: document.getElementById("a2aAgentCardClose"),
   a2aAgentCardCloseBtn: document.getElementById("a2aAgentCardCloseBtn"),
+  a2aHistoryModal: document.getElementById("a2aHistoryModal"),
+  a2aHistoryMeta: document.getElementById("a2aHistoryMeta"),
+  a2aHistoryList: document.getElementById("a2aHistoryList"),
+  a2aHistoryClose: document.getElementById("a2aHistoryClose"),
+  a2aHistoryCloseBtn: document.getElementById("a2aHistoryCloseBtn"),
 };

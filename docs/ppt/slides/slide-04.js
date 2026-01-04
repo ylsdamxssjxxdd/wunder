@@ -2,25 +2,46 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 4 页：运行流程图，用于展示 /wunder 从请求到回复的链路。
+// 第 4 页：工具体系总览，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="运行流程">
+<section class="slide" data-title="工具体系">
         <div class="slide-meta">
-          <span class="section-tag">第1节 核心理念</span>
+          <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
-            <a class="section-chip" href="#3">核心理念</a>
-            <a class="section-chip active" href="#4">运行流程</a>
+            <a class="section-chip active" href="#4">总览</a>
+            <a class="section-chip" href="#5">内置</a>
+            <a class="section-chip" href="#6">MCP</a>
+            <a class="section-chip" href="#7">Skills</a>
+            <a class="section-chip" href="#8">知识库</a>
+            <a class="section-chip" href="#9">自建</a>
+            <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>从请求到回复</h2>
-        <p class="section-lead">一次提问贯穿“理解 → 调用 → 产出”</p>
-        <img
-          class="hero-image"
-          src="assets/02-request-flow.svg"
-          alt="wunder 运行流程图"
-        />
-        <p class="hint">请求：POST /wunder（user_id, question, tool_names, stream）</p>
+        <h2>六类工具构成能力地图</h2>
+        <p class="section-lead">能力拆分后，才能被治理、复用与共享</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">工具类型</span>
+            <ul>
+              <li>内置工具：文件/命令/ptc</li>
+              <li>MCP 工具：外部服务接入</li>
+              <li>Skills 工具：流程固化</li>
+              <li>知识库工具：可检索资料</li>
+              <li>自建工具：个人能力包</li>
+              <li>共享工具：团队复用池</li>
+            </ul>
+            <span class="pill">统一治理</span>
+            <p>统一清单、白名单管控、可组合使用</p>
+            <span class="pill">价值</span>
+            <p>让能力标准化、可追踪、可复用</p>
+          </div>
+          <div class="card media-panel stack">
+            <h3>图片占位</h3>
+            <p>建议：工具体系总览图（六类工具 + 调度层）</p>
+            <span class="tag">assets/tool-system-overview.png</span>
+          </div>
+        </div>
       </section>
   `);
 }

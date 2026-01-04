@@ -2,41 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 15 页：A2UI，用于拆分维护本页内容。
+// 第 15 页：A2A 标准接口，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="A2UI">
+<section class="slide" data-title="A2A 标准接口">
         <div class="slide-meta">
           <span class="section-tag">第4节 前沿特性</span>
           <div class="section-map">
-            <a class="section-chip" href="#14">记忆与压缩</a>
-            <a class="section-chip active" href="#15">A2UI</a>
-            <a class="section-chip" href="#16">A2A</a>
+            <a class="section-chip" href="#13">记忆与压缩</a>
+            <a class="section-chip" href="#14">A2UI</a>
+            <a class="section-chip active" href="#15">A2A</a>
           </div>
         </div>
-        <h2>A2UI：让回答直接变成界面</h2>
-        <p class="section-lead">结构化输出，前端可直接渲染</p>
+        <h2>A2A：对外标准化智能体接口</h2>
+        <p class="section-lead">JSON-RPC + SSE，让智能体能力可互通</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">是什么</span>
+            <span class="pill">接口能力</span>
             <ul>
-              <li>模型输出 A2UI JSON 消息</li>
-              <li>前端渲染卡片、表单、按钮</li>
-              <li>结构化展示过程与结果</li>
+              <li>SendMessage / SendStreamingMessage</li>
+              <li>GetTask / ListTasks / SubscribeToTask</li>
+              <li>AgentCard 服务发现</li>
             </ul>
             <span class="pill">接入方式</span>
             <ul>
-              <li>显式启用 a2ui 工具</li>
-              <li>SSE 输出 a2ui 事件</li>
-              <li>前端按组件规范渲染</li>
+              <li>入口：/a2a（JSON-RPC 2.0）</li>
+              <li>发现：/.well-known/agent-card.json</li>
+              <li>鉴权：API Key 统一校验</li>
             </ul>
             <span class="pill">价值</span>
-            <p>降低二次开发成本，体验更直观</p>
+            <p>统一跨系统调用，复用 Wunder 工具链</p>
           </div>
           <div class="card media-panel stack">
             <h3>图片占位</h3>
-            <p>建议：A2UI 卡片/表单渲染截图</p>
-            <span class="tag">assets/feature-a2ui.png</span>
+            <p>建议：客户端 ↔ /a2a ↔ wunder 的调用链路</p>
+            <span class="tag">assets/feature-a2a.png</span>
           </div>
         </div>
       </section>

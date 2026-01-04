@@ -2,56 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 2 页：目录页（明确章节结构），用于拆分维护本页内容。
+// 第 2 页：核心理念，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide toc" data-title="Agenda">
-        <div class="eyebrow">Agenda</div>
-        <h2>Six parts for today</h2>
-        <div class="toc-grid">
-          <!-- 目录项通过 hash 跳转到对应章节 -->
-          <a class="toc-item toc-link" href="#3">
-            <div class="toc-index">01</div>
-            <div>
-              <div class="toc-title">Core idea</div>
-              <div class="toc-desc">From chat to action</div>
+<section class="slide" data-title="Core idea">
+        <div class="slide-meta">
+          <span class="section-tag">Section 1 Core idea</span>
+          <div class="section-map">
+            <a class="section-chip active" href="#2">Core idea</a>
+            <a class="section-chip" href="#3">Runtime flow</a>
+          </div>
+        </div>
+        <h2>From chatting to getting things done</h2>
+        <p class="section-lead">One question connects understanding to delivery</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">What users see</span>
+            <ul>
+              <li>Just ask the question</li>
+              <li>Process is clear and traceable</li>
+              <li>Results become deliverables</li>
+            </ul>
+            <span class="pill">Unified entry</span>
+            <p>/wunder supports streaming progress and final replies</p>
+          </div>
+          <div class="card soft stack">
+            <span class="pill">Core idea</span>
+            <ul>
+              <li>For developers: everything is an interface (API/config/tools)</li>
+              <li>For the model: everything is a tool (callable, composable, governable)</li>
+              <li>One question drives the full execution chain</li>
+            </ul>
+            <div class="note">
+              <strong>Outcome:</strong> answers become reusable deliverables
             </div>
-          </a>
-          <a class="toc-item toc-link" href="#5">
-            <div class="toc-index">02</div>
-            <div>
-              <div class="toc-title">Tool system</div>
-              <div class="toc-desc">Six tool types and unified governance</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#12">
-            <div class="toc-index">03</div>
-            <div>
-              <div class="toc-title">Workspace</div>
-              <div class="toc-desc">Deliverables and reusable assets</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#14">
-            <div class="toc-index">04</div>
-            <div>
-              <div class="toc-title">Frontier features</div>
-              <div class="toc-desc">Memory/compaction + A2UI + A2A</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#17">
-            <div class="toc-index">05</div>
-            <div>
-              <div class="toc-title">Agent session management</div>
-              <div class="toc-desc">Stable, observable, cancelable</div>
-            </div>
-          </a>
-          <a class="toc-item toc-link" href="#18">
-            <div class="toc-index">06</div>
-            <div>
-              <div class="toc-title">Quick start</div>
-              <div class="toc-desc">Start with one scenario</div>
-            </div>
-          </a>
+          </div>
         </div>
       </section>
   `);

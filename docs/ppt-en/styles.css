@@ -112,6 +112,11 @@ body {
   gap: clamp(10px, 2vmin, 18px);
 }
 
+/* 目录页标题“Agenda”加大字号，强化视觉锚点 */
+.slide.toc .eyebrow {
+  font-size: clamp(16px, 3.2vmin, 28px);
+}
+
 /* 顶部章节定位条，提示当前讲述位置 */
 .slide-meta {
   display: flex;

@@ -1,12 +1,14 @@
-import { elements } from "./elements.js?v=20260104-09";
+import { elements } from "./elements.js?v=20260104-11";
 import { state } from "./state.js";
-import { parseHeadersValue, normalizeApiBase } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260104-09";
+import { parseHeadersValue, normalizeApiBase, formatTimestamp } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js?v=20260104-11";
+import { notify } from "./notify.js";
 
 const A2A_STATE_KEY = "wunder_a2a_state";
 const MAX_LOG_ITEMS = 300;
 const STREAM_METHODS = new Set(["SendStreamingMessage", "SubscribeToTask"]);
 const a2aLogTimestamps = new WeakMap();
+const pendingA2aRequests = [];
 
 const buildEmptyStats = () => ({
   requestId: "",
@@ -174,6 +176,65 @@ const formatDuration = (durationMs) => {
   return `${seconds.toFixed(2)}s`;
 };
 
+// 在请求日志条目右侧补充耗时标签，保持与事件日志对齐
+const appendA2aRequestDurationBadge = (item, durationText) => {
+  if (!item || !durationText || durationText === "-") {
+    return;
+  }
+  const summary = item.querySelector("summary");
+  if (!summary) {
+    return;
+  }
+  let rightWrap = summary.querySelector(".log-right");
+  if (!rightWrap) {
+    rightWrap = document.createElement("span");
+    rightWrap.className = "log-right";
+    summary.appendChild(rightWrap);
+  }
+  let durationNode = rightWrap.querySelector(".log-duration");
+  if (!durationNode) {
+    durationNode = document.createElement("span");
+    durationNode.className = "log-duration";
+    const durationLabel = document.createElement("span");
+    durationLabel.className = "log-duration-label";
+    durationLabel.textContent = t("log.duration");
+    const durationValue = document.createElement("span");
+    durationValue.className = "log-duration-value";
+    durationValue.textContent = durationText;
+    durationNode.appendChild(durationLabel);
+    durationNode.appendChild(durationValue);
+    rightWrap.appendChild(durationNode);
+  } else {
+    const durationValue = durationNode.querySelector(".log-duration-value");
+    if (durationValue) {
+      durationValue.textContent = durationText;
+    }
+  }
+};
+
+// 解析 A2A 事件中的时间戳，提升日志耗时准确度
+const resolveA2aEventTimestamp = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidates = [
+    payload.timestamp,
+    payload.statusUpdate?.status?.timestamp,
+    payload.task?.status?.timestamp,
+    payload.message?.timestamp,
+    payload.artifactUpdate?.metadata?.timestamp,
+    payload.artifactUpdate?.artifact?.metadata?.timestamp,
+    payload.artifactUpdate?.artifact?.timestamp,
+    payload.task?.metadata?.timestamp,
+  ];
+  for (const value of candidates) {
+    if (Number.isFinite(resolveLogTimestampMs(value))) {
+      return value;
+    }
+  }
+  return null;
+};
+
 // 计算耗时差，首条日志默认显示 0s
 const resolveDurationMs = (container, timestampMs, overrideMs) => {
   if (Number.isFinite(overrideMs)) {
@@ -299,12 +360,24 @@ const appendA2aEventLog = (title, options = {}) =>
   appendA2aLogItem(elements.a2aEventLog, title, options);
 
 // 追加 A2A 请求日志条目
-const appendA2aRequestLog = (title, detail, options = {}) =>
-  appendA2aLogItem(elements.a2aRequestLog, title, {
+const appendA2aRequestLog = (title, detail, options = {}) => {
+  const timestampValue = options.timestamp;
+  const timestampMs = resolveLogTimestampMs(timestampValue);
+  const fallbackMs = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+  const item = appendA2aLogItem(elements.a2aRequestLog, title, {
     detail,
     showDuration: false,
     ...options,
+    timestamp: Number.isFinite(timestampMs) ? timestampValue : fallbackMs,
   });
+  if (item) {
+    pendingA2aRequests.push({
+      item,
+      requestTimestampMs: Number.isFinite(timestampMs) ? timestampMs : fallbackMs,
+    });
+  }
+  return item;
+};
 
 // 重置日志时间差计数，避免新一轮耗时计算串联
 const resetA2aLogTimers = () => {
@@ -314,6 +387,26 @@ const resetA2aLogTimers = () => {
   if (elements.a2aRequestLog) {
     a2aLogTimestamps.delete(elements.a2aRequestLog);
   }
+};
+
+// 清空正在等待的请求日志状态
+const resetPendingA2aRequests = () => {
+  pendingA2aRequests.length = 0;
+};
+
+// 计算并补充请求耗时展示
+const finishA2aRequestLog = (options = {}) => {
+  if (!pendingA2aRequests.length) {
+    return;
+  }
+  const entry = pendingA2aRequests.shift();
+  if (!entry || !entry.item) {
+    return;
+  }
+  const responseTimestampMs = resolveLogTimestampMs(options.timestamp);
+  const endTimestampMs = Number.isFinite(responseTimestampMs) ? responseTimestampMs : Date.now();
+  const durationText = formatDurationSeconds(entry.requestTimestampMs, endTimestampMs);
+  appendA2aRequestDurationBadge(entry.item, durationText);
 };
 
 // 统一更新模型输出区域文本
@@ -704,25 +797,48 @@ const clearLogs = () => {
   if (elements.a2aRequestLog) {
     elements.a2aRequestLog.innerHTML = "";
   }
+  resetPendingA2aRequests();
   resetA2aLogTimers();
   resetA2aOutput();
   resetA2aStats();
 };
 
+// 统一更新 A2A 日志等待状态
+const setA2aLogWaiting = (waiting) => {
+  [
+    { card: elements.a2aEventCard, log: elements.a2aEventLog },
+    { card: elements.a2aRequestCard, log: elements.a2aRequestLog },
+  ].forEach(({ card, log }) => {
+    const target = card || log?.closest?.(".log-card");
+    if (target) {
+      target.classList.toggle("is-waiting", waiting);
+    }
+    if (log) {
+      log.setAttribute("aria-busy", waiting ? "true" : "false");
+    }
+  });
+};
+
+// 控制发送/停止按钮状态
+const setA2aSendToggleState = (active) => {
+  if (!elements.a2aSendBtn) {
+    return;
+  }
+  const isStop = Boolean(active);
+  const icon = elements.a2aSendBtn.querySelector("i");
+  if (icon) {
+    icon.className = isStop ? "fa-solid fa-stop" : "fa-solid fa-paper-plane";
+  }
+  elements.a2aSendBtn.classList.toggle("danger", isStop);
+  const label = isStop ? t("a2a.action.stop") : t("a2a.action.send");
+  elements.a2aSendBtn.setAttribute("aria-label", label);
+  elements.a2aSendBtn.title = label;
+};
+
 const setStreamingState = (active) => {
   state.runtime.a2aStreaming = active;
-  if (elements.a2aEventCard) {
-    elements.a2aEventCard.classList.toggle("is-waiting", active);
-  }
-  if (elements.a2aStatus) {
-    elements.a2aStatus.textContent = active ? t("a2a.status.streaming") : t("a2a.status.idle");
-  }
-  if (elements.a2aSendBtn) {
-    elements.a2aSendBtn.disabled = active;
-  }
-  if (elements.a2aStopBtn) {
-    elements.a2aStopBtn.disabled = !active;
-  }
+  setA2aLogWaiting(active);
+  setA2aSendToggleState(active);
 };
 
 // 打开连接设置弹窗，确保默认 Endpoint 已同步
@@ -1383,6 +1499,276 @@ const applyOutputFromResult = (result) => {
   return true;
 };
 
+const resolveHistoryTaskId = (task) => {
+  const value = task?.id || task?.taskId || task?.name || "";
+  return String(value || "").trim();
+};
+
+const resolveHistoryTaskStatus = (task) => {
+  const value = task?.status?.state || task?.status?.status || task?.status || "";
+  return String(value || "").trim();
+};
+
+const resolveHistoryTaskTimestamp = (task) =>
+  task?.status?.timestamp || task?.status?.message?.timestamp || task?.metadata?.timestamp || "";
+
+const resolveHistoryTaskTitle = (task) => {
+  const summary = extractMessageText(task?.status?.message);
+  if (summary) {
+    return summary;
+  }
+  const taskId = resolveHistoryTaskId(task);
+  return taskId ? `task ${taskId}` : "-";
+};
+
+const sortHistoryTasksByTime = (tasks) =>
+  [...tasks].sort((a, b) => {
+    const aTime = resolveLogTimestampMs(resolveHistoryTaskTimestamp(a)) || 0;
+    const bTime = resolveLogTimestampMs(resolveHistoryTaskTimestamp(b)) || 0;
+    return bTime - aTime;
+  });
+
+const updateA2aHistoryMeta = (tasks) => {
+  if (!elements.a2aHistoryMeta) {
+    return;
+  }
+  const count = Array.isArray(tasks) ? tasks.length : 0;
+  elements.a2aHistoryMeta.textContent = t("a2a.history.meta", { count });
+};
+
+const renderA2aHistoryList = (tasks) => {
+  if (!elements.a2aHistoryList) {
+    return;
+  }
+  elements.a2aHistoryList.textContent = "";
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    elements.a2aHistoryList.textContent = t("a2a.history.empty");
+    return;
+  }
+  sortHistoryTasksByTime(tasks).forEach((task) => {
+    const taskId = resolveHistoryTaskId(task);
+    const contextId = String(task?.contextId || "").trim();
+    const status = resolveHistoryTaskStatus(task);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "list-item";
+    if (taskId && taskId === state.runtime.a2aTaskId) {
+      item.classList.add("active");
+    }
+
+    const title = document.createElement("div");
+    title.textContent = resolveHistoryTaskTitle(task);
+
+    const metaParts = [];
+    metaParts.push(taskId || "-");
+    if (contextId && contextId !== taskId) {
+      metaParts.push(contextId);
+    }
+    metaParts.push(status || "-");
+    const timeText = formatTimestamp(resolveHistoryTaskTimestamp(task));
+    if (timeText && timeText !== "-") {
+      metaParts.push(timeText);
+    }
+    const meta = document.createElement("small");
+    meta.textContent = metaParts.join(" · ");
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.addEventListener("click", () => {
+      restoreA2aHistoryTask(task);
+    });
+    elements.a2aHistoryList.appendChild(item);
+  });
+};
+
+const fetchA2aHistoryTasks = async () => {
+  const endpoint = resolveEndpoint();
+  if (!endpoint) {
+    throw new Error(t("a2a.error.endpointRequired"));
+  }
+  const headers = buildHeaders(false);
+  const params = buildParamsFromForm("ListTasks");
+  if (!Object.prototype.hasOwnProperty.call(params, "pageSize")) {
+    params.pageSize = 50;
+  }
+  const payload = {
+    jsonrpc: "2.0",
+    id: generateRequestId(),
+    method: "ListTasks",
+    params,
+  };
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const data = await response.json();
+  const result = data?.result || data || {};
+  return Array.isArray(result.tasks) ? result.tasks : [];
+};
+
+const loadA2aHistory = async () => {
+  if (!elements.a2aHistoryList) {
+    return;
+  }
+  elements.a2aHistoryList.textContent = t("common.loading");
+  try {
+    const tasks = await fetchA2aHistoryTasks();
+    updateA2aHistoryMeta(tasks);
+    renderA2aHistoryList(tasks);
+  } catch (error) {
+    elements.a2aHistoryList.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
+  }
+};
+
+const openA2aHistoryModal = async () => {
+  if (!elements.a2aHistoryModal) {
+    return;
+  }
+  elements.a2aHistoryModal.classList.add("active");
+  await loadA2aHistory();
+};
+
+const closeA2aHistoryModal = () => {
+  elements.a2aHistoryModal?.classList.remove("active");
+};
+
+const requestA2aTaskDetail = async (taskId) => {
+  updateHeaderError("");
+  const endpoint = resolveEndpoint();
+  if (!endpoint) {
+    appendA2aEventLog(t("a2a.error.endpointRequired"), {
+      eventType: t("a2a.event.error"),
+      detail: {},
+    });
+    bumpA2aErrorCount();
+    return false;
+  }
+  const params = buildParamsFromForm("GetTask");
+  if (!params.name) {
+    params.name = normalizeTaskName(taskId);
+  }
+  const payload = {
+    jsonrpc: "2.0",
+    id: generateRequestId(),
+    method: "GetTask",
+    params,
+  };
+  const headers = buildHeaders(false);
+  const requestTimestamp = Date.now();
+  startA2aStats({
+    requestId: payload.id,
+    method: payload.method,
+    endpoint,
+    stream: false,
+  });
+  appendA2aRequestLog(payload.method, {
+    endpoint,
+    method: "POST",
+    headers: headersToObject(headers),
+    payload,
+  }, {
+    eventType: t("a2a.event.request"),
+    timestamp: requestTimestamp,
+  });
+  const controller = new AbortController();
+  state.runtime.a2aController = controller;
+  setStreamingState(true);
+
+  let success = false;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    a2aStats.httpStatus = String(response.status || "");
+    renderA2aStats();
+    if (!response.ok) {
+      const text = await response.text();
+      appendA2aEventLog(t("a2a.event.error"), {
+        eventType: t("a2a.event.error"),
+        detail: text || response.status,
+        rightTag: String(response.status),
+      });
+      bumpA2aErrorCount();
+      updateModelOutputText(text || String(response.status));
+      return false;
+    }
+    const data = await response.json();
+    const result = data?.result || data;
+    const normalizedResult = result?.task ? result : { task: result };
+    a2aOutputState.rawEvents = [normalizedResult];
+    bumpA2aEventCount();
+    applyA2aStatsFromPayload(normalizedResult);
+    applySessionFromPayload(normalizedResult);
+    const appliedOutput = applyOutputFromResult(normalizedResult);
+    if (!appliedOutput) {
+      updateModelOutputText("");
+    }
+    appendA2aEventLog(t("a2a.event.response"), {
+      eventType: t("a2a.event.response"),
+      detail: data,
+      timestamp: Date.now(),
+    });
+    success = true;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      appendA2aEventLog(t("a2a.event.aborted"), {
+        eventType: t("a2a.event.aborted"),
+        detail: {},
+      });
+    } else {
+      appendA2aEventLog(t("a2a.event.error"), {
+        eventType: t("a2a.event.error"),
+        detail: error.message || String(error),
+      });
+      bumpA2aErrorCount();
+    }
+  } finally {
+    setStreamingState(false);
+    state.runtime.a2aController = null;
+    finishA2aRequestLog({ timestamp: Date.now() });
+    finishA2aStats();
+  }
+  return success;
+};
+
+const restoreA2aHistoryTask = async (task) => {
+  const taskId = resolveHistoryTaskId(task);
+  if (!taskId) {
+    notify(t("a2a.history.missingTaskId"), "warn");
+    return;
+  }
+  if (state.runtime.a2aStreaming) {
+    notify(t("a2a.history.restoreBusy"), "warn");
+    return;
+  }
+  const contextId = String(task?.contextId || "").trim() || taskId;
+  if (elements.a2aTaskId) {
+    elements.a2aTaskId.value = normalizeSessionIdValue(taskId);
+  }
+  if (elements.a2aContextId) {
+    elements.a2aContextId.value = normalizeSessionIdValue(contextId);
+  }
+  updateSessionState(taskId, contextId);
+  syncInputs();
+  closeA2aHistoryModal();
+  clearLogs();
+  const restored = await requestA2aTaskDetail(taskId);
+  if (!restored) {
+    notify(t("a2a.history.restoreFailed"), "error");
+    return;
+  }
+  notify(t("a2a.history.restoreSuccess"), "success");
+};
+
 // 解析 SSE 块，提取 data 行
 const parseSseBlock = (block) => {
   const lines = block.split(/\r?\n/);
@@ -1452,7 +1838,8 @@ const handleStreamEvent = (payload) => {
   applyA2aStatsFromPayload(payload);
   applySessionFromPayload(payload);
   const { title, eventType, stage } = describeStreamEvent(payload);
-  appendA2aEventLog(title, { eventType, stage, detail: payload, timestamp: Date.now() });
+  const eventTimestamp = resolveA2aEventTimestamp(payload) || Date.now();
+  appendA2aEventLog(title, { eventType, stage, detail: payload, timestamp: eventTimestamp });
   if (payload?.message) {
     appendOutputMessage(payload.message);
   }
@@ -1541,6 +1928,7 @@ const handleSend = async () => {
   }
   const isStreaming = STREAM_METHODS.has(method);
   const headers = buildHeaders(isStreaming);
+  const requestTimestamp = Date.now();
   startA2aStats({
     requestId: payload.id,
     method,
@@ -1554,10 +1942,11 @@ const handleSend = async () => {
     payload,
   }, {
     eventType: t("a2a.event.request"),
+    timestamp: requestTimestamp,
   });
   const controller = new AbortController();
   state.runtime.a2aController = controller;
-  setStreamingState(isStreaming);
+  setStreamingState(true);
 
   try {
     const response = await fetch(endpoint, {
@@ -1619,6 +2008,7 @@ const handleSend = async () => {
   } finally {
     setStreamingState(false);
     state.runtime.a2aController = null;
+    finishA2aRequestLog({ timestamp: Date.now() });
     finishA2aStats();
   }
 };
@@ -1663,6 +2053,7 @@ const handleAgentCard = async () => {
     return;
   }
   const headers = buildHeaders(false);
+  const requestTimestamp = Date.now();
   startA2aStats({
     requestId: "",
     method: "AgentCard",
@@ -1675,6 +2066,7 @@ const handleAgentCard = async () => {
     headers: headersToObject(headers),
   }, {
     eventType: t("a2a.event.request"),
+    timestamp: requestTimestamp,
   });
   try {
     const response = await fetch(url, { headers });
@@ -1706,6 +2098,7 @@ const handleAgentCard = async () => {
     });
     bumpA2aErrorCount();
   } finally {
+    finishA2aRequestLog({ timestamp: Date.now() });
     finishA2aStats();
   }
 };
@@ -1929,16 +2322,35 @@ export const initA2aPanel = () => {
     });
   }
   if (elements.a2aSendBtn) {
-    elements.a2aSendBtn.addEventListener("click", handleSend);
-  }
-  if (elements.a2aStopBtn) {
-    elements.a2aStopBtn.addEventListener("click", handleStop);
+    elements.a2aSendBtn.addEventListener("click", () => {
+      if (state.runtime.a2aStreaming) {
+        handleStop();
+        return;
+      }
+      handleSend();
+    });
   }
   if (elements.a2aNewSessionBtn) {
     elements.a2aNewSessionBtn.addEventListener("click", handleNewSession);
   }
   if (elements.a2aAgentCardBtn) {
     elements.a2aAgentCardBtn.addEventListener("click", handleAgentCard);
+  }
+  if (elements.a2aHistoryBtn) {
+    elements.a2aHistoryBtn.addEventListener("click", openA2aHistoryModal);
+  }
+  if (elements.a2aHistoryClose) {
+    elements.a2aHistoryClose.addEventListener("click", closeA2aHistoryModal);
+  }
+  if (elements.a2aHistoryCloseBtn) {
+    elements.a2aHistoryCloseBtn.addEventListener("click", closeA2aHistoryModal);
+  }
+  if (elements.a2aHistoryModal) {
+    elements.a2aHistoryModal.addEventListener("click", (event) => {
+      if (event.target === elements.a2aHistoryModal) {
+        closeA2aHistoryModal();
+      }
+    });
   }
   if (elements.a2aOutputRoundSelect) {
     elements.a2aOutputRoundSelect.addEventListener("change", handleOutputRoundSelect);
