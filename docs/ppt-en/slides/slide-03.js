@@ -9,7 +9,7 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 1 Core idea</span>
           <div class="section-map">
-            <span class="section-chip active">Core idea</span>
+            <a class="section-chip active" href="#3">Core idea</a>
           </div>
         </div>
         <h2>From chatting to getting things done</h2>

@@ -9,7 +9,7 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 5 Agent session management</span>
           <div class="section-map">
-            <span class="section-chip active">Session management</span>
+            <a class="section-chip active" href="#16">Session management</a>
           </div>
         </div>
         <h2>Agent session management: stable and controllable</h2>

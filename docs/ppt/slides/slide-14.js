@@ -9,9 +9,9 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第4节 前沿特性</span>
           <div class="section-map">
-            <span class="section-chip">记忆与压缩</span>
-            <span class="section-chip active">A2UI</span>
-            <span class="section-chip">A2A</span>
+            <a class="section-chip" href="#13">记忆与压缩</a>
+            <a class="section-chip active" href="#14">A2UI</a>
+            <a class="section-chip" href="#15">A2A</a>
           </div>
         </div>
         <h2>A2UI：让回答直接变成界面</h2>

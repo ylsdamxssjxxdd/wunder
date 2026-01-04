@@ -9,13 +9,13 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第2节 工具体系</span>
           <div class="section-map">
-            <span class="section-chip">总览</span>
-            <span class="section-chip">内置</span>
-            <span class="section-chip active">MCP</span>
-            <span class="section-chip">Skills</span>
-            <span class="section-chip">知识库</span>
-            <span class="section-chip">自建</span>
-            <span class="section-chip">共享</span>
+            <a class="section-chip" href="#4">总览</a>
+            <a class="section-chip" href="#5">内置</a>
+            <a class="section-chip active" href="#6">MCP</a>
+            <a class="section-chip" href="#7">Skills</a>
+            <a class="section-chip" href="#8">知识库</a>
+            <a class="section-chip" href="#9">自建</a>
+            <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
         <h2>MCP 工具：接入外部系统</h2>

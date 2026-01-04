@@ -159,6 +159,18 @@ body {
   border: 1px solid var(--border);
 }
 
+a.section-chip,
+a.section-chip:visited,
+a.section-chip:hover,
+a.section-chip:active,
+a.section-chip:focus {
+  text-decoration: none;
+}
+
+a.section-chip {
+  cursor: pointer;
+}
+
 .section-chip.active {
   color: #ffffff;
   background: var(--accent);

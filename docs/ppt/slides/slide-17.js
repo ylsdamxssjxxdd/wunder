@@ -9,8 +9,8 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第6节 快速开始</span>
           <div class="section-map">
-            <span class="section-chip active">快速开始</span>
-            <span class="section-chip">收尾</span>
+            <a class="section-chip active" href="#17">快速开始</a>
+            <a class="section-chip" href="#18">收尾</a>
           </div>
         </div>
         <h2>快速开始：三步落地</h2>

@@ -9,8 +9,8 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第3节 工作区</span>
           <div class="section-map">
-            <span class="section-chip">工作区</span>
-            <span class="section-chip active">功能演示</span>
+            <a class="section-chip" href="#11">工作区</a>
+            <a class="section-chip active" href="#12">功能演示</a>
           </div>
         </div>
         <h2>智能体功能演示：画爱心并保存</h2>

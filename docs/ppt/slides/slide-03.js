@@ -9,7 +9,7 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第1节 核心理念</span>
           <div class="section-map">
-            <span class="section-chip active">核心理念</span>
+            <a class="section-chip active" href="#3">核心理念</a>
           </div>
         </div>
         <h2>从“会聊”到“会做事”</h2>

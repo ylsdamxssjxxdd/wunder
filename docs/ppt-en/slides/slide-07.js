@@ -9,13 +9,13 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 2 Tool system</span>
           <div class="section-map">
-            <span class="section-chip">Overview</span>
-            <span class="section-chip">Built-in</span>
-            <span class="section-chip">MCP</span>
-            <span class="section-chip active">Skills</span>
-            <span class="section-chip">Knowledge</span>
-            <span class="section-chip">Custom</span>
-            <span class="section-chip">Shared</span>
+            <a class="section-chip" href="#4">Overview</a>
+            <a class="section-chip" href="#5">Built-in</a>
+            <a class="section-chip" href="#6">MCP</a>
+            <a class="section-chip active" href="#7">Skills</a>
+            <a class="section-chip" href="#8">Knowledge</a>
+            <a class="section-chip" href="#9">Custom</a>
+            <a class="section-chip" href="#10">Shared</a>
           </div>
         </div>
         <h2>Skills tools: turn experience into workflows</h2>

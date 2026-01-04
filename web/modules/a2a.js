@@ -1,7 +1,7 @@
-import { elements } from "./elements.js?v=20251231-03";
+import { elements } from "./elements.js?v=20260104-02";
 import { state } from "./state.js";
 import { parseHeadersValue, normalizeApiBase } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js";
+import { t } from "./i18n.js?v=20260104-02";
 
 const A2A_STATE_KEY = "wunder_a2a_state";
 const MAX_LOG_CHARS = 200000;

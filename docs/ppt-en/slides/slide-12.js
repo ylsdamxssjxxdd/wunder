@@ -9,8 +9,8 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 3 Workspace</span>
           <div class="section-map">
-            <span class="section-chip">Workspace</span>
-            <span class="section-chip active">Demo</span>
+            <a class="section-chip" href="#11">Workspace</a>
+            <a class="section-chip active" href="#12">Demo</a>
           </div>
         </div>
         <h2>Agent demo: draw a heart and save it</h2>

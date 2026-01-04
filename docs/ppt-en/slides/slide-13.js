@@ -9,9 +9,9 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 4 Frontier features</span>
           <div class="section-map">
-            <span class="section-chip active">Memory & compaction</span>
-            <span class="section-chip">A2UI</span>
-            <span class="section-chip">A2A</span>
+            <a class="section-chip active" href="#13">Memory & compaction</a>
+            <a class="section-chip" href="#14">A2UI</a>
+            <a class="section-chip" href="#15">A2A</a>
           </div>
         </div>
         <h2>Frontier features: memory & context compaction</h2>

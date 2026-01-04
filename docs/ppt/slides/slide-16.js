@@ -9,7 +9,7 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">第5节 智能体线程管理</span>
           <div class="section-map">
-            <span class="section-chip active">线程管理</span>
+            <a class="section-chip active" href="#16">线程管理</a>
           </div>
         </div>
         <h2>智能体线程管理：稳定可控</h2>

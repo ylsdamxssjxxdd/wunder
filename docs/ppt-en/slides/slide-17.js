@@ -9,8 +9,8 @@ export default function buildSlide() {
         <div class="slide-meta">
           <span class="section-tag">Section 6 Quick start</span>
           <div class="section-map">
-            <span class="section-chip active">Quick start</span>
-            <span class="section-chip">Closing</span>
+            <a class="section-chip active" href="#17">Quick start</a>
+            <a class="section-chip" href="#18">Closing</a>
           </div>
         </div>
         <h2>Quick start: three steps</h2>
