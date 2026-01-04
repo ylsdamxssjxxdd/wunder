@@ -496,6 +496,18 @@ li {
   box-shadow: var(--shadow-soft);
 }
 
+/* 右侧图片占位区域：未准备图片时保持布局稳定 */
+.media-panel {
+  border-style: dashed;
+  border-width: 2px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: none;
+  text-align: center;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(220px, 40vmin, 420px);
+}
+
 /* 底部 HUD：进度条与页码 */
 #hud {
   position: fixed;

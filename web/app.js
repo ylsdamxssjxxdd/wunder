@@ -4,7 +4,7 @@ import {
   readStoredConfig,
   updateDefaultConfig,
 } from "./app.config.js";
-import { elements } from "./modules/elements.js?v=20260104-03";
+import { elements } from "./modules/elements.js?v=20260104-09";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
@@ -34,8 +34,8 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
-import { initA2aPanel } from "./modules/a2a.js?v=20260104-03";
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-03";
+import { initA2aPanel } from "./modules/a2a.js?v=20260104-09";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-09";
 
 const patchApiFetch = () => {
   // 统一为前端请求补齐 API Key，避免每处调用手动添加。

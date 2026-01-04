@@ -849,11 +849,12 @@
 #### 4.7.1 `GET /.well-known/agent-card.json`
 
 - 说明：A2A AgentCard 发现入口（公开访问）。
-- 返回（JSON）：AgentCard 元数据（protocolVersion、supportedInterfaces、skills、capabilities 等）。
+- 返回（JSON）：AgentCard 元数据（protocolVersion、supportedInterfaces、skills、capabilities、tooling 等）。
+- 备注：`tooling` 汇总内置工具/MCP 工具/知识库工具清单，用于客户端能力展示，默认仅保留名称/描述，不包含参数 schema。
 
 #### 4.7.2 `GET /a2a/extendedAgentCard`
 
-- 说明：返回扩展 AgentCard（当前与基础版一致）。
+- 说明：返回扩展 AgentCard（当前与基础版一致，保持轻量清单结构）。
 - 鉴权：需携带 API Key。
 
 #### 4.7.3 `POST /a2a`

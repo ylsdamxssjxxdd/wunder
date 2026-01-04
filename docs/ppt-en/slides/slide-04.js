@@ -2,52 +2,36 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 4 页：工具体系总览，用于拆分维护本页内容。
+// 第 4 页：运行流程，用于展示 /wunder 从请求到回复的链路。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Tool system">
+<section class="slide" data-title="Runtime flow">
         <div class="slide-meta">
-          <span class="section-tag">Section 2 Tool system</span>
+          <span class="section-tag">Section 1 Core idea</span>
           <div class="section-map">
-            <a class="section-chip active" href="#4">Overview</a>
-            <a class="section-chip" href="#5">Built-in</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip" href="#8">Knowledge</a>
-            <a class="section-chip" href="#9">Custom</a>
-            <a class="section-chip" href="#10">Shared</a>
+            <a class="section-chip" href="#3">Core idea</a>
+            <a class="section-chip active" href="#4">Runtime flow</a>
           </div>
         </div>
-        <h2>Six tool types form the capability map</h2>
-        <p class="section-lead">Decomposition enables governance, reuse, and sharing</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>Built-in tools</h3>
-            <p>File, command, and basic actions</p>
+        <h2>From request to response</h2>
+        <p class="section-lead">One question drives understanding → execution → delivery</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">Key steps</span>
+            <ul>
+              <li>POST /wunder (user_id, question, tool_names, stream)</li>
+              <li>Orchestrator plans and builds the prompt</li>
+              <li>LLM triggers tools, tools return results</li>
+              <li>SSE streams progress and final reply</li>
+            </ul>
+            <span class="pill">Why it matters</span>
+            <p>One entry point, observable execution, reusable outputs.</p>
           </div>
-          <div class="card">
-            <h3>MCP tools</h3>
-            <p>Connect external systems and platforms</p>
+          <div class="card media-panel stack">
+            <h3>Image placeholder</h3>
+            <p>Suggested: request-to-response flow diagram</p>
+            <span class="tag">assets/request-flow.png</span>
           </div>
-          <div class="card">
-            <h3>Skills tools</h3>
-            <p>Turn experience into standard workflows</p>
-          </div>
-          <div class="card">
-            <h3>Knowledge tools</h3>
-            <p>Documents stay searchable and traceable</p>
-          </div>
-          <div class="card">
-            <h3>Custom tools</h3>
-            <p>Personal capability packs</p>
-          </div>
-          <div class="card">
-            <h3>Shared tools</h3>
-            <p>Team capability pool</p>
-          </div>
-        </div>
-        <div class="note">
-          <strong>Unified governance:</strong> shared catalog, allowlist control, composable usage
         </div>
       </section>
   `);

@@ -962,6 +962,10 @@
           <div class="list-header">
             <h1 data-i18n="a2a.title">A2A 测试</h1>
             <div class="header-actions a2a-header-actions">
+              <button id="a2aAgentCardBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-id-card"></i>
+                <span data-i18n="a2a.action.agentCard">加载 AgentCard</span>
+              </button>
               <button id="a2aConnectBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-plug"></i>
                 <span data-i18n="a2a.action.connect">连接设置</span>
@@ -989,9 +993,9 @@
                   ></textarea>
                 </div>
                 <div class="actions a2a-actions">
-                  <button id="a2aClearBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-eraser"></i>
-                    <span data-i18n="a2a.action.clear">清空</span>
+                  <button id="a2aNewSessionBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-plus"></i>
+                    <span data-i18n="a2a.action.newSession">新会话</span>
                   </button>
                   <button id="a2aStopBtn" class="secondary btn-with-icon" type="button">
                     <i class="fa-solid fa-stop"></i>
@@ -1024,6 +1028,10 @@
               <div class="log-card">
                 <div class="log-card-header">
                   <label data-i18n="debug.log.output">模型输出</label>
+                  <div class="header-input">
+                    <label for="a2aOutputRoundSelect" data-i18n="debug.log.round">轮次</label>
+                    <select id="a2aOutputRoundSelect"></select>
+                  </div>
                 </div>
                 <div id="a2aModelOutput" class="log">
                   <pre id="a2aModelOutputText" class="model-output-text"></pre>
@@ -1086,10 +1094,6 @@
               </div>
             </div>
             <div class="modal-actions a2a-connection-actions">
-              <button id="a2aAgentCardBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-id-card"></i>
-                <span data-i18n="a2a.action.agentCard">加载 AgentCard</span>
-              </button>
               <button id="a2aConnectionCloseBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
               </button>
@@ -1209,6 +1213,63 @@
             </div>
             <div class="modal-actions">
               <button id="a2aAdvancedCloseBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="a2aAgentCardModal" class="modal">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <div id="a2aAgentCardTitle" class="detail-title" data-i18n="a2a.agentCard.title">
+                AgentCard
+              </div>
+              <button id="a2aAgentCardClose" class="icon-btn" type="button">×</button>
+            </div>
+            <div class="modal-body agentcard-body">
+              <div class="agentcard-summary">
+                <div id="a2aAgentCardName" class="agentcard-name"></div>
+                <div id="a2aAgentCardDescription" class="agentcard-desc muted"></div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.basic">
+                  基础信息
+                </div>
+                <div id="a2aAgentCardBasic"></div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.capabilities">
+                  能力
+                </div>
+                <div id="a2aAgentCardCapabilities"></div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.interfaces">
+                  接口
+                </div>
+                <div id="a2aAgentCardInterfaces" class="agentcard-list"></div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.skills">
+                  技能
+                </div>
+                <div id="a2aAgentCardSkills" class="agentcard-list"></div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.tools">
+                  工具
+                </div>
+                <div id="a2aAgentCardTools" class="agentcard-tool-groups"></div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="a2aAgentCardCloseBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
               </button>
             </div>
@@ -2615,6 +2676,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260104-03"></script>
+    <script type="module" src="./app.js?v=20260104-09"></script>
   </body>
 </html>

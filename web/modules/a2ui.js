@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20260104-03";
+import { t } from "./i18n.js?v=20260104-09";
 
 // A2UI 消息类型顺序，用于定位消息主体。
 const A2UI_MESSAGE_KEYS = [

@@ -2757,7 +2757,166 @@ button.danger {
 }
 
 .a2a-connection-actions {
+  justify-content: flex-end;
+}
+
+.agentcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agentcard-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agentcard-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.agentcard-desc {
+  line-height: 1.5;
+}
+
+.agentcard-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agentcard-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.agentcard-kv-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+  color: #475569;
+}
+
+.agentcard-kv-table th,
+.agentcard-kv-table td {
+  padding: 4px 6px;
+  vertical-align: top;
+}
+
+.agentcard-kv-table tbody tr + tr th,
+.agentcard-kv-table tbody tr + tr td {
+  border-top: 1px dashed #e2e8f0;
+}
+
+.agentcard-kv-table th {
+  width: 40%;
+  font-weight: 500;
+  text-align: left;
+  color: #64748b;
+}
+
+.agentcard-kv-table td {
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.agentcard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agentcard-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.agentcard-item > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.agentcard-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agentcard-item > summary::before {
+  content: "▸";
+  color: #94a3b8;
+  transition: transform 0.2s ease;
+}
+
+.agentcard-item[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.agentcard-item-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+  white-space: pre-wrap;
+}
+
+.agentcard-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.agentcard-item-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.agentcard-item-schema {
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  font-size: 12px;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  color: #0f172a;
+}
+
+.agentcard-tool-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agentcard-tool-group-title {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.agentcard-empty {
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .modal-card.model-output-preview-card {

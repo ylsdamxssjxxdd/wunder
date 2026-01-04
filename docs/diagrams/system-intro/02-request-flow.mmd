@@ -1,0 +1,18 @@
+﻿sequenceDiagram
+  participant U as 用户/前端
+  participant API as API层
+  participant O as Orchestrator
+  participant P as Prompt Builder
+  participant L as LLM
+  participant T as 工具执行层
+  participant S as 存储/监控
+
+  U->>API: POST /wunder (user_id, question, tool_names, stream)
+  API->>O: 创建会话并注册线程
+  O->>P: 构建系统提示词(含工具/技能/工作区信息)
+  O->>L: 调用模型(可流式)
+  L-->>O: 生成工具调用或答案
+  O->>T: 执行工具(内置/MCP/Skills/知识库/自建)
+  T-->>O: 工具结果
+  O->>S: 写入对话/工具/监控记录
+  O-->>U: SSE事件或最终回复

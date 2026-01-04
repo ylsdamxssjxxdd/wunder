@@ -14,6 +14,8 @@ export const state = {
     debugSyncAfterStream: false,
     a2aController: null,
     a2aStreaming: false,
+    a2aTaskId: "",
+    a2aContextId: "",
     promptReloadTimer: null,
     promptNeedsRefresh: false,
     promptReloadHandler: null,

@@ -2,40 +2,32 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 17 页：快速开始，用于拆分维护本页内容。
+// 第 17 页：智能体线程管理，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="快速开始">
+<section class="slide" data-title="智能体线程管理">
         <div class="slide-meta">
-          <span class="section-tag">第6节 快速开始</span>
+          <span class="section-tag">第5节 智能体线程管理</span>
           <div class="section-map">
-            <a class="section-chip active" href="#17">快速开始</a>
-            <a class="section-chip" href="#18">收尾</a>
+            <a class="section-chip active" href="#17">线程管理</a>
           </div>
         </div>
-        <h2>快速开始：三步落地</h2>
-        <p class="section-lead">从一个高频场景做起，快速见效</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>1. 选场景</h3>
-            <p>挑一个需求高频且明确的场景</p>
+        <h2>智能体线程管理：稳定可控</h2>
+        <p class="section-lead">任务并发时，保障执行稳定</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">生命周期</span>
+            <p>running → finished / error / cancelled</p>
+            <span class="pill">并发规则</span>
+            <p>同一用户单线程，冲突即时提示</p>
+            <span class="pill">监控与取消</span>
+            <p>过程可追踪，卡住可终止</p>
           </div>
-          <div class="card">
-            <h3>2. 选工具组合</h3>
-            <p>工具 + 知识库 + Skills 搭配</p>
+          <div class="card media-panel stack">
+            <h3>图片占位</h3>
+            <p>建议：线程状态机或监控面板截图</p>
+            <span class="tag">assets/monitor-thread.png</span>
           </div>
-          <div class="card">
-            <h3>3. 固化流程</h3>
-            <p>把成功经验沉淀为流程模板</p>
-          </div>
-        </div>
-        <div class="card soft stack">
-          <span class="pill">试点示例</span>
-          <ul>
-            <li>制度/流程问答（知识库）</li>
-            <li>周报/纪要生成（Skills）</li>
-            <li>资料整理与批量处理（内置工具）</li>
-          </ul>
         </div>
       </section>
   `);

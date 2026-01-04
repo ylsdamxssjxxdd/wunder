@@ -2,22 +2,40 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 18 页：收尾，用于拆分维护本页内容。
+// 第 18 页：快速开始，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="收尾">
+<section class="slide" data-title="快速开始">
         <div class="slide-meta">
           <span class="section-tag">第6节 快速开始</span>
           <div class="section-map">
-            <a class="section-chip" href="#17">快速开始</a>
-            <a class="section-chip active" href="#18">收尾</a>
+            <a class="section-chip active" href="#18">快速开始</a>
+            <a class="section-chip" href="#19">收尾</a>
           </div>
         </div>
-        <h2>谢谢</h2>
-        <p class="section-lead">欢迎提问，也欢迎一起做试点</p>
-        <div class="card">
-          <h3>wunder：让大模型会做事，并能长期复用</h3>
-          <p>从一个场景开始，把成功经验沉淀成工具与流程</p>
+        <h2>快速开始：三步落地</h2>
+        <p class="section-lead">从一个高频场景做起，快速见效</p>
+        <div class="grid three">
+          <div class="card">
+            <h3>1. 选场景</h3>
+            <p>挑一个需求高频且明确的场景</p>
+          </div>
+          <div class="card">
+            <h3>2. 选工具组合</h3>
+            <p>工具 + 知识库 + Skills 搭配</p>
+          </div>
+          <div class="card">
+            <h3>3. 固化流程</h3>
+            <p>把成功经验沉淀为流程模板</p>
+          </div>
+        </div>
+        <div class="card soft stack">
+          <span class="pill">试点示例</span>
+          <ul>
+            <li>制度/流程问答（知识库）</li>
+            <li>周报/纪要生成（Skills）</li>
+            <li>资料整理与批量处理（内置工具）</li>
+          </ul>
         </div>
       </section>
   `);

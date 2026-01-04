@@ -2,41 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 7 页：Skills 工具，用于拆分维护本页内容。
+// 第 6 页：MCP 工具，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Skills tools">
+<section class="slide" data-title="MCP tools">
         <div class="slide-meta">
           <span class="section-tag">Section 2 Tool system</span>
           <div class="section-map">
             <a class="section-chip" href="#4">Overview</a>
             <a class="section-chip" href="#5">Built-in</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip active" href="#7">Skills</a>
+            <a class="section-chip active" href="#6">MCP</a>
+            <a class="section-chip" href="#7">Skills</a>
             <a class="section-chip" href="#8">Knowledge</a>
             <a class="section-chip" href="#9">Custom</a>
             <a class="section-chip" href="#10">Shared</a>
           </div>
         </div>
-        <h2>Skills tools: turn experience into workflows</h2>
-        <p class="section-lead">Turn successful practice into repeatable SOPs</p>
+        <h2>MCP tools: connect external systems</h2>
+        <p class="section-lead">When built-ins are not enough, bring in external capabilities</p>
         <div class="grid two">
           <div class="card stack">
             <span class="pill">What it is</span>
             <ul>
-              <li>SKILL.md defines inputs and steps</li>
-              <li>run.py executes the workflow</li>
-              <li>One-line trigger for the full task</li>
+              <li>Connect external services via MCP</li>
+              <li>Call as server@tool</li>
+              <li>Auto included in the tool catalog</li>
             </ul>
           </div>
           <div class="card soft stack">
             <span class="pill">Why it matters</span>
             <ul>
-              <li>Consistent execution and repeatability</li>
-              <li>Reduce manual work and communication cost</li>
+              <li>Connect enterprise systems, search, BI, and more</li>
+              <li>Build cross-system execution chains</li>
             </ul>
             <span class="pill">Governance</span>
-            <p>Versioning with clear sharing boundaries</p>
+            <p>allow_tools allowlist + unified timeout control</p>
           </div>
         </div>
       </section>

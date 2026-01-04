@@ -2,35 +2,39 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 12 页：智能体功能演示，用于拆分维护本页内容。
+// 第 11 页：工作区，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Agent demo">
+<section class="slide" data-title="Workspace">
         <div class="slide-meta">
           <span class="section-tag">Section 3 Workspace</span>
           <div class="section-map">
-            <a class="section-chip" href="#11">Workspace</a>
-            <a class="section-chip active" href="#12">Demo</a>
+            <a class="section-chip active" href="#11">Workspace</a>
+            <a class="section-chip" href="#12">Demo</a>
           </div>
         </div>
-        <h2>Agent demo: draw a heart and save it</h2>
-        <p class="section-lead">Prove the tools + workspace loop</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>1. Ask</h3>
-            <p>Please draw a heart in Python</p>
+        <h2>Workspace: a long-term home for artifacts</h2>
+        <p class="section-lead">Outputs persist and keep accumulating</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">Purpose</span>
+            <p>One persistent space per user</p>
+            <span class="pill">Path example</span>
+            <p>data/workspaces/&lt;user_id&gt;/files</p>
+            <span class="pill">Stored content</span>
+            <ul>
+              <li>Docs, scripts, analysis results</li>
+              <li>Tool outputs and intermediate files</li>
+            </ul>
           </div>
-          <div class="card">
-            <h3>2. Run</h3>
-            <p>Generate an image and save to the temp workspace</p>
+          <div class="card soft stack">
+            <span class="pill">Why it matters</span>
+            <ul>
+              <li>Conversation output becomes assets</li>
+              <li>Reuse the same materials across sessions</li>
+              <li>Easy to share, reuse, and collaborate</li>
+            </ul>
           </div>
-          <div class="card">
-            <h3>3. Download</h3>
-            <p>User downloads the result locally</p>
-          </div>
-        </div>
-        <div class="note">
-          <strong>Result:</strong> from one sentence to a deliverable file
         </div>
       </section>
   `);

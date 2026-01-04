@@ -25,10 +25,13 @@ from app.a2a.utils import (
     utc_now,
 )
 from app.core.errors import ErrorCodes
-from app.core.i18n import t
+from app.core.i18n import get_language, t
+from app.knowledge.service import build_knowledge_tool_specs
 from app.monitor.registry import monitor
 from app.schemas.wunder import WunderRequest
 from app.storage.sqlite import get_storage
+from app.tools.availability import build_enabled_builtin_specs, build_mcp_tool_specs
+from app.tools.registry import ToolSpec
 
 
 class A2AError(Exception):
@@ -61,11 +64,48 @@ class A2AService:
         self._storage = get_storage(orchestrator.config.storage.db_path)
         self._logger = logging.getLogger("wunder.a2a")
 
+    def _resolve_agent_description(self) -> str:
+        """根据当前语言返回 AgentCard 描述文本。"""
+        language = get_language().lower()
+        if language.startswith("en"):
+            return "Wunder agent router"
+        return "Wunder 智能体路由器"
+
+    def _tool_spec_to_payload(self, spec: ToolSpec, *, kind: str) -> Dict[str, Any]:
+        """将 ToolSpec 转换为 AgentCard 可序列化结构。"""
+        payload: Dict[str, Any] = {
+            "name": spec.name,
+            "description": spec.description,
+        }
+        if kind == "mcp":
+            if "@" in spec.name:
+                server, tool = spec.name.split("@", 1)
+                payload["server"] = server
+                payload["tool"] = tool
+            else:
+                payload["tool"] = spec.name
+        return payload
+
+    def _build_tooling_specs(self) -> Dict[str, Any]:
+        """汇总内置/MCP/知识库工具清单，用于 AgentCard 扩展展示。"""
+        config = self._orchestrator.config
+        skill_names = {spec.name for spec in self._orchestrator.skills.list_specs()}
+        builtin_specs = build_enabled_builtin_specs(config)
+        mcp_specs = build_mcp_tool_specs(config)
+        knowledge_specs = build_knowledge_tool_specs(config, blocked_names=skill_names)
+        return {
+            "builtin": [self._tool_spec_to_payload(spec, kind="builtin") for spec in builtin_specs],
+            "mcp": [self._tool_spec_to_payload(spec, kind="mcp") for spec in mcp_specs],
+            "knowledge": [
+                self._tool_spec_to_payload(spec, kind="knowledge") for spec in knowledge_specs
+            ],
+        }
+
     def build_agent_card(self, base_url: str, *, extended: bool = False) -> Dict[str, Any]:
         """构造 AgentCard，提供 A2A 服务发现与能力声明。"""
         config = self._orchestrator.config
         base = base_url.rstrip("/")
-        description = t("system.intro.tagline", default="Wunder 智能体路由器")
+        description = self._resolve_agent_description()
         card: Dict[str, Any] = {
             "protocolVersion": A2A_PROTOCOL_VERSION,
             "name": "Wunder",
@@ -90,6 +130,8 @@ class A2AService:
 
         # 生成技能清单，优先使用已启用技能；无技能时提供默认能力描述。
         card["skills"] = self._build_skill_specs()
+        # 扩展补充工具清单，方便 A2A 客户端理解可用工具范围。
+        card["tooling"] = self._build_tooling_specs()
 
         api_key = str(config.security.api_key or "").strip()
         if api_key:

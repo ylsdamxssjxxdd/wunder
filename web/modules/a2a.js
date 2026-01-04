@@ -1,7 +1,7 @@
-import { elements } from "./elements.js?v=20260104-03";
+import { elements } from "./elements.js?v=20260104-09";
 import { state } from "./state.js";
 import { parseHeadersValue, normalizeApiBase } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260104-03";
+import { t } from "./i18n.js?v=20260104-09";
 
 const A2A_STATE_KEY = "wunder_a2a_state";
 const MAX_LOG_ITEMS = 300;
@@ -25,7 +25,10 @@ const buildEmptyStats = () => ({
 
 let a2aStats = buildEmptyStats();
 const a2aOutputState = {
-  messages: [],
+  rounds: [],
+  currentRound: null,
+  selectedRound: null,
+  userSelectedRound: false,
   rawEvents: [],
 };
 
@@ -325,21 +328,232 @@ const updateModelOutputText = (text) => {
 };
 
 // 重置模型输出缓存与展示
-const resetA2aOutput = () => {
-  a2aOutputState.messages = [];
+const resetA2aOutput = (options = {}) => {
+  const resetRounds = options.resetRounds !== false;
+  if (resetRounds) {
+    a2aOutputState.rounds = [];
+    a2aOutputState.currentRound = null;
+    a2aOutputState.selectedRound = null;
+    a2aOutputState.userSelectedRound = false;
+    renderA2aRoundSelectOptions();
+  }
   a2aOutputState.rawEvents = [];
   updateModelOutputText("");
 };
 
+const normalizeSessionIdValue = (value) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.startsWith("tasks/") ? trimmed.slice("tasks/".length) : trimmed;
+};
+
+const resolveSessionIdPair = (taskId, contextId) => {
+  const normalizedTaskId = normalizeSessionIdValue(taskId);
+  const normalizedContextId = normalizeSessionIdValue(contextId);
+  if (!normalizedTaskId && !normalizedContextId) {
+    return { taskId: "", contextId: "" };
+  }
+  return {
+    taskId: normalizedTaskId || normalizedContextId,
+    contextId: normalizedContextId || normalizedTaskId,
+  };
+};
+
+const readSessionInputs = () => ({
+  taskId: normalizeSessionIdValue(elements.a2aTaskId?.value || ""),
+  contextId: normalizeSessionIdValue(elements.a2aContextId?.value || ""),
+});
+
+const clearSessionState = () => {
+  state.runtime.a2aTaskId = "";
+  state.runtime.a2aContextId = "";
+  if (elements.a2aTaskId) {
+    elements.a2aTaskId.value = "";
+  }
+  if (elements.a2aContextId) {
+    elements.a2aContextId.value = "";
+  }
+  writeA2aState({ taskId: "", contextId: "" });
+};
+
+const updateSessionState = (taskId, contextId) => {
+  const next = resolveSessionIdPair(taskId, contextId);
+  if (!next.taskId && !next.contextId) {
+    return false;
+  }
+  let changed = false;
+  if (state.runtime.a2aTaskId !== next.taskId) {
+    state.runtime.a2aTaskId = next.taskId;
+    changed = true;
+  }
+  if (state.runtime.a2aContextId !== next.contextId) {
+    state.runtime.a2aContextId = next.contextId;
+    changed = true;
+  }
+  if (elements.a2aTaskId && elements.a2aTaskId.value !== next.taskId) {
+    elements.a2aTaskId.value = next.taskId;
+    changed = true;
+  }
+  if (elements.a2aContextId && elements.a2aContextId.value !== next.contextId) {
+    elements.a2aContextId.value = next.contextId;
+    changed = true;
+  }
+  if (changed) {
+    writeA2aState({ taskId: next.taskId, contextId: next.contextId });
+  }
+  return changed;
+};
+
+const extractSessionIds = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return {};
+  }
+  if (Array.isArray(payload.tasks)) {
+    return {};
+  }
+  let taskId =
+    payload.task?.id ||
+    payload.statusUpdate?.taskId ||
+    payload.message?.taskId ||
+    payload.taskId ||
+    "";
+  let contextId =
+    payload.task?.contextId ||
+    payload.statusUpdate?.contextId ||
+    payload.message?.contextId ||
+    payload.contextId ||
+    "";
+  if (!taskId && typeof payload.id === "string" && payload.contextId) {
+    taskId = payload.id;
+  }
+  return { taskId, contextId };
+};
+
+const applySessionFromPayload = (payload) => {
+  const { taskId, contextId } = extractSessionIds(payload);
+  updateSessionState(taskId, contextId);
+};
+
+// 构造轮次条目
+const buildA2aRoundEntry = (roundId, timestamp) => ({
+  id: roundId,
+  timestamp,
+  timeText: new Date(timestamp).toLocaleTimeString(),
+  messages: [],
+});
+
+// 获取下一轮编号
+const getNextA2aRoundId = () => {
+  if (!a2aOutputState.rounds.length) {
+    return 1;
+  }
+  const lastId = a2aOutputState.rounds[a2aOutputState.rounds.length - 1].id;
+  return Number.isFinite(lastId) ? lastId + 1 : a2aOutputState.rounds.length + 1;
+};
+
+// 查找指定轮次条目
+const findA2aRoundEntry = (roundId) => {
+  if (!Number.isFinite(roundId)) {
+    return null;
+  }
+  return a2aOutputState.rounds.find((entry) => entry.id === roundId) || null;
+};
+
+// 渲染轮次选择下拉
+const renderA2aRoundSelectOptions = () => {
+  if (!elements.a2aOutputRoundSelect) {
+    return;
+  }
+  const select = elements.a2aOutputRoundSelect;
+  select.textContent = "";
+  if (!a2aOutputState.rounds.length) {
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = t("debug.round.empty");
+    select.appendChild(emptyOption);
+    select.value = "";
+    return;
+  }
+  if (
+    !Number.isFinite(a2aOutputState.selectedRound) ||
+    !findA2aRoundEntry(a2aOutputState.selectedRound)
+  ) {
+    a2aOutputState.selectedRound = a2aOutputState.rounds[a2aOutputState.rounds.length - 1].id;
+  }
+  a2aOutputState.rounds.forEach((entry) => {
+    const option = document.createElement("option");
+    option.value = String(entry.id);
+    option.textContent = entry.timeText
+      ? t("debug.round.labelWithTime", { id: entry.id, time: entry.timeText })
+      : t("debug.round.label", { id: entry.id });
+    select.appendChild(option);
+  });
+  select.value = String(a2aOutputState.selectedRound || "");
+};
+
+// 选中指定轮次
+const selectA2aRound = (roundId, options = {}) => {
+  const entry = findA2aRoundEntry(roundId);
+  if (!entry) {
+    return;
+  }
+  a2aOutputState.selectedRound = entry.id;
+  if (options.manual) {
+    a2aOutputState.userSelectedRound = true;
+  }
+  if (options.auto) {
+    a2aOutputState.userSelectedRound = false;
+  }
+  renderA2aRoundSelectOptions();
+  renderA2aModelOutput();
+};
+
+// 确保存在当前轮次条目
+const ensureA2aRoundEntry = (options = {}) => {
+  const entry =
+    findA2aRoundEntry(a2aOutputState.currentRound) ||
+    (() => {
+      const roundId = getNextA2aRoundId();
+      const created = buildA2aRoundEntry(roundId, Date.now());
+      a2aOutputState.rounds.push(created);
+      a2aOutputState.currentRound = roundId;
+      return created;
+    })();
+  if (options.resetUserSelection) {
+    a2aOutputState.userSelectedRound = false;
+  }
+  if (options.forceSelect || !a2aOutputState.userSelectedRound) {
+    selectA2aRound(entry.id, { auto: true });
+  } else {
+    renderA2aRoundSelectOptions();
+  }
+  return entry;
+};
+
+// 创建新轮次并默认切换
+const startA2aRound = () => {
+  const roundId = getNextA2aRoundId();
+  const entry = buildA2aRoundEntry(roundId, Date.now());
+  a2aOutputState.rounds.push(entry);
+  a2aOutputState.currentRound = roundId;
+  a2aOutputState.selectedRound = roundId;
+  a2aOutputState.userSelectedRound = false;
+  renderA2aRoundSelectOptions();
+  renderA2aModelOutput();
+  return entry;
+};
+
 // 根据缓存内容渲染模型输出
 const resolveModelOutputText = () => {
-  if (a2aOutputState.messages.length) {
-    return a2aOutputState.messages.join("\n");
+  const entry =
+    findA2aRoundEntry(a2aOutputState.selectedRound) ||
+    findA2aRoundEntry(a2aOutputState.currentRound);
+  if (!entry) {
+    return "";
   }
-  if (a2aOutputState.rawEvents.length) {
-    return stringifyPayload(a2aOutputState.rawEvents[a2aOutputState.rawEvents.length - 1]);
-  }
-  return "";
+  return entry.messages.join("\n");
 };
 
 const renderA2aModelOutput = () => {
@@ -449,12 +663,10 @@ const applyA2aStatsFromPayload = (payload) => {
   if (!payload || typeof payload !== "object") {
     return;
   }
-  const taskId = payload.task?.id || payload.statusUpdate?.taskId || payload.message?.taskId;
+  const { taskId, contextId } = extractSessionIds(payload);
   if (taskId) {
     a2aStats.taskId = taskId;
   }
-  const contextId =
-    payload.task?.contextId || payload.statusUpdate?.contextId || payload.message?.contextId;
   if (contextId) {
     a2aStats.contextId = contextId;
   }
@@ -539,6 +751,287 @@ const openA2aAdvancedModal = () => {
 // 关闭高级设置弹窗
 const closeA2aAdvancedModal = () => {
   elements.a2aAdvancedModal?.classList.remove("active");
+};
+
+// 读取 AgentCard 字段，兼容不同命名风格
+const readAgentCardValue = (card, keys) => {
+  for (const key of keys) {
+    if (card && Object.prototype.hasOwnProperty.call(card, key)) {
+      return card[key];
+    }
+  }
+  return undefined;
+};
+
+// 格式化 AgentCard 字段输出
+const formatAgentCardValue = (value) => {
+  if (value === undefined || value === null) {
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? t("common.yes") : t("common.no");
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined && item !== null).join(", ") || "-";
+  }
+  if (typeof value === "object") {
+    return stringifyPayload(value);
+  }
+  const text = String(value).trim();
+  return text ? text : "-";
+};
+
+// 渲染 AgentCard 表格
+const renderAgentCardTable = (container, rows) => {
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "agentcard-empty";
+    empty.textContent = t("common.noData");
+    container.appendChild(empty);
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "agentcard-kv-table";
+  const tbody = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const th = document.createElement("th");
+    th.textContent = row.label;
+    const td = document.createElement("td");
+    td.textContent = formatAgentCardValue(row.value);
+    tr.appendChild(th);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+};
+
+// 渲染列表空态
+const renderAgentCardEmpty = (container) => {
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  const empty = document.createElement("div");
+  empty.className = "agentcard-empty";
+  empty.textContent = t("common.noData");
+  container.appendChild(empty);
+};
+
+// 渲染接口列表
+const renderAgentCardInterfaces = (container, interfaces) => {
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  if (!Array.isArray(interfaces) || !interfaces.length) {
+    renderAgentCardEmpty(container);
+    return;
+  }
+  interfaces.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "agentcard-item";
+    const summary = document.createElement("div");
+    summary.className = "agentcard-item-title";
+    const protocol = String(item?.protocolBinding || item?.protocol_binding || "").trim();
+    const url = String(item?.url || "").trim();
+    summary.textContent = protocol ? `${protocol} · ${url}` : url || "-";
+    card.appendChild(summary);
+    container.appendChild(card);
+  });
+};
+
+// 渲染技能列表
+const renderAgentCardSkills = (container, skills) => {
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  if (!Array.isArray(skills) || !skills.length) {
+    renderAgentCardEmpty(container);
+    return;
+  }
+  skills.forEach((skill) => {
+    const item = document.createElement("details");
+    item.className = "agentcard-item";
+    const summary = document.createElement("summary");
+    summary.textContent = String(skill?.name || skill?.id || "-");
+    item.appendChild(summary);
+    const desc = document.createElement("div");
+    desc.className = "agentcard-item-desc";
+    desc.textContent = String(skill?.description || "");
+    item.appendChild(desc);
+    const metaParts = [];
+    if (Array.isArray(skill?.tags) && skill.tags.length) {
+      metaParts.push(`${t("a2a.agentCard.skill.tags")}: ${skill.tags.join(", ")}`);
+    }
+    if (Array.isArray(skill?.examples) && skill.examples.length) {
+      metaParts.push(`${t("a2a.agentCard.skill.examples")}: ${skill.examples.join(" | ")}`);
+    }
+    if (Array.isArray(skill?.inputModes) && skill.inputModes.length) {
+      metaParts.push(`${t("a2a.agentCard.skill.inputModes")}: ${skill.inputModes.join(", ")}`);
+    }
+    if (Array.isArray(skill?.outputModes) && skill.outputModes.length) {
+      metaParts.push(`${t("a2a.agentCard.skill.outputModes")}: ${skill.outputModes.join(", ")}`);
+    }
+    if (metaParts.length) {
+      const meta = document.createElement("div");
+      meta.className = "agentcard-item-meta";
+      meta.textContent = metaParts.join(" · ");
+      item.appendChild(meta);
+    }
+    container.appendChild(item);
+  });
+};
+
+// 渲染工具分组
+const renderAgentCardTools = (container, tooling) => {
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  if (!tooling || typeof tooling !== "object") {
+    renderAgentCardEmpty(container);
+    return;
+  }
+  const groups = [
+    { key: "builtin", label: t("a2a.agentCard.group.builtin") },
+    { key: "mcp", label: t("a2a.agentCard.group.mcp") },
+    { key: "knowledge", label: t("a2a.agentCard.group.knowledge") },
+  ];
+  let hasAny = false;
+  groups.forEach((group) => {
+    const items = Array.isArray(tooling[group.key]) ? tooling[group.key] : [];
+    if (!items.length) {
+      return;
+    }
+    hasAny = true;
+    const groupWrap = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "agentcard-tool-group-title";
+    title.textContent = `${group.label} (${items.length})`;
+    groupWrap.appendChild(title);
+    const list = document.createElement("div");
+    list.className = "agentcard-list";
+    items.forEach((tool) => {
+      const item = document.createElement("details");
+      item.className = "agentcard-item";
+      const summary = document.createElement("summary");
+      const name = String(tool?.tool || tool?.name || "-");
+      const server = String(tool?.server || "").trim();
+      summary.textContent = server ? `${server}@${name}` : name;
+      item.appendChild(summary);
+      const desc = document.createElement("div");
+      desc.className = "agentcard-item-desc";
+      desc.textContent = String(tool?.description || "");
+      item.appendChild(desc);
+      if (tool?.argsSchema) {
+        const schema = document.createElement("pre");
+        schema.className = "agentcard-item-schema";
+        schema.textContent = stringifyPayload(tool.argsSchema);
+        item.appendChild(schema);
+      }
+      list.appendChild(item);
+    });
+    groupWrap.appendChild(list);
+    container.appendChild(groupWrap);
+  });
+  if (!hasAny) {
+    renderAgentCardEmpty(container);
+  }
+};
+
+// 渲染 AgentCard 弹窗内容
+const renderAgentCardModal = (card) => {
+  if (!card || typeof card !== "object") {
+    return;
+  }
+  const protocolVersion = readAgentCardValue(card, ["protocolVersion", "protocol_version"]);
+  const version = readAgentCardValue(card, ["version"]);
+  const name = readAgentCardValue(card, ["name"]);
+  const description = readAgentCardValue(card, ["description"]);
+  const provider = readAgentCardValue(card, ["provider"]);
+  const documentationUrl = readAgentCardValue(card, ["documentationUrl", "documentation_url"]);
+  const inputModes = readAgentCardValue(card, ["defaultInputModes", "default_input_modes"]);
+  const outputModes = readAgentCardValue(card, ["defaultOutputModes", "default_output_modes"]);
+  const supportedInterfaces = readAgentCardValue(card, [
+    "supportedInterfaces",
+    "supported_interfaces",
+  ]);
+  const capabilities = readAgentCardValue(card, ["capabilities"]) || {};
+  const supportsExtended = readAgentCardValue(card, ["supportsExtendedAgentCard"]);
+  const skills = readAgentCardValue(card, ["skills"]);
+  const tooling =
+    readAgentCardValue(card, ["tooling"]) ||
+    readAgentCardValue(card, ["tools"]) ||
+    capabilities?.extensions?.find?.((item) => item?.uri === "wunder.tools")?.params ||
+    null;
+
+  if (elements.a2aAgentCardTitle) {
+    elements.a2aAgentCardTitle.textContent = t("a2a.agentCard.title");
+  }
+  if (elements.a2aAgentCardName) {
+    elements.a2aAgentCardName.textContent = name ? String(name) : "-";
+  }
+  if (elements.a2aAgentCardDescription) {
+    elements.a2aAgentCardDescription.textContent = description ? String(description) : "-";
+  }
+
+  const providerText =
+    provider && typeof provider === "object"
+      ? `${provider.organization || ""} ${provider.url || ""}`.trim()
+      : formatAgentCardValue(provider);
+
+  renderAgentCardTable(elements.a2aAgentCardBasic, [
+    { label: t("a2a.agentCard.field.protocolVersion"), value: protocolVersion },
+    { label: t("a2a.agentCard.field.version"), value: version },
+    { label: t("a2a.agentCard.field.provider"), value: providerText },
+    { label: t("a2a.agentCard.field.documentation"), value: documentationUrl },
+    { label: t("a2a.agentCard.field.inputModes"), value: inputModes },
+    { label: t("a2a.agentCard.field.outputModes"), value: outputModes },
+  ]);
+
+  renderAgentCardTable(elements.a2aAgentCardCapabilities, [
+    {
+      label: t("a2a.agentCard.field.streaming"),
+      value: readAgentCardValue(capabilities, ["streaming"]),
+    },
+    {
+      label: t("a2a.agentCard.field.pushNotifications"),
+      value: readAgentCardValue(capabilities, ["pushNotifications", "push_notifications"]),
+    },
+    {
+      label: t("a2a.agentCard.field.stateTransitionHistory"),
+      value: readAgentCardValue(capabilities, ["stateTransitionHistory", "state_transition_history"]),
+    },
+    {
+      label: t("a2a.agentCard.field.supportsExtended"),
+      value: supportsExtended,
+    },
+  ]);
+
+  renderAgentCardInterfaces(elements.a2aAgentCardInterfaces, supportedInterfaces);
+  renderAgentCardSkills(elements.a2aAgentCardSkills, skills);
+  renderAgentCardTools(elements.a2aAgentCardTools, tooling);
+};
+
+// 打开 AgentCard 弹窗
+const openAgentCardModal = (card) => {
+  if (!elements.a2aAgentCardModal) {
+    return;
+  }
+  renderAgentCardModal(card);
+  elements.a2aAgentCardModal.classList.add("active");
+};
+
+// 关闭 AgentCard 弹窗
+const closeAgentCardModal = () => {
+  elements.a2aAgentCardModal?.classList.remove("active");
 };
 
 const syncEndpointDefault = () => {
@@ -637,27 +1130,65 @@ const splitToolNames = (raw) => {
   return items.length ? items : null;
 };
 
-// 提取消息内容文本，优先读取 parts/text
+// 从 Part 列表中提取文本内容
+const extractTextParts = (parts) => {
+  if (!Array.isArray(parts)) {
+    return "";
+  }
+  const texts = parts
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .filter((text) => text);
+  return texts.join("");
+};
+
+// 提取消息内容文本，忽略 user 消息避免重复回显
 const extractMessageText = (message) => {
   if (!message || typeof message !== "object") {
     return "";
   }
-  const role = typeof message.role === "string" && message.role ? `${message.role}: ` : "";
-  if (Array.isArray(message.parts)) {
-    const texts = message.parts
-      .map((part) => (typeof part?.text === "string" ? part.text : ""))
-      .filter((text) => text);
-    if (texts.length) {
-      return `${role}${texts.join("")}`.trim();
-    }
+  const role = String(message.role || "").trim().toLowerCase();
+  if (role === "user") {
+    return "";
+  }
+  const text = extractTextParts(message.parts || []);
+  if (text) {
+    return text.trim();
   }
   if (typeof message.content === "string" && message.content) {
-    return `${role}${message.content}`.trim();
+    return String(message.content).trim();
   }
   if (typeof message.text === "string" && message.text) {
-    return `${role}${message.text}`.trim();
+    return String(message.text).trim();
   }
-  return role.trim();
+  return "";
+};
+
+// 提取 Artifact 中的文本内容
+const extractArtifactText = (artifact) => {
+  if (!artifact || typeof artifact !== "object") {
+    return "";
+  }
+  const text = extractTextParts(artifact.parts || []);
+  return text.trim();
+};
+
+// 追加模型输出文本并刷新显示
+const appendOutputText = (text) => {
+  const value = String(text || "").trim();
+  if (!value) {
+    return;
+  }
+  const entry = ensureA2aRoundEntry();
+  entry.messages.push(value);
+  renderA2aModelOutput();
+};
+
+// 覆盖模型输出文本
+const setOutputText = (text) => {
+  const value = String(text || "").trim();
+  const entry = ensureA2aRoundEntry();
+  entry.messages = value ? [value] : [];
+  renderA2aModelOutput();
 };
 
 // 追加模型输出中的消息文本
@@ -666,7 +1197,16 @@ const appendOutputMessage = (message) => {
   if (!text) {
     return;
   }
-  a2aOutputState.messages.push(text);
+  appendOutputText(text);
+};
+
+// 追加模型输出中的 Artifact 文本
+const appendOutputArtifact = (artifact) => {
+  const text = extractArtifactText(artifact);
+  if (!text) {
+    return;
+  }
+  appendOutputText(text);
 };
 
 const resolveUserId = () => {
@@ -789,6 +1329,60 @@ const buildJsonRpcPayload = () => {
   };
 };
 
+// 从 Task 或结果中提取模型输出文本
+const collectOutputTexts = (result) => {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const outputs = [];
+  if (result.message) {
+    const text = extractMessageText(result.message);
+    if (text) {
+      outputs.push(text);
+    }
+  }
+  if (Array.isArray(result.messages)) {
+    result.messages.forEach((item) => {
+      const text = extractMessageText(item);
+      if (text) {
+        outputs.push(text);
+      }
+    });
+  }
+  const task = result.task;
+  if (task && typeof task === "object") {
+    if (Array.isArray(task.artifacts)) {
+      task.artifacts.forEach((artifact) => {
+        const text = extractArtifactText(artifact);
+        if (text) {
+          outputs.push(text);
+        }
+      });
+    }
+    if (!outputs.length && Array.isArray(task.history)) {
+      const history = [...task.history].reverse();
+      for (const entry of history) {
+        const text = extractMessageText(entry);
+        if (text) {
+          outputs.push(text);
+          break;
+        }
+      }
+    }
+  }
+  return outputs;
+};
+
+// 应用模型输出文本，返回是否成功写入
+const applyOutputFromResult = (result) => {
+  const outputs = collectOutputTexts(result);
+  if (!outputs.length) {
+    return false;
+  }
+  setOutputText(outputs.join("\n"));
+  return true;
+};
+
 // 解析 SSE 块，提取 data 行
 const parseSseBlock = (block) => {
   const lines = block.split(/\r?\n/);
@@ -856,10 +1450,14 @@ const handleStreamEvent = (payload) => {
   a2aOutputState.rawEvents.push(payload);
   bumpA2aEventCount();
   applyA2aStatsFromPayload(payload);
+  applySessionFromPayload(payload);
   const { title, eventType, stage } = describeStreamEvent(payload);
   appendA2aEventLog(title, { eventType, stage, detail: payload, timestamp: Date.now() });
   if (payload?.message) {
     appendOutputMessage(payload.message);
+  }
+  if (payload?.artifactUpdate?.artifact) {
+    appendOutputArtifact(payload.artifactUpdate.artifact);
   }
   renderA2aModelOutput();
 };
@@ -897,9 +1495,24 @@ const streamResponse = async (response) => {
 
 const handleSend = async () => {
   updateHeaderError("");
-  clearLogs();
   if (state.runtime.a2aStreaming) {
     return;
+  }
+  const { taskId, contextId } = readSessionInputs();
+  const nextSession = resolveSessionIdPair(taskId, contextId);
+  const hasSession = Boolean(nextSession.taskId || nextSession.contextId);
+  const sessionChanged =
+    hasSession &&
+    (nextSession.taskId !== (state.runtime.a2aTaskId || "") ||
+      nextSession.contextId !== (state.runtime.a2aContextId || ""));
+  if (!hasSession) {
+    clearLogs();
+    clearSessionState();
+  } else if (sessionChanged) {
+    clearLogs();
+    updateSessionState(nextSession.taskId, nextSession.contextId);
+  } else {
+    resetA2aLogTimers();
   }
   const endpoint = resolveEndpoint();
   if (!endpoint) {
@@ -923,6 +1536,9 @@ const handleSend = async () => {
   }
 
   const method = payload.method;
+  if (method === "SendMessage" || method === "SendStreamingMessage") {
+    startA2aRound();
+  }
   const isStreaming = STREAM_METHODS.has(method);
   const headers = buildHeaders(isStreaming);
   startA2aStats({
@@ -973,10 +1589,15 @@ const handleSend = async () => {
       return;
     }
     const data = await response.json();
-    a2aOutputState.rawEvents = [data];
+    const result = data?.result || data;
+    a2aOutputState.rawEvents = [result];
     bumpA2aEventCount();
-    applyA2aStatsFromPayload(data?.result || data);
-    updateModelOutputText(stringifyPayload(data));
+    applyA2aStatsFromPayload(result);
+    applySessionFromPayload(result);
+    const appliedOutput = applyOutputFromResult(result);
+    if (!appliedOutput) {
+      updateModelOutputText("");
+    }
     appendA2aEventLog(t("a2a.event.response"), {
       eventType: t("a2a.event.response"),
       detail: data,
@@ -1007,6 +1628,27 @@ const handleStop = () => {
     state.runtime.a2aController.abort();
   }
   setStreamingState(false);
+};
+
+// 新会话：清空日志并重置会话标识
+const handleNewSession = () => {
+  if (state.runtime.a2aStreaming) {
+    handleStop();
+  }
+  clearLogs();
+  clearSessionState();
+};
+
+// 选择指定轮次输出
+const handleOutputRoundSelect = () => {
+  if (!elements.a2aOutputRoundSelect) {
+    return;
+  }
+  const value = Number(elements.a2aOutputRoundSelect.value);
+  if (!Number.isFinite(value)) {
+    return;
+  }
+  selectA2aRound(value, { manual: true });
 };
 
 const handleAgentCard = async () => {
@@ -1050,9 +1692,8 @@ const handleAgentCard = async () => {
       return;
     }
     const data = await response.json();
-    a2aOutputState.rawEvents = [data];
     bumpA2aEventCount();
-    updateModelOutputText(stringifyPayload(data));
+    openAgentCardModal(data);
     appendA2aEventLog(t("a2a.event.agentCard"), {
       eventType: t("a2a.event.agentCard"),
       detail: data,
@@ -1159,12 +1800,20 @@ const applyStoredState = () => {
   if (elements.a2aBlocking) {
     elements.a2aBlocking.checked = Boolean(stored.blocking);
   }
+  if (elements.a2aMethod && elements.a2aBlocking) {
+    const hasBlocking = Object.prototype.hasOwnProperty.call(stored, "blocking");
+    if (!hasBlocking && elements.a2aMethod.value === "SendMessage") {
+      elements.a2aBlocking.checked = true;
+    }
+  }
   if (elements.a2aIncludeArtifacts) {
     elements.a2aIncludeArtifacts.checked = Boolean(stored.includeArtifacts);
   }
   if (elements.a2aParamsJson) {
     elements.a2aParamsJson.value = stored.paramsJson || "";
   }
+  state.runtime.a2aTaskId = normalizeSessionIdValue(elements.a2aTaskId?.value || "");
+  state.runtime.a2aContextId = normalizeSessionIdValue(elements.a2aContextId?.value || "");
 };
 
 const bindInputs = () => {
@@ -1185,13 +1834,20 @@ const bindInputs = () => {
       syncInputs();
     });
   }
+  if (elements.a2aMethod && elements.a2aBlocking) {
+    elements.a2aMethod.addEventListener("change", () => {
+      if (elements.a2aMethod.value === "SendMessage") {
+        elements.a2aBlocking.checked = true;
+      }
+      syncInputs();
+    });
+  }
 
   [
     "a2aVersion",
     "a2aAuthType",
     "a2aApiKey",
     "a2aHeaders",
-    "a2aMethod",
     "a2aRequestId",
     "a2aUserId",
     "a2aTaskId",
@@ -1259,16 +1915,32 @@ export const initA2aPanel = () => {
       }
     });
   }
+  if (elements.a2aAgentCardClose) {
+    elements.a2aAgentCardClose.addEventListener("click", closeAgentCardModal);
+  }
+  if (elements.a2aAgentCardCloseBtn) {
+    elements.a2aAgentCardCloseBtn.addEventListener("click", closeAgentCardModal);
+  }
+  if (elements.a2aAgentCardModal) {
+    elements.a2aAgentCardModal.addEventListener("click", (event) => {
+      if (event.target === elements.a2aAgentCardModal) {
+        closeAgentCardModal();
+      }
+    });
+  }
   if (elements.a2aSendBtn) {
     elements.a2aSendBtn.addEventListener("click", handleSend);
   }
   if (elements.a2aStopBtn) {
     elements.a2aStopBtn.addEventListener("click", handleStop);
   }
-  if (elements.a2aClearBtn) {
-    elements.a2aClearBtn.addEventListener("click", clearLogs);
+  if (elements.a2aNewSessionBtn) {
+    elements.a2aNewSessionBtn.addEventListener("click", handleNewSession);
   }
   if (elements.a2aAgentCardBtn) {
     elements.a2aAgentCardBtn.addEventListener("click", handleAgentCard);
+  }
+  if (elements.a2aOutputRoundSelect) {
+    elements.a2aOutputRoundSelect.addEventListener("change", handleOutputRoundSelect);
   }
 };

@@ -6,7 +6,7 @@ import { createSlide } from "./utils.js";
 export default function buildSlide() {
   return createSlide(`
 <section class="slide cover" data-title="Welcome">
-        <h1>wunder Agent Router</h1>
+        <h1>wunder Agent Orchestration Platform</h1>
         <p class="subtitle">From "chatting" to getting things done</p>
       </section>
   `);

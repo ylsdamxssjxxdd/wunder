@@ -2,40 +2,35 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 13 页：前沿特性（记忆与上下文压缩），用于拆分维护本页内容。
+// 第 13 页：智能体功能演示，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="前沿特性">
+<section class="slide" data-title="智能体功能演示">
         <div class="slide-meta">
-          <span class="section-tag">第4节 前沿特性</span>
+          <span class="section-tag">第3节 工作区</span>
           <div class="section-map">
-            <a class="section-chip active" href="#13">记忆与压缩</a>
-            <a class="section-chip" href="#14">A2UI</a>
-            <a class="section-chip" href="#15">A2A</a>
+            <a class="section-chip" href="#12">工作区</a>
+            <a class="section-chip active" href="#13">功能演示</a>
           </div>
         </div>
-        <h2>前沿特性：记忆与上下文压缩</h2>
-        <p class="section-lead">长对话稳定运行，关键结论可延续</p>
+        <h2>智能体功能演示：画爱心并保存</h2>
+        <p class="section-lead">证明“工具 + 工作区”闭环</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">上下文压缩</span>
+            <span class="pill">演示步骤</span>
             <ul>
-              <li>触发：上下文占用达到阈值</li>
-              <li>保留系统提示词与近期消息</li>
-              <li>生成结构化摘要继续对话</li>
+              <li>提问：请用 Python 画一颗爱心</li>
+              <li>执行：生成图片并保存到临时文件区</li>
+              <li>下载：用户将结果保存到本地</li>
             </ul>
-            <span class="pill">口径说明</span>
-            <p>统计的是上下文占用 token，不是总消耗</p>
+            <div class="note">
+              <strong>结果：</strong>从一句话到可交付文件
+            </div>
           </div>
-          <div class="card soft stack">
-            <span class="pill">长期记忆</span>
-            <ul>
-              <li>最终回复后自动总结</li>
-              <li>按时间戳写入长期记忆</li>
-              <li>后续会话注入 [长期记忆]</li>
-            </ul>
-            <span class="pill">可控性</span>
-            <p>支持开关、清空、删除与查看</p>
+          <div class="card media-panel stack">
+            <h3>图片占位</h3>
+            <p>建议：爱心产物截图或下载结果截图</p>
+            <span class="tag">assets/demo-heart.png</span>
           </div>
         </div>
       </section>

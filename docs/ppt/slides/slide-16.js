@@ -2,30 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 16 页：智能体线程管理，用于拆分维护本页内容。
+// 第 16 页：A2A 标准接口，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="智能体线程管理">
+<section class="slide" data-title="A2A 标准接口">
         <div class="slide-meta">
-          <span class="section-tag">第5节 智能体线程管理</span>
+          <span class="section-tag">第4节 前沿特性</span>
           <div class="section-map">
-            <a class="section-chip active" href="#16">线程管理</a>
+            <a class="section-chip" href="#14">记忆与压缩</a>
+            <a class="section-chip" href="#15">A2UI</a>
+            <a class="section-chip active" href="#16">A2A</a>
           </div>
         </div>
-        <h2>智能体线程管理：稳定可控</h2>
-        <p class="section-lead">任务并发时，保障执行稳定</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>生命周期</h3>
-            <p>running → finished / error / cancelled</p>
+        <h2>A2A：对外标准化智能体接口</h2>
+        <p class="section-lead">JSON-RPC + SSE，让智能体能力可互通</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">接口能力</span>
+            <ul>
+              <li>SendMessage / SendStreamingMessage</li>
+              <li>GetTask / ListTasks / SubscribeToTask</li>
+              <li>AgentCard 服务发现</li>
+            </ul>
+            <span class="pill">接入方式</span>
+            <ul>
+              <li>入口：/a2a（JSON-RPC 2.0）</li>
+              <li>发现：/.well-known/agent-card.json</li>
+              <li>鉴权：API Key 统一校验</li>
+            </ul>
+            <span class="pill">价值</span>
+            <p>统一跨系统调用，复用 Wunder 工具链</p>
           </div>
-          <div class="card">
-            <h3>并发规则</h3>
-            <p>同一用户单线程，冲突即时提示</p>
-          </div>
-          <div class="card">
-            <h3>监控与取消</h3>
-            <p>过程可追踪，卡住可终止</p>
+          <div class="card media-panel stack">
+            <h3>图片占位</h3>
+            <p>建议：客户端 ↔ /a2a ↔ wunder 的调用链路</p>
+            <span class="tag">assets/feature-a2a.png</span>
           </div>
         </div>
       </section>

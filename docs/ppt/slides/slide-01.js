@@ -6,7 +6,7 @@ import { createSlide } from "./utils.js";
 export default function buildSlide() {
   return createSlide(`
 <section class="slide cover" data-title="欢迎">
-        <h1>wunder 智能体路由器</h1>
+        <h1>wunder 智能体调度平台</h1>
         <p class="subtitle">让大模型从“会聊”走向“会做事”</p>
       </section>
   `);

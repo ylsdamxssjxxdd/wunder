@@ -1,0 +1,5 @@
+﻿flowchart LR
+  Config["配置入口(config/wunder.yaml + data/config/wunder.override.yaml + app/user_tools/store.py)"] --> Catalog["工具清单(/wunder/tools, app/services/tool_service.py)"]
+  Catalog --> Orchestrator["编排与注入(app/orchestrator/engine.py + prompting.py)"]
+  Orchestrator --> Exec["执行器(app/orchestrator/tool_executor.py)"]
+  Exec --> Pool["工具池(app/tools + app/skills + app/knowledge + MCP/用户工具)"]

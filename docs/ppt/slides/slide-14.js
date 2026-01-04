@@ -2,38 +2,41 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 14 页：A2UI，用于拆分维护本页内容。
+// 第 14 页：前沿特性（记忆与上下文压缩），用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="A2UI">
+<section class="slide" data-title="前沿特性">
         <div class="slide-meta">
           <span class="section-tag">第4节 前沿特性</span>
           <div class="section-map">
-            <a class="section-chip" href="#13">记忆与压缩</a>
-            <a class="section-chip active" href="#14">A2UI</a>
-            <a class="section-chip" href="#15">A2A</a>
+            <a class="section-chip active" href="#14">记忆与压缩</a>
+            <a class="section-chip" href="#15">A2UI</a>
+            <a class="section-chip" href="#16">A2A</a>
           </div>
         </div>
-        <h2>A2UI：让回答直接变成界面</h2>
-        <p class="section-lead">结构化输出，前端可直接渲染</p>
+        <h2>前沿特性：记忆与上下文压缩</h2>
+        <p class="section-lead">长对话稳定运行，关键结论可延续</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">是什么</span>
+            <span class="pill">上下文压缩</span>
             <ul>
-              <li>模型输出 A2UI JSON 消息</li>
-              <li>前端渲染卡片、表单、按钮</li>
-              <li>结构化展示过程与结果</li>
+              <li>触发：上下文占用达到阈值</li>
+              <li>保留系统提示词与近期消息</li>
+              <li>生成结构化摘要继续对话</li>
             </ul>
+            <span class="pill">长期记忆</span>
+            <ul>
+              <li>最终回复后自动总结</li>
+              <li>按时间戳写入长期记忆</li>
+              <li>后续会话注入 [长期记忆]</li>
+            </ul>
+            <span class="pill">口径说明</span>
+            <p>统计的是上下文占用 token，不是总消耗</p>
           </div>
-          <div class="card soft stack">
-            <span class="pill">接入方式</span>
-            <ul>
-              <li>显式启用 a2ui 工具</li>
-              <li>SSE 输出 a2ui 事件</li>
-              <li>前端按组件规范渲染</li>
-            </ul>
-            <span class="pill">价值</span>
-            <p>降低二次开发成本，体验更直观</p>
+          <div class="card media-panel stack">
+            <h3>图片占位</h3>
+            <p>建议：上下文压缩流程或记忆注入示意</p>
+            <span class="tag">assets/feature-memory.png</span>
           </div>
         </div>
       </section>

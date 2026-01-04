@@ -2,38 +2,40 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 14 页：A2UI，用于拆分维护本页内容。
+// 第 13 页：前沿特性（记忆与上下文压缩），用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="A2UI">
+<section class="slide" data-title="Frontier features">
         <div class="slide-meta">
           <span class="section-tag">Section 4 Frontier features</span>
           <div class="section-map">
-            <a class="section-chip" href="#13">Memory & compaction</a>
-            <a class="section-chip active" href="#14">A2UI</a>
+            <a class="section-chip active" href="#13">Memory & compaction</a>
+            <a class="section-chip" href="#14">A2UI</a>
             <a class="section-chip" href="#15">A2A</a>
           </div>
         </div>
-        <h2>A2UI: turn answers into UI</h2>
-        <p class="section-lead">Structured output that the front-end can render directly</p>
+        <h2>Frontier features: memory & context compaction</h2>
+        <p class="section-lead">Keep long chats stable and carry key conclusions forward</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">What it is</span>
+            <span class="pill">Context compaction</span>
             <ul>
-              <li>Model outputs A2UI JSON messages</li>
-              <li>Front-end renders cards, forms, buttons</li>
-              <li>Structured display for process and results</li>
+              <li>Trigger: context usage hits threshold</li>
+              <li>Keep system prompt + recent messages</li>
+              <li>Generate a structured summary and continue</li>
             </ul>
+            <span class="pill">Metric note</span>
+            <p>Counts context tokens, not total usage</p>
           </div>
           <div class="card soft stack">
-            <span class="pill">How to use</span>
+            <span class="pill">Long-term memory</span>
             <ul>
-              <li>Explicitly enable the a2ui tool</li>
-              <li>SSE emits a2ui events</li>
-              <li>Render with the A2UI component spec</li>
+              <li>Auto summarize after the final reply</li>
+              <li>Write to long-term memory with timestamp</li>
+              <li>Injected as [Long-term memory] later</li>
             </ul>
-            <span class="pill">Value</span>
-            <p>Lower UI integration cost, clearer UX</p>
+            <span class="pill">Controls</span>
+            <p>Enable, disable, clear, and delete</p>
           </div>
         </div>
       </section>

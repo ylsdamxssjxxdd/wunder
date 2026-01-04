@@ -1,0 +1,6 @@
+﻿stateDiagram-v2
+  [*] --> running: 注册会话
+  running --> cancelling: 请求取消
+  cancelling --> cancelled: 中断完成
+  running --> finished: 输出 final
+  running --> error: 异常/超时

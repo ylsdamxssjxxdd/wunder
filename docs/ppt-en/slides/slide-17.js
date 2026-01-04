@@ -2,40 +2,31 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 17 页：快速开始，用于拆分维护本页内容。
+// 第 16 页：智能体线程管理，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Quick start">
+<section class="slide" data-title="Session management">
         <div class="slide-meta">
-          <span class="section-tag">Section 6 Quick start</span>
+          <span class="section-tag">Section 5 Agent session management</span>
           <div class="section-map">
-            <a class="section-chip active" href="#17">Quick start</a>
-            <a class="section-chip" href="#18">Closing</a>
+            <a class="section-chip active" href="#16">Session management</a>
           </div>
         </div>
-        <h2>Quick start: three steps</h2>
-        <p class="section-lead">Start with a high-frequency scenario and see results fast</p>
+        <h2>Agent session management: stable and controllable</h2>
+        <p class="section-lead">Ensure stability under concurrent tasks</p>
         <div class="grid three">
           <div class="card">
-            <h3>1. Pick a scenario</h3>
-            <p>Choose a frequent, well-defined need</p>
+            <h3>Lifecycle</h3>
+            <p>running → finished / error / cancelled</p>
           </div>
           <div class="card">
-            <h3>2. Pick a tool mix</h3>
-            <p>Combine tools + knowledge + skills</p>
+            <h3>Concurrency rules</h3>
+            <p>One thread per user, conflicts reported immediately</p>
           </div>
           <div class="card">
-            <h3>3. Solidify the workflow</h3>
-            <p>Turn success into a workflow template</p>
+            <h3>Monitoring & cancel</h3>
+            <p>Traceable process, cancel when stuck</p>
           </div>
-        </div>
-        <div class="card soft stack">
-          <span class="pill">Pilot examples</span>
-          <ul>
-            <li>Policy/process Q&A (knowledge base)</li>
-            <li>Weekly report/minutes generation (skills)</li>
-            <li>Document cleanup and batch processing (built-in tools)</li>
-          </ul>
         </div>
       </section>
   `);
