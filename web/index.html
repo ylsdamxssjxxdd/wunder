@@ -54,6 +54,10 @@
             <i class="fa-solid fa-plug"></i>
             <span data-i18n="panel.mcp">MCP 服务</span>
           </button>
+          <button id="navA2aServices" class="nav-btn">
+            <i class="fa-solid fa-diagram-project"></i>
+            <span data-i18n="panel.a2aServices">A2A 服务</span>
+          </button>
           <button id="navSkills" class="nav-btn">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
             <span data-i18n="panel.skills">技能管理</span>
@@ -288,8 +292,11 @@
                 </div>
 
                 <div class="monitor-block monitor-block-tools">
-                  <div id="toolHeatmapTitle" class="monitor-block-title" data-i18n="monitor.chart.toolHeatmap.default">
-                    近 3 小时工具调用热力图
+                  <div id="toolHeatmapTitle" class="monitor-block-title">
+                    <i class="fa-solid fa-diagram-project"></i>
+                    <span data-role="title" data-i18n="monitor.chart.toolHeatmap.default">
+                      近 3 小时工具调用热力图
+                    </span>
                   </div>
                   <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
                     <div id="toolHeatmapGrid" class="tool-heatmap"></div>
@@ -334,7 +341,7 @@
             <iframe
               id="introFrame"
               class="intro-frame"
-              src="/wunder/ppt/index.html"
+              src="/wunder/ppt/index.html?v=20260104-06"
               title="wunder 系统介绍"
               data-i18n-title="intro.frame.title"
               loading="lazy"
@@ -1388,6 +1395,7 @@
                     <option value="llm" data-i18n="panel.llm">模型配置</option>
                     <option value="builtin" data-i18n="panel.builtin">内置工具链</option>
                     <option value="mcp" data-i18n="panel.mcp">MCP 服务</option>
+                    <option value="a2aServices" data-i18n="panel.a2aServices">A2A 服务</option>
                     <option value="skills" data-i18n="panel.skills">技能管理</option>
                     <option value="knowledge" data-i18n="panel.knowledge">字面知识库</option>
                     <option value="prompt" data-i18n="panel.prompt">系统提示词</option>
@@ -1477,6 +1485,70 @@
               </div>
               <div class="muted" data-i18n="mcp.tip.allowTools">勾选后将写入 allow_tools，仅启用选中的工具。</div>
               <div id="mcpToolList" class="tool-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="a2aServicesPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="a2aServices.title">A2A 服务管理</h1>
+            <div class="header-actions">
+              <button id="a2aServiceAddBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-plus"></i><span data-i18n="a2aServices.action.add">新增服务</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="a2aServices.tip">
+            配置 A2A 服务并缓存 AgentCard，启用后可作为工具注入系统提示词。
+          </div>
+
+          <div class="management-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label data-i18n="a2aServices.list.title">服务列表</label>
+              </div>
+              <div id="a2aServiceList" class="list-body"></div>
+            </div>
+
+            <div class="management-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="a2aServiceDetailTitle" class="detail-title" data-i18n="a2aServices.detail.none">
+                    未选择服务
+                  </div>
+                  <div id="a2aServiceDetailMeta" class="muted"></div>
+                  <div id="a2aServiceDetailDesc" class="muted"></div>
+                </div>
+              </div>
+              <div class="detail-actions">
+                <div class="actions">
+                  <button id="a2aServiceConnectBtn" class="btn-with-icon">
+                    <i class="fa-solid fa-link"></i><span data-i18n="a2aServices.action.connect">连接</span>
+                  </button>
+                </div>
+                <div class="actions">
+                  <button id="a2aServiceEditBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-pen-to-square"></i><span data-i18n="a2aServices.action.edit">编辑服务</span>
+                  </button>
+                  <button id="a2aServiceDeleteBtn" class="danger btn-with-icon">
+                    <i class="fa-solid fa-trash"></i><span data-i18n="a2aServices.action.delete">删除服务</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="agentcard-section">
+                <div class="agentcard-section-title" data-i18n="a2aServices.card.title">AgentCard</div>
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.basic">基础信息</div>
+                <div id="a2aServiceCardBasic"></div>
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.capabilities">能力</div>
+                <div id="a2aServiceCardCapabilities"></div>
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.interfaces">接口</div>
+                <div id="a2aServiceCardInterfaces" class="agentcard-list"></div>
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.skills">Skills</div>
+                <div id="a2aServiceCardSkills" class="agentcard-list"></div>
+                <div class="agentcard-section-title" data-i18n="a2a.agentCard.section.tools">工具</div>
+                <div id="a2aServiceCardTools" class="agentcard-tool-groups"></div>
+              </div>
             </div>
           </div>
         </section>
@@ -1847,6 +1919,12 @@
             </div>
             <div class="prompt-secondary">
               <div class="prompt-section">
+                <div class="prompt-section-title">
+                  <i class="fa-solid fa-diagram-project"></i><span data-i18n="prompt.section.a2a">A2A 工具</span>
+                </div>
+                <div id="promptA2aTools" class="prompt-tool-list"></div>
+              </div>
+              <div class="prompt-section">
                 <div class="prompt-section-header">
                   <div class="prompt-section-title">
                     <i class="fa-solid fa-toolbox"></i><span data-i18n="prompt.section.userTools">自建工具</span>
@@ -1985,6 +2063,62 @@
           </button>
           <button id="mcpImportConfirm" class="btn-with-icon">
             <i class="fa-solid fa-file-import"></i><span data-i18n="common.import">导入</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="a2aServiceModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="a2aServiceModalTitle" class="detail-title" data-i18n="a2aServices.modal.editTitle">
+            编辑 A2A 服务
+          </div>
+          <button id="a2aServiceModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="a2aServiceName" data-i18n="a2aServices.field.name">服务 ID</label>
+            <input id="a2aServiceName" type="text" placeholder="agent-a2a" />
+          </div>
+          <div class="form-row">
+            <label for="a2aServiceDisplayName" data-i18n="a2aServices.field.displayName">展示名</label>
+            <input id="a2aServiceDisplayName" type="text" placeholder="外部智能体" />
+          </div>
+          <div class="form-row">
+            <label for="a2aServiceEndpoint" data-i18n="a2aServices.field.endpoint">A2A Endpoint</label>
+            <input id="a2aServiceEndpoint" type="text" placeholder="https://example.com/a2a" />
+          </div>
+          <div class="form-row">
+            <label for="a2aServiceDescription" data-i18n="a2aServices.field.description">描述</label>
+            <textarea
+              id="a2aServiceDescription"
+              placeholder="服务用途说明"
+              data-i18n-placeholder="a2aServices.placeholder.description"
+            ></textarea>
+          </div>
+          <div class="form-row">
+            <label for="a2aServiceHeaders" data-i18n="a2aServices.field.headers">额外 Headers JSON</label>
+            <textarea
+              id="a2aServiceHeaders"
+              class="code-preview"
+              placeholder='{"X-API-Key":"demo"}'
+            ></textarea>
+            <div id="a2aServiceHeadersError" class="error-text"></div>
+          </div>
+          <div class="form-row">
+            <label class="checkbox-row">
+              <input id="a2aServiceEnabled" type="checkbox" checked />
+              <span data-i18n="a2aServices.field.enabled">启用服务</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="a2aServiceModalCancel" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="a2aServiceModalSave" class="btn-with-icon">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
@@ -2721,6 +2855,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260104-11"></script>
+    <script type="module" src="./app.js?v=20260104-12"></script>
   </body>
 </html>

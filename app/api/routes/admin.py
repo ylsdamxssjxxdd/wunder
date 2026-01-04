@@ -14,6 +14,7 @@ from app.api.responses import json_response
 from app.core.config import KnowledgeBaseConfig, WunderConfig, load_config
 from app.core.i18n import get_language, t
 from app.core.config_store import (
+    update_a2a_services,
     update_builtin_tools,
     update_knowledge_config,
     update_llm_config,
@@ -30,6 +31,11 @@ from app.knowledge.service import refresh_knowledge_cache
 from app.llm.openai_compatible import probe_openai_context_window
 from app.monitor.registry import monitor
 from app.schemas.wunder import (
+    A2aCardRequest,
+    A2aCardResponse,
+    A2aListResponse,
+    A2aServiceItem,
+    A2aUpdateRequest,
     BuiltinToolsResponse,
     BuiltinToolsUpdateRequest,
     KnowledgeActionResponse,
@@ -73,6 +79,7 @@ from app.schemas.wunder import (
     UserStatsResponse,
 )
 from app.services.config_service import apply_config_update
+from app.services.a2a_service import fetch_a2a_agent_card
 from app.services.mcp_service import fetch_mcp_tools
 from app.skills.loader import load_skills
 from app.tools.catalog import build_builtin_tool_aliases, resolve_builtin_tool_name
@@ -385,6 +392,78 @@ async def wunder_mcp_tools(request: McpToolsRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
     return json_response(response)
+
+
+@router.get("/wunder/admin/a2a", response_model=A2aListResponse)
+async def wunder_a2a_list():
+    """获取 A2A 服务配置。"""
+    config = load_config(get_config_path())
+    services = [
+        A2aServiceItem(
+            name=service.name,
+            endpoint=service.endpoint,
+            enabled=service.enabled,
+            description=service.description,
+            display_name=service.display_name,
+            headers=service.headers,
+            auth=service.auth,
+            agent_card=service.agent_card,
+            allow_self=service.allow_self,
+            max_depth=service.max_depth,
+            default_method=service.default_method,
+        )
+        for service in config.a2a.services
+    ]
+    return json_response(A2aListResponse(services=services))
+
+
+@router.post("/wunder/admin/a2a", response_model=A2aListResponse)
+async def wunder_a2a_update(request: A2aUpdateRequest):
+    """更新 A2A 服务配置。"""
+    try:
+        updated = apply_config_update(
+            get_orchestrator(),
+            get_config_path(),
+            update_a2a_services,
+            [service.model_dump() for service in request.services],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+
+    services = [
+        A2aServiceItem(
+            name=service.name,
+            endpoint=service.endpoint,
+            enabled=service.enabled,
+            description=service.description,
+            display_name=service.display_name,
+            headers=service.headers,
+            auth=service.auth,
+            agent_card=service.agent_card,
+            allow_self=service.allow_self,
+            max_depth=service.max_depth,
+            default_method=service.default_method,
+        )
+        for service in updated.a2a.services
+    ]
+    return json_response(A2aListResponse(services=services))
+
+
+@router.post("/wunder/admin/a2a/card", response_model=A2aCardResponse)
+async def wunder_a2a_card(request: A2aCardRequest):
+    """获取指定 A2A 服务的 AgentCard。"""
+    config = load_config(get_config_path())
+    timeout_s = int(getattr(config.a2a, "timeout_s", 120) or 120)
+    try:
+        card = await fetch_a2a_agent_card(
+            request.endpoint,
+            request.headers,
+            request.auth,
+            timeout_s,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+    return json_response(A2aCardResponse(agent_card=card))
 
 
 @router.get("/wunder/admin/skills", response_model=SkillsListResponse)

@@ -167,6 +167,64 @@ def update_mcp_servers(path: Path, servers: List[Dict[str, Any]]) -> WunderConfi
     return load_config(path)
 
 
+def update_a2a_services(path: Path, services: List[Dict[str, Any]]) -> WunderConfig:
+    """更新 A2A 服务配置并返回最新配置。"""
+    override_path = resolve_override_config_path()
+    raw = _read_raw_config(override_path)
+    cleaned: List[Dict[str, Any]] = []
+    for service in services:
+        name = str(service.get("name", "")).strip()
+        endpoint = str(
+            service.get("endpoint")
+            or service.get("url")
+            or service.get("baseUrl")
+            or service.get("base_url")
+            or ""
+        ).strip()
+        if not name or not endpoint or "@" in name:
+            continue
+        enabled = bool(service.get("enabled", service.get("isActive", True)))
+        description = str(service.get("description", "")).strip()
+        display_name = str(service.get("display_name") or service.get("displayName") or "").strip()
+        headers = service.get("headers") or {}
+        if isinstance(headers, str):
+            try:
+                headers = json.loads(headers)
+            except json.JSONDecodeError:
+                headers = {}
+        if not isinstance(headers, dict):
+            headers = {}
+        headers = {str(key): str(value) for key, value in headers.items()}
+        auth = service.get("auth")
+        agent_card = service.get("agent_card") or service.get("agentCard") or {}
+        if not isinstance(agent_card, dict):
+            agent_card = {}
+        allow_self = bool(service.get("allow_self", service.get("allowSelf", False)))
+        max_depth = service.get("max_depth", service.get("maxDepth", 0))
+        default_method = str(
+            service.get("default_method") or service.get("defaultMethod") or "SendMessage"
+        ).strip() or "SendMessage"
+        cleaned.append(
+            {
+                "name": name,
+                "endpoint": endpoint,
+                "enabled": enabled,
+                "description": description,
+                "display_name": display_name,
+                "headers": headers,
+                "auth": auth,
+                "agent_card": agent_card,
+                "allow_self": allow_self,
+                "max_depth": max_depth,
+                "default_method": default_method,
+            }
+        )
+    raw.setdefault("a2a", {})["services"] = cleaned
+    _write_raw_config(override_path, raw)
+    get_config.cache_clear()
+    return load_config(path)
+
+
 def update_skills(
     path: Path, enabled: List[str], paths: Optional[List[str]] = None
 ) -> WunderConfig:

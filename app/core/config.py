@@ -124,6 +124,31 @@ class MCPConfig(BaseModel):
     servers: List[MCPServerConfig] = Field(default_factory=list)
 
 
+class A2AServiceConfig(BaseModel):
+    """A2A 服务配置。"""
+
+    name: str
+    endpoint: str
+    enabled: bool = True
+    description: str = ""
+    display_name: str = ""
+    headers: Dict[str, str] = Field(default_factory=dict)
+    auth: Optional[str] = None
+    agent_card: Dict[str, Any] = Field(default_factory=dict)
+    allow_self: bool = False
+    max_depth: int = 0
+    default_method: str = "SendMessage"
+
+    model_config = ConfigDict(extra="allow")
+
+
+class A2AConfig(BaseModel):
+    """A2A 服务配置集合。"""
+
+    timeout_s: int = Field(default=120, description="A2A 请求超时秒数")
+    services: List[A2AServiceConfig] = Field(default_factory=list)
+
+
 class SkillsConfig(BaseModel):
     """技能配置。"""
 
@@ -232,6 +257,7 @@ class WunderConfig(BaseModel):
     i18n: I18nConfig = Field(default_factory=I18nConfig)
     llm: LLMGroupConfig = Field(default_factory=LLMGroupConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    a2a: A2AConfig = Field(default_factory=A2AConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)

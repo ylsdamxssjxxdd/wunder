@@ -33,6 +33,7 @@ export const state = {
     users: false,
     memory: false,
     mcp: false,
+    a2aServices: false,
     builtin: false,
     skills: false,
     knowledge: false,
@@ -44,6 +45,14 @@ export const state = {
     toolsByIndex: [],
     selectedIndex: -1,
     saveVersion: 0,
+  },
+  a2aServices: {
+    services: [],
+    selectedIndex: -1,
+    saveVersion: 0,
+  },
+  a2aServiceModal: {
+    index: null,
   },
   mcpModal: {
     index: null,
@@ -66,6 +75,7 @@ export const state = {
   toolSelection: {
     builtin: [],
     mcp: [],
+    a2a: [],
     skills: [],
     knowledge: [],
     userTools: [],

@@ -30,7 +30,11 @@ from app.knowledge.service import build_knowledge_tool_specs
 from app.monitor.registry import monitor
 from app.schemas.wunder import WunderRequest
 from app.storage.sqlite import get_storage
-from app.tools.availability import build_enabled_builtin_specs, build_mcp_tool_specs
+from app.tools.availability import (
+    build_a2a_tool_specs,
+    build_enabled_builtin_specs,
+    build_mcp_tool_specs,
+)
 from app.tools.registry import ToolSpec
 
 
@@ -92,10 +96,12 @@ class A2AService:
         skill_names = {spec.name for spec in self._orchestrator.skills.list_specs()}
         builtin_specs = build_enabled_builtin_specs(config)
         mcp_specs = build_mcp_tool_specs(config)
+        a2a_specs = build_a2a_tool_specs(config)
         knowledge_specs = build_knowledge_tool_specs(config, blocked_names=skill_names)
         return {
             "builtin": [self._tool_spec_to_payload(spec, kind="builtin") for spec in builtin_specs],
             "mcp": [self._tool_spec_to_payload(spec, kind="mcp") for spec in mcp_specs],
+            "a2a": [self._tool_spec_to_payload(spec, kind="a2a") for spec in a2a_specs],
             "knowledge": [
                 self._tool_spec_to_payload(spec, kind="knowledge") for spec in knowledge_specs
             ],

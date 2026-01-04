@@ -1,5 +1,7 @@
 ﻿import io
 import zipfile
+
+from app.core.config import A2AServiceConfig
 from tests.utils.sse import parse_sse_events
 
 
@@ -91,7 +93,42 @@ async def test_tools_list(client):
     assert response.status_code == 200
     data = response.json()
     assert "builtin_tools" in data
+    assert "a2a_tools" in data
     assert isinstance(data["builtin_tools"], list)
+    assert isinstance(data["a2a_tools"], list)
+
+
+async def test_admin_a2a_update(client, monkeypatch):
+    """验证 A2A 服务更新接口返回结构与配置写入流程。"""
+    from app.api.routes import admin as admin_routes
+
+    def _fake_apply_config_update(target_orchestrator, _config_path, _updater, *args, **_kwargs):
+        """替换配置更新流程，避免写入真实配置文件。"""
+        updated = target_orchestrator.config.model_copy(deep=True)
+        services = args[0] if args else []
+        updated.a2a.services = [A2AServiceConfig(**service) for service in services]
+        target_orchestrator.apply_config(updated)
+        return updated
+
+    monkeypatch.setattr(admin_routes, "apply_config_update", _fake_apply_config_update)
+    payload = {
+        "services": [
+            {
+                "name": "demo-a2a",
+                "endpoint": "http://example.com/a2a",
+                "enabled": True,
+                "description": "测试服务",
+                "display_name": "Demo A2A",
+            }
+        ]
+    }
+    response = await client.post("/wunder/admin/a2a", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data.get("services"), list)
+    assert data["services"][0]["name"] == "demo-a2a"
+    assert data["services"][0]["endpoint"] == "http://example.com/a2a"
 
 
 async def test_workspace_roundtrip(client):

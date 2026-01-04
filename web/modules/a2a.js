@@ -1018,6 +1018,7 @@ const renderAgentCardTools = (container, tooling) => {
   const groups = [
     { key: "builtin", label: t("a2a.agentCard.group.builtin") },
     { key: "mcp", label: t("a2a.agentCard.group.mcp") },
+    { key: "a2a", label: t("a2a.agentCard.group.a2a") },
     { key: "knowledge", label: t("a2a.agentCard.group.knowledge") },
   ];
   let hasAny = false;

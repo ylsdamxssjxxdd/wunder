@@ -34,6 +34,7 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
+import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initA2aPanel } from "./modules/a2a.js?v=20260104-11";
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-11";
 
@@ -67,6 +68,7 @@ const panelMap = {
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
   mcp: { panel: elements.mcpPanel, nav: elements.navMcp },
+  a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navA2aServices },
   skills: { panel: elements.skillsPanel, nav: elements.navSkills },
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
@@ -90,13 +92,15 @@ const switchPanel = (panel) => {
   toggleMemoryPolling(panel === "memory");
 };
 
-// 根据语言切换系统介绍 PPT 地址
+// 根据语言切换系统介绍 PPT 地址，同时附带版本号避免浏览器缓存旧页
+const INTRO_PPT_VERSION = "20260104-06";
+const appendIntroVersion = (src) => `${src}?v=${INTRO_PPT_VERSION}`;
 const resolveIntroSrc = (language) => {
   const normalized = String(language || "").toLowerCase();
   if (normalized.startsWith("en")) {
-    return "/wunder/ppt-en/index.html";
+    return appendIntroVersion("/wunder/ppt-en/index.html");
   }
-  return "/wunder/ppt/index.html";
+  return appendIntroVersion("/wunder/ppt/index.html");
 };
 
 const syncIntroFrameLanguage = (language) => {
@@ -161,6 +165,19 @@ const bindNavigation = () => {
     loadWorkspace();
   });
   elements.navA2a.addEventListener("click", () => switchPanel("a2a"));
+  elements.navA2aServices.addEventListener("click", async () => {
+    switchPanel("a2aServices");
+    if (!state.panelLoaded.a2aServices) {
+      try {
+        await loadA2aServices();
+        state.panelLoaded.a2aServices = true;
+      } catch (error) {
+        elements.a2aServiceList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
+      }
+    }
+  });
   elements.navSettings.addEventListener("click", () => switchPanel("settings"));
   elements.navMcp.addEventListener("click", async () => {
     switchPanel("mcp");
@@ -388,6 +405,7 @@ const bootstrap = async () => {
   initLlmPanel();
   initPromptPanel();
   initA2aPanel();
+  initA2aServicesPanel();
   initUserTools();
   initSettingsPanel();
   bindNavigation();

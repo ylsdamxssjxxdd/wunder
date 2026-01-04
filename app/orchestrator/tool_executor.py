@@ -1,6 +1,8 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
 from app.core.config import KnowledgeBaseConfig
 from app.core.i18n import t
@@ -12,6 +14,8 @@ from app.sandbox.client import SandboxClient, SandboxClientError
 from app.schemas.wunder import StreamEvent
 from app.tools.catalog import is_workspace_mutation_tool, resolve_builtin_tool_name
 from app.tools.constants import SANDBOX_TOOL_NAMES
+from app.tools.availability import extract_a2a_service_name, is_a2a_tool_name
+from app.tools import builtin
 from app.tools.mcp import MCPClient
 from app.tools.types import ToolContext, ToolResult
 
@@ -243,6 +247,8 @@ class ToolExecutor:
                 "allow_paths": allow_paths,
                 "deny_globs": ctx.config.security.deny_globs,
                 "storage_db_path": ctx.config.storage.db_path,
+                "api_key": ctx.config.security.api_key,
+                "server_port": ctx.config.server.port,
             },
             emit_event=_emit_debug_event,
         )
@@ -445,6 +451,91 @@ class ToolExecutor:
                         error=t("tool.invoke.wunder_run_failed", detail=str(exc)),
                     )
                 )
+
+        if is_a2a_tool_name(name):
+            service_name = extract_a2a_service_name(name)
+            service = next(
+                (
+                    item
+                    for item in ctx.config.a2a.services
+                    if str(getattr(item, "name", "")).strip() == service_name
+                ),
+                None,
+            )
+            if not service or not getattr(service, "enabled", True):
+                return _finish(
+                    ToolResult(
+                        ok=False,
+                        data={},
+                        error=t("tool.a2a.service_unavailable", name=service_name or name),
+                    )
+                )
+
+            def _normalize_endpoint(raw_endpoint: Any) -> str:
+                """规范化端点地址，便于本地判断。"""
+                value = str(raw_endpoint or "").strip()
+                if value and not value.startswith(("http://", "https://")):
+                    value = f"http://{value}"
+                return value
+
+            def _should_attach_api_key(raw_endpoint: Any, target_name: str) -> bool:
+                """判断是否需要附加全局 API Key。"""
+                api_key = str(ctx.config.security.api_key or "").strip()
+                if not api_key:
+                    return False
+                if str(target_name or "").strip().lower() == "wunder":
+                    return True
+                normalized = _normalize_endpoint(raw_endpoint)
+                if not normalized:
+                    return False
+                parsed = urlparse(normalized)
+                host = (parsed.hostname or "").lower()
+                if host not in {"127.0.0.1", "localhost"}:
+                    return False
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                return port == int(ctx.config.server.port)
+
+            a2a_args: Dict[str, Any] = dict(args) if isinstance(args, dict) else {"content": args}
+            a2a_args["endpoint"] = getattr(service, "endpoint", "")
+            raw_method = str(a2a_args.get("method") or "").strip()
+            stream_flag = a2a_args.pop("stream", None)
+            if not raw_method:
+                if stream_flag:
+                    raw_method = "SendStreamingMessage"
+                else:
+                    raw_method = str(getattr(service, "default_method", "") or "SendMessage")
+            if raw_method:
+                a2a_args["method"] = raw_method
+
+            if getattr(service, "allow_self", False):
+                a2a_args.setdefault("allow_self", True)
+            max_depth = getattr(service, "max_depth", 0)
+            if max_depth:
+                a2a_args.setdefault("max_depth", max_depth)
+
+            service_headers = dict(getattr(service, "headers", {}) or {})
+            call_headers = a2a_args.get("headers")
+            if isinstance(call_headers, dict):
+                service_headers.update(call_headers)
+            if service_headers:
+                a2a_args["headers"] = service_headers
+
+            if (
+                getattr(service, "auth", None)
+                and not any(key.lower() == "authorization" for key in service_headers)
+                and not a2a_args.get("authorization")
+                and not a2a_args.get("auth")
+            ):
+                a2a_args["auth"] = service.auth
+
+            if _should_attach_api_key(getattr(service, "endpoint", ""), service_name):
+                a2a_args.setdefault("api_key", ctx.config.security.api_key)
+
+            if "timeout_s" not in a2a_args:
+                a2a_args["timeout_s"] = getattr(ctx.config.a2a, "timeout_s", 120)
+
+            result = await asyncio.to_thread(builtin.a2a_delegate, tool_context, a2a_args)
+            return _finish(result)
 
         if "@" in name:
             server, tool = name.split("@", 1)

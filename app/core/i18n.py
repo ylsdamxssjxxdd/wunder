@@ -728,6 +728,42 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "zh-CN": "命令执行失败。",
         "en-US": "Command execution failed.",
     },
+    "tool.a2a.endpoint_required": {
+        "zh-CN": "A2A endpoint 不能为空。",
+        "en-US": "A2A endpoint is required.",
+    },
+    "tool.a2a.message_required": {
+        "zh-CN": "A2A 消息不能为空。",
+        "en-US": "A2A message is required.",
+    },
+    "tool.a2a.method_unsupported": {
+        "zh-CN": "不支持的 A2A 方法: {method}",
+        "en-US": "Unsupported A2A method: {method}",
+    },
+    "tool.a2a.loop_detected": {
+        "zh-CN": "检测到委派链路循环，已阻止调用。",
+        "en-US": "Delegation loop detected; call blocked.",
+    },
+    "tool.a2a.depth_exceeded": {
+        "zh-CN": "委派深度超过上限({max_depth})。",
+        "en-US": "Delegation depth exceeds limit ({max_depth}).",
+    },
+    "tool.a2a.request_failed": {
+        "zh-CN": "A2A 请求失败: {detail}",
+        "en-US": "A2A request failed: {detail}",
+    },
+    "tool.a2a.response_invalid": {
+        "zh-CN": "A2A 响应格式错误。",
+        "en-US": "Invalid A2A response format.",
+    },
+    "tool.a2a.http_error": {
+        "zh-CN": "A2A 返回错误: status={status}",
+        "en-US": "A2A returned error: status={status}",
+    },
+    "tool.a2a.service_unavailable": {
+        "zh-CN": "A2A 服务不可用：{name}",
+        "en-US": "A2A service unavailable: {name}",
+    },
     "tool.ptc.filename_required": {
         "zh-CN": "脚本文件名不能为空。",
         "en-US": "Script filename is required.",
@@ -775,6 +811,134 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
     "tool.spec.a2ui.args.content": {
         "zh-CN": "可选的简短文本说明。",
         "en-US": "Optional short textual note.",
+    },
+    "tool.spec.a2a.description": {
+        "zh-CN": "通过 A2A JSON-RPC 委派任务给外部智能体并获取结果。",
+        "en-US": "Delegate a task to an external agent via A2A JSON-RPC and return the result.",
+    },
+    "tool.spec.a2a.args.endpoint": {
+        "zh-CN": "A2A JSON-RPC 接口地址（通常以 /a2a 结尾）。",
+        "en-US": "A2A JSON-RPC endpoint (usually ends with /a2a).",
+    },
+    "tool.spec.a2a.args.method": {
+        "zh-CN": "调用方法（SendMessage 或 SendStreamingMessage）。",
+        "en-US": "Method to call (SendMessage or SendStreamingMessage).",
+    },
+    "tool.spec.a2a.args.content": {
+        "zh-CN": "简要文本问题，未提供 message 时使用。",
+        "en-US": "Text prompt used when message is not provided.",
+    },
+    "tool.spec.a2a.args.message": {
+        "zh-CN": "完整 A2A Message（可选，优先使用）。",
+        "en-US": "Full A2A Message (optional, preferred when provided).",
+    },
+    "tool.spec.a2a.args.session_id": {
+        "zh-CN": "会话标识（写入 taskId/contextId，默认当前会话）。",
+        "en-US": "Session id used for taskId/contextId (defaults to current session).",
+    },
+    "tool.spec.a2a.args.user_id": {
+        "zh-CN": "远端智能体的 userId（默认沿用当前 user_id）。",
+        "en-US": "Remote userId (defaults to current user_id).",
+    },
+    "tool.spec.a2a.args.tool_names": {
+        "zh-CN": "远端允许调用的工具列表（可选）。",
+        "en-US": "Allowed tool list for the remote agent (optional).",
+    },
+    "tool.spec.a2a.args.model_name": {
+        "zh-CN": "远端模型配置名称（可选）。",
+        "en-US": "Remote model configuration name (optional).",
+    },
+    "tool.spec.a2a.args.blocking": {
+        "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。",
+        "en-US": "Whether SendMessage blocks for result (default true).",
+    },
+    "tool.spec.a2a.args.headers": {
+        "zh-CN": "额外请求头（如鉴权）。",
+        "en-US": "Extra headers (e.g., auth).",
+    },
+    "tool.spec.a2a.args.timeout": {
+        "zh-CN": "请求超时秒数（默认 120）。",
+        "en-US": "Timeout in seconds (default 120).",
+    },
+    "tool.spec.a2a.args.allow_self": {
+        "zh-CN": "是否允许调用本地 A2A 入口（默认 false）。",
+        "en-US": "Allow calling local A2A endpoint (default false).",
+    },
+    "tool.spec.a2a.args.delegation_chain": {
+        "zh-CN": "委派链路（用于防止循环）。",
+        "en-US": "Delegation chain to prevent loops.",
+    },
+    "tool.spec.a2a.args.max_depth": {
+        "zh-CN": "委派链路最大深度（可选）。",
+        "en-US": "Max delegation depth (optional).",
+    },
+    "tool.spec.a2a_service.description": {
+        "zh-CN": "委派给 A2A 智能体 {name} 执行任务并返回结果。",
+        "en-US": "Delegate tasks to A2A agent {name} and return the result.",
+    },
+    "tool.spec.a2a_service.summary.skills": {
+        "zh-CN": "技能：{skills}",
+        "en-US": "Skills: {skills}",
+    },
+    "tool.spec.a2a_service.summary.skills_more": {
+        "zh-CN": "技能：{names} 等 {count} 项",
+        "en-US": "Skills: {names} (total {count})",
+    },
+    "tool.spec.a2a_service.summary.tools": {
+        "zh-CN": "工具：{tools}",
+        "en-US": "Tools: {tools}",
+    },
+    "tool.spec.a2a_service.summary.tool.builtin": {
+        "zh-CN": "内置{count}",
+        "en-US": "builtin {count}",
+    },
+    "tool.spec.a2a_service.summary.tool.mcp": {
+        "zh-CN": "MCP{count}",
+        "en-US": "MCP {count}",
+    },
+    "tool.spec.a2a_service.summary.tool.a2a": {
+        "zh-CN": "A2A{count}",
+        "en-US": "A2A {count}",
+    },
+    "tool.spec.a2a_service.summary.tool.knowledge": {
+        "zh-CN": "知识库{count}",
+        "en-US": "knowledge {count}",
+    },
+    "tool.spec.a2a_service.args.content": {
+        "zh-CN": "发送给智能体的文本内容。",
+        "en-US": "Text message sent to the agent.",
+    },
+    "tool.spec.a2a_service.args.message": {
+        "zh-CN": "可选的完整 A2A Message 对象。",
+        "en-US": "Optional full A2A Message payload.",
+    },
+    "tool.spec.a2a_service.args.session_id": {
+        "zh-CN": "会话标识（写入 taskId/contextId）。",
+        "en-US": "Session id used for taskId/contextId.",
+    },
+    "tool.spec.a2a_service.args.user_id": {
+        "zh-CN": "远端智能体的 userId（可选）。",
+        "en-US": "Remote userId (optional).",
+    },
+    "tool.spec.a2a_service.args.tool_names": {
+        "zh-CN": "远端允许调用的工具列表（可选）。",
+        "en-US": "Allowed tool list for the remote agent (optional).",
+    },
+    "tool.spec.a2a_service.args.model_name": {
+        "zh-CN": "远端模型配置名称（可选）。",
+        "en-US": "Remote model configuration name (optional).",
+    },
+    "tool.spec.a2a_service.args.blocking": {
+        "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。",
+        "en-US": "Whether SendMessage blocks for result (default true).",
+    },
+    "tool.spec.a2a_service.args.stream": {
+        "zh-CN": "是否使用流式接口（SendStreamingMessage）。",
+        "en-US": "Use streaming interface (SendStreamingMessage).",
+    },
+    "tool.spec.a2a_service.args.timeout": {
+        "zh-CN": "请求超时秒数（可选）。",
+        "en-US": "Timeout in seconds (optional).",
     },
     "tool.spec.exec.description": {
         "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。",

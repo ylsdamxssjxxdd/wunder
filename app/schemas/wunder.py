@@ -207,6 +207,48 @@ class McpToolsResponse(BaseModel):
     tools: List[McpToolItem]
 
 
+class A2aServiceItem(BaseModel):
+    """A2A 服务信息。"""
+
+    name: str
+    endpoint: str
+    enabled: bool = True
+    description: str = ""
+    display_name: str = ""
+    headers: Dict[str, str] = Field(default_factory=dict)
+    auth: Optional[str] = None
+    agent_card: Dict[str, Any] = Field(default_factory=dict)
+    allow_self: bool = False
+    max_depth: int = 0
+    default_method: str = "SendMessage"
+
+
+class A2aListResponse(BaseModel):
+    """A2A 服务列表响应。"""
+
+    services: List[A2aServiceItem]
+
+
+class A2aUpdateRequest(BaseModel):
+    """A2A 服务更新请求。"""
+
+    services: List[A2aServiceItem]
+
+
+class A2aCardRequest(BaseModel):
+    """A2A AgentCard 探测请求。"""
+
+    endpoint: str = Field(..., description="A2A 服务端点")
+    headers: Dict[str, str] = Field(default_factory=dict)
+    auth: Optional[str] = None
+
+
+class A2aCardResponse(BaseModel):
+    """A2A AgentCard 探测响应。"""
+
+    agent_card: Dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillItem(BaseModel):
     """技能信息。"""
 
@@ -353,6 +395,7 @@ class AvailableToolsResponse(BaseModel):
 
     builtin_tools: List[AvailableToolItem]
     mcp_tools: List[AvailableToolItem]
+    a2a_tools: List[AvailableToolItem] = Field(default_factory=list)
     skills: List[AvailableToolItem]
     knowledge_tools: List[AvailableToolItem] = Field(default_factory=list)
     user_tools: List[AvailableToolItem] = Field(default_factory=list)

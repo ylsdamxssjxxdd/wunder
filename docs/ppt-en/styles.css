@@ -112,6 +112,11 @@ body {
   gap: clamp(10px, 2vmin, 18px);
 }
 
+/* 首页左右布局垂直居中，避免内容贴顶 */
+.slide.intro-split {
+  justify-content: center;
+}
+
 /* 目录页标题“Agenda”加大字号，强化视觉锚点 */
 .slide.toc .eyebrow {
   font-size: clamp(16px, 3.2vmin, 28px);
@@ -298,6 +303,20 @@ p {
 
 .grid.four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 首页左右布局：左侧欢迎文案，右侧目录 */
+.grid.toc-split {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: center;
+}
+
+.grid.toc-split .toc-grid {
+  grid-template-columns: 1fr;
+}
+
+.cover-intro {
+  justify-content: center;
 }
 
 /* 目录页专用布局，强调章节与描述 */

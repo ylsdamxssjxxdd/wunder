@@ -49,6 +49,7 @@
 - 返回（JSON）：
   - `builtin_tools`：内置工具列表（name/description/input_schema）
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
+  - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
   - `skills`：技能列表（name/description/input_schema）
   - `knowledge_tools`：字面知识库工具列表（name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
@@ -57,6 +58,7 @@
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
   - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+  - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -241,6 +243,24 @@
   - `endpoint`：服务地址
 - 返回（JSON）：
   - `tools`：服务端工具清单
+
+### 4.1.4.1 `/wunder/admin/a2a`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `services`：A2A 服务列表（name/endpoint/enabled/description/display_name/headers/auth/agent_card/allow_self/max_depth/default_method）
+- `POST` 入参：
+  - `services`：完整 A2A 服务列表，用于保存配置
+
+### 4.1.4.2 `/wunder/admin/a2a/card`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `endpoint`：A2A JSON-RPC 端点
+  - `headers`：请求头对象（可选）
+  - `auth`：认证字段（可选）
+- 返回（JSON）：
+  - `agent_card`：AgentCard 元数据
 
 ### 4.1.5 `/wunder/admin/skills`
 
@@ -781,6 +801,7 @@
 - 模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具。
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
 - 工具结果以 `tool` 角色回填给模型，用于下一轮判断。
+- A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
@@ -850,7 +871,7 @@
 
 - 说明：A2A AgentCard 发现入口（公开访问）。
 - 返回（JSON）：AgentCard 元数据（protocolVersion、supportedInterfaces、skills、capabilities、tooling 等）。
-- 备注：`tooling` 汇总内置工具/MCP 工具/知识库工具清单，用于客户端能力展示，默认仅保留名称/描述，不包含参数 schema。
+- 备注：`tooling` 汇总内置工具/MCP/A2A/知识库工具清单，用于客户端能力展示，默认仅保留名称/描述，不包含参数 schema。
 
 #### 4.7.2 `GET /a2a/extendedAgentCard`
 

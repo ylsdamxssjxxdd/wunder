@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import WunderConfig
 from app.core.i18n import t
 from app.tools.availability import (
+    build_a2a_tool_specs,
     build_enabled_builtin_specs,
     build_knowledge_tool_specs_filtered,
     build_mcp_tool_specs,
@@ -43,6 +44,16 @@ def build_available_tools(
         for spec in build_mcp_tool_specs(config)
     ]
 
+    # A2A 服务工具（由管理员配置）
+    a2a_tools = [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "input_schema": spec.args_schema,
+        }
+        for spec in build_a2a_tool_specs(config)
+    ]
+
     eva_skills = Path("EVA_SKILLS")
     scan_paths = list(config.skills.paths)
     if eva_skills.exists() and str(eva_skills) not in scan_paths:
@@ -61,7 +72,7 @@ def build_available_tools(
             }
         )
 
-    blocked_names = {tool["name"] for tool in builtin_tools + mcp_tools + skills}
+    blocked_names = {tool["name"] for tool in builtin_tools + mcp_tools + a2a_tools + skills}
     # ????????????????????????
     knowledge_tools = [
         {
@@ -257,6 +268,7 @@ def build_available_tools(
     return AvailableToolsResponse(
         builtin_tools=builtin_tools,
         mcp_tools=mcp_tools,
+        a2a_tools=a2a_tools,
         skills=skills,
         knowledge_tools=knowledge_tools,
         user_tools=user_tools,

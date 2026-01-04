@@ -304,9 +304,13 @@ const updateMonitorChartTitles = () => {
   }
   if (elements.toolHeatmapTitle) {
     const windowLabel = getMonitorTimeWindowLabel();
-    elements.toolHeatmapTitle.textContent = t("monitor.chart.toolHeatmap", {
-      label: windowLabel,
-    });
+    const text = t("monitor.chart.toolHeatmap", { label: windowLabel });
+    const label = elements.toolHeatmapTitle.querySelector("[data-role='title']");
+    if (label) {
+      label.textContent = text;
+    } else {
+      elements.toolHeatmapTitle.textContent = text;
+    }
   }
   if (elements.metricSandboxCallsLabel) {
     const windowLabel = getMonitorTimeWindowLabel();

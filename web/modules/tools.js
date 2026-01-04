@@ -59,6 +59,7 @@ const persistToolSelection = () => {
   const known = [
     ...state.toolSelection.builtin,
     ...state.toolSelection.mcp,
+    ...state.toolSelection.a2a,
     ...state.toolSelection.skills,
     ...state.toolSelection.knowledge,
     ...state.toolSelection.userTools,
@@ -82,6 +83,7 @@ const ensureToolSelectionState = () => {
     state.toolSelection = {
       builtin: [],
       mcp: [],
+      a2a: [],
       skills: [],
       knowledge: [],
       userTools: [],
@@ -96,6 +98,9 @@ const ensureToolSelectionState = () => {
   }
   if (!Array.isArray(state.toolSelection.mcp)) {
     state.toolSelection.mcp = [];
+  }
+  if (!Array.isArray(state.toolSelection.a2a)) {
+    state.toolSelection.a2a = [];
   }
   if (!Array.isArray(state.toolSelection.skills)) {
     state.toolSelection.skills = [];
@@ -301,6 +306,7 @@ export const renderPromptTools = () => {
     t("tools.empty.builtin")
   );
   renderPromptToolList(elements.promptMcpTools, state.toolSelection.mcp, t("tools.empty.mcp"));
+  renderPromptToolList(elements.promptA2aTools, state.toolSelection.a2a, t("tools.empty.a2a"));
   renderPromptToolList(elements.promptSkills, state.toolSelection.skills, t("tools.empty.skills"));
   renderPromptToolList(
     elements.promptKnowledgeTools,
@@ -325,6 +331,9 @@ export const applyPromptToolError = (message) => {
     : t("common.loadFailed");
   elements.promptBuiltinTools.textContent = text;
   elements.promptMcpTools.textContent = text;
+  if (elements.promptA2aTools) {
+    elements.promptA2aTools.textContent = text;
+  }
   elements.promptSkills.textContent = text;
   elements.promptKnowledgeTools.textContent = text;
   if (elements.promptUserTools) {
@@ -353,14 +362,21 @@ export const loadAvailableTools = async () => {
   const result = await response.json();
   const builtin = Array.isArray(result.builtin_tools) ? result.builtin_tools : [];
   const mcp = Array.isArray(result.mcp_tools) ? result.mcp_tools : [];
+  const a2a = Array.isArray(result.a2a_tools) ? result.a2a_tools : [];
   const skills = Array.isArray(result.skills) ? result.skills : [];
   const knowledge = Array.isArray(result.knowledge_tools) ? result.knowledge_tools : [];
   const userTools = Array.isArray(result.user_tools) ? result.user_tools : [];
   const sharedTools = Array.isArray(result.shared_tools) ? result.shared_tools : [];
   const extraPrompt = typeof result.extra_prompt === "string" ? result.extra_prompt : "";
-  const allNames = [...builtin, ...mcp, ...skills, ...knowledge, ...userTools, ...sharedTools].map(
-    (item) => item.name
-  );
+  const allNames = [
+    ...builtin,
+    ...mcp,
+    ...a2a,
+    ...skills,
+    ...knowledge,
+    ...userTools,
+    ...sharedTools,
+  ].map((item) => item.name);
   const allSet = new Set(allNames);
   const sharedSet = new Set(sharedTools.map((item) => item.name));
   const previousKnown = state.toolSelection.loaded
@@ -368,6 +384,7 @@ export const loadAvailableTools = async () => {
         [
           ...state.toolSelection.builtin,
           ...state.toolSelection.mcp,
+          ...state.toolSelection.a2a,
           ...state.toolSelection.skills,
           ...state.toolSelection.knowledge,
           ...state.toolSelection.userTools,
@@ -414,6 +431,7 @@ export const loadAvailableTools = async () => {
 
   state.toolSelection.builtin = builtin;
   state.toolSelection.mcp = mcp;
+  state.toolSelection.a2a = a2a;
   state.toolSelection.skills = skills;
   state.toolSelection.knowledge = knowledge;
   state.toolSelection.userTools = userTools;
