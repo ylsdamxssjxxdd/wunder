@@ -11,7 +11,7 @@ Call requirements:
 4. If you need a brief textual note, put it in arguments.content (optional).
 5. Do not output Markdown code fences; only return the JSON message array inside a2ui.
 
-Generation rules (reference-style, condensed):
+Generation rules:
 - a2ui is a message array. Each message may include only one action: beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface.
 - Typical order: beginRendering -> surfaceUpdate -> dataModelUpdate; use deleteSurface only when cleaning up.
 - Components use an adjacency list: all components live in surfaceUpdate.components, and root points to the root component id.
@@ -20,7 +20,7 @@ Generation rules (reference-style, condensed):
 - The primary action button should include "primary": true.
 - Prefer standard icon names: mail / call / locationOn / calendarToday / check / close, etc.
 
-Supported components (common fields):
+Supported components:
 - Text: text{literalString|path}, usageHint(h1~h5/caption/body)
 - Row/Column/List: children{explicitList|template}, alignment/distribution, List.direction
 - Card: child
@@ -38,7 +38,7 @@ Supported components (common fields):
 - Video: url
 - AudioPlayer: url, description
 
-Template rules (simplified):
+Template rules:
 - Lists: Column + List(template) + Card; put items in dataModelUpdate.
 - Detail cards: Card wraps Column; use h2/h3 titles; main button primary:true.
 - Action feedback: use Card or Modal to show confirmation.

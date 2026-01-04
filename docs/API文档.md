@@ -329,7 +329,7 @@
   - `events`：事件详情列表
 - 说明：
 - 事件列表会按 `observability.monitor_event_limit` 保留最近 N 条，<= 0 表示不截断。
-  - 字符串字段会按 `observability.monitor_payload_max_chars` 截断。
+  - 字符串字段会按 `observability.monitor_payload_max_chars` 截断（<= 0 表示不截断）。
   - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
   - `observability.monitor_drop_event_types` 可过滤不持久化的事件类型。
 

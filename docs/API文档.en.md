@@ -247,7 +247,7 @@
 
 - Method: `GET`
 - Response: `session`, `events`
-- Notes: events are trimmed by `observability.monitor_event_limit` and `monitor_payload_max_chars`.
+- Notes: events are trimmed by `observability.monitor_event_limit` and `monitor_payload_max_chars` (<= 0 disables trimming).
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
 

@@ -11,7 +11,7 @@
 4. 若需要额外文本说明，可在 arguments.content 中提供简短说明（可选）。
 5. 禁止输出 Markdown 代码块；仅在 a2ui 中返回 JSON 消息数组。
 
-生成规则（参考项目风格，精简版）：
+生成规则：
 - a2ui 是消息数组，每条消息只能包含一种操作：beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface。
 - 常见顺序：beginRendering -> surfaceUpdate -> dataModelUpdate；仅在需要清理时用 deleteSurface。
 - 组件采用“邻接表”：所有组件平铺在 surfaceUpdate.components，root 指向根组件 id。
@@ -20,7 +20,7 @@
 - 主动作按钮请加 "primary": true。
 - 图标建议使用标准名称：mail / call / locationOn / calendarToday / check / close 等。
 
-组件清单（调试面板支持的常用字段）：
+组件清单：
 - Text: text{literalString|path}, usageHint(h1~h5/caption/body)
 - Row/Column/List: children{explicitList|template}, alignment/distribution, List.direction
 - Card: child
@@ -38,7 +38,7 @@
 - Video: url
 - AudioPlayer: url, description
 
-模板规则（简化）：
+模板规则：
 - 列表：Column + List(template) + Card；dataModelUpdate 中提供 items。
 - 详情：Card 包裹 Column；标题用 h2/h3；主按钮 primary:true。
 - 操作反馈：可用 Card 或 Modal 展示确认信息。

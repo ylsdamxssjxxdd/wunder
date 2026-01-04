@@ -2718,7 +2718,7 @@ button.danger {
   gap: 10px;
 }
 
-.model-output-preview-card {
+.modal-card.model-output-preview-card {
   width: min(960px, 96vw);
   height: 70vh;
   max-height: 70vh;
