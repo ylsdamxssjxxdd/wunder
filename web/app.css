@@ -431,6 +431,11 @@ textarea {
   align-items: center;
 }
 
+.a2a-actions {
+  justify-content: flex-end;
+  align-items: center;
+}
+
 button {
   padding: 8px 14px;
   border: none;

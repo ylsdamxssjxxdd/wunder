@@ -9,6 +9,11 @@
 const slides = Array.from(document.querySelectorAll(".slide"));
 const progressBar = document.querySelector("#progress-bar");
 const counter = document.querySelector("#counter");
+// 目录页索引：优先匹配带 toc 类的页面，便于快捷键直接返回目录
+const tocIndex = (() => {
+  const index = slides.findIndex((slide) => slide.classList.contains("toc"));
+  return index >= 0 ? index : 1;
+})();
 
 // 当前页索引与每一页的分步展示进度
 const state = {
@@ -126,7 +131,7 @@ function prev() {
   }
 }
 
-// 键盘控制：方向键、空格、PageUp/Down 等
+// 键盘控制：方向键、空格、PageUp/Down，T 返回目录
 function handleKeydown(event) {
   switch (event.key) {
     case "ArrowRight":
@@ -150,6 +155,11 @@ function handleKeydown(event) {
     case "End":
       event.preventDefault();
       goTo(slides.length - 1);
+      break;
+    case "t":
+    case "T":
+      event.preventDefault();
+      goTo(tocIndex);
       break;
     default:
       break;

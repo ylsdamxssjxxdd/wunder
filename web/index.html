@@ -964,21 +964,13 @@
           <div class="list-header">
             <h1 data-i18n="a2a.title">A2A 测试</h1>
             <div class="header-actions a2a-header-actions">
-              <button id="a2aAgentCardBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-id-card"></i>
-                <span data-i18n="a2a.action.agentCard">加载 AgentCard</span>
+              <button id="a2aConnectBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-plug"></i>
+                <span data-i18n="a2a.action.connect">连接设置</span>
               </button>
-              <button id="a2aClearBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-eraser"></i>
-                <span data-i18n="a2a.action.clear">清空</span>
-              </button>
-              <button id="a2aStopBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-stop"></i>
-                <span data-i18n="a2a.action.stop">停止</span>
-              </button>
-              <button id="a2aSendBtn" class="btn-with-icon" type="button">
-                <i class="fa-solid fa-paper-plane"></i>
-                <span data-i18n="a2a.action.send">发送</span>
+              <button id="a2aAdvancedBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-sliders"></i>
+                <span data-i18n="a2a.action.advanced">高级设置</span>
               </button>
             </div>
           </div>
@@ -990,88 +982,6 @@
             <div class="a2a-form">
               <div class="form-section a2a-form-section">
                 <div class="form-row">
-                  <label for="a2aEndpoint" data-i18n="a2a.label.endpoint">A2A Endpoint</label>
-                  <input id="a2aEndpoint" type="text" placeholder="http://127.0.0.1:8000/a2a" />
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aVersion" data-i18n="a2a.label.version">A2A-Version</label>
-                    <input id="a2aVersion" type="text" placeholder="1.0" />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aAuthType" data-i18n="a2a.label.authType">认证方式</label>
-                    <select id="a2aAuthType">
-                      <option value="apiKey" data-i18n="a2a.authType.apiKey">X-API-Key</option>
-                      <option value="bearer" data-i18n="a2a.authType.bearer">
-                        Authorization Bearer
-                      </option>
-                      <option value="none" data-i18n="a2a.authType.none">不使用认证</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label class="checkbox-row">
-                    <input id="a2aUseGlobalKey" type="checkbox" checked />
-                    <span data-i18n="a2a.label.useGlobalKey">使用全局 API Key</span>
-                  </label>
-                </div>
-                <div class="form-row">
-                  <label for="a2aApiKey" data-i18n="a2a.label.apiKey">API Key</label>
-                  <input
-                    id="a2aApiKey"
-                    type="password"
-                    placeholder="可选"
-                    data-i18n-placeholder="settings.placeholder.optional"
-                  />
-                </div>
-                <div class="form-row">
-                  <label for="a2aHeaders" data-i18n="a2a.label.headers">额外 Headers JSON</label>
-                  <textarea id="a2aHeaders" class="code-preview" placeholder='{"X-Trace-Id":"demo"}'></textarea>
-                  <div id="a2aHeadersError" class="error-text"></div>
-                </div>
-                <div class="form-row">
-                  <label for="a2aMethod" data-i18n="a2a.label.method">方法</label>
-                  <select id="a2aMethod">
-                    <option value="SendMessage">SendMessage</option>
-                    <option value="SendStreamingMessage">SendStreamingMessage</option>
-                    <option value="GetTask">GetTask</option>
-                    <option value="ListTasks">ListTasks</option>
-                    <option value="CancelTask">CancelTask</option>
-                    <option value="SubscribeToTask">SubscribeToTask</option>
-                    <option value="GetExtendedAgentCard">GetExtendedAgentCard</option>
-                  </select>
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aRequestId" data-i18n="a2a.label.requestId">请求 ID</label>
-                    <input
-                      id="a2aRequestId"
-                      type="text"
-                      placeholder="自动生成"
-                      data-i18n-placeholder="a2a.placeholder.requestId"
-                    />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aUserId" data-i18n="a2a.label.userId">userId</label>
-                    <input
-                      id="a2aUserId"
-                      type="text"
-                      placeholder="demo_user"
-                      data-i18n-placeholder="common.placeholder.userId"
-                    />
-                  </div>
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aTaskId" data-i18n="a2a.label.taskId">taskId</label>
-                    <input id="a2aTaskId" type="text" placeholder="tasks/{id}" />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aContextId" data-i18n="a2a.label.contextId">contextId</label>
-                    <input id="a2aContextId" type="text" placeholder="context_id" />
-                  </div>
-                </div>
-                <div class="form-row">
                   <label for="a2aMessage" data-i18n="a2a.label.message">消息内容</label>
                   <textarea
                     id="a2aMessage"
@@ -1080,65 +990,19 @@
                     data-i18n-placeholder="a2a.placeholder.message"
                   ></textarea>
                 </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aToolNames" data-i18n="a2a.label.toolNames">toolNames</label>
-                    <input id="a2aToolNames" type="text" placeholder="tool1,tool2" />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aModelName" data-i18n="a2a.label.modelName">modelName</label>
-                    <input id="a2aModelName" type="text" placeholder="main" />
-                  </div>
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aHistoryLength" data-i18n="a2a.label.historyLength">historyLength</label>
-                    <input id="a2aHistoryLength" type="number" min="0" step="1" placeholder="0" />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aPageSize" data-i18n="a2a.label.pageSize">pageSize</label>
-                    <input id="a2aPageSize" type="number" min="1" step="1" placeholder="50" />
-                  </div>
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label for="a2aPageToken" data-i18n="a2a.label.pageToken">pageToken</label>
-                    <input
-                      id="a2aPageToken"
-                      type="text"
-                      placeholder="可选"
-                      data-i18n-placeholder="settings.placeholder.optional"
-                    />
-                  </div>
-                  <div class="form-row">
-                    <label for="a2aStatusFilter" data-i18n="a2a.label.status">status</label>
-                    <input id="a2aStatusFilter" type="text" placeholder="working/completed" />
-                  </div>
-                </div>
-                <div class="grid a2a-grid">
-                  <div class="form-row">
-                    <label class="checkbox-row">
-                      <input id="a2aBlocking" type="checkbox" />
-                      <span data-i18n="a2a.label.blocking">blocking</span>
-                    </label>
-                  </div>
-                  <div class="form-row">
-                    <label class="checkbox-row">
-                      <input id="a2aIncludeArtifacts" type="checkbox" />
-                      <span data-i18n="a2a.label.includeArtifacts">includeArtifacts</span>
-                    </label>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label for="a2aParamsJson" data-i18n="a2a.label.paramsJson">Params JSON（可选）</label>
-                  <textarea
-                    id="a2aParamsJson"
-                    class="code-preview"
-                    placeholder='{"message":{"role":"user","parts":[{"text":"hello"}]}}'
-                  ></textarea>
-                  <div class="muted" data-i18n="a2a.tip.params">
-                    如果填写 Params JSON，将覆盖上方表单字段。
-                  </div>
+                <div class="actions a2a-actions">
+                  <button id="a2aClearBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-eraser"></i>
+                    <span data-i18n="a2a.action.clear">清空</span>
+                  </button>
+                  <button id="a2aStopBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-stop"></i>
+                    <span data-i18n="a2a.action.stop">停止</span>
+                  </button>
+                  <button id="a2aSendBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    <span data-i18n="a2a.action.send">发送</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1168,6 +1032,184 @@
             </div>
           </div>
         </section>
+
+        <div id="a2aConnectionModal" class="modal">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="detail-title" data-i18n="a2a.modal.connection.title">连接设置</div>
+              <button id="a2aConnectionClose" class="icon-btn" type="button">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-row">
+                <label for="a2aEndpoint" data-i18n="a2a.label.endpoint">A2A Endpoint</label>
+                <input id="a2aEndpoint" type="text" placeholder="http://127.0.0.1:8000/a2a" />
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aVersion" data-i18n="a2a.label.version">A2A-Version</label>
+                  <input id="a2aVersion" type="text" placeholder="1.0" />
+                </div>
+                <div class="form-row">
+                  <label for="a2aAuthType" data-i18n="a2a.label.authType">认证方式</label>
+                  <select id="a2aAuthType">
+                    <option value="apiKey" data-i18n="a2a.authType.apiKey">X-API-Key</option>
+                    <option value="bearer" data-i18n="a2a.authType.bearer">
+                      Authorization Bearer
+                    </option>
+                    <option value="none" data-i18n="a2a.authType.none">不使用认证</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <label class="checkbox-row">
+                  <input id="a2aUseGlobalKey" type="checkbox" checked />
+                  <span data-i18n="a2a.label.useGlobalKey">使用全局 API Key</span>
+                </label>
+              </div>
+              <div class="form-row">
+                <label for="a2aApiKey" data-i18n="a2a.label.apiKey">API Key</label>
+                <input
+                  id="a2aApiKey"
+                  type="password"
+                  placeholder="可选"
+                  data-i18n-placeholder="settings.placeholder.optional"
+                />
+              </div>
+              <div class="form-row">
+                <label for="a2aHeaders" data-i18n="a2a.label.headers">额外 Headers JSON</label>
+                <textarea id="a2aHeaders" class="code-preview" placeholder='{"X-Trace-Id":"demo"}'></textarea>
+                <div id="a2aHeadersError" class="error-text"></div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="a2aAgentCardBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-id-card"></i>
+                <span data-i18n="a2a.action.agentCard">加载 AgentCard</span>
+              </button>
+              <button id="a2aConnectionCloseBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="a2aAdvancedModal" class="modal">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <div class="detail-title" data-i18n="a2a.modal.advanced.title">高级设置</div>
+              <button id="a2aAdvancedClose" class="icon-btn" type="button">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-row">
+                <label for="a2aMethod" data-i18n="a2a.label.method">方法</label>
+                <select id="a2aMethod">
+                  <option value="SendMessage">SendMessage</option>
+                  <option value="SendStreamingMessage">SendStreamingMessage</option>
+                  <option value="GetTask">GetTask</option>
+                  <option value="ListTasks">ListTasks</option>
+                  <option value="CancelTask">CancelTask</option>
+                  <option value="SubscribeToTask">SubscribeToTask</option>
+                  <option value="GetExtendedAgentCard">GetExtendedAgentCard</option>
+                </select>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aRequestId" data-i18n="a2a.label.requestId">请求 ID</label>
+                  <input
+                    id="a2aRequestId"
+                    type="text"
+                    placeholder="自动生成"
+                    data-i18n-placeholder="a2a.placeholder.requestId"
+                  />
+                </div>
+                <div class="form-row">
+                  <label for="a2aUserId" data-i18n="a2a.label.userId">userId</label>
+                  <input
+                    id="a2aUserId"
+                    type="text"
+                    placeholder="demo_user"
+                    data-i18n-placeholder="common.placeholder.userId"
+                  />
+                </div>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aTaskId" data-i18n="a2a.label.taskId">taskId</label>
+                  <input id="a2aTaskId" type="text" placeholder="tasks/{id}" />
+                </div>
+                <div class="form-row">
+                  <label for="a2aContextId" data-i18n="a2a.label.contextId">contextId</label>
+                  <input id="a2aContextId" type="text" placeholder="context_id" />
+                </div>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aToolNames" data-i18n="a2a.label.toolNames">toolNames</label>
+                  <input id="a2aToolNames" type="text" placeholder="tool1,tool2" />
+                </div>
+                <div class="form-row">
+                  <label for="a2aModelName" data-i18n="a2a.label.modelName">modelName</label>
+                  <input id="a2aModelName" type="text" placeholder="main" />
+                </div>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aHistoryLength" data-i18n="a2a.label.historyLength">historyLength</label>
+                  <input id="a2aHistoryLength" type="number" min="0" step="1" placeholder="0" />
+                </div>
+                <div class="form-row">
+                  <label for="a2aPageSize" data-i18n="a2a.label.pageSize">pageSize</label>
+                  <input id="a2aPageSize" type="number" min="1" step="1" placeholder="50" />
+                </div>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label for="a2aPageToken" data-i18n="a2a.label.pageToken">pageToken</label>
+                  <input
+                    id="a2aPageToken"
+                    type="text"
+                    placeholder="可选"
+                    data-i18n-placeholder="settings.placeholder.optional"
+                  />
+                </div>
+                <div class="form-row">
+                  <label for="a2aStatusFilter" data-i18n="a2a.label.status">status</label>
+                  <input id="a2aStatusFilter" type="text" placeholder="working/completed" />
+                </div>
+              </div>
+              <div class="grid a2a-grid">
+                <div class="form-row">
+                  <label class="checkbox-row">
+                    <input id="a2aBlocking" type="checkbox" />
+                    <span data-i18n="a2a.label.blocking">blocking</span>
+                  </label>
+                </div>
+                <div class="form-row">
+                  <label class="checkbox-row">
+                    <input id="a2aIncludeArtifacts" type="checkbox" />
+                    <span data-i18n="a2a.label.includeArtifacts">includeArtifacts</span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-row">
+                <label for="a2aParamsJson" data-i18n="a2a.label.paramsJson">Params JSON（可选）</label>
+                <textarea
+                  id="a2aParamsJson"
+                  class="code-preview"
+                  placeholder='{"message":{"role":"user","parts":[{"text":"hello"}]}}'
+                ></textarea>
+                <div class="muted" data-i18n="a2a.tip.params">
+                  如果填写 Params JSON，将覆盖上方表单字段。
+                </div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="a2aAdvancedCloseBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+              </button>
+            </div>
+          </div>
+        </div>
 
         <section id="settingsPanel" class="panel">
           <div class="list-header">

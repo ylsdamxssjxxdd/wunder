@@ -120,6 +120,34 @@ const setStreamingState = (active) => {
   }
 };
 
+// 打开连接设置弹窗，确保默认 Endpoint 已同步
+const openA2aConnectionModal = () => {
+  if (!elements.a2aConnectionModal) {
+    return;
+  }
+  syncEndpointDefault();
+  elements.a2aConnectionModal.classList.add("active");
+  elements.a2aEndpoint?.focus();
+};
+
+// 关闭连接设置弹窗
+const closeA2aConnectionModal = () => {
+  elements.a2aConnectionModal?.classList.remove("active");
+};
+
+// 打开高级设置弹窗
+const openA2aAdvancedModal = () => {
+  if (!elements.a2aAdvancedModal) {
+    return;
+  }
+  elements.a2aAdvancedModal.classList.add("active");
+};
+
+// 关闭高级设置弹窗
+const closeA2aAdvancedModal = () => {
+  elements.a2aAdvancedModal?.classList.remove("active");
+};
+
 const syncEndpointDefault = () => {
   if (!elements.a2aEndpoint) {
     return;
@@ -660,6 +688,38 @@ export const initA2aPanel = () => {
   bindInputs();
   setStreamingState(false);
   state.panelLoaded.a2a = true;
+  if (elements.a2aConnectBtn) {
+    elements.a2aConnectBtn.addEventListener("click", openA2aConnectionModal);
+  }
+  if (elements.a2aAdvancedBtn) {
+    elements.a2aAdvancedBtn.addEventListener("click", openA2aAdvancedModal);
+  }
+  if (elements.a2aConnectionClose) {
+    elements.a2aConnectionClose.addEventListener("click", closeA2aConnectionModal);
+  }
+  if (elements.a2aConnectionCloseBtn) {
+    elements.a2aConnectionCloseBtn.addEventListener("click", closeA2aConnectionModal);
+  }
+  if (elements.a2aConnectionModal) {
+    elements.a2aConnectionModal.addEventListener("click", (event) => {
+      if (event.target === elements.a2aConnectionModal) {
+        closeA2aConnectionModal();
+      }
+    });
+  }
+  if (elements.a2aAdvancedClose) {
+    elements.a2aAdvancedClose.addEventListener("click", closeA2aAdvancedModal);
+  }
+  if (elements.a2aAdvancedCloseBtn) {
+    elements.a2aAdvancedCloseBtn.addEventListener("click", closeA2aAdvancedModal);
+  }
+  if (elements.a2aAdvancedModal) {
+    elements.a2aAdvancedModal.addEventListener("click", (event) => {
+      if (event.target === elements.a2aAdvancedModal) {
+        closeA2aAdvancedModal();
+      }
+    });
+  }
   if (elements.a2aSendBtn) {
     elements.a2aSendBtn.addEventListener("click", handleSend);
   }

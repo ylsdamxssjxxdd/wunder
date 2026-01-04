@@ -1,8 +1,8 @@
 "use strict";
 
-import slideManifest from "./manifest.js?v=20260104-03";
+import slideManifest from "./manifest.js?v=20260104-04";
 
-const CACHE_BUST = "v=20260104-03";
+const CACHE_BUST = "v=20260104-04";
 const withCacheBust = (path) => (path.includes("?") ? path : `${path}?${CACHE_BUST}`);
 
 // 负责把所有页面插入到 deck，再加载翻页控制脚本。

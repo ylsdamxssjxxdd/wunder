@@ -299,6 +299,18 @@ p {
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-soft);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.toc-link,
+.toc-link:visited,
+.toc-link:hover,
+.toc-link:active,
+.toc-link:focus {
+  text-decoration: none;
+  color: inherit;
 }
 
 .toc-index {
