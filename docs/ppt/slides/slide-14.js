@@ -2,34 +2,38 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 14 页：长期记忆，用于拆分维护本页内容。
+// 第 14 页：A2UI，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="长期记忆">
+<section class="slide" data-title="A2UI">
         <div class="slide-meta">
-          <span class="section-tag">第5节 长期记忆</span>
+          <span class="section-tag">第4节 前沿特性</span>
           <div class="section-map">
-            <span class="section-chip active">长期记忆</span>
+            <span class="section-chip">记忆与压缩</span>
+            <span class="section-chip active">A2UI</span>
+            <span class="section-chip">A2A</span>
           </div>
         </div>
-        <h2>长期记忆：跨会话保持一致</h2>
-        <p class="section-lead">把关键结论延续到下一次协作</p>
+        <h2>A2UI：让回答直接变成界面</h2>
+        <p class="section-lead">结构化输出，前端可直接渲染</p>
         <div class="grid two">
           <div class="card stack">
-            <span class="pill">生成方式</span>
+            <span class="pill">是什么</span>
             <ul>
-              <li>最终回复完成后自动总结</li>
-              <li>写入长期记忆记录（最多 30 条）</li>
-              <li>带时间戳便于回溯</li>
+              <li>模型输出 A2UI JSON 消息</li>
+              <li>前端渲染卡片、表单、按钮</li>
+              <li>结构化展示过程与结果</li>
             </ul>
           </div>
           <div class="card soft stack">
-            <span class="pill">使用与控制</span>
+            <span class="pill">接入方式</span>
             <ul>
-              <li>后续会话自动注入 [长期记忆]</li>
-              <li>可开关、可清空、可删除</li>
-              <li>让偏好与约束持续一致</li>
+              <li>显式启用 a2ui 工具</li>
+              <li>SSE 输出 a2ui 事件</li>
+              <li>前端按组件规范渲染</li>
             </ul>
+            <span class="pill">价值</span>
+            <p>降低二次开发成本，体验更直观</p>
           </div>
         </div>
       </section>

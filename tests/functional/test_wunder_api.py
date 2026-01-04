@@ -1,6 +1,5 @@
 ﻿import io
 import zipfile
-from app.monitor.registry import monitor
 from tests.utils.sse import parse_sse_events
 
 
@@ -50,9 +49,13 @@ async def test_wunder_stream_event_order(client):
     assert event_types.index("progress") < event_types.index("final")
 
 
-async def test_wunder_busy_rejected(client, monkeypatch):
+async def test_wunder_busy_rejected(client, orchestrator, monkeypatch):
     """验证同一 user_id 并发时会收到 429 拒绝。"""
-    monkeypatch.setattr(monitor, "try_register", lambda *_args, **_kwargs: False)
+    async def _reject_acquire(*_args, **_kwargs):
+        return False
+
+    # 通过并发限制器模拟用户繁忙，确保返回 429。
+    monkeypatch.setattr(orchestrator._request_limiter, "acquire", _reject_acquire)
     # 主动模拟用户被占用，触发后端限流分支。
     payload = {"user_id": "tester-busy", "question": "busy", "stream": False}
     response = await client.post("/wunder", json=payload)

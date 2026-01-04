@@ -7,7 +7,7 @@ export default function buildSlide() {
   return createSlide(`
 <section class="slide toc" data-title="Agenda">
         <div class="eyebrow">Agenda</div>
-        <h2>Seven parts for today</h2>
+        <h2>Six parts for today</h2>
         <div class="toc-grid">
           <div class="toc-item">
             <div class="toc-index">01</div>
@@ -33,26 +33,19 @@ export default function buildSlide() {
           <div class="toc-item">
             <div class="toc-index">04</div>
             <div>
-              <div class="toc-title">Context compaction</div>
-              <div class="toc-desc">Keep long conversations usable</div>
+              <div class="toc-title">Frontier features</div>
+              <div class="toc-desc">Memory/compaction + A2UI + A2A</div>
             </div>
           </div>
           <div class="toc-item">
             <div class="toc-index">05</div>
-            <div>
-              <div class="toc-title">Long-term memory</div>
-              <div class="toc-desc">Consistency across sessions</div>
-            </div>
-          </div>
-          <div class="toc-item">
-            <div class="toc-index">06</div>
             <div>
               <div class="toc-title">Agent session management</div>
               <div class="toc-desc">Stable, observable, cancelable</div>
             </div>
           </div>
           <div class="toc-item">
-            <div class="toc-index">07</div>
+            <div class="toc-index">06</div>
             <div>
               <div class="toc-title">Quick start</div>
               <div class="toc-desc">Start with one scenario</div>

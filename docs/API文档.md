@@ -9,7 +9,8 @@
 - 启动优化：MCP 服务、监控与调度器采用惰性初始化，首次访问相关接口可能有冷启动延迟。
 - 轻量入口：推荐使用 `uvicorn app.asgi:app` 启动，可通过 `WUNDER_LAZY_WARMUP_S` 控制后台预热延迟（秒，负数/关闭值表示禁用预热）。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
-- 鉴权：所有 `/wunder` 与 `/wunder/mcp` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
+- 鉴权：所有 `/wunder`、`/wunder/mcp`、`/a2a` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
+- A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage`/`SubscribeToTask` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：请求头可携带 `X-Wunder-Language` 或 `Accept-Language`（也支持 query 参数 `lang`/`language`），支持语言以 `i18n.supported_languages` 为准，响应会返回 `Content-Language` 并影响系统提示词与返回消息语言。
 
 ### 4.1 `/wunder` 请求
@@ -526,7 +527,7 @@
 ### 4.1.24 `/wunder/web`
 
 - 方法：`GET`
-- 说明：提供前端调试页面与静态资源（`web/` 目录），用于远程访问调试。
+- 说明：提供前端调试页面与静态资源（`web/` 目录），包含系统介绍与 A2A 测试面板，支持远程访问调试。
 
 ### 4.1.24.1 `/wunder/ppt`
 
@@ -842,6 +843,33 @@
 #### 4.6.4 运行说明
 
 - 共享沙盒服务不创建子容器，依赖同一镜像运行与工作区挂载即可。
+
+### 4.7 A2A 标准接口
+
+#### 4.7.1 `GET /.well-known/agent-card.json`
+
+- 说明：A2A AgentCard 发现入口（公开访问）。
+- 返回（JSON）：AgentCard 元数据（protocolVersion、supportedInterfaces、skills、capabilities 等）。
+
+#### 4.7.2 `GET /a2a/extendedAgentCard`
+
+- 说明：返回扩展 AgentCard（当前与基础版一致）。
+- 鉴权：需携带 API Key。
+
+#### 4.7.3 `POST /a2a`
+
+- 类型：JSON-RPC 2.0
+- 说明：A2A 标准方法入口，支持 `SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`、`GetExtendedAgentCard`。
+- 鉴权：需携带 API Key。
+- JSON-RPC 请求结构：
+  - `jsonrpc`: 固定 `2.0`
+  - `id`: 请求标识
+  - `method`: A2A 方法名
+  - `params`: A2A 参数对象
+- 流式返回：
+  - `SendStreamingMessage` 与 `SubscribeToTask` 返回 `text/event-stream`
+  - SSE data 内容为 A2A StreamResponse（`task`/`statusUpdate`/`artifactUpdate`）
+  - `statusUpdate.final=true` 表示任务结束
 
 ## 5. 附录：辅助脚本
 

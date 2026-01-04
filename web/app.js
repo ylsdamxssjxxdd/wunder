@@ -34,6 +34,7 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
+import { initA2aPanel } from "./modules/a2a.js?v=20260104-01";
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js";
 
 const patchApiFetch = () => {
@@ -70,6 +71,7 @@ const panelMap = {
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
+  a2a: { panel: elements.a2aPanel, nav: elements.navA2a },
   settings: { panel: elements.settingsPanel, nav: elements.navSettings },
 };
 
@@ -153,6 +155,7 @@ const bindNavigation = () => {
   elements.navDebug.addEventListener("click", () => {
     loadWorkspace();
   });
+  elements.navA2a.addEventListener("click", () => switchPanel("a2a"));
   elements.navSettings.addEventListener("click", () => switchPanel("settings"));
   elements.navMcp.addEventListener("click", async () => {
     switchPanel("mcp");
@@ -379,6 +382,7 @@ const bootstrap = async () => {
   initKnowledgePanel();
   initLlmPanel();
   initPromptPanel();
+  initA2aPanel();
   initUserTools();
   initSettingsPanel();
   bindNavigation();

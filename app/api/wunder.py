@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.deps import get_orchestrator
-from app.api.routes import admin, core, user_tools, workspace
+from app.api.routes import a2a, admin, core, user_tools, workspace
 
 
 router = APIRouter()
@@ -9,6 +9,7 @@ router.include_router(core.router)
 router.include_router(user_tools.router)
 router.include_router(admin.router)
 router.include_router(workspace.router)
+router.include_router(a2a.router)
 
 
 class _LazyOrchestratorProxy:

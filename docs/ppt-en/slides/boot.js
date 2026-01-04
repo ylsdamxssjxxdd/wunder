@@ -1,6 +1,9 @@
 "use strict";
 
-import slideManifest from "./manifest.js";
+import slideManifest from "./manifest.js?v=20260104-03";
+
+const CACHE_BUST = "v=20260104-03";
+const withCacheBust = (path) => (path.includes("?") ? path : `${path}?${CACHE_BUST}`);
 
 // 负责把所有页面插入到 deck，再加载翻页控制脚本。
 const deck = document.querySelector("#deck");
@@ -14,7 +17,7 @@ if (!deck) {
     // 逐个动态 import，确保页面顺序与清单一致。
     for (const [index, path] of slideManifest.entries()) {
       try {
-        const module = await import(path);
+        const module = await import(withCacheBust(path));
         const buildSlide = module?.default;
         if (typeof buildSlide !== "function") {
           console.error(`Slide module missing default export: ${path}`);
@@ -37,7 +40,7 @@ if (!deck) {
     deck.appendChild(fragment);
 
     // 页面就绪后再加载控制脚本，保证能正确读取所有 .slide。
-    await import("../app.js");
+    await import(withCacheBust("../app.js"));
   };
 
   loadSlides().catch((error) => {

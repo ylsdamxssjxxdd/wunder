@@ -70,6 +70,10 @@ def build_lifespan(mcp_app) -> callable:
 
 def _is_protected_path(path: str) -> bool:
     """判断当前请求路径是否需要 API Key 鉴权。"""
+    if path.startswith("/.well-known/agent-card.json"):
+        return False
+    if path.startswith("/a2a"):
+        return True
     if not path.startswith("/wunder"):
         return False
     # 静态调试页不走接口鉴权，避免浏览器直接访问被拦截。

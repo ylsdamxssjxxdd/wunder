@@ -69,5 +69,9 @@ def orchestrator(test_config: WunderConfig, monkeypatch: pytest.MonkeyPatch, tmp
 async def client(orchestrator):
     """使用 ASGITransport 直接调用 FastAPI 应用，避免启动真实服务。"""
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
+    api_key = getattr(app.state, "api_key", "")
+    headers = {"X-API-Key": api_key} if api_key else {}
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", headers=headers
+    ) as http_client:
         yield http_client

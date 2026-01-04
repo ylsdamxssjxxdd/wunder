@@ -128,8 +128,9 @@ h1 {
   font-size: 20px;
 }
 
-/* 调试面板布局：左右分栏 */
-.debug-layout {
+/* 调试/A2A 面板布局：左右分栏 */
+.debug-layout,
+.a2a-layout {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
@@ -139,7 +140,8 @@ h1 {
   overflow: hidden;
 }
 
-.debug-form {
+.debug-form,
+.a2a-form {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -221,6 +223,11 @@ h1 {
   justify-content: flex-end;
 }
 
+.a2a-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .monitor-time-filter {
   display: inline-flex;
   align-items: center;
@@ -263,7 +270,8 @@ h1 {
   padding-right: 4px;
 }
 
-.debug-form-section {
+.debug-form-section,
+.a2a-form-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
