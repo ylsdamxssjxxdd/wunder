@@ -929,6 +929,17 @@
                   <div class="header-input">
                     <label for="modelOutputRoundSelect" data-i18n="debug.log.round">轮次</label>
                     <select id="modelOutputRoundSelect"></select>
+                    <button
+                      id="modelOutputPreviewBtn"
+                      class="model-output-preview-toggle"
+                      type="button"
+                      aria-label="预览"
+                      title="预览"
+                      data-i18n-aria-label="debug.output.preview"
+                      data-i18n-title="debug.output.preview"
+                    >
+                      <i class="fa-solid fa-eye"></i>
+                    </button>
                   </div>
                 </div>
                 <div id="modelOutput" class="log">
@@ -2297,6 +2308,25 @@
       </div>
     </div>
 
+    <div id="modelOutputPreviewModal" class="modal">
+      <div class="modal-card modal-card-lg model-output-preview-card">
+        <div class="modal-header">
+          <div
+            id="modelOutputPreviewTitle"
+            class="detail-title"
+            data-i18n="debug.output.previewTitle"
+          >模型输出预览</div>
+          <button id="modelOutputPreviewClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body model-output-preview-body">
+          <div class="model-output-preview-content">
+            <div id="modelOutputPreviewText" class="model-output-preview-pane model-output-preview-markdown"></div>
+            <div id="modelOutputPreviewA2ui" class="model-output-preview-pane a2ui-output"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="workspaceEditorModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
@@ -2324,6 +2354,7 @@
 
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js"></script>
+    <script src="./third/marked.min.js"></script>
     <script type="module" src="./app.js?v=20260101-02"></script>
   </body>
 </html>

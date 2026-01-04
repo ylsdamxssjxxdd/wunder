@@ -102,7 +102,7 @@ storage: # 存储配置
 observability: # 可观测性配置
   log_level: INFO # 日志级别（DEBUG/INFO/WARNING/ERROR）
   monitor_event_limit: 500 # 监控事件保留条数上限（<=0 表示不限制，注意会增加内存占用）
-  monitor_payload_max_chars: 4000 # 监控事件单条最大字符数（超出会截断）
+  monitor_payload_max_chars: 0 # 监控事件单条最大字符数（<= 0 表示不截断）
   monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）
     - llm_output_delta
 

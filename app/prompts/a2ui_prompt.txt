@@ -1,3 +1,5 @@
+﻿[A2UI 界面生成指南]
+
 当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用“最终回复”工具。
 
 调用要求：
@@ -7,3 +9,73 @@
    - a2ui：A2UI JSON 消息数组，每条消息仅包含一种类型（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。
 3. 如果消息里缺少 surfaceId，系统会自动使用 uid 补齐。
 4. 若需要额外文本说明，可在 arguments.content 中提供简短说明（可选）。
+5. 禁止输出 Markdown 代码块；仅在 a2ui 中返回 JSON 消息数组。
+
+生成规则（参考项目风格，精简版）：
+- a2ui 是消息数组，每条消息只能包含一种操作：beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface。
+- 常见顺序：beginRendering -> surfaceUpdate -> dataModelUpdate；仅在需要清理时用 deleteSurface。
+- 组件采用“邻接表”：所有组件平铺在 surfaceUpdate.components，root 指向根组件 id。
+- dataModelUpdate.contents 由 key + value* 组成（valueString/valueNumber/valueBoolean/valueMap），valueMap 支持嵌套对象。
+- 列表模板使用 List.children.template：dataBinding 指向列表数据；模板内部用相对 path（如 "name"）读取 dataContext。
+- 主动作按钮请加 "primary": true。
+- 图标建议使用标准名称：mail / call / locationOn / calendarToday / check / close 等。
+
+组件清单（调试面板支持的常用字段）：
+- Text: text{literalString|path}, usageHint(h1~h5/caption/body)
+- Row/Column/List: children{explicitList|template}, alignment/distribution, List.direction
+- Card: child
+- Button: child, primary, action{name, context[]}
+- Image: url, fit, usageHint
+- Icon: name, size, color
+- Divider: axis
+- Tabs: tabItems[{title, child}]
+- Modal: entryPointChild, contentChild
+- CheckBox: label, value
+- TextField: label, text, textFieldType(shortText/longText/number/date/obscured)
+- DateTimeInput: value, enableDate, enableTime
+- MultipleChoice: selections, options[{label,value}], maxAllowedSelections
+- Slider: value, minValue, maxValue
+- Video: url
+- AudioPlayer: url, description
+
+模板规则（简化）：
+- 列表：Column + List(template) + Card；dataModelUpdate 中提供 items。
+- 详情：Card 包裹 Column；标题用 h2/h3；主按钮 primary:true。
+- 操作反馈：可用 Card 或 Modal 展示确认信息。
+
+示例A：详情卡片
+[
+  {"beginRendering":{"surfaceId":"demo","root":"root","styles":{"primaryColor":"#2563eb","font":"Inter"}}},
+  {"surfaceUpdate":{"surfaceId":"demo","components":[
+    {"id":"root","component":{"Card":{"child":"rootColumn"}}},
+    {"id":"rootColumn","component":{"Column":{"children":{"explicitList":["title","subtitle","cta"]},"alignment":"stretch"}}},
+    {"id":"title","component":{"Text":{"usageHint":"h2","text":{"path":"/title"}}}},
+    {"id":"subtitle","component":{"Text":{"usageHint":"caption","text":{"path":"/subtitle"}}}},
+    {"id":"ctaText","component":{"Text":{"text":{"literalString":"确认"}}}},
+    {"id":"cta","component":{"Button":{"child":"ctaText","primary":true,"action":{"name":"confirm"}}}}
+  ]}},
+  {"dataModelUpdate":{"surfaceId":"demo","path":"/","contents":[
+    {"key":"title","valueString":"示例标题"},
+    {"key":"subtitle","valueString":"简短说明"}
+  ]}}
+]
+
+示例B：列表模板
+[
+  {"beginRendering":{"surfaceId":"list","root":"root"}},
+  {"surfaceUpdate":{"surfaceId":"list","components":[
+    {"id":"root","component":{"Column":{"children":{"explicitList":["title","list"]}}}},
+    {"id":"title","component":{"Text":{"usageHint":"h3","text":{"literalString":"项目列表"}}}},
+    {"id":"list","component":{"List":{"direction":"vertical","children":{"template":{"componentId":"itemCard","dataBinding":"/items"}}}}},
+    {"id":"itemCard","component":{"Card":{"child":"itemRow"}}},
+    {"id":"itemRow","component":{"Row":{"children":{"explicitList":["itemName","itemDesc"]},"alignment":"center"}}},
+    {"id":"itemName","component":{"Text":{"usageHint":"h4","text":{"path":"name"}}}},
+    {"id":"itemDesc","component":{"Text":{"text":{"path":"desc"}}}}
+  ]}},
+  {"dataModelUpdate":{"surfaceId":"list","path":"/","contents":[
+    {"key":"items","valueMap":[
+      {"key":"item1","valueMap":[{"key":"name","valueString":"A"},{"key":"desc","valueString":"说明 A"}]},
+      {"key":"item2","valueMap":[{"key":"name","valueString":"B"},{"key":"desc","valueString":"说明 B"}]}
+    ]}
+  ]}}
+]

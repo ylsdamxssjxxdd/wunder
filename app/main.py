@@ -78,6 +78,9 @@ def _is_protected_path(path: str) -> bool:
     # 系统介绍 PPT 作为静态页面开放访问。
     if path.startswith("/wunder/ppt"):
         return False
+    # i18n 配置用于前端初始化，不要求携带 API Key。
+    if path.startswith("/wunder/i18n"):
+        return False
     return True
 
 

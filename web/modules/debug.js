@@ -92,6 +92,10 @@ const modelOutputBuffer = {
   pendingScroll: false,
   rafId: 0,
 };
+// 预览弹窗状态：记录 markdown 渲染器初始化状态
+const outputPreviewState = {
+  markedReady: false,
+};
 const debugAttachments = [];
 let debugAttachmentBusy = 0;
 let debugStats = null;
@@ -892,6 +896,7 @@ const resetModelOutputState = (options = {}) => {
     // 清空 A2UI 渲染状态，避免旧 UI 残留。
     resetA2uiState(elements.modelOutputA2ui);
     renderRoundSelectOptions(outputState);
+    updateModelOutputPreviewButton(outputState);
   }
 };
 
@@ -915,6 +920,10 @@ const resetRoundOutput = (roundId) => {
   entry.headerWritten = false;
   entry.streaming = false;
   entry.reasoningStreaming = false;
+  entry.a2uiMessages = null;
+  entry.a2uiUid = "";
+  entry.a2uiContent = "";
+  entry.contentChunks = [];
   if (outputState.selectedRound === entry.id) {
     resetModelOutputBuffer();
     const outputContainer = resolveModelOutputText();
@@ -923,6 +932,8 @@ const resetRoundOutput = (roundId) => {
     }
   }
   renderRoundSelectOptions(outputState);
+  updateModelOutputPreviewButton(outputState);
+  refreshModelOutputPreview();
 };
 
 const getModelOutputState = () => {
@@ -1110,6 +1121,7 @@ const buildRoundEntry = (roundId, timestamp) => ({
   id: roundId,
   timeText: timestamp ? formatEventTime(timestamp) : "",
   chunks: [],
+  contentChunks: [],
   totalChars: 0,
   contentChars: 0,
   section: null,
@@ -1118,7 +1130,224 @@ const buildRoundEntry = (roundId, timestamp) => ({
   tail: "",
   lastChar: "",
   headerWritten: false,
+  a2uiUid: "",
+  a2uiMessages: null,
+  a2uiContent: "",
 });
+
+// 归一化 A2UI 消息，保证渲染时能直接回放
+const normalizeA2uiMessages = (payload) => {
+  if (!payload) {
+    return [];
+  }
+  if (Array.isArray(payload.messages)) {
+    return payload.messages;
+  }
+  if (Array.isArray(payload.a2ui)) {
+    return payload.a2ui;
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (typeof payload === "string") {
+    try {
+      const parsed = JSON.parse(payload);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+      if (parsed && typeof parsed === "object") {
+        return [parsed];
+      }
+    } catch (error) {
+      return [];
+    }
+  }
+  if (typeof payload === "object") {
+    return [payload];
+  }
+  return [];
+};
+
+// 获取预览用文本，优先展示纯输出内容，避免混入调试标记
+const resolvePreviewEntryText = (entry) => {
+  if (!entry) {
+    return "";
+  }
+  if (typeof entry.a2uiContent === "string" && entry.a2uiContent.trim()) {
+    return entry.a2uiContent;
+  }
+  if (Array.isArray(entry.contentChunks) && entry.contentChunks.length) {
+    return entry.contentChunks.join("");
+  }
+  return buildRoundText(entry);
+};
+
+const hasPreviewText = (entry) => Boolean(resolvePreviewEntryText(entry).trim());
+
+const hasPreviewA2ui = (entry) =>
+  Array.isArray(entry?.a2uiMessages) && entry.a2uiMessages.length > 0;
+
+// 同步预览按钮可用状态：只要文本或 A2UI 存在即可预览
+const updateModelOutputPreviewButton = (outputState) => {
+  if (!elements.modelOutputPreviewBtn) {
+    return;
+  }
+  const entry = findRoundEntry(outputState, outputState.selectedRound);
+  const enabled = hasPreviewText(entry) || hasPreviewA2ui(entry);
+  elements.modelOutputPreviewBtn.disabled = !enabled;
+  elements.modelOutputPreviewBtn.setAttribute("aria-label", t("debug.output.preview"));
+  elements.modelOutputPreviewBtn.setAttribute("title", t("debug.output.preview"));
+  const icon = elements.modelOutputPreviewBtn.querySelector("i");
+  if (icon) {
+    icon.className = "fa-solid fa-eye";
+  }
+};
+
+const isModelOutputPreviewOpen = () =>
+  Boolean(elements.modelOutputPreviewModal?.classList.contains("active"));
+
+// 初始化 markdown 渲染器，确保预览支持换行
+const ensureMarkedReady = () => {
+  if (outputPreviewState.markedReady) {
+    return;
+  }
+  const renderer = globalThis.marked;
+  if (renderer && typeof renderer.setOptions === "function") {
+    renderer.setOptions({ breaks: true, gfm: true });
+  }
+  outputPreviewState.markedReady = true;
+};
+
+// 渲染文本预览，默认按 Markdown 处理
+const renderPreviewText = (entry) => {
+  if (!elements.modelOutputPreviewText) {
+    return;
+  }
+  const text = resolvePreviewEntryText(entry);
+  const trimmed = text.trim();
+  const container = elements.modelOutputPreviewText;
+  container.classList.toggle("is-empty", !trimmed);
+  if (!trimmed) {
+    container.textContent = t("debug.output.previewEmpty");
+    return;
+  }
+  const renderer = globalThis.marked;
+  if (renderer && typeof renderer.parse === "function") {
+    ensureMarkedReady();
+    try {
+      container.innerHTML = renderer.parse(text);
+    } catch (error) {
+      container.textContent = text;
+    }
+  } else {
+    container.textContent = text;
+  }
+};
+
+// 渲染 A2UI 预览
+const renderPreviewA2ui = (entry) => {
+  if (!elements.modelOutputPreviewA2ui) {
+    return;
+  }
+  resetA2uiState(elements.modelOutputPreviewA2ui);
+  const messages = Array.isArray(entry?.a2uiMessages) ? entry.a2uiMessages : [];
+  if (!messages.length) {
+    const empty = document.createElement("div");
+    empty.className = "a2ui-empty";
+    empty.textContent = t("debug.a2ui.empty");
+    elements.modelOutputPreviewA2ui.appendChild(empty);
+    return;
+  }
+  applyA2uiMessages(elements.modelOutputPreviewA2ui, {
+    uid: entry?.a2uiUid || "",
+    messages,
+  });
+};
+
+// 自动选择预览模式：优先展示 A2UI，其次为文本渲染
+const resolvePreviewMode = (entry) => (hasPreviewA2ui(entry) ? "a2ui" : "text");
+
+// 切换预览模式，仅展示对应的渲染结果
+const applyModelOutputPreviewMode = (mode) => {
+  const showText = mode !== "a2ui";
+  elements.modelOutputPreviewText?.classList.toggle("active", showText);
+  elements.modelOutputPreviewA2ui?.classList.toggle("active", !showText);
+};
+
+// 刷新预览内容，确保切换轮次后同步更新
+const refreshModelOutputPreview = () => {
+  if (!isModelOutputPreviewOpen()) {
+    return;
+  }
+  const outputState = getModelOutputState();
+  const entry = findRoundEntry(outputState, outputState.selectedRound);
+  const mode = resolvePreviewMode(entry);
+  if (mode === "a2ui") {
+    renderPreviewA2ui(entry);
+  } else {
+    renderPreviewText(entry);
+  }
+  applyModelOutputPreviewMode(mode);
+};
+
+// 打开模型输出预览弹窗
+const openModelOutputPreview = () => {
+  if (!elements.modelOutputPreviewModal) {
+    return;
+  }
+  const outputState = getModelOutputState();
+  const entry = findRoundEntry(outputState, outputState.selectedRound);
+  const mode = resolvePreviewMode(entry);
+  if (mode === "a2ui") {
+    renderPreviewA2ui(entry);
+  } else {
+    renderPreviewText(entry);
+  }
+  applyModelOutputPreviewMode(mode);
+  elements.modelOutputPreviewModal.classList.add("active");
+  elements.modelOutputPreviewBtn?.classList.add("is-active");
+};
+
+// 关闭模型输出预览弹窗
+const closeModelOutputPreview = () => {
+  elements.modelOutputPreviewModal?.classList.remove("active");
+  elements.modelOutputPreviewBtn?.classList.remove("is-active");
+};
+
+const recordA2uiMessages = (payload, timestamp) => {
+  const outputState = getModelOutputState();
+  const messages = normalizeA2uiMessages(payload);
+  const content = typeof payload?.content === "string" ? payload.content : "";
+  if (!messages.length && !content) {
+    updateModelOutputPreviewButton(outputState);
+    return null;
+  }
+  let roundId = resolveOutputRoundId(outputState, payload?.round);
+  let entry = null;
+  if (!Number.isFinite(roundId)) {
+    roundId = advanceModelRound(timestamp);
+    entry = findRoundEntry(outputState, roundId);
+  } else {
+    entry = ensureRoundEntry(outputState, roundId, timestamp, { autoSelect: false });
+  }
+  if (!entry) {
+    return null;
+  }
+  if (!Array.isArray(entry.a2uiMessages)) {
+    entry.a2uiMessages = [];
+  }
+  entry.a2uiMessages.push(...messages);
+  const uid = typeof payload?.uid === "string" ? payload.uid : "";
+  if (uid) {
+    entry.a2uiUid = uid;
+  }
+  if (content) {
+    entry.a2uiContent = content;
+  }
+  updateModelOutputPreviewButton(outputState);
+  refreshModelOutputPreview();
+  return entry;
+};
 
 // 判断是否自动切换到新轮次
 const shouldAutoSelectRound = (outputState, roundId) => {
@@ -1156,6 +1385,8 @@ const selectRound = (outputState, roundId, options = {}) => {
   renderRoundSelectOptions(outputState);
   const finalEntry = findRoundEntry(outputState, outputState.selectedRound);
   renderSelectedRound(outputState, finalEntry, { scrollTo: options.scrollTo });
+  updateModelOutputPreviewButton(outputState);
+  refreshModelOutputPreview();
 };
 
 // 确保轮次存在，并在需要时自动切换
@@ -1176,6 +1407,12 @@ const ensureRoundEntry = (outputState, roundId, timestamp, options = {}) => {
   }
   if (!Number.isFinite(entry.contentChars)) {
     entry.contentChars = 0;
+  }
+  if (!Array.isArray(entry.contentChunks)) {
+    entry.contentChunks = [];
+  }
+  if (typeof entry.a2uiContent !== "string") {
+    entry.a2uiContent = "";
   }
   if (needsRender) {
     renderRoundSelectOptions(outputState);
@@ -1234,10 +1471,15 @@ const appendRoundText = (outputState, entry, text, options = {}) => {
       entry.contentChars = 0;
     }
     entry.contentChars += textValue.length;
+    if (!Array.isArray(entry.contentChunks)) {
+      entry.contentChunks = [];
+    }
+    entry.contentChunks.push(textValue);
   }
   updateRoundTail(entry, textValue);
   if (entry.id === outputState.selectedRound) {
     appendModelOutputChunk(textValue, { scroll: options.scroll !== false });
+    updateModelOutputPreviewButton(outputState);
   }
 };
 
@@ -1369,8 +1611,9 @@ const handleEvent = (eventType, dataText, options = {}) => {
 
   if (eventType === "a2ui") {
     const data = payload.data || payload;
-    applyA2uiMessages(elements.modelOutputA2ui, data);
-    const messageCount = Array.isArray(data?.messages) ? data.messages.length : 0;
+    const messages = normalizeA2uiMessages(data);
+    recordA2uiMessages(data, eventTimestamp);
+    const messageCount = messages.length;
     const detail = JSON.stringify(
       {
         uid: data?.uid || "",
@@ -1619,6 +1862,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     if (entry.id === outputState.selectedRound) {
       scheduleModelOutputScroll();
     }
+    refreshModelOutputPreview();
     return;
   }
 
@@ -2006,10 +2250,13 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   applyTokenUsageSnapshot(result?.usage, { override: true });
   renderDebugStats();
   if (Array.isArray(result?.a2ui)) {
-    applyA2uiMessages(elements.modelOutputA2ui, {
-      uid: result?.uid || "",
-      messages: result.a2ui,
-    });
+    recordA2uiMessages(
+      {
+        uid: result?.uid || "",
+        messages: result.a2ui,
+      },
+      Date.now()
+    );
   }
   appendLog(t("debug.nonStream.response", { payload: JSON.stringify(result) }));
 };
@@ -2188,6 +2435,7 @@ const handleClear = () => {
   resetPendingRequestLogs();
   resetModelOutputState({ resetContent: true });
   resetDebugStats();
+  closeModelOutputPreview();
 };
 
 // 初始化调试面板交互
@@ -2272,6 +2520,19 @@ export const initDebugPanel = () => {
   if (elements.modelOutputRoundSelect) {
     elements.modelOutputRoundSelect.addEventListener("change", handleModelOutputRoundChange);
   }
+  if (elements.modelOutputPreviewBtn) {
+    elements.modelOutputPreviewBtn.addEventListener("click", openModelOutputPreview);
+  }
+  if (elements.modelOutputPreviewClose) {
+    elements.modelOutputPreviewClose.addEventListener("click", closeModelOutputPreview);
+  }
+  if (elements.modelOutputPreviewModal) {
+    elements.modelOutputPreviewModal.addEventListener("click", (event) => {
+      if (event.target === elements.modelOutputPreviewModal) {
+        closeModelOutputPreview();
+      }
+    });
+  }
 
   if (elements.debugHistoryBtn) {
     elements.debugHistoryBtn.addEventListener("click", openDebugHistoryModal);
@@ -2305,5 +2566,7 @@ export const initDebugPanel = () => {
     });
   }
   renderAttachmentList();
-  renderRoundSelectOptions(getModelOutputState());
+  const outputState = getModelOutputState();
+  renderRoundSelectOptions(outputState);
+  updateModelOutputPreviewButton(outputState);
 };

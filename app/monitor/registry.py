@@ -219,8 +219,8 @@ class SessionMonitor:
         self._event_limit = self._resolve_event_limit(
             getattr(config.observability, "monitor_event_limit", 500)
         )
-        self._payload_limit = max(
-            256, int(getattr(config.observability, "monitor_payload_max_chars", 4000))
+        self._payload_limit = self._resolve_payload_limit(
+            getattr(config.observability, "monitor_payload_max_chars", 4000)
         )
         drop_items = getattr(config.observability, "monitor_drop_event_types", []) or []
         self._drop_event_types = {
@@ -248,6 +248,19 @@ class SessionMonitor:
         if limit <= 0:
             return None
         return max(1, limit)
+
+    @staticmethod
+    def _resolve_payload_limit(raw: Any) -> Optional[int]:
+        """解析监控事件内容长度上限，<= 0 表示不截断。"""
+        if raw is None:
+            return 4000
+        try:
+            limit = int(raw)
+        except (TypeError, ValueError):
+            return 4000
+        if limit <= 0:
+            return None
+        return max(256, limit)
 
     @staticmethod
     def _safe_session_filename(session_id: str) -> str:
@@ -338,6 +351,8 @@ class SessionMonitor:
 
     def _trim_text(self, text: str) -> str:
         """裁剪超长文本，避免监控事件占用过多内存。"""
+        if self._payload_limit is None:
+            return text
         if len(text) <= self._payload_limit:
             return text
         return text[: self._payload_limit] + "...(truncated)"

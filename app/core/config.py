@@ -17,7 +17,8 @@ def _default_builtin_tool_names() -> List[str]:
     """延迟加载内置工具名称，避免模块导入循环。"""
     from app.tools.catalog import list_builtin_tool_names
 
-    return list_builtin_tool_names()
+    # 默认内置工具不自动勾选 a2ui，避免调试面板默认选中。
+    return [name for name in list_builtin_tool_names() if name != "a2ui"]
 
 
 class ServerConfig(BaseModel):
