@@ -549,6 +549,19 @@ li {
   display: block;
 }
 
+.media-panel.is-image.fill {
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-panel.is-image.fill img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* 底部 HUD：进度条与页码 */
 #hud {
   position: fixed;

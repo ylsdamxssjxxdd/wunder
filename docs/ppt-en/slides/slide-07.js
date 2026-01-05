@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>Versioning with clear sharing boundaries</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: SKILL.md + run.py structure or workflow diagram</p>
-            <span class="tag">assets/tool-skills.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-skills.svg" alt="Skills tools illustration" />
           </div>
         </div>
       </section>

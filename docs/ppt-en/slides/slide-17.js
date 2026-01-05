@@ -10,7 +10,6 @@ export default function buildSlide() {
           <span class="section-tag">Section 6 Quick start</span>
           <div class="section-map">
             <a class="section-chip active" href="#17">Quick start</a>
-            <a class="section-chip" href="#18">Closing</a>
           </div>
         </div>
         <h2>Quick start: three steps</h2>
@@ -29,13 +28,8 @@ export default function buildSlide() {
             <p>Turn success into a workflow template</p>
           </div>
         </div>
-        <div class="card soft stack">
-          <span class="pill">Pilot examples</span>
-          <ul>
-            <li>Policy/process Q&A (knowledge base)</li>
-            <li>Weekly report/minutes generation (skills)</li>
-            <li>Document cleanup and batch processing (built-in tools)</li>
-          </ul>
+        <div class="card media-panel is-image stack fill">
+          <img src="assets/quickstart-pilots.svg" alt="Pilot examples illustration" />
         </div>
       </section>
   `);

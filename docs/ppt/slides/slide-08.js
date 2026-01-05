@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">治理要点</span>
             <p>定期更新与权限控制</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：知识库切分/检索流程示意</p>
-            <span class="tag">assets/tool-knowledge.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-knowledge.svg" alt="知识库工具示意图" />
           </div>
         </div>
       </section>

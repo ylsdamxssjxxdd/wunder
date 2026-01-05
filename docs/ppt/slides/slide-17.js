@@ -10,7 +10,6 @@ export default function buildSlide() {
           <span class="section-tag">第6节 快速开始</span>
           <div class="section-map">
             <a class="section-chip active" href="#17">快速开始</a>
-            <a class="section-chip" href="#18">收尾</a>
           </div>
         </div>
         <h2>快速开始：三步落地</h2>
@@ -29,13 +28,8 @@ export default function buildSlide() {
             <p>把成功经验沉淀为流程模板</p>
           </div>
         </div>
-        <div class="card soft stack">
-          <span class="pill">试点示例</span>
-          <ul>
-            <li>制度/流程问答（知识库）</li>
-            <li>周报/纪要生成（Skills）</li>
-            <li>资料整理与批量处理（内置工具）</li>
-          </ul>
+        <div class="card media-panel is-image stack fill">
+          <img src="assets/quickstart-pilots.svg" alt="试点示例示意图" />
         </div>
       </section>
   `);

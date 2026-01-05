@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>Isolated and controlled, must be explicitly enabled</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: user tool folder structure or config view</p>
-            <span class="tag">assets/tool-custom.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-custom.svg" alt="Custom tools illustration" />
           </div>
         </div>
       </section>

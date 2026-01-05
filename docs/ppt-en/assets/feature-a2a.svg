@@ -1,0 +1,97 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .label {
+        font: 600 18px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .line {
+        stroke: #d6deed;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .arrow {
+        stroke: #c7d2e5;
+        stroke-width: 3;
+        stroke-linecap: round;
+      }
+      .icon-box {
+        fill: #eef6ff;
+        stroke: #e1e7f2;
+      }
+      .icon-stroke {
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <g filter="url(#shadow)">
+    <rect x="140" y="240" width="260" height="220" rx="20" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="470" y="220" width="260" height="260" rx="20" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="800" y="240" width="260" height="220" rx="20" class="card" />
+  </g>
+
+  <text x="270" y="270" text-anchor="middle" class="label">Caller</text>
+  <text x="600" y="250" text-anchor="middle" class="label">A2A Standard</text>
+  <text x="930" y="270" text-anchor="middle" class="label">External Agents</text>
+
+  <g transform="translate(230 300)">
+    <rect class="icon-box" width="80" height="80" rx="18" />
+    <g class="icon-stroke" stroke="#3a6ff5">
+      <rect x="18" y="22" width="44" height="32" rx="8" />
+      <line x1="26" y1="32" x2="54" y2="32" />
+      <line x1="26" y1="42" x2="46" y2="42" />
+    </g>
+  </g>
+
+  <g transform="translate(560 300)">
+    <rect class="icon-box" width="80" height="80" rx="18" />
+    <g class="icon-stroke" stroke="#3a6ff5">
+      <rect x="20" y="24" width="40" height="30" rx="6" />
+      <line x1="20" y1="36" x2="60" y2="36" />
+      <line x1="40" y1="54" x2="40" y2="62" />
+      <line x1="34" y1="62" x2="46" y2="62" />
+    </g>
+  </g>
+
+  <g transform="translate(890 300)">
+    <rect class="icon-box" width="80" height="80" rx="18" />
+    <g class="icon-stroke" stroke="#3a6ff5">
+      <circle cx="40" cy="32" r="14" />
+      <path d="M20 62c4-12 16-18 20-18s16 6 20 18" />
+    </g>
+  </g>
+
+  <line class="arrow" x1="400" y1="350" x2="470" y2="350" />
+  <polygon points="470 350 458 342 458 358" fill="#c7d2e5" />
+  <line class="arrow" x1="730" y1="350" x2="800" y2="350" />
+  <polygon points="800 350 788 342 788 358" fill="#c7d2e5" />
+</svg>

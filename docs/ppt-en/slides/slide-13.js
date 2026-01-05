@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">Metric note</span>
             <p>Counts context tokens, not total usage</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: compaction flow or memory injection diagram</p>
-            <span class="tag">assets/feature-memory.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-memory.svg" alt="Memory and context compaction illustration" />
           </div>
         </div>
       </section>

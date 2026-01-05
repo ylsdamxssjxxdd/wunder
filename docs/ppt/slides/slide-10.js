@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">治理要点</span>
             <p>使用者需显式启用共享工具</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：共享配置 + 别名路由示意</p>
-            <span class="tag">assets/tool-shared.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-shared.svg" alt="共享工具示意图" />
           </div>
         </div>
       </section>

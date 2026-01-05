@@ -496,7 +496,10 @@ Example:
 
 ## 4.5 Storage
 
-- System logs, chat history, tool logs, artifacts, monitor records, session locks, and overflow events are stored in SQLite (`storage.db_path`).
+- Storage backend is configurable via `storage.backend`: `postgres` (default) or `sqlite`.
+- PostgreSQL config uses `storage.postgres.dsn` (env: `WUNDER_POSTGRES_DSN`) and `storage.postgres.connect_timeout_s`.
+- SQLite uses `storage.db_path`.
+- System logs, chat history, tool logs, artifacts, monitor records, session locks, and overflow events are stored in the selected backend.
 - Legacy `data/historys/` is kept for migration only.
 
 ## 4.6 Sandbox service API

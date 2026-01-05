@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>Regular updates and access control</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: knowledge splitting or retrieval flow</p>
-            <span class="tag">assets/tool-knowledge.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-knowledge.svg" alt="Knowledge tools illustration" />
           </div>
         </div>
       </section>

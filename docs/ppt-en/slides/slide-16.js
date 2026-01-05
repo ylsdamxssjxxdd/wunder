@@ -23,10 +23,8 @@ export default function buildSlide() {
             <span class="pill">Monitoring & cancel</span>
             <p>Traceable process, cancel when stuck</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: session state machine or monitor dashboard</p>
-            <span class="tag">assets/monitor-thread.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/monitor-thread.svg" alt="Session monitor illustration" />
           </div>
         </div>
       </section>

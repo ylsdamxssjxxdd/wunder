@@ -27,10 +27,8 @@ export default function buildSlide() {
               <strong>结果：</strong>从一句话到可交付文件
             </div>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：爱心产物截图或下载结果截图</p>
-            <span class="tag">assets/demo-heart.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/demo-heart.svg" alt="爱心产物示意图" />
           </div>
         </div>
       </section>

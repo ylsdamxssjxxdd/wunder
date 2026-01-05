@@ -27,10 +27,8 @@ export default function buildSlide() {
               <strong>Result:</strong> from one sentence to a deliverable file
             </div>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: heart output or download result screenshot</p>
-            <span class="tag">assets/demo-heart.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/demo-heart.svg" alt="Heart output illustration" />
           </div>
         </div>
       </section>

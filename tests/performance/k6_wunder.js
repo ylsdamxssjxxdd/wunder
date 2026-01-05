@@ -10,6 +10,8 @@ const FIXED_USER_ID = (__ENV.WUNDER_USER_ID || '').trim();
 const LOAD_STREAM = (__ENV.WUNDER_STREAM || 'false') === 'true';
 const SOAK_VUS = Number(__ENV.WUNDER_SOAK_VUS || 10);
 const SOAK_DURATION = __ENV.WUNDER_SOAK_DURATION || '30m';
+// 使用环境变量注入 API Key，避免压测脚本固定密钥。
+const API_KEY = (__ENV.WUNDER_API_KEY || 'ylsdamxssjxxdd').trim();
 
 // 全档位共享题库，尽量使用需要工具操作的简单任务。
 const QUESTION_POOL = [
@@ -151,8 +153,12 @@ export default function () {
     stream: STREAM,
   });
 
+  const headers = { 'Content-Type': 'application/json' };
+  if (API_KEY) {
+    headers['X-API-Key'] = API_KEY;
+  }
   const response = http.post(BASE_URL, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     timeout: '120s',
   });
 

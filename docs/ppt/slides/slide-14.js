@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">价值</span>
             <p>降低二次开发成本，体验更直观</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：A2UI 卡片/表单渲染截图</p>
-            <span class="tag">assets/feature-a2ui.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-a2ui.svg" alt="A2UI 结构化渲染示意图" />
           </div>
         </div>
       </section>

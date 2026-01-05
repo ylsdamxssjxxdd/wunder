@@ -211,7 +211,7 @@ class StorageConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """安全与权限配置。"""
 
-    api_key: str = Field(default="", description="API/MCP 访问密钥")
+    api_key: str = Field(default="ylsdamxssjxxdd", description="API/MCP 访问密钥")
     allow_commands: List[str] = Field(default_factory=list)
     allow_paths: List[str] = Field(default_factory=list)  # 允许工具访问的额外目录白名单
     deny_globs: List[str] = Field(default_factory=list)

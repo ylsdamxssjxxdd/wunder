@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">Value</span>
             <p>Lower UI integration cost, clearer UX</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: A2UI card/form rendering screenshot</p>
-            <span class="tag">assets/feature-a2ui.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-a2ui.svg" alt="A2UI rendering illustration" />
           </div>
         </div>
       </section>

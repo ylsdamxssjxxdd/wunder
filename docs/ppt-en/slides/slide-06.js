@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>allow_tools allowlist + unified timeout control</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: MCP topology or external services map</p>
-            <span class="tag">assets/tool-mcp.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-mcp.svg" alt="MCP tools illustration" />
           </div>
         </div>
       </section>

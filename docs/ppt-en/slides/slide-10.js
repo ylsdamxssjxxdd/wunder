@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>Users must explicitly enable shared tools</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: shared config + alias routing diagram</p>
-            <span class="tag">assets/tool-shared.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-shared.svg" alt="Shared tools illustration" />
           </div>
         </div>
       </section>

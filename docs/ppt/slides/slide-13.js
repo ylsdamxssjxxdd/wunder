@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">口径说明</span>
             <p>统计的是上下文占用 token，不是总消耗</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：上下文压缩流程或记忆注入示意</p>
-            <span class="tag">assets/feature-memory.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-memory.svg" alt="记忆与上下文压缩示意图" />
           </div>
         </div>
       </section>

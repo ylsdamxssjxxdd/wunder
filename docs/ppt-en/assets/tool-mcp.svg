@@ -1,0 +1,118 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .icon-box {
+        fill: #fff5ef;
+        stroke: #e1e7f2;
+      }
+      .icon-stroke {
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .connector {
+        stroke: #c7d2e5;
+        stroke-width: 2;
+      }
+      .line {
+        stroke: #e1e7f2;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .label {
+        font: 600 18px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .caption {
+        font: 500 14px "Segoe UI", "Arial", sans-serif;
+        fill: #5b6b8c;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <line class="connector" x1="600" y1="360" x2="255" y2="210" />
+  <line class="connector" x1="600" y1="360" x2="945" y2="210" />
+  <line class="connector" x1="600" y1="360" x2="600" y2="560" />
+
+  <g filter="url(#shadow)">
+    <rect x="150" y="140" width="210" height="140" rx="18" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="840" y="140" width="210" height="140" rx="18" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="480" y="490" width="240" height="140" rx="18" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="480" y="230" width="240" height="260" rx="20" class="card" />
+  </g>
+
+  <!-- 左侧卡片文案 -->
+  <text x="255" y="252" text-anchor="middle" class="label">External Services</text>
+  <!-- 右侧卡片文案 -->
+  <text x="945" y="252" text-anchor="middle" class="label">Enterprise Systems</text>
+  <!-- 中心卡片文案 -->
+  <text x="600" y="262" text-anchor="middle" class="label">MCP Gateway</text>
+  <!-- 底部卡片文案 -->
+  <text x="600" y="606" text-anchor="middle" class="label">Tool Calls</text>
+
+  <g transform="translate(220 168)">
+    <rect class="icon-box" width="64" height="64" rx="16" />
+    <g class="icon-stroke" stroke="#FF8A4C">
+      <path d="M18 40h26a12 12 0 0 0 0-24 16 16 0 0 0-30-4 10 10 0 0 0 4 28z" />
+    </g>
+  </g>
+
+  <g transform="translate(910 168)">
+    <rect class="icon-box" width="64" height="64" rx="16" />
+    <g class="icon-stroke" stroke="#FF8A4C">
+      <ellipse cx="32" cy="18" rx="14" ry="6" />
+      <path d="M18 18v20c0 4 6 6 14 6s14-2 14-6V18" />
+      <path d="M18 30c0 4 6 6 14 6s14-2 14-6" />
+    </g>
+  </g>
+
+  <g transform="translate(568 515)">
+    <rect class="icon-box" width="64" height="64" rx="16" />
+    <g class="icon-stroke" stroke="#FF8A4C">
+      <path d="M20 32c4-6 12-6 16 0" />
+      <path d="M28 24l8-8" />
+      <path d="M36 40l8-8" />
+      <path d="M28 40l-8 8" />
+      <path d="M20 24l-8 8" />
+    </g>
+  </g>
+
+  <g transform="translate(568 290)">
+    <rect class="icon-box" width="64" height="64" rx="16" />
+    <g class="icon-stroke" stroke="#FF8A4C">
+      <rect x="20" y="24" width="24" height="20" rx="6" />
+      <line x1="26" y1="16" x2="26" y2="24" />
+      <line x1="38" y1="16" x2="38" y2="24" />
+      <line x1="32" y1="44" x2="32" y2="52" />
+      <line x1="28" y1="52" x2="36" y2="52" />
+    </g>
+  </g>
+</svg>

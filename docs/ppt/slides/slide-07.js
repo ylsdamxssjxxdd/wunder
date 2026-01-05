@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">治理要点</span>
             <p>版本管理与共享边界清晰</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：SKILL.md + run.py 结构或流程示意</p>
-            <span class="tag">assets/tool-skills.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-skills.svg" alt="Skills 工具示意图" />
           </div>
         </div>
       </section>

@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">Value</span>
             <p>Unified cross-system calls with Wunder tooling</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: client ↔ /a2a ↔ wunder call flow</p>
-            <span class="tag">assets/feature-a2a.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-a2a.svg" alt="A2A interface illustration" />
           </div>
         </div>
       </section>

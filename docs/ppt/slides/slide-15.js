@@ -33,10 +33,8 @@ export default function buildSlide() {
             <span class="pill">价值</span>
             <p>统一跨系统调用，复用 Wunder 工具链</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：客户端 ↔ /a2a ↔ wunder 的调用链路</p>
-            <span class="tag">assets/feature-a2a.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/feature-a2a.svg" alt="A2A 标准接口示意图" />
           </div>
         </div>
       </section>

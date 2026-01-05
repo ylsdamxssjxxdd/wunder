@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">治理要点</span>
             <p>隔离可控，启用需明确勾选</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：用户工具目录结构或配置示意</p>
-            <span class="tag">assets/tool-custom.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-custom.svg" alt="自建工具示意图" />
           </div>
         </div>
       </section>

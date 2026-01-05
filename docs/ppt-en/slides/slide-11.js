@@ -33,10 +33,8 @@ export default function buildSlide() {
               <li>Easy to share, reuse, and collaborate</li>
             </ul>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: workspace tree or file list screenshot</p>
-            <span class="tag">assets/workspace-tree.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/workspace-tree.svg" alt="Workspace tree illustration" />
           </div>
         </div>
       </section>

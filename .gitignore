@@ -24,6 +24,8 @@ images/*.7z
 images/*.zip
 images/*.tar
 images/*.tar.gz
+images/arm/
+images/x86/
 .pytest_cache
 **/__pycache__/
 *.pyc

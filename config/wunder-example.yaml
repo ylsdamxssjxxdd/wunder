@@ -45,7 +45,7 @@ mcp: # MCP 工具配置
       endpoint: http://127.0.0.1:8000/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
       allow_tools: # 允许调用的工具白名单（为空表示全部）
         - run
-      enabled: true # 是否启用该 MCP 服务
+      enabled: false # 是否启用该 MCP 服务
       transport: streamable-http # 传输协议类型（http/sse/streamable-http）
       description: wunder 自托管 MCP 服务，用于执行内部智能体任务。 # 服务描述信息（用于前端展示）
       display_name: Wunder 智能体 # 服务展示名（用于前端展示）

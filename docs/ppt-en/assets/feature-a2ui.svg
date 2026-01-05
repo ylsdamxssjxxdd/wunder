@@ -1,0 +1,69 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .label {
+        font: 600 18px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .line {
+        stroke: #d6deed;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .arrow {
+        stroke: #c7d2e5;
+        stroke-width: 3;
+        stroke-linecap: round;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <g filter="url(#shadow)">
+    <rect x="150" y="180" width="380" height="360" rx="22" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="670" y="180" width="380" height="360" rx="22" class="card" />
+  </g>
+
+  <text x="340" y="220" text-anchor="middle" class="label">A2UI JSON</text>
+  <text x="860" y="220" text-anchor="middle" class="label">Rendered UI</text>
+
+  <text x="190" y="280" class="label">{</text>
+  <line class="line" x1="220" y1="280" x2="470" y2="280" />
+  <line class="line" x1="220" y1="320" x2="460" y2="320" />
+  <line class="line" x1="220" y1="360" x2="440" y2="360" />
+  <line class="line" x1="220" y1="400" x2="420" y2="400" />
+  <text x="190" y="440" class="label">}</text>
+
+  <rect x="710" y="250" width="300" height="50" rx="12" fill="#eef2ff" />
+  <rect x="710" y="320" width="300" height="90" rx="16" fill="#f7f9ff" />
+  <rect x="710" y="430" width="140" height="46" rx="12" fill="#3a6ff5" />
+  <line class="line" x1="740" y1="280" x2="980" y2="280" />
+  <line class="line" x1="740" y1="360" x2="960" y2="360" />
+  <line class="line" x1="740" y1="390" x2="940" y2="390" />
+  <line class="line" x1="740" y1="452" x2="830" y2="452" />
+
+  <line class="arrow" x1="530" y1="360" x2="670" y2="360" />
+  <polygon points="670 360 658 352 658 368" fill="#c7d2e5" />
+</svg>

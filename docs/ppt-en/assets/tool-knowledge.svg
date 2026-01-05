@@ -1,0 +1,106 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .icon-box {
+        fill: #eefaf4;
+        stroke: #e1e7f2;
+      }
+      .icon-stroke {
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .chunk {
+        fill: #f7f9ff;
+        stroke: #dfe6f2;
+      }
+      .connector {
+        stroke: #c7d2e5;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .label {
+        font: 600 18px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .caption {
+        font: 500 14px "Segoe UI", "Arial", sans-serif;
+        fill: #5b6b8c;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <g filter="url(#shadow)">
+    <rect x="180" y="170" width="840" height="380" rx="24" class="card" />
+  </g>
+
+  <!-- 左侧知识源文案 -->
+  <text x="288" y="238" text-anchor="middle" class="label">Knowledge Base</text>
+
+  <g transform="translate(240 270)">
+    <rect class="icon-box" width="96" height="96" rx="20" />
+    <g class="icon-stroke" stroke="#24C18F">
+      <rect x="24" y="24" width="20" height="48" rx="4" />
+      <rect x="44" y="24" width="20" height="48" rx="4" />
+      <line x1="44" y1="24" x2="44" y2="72" />
+      <line x1="28" y1="36" x2="40" y2="36" />
+      <line x1="48" y1="36" x2="60" y2="36" />
+    </g>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="520" y="260" width="180" height="70" rx="16" class="chunk" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="520" y="340" width="180" height="70" rx="16" class="chunk" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="520" y="420" width="180" height="70" rx="16" class="chunk" />
+  </g>
+
+  <!-- 知识切分文案 -->
+  <text x="610" y="304" text-anchor="middle" class="label">Chunk 01</text>
+  <text x="610" y="384" text-anchor="middle" class="label">Chunk 02</text>
+  <text x="610" y="464" text-anchor="middle" class="label">Chunk 03</text>
+
+  <line class="connector" x1="336" y1="318" x2="520" y2="295" />
+  <line class="connector" x1="336" y1="330" x2="520" y2="375" />
+  <line class="connector" x1="336" y1="342" x2="520" y2="455" />
+
+  <g transform="translate(820 270)">
+    <rect class="icon-box" width="96" height="96" rx="20" />
+    <g class="icon-stroke" stroke="#24C18F">
+      <circle cx="44" cy="44" r="18" />
+      <line x1="56" y1="56" x2="72" y2="72" />
+    </g>
+  </g>
+
+  <!-- 右侧检索文案 -->
+  <text x="868" y="238" text-anchor="middle" class="label">Search</text>
+
+  <line class="connector" x1="700" y1="295" x2="820" y2="318" />
+  <line class="connector" x1="700" y1="375" x2="820" y2="330" />
+  <line class="connector" x1="700" y1="455" x2="820" y2="342" />
+</svg>

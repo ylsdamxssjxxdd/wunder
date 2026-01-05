@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">治理要点</span>
             <p>allow_tools 白名单 + 统一超时控制</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：MCP 接入拓扑或外部服务示意</p>
-            <span class="tag">assets/tool-mcp.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-mcp.svg" alt="MCP 工具示意图" />
           </div>
         </div>
       </section>

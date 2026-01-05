@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Governance</span>
             <p>allow_paths / allow_commands control access scope</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: built-in tool list or file operations</p>
-            <span class="tag">assets/tool-builtin.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-builtin.svg" alt="Built-in tools illustration" />
           </div>
         </div>
       </section>

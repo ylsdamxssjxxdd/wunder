@@ -1,0 +1,79 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .label {
+        font: 600 18px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .caption {
+        font: 500 13px "Segoe UI", "Arial", sans-serif;
+        fill: #5b6b8c;
+      }
+      .line {
+        stroke: #d6deed;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .node {
+        fill: #4c6fff;
+      }
+      .folder {
+        fill: #eef2ff;
+        stroke: #cfd8ee;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <g filter="url(#shadow)">
+    <rect x="140" y="150" width="380" height="420" rx="22" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="580" y="150" width="480" height="420" rx="22" class="card" />
+  </g>
+
+  <text x="330" y="190" text-anchor="middle" class="label">Workspace Tree</text>
+  <text x="330" y="216" text-anchor="middle" class="caption">data/workspaces/&lt;user_id&gt;/files</text>
+  <text x="820" y="190" text-anchor="middle" class="label">File List</text>
+
+  <g transform="translate(200 260)">
+    <rect class="folder" x="0" y="0" width="60" height="36" rx="8" />
+    <rect class="folder" x="10" y="-10" width="26" height="16" rx="4" />
+  </g>
+  <line class="line" x1="230" y1="310" x2="230" y2="470" />
+  <line class="line" x1="230" y1="340" x2="270" y2="340" />
+  <line class="line" x1="230" y1="380" x2="270" y2="380" />
+  <line class="line" x1="230" y1="420" x2="270" y2="420" />
+  <circle class="node" cx="280" cy="340" r="6" />
+  <circle class="node" cx="280" cy="380" r="6" />
+  <circle class="node" cx="280" cy="420" r="6" />
+
+  <rect x="640" y="240" width="360" height="40" rx="10" fill="#f4f7ff" />
+  <rect x="640" y="300" width="360" height="40" rx="10" fill="#f4f7ff" />
+  <rect x="640" y="360" width="360" height="40" rx="10" fill="#f4f7ff" />
+  <rect x="640" y="420" width="360" height="40" rx="10" fill="#f4f7ff" />
+  <line class="line" x1="670" y1="260" x2="960" y2="260" />
+  <line class="line" x1="670" y1="320" x2="930" y2="320" />
+  <line class="line" x1="670" y1="380" x2="950" y2="380" />
+  <line class="line" x1="670" y1="440" x2="900" y2="440" />
+</svg>

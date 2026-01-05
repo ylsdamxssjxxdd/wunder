@@ -1,0 +1,66 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+      }
+      .label {
+        font: 600 18px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #1f2a44;
+      }
+      .line {
+        stroke: #d6deed;
+        stroke-width: 2;
+        stroke-linecap: round;
+      }
+      .arrow {
+        stroke: #c7d2e5;
+        stroke-width: 3;
+        stroke-linecap: round;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <g filter="url(#shadow)">
+    <rect x="140" y="180" width="420" height="360" rx="22" class="card" />
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="640" y="180" width="420" height="360" rx="22" class="card" />
+  </g>
+
+  <text x="350" y="220" text-anchor="middle" class="label">输入指令</text>
+  <text x="850" y="220" text-anchor="middle" class="label">生成图片</text>
+
+  <line class="line" x1="190" y1="260" x2="500" y2="260" />
+  <line class="line" x1="190" y1="290" x2="480" y2="290" />
+  <line class="line" x1="190" y1="320" x2="460" y2="320" />
+  <line class="line" x1="190" y1="350" x2="440" y2="350" />
+  <line class="line" x1="190" y1="380" x2="420" y2="380" />
+
+  <line class="arrow" x1="560" y1="360" x2="640" y2="360" />
+  <polygon points="640 360 628 352 628 368" fill="#c7d2e5" />
+
+  <path
+    d="M850 430c-50-45-90-85-90-130 0-35 24-58 58-58 20 0 37 10 46 26 9-16 26-26 46-26 34 0 58 23 58 58 0 45-40 85-90 130z"
+    fill="#FF6B6B"
+    opacity="0.9"
+  />
+</svg>

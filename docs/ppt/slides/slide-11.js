@@ -33,10 +33,8 @@ export default function buildSlide() {
               <li>方便分享、复用、协作</li>
             </ul>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：工作区树或文件列表截图</p>
-            <span class="tag">assets/workspace-tree.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/workspace-tree.svg" alt="工作区树示意图" />
           </div>
         </div>
       </section>

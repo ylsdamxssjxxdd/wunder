@@ -23,10 +23,8 @@ export default function buildSlide() {
             <span class="pill">监控与取消</span>
             <p>过程可追踪，卡住可终止</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：线程状态机或监控面板截图</p>
-            <span class="tag">assets/monitor-thread.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/monitor-thread.svg" alt="线程监控示意图" />
           </div>
         </div>
       </section>
