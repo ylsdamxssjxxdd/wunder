@@ -183,6 +183,14 @@ def update_a2a_services(path: Path, services: List[Dict[str, Any]]) -> WunderCon
         ).strip()
         if not name or not endpoint or "@" in name:
             continue
+        service_type = str(
+            service.get("service_type") or service.get("serviceType") or ""
+        ).strip().lower()
+        if service_type not in {"internal", "external"}:
+            service_type = "external"
+        user_id = str(service.get("user_id") or service.get("userId") or "").strip()
+        if service_type != "internal":
+            user_id = ""
         enabled = bool(service.get("enabled", service.get("isActive", True)))
         description = str(service.get("description", "")).strip()
         display_name = str(service.get("display_name") or service.get("displayName") or "").strip()
@@ -208,6 +216,8 @@ def update_a2a_services(path: Path, services: List[Dict[str, Any]]) -> WunderCon
             {
                 "name": name,
                 "endpoint": endpoint,
+                "service_type": service_type,
+                "user_id": user_id,
                 "enabled": enabled,
                 "description": description,
                 "display_name": display_name,

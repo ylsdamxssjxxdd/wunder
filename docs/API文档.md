@@ -57,8 +57,9 @@
   - `extra_prompt`：附加提示词文本（与用户自建工具配置关联）
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
-  - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
-  - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
+- 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+- A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
+- 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -248,9 +249,10 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `services`：A2A 服务列表（name/endpoint/enabled/description/display_name/headers/auth/agent_card/allow_self/max_depth/default_method）
+  - `services`：A2A 服务列表（name/endpoint/service_type/user_id/enabled/description/display_name/headers/auth/agent_card/allow_self/max_depth/default_method）
 - `POST` 入参：
   - `services`：完整 A2A 服务列表，用于保存配置
+- 说明：`service_type=internal` 表示 Wunder 内部 A2A 服务，需配置固定 `user_id` 以便挂载工具后自动填充。
 
 ### 4.1.4.2 `/wunder/admin/a2a/card`
 
@@ -547,7 +549,7 @@
 ### 4.1.24 `/wunder/web`
 
 - 方法：`GET`
-- 说明：提供前端调试页面与静态资源（`web/` 目录），包含系统介绍与 A2A 测试面板，支持远程访问调试；系统介绍通过点击侧边栏标题进入，侧边栏支持滚动。
+- 说明：提供前端调试页面与静态资源（`web/` 目录），包含系统介绍与 A2A 服务管理面板，支持远程访问调试；系统介绍通过点击侧边栏标题进入，侧边栏支持滚动。
 
 ### 4.1.24.1 `/wunder/ppt`
 
@@ -766,6 +768,11 @@
 - `event: token_usage`：单轮 token 统计（input/output/total）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_result`：工具执行结果
+- `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
+- `event: a2a_task`：A2A 任务创建/识别（task_id/context_id）
+- `event: a2a_status`：A2A 任务状态更新（state/final）
+- `event: a2a_artifact`：A2A 产物更新（artifact name）
+- `event: a2a_result`：A2A 任务结束摘要（status/elapsed_ms）
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态）
 - `event: final`：最终回复

@@ -2086,6 +2086,14 @@ class WunderOrchestrator:
         """执行单个工具调用并上报事件。"""
         safe_args = args if isinstance(args, dict) else {"raw": args}
         emitter.emit("tool_call", {"tool": name, "args": safe_args})
+        loop = asyncio.get_running_loop()
+
+        def _emit_tool_event(event: StreamEvent) -> None:
+            # 工具事件可能来自线程池，统一通过线程安全方式投递到 SSE
+            if loop.is_closed():
+                return
+            loop.call_soon_threadsafe(emitter.emit_event, event)
+
         try:
             tool_task = asyncio.create_task(
                 self._tool_executor.execute(
@@ -2094,6 +2102,7 @@ class WunderOrchestrator:
                     ctx,
                     workspace,
                     user_tool_bindings,
+                    emit_event=_emit_tool_event,
                 )
             )
             result, debug_events = await self._await_tool_execution(

@@ -63,17 +63,18 @@ mcp: # MCP 工具配置
               - task
             type: object # Schema 类型
 
-a2a: # A2A 服务配置
-  timeout_s: 120 # A2A 调用超时（秒）
+a2a: # A2A 配置
+  timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表
-    - name: wunder # A2A 服务名称（用于 a2a@name 标识）
+    - name: wunder # A2A 服务名称（工具名为 a2a@name）
       endpoint: http://127.0.0.1:8000/a2a # A2A JSON-RPC 端点
-      enabled: false # 默认不启用，避免误触发自调用
-      allow_self: true # 允许自调用
-      description: wunder 自托管 A2A 服务，用于跨智能体协作。 # 服务描述
-      display_name: Wunder 智能体 # 服务展示名
-      headers: {} # 额外请求头（如鉴权信息）
-
+      service_type: internal # internal 表示 Wunder 内部 A2A
+      user_id: demo_user # 内部 A2A 需固定 user_id，挂载工具后无需模型传入
+      enabled: false # 是否启用该服务
+      allow_self: true # 是否允许本地自调用
+      description: wunder 默认 A2A 服务，用于内部协作 # 服务描述
+      display_name: Wunder 内部 # 展示名称
+      headers: {} # 请求附加 Headers
 skills: # Skills 技能配置
   paths: # 技能扫描路径列表（支持相对路径）
     - ./skills

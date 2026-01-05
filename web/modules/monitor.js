@@ -1,5 +1,5 @@
 ﻿import { APP_CONFIG } from "../app.config.js";
-import { elements } from "./elements.js?v=20260104-11";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20251229-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260104-11";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260105-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -47,6 +47,10 @@ const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
+  { keyword: "a2a观察", icon: "fa-glasses" },
+  { keyword: "a2a_observe", icon: "fa-glasses" },
+  { keyword: "a2a等待", icon: "fa-clock" },
+  { keyword: "a2a_wait", icon: "fa-clock" },
   { keyword: "a2a@", icon: "fa-diagram-project" },
   { keyword: "a2ui", icon: "fa-image" },
   { keyword: "列出文件", icon: "fa-folder-open" },

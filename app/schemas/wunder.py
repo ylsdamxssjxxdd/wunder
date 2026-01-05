@@ -212,6 +212,8 @@ class A2aServiceItem(BaseModel):
 
     name: str
     endpoint: str
+    service_type: str = "external"
+    user_id: str = ""
     enabled: bool = True
     description: str = ""
     display_name: str = ""

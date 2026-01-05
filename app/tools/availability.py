@@ -64,22 +64,9 @@ def _build_a2a_args_schema() -> Dict[str, Any]:
                 "type": "string",
                 "description": t("tool.spec.a2a_service.args.content"),
             },
-            "message": {
-                "type": "object",
-                "description": t("tool.spec.a2a_service.args.message"),
-            },
             "session_id": {
                 "type": "string",
                 "description": t("tool.spec.a2a_service.args.session_id"),
-            },
-            "user_id": {
-                "type": "string",
-                "description": t("tool.spec.a2a_service.args.user_id"),
-            },
-            "tool_names": {
-                "type": "array",
-                "description": t("tool.spec.a2a_service.args.tool_names"),
-                "items": {"type": "string"},
             },
         },
         "required": ["content"],

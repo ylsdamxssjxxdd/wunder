@@ -764,6 +764,10 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "zh-CN": "A2A 服务不可用：{name}",
         "en-US": "A2A service unavailable: {name}",
     },
+    "tool.a2a.task_required": {
+        "zh-CN": "A2A 任务标识不能为空。",
+        "en-US": "A2A task name/id is required.",
+    },
     "tool.ptc.filename_required": {
         "zh-CN": "脚本文件名不能为空。",
         "en-US": "Script filename is required.",
@@ -821,8 +825,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "A2A JSON-RPC endpoint (usually ends with /a2a).",
     },
     "tool.spec.a2a.args.method": {
-        "zh-CN": "调用方法（SendMessage 或 SendStreamingMessage）。",
-        "en-US": "Method to call (SendMessage or SendStreamingMessage).",
+        "zh-CN": "调用方法（SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask）。",
+        "en-US": "Method to call (SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask).",
     },
     "tool.spec.a2a.args.content": {
         "zh-CN": "简要文本问题，未提供 message 时使用。",
@@ -837,8 +841,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "Session id used for taskId/contextId (defaults to current session).",
     },
     "tool.spec.a2a.args.user_id": {
-        "zh-CN": "远端智能体的 userId（默认沿用当前 user_id）。",
-        "en-US": "Remote userId (defaults to current user_id).",
+        "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。",
+        "en-US": "Remote userId (optional, defaults to current user_id).",
     },
     "tool.spec.a2a.args.tool_names": {
         "zh-CN": "远端允许调用的工具列表（可选）。",
@@ -851,6 +855,10 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
     "tool.spec.a2a.args.blocking": {
         "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。",
         "en-US": "Whether SendMessage blocks for result (default true).",
+    },
+    "tool.spec.a2a.args.stream": {
+        "zh-CN": "是否使用流式接口（SendStreamingMessage）。",
+        "en-US": "Use streaming interface (SendStreamingMessage).",
     },
     "tool.spec.a2a.args.headers": {
         "zh-CN": "额外请求头（如鉴权）。",
@@ -871,6 +879,14 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
     "tool.spec.a2a.args.max_depth": {
         "zh-CN": "委派链路最大深度（可选）。",
         "en-US": "Max delegation depth (optional).",
+    },
+    "tool.spec.a2a.args.task_id": {
+        "zh-CN": "任务标识（用于 GetTask/SubscribeToTask 等方法）。",
+        "en-US": "Task id for GetTask/SubscribeToTask.",
+    },
+    "tool.spec.a2a.args.task_name": {
+        "zh-CN": "任务名称（如 tasks/{id}）。",
+        "en-US": "Task name (e.g., tasks/{id}).",
     },
     "tool.spec.a2a_service.description": {
         "zh-CN": "委派给 A2A 智能体 {name} 执行任务并返回结果。",
@@ -917,8 +933,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "Session id used for taskId/contextId.",
     },
     "tool.spec.a2a_service.args.user_id": {
-        "zh-CN": "远端智能体的 userId（可选）。",
-        "en-US": "Remote userId (optional).",
+        "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。",
+        "en-US": "Remote userId (optional, defaults to current user_id).",
     },
     "tool.spec.a2a_service.args.tool_names": {
         "zh-CN": "远端允许调用的工具列表（可选）。",
@@ -939,6 +955,66 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
     "tool.spec.a2a_service.args.timeout": {
         "zh-CN": "请求超时秒数（可选）。",
         "en-US": "Timeout in seconds (optional).",
+    },
+    "tool.spec.a2a_observe.description": {
+        "zh-CN": "观察当前会话内 A2A 任务的状态与结果，并汇总返回。",
+        "en-US": "Observe A2A tasks in the current session and return aggregated status/results.",
+    },
+    "tool.spec.a2a_observe.args.task_ids": {
+        "zh-CN": "需要观察的 task_id 列表（可选）。",
+        "en-US": "List of task_ids to observe (optional).",
+    },
+    "tool.spec.a2a_observe.args.tasks": {
+        "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。",
+        "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    },
+    "tool.spec.a2a_observe.args.endpoint": {
+        "zh-CN": "过滤指定的 A2A 端点（可选）。",
+        "en-US": "Filter by A2A endpoint (optional).",
+    },
+    "tool.spec.a2a_observe.args.service_name": {
+        "zh-CN": "过滤指定的 A2A 服务名（可选）。",
+        "en-US": "Filter by A2A service name (optional).",
+    },
+    "tool.spec.a2a_observe.args.refresh": {
+        "zh-CN": "是否主动刷新远端任务状态（默认 true）。",
+        "en-US": "Refresh remote task status (default true).",
+    },
+    "tool.spec.a2a_observe.args.timeout": {
+        "zh-CN": "刷新远端任务的超时秒数（可选）。",
+        "en-US": "Timeout seconds for remote refresh (optional).",
+    },
+    "tool.spec.a2a_wait.description": {
+        "zh-CN": "等待 A2A 任务完成或超时返回，可用于长任务休眠。",
+        "en-US": "Wait for A2A tasks to finish or timeout, useful for long-running jobs.",
+    },
+    "tool.spec.a2a_wait.args.wait_s": {
+        "zh-CN": "等待秒数（可选，默认 30 秒）。",
+        "en-US": "Wait seconds (optional, default 30s).",
+    },
+    "tool.spec.a2a_wait.args.poll_interval": {
+        "zh-CN": "轮询间隔秒数（可选）。",
+        "en-US": "Polling interval in seconds (optional).",
+    },
+    "tool.spec.a2a_wait.args.task_ids": {
+        "zh-CN": "需要等待的 task_id 列表（可选）。",
+        "en-US": "List of task_ids to wait for (optional).",
+    },
+    "tool.spec.a2a_wait.args.tasks": {
+        "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。",
+        "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    },
+    "tool.spec.a2a_wait.args.endpoint": {
+        "zh-CN": "过滤指定的 A2A 端点（可选）。",
+        "en-US": "Filter by A2A endpoint (optional).",
+    },
+    "tool.spec.a2a_wait.args.service_name": {
+        "zh-CN": "过滤指定的 A2A 服务名（可选）。",
+        "en-US": "Filter by A2A service name (optional).",
+    },
+    "tool.spec.a2a_wait.args.refresh": {
+        "zh-CN": "等待期间是否刷新远端任务状态（默认 true）。",
+        "en-US": "Refresh remote task status while waiting (default true).",
     },
     "tool.spec.exec.description": {
         "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。",

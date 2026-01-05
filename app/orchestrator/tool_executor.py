@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from app.core.config import KnowledgeBaseConfig
@@ -181,6 +181,8 @@ class ToolExecutor:
         ctx: RequestContext,
         workspace,
         user_tool_bindings: UserToolBindings | None = None,
+        *,
+        emit_event: Optional[Callable[[StreamEvent], None]] = None,
     ) -> Tuple[ToolResult, List[StreamEvent]]:
         """执行工具调用，返回工具结果与调试事件列表。"""
         debug_events: List[StreamEvent] = []
@@ -189,14 +191,12 @@ class ToolExecutor:
         )
 
         def _emit_debug_event(event_type: str, data: Dict[str, Any]) -> None:
-            # 统一收集调试事件，便于流式日志回放与前端展示
-            debug_events.append(
-                StreamEvent(
-                    type=event_type,
-                    session_id=workspace.session_id,
-                    data=data,
-                )
-            )
+            # 统一构建工具调试事件，优先实时抛给 SSE，否则暂存等待统一回放
+            event = StreamEvent(type=event_type, session_id=workspace.session_id, data=data)
+            if emit_event:
+                emit_event(event)
+                return
+            debug_events.append(event)
 
         def _finish(result: ToolResult, mutated: bool = False) -> Tuple[ToolResult, List[StreamEvent]]:
             """在返回前统一处理工作区变更标记，避免遗漏目录树刷新。"""
@@ -249,6 +249,9 @@ class ToolExecutor:
                 "storage_db_path": ctx.config.storage.db_path,
                 "api_key": ctx.config.security.api_key,
                 "server_port": ctx.config.server.port,
+                # 透传 A2A 服务配置，便于工具侧复用鉴权与默认超时
+                "a2a_services": ctx.config.a2a.services,
+                "a2a_timeout_s": getattr(ctx.config.a2a, "timeout_s", 120),
             },
             emit_event=_emit_debug_event,
         )
@@ -497,6 +500,12 @@ class ToolExecutor:
 
             a2a_args: Dict[str, Any] = dict(args) if isinstance(args, dict) else {"content": args}
             a2a_args["endpoint"] = getattr(service, "endpoint", "")
+            a2a_args.setdefault("service_name", service_name)
+            service_type = str(getattr(service, "service_type", "") or "").strip().lower()
+            service_user_id = str(getattr(service, "user_id", "") or "").strip()
+            if service_type == "internal" and service_user_id:
+                if "user_id" not in a2a_args and "userId" not in a2a_args:
+                    a2a_args["user_id"] = service_user_id
             raw_method = str(a2a_args.get("method") or "").strip()
             stream_flag = a2a_args.pop("stream", None)
             if not raw_method:

@@ -312,6 +312,10 @@ h1 {
   min-width: 0;
 }
 
+.form-row.is-hidden {
+  display: none;
+}
+
 /* 表单行内布局：输入框与操作按钮并排展示 */
 .form-row-inline {
   display: flex;

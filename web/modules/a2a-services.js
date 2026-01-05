@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260104-11";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251231-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260104-11";
+import { t } from "./i18n.js?v=20260105-01";
 
 // 规范化 A2A 服务字段，兼容后端与导入结构
 const normalizeA2aService = (service) => {
@@ -16,10 +16,23 @@ const normalizeA2aService = (service) => {
     : {};
   const maxDepthRaw = service.max_depth ?? service.maxDepth;
   const maxDepth = Number.isFinite(Number(maxDepthRaw)) ? Number(maxDepthRaw) : 0;
+  const rawServiceType = String(service.service_type || service.serviceType || "")
+    .trim()
+    .toLowerCase();
+  const serviceName = String(service.name || "").trim().toLowerCase();
+  const serviceType =
+    rawServiceType === "internal" || rawServiceType === "external"
+      ? rawServiceType
+      : serviceName === "wunder"
+      ? "internal"
+      : "external";
+  const userId = String(service.user_id || service.userId || "").trim();
   return {
     name: String(service.name || "").trim(),
     display_name: String(service.display_name || service.displayName || "").trim(),
+    service_type: serviceType,
     endpoint: String(service.endpoint || service.url || service.baseUrl || service.base_url || "").trim(),
+    user_id: userId,
     description: String(service.description || "").trim(),
     headers,
     auth: service.auth || "",
@@ -33,6 +46,12 @@ const normalizeA2aService = (service) => {
 
 const isA2aServiceConnected = (service) =>
   Boolean(service && isPlainObject(service.agent_card) && Object.keys(service.agent_card).length);
+
+const resolveA2aServiceType = (service) =>
+  service?.service_type === "internal" ? "internal" : "external";
+
+const formatA2aServiceType = (serviceType) =>
+  serviceType === "internal" ? t("a2aServices.type.internal") : t("a2aServices.type.external");
 
 const readAgentCardValue = (card, keys) => {
   if (!card) {
@@ -280,6 +299,10 @@ const renderA2aHeader = () => {
     elements.a2aServiceDetailDesc.textContent = "";
     elements.a2aServiceEditBtn.disabled = true;
     elements.a2aServiceDeleteBtn.disabled = true;
+    if (elements.a2aServiceEnabled) {
+      elements.a2aServiceEnabled.checked = false;
+      elements.a2aServiceEnabled.disabled = true;
+    }
     updateA2aConnectButton();
     renderAgentCardEmpty(elements.a2aServiceCardBasic);
     return;
@@ -292,12 +315,21 @@ const renderA2aHeader = () => {
   if (service.endpoint) {
     metaParts.push(service.endpoint);
   }
+  const serviceType = resolveA2aServiceType(service);
+  metaParts.push(formatA2aServiceType(serviceType));
+  if (serviceType === "internal" && service.user_id) {
+    metaParts.push(t("a2aServices.meta.userId", { user_id: service.user_id }));
+  }
   metaParts.push(service.enabled !== false ? t("a2aServices.status.enabled") : t("a2aServices.status.disabled"));
   elements.a2aServiceDetailTitle.textContent = title;
   elements.a2aServiceDetailMeta.textContent = metaParts.join(" · ");
   elements.a2aServiceDetailDesc.textContent = service.description || "";
   elements.a2aServiceEditBtn.disabled = false;
   elements.a2aServiceDeleteBtn.disabled = false;
+  if (elements.a2aServiceEnabled) {
+    elements.a2aServiceEnabled.checked = service.enabled !== false;
+    elements.a2aServiceEnabled.disabled = false;
+  }
   updateA2aConnectButton();
 };
 
@@ -320,6 +352,7 @@ const renderA2aServices = () => {
     if (service.display_name && service.name) {
       subtitleParts.push(`ID: ${service.name}`);
     }
+    subtitleParts.push(formatA2aServiceType(resolveA2aServiceType(service)));
     subtitleParts.push(service.endpoint || "-");
     item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" · ")}</small>`;
     item.addEventListener("click", () => {
@@ -366,6 +399,8 @@ const saveA2aServices = async (options = {}) => {
   const payloadServices = state.a2aServices.services.map((service) => ({
     name: service.name,
     endpoint: service.endpoint,
+    service_type: service.service_type || "external",
+    user_id: service.user_id || "",
     enabled: service.enabled !== false,
     description: service.description,
     display_name: service.display_name,
@@ -430,6 +465,38 @@ const connectA2aService = async () => {
   }
 };
 
+const toggleA2aServiceEnabled = async () => {
+  const index = state.a2aServices.selectedIndex;
+  if (index < 0) {
+    return;
+  }
+  const service = state.a2aServices.services[index];
+  if (!service) {
+    return;
+  }
+  const previous = service.enabled !== false;
+  const next = elements.a2aServiceEnabled.checked;
+  if (previous === next) {
+    return;
+  }
+  service.enabled = next;
+  try {
+    await saveA2aServices();
+    notify(t("a2aServices.save.success"), "success");
+  } catch (error) {
+    service.enabled = previous;
+    elements.a2aServiceEnabled.checked = previous;
+    notify(t("a2aServices.saveFailed", { message: error.message || "-" }), "error");
+  }
+};
+
+const updateA2aServiceTypeView = () => {
+  const serviceType = elements.a2aServiceType?.value === "internal" ? "internal" : "external";
+  if (elements.a2aServiceUserIdRow) {
+    elements.a2aServiceUserIdRow.classList.toggle("is-hidden", serviceType !== "internal");
+  }
+};
+
 const openA2aModal = (index) => {
   state.a2aServiceModal.index = index;
   const service = index !== null ? state.a2aServices.services[index] : null;
@@ -437,14 +504,16 @@ const openA2aModal = (index) => {
     index === null ? t("a2aServices.modal.addTitle") : t("a2aServices.modal.editTitle");
   elements.a2aServiceName.value = service?.name || "";
   elements.a2aServiceDisplayName.value = service?.display_name || "";
+  elements.a2aServiceType.value = service?.service_type || "external";
   elements.a2aServiceEndpoint.value = service?.endpoint || "";
+  elements.a2aServiceUserId.value = service?.user_id || "";
   elements.a2aServiceDescription.value = service?.description || "";
   elements.a2aServiceHeaders.value =
     service?.headers && Object.keys(service.headers).length
       ? JSON.stringify(service.headers, null, 2)
       : "";
   elements.a2aServiceHeadersError.textContent = "";
-  elements.a2aServiceEnabled.checked = service ? service.enabled !== false : true;
+  updateA2aServiceTypeView();
   elements.a2aServiceModal.classList.add("active");
 };
 
@@ -476,6 +545,12 @@ const applyA2aModal = () => {
     notify(t("a2aServices.form.required"), "warn");
     return false;
   }
+  const serviceType = elements.a2aServiceType.value === "internal" ? "internal" : "external";
+  const userId = elements.a2aServiceUserId.value.trim();
+  if (serviceType === "internal" && !userId) {
+    notify(t("a2aServices.form.userIdRequired"), "warn");
+    return false;
+  }
   const headersResult = parseHeadersValue(elements.a2aServiceHeaders.value);
   if (headersResult.error) {
     elements.a2aServiceHeadersError.textContent = headersResult.error;
@@ -483,13 +558,16 @@ const applyA2aModal = () => {
   }
   const baseService =
     state.a2aServiceModal.index !== null ? state.a2aServices.services[state.a2aServiceModal.index] : null;
+  const enabled = baseService ? baseService.enabled !== false : true;
   const service = normalizeA2aService({
     name,
     display_name: elements.a2aServiceDisplayName.value.trim(),
+    service_type: serviceType,
     endpoint,
+    user_id: serviceType === "internal" ? userId : "",
     description: elements.a2aServiceDescription.value.trim(),
     headers: headersResult.headers || {},
-    enabled: elements.a2aServiceEnabled.checked,
+    enabled,
     auth: baseService?.auth || "",
     agent_card: baseService?.agent_card || {},
     allow_self: baseService?.allow_self || false,
@@ -559,6 +637,7 @@ export const initA2aServicesPanel = () => {
     openA2aModal(state.a2aServices.selectedIndex);
   });
   elements.a2aServiceDeleteBtn.addEventListener("click", deleteA2aService);
+  elements.a2aServiceEnabled.addEventListener("change", toggleA2aServiceEnabled);
   elements.a2aServiceModalSave.addEventListener("click", async () => {
     const ok = applyA2aModal();
     if (!ok) {
@@ -582,4 +661,5 @@ export const initA2aServicesPanel = () => {
   elements.a2aServiceHeaders.addEventListener("input", () => {
     elements.a2aServiceHeadersError.textContent = "";
   });
+  elements.a2aServiceType.addEventListener("change", updateA2aServiceTypeView);
 };

@@ -402,6 +402,8 @@ async def wunder_a2a_list():
         A2aServiceItem(
             name=service.name,
             endpoint=service.endpoint,
+            service_type=getattr(service, "service_type", "external"),
+            user_id=getattr(service, "user_id", ""),
             enabled=service.enabled,
             description=service.description,
             display_name=service.display_name,
@@ -434,6 +436,8 @@ async def wunder_a2a_update(request: A2aUpdateRequest):
         A2aServiceItem(
             name=service.name,
             endpoint=service.endpoint,
+            service_type=getattr(service, "service_type", "external"),
+            user_id=getattr(service, "user_id", ""),
             enabled=service.enabled,
             description=service.description,
             display_name=service.display_name,

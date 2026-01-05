@@ -34,6 +34,7 @@ class SQLiteStorage:
         self._db_path = Path(db_path).resolve()
         self._init_lock = threading.Lock()
         self._initialized = False
+        self._wal_enabled: Optional[bool] = None
 
     def ensure_initialized(self) -> None:
         """初始化数据库表结构，保证幂等。"""
@@ -42,7 +43,7 @@ class SQLiteStorage:
         with self._init_lock:
             if self._initialized:
                 return
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_db_dir()
             with self._connect() as conn:
                 conn.executescript(
                     """
@@ -1287,13 +1288,47 @@ class SQLiteStorage:
 
     def _connect(self) -> sqlite3.Connection:
         """创建 SQLite 连接并开启 WAL 模式。"""
+        self._ensure_db_dir()
         conn = sqlite3.connect(self._db_path, timeout=5, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
+        if self._wal_enabled is None:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                self._wal_enabled = True
+            except sqlite3.OperationalError:
+                # åœ¨ä¸€äº›æŒ‚è½½å·/åªè¯»çŽ¯å¢ƒä¸­ WAL å¯èƒ½ä¸?å¯ç”¨ï¼Œéœ€è¦é™çº§é¿å…é‡è¯•æŠ¥é”™
+                self._wal_enabled = False
+                try:
+                    conn.execute("PRAGMA journal_mode=DELETE;")
+                except sqlite3.OperationalError:
+                    pass
+        elif self._wal_enabled is False:
+            try:
+                conn.execute("PRAGMA journal_mode=DELETE;")
+            except sqlite3.OperationalError:
+                pass
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA busy_timeout=3000;")
         return conn
+
+    def _ensure_db_dir(self) -> None:
+        """ç¡®ä¿æ•°æ®åº“è·¯å¾„å¯ç”¨ï¼Œé¿å…å› ç›®å½•ä¸¢å¤±å¯¼è‡´æ— æ³•è¿žæŽ¥ã€?"""
+        if self._db_path.exists() and self._db_path.is_dir():
+            raise sqlite3.OperationalError(
+                f"æ•°æ®åº“è·¯å¾„æŒ‡å‘äº†ç›®å½•ï¼š{self._db_path}"
+            )
+        parent = self._db_path.parent
+        if parent.exists() and not parent.is_dir():
+            raise sqlite3.OperationalError(
+                f"æ•°æ®åº“ç›®å½•è·¯å¾„ä¸?æ˜¯ç›®å½•ï¼š{parent}"
+            )
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise sqlite3.OperationalError(
+                f"æ— æ³•åˆ›å»ºæ•°æ®åº“ç›®å½•ï¼š{parent}"
+            ) from exc
 
     @staticmethod
     def _json_dumps(value: Any) -> str:

@@ -607,6 +607,40 @@ def _iter_a2a_sse_payloads(response: httpx.Response):
             yield payload
 
 
+def _normalize_a2a_task_name(raw_name: Any, raw_task_id: Any) -> str:
+    """统一 A2A 任务名输入，优先使用 name，不足时补齐 tasks/{id}。"""
+    name = str(raw_name or "").strip()
+    if name:
+        return name
+    task_id = str(raw_task_id or "").strip()
+    if not task_id:
+        return ""
+    return f"tasks/{task_id}"
+
+
+def _extract_a2a_task_id(raw_name: Any) -> str:
+    """从 tasks/{id} 名称中提取 task_id。"""
+    name = str(raw_name or "").strip()
+    if not name:
+        return ""
+    if name.startswith("tasks/"):
+        return name[len("tasks/") :].strip()
+    return name
+
+
+def _normalize_string_list(raw: Any) -> List[str]:
+    """统一清洗字符串列表输入，支持逗号分隔。"""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = [item.strip() for item in raw.split(",")]
+        return [item for item in parts if item]
+    if isinstance(raw, list):
+        cleaned = [str(item).strip() for item in raw if str(item).strip()]
+        return cleaned
+    return []
+
+
 def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     """通过 A2A JSON-RPC 委派任务给外部智能体并返回结果。"""
     start_ts = time.perf_counter()
@@ -614,13 +648,26 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     if not endpoint:
         return ToolResult(ok=False, data={}, error=t("tool.a2a.endpoint_required"))
 
-    method = str(args.get("method") or "").strip() or "SendMessage"
-    if method not in {"SendMessage", "SendStreamingMessage"}:
+    raw_method = str(args.get("method") or "").strip()
+    if not raw_method and bool(args.get("stream", False)):
+        raw_method = "SendStreamingMessage"
+    method = raw_method or "SendMessage"
+    supported_methods = {
+        "SendMessage",
+        "SendStreamingMessage",
+        "GetTask",
+        "SubscribeToTask",
+        "ListTasks",
+        "CancelTask",
+    }
+    if method not in supported_methods:
         return ToolResult(
             ok=False,
             data={"method": method},
             error=t("tool.a2a.method_unsupported", method=method),
         )
+
+    service_name = str(args.get("service_name") or args.get("service") or "").strip()
 
     # 统一读取会话标识：显式传入优先，跨用户委派时避免复用当前会话导致锁冲突
     explicit_session_id = str(
@@ -637,96 +684,134 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     if local_endpoint and endpoint == local_endpoint and not explicit_user_id and context_user:
         user_id = f"a2a:{context_user}"
     session_id = explicit_session_id
-    if not session_id:
+    if not session_id and method in {"SendMessage", "SendStreamingMessage"}:
         if not user_id or user_id == context_user:
             session_id = str(context.workspace.session_id or "").strip()
     request_id = str(
         args.get("jsonrpc_id") or args.get("request_id") or session_id or uuid.uuid4().hex
     ).strip()
 
-    raw_message = args.get("message")
-    if raw_message is None:
-        raw_message = args.get("content")
-    if raw_message is None:
-        raw_message = args.get("text")
-    if raw_message is None:
-        raw_message = args.get("request")
-    message = _normalize_a2a_message(raw_message)
-    if message is None:
-        return ToolResult(ok=False, data={}, error=t("tool.a2a.message_required"))
+    params: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = {}
+    delegation = None
+    blocking = False
+    task_name = ""
+    initial_task_id = ""
 
-    if session_id:
-        message.setdefault("taskId", session_id)
-        message.setdefault("contextId", session_id)
+    if method in {"SendMessage", "SendStreamingMessage"}:
+        raw_message = args.get("message")
+        if raw_message is None:
+            raw_message = args.get("content")
+        if raw_message is None:
+            raw_message = args.get("text")
+        if raw_message is None:
+            raw_message = args.get("request")
+        message = _normalize_a2a_message(raw_message)
+        if message is None:
+            return ToolResult(ok=False, data={}, error=t("tool.a2a.message_required"))
 
-    # 组装委派链路，避免循环调用
-    caller = str(args.get("caller") or args.get("caller_id") or "Wunder").strip() or "Wunder"
-    target = str(args.get("target") or endpoint).strip() or endpoint
-    chain = _normalize_a2a_tool_names(
-        args.get("delegation_chain") or args.get("delegationChain")
-    ) or []
-    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-    if not chain:
-        delegation_meta = metadata.get("delegation") if isinstance(metadata, dict) else {}
-        if isinstance(delegation_meta, dict):
-            chain = _normalize_a2a_tool_names(delegation_meta.get("chain")) or []
-    if caller and (not chain or (chain[0] != caller and caller not in chain)):
-        chain.insert(0, caller)
+        if session_id:
+            message.setdefault("taskId", session_id)
+            message.setdefault("contextId", session_id)
 
-    allow_self = bool(args.get("allow_self", False))
-    max_depth = int(args.get("max_depth") or 0)
-    if local_endpoint and endpoint == local_endpoint and not allow_self:
-        return ToolResult(ok=False, data={}, error=t("tool.a2a.loop_detected"))
+        # 组装委派链路，避免循环调用
+        caller = str(args.get("caller") or args.get("caller_id") or "Wunder").strip() or "Wunder"
+        target = str(args.get("target") or endpoint).strip() or endpoint
+        chain = _normalize_a2a_tool_names(
+            args.get("delegation_chain") or args.get("delegationChain")
+        ) or []
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if not chain:
+            delegation_meta = metadata.get("delegation") if isinstance(metadata, dict) else {}
+            if isinstance(delegation_meta, dict):
+                chain = _normalize_a2a_tool_names(delegation_meta.get("chain")) or []
+        if caller and (not chain or (chain[0] != caller and caller not in chain)):
+            chain.insert(0, caller)
 
-    if target in chain and not allow_self:
-        return ToolResult(ok=False, data={}, error=t("tool.a2a.loop_detected"))
-    if target not in chain:
-        chain.append(target)
-    if max_depth > 0 and len(chain) > max_depth:
-        return ToolResult(
-            ok=False,
-            data={"max_depth": max_depth, "delegation_chain": chain},
-            error=t("tool.a2a.depth_exceeded", max_depth=max_depth),
+        allow_self = bool(args.get("allow_self", False))
+        max_depth = int(args.get("max_depth") or 0)
+        if local_endpoint and endpoint == local_endpoint and not allow_self:
+            return ToolResult(ok=False, data={}, error=t("tool.a2a.loop_detected"))
+
+        if target in chain and not allow_self:
+            return ToolResult(ok=False, data={}, error=t("tool.a2a.loop_detected"))
+        if target not in chain:
+            chain.append(target)
+        if max_depth > 0 and len(chain) > max_depth:
+            return ToolResult(
+                ok=False,
+                data={"max_depth": max_depth, "delegation_chain": chain},
+                error=t("tool.a2a.depth_exceeded", max_depth=max_depth),
+            )
+
+        # 将委派链路写入 metadata，供对端或后续调用沿用
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["delegation"] = {
+            "caller": caller,
+            "target": target,
+            "chain": chain,
+            "depth": len(chain),
+            "parentTaskId": context.workspace.session_id,
+        }
+        metadata.setdefault("delegationChain", chain)
+        message["metadata"] = metadata
+        delegation = metadata.get("delegation")
+
+        params = {"message": message}
+        if user_id:
+            params["userId"] = user_id
+
+        tool_names = _normalize_a2a_tool_names(args.get("tool_names") or args.get("toolNames"))
+        if tool_names:
+            params["toolNames"] = tool_names
+        model_name = str(args.get("model_name") or args.get("modelName") or "").strip()
+        if model_name:
+            params["modelName"] = model_name
+
+        configuration = args.get("configuration")
+        config_payload = dict(configuration) if isinstance(configuration, dict) else {}
+        blocking = args.get("blocking")
+        if blocking is None:
+            blocking = method == "SendMessage"
+        config_payload["blocking"] = bool(blocking)
+        history_length = args.get("history_length") or args.get("historyLength")
+        if history_length is not None:
+            try:
+                config_payload["historyLength"] = int(history_length)
+            except (TypeError, ValueError):
+                pass
+        if method == "SendMessage" and config_payload:
+            params["configuration"] = config_payload
+    elif method in {"GetTask", "SubscribeToTask", "CancelTask"}:
+        task_name = _normalize_a2a_task_name(
+            args.get("name") or args.get("task_name") or args.get("taskName"),
+            args.get("task_id")
+            or args.get("taskId")
+            or args.get("context_id")
+            or args.get("session_id")
+            or explicit_session_id
+            or session_id,
         )
-
-    # 将委派链路写入 metadata，供对端或后续调用沿用
-    if not isinstance(metadata, dict):
-        metadata = {}
-    metadata["delegation"] = {
-        "caller": caller,
-        "target": target,
-        "chain": chain,
-        "depth": len(chain),
-        "parentTaskId": context.workspace.session_id,
-    }
-    metadata.setdefault("delegationChain", chain)
-    message["metadata"] = metadata
-
-    params: Dict[str, Any] = {"message": message}
-    if user_id:
-        params["userId"] = user_id
-
-    tool_names = _normalize_a2a_tool_names(args.get("tool_names") or args.get("toolNames"))
-    if tool_names:
-        params["toolNames"] = tool_names
-    model_name = str(args.get("model_name") or args.get("modelName") or "").strip()
-    if model_name:
-        params["modelName"] = model_name
-
-    configuration = args.get("configuration")
-    config_payload = dict(configuration) if isinstance(configuration, dict) else {}
-    blocking = args.get("blocking")
-    if blocking is None:
-        blocking = method == "SendMessage"
-    config_payload["blocking"] = bool(blocking)
-    history_length = args.get("history_length") or args.get("historyLength")
-    if history_length is not None:
-        try:
-            config_payload["historyLength"] = int(history_length)
-        except (TypeError, ValueError):
-            pass
-    if method == "SendMessage" and config_payload:
-        params["configuration"] = config_payload
+        if not task_name:
+            return ToolResult(ok=False, data={}, error=t("tool.a2a.task_required"))
+        params = {"name": task_name}
+        initial_task_id = _extract_a2a_task_id(task_name)
+        history_length = args.get("history_length") or args.get("historyLength")
+        if history_length is not None:
+            try:
+                params["historyLength"] = int(history_length)
+            except (TypeError, ValueError):
+                pass
+    else:
+        raw_params = args.get("params")
+        if isinstance(raw_params, dict):
+            params = dict(raw_params)
+        else:
+            params = {}
+            for key in ("pageSize", "pageToken", "status", "includeArtifacts", "includeHistory"):
+                if key in args:
+                    params[key] = args[key]
 
     headers: Dict[str, str] = {}
     raw_headers = args.get("headers")
@@ -746,23 +831,28 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             headers["Authorization"] = authorization
         else:
             headers["Authorization"] = f"Bearer {authorization}"
-    if method == "SendStreamingMessage":
+    if method in {"SendStreamingMessage", "SubscribeToTask"}:
         headers.setdefault("Accept", "text/event-stream")
 
-    timeout_s = int(args.get("timeout_s") or A2A_DEFAULT_TIMEOUT_S)
+    timeout_s = int(
+        args.get("timeout_s") or context.config.get("a2a_timeout_s") or A2A_DEFAULT_TIMEOUT_S
+    )
     payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
 
     if context.emit_event:
-        context.emit_event(
-            "a2a_request",
-            {
-                "endpoint": endpoint,
-                "method": method,
-                "request_id": request_id,
-                "session_id": session_id,
-                "blocking": bool(blocking),
-            },
-        )
+        request_payload = {
+            "endpoint": endpoint,
+            "method": method,
+            "request_id": request_id,
+            "session_id": session_id,
+        }
+        if service_name:
+            request_payload["service_name"] = service_name
+        if task_name:
+            request_payload["task_name"] = task_name
+        if method == "SendMessage":
+            request_payload["blocking"] = bool(blocking)
+        context.emit_event("a2a_request", request_payload)
 
     include_raw = bool(args.get("include_raw", False))
     include_events = bool(args.get("include_events", False))
@@ -770,14 +860,35 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     events: List[Dict[str, Any]] = []
     raw_response: Any = None
     final_text_parts: List[str] = []
-    task_id = ""
+    task_id = initial_task_id
     context_id = ""
     state = ""
     token_usage: Optional[Dict[str, Any]] = None
+    list_result: Optional[Dict[str, Any]] = None
+    task_emitted = False
+
+    def _emit_task_event() -> None:
+        nonlocal task_emitted
+        if not context.emit_event:
+            return
+        if not task_id or task_emitted:
+            return
+        payload = {
+            "task_id": task_id,
+            "context_id": context_id,
+            "endpoint": endpoint,
+            "method": method,
+        }
+        if service_name:
+            payload["service_name"] = service_name
+        if task_name:
+            payload["task_name"] = task_name
+        context.emit_event("a2a_task", payload)
+        task_emitted = True
 
     try:
         with httpx.Client(timeout=timeout_s) as client:
-            if method == "SendStreamingMessage":
+            if method in {"SendStreamingMessage", "SubscribeToTask"}:
                 with client.stream("POST", endpoint, json=payload, headers=headers) as resp:
                     if resp.status_code >= 400:
                         return ToolResult(
@@ -792,6 +903,7 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                             task = item.get("task", {})
                             task_id = str(task.get("id") or "").strip()
                             context_id = str(task.get("contextId") or "").strip()
+                            _emit_task_event()
                         status_update = item.get("statusUpdate")
                         if isinstance(status_update, dict):
                             status = status_update.get("status") if isinstance(status_update.get("status"), dict) else {}
@@ -805,6 +917,9 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                                     {
                                         "task_id": task_id,
                                         "context_id": context_id,
+                                        "endpoint": endpoint,
+                                        "method": method,
+                                        "service_name": service_name,
                                         "state": state,
                                         "final": bool(status_update.get("final")),
                                     },
@@ -822,6 +937,9 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                                     {
                                         "task_id": task_id,
                                         "context_id": context_id,
+                                        "endpoint": endpoint,
+                                        "method": method,
+                                        "service_name": service_name,
                                         "name": artifact.get("name"),
                                     },
                                 )
@@ -846,23 +964,35 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
                     message = str(error_payload.get("message") or t("tool.a2a.response_invalid"))
                     return ToolResult(ok=False, data={"error": error_payload}, error=message)
                 result = body.get("result") if isinstance(body, dict) else None
-                task = result.get("task") if isinstance(result, dict) else None
-                if not task and isinstance(result, dict):
-                    task = result
-                if not isinstance(task, dict):
-                    return ToolResult(ok=False, data={}, error=t("tool.a2a.response_invalid"))
-                task_id = str(task.get("id") or "").strip()
-                context_id = str(task.get("contextId") or "").strip()
-                status = task.get("status") if isinstance(task.get("status"), dict) else {}
-                state = str(status.get("state") or "")
-                artifacts = task.get("artifacts") if isinstance(task.get("artifacts"), list) else []
-                for artifact in artifacts:
-                    if not isinstance(artifact, dict):
-                        continue
-                    final_text_parts.extend(_extract_a2a_text_parts(artifact.get("parts")))
-                metadata_value = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-                if isinstance(metadata_value.get("tokenUsage"), dict):
-                    token_usage = metadata_value.get("tokenUsage")
+                if method == "ListTasks":
+                    if isinstance(result, dict):
+                        list_result = result
+                    else:
+                        list_result = {"tasks": result}
+                else:
+                    task = result.get("task") if isinstance(result, dict) else None
+                    if not task and isinstance(result, dict):
+                        task = result
+                    if not isinstance(task, dict):
+                        return ToolResult(ok=False, data={}, error=t("tool.a2a.response_invalid"))
+                    task_id = str(task.get("id") or "").strip()
+                    context_id = str(task.get("contextId") or "").strip()
+                    state = str(
+                        (task.get("status") or {}).get("state")
+                        if isinstance(task.get("status"), dict)
+                        else ""
+                    )
+                    artifacts = (
+                        task.get("artifacts") if isinstance(task.get("artifacts"), list) else []
+                    )
+                    for artifact in artifacts:
+                        if not isinstance(artifact, dict):
+                            continue
+                        final_text_parts.extend(_extract_a2a_text_parts(artifact.get("parts")))
+                    metadata_value = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+                    if isinstance(metadata_value.get("tokenUsage"), dict):
+                        token_usage = metadata_value.get("tokenUsage")
+                    _emit_task_event()
                 if include_raw:
                     raw_response = body
     except httpx.RequestError as exc:
@@ -885,7 +1015,7 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         "status": state,
         "answer": answer,
         "elapsed_ms": elapsed_ms,
-        "delegation": metadata.get("delegation"),
+        "delegation": delegation,
     }
     if token_usage is not None:
         data["token_usage"] = token_usage
@@ -893,6 +1023,12 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         data["events"] = events
     if include_raw and raw_response is not None:
         data["raw"] = raw_response
+    if service_name:
+        data["service_name"] = service_name
+    if task_name:
+        data["task_name"] = task_name
+    if list_result is not None:
+        data["tasks"] = list_result.get("tasks") if isinstance(list_result, dict) else list_result
 
     if context.emit_event:
         context.emit_event(
@@ -900,6 +1036,9 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             {
                 "task_id": task_id,
                 "context_id": context_id,
+                "endpoint": endpoint,
+                "method": method,
+                "service_name": service_name,
                 "status": state,
                 "elapsed_ms": elapsed_ms,
                 "ok": ok,
@@ -907,3 +1046,334 @@ def a2a_delegate(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         )
 
     return ToolResult(ok=ok, data=data)
+
+
+def _build_a2a_task_entry(task_id: str) -> Dict[str, Any]:
+    """初始化 A2A 任务快照结构。"""
+    return {
+        "task_id": task_id,
+        "context_id": "",
+        "status": "",
+        "endpoint": "",
+        "method": "",
+        "service_name": "",
+        "artifacts": [],
+        "answer": "",
+        "ok": None,
+        "updated_time": "",
+    }
+
+
+def _merge_a2a_task_entry(entry: Dict[str, Any], **fields: Any) -> None:
+    """合并 A2A 任务字段，忽略空值，保留已有信息。"""
+    for key, value in fields.items():
+        if value is None or value == "":
+            continue
+        entry[key] = value
+
+
+def _append_a2a_artifact(entry: Dict[str, Any], name: str) -> None:
+    """追加 A2A 任务产物名称，避免重复。"""
+    if not name:
+        return
+    artifacts = entry.setdefault("artifacts", [])
+    if name not in artifacts:
+        artifacts.append(name)
+
+
+def _is_a2a_task_finished(state: str) -> bool:
+    """判断 A2A 任务是否已结束。"""
+    return str(state or "").lower() in {"completed", "failed", "cancelled", "rejected"}
+
+
+def _resolve_a2a_service_config(context: ToolContext, service_name: str, endpoint: str) -> Any:
+    """从工具上下文中匹配 A2A 服务配置，用于补齐鉴权与默认参数。"""
+    services = context.config.get("a2a_services") or []
+    normalized_endpoint = _normalize_a2a_endpoint(endpoint) if endpoint else ""
+    for service in services:
+        name = str(
+            getattr(service, "name", "")
+            or (service.get("name", "") if isinstance(service, dict) else "")
+        ).strip()
+        service_endpoint = str(
+            getattr(service, "endpoint", "")
+            or (service.get("endpoint", "") if isinstance(service, dict) else "")
+        ).strip()
+        if service_name and name == service_name:
+            return service
+        if normalized_endpoint and service_endpoint:
+            if _normalize_a2a_endpoint(service_endpoint) == normalized_endpoint:
+                return service
+    return None
+
+
+def _collect_a2a_tasks_from_monitor(
+    context: ToolContext,
+    *,
+    task_ids: Optional[set[str]] = None,
+    service_name: str = "",
+    endpoint: str = "",
+) -> Dict[str, Dict[str, Any]]:
+    """从监控事件中汇总当前会话的 A2A 任务快照。"""
+    from app.monitor.registry import monitor
+    from app.tools.availability import is_a2a_tool_name
+    from app.tools.catalog import resolve_builtin_tool_name
+
+    tasks: Dict[str, Dict[str, Any]] = {}
+    detail = monitor.get_detail(context.workspace.session_id)
+    events = detail.get("events") if isinstance(detail, dict) else []
+    for item in events or []:
+        if not isinstance(item, dict):
+            continue
+        event_type = str(item.get("type") or "")
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        timestamp = str(item.get("timestamp") or "")
+        if event_type.startswith("a2a_"):
+            task_id = str(data.get("task_id") or data.get("taskId") or "").strip()
+            if not task_id:
+                task_id = _extract_a2a_task_id(data.get("task_name"))
+            if not task_id:
+                continue
+            if task_ids and task_id not in task_ids:
+                continue
+            entry = tasks.setdefault(task_id, _build_a2a_task_entry(task_id))
+            entry["updated_time"] = timestamp or entry.get("updated_time", "")
+            if event_type == "a2a_task":
+                _merge_a2a_task_entry(
+                    entry,
+                    context_id=data.get("context_id"),
+                    endpoint=data.get("endpoint"),
+                    method=data.get("method"),
+                    service_name=data.get("service_name"),
+                )
+            elif event_type == "a2a_status":
+                _merge_a2a_task_entry(
+                    entry,
+                    context_id=data.get("context_id"),
+                    endpoint=data.get("endpoint"),
+                    method=data.get("method"),
+                    service_name=data.get("service_name"),
+                    status=data.get("state") or data.get("status"),
+                )
+            elif event_type == "a2a_artifact":
+                _merge_a2a_task_entry(
+                    entry,
+                    context_id=data.get("context_id"),
+                    endpoint=data.get("endpoint"),
+                    method=data.get("method"),
+                    service_name=data.get("service_name"),
+                )
+                _append_a2a_artifact(entry, str(data.get("name") or ""))
+            elif event_type == "a2a_result":
+                _merge_a2a_task_entry(
+                    entry,
+                    context_id=data.get("context_id"),
+                    endpoint=data.get("endpoint"),
+                    method=data.get("method"),
+                    service_name=data.get("service_name"),
+                    status=data.get("status"),
+                    ok=data.get("ok"),
+                )
+            continue
+        if event_type != "tool_result":
+            continue
+        tool_name = str(data.get("tool") or "").strip()
+        if not tool_name:
+            continue
+        canonical = resolve_builtin_tool_name(tool_name)
+        if not is_a2a_tool_name(tool_name) and canonical != "a2a":
+            continue
+        result_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+        task_id = str(result_data.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        if task_ids and task_id not in task_ids:
+            continue
+        entry = tasks.setdefault(task_id, _build_a2a_task_entry(task_id))
+        entry["updated_time"] = timestamp or entry.get("updated_time", "")
+        inferred_service = ""
+        if tool_name.startswith("a2a@"):
+            inferred_service = tool_name.split("@", 1)[-1].strip()
+        _merge_a2a_task_entry(
+            entry,
+            context_id=result_data.get("context_id"),
+            endpoint=result_data.get("endpoint"),
+            method=result_data.get("method"),
+            service_name=result_data.get("service_name") or inferred_service,
+            status=result_data.get("status"),
+            answer=result_data.get("answer"),
+        )
+    if service_name or endpoint:
+        filtered: Dict[str, Dict[str, Any]] = {}
+        for task_id, entry in tasks.items():
+            if service_name and entry.get("service_name") != service_name:
+                continue
+            if endpoint and entry.get("endpoint") != endpoint:
+                continue
+            filtered[task_id] = entry
+        return filtered
+    return tasks
+
+
+def _refresh_a2a_task(
+    context: ToolContext, entry: Dict[str, Any], timeout_s: int
+) -> Optional[str]:
+    """通过 GetTask 刷新任务状态，失败时返回错误信息。"""
+    task_id = str(entry.get("task_id") or "").strip()
+    endpoint = str(entry.get("endpoint") or "").strip()
+    service_name = str(entry.get("service_name") or "").strip()
+    if not task_id or not endpoint:
+        return "missing_task_or_endpoint"
+    service = _resolve_a2a_service_config(context, service_name, endpoint)
+    headers: Dict[str, str] = {}
+    auth_value = None
+    if service:
+        raw_headers = getattr(service, "headers", None)
+        if raw_headers is None and isinstance(service, dict):
+            raw_headers = service.get("headers", {})
+        if isinstance(raw_headers, dict):
+            headers.update({str(k): str(v) for k, v in raw_headers.items()})
+        auth_value = getattr(service, "auth", None)
+        if auth_value is None and isinstance(service, dict):
+            auth_value = service.get("auth")
+    # 使用静默上下文调用 GetTask，避免生成额外调试事件
+    silent_context = ToolContext(
+        workspace=context.workspace,
+        config=context.config,
+        emit_event=None,
+    )
+    call_args: Dict[str, Any] = {
+        "endpoint": endpoint,
+        "method": "GetTask",
+        "task_id": task_id,
+        "timeout_s": timeout_s,
+    }
+    if headers:
+        call_args["headers"] = headers
+    if auth_value:
+        call_args["auth"] = auth_value
+    result = a2a_delegate(silent_context, call_args)
+    if not result.ok:
+        return result.error or "request_failed"
+    data = result.data
+    _merge_a2a_task_entry(
+        entry,
+        context_id=data.get("context_id"),
+        status=data.get("status"),
+        answer=data.get("answer"),
+    )
+    if isinstance(data.get("tasks"), list):
+        entry["tasks"] = data.get("tasks")
+    return None
+
+
+def a2a_observe(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
+    """观察当前会话的 A2A 任务进度，并返回聚合快照。"""
+    explicit_task_ids = _normalize_string_list(
+        args.get("task_ids") or args.get("task_id") or args.get("taskId")
+    )
+    raw_tasks = args.get("tasks")
+    explicit_endpoint = str(args.get("endpoint") or "").strip()
+    explicit_service = str(args.get("service_name") or args.get("service") or "").strip()
+    task_filter = set(explicit_task_ids) if explicit_task_ids else None
+
+    tasks: Dict[str, Dict[str, Any]] = {}
+    if isinstance(raw_tasks, list):
+        for item in raw_tasks:
+            if not isinstance(item, dict):
+                continue
+            task_id = str(item.get("task_id") or item.get("taskId") or "").strip()
+            if not task_id:
+                continue
+            entry = tasks.setdefault(task_id, _build_a2a_task_entry(task_id))
+            _merge_a2a_task_entry(
+                entry,
+                endpoint=item.get("endpoint") or explicit_endpoint,
+                service_name=item.get("service_name") or explicit_service,
+            )
+
+    if explicit_task_ids:
+        for task_id in explicit_task_ids:
+            entry = tasks.setdefault(task_id, _build_a2a_task_entry(task_id))
+            if explicit_endpoint:
+                entry["endpoint"] = explicit_endpoint
+            if explicit_service:
+                entry["service_name"] = explicit_service
+
+    monitor_tasks = _collect_a2a_tasks_from_monitor(
+        context,
+        task_ids=task_filter,
+        service_name=explicit_service,
+        endpoint=explicit_endpoint,
+    )
+    for task_id, entry in monitor_tasks.items():
+        if task_id in tasks:
+            _merge_a2a_task_entry(tasks[task_id], **entry)
+        else:
+            tasks[task_id] = entry
+
+    refresh = bool(args.get("refresh", True))
+    timeout_s = int(args.get("timeout_s") or context.config.get("a2a_timeout_s") or 120)
+    if refresh:
+        for entry in tasks.values():
+            error = _refresh_a2a_task(context, entry, timeout_s)
+            if error:
+                entry["refresh_error"] = error
+
+    task_list = list(tasks.values())
+    pending = [item for item in task_list if not _is_a2a_task_finished(item.get("status"))]
+    data = {
+        "tasks": task_list,
+        "pending": pending,
+        "done": not pending,
+        "total": len(task_list),
+    }
+    return ToolResult(ok=True, data=data)
+
+
+def a2a_wait(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
+    """等待 A2A 任务完成或达到超时阈值。"""
+    wait_s = args.get("wait_s") if args.get("wait_s") is not None else args.get("timeout_s")
+    try:
+        timeout_s = float(wait_s) if wait_s is not None else 30.0
+    except (TypeError, ValueError):
+        timeout_s = 30.0
+    try:
+        poll_interval_s = float(args.get("poll_interval_s") or 1.5)
+    except (TypeError, ValueError):
+        poll_interval_s = 1.5
+    poll_interval_s = max(0.2, poll_interval_s)
+    start_ts = time.time()
+    deadline = start_ts + timeout_s if timeout_s > 0 else start_ts
+
+    refresh = bool(args.get("refresh", True))
+    last_snapshot: Dict[str, Any] = {}
+    while True:
+        observe_result = a2a_observe(
+            context,
+            {
+                "task_ids": args.get("task_ids") or args.get("task_id"),
+                "tasks": args.get("tasks"),
+                "endpoint": args.get("endpoint"),
+                "service_name": args.get("service_name") or args.get("service"),
+                "refresh": refresh,
+                "timeout_s": args.get("timeout_s"),
+            },
+        )
+        last_snapshot = observe_result.data if observe_result.ok else {}
+        pending = last_snapshot.get("pending", [])
+        if not pending:
+            break
+        if time.time() >= deadline:
+            break
+        time.sleep(min(poll_interval_s, max(0.0, deadline - time.time())))
+
+    elapsed_s = time.time() - start_ts
+    data = dict(last_snapshot or {})
+    data.update(
+        {
+            "elapsed_s": round(elapsed_s, 3),
+            "timeout": bool(data.get("pending")) and time.time() >= deadline,
+        }
+    )
+    return ToolResult(ok=True, data=data)

@@ -89,6 +89,88 @@ def _build_builtin_tool_descriptors(language: str) -> tuple[ToolDescriptor, ...]
             runtime=False,
         ),
         ToolDescriptor(
+            name="a2a观察",
+            description=t("tool.spec.a2a_observe.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "task_ids": {
+                        "type": "array",
+                        "description": t("tool.spec.a2a_observe.args.task_ids"),
+                        "items": {"type": "string"},
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "description": t("tool.spec.a2a_observe.args.tasks"),
+                        "items": {"type": "object"},
+                    },
+                    "endpoint": {
+                        "type": "string",
+                        "description": t("tool.spec.a2a_observe.args.endpoint"),
+                    },
+                    "service_name": {
+                        "type": "string",
+                        "description": t("tool.spec.a2a_observe.args.service_name"),
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": t("tool.spec.a2a_observe.args.refresh"),
+                    },
+                    "timeout_s": {
+                        "type": "integer",
+                        "description": t("tool.spec.a2a_observe.args.timeout"),
+                    },
+                },
+            },
+            handler=builtin.a2a_observe,
+            runtime=True,
+            sandbox=False,
+            aliases=("a2a_observe",),
+        ),
+        ToolDescriptor(
+            name="a2a等待",
+            description=t("tool.spec.a2a_wait.description"),
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "wait_s": {
+                        "type": "number",
+                        "description": t("tool.spec.a2a_wait.args.wait_s"),
+                    },
+                    "poll_interval_s": {
+                        "type": "number",
+                        "description": t("tool.spec.a2a_wait.args.poll_interval"),
+                    },
+                    "task_ids": {
+                        "type": "array",
+                        "description": t("tool.spec.a2a_wait.args.task_ids"),
+                        "items": {"type": "string"},
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "description": t("tool.spec.a2a_wait.args.tasks"),
+                        "items": {"type": "object"},
+                    },
+                    "endpoint": {
+                        "type": "string",
+                        "description": t("tool.spec.a2a_wait.args.endpoint"),
+                    },
+                    "service_name": {
+                        "type": "string",
+                        "description": t("tool.spec.a2a_wait.args.service_name"),
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": t("tool.spec.a2a_wait.args.refresh"),
+                    },
+                },
+            },
+            handler=builtin.a2a_wait,
+            runtime=True,
+            sandbox=False,
+            aliases=("a2a_wait",),
+        ),
+        ToolDescriptor(
             name="执行命令",
             description=t("tool.spec.exec.description"),
             args_schema={

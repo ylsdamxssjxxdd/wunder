@@ -4,7 +4,7 @@ import {
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js";
-import { elements } from "./elements.js?v=20260104-11";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260102-01";
 import { notify } from "./notify.js";
@@ -14,7 +14,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260104-11";
+} from "./i18n.js?v=20260105-01";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 
 const MIN_MONITOR_INTERVAL_MS = 500;

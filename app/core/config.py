@@ -129,6 +129,8 @@ class A2AServiceConfig(BaseModel):
 
     name: str
     endpoint: str
+    service_type: str = Field(default="external", description="internal/external")
+    user_id: str = ""
     enabled: bool = True
     description: str = ""
     display_name: str = ""

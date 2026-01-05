@@ -4,7 +4,7 @@ import {
   readStoredConfig,
   updateDefaultConfig,
 } from "./app.config.js";
-import { elements } from "./modules/elements.js?v=20260104-11";
+import { elements } from "./modules/elements.js?v=20260105-02";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20251231-01";
@@ -19,7 +19,7 @@ import {
 } from "./modules/tools.js?v=20251231-01";
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260101-02";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260102-01";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260105-02";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20251231-01";
 import {
   initMemoryPanel,
@@ -35,8 +35,7 @@ import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
-import { initA2aPanel } from "./modules/a2a.js?v=20260104-11";
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260104-11";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260105-01";
 
 const patchApiFetch = () => {
   // 统一为前端请求补齐 API Key，避免每处调用手动添加。
@@ -73,7 +72,6 @@ const panelMap = {
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
-  a2a: { panel: elements.a2aPanel, nav: elements.navA2a },
   settings: { panel: elements.settingsPanel, nav: elements.navSettings },
 };
 
@@ -164,7 +162,6 @@ const bindNavigation = () => {
   elements.navDebug.addEventListener("click", () => {
     loadWorkspace();
   });
-  elements.navA2a.addEventListener("click", () => switchPanel("a2a"));
   elements.navA2aServices.addEventListener("click", async () => {
     switchPanel("a2aServices");
     if (!state.panelLoaded.a2aServices) {
@@ -404,7 +401,6 @@ const bootstrap = async () => {
   initKnowledgePanel();
   initLlmPanel();
   initPromptPanel();
-  initA2aPanel();
   initA2aServicesPanel();
   initUserTools();
   initSettingsPanel();
