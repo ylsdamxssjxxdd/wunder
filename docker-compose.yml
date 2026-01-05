@@ -16,7 +16,7 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
-    command: uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "data/workspaces/*"
     restart: always 
 
   postgres:
