@@ -1714,10 +1714,11 @@ const resolveToolSessionTimestamp = (session) => {
 };
 
 // 渲染工具调用会话列表，保持与线程状态弹窗一致的风格
-const renderMonitorToolList = (sessions) => {
+const renderMonitorToolList = (sessions, toolName = "") => {
   if (!elements.monitorToolList) {
     return;
   }
+  const focusToolName = String(toolName || "").trim();
   elements.monitorToolList.textContent = "";
   if (!Array.isArray(sessions) || sessions.length === 0) {
     elements.monitorToolList.textContent = t("common.noRecords");
@@ -1778,7 +1779,7 @@ const renderMonitorToolList = (sessions) => {
         if (!session?.session_id) {
           return;
         }
-        openMonitorDetail(session.session_id);
+        openMonitorDetail(session.session_id, { focusTool: focusToolName });
       });
       elements.monitorToolList.appendChild(item);
     });
@@ -1801,7 +1802,10 @@ const fetchMonitorToolSessions = async (toolName) => {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
-  return Array.isArray(result.sessions) ? result.sessions : [];
+  return {
+    sessions: Array.isArray(result.sessions) ? result.sessions : [],
+    toolName: String(result.tool_name || toolName || "").trim(),
+  };
 };
 
 // 打开工具调用明细弹窗
@@ -1827,7 +1831,7 @@ const openMonitorToolModal = async (toolName) => {
   }
   elements.monitorToolModal.classList.add("active");
   try {
-    const sessions = await fetchMonitorToolSessions(cleaned);
+    const { sessions, toolName: focusToolName } = await fetchMonitorToolSessions(cleaned);
     if (elements.monitorToolMeta) {
       const windowLabel = getMonitorTimeWindowLabel();
       elements.monitorToolMeta.textContent = t("monitor.toolModal.meta.total", {
@@ -1835,7 +1839,7 @@ const openMonitorToolModal = async (toolName) => {
         total: sessions.length,
       });
     }
-    renderMonitorToolList(sessions);
+    renderMonitorToolList(sessions, focusToolName || cleaned);
   } catch (error) {
     appendLog(t("monitor.toolDetailLoadFailed", { message: error.message }));
     if (elements.monitorToolList) {
@@ -1992,7 +1996,124 @@ const highlightMonitorTimestamps = (detailText) =>
     '<span class="log-timestamp">[$1]</span>'
   );
 
-export const openMonitorDetail = async (sessionId) => {
+// 统一规整工具名称，避免大小写或多余空格导致定位失败
+const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCase();
+
+// 格式化事件数据为可展示文本，确保异常数据不会打断渲染
+const stringifyMonitorEventData = (data) => {
+  try {
+    const text = JSON.stringify(data);
+    return typeof text === "string" ? text : String(text);
+  } catch (error) {
+    return String(data);
+  }
+};
+
+// 拼接单条事件文本，保持与历史展示一致
+const buildMonitorEventLine = (event) => {
+  const timestamp = event?.timestamp || "";
+  const eventType = event?.type || "unknown";
+  const dataText = stringifyMonitorEventData(event?.data);
+  return `[${timestamp}] ${eventType}: ${dataText}`;
+};
+
+// 从事件数据中提取工具名称，便于定位工具调用位置
+const resolveMonitorEventToolName = (event) => {
+  const data = event?.data;
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+  const tool = data.tool ?? data.tool_name ?? data.toolName;
+  return typeof tool === "string" ? tool.trim() : "";
+};
+
+// 渲染线程事件列表，并返回需要定位的目标节点
+const renderMonitorDetailEvents = (events, options = {}) => {
+  if (!elements.monitorDetailEvents) {
+    return null;
+  }
+  const container = elements.monitorDetailEvents;
+  container.textContent = "";
+  if (!Array.isArray(events) || events.length === 0) {
+    container.textContent = t("monitor.detail.noEvents");
+    return null;
+  }
+  const focusToolName = normalizeMonitorToolName(options.focusTool);
+  const fragment = document.createDocumentFragment();
+  let focusNode = null;
+  let fallbackNode = null;
+  events.forEach((event) => {
+    const lineText = buildMonitorEventLine(event);
+    const normalizedLineText = normalizeMonitorToolName(lineText);
+    const line = document.createElement("div");
+    line.className = "monitor-event-line";
+    line.innerHTML = highlightMonitorTimestamps(lineText);
+    const eventTool = resolveMonitorEventToolName(event);
+    const matchesToolName =
+      focusToolName &&
+      (normalizeMonitorToolName(eventTool) === focusToolName ||
+        normalizedLineText.includes(focusToolName));
+    if (matchesToolName) {
+      line.classList.add("monitor-event-line--tool");
+      const eventType = String(event?.type || "").toLowerCase();
+      if (!focusNode && eventType === "tool_call") {
+        focusNode = line;
+      } else if (!fallbackNode && eventType === "tool_result") {
+        fallbackNode = line;
+      }
+    }
+    fragment.appendChild(line);
+  });
+  container.appendChild(fragment);
+  if (!focusNode && fallbackNode) {
+    focusNode = fallbackNode;
+  }
+  if (focusNode) {
+    focusNode.classList.add("monitor-event-line--focus");
+  }
+  return focusNode;
+};
+
+// 滚动事件列表到目标位置，避免用户手动查找
+// 查找可滚动的父容器，兼容弹窗内部多级滚动布局
+const resolveMonitorScrollContainer = (line) => {
+  let current = line?.parentElement || null;
+  while (current && current !== document.body) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style?.overflowY || "";
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      current.scrollHeight > current.clientHeight
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return elements.monitorDetailEvents || null;
+};
+
+// 滚动事件列表到目标位置，避免用户手动查找
+const scrollMonitorDetailToLine = (line) => {
+  if (!line) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const container = resolveMonitorScrollContainer(line);
+      if (!container) {
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const offset = lineRect.top - containerRect.top;
+      const target =
+        container.scrollTop + offset - container.clientHeight / 2 + lineRect.height / 2;
+      container.scrollTop = Math.max(0, target);
+    });
+  });
+};
+
+export const openMonitorDetail = async (sessionId, options = {}) => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
   try {
@@ -2011,15 +2132,13 @@ export const openMonitorDetail = async (sessionId) => {
     )} · ${formatDuration(session.elapsed_s)}`;
     elements.monitorDetailQuestion.textContent = session.question || "";
     const events = Array.isArray(result.events) ? result.events : [];
-    const detailText = events
-      .map((item) => `[${item.timestamp}] ${item.type}: ${JSON.stringify(item.data)}`)
-      .join("\n");
-    if (detailText) {
-      elements.monitorDetailEvents.innerHTML = highlightMonitorTimestamps(detailText);
-    } else {
-      elements.monitorDetailEvents.textContent = t("monitor.detail.noEvents");
-    }
+    const focusTool =
+      typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
+    const focusLine = renderMonitorDetailEvents(events, { focusTool });
     elements.monitorDetailModal.classList.add("active");
+    if (focusTool) {
+      scrollMonitorDetailToLine(focusLine);
+    }
   } catch (error) {
     appendLog(t("monitor.detailLoadFailed", { message: error.message }));
   }

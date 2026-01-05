@@ -787,6 +787,7 @@ class MonitorToolUsageResponse(BaseModel):
     """工具使用会话列表响应。"""
 
     tool: str
+    tool_name: str = Field(default="", description="工具真实名称（用于事件定位）")
     sessions: List[MonitorToolSessionItem] = Field(default_factory=list)
 
 

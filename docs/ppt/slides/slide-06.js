@@ -1,9 +1,12 @@
 "use strict";
 
-import { createSlide } from "./utils.js";
+(() => {
+
+// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
+const { createSlide, registerSlide } = window.WunderPpt;
 
 // 第 6 页：MCP 工具，用于拆分维护本页内容。
-export default function buildSlide() {
+function buildSlide() {
   return createSlide(`
 <section class="slide" data-title="MCP 工具">
         <div class="slide-meta">
@@ -43,3 +46,9 @@ export default function buildSlide() {
       </section>
   `);
 }
+
+// 注册页面构建函数，保持与清单一致的加载顺序。
+registerSlide(buildSlide);
+
+
+})();

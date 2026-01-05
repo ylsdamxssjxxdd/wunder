@@ -342,6 +342,7 @@
 - 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`。
 - 返回（JSON）：
   - `tool`：工具名称
+  - `tool_name`：工具真实名称（用于事件定位）
   - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time）
 
 ### 4.1.9 `/wunder/admin/monitor/{session_id}`

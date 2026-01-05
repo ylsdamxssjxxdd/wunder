@@ -1,13 +1,14 @@
-# PPT 维护说明
+﻿# PPT 维护说明
 
-本目录使用纯静态方式组织 PPT。每一页都是一个独立的 JS 文件，页面清单由 `manifest.js` 维护，通过动态 import 按顺序加载，方便单独新增、删除或调整顺序。
+本目录使用纯静态方式组织 PPT。每一页都是一个独立的 JS 文件，页面清单由 `manifest.js` 维护，通过启动脚本顺序加载并注册，避免浏览器对 `file://` 模块的 CORS 限制，支持直接双击打开。
 
 ## 页面结构
 
 - 入口页面：`docs/ppt/index.html`（只负责容器与 HUD）
-- 启动脚本：`docs/ppt/slides/boot.js`（读取清单、动态加载页面、再加载翻页逻辑）
+- 启动脚本：`docs/ppt/slides/boot.js`（读取清单、顺序加载页面脚本、拼装 DOM、再加载翻页逻辑）
 - 页面清单：`docs/ppt/slides/manifest.js`（页面顺序与路径在这里维护）
-- 单页内容：`docs/ppt/slides/*.js`（每页一个文件，名称可自定义）
+- 工具脚本：`docs/ppt/slides/utils.js`（提供 `createSlide` / `registerSlide`）
+- 单页内容：`docs/ppt/slides/*.js`（每页一个文件，通过注册函数加入播放序列）
 - 样式文件：`docs/ppt/styles.css`
 
 ## 新增页面
@@ -28,7 +29,7 @@
 - 每页必须以 `<section class="slide ...">` 作为根节点。
 - 不要手动添加 `active` 类，翻页脚本会自动控制当前页。
 - 需要分步出现的元素加上 `class="fragment"` 即可。
-- 单页文件默认导出一个函数（`export default function`），返回该页的 DOM 元素。
+- 单页文件通过 `window.WunderPpt.registerSlide` 注册一个函数，返回该页的 DOM 元素。
 
 ## 资源与路径
 

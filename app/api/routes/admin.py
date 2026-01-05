@@ -1034,6 +1034,8 @@ async def wunder_monitor_tool_usage(
     if orchestrator is None:
         return json_response(MonitorToolUsageResponse(tool=cleaned, sessions=[]))
     canonical_name = resolve_builtin_tool_name(cleaned)
+    # tool_name 保留为真实工具名，供前端定位工具事件
+    tool_name = cleaned
     display_map = _build_builtin_tool_display_map()
     if canonical_name in BUILTIN_TOOL_NAMES:
         aliases = build_builtin_tool_aliases().get(canonical_name, ())
@@ -1050,6 +1052,7 @@ async def wunder_monitor_tool_usage(
             )
         usage_records = _merge_tool_session_usage(usage_records)
         display_name = display_map.get(canonical_name, canonical_name)
+        tool_name = canonical_name
     else:
         usage_records = orchestrator.workspace_manager.get_tool_session_usage(
             cleaned, since_time, until_time
@@ -1087,7 +1090,9 @@ async def wunder_monitor_tool_usage(
             }
         )
 
-    return json_response(MonitorToolUsageResponse(tool=display_name, sessions=sessions))
+    return json_response(
+        MonitorToolUsageResponse(tool=display_name, tool_name=tool_name, sessions=sessions)
+    )
 
 
 @router.get("/wunder/admin/monitor/{session_id}", response_model=MonitorDetailResponse)

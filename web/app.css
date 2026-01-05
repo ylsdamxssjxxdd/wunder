@@ -594,6 +594,20 @@ button.danger {
   overflow-y: auto;
 }
 
+.monitor-event-line {
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.monitor-event-line--tool {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.monitor-event-line--focus {
+  background: rgba(251, 191, 36, 0.22);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4);
+}
+
 .log-timestamp {
   display: inline-block;
   padding: 0 6px;
