@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>知识库工具：把资料变成可检索工具</h2>
+        <h2>知识库工具：百科全书</h2>
         <p class="section-lead">让答案可追溯，减少“拍脑袋”</p>
         <div class="grid two">
           <div class="card stack">

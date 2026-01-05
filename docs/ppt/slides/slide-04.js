@@ -24,22 +24,20 @@ export default function buildSlide() {
           <div class="card stack">
             <span class="pill">工具类型</span>
             <ul>
-              <li>内置工具：文件/命令/ptc</li>
-              <li>MCP 工具：外部服务接入</li>
-              <li>Skills 工具：流程固化</li>
-              <li>知识库工具：可检索资料</li>
-              <li>自建工具：个人能力包</li>
-              <li>共享工具：团队复用池</li>
+              <li>内置工具：手和脚（文件/命令/ptc）</li>
+              <li>MCP 工具：刀和剑（外部服务接入）</li>
+              <li>Skills 工具：通关攻略（流程固化）</li>
+              <li>知识库工具：百科全书（可检索资料）</li>
+              <li>自建工具：私人装备（个人能力包）</li>
+              <li>共享工具：装备市场（团队复用池）</li>
             </ul>
             <span class="pill">统一治理</span>
             <p>统一清单、白名单管控、可组合使用</p>
             <span class="pill">价值</span>
             <p>让能力标准化、可追踪、可复用</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>图片占位</h3>
-            <p>建议：工具体系总览图（六类工具 + 调度层）</p>
-            <span class="tag">assets/tool-system-overview.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-system-overview.svg" alt="工具体系总览图（六类工具 + 调度层）" />
           </div>
         </div>
       </section>

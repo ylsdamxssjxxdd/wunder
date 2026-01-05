@@ -69,7 +69,7 @@ from app.tools.mcp import MCPClient
 from app.tools.registry import ToolRegistry
 from app.tools.types import ToolResult
 from app.user_tools.store import UserToolStore
-from app.storage.sqlite import get_storage
+from app.storage import get_storage
 
 
 def build_llm_client(config: LLMConfig):
@@ -196,7 +196,7 @@ class WunderOrchestrator:
         # 提示词缓存由版本号/工具选择等条件驱动失效，适当延长 TTL 降低重复构建开销
         self._prompt_composer = PromptComposer(cache_ttl_s=60)
         self._prompt_composer.set_config_version(self._config_version)
-        self._storage = get_storage(self._config.storage.db_path)
+        self._storage = get_storage(self._config.storage)
         self._memory_store = MemoryStore(self._storage)
         self._event_store = StreamEventStore(
             self._storage,
@@ -359,7 +359,7 @@ class WunderOrchestrator:
         self._prompt_composer.set_config_version(self._config_version)
         self._prompt_composer.clear_cache()
         # 配置更新后需重建依赖配置的模块实例
-        self._storage = get_storage(self._config.storage.db_path)
+        self._storage = get_storage(self._config.storage)
         self._memory_store = MemoryStore(self._storage)
         self._event_store = StreamEventStore(
             self._storage,

@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
   
 # 安装常用库
 RUN pip install numpy pandas scipy markdown pypandoc langchain langgraph mcp onnx transformers \
-    python-dateutil scikit-learn sqlalchemy pymysql pymongo openpyxl xlrd xlwt xlsxwriter PyYAML fastmcp \
+    python-dateutil scikit-learn sqlalchemy psycopg[binary] pymysql pymongo openpyxl xlrd xlwt xlsxwriter PyYAML fastmcp \
     reportlab pyarrow matplotlib seaborn weasyprint fastapi uvicorn starlette sse-starlette pydantic \
     jinja2 jupyterlab flask flask-restx requests aiohttp httpx scrapy -i https://pypi.tuna.tsinghua.edu.cn/simple
 
@@ -75,11 +75,13 @@ RUN pip install \
     pytest-asyncio python-jose passlib python-multipart\
   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
+RUN pip install psycopg -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 # 设置工作目录
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]
 
-# docker buildx build --platform linux/arm64 -t wunder:20251224-arm64 -f Dockerfile .
-# docker buildx build --platform linux/x86_64 -t wunder:20251224-x86 -f Dockerfile .
+# docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfile .
+# docker buildx build --platform linux/x86_64 -t wunder:20250105-x86 -f Dockerfile .
 

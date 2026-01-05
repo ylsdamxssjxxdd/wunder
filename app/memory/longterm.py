@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.core.i18n import t
-from app.storage.sqlite import SQLiteStorage
+from app.storage import Storage
 
 
 @dataclass
@@ -43,7 +43,7 @@ def _format_ts(ts: float) -> str:
 class MemoryStore:
     """长期记忆存储管理器，封装 SQLite 读写与格式化逻辑。"""
 
-    def __init__(self, storage: SQLiteStorage, max_records: int = 30) -> None:
+    def __init__(self, storage: Storage, max_records: int = 30) -> None:
         self._storage = storage
         self._max_records = max(1, int(max_records))
 

@@ -532,6 +532,23 @@ li {
   min-height: clamp(220px, 40vmin, 420px);
 }
 
+/* 媒体面板包含实际图片时，恢复卡片样式并保持图片自适应。 */
+.media-panel.is-image {
+  border-style: solid;
+  border-width: 1px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.media-panel.is-image img {
+  width: 100%;
+  height: auto;
+  border-radius: clamp(10px, 2vmin, 16px);
+  display: block;
+}
+
 /* 底部 HUD：进度条与页码 */
 #hud {
   position: fixed;

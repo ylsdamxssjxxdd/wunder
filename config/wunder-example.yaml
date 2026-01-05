@@ -109,7 +109,11 @@ workspace: # 工作区配置
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
 storage: # 存储配置
-  db_path: ./data/wunder.db # SQLite 数据库路径（记录会话、工具、监控数据）
+  backend: postgres # sqlite | postgres
+  db_path: ./data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）
+  postgres:
+    dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder} # PostgreSQL DSN
+    connect_timeout_s: 5 # PostgreSQL 连接超时（秒）
 
 observability: # 可观测性配置
   log_level: INFO # 日志级别（DEBUG/INFO/WARNING/ERROR）
@@ -120,7 +124,7 @@ observability: # 可观测性配置
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）
-  image: wunder:20251224-x86 # 沙盒容器镜像名称
+  image: wunder:20250105-x86 # 沙盒容器镜像名称
   endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
   container_root: /workspaces # 容器内项目根目录
   network: bridge # 容器网络模式（bridge/host）

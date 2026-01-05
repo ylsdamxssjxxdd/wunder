@@ -1,6 +1,6 @@
 services:
   WUNDER:
-    image: wunder:20251224-x86
+    image: wunder:20250105-x86
     ports:
       - "8000:8000"
     volumes:
@@ -10,13 +10,36 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - WUNDER_SANDBOX_ENDPOINT=http://sandbox:9001
+      - WUNDER_POSTGRES_DSN=postgresql://wunder:wunder@postgres:5432/wunder
     depends_on:
-      - SANDBOX
+      SANDBOX:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     command: uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --reload
     restart: always 
 
+  postgres:
+    image: postgres:16
+    platform: linux/x86_64
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_DB=wunder
+      - POSTGRES_USER=wunder
+      - POSTGRES_PASSWORD=wunder
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+
   SANDBOX:
-    image: wunder:20251224-x86
+    image: wunder:20250105-x86
     environment:
       - TZ=Asia/Shanghai
     volumes:

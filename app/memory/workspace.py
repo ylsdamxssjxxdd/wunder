@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.core.config import WunderConfig
 from app.core.i18n import t
-from app.storage.sqlite import SQLiteStorage, get_storage
+from app.storage import Storage, get_storage
 
 
 @dataclass
@@ -53,7 +53,7 @@ class WorkspaceManager:
         self._root = Path(config.workspace.root).resolve()
         # 历史记录使用 SQLite 持久化，保留 data/historys 目录用于旧数据迁移
         self._history_root = Path("data/historys").resolve()
-        self._storage: SQLiteStorage = get_storage(config.storage.db_path)
+        self._storage: Storage = get_storage(config.storage)
         self._locks: Dict[str, asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
         self._tree_cache: Dict[str, str] = {}

@@ -36,10 +36,8 @@ export default function buildSlide() {
             <span class="pill">Value</span>
             <p>Standardize capabilities and make results reusable</p>
           </div>
-          <div class="card media-panel stack">
-            <h3>Image placeholder</h3>
-            <p>Suggested: tool system overview (six tool types + orchestration)</p>
-            <span class="tag">assets/tool-system-overview.png</span>
+          <div class="card media-panel is-image stack">
+            <img src="assets/tool-system-overview.svg" alt="Tool system overview (six tool types + orchestration)" />
           </div>
         </div>
       </section>

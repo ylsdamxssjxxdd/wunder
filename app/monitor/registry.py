@@ -15,7 +15,7 @@ import psutil
 
 from app.core.config import get_config
 from app.core.i18n import get_known_prefixes, t
-from app.storage.sqlite import SQLiteStorage, get_storage
+from app.storage import Storage, get_storage
 
 def _now_ts() -> float:
     return time.time()
@@ -226,7 +226,7 @@ class SessionMonitor:
         self._drop_event_types = {
             str(item).strip() for item in drop_items if str(item).strip()
         }
-        self._storage: SQLiteStorage = get_storage(config.storage.db_path)
+        self._storage: Storage = get_storage(config.storage)
         self._storage.ensure_initialized()
         # 旧版监控历史目录，保留用于迁移
         self._history_dir = Path("data/historys/monitor")

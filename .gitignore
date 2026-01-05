@@ -20,7 +20,10 @@ build_ninja
 workspaces
 data
 data/logs
-images/grafana_k6_latest-arm.7z
+images/*.7z
+images/*.zip
+images/*.tar
+images/*.tar.gz
 .pytest_cache
 **/__pycache__/
 *.pyc

@@ -24,11 +24,11 @@ wunder可以暴露自身作为mcp工具，成为最终武器
 ### 2.1 构建基础镜像
 x86
 ```bash
-docker buildx build --platform linux/x86_64 -t wunder:20251224-x86 -f Dockerfile .
+docker buildx build --platform linux/x86_64 -t wunder:20250105-x86 -f Dockerfile .
 ```
 arm
 ```bash
-docker buildx build --platform linux/arm64 -t wunder:20251224-arm64 -f Dockerfile .
+docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfile .
 ```
 ### 2.2 修改配置文件
 先将示例配置复制为正式配置：`config/wunder-example.yaml` -> `config/wunder.yaml`

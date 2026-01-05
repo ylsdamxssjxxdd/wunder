@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>自建工具：个人专属能力</h2>
+        <h2>自建工具：私人装备</h2>
         <p class="section-lead">每个人都能拥有自己的工具箱</p>
         <div class="grid two">
           <div class="card stack">

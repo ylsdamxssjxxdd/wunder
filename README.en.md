@@ -24,11 +24,11 @@ wunder can expose itself as an MCP tool and become the ultimate tool.
 ### 2.1 Build base image
 x86
 ```bash
-docker buildx build --platform linux/x86_64 -t wunder:20251224-x86 -f Dockerfile .
+docker buildx build --platform linux/x86_64 -t wunder:20250105-x86 -f Dockerfile .
 ```
 arm
 ```bash
-docker buildx build --platform linux/arm64 -t wunder:20251224-arm64 -f Dockerfile .
+docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfile .
 ```
 
 ### 2.2 Update configuration

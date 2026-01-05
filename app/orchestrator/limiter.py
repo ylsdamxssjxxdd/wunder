@@ -2,7 +2,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 
-from app.storage.sqlite import SQLiteStorage
+from app.storage import Storage
 
 
 @dataclass
@@ -20,7 +20,7 @@ class RequestLimiter:
 
     def __init__(
         self,
-        storage: SQLiteStorage,
+        storage: Storage,
         max_active: int,
         *,
         poll_interval_s: float = 0.2,

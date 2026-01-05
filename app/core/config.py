@@ -193,10 +193,19 @@ class WorkspaceConfig(BaseModel):
     retention_days: int = 30
 
 
-class StorageConfig(BaseModel):
-    """SQLite 持久化配置。"""
+class PostgresStorageConfig(BaseModel):
+    """PostgreSQL 持久化配置。"""
 
+    dsn: str = "postgresql://wunder:wunder@postgres:5432/wunder"
+    connect_timeout_s: int = 5
+
+
+class StorageConfig(BaseModel):
+    """持久化存储配置。"""
+
+    backend: str = "postgres"  # sqlite | postgres
     db_path: str = "./data/wunder.db"
+    postgres: PostgresStorageConfig = Field(default_factory=PostgresStorageConfig)
 
 
 class SecurityConfig(BaseModel):

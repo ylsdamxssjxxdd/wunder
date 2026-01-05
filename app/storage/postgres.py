@@ -1,40 +1,27 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
-import logging
-import sqlite3
 import threading
 import time
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+import psycopg
+from psycopg.rows import dict_row
 
 from app.core.i18n import get_default_language, normalize_language
 
 
-_STORAGE_LOCK = threading.Lock()
-_STORAGE_CACHE: Dict[str, "SQLiteStorage"] = {}
+class PostgresStorage:
+    """基于 PostgreSQL 的持久化存储。"""
 
+    _ADVISORY_LOCK_KEY = 742815
 
-def get_storage(db_path: str) -> "SQLiteStorage":
-    """获取 SQLite 存储实例，避免重复初始化连接配置。"""
-    key = str(Path(db_path).resolve())
-    with _STORAGE_LOCK:
-        storage = _STORAGE_CACHE.get(key)
-        if storage is None:
-            storage = SQLiteStorage(key)
-            _STORAGE_CACHE[key] = storage
-        return storage
-
-
-class SQLiteStorage:
-    """基于 SQLite 的持久化存储。"""
-
-    def __init__(self, db_path: str) -> None:
-        self._db_path = Path(db_path).resolve()
+    def __init__(self, dsn: str, *, connect_timeout_s: int = 5) -> None:
+        self._dsn = str(dsn or "").strip()
+        self._connect_timeout_s = max(1, int(connect_timeout_s or 5))
         self._init_lock = threading.Lock()
         self._initialized = False
-        self._wal_enabled: Optional[bool] = None
 
     def ensure_initialized(self) -> None:
         """初始化数据库表结构，保证幂等。"""
@@ -43,141 +30,198 @@ class SQLiteStorage:
         with self._init_lock:
             if self._initialized:
                 return
-            self._ensure_db_dir()
-            with self._connect() as conn:
-                conn.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS meta (
-                      key TEXT PRIMARY KEY,
-                      value TEXT NOT NULL,
-                      updated_time REAL NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS chat_history (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id TEXT NOT NULL,
-                      session_id TEXT NOT NULL,
-                      role TEXT NOT NULL,
-                      content TEXT,
-                      timestamp TEXT,
-                      meta TEXT,
-                      payload TEXT NOT NULL,
-                      created_time REAL NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_chat_history_session
-                      ON chat_history (user_id, session_id, id);
-                    CREATE TABLE IF NOT EXISTS tool_logs (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id TEXT NOT NULL,
-                      session_id TEXT NOT NULL,
-                      tool TEXT,
-                      ok INTEGER,
-                      error TEXT,
-                      args TEXT,
-                      data TEXT,
-                      timestamp TEXT,
-                      payload TEXT NOT NULL,
-                      created_time REAL NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_tool_logs_session
-                      ON tool_logs (user_id, session_id, id);
-                    CREATE TABLE IF NOT EXISTS artifact_logs (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id TEXT NOT NULL,
-                      session_id TEXT NOT NULL,
-                      kind TEXT NOT NULL,
-                      name TEXT,
-                      payload TEXT NOT NULL,
-                      created_time REAL NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
-                      ON artifact_logs (user_id, session_id, id);
-                    CREATE TABLE IF NOT EXISTS monitor_sessions (
-                      session_id TEXT PRIMARY KEY,
-                      user_id TEXT,
-                      status TEXT,
-                      updated_time REAL,
-                      payload TEXT NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
-                      ON monitor_sessions (status);
-                    CREATE TABLE IF NOT EXISTS system_logs (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      created_at TEXT NOT NULL,
-                      level TEXT NOT NULL,
-                      logger TEXT NOT NULL,
-                      message TEXT NOT NULL,
-                      payload TEXT
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_system_logs_created
-                      ON system_logs (created_at);
-                    CREATE TABLE IF NOT EXISTS session_locks (
-                      session_id TEXT PRIMARY KEY,
-                      user_id TEXT NOT NULL,
-                      created_time REAL NOT NULL,
-                      updated_time REAL NOT NULL,
-                      expires_at REAL NOT NULL
-                    );
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user
-                      ON session_locks (user_id);
-                    CREATE INDEX IF NOT EXISTS idx_session_locks_expires
-                      ON session_locks (expires_at);
-                    CREATE TABLE IF NOT EXISTS stream_events (
-                      session_id TEXT NOT NULL,
-                      event_id INTEGER NOT NULL,
-                      user_id TEXT NOT NULL,
-                      payload TEXT NOT NULL,
-                      created_time REAL NOT NULL,
-                      PRIMARY KEY (session_id, event_id)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_stream_events_user
-                      ON stream_events (user_id);
-                    CREATE INDEX IF NOT EXISTS idx_stream_events_time
-                      ON stream_events (created_time);
-                    CREATE TABLE IF NOT EXISTS memory_settings (
-                      user_id TEXT PRIMARY KEY,
-                      enabled INTEGER NOT NULL,
-                      updated_time REAL NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS memory_records (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      user_id TEXT NOT NULL,
-                      session_id TEXT NOT NULL,
-                      summary TEXT NOT NULL,
-                      created_time REAL NOT NULL,
-                      updated_time REAL NOT NULL,
-                      UNIQUE(user_id, session_id)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_memory_records_user_time
-                      ON memory_records (user_id, updated_time);
-                    CREATE TABLE IF NOT EXISTS memory_task_logs (
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      task_id TEXT NOT NULL,
-                      user_id TEXT NOT NULL,
-                      session_id TEXT NOT NULL,
-                      status TEXT NOT NULL,
-                      queued_time REAL NOT NULL,
-                      started_time REAL NOT NULL,
-                      finished_time REAL NOT NULL,
-                      elapsed_s REAL NOT NULL,
-                      request_payload TEXT,
-                      result TEXT,
-                      error TEXT,
-                      updated_time REAL NOT NULL,
-                      UNIQUE(user_id, session_id)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_memory_task_logs_updated
-                      ON memory_task_logs (updated_time);
-                    CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
-                      ON memory_task_logs (task_id);
-                    """
-                )
+            attempts = 0
+            while True:
+                try:
+                    with self._connect() as conn:
+                        statements = [
+                            """
+                            CREATE TABLE IF NOT EXISTS meta (
+                              key TEXT PRIMARY KEY,
+                              value TEXT NOT NULL,
+                              updated_time DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS chat_history (
+                              id BIGSERIAL PRIMARY KEY,
+                              user_id TEXT NOT NULL,
+                              session_id TEXT NOT NULL,
+                              role TEXT NOT NULL,
+                              content TEXT,
+                              timestamp TEXT,
+                              meta TEXT,
+                              payload TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_chat_history_session
+                              ON chat_history (user_id, session_id, id)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS tool_logs (
+                              id BIGSERIAL PRIMARY KEY,
+                              user_id TEXT NOT NULL,
+                              session_id TEXT NOT NULL,
+                              tool TEXT,
+                              ok INTEGER,
+                              error TEXT,
+                              args TEXT,
+                              data TEXT,
+                              timestamp TEXT,
+                              payload TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_tool_logs_session
+                              ON tool_logs (user_id, session_id, id)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS artifact_logs (
+                              id BIGSERIAL PRIMARY KEY,
+                              user_id TEXT NOT NULL,
+                              session_id TEXT NOT NULL,
+                              kind TEXT NOT NULL,
+                              name TEXT,
+                              payload TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
+                              ON artifact_logs (user_id, session_id, id)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS monitor_sessions (
+                              session_id TEXT PRIMARY KEY,
+                              user_id TEXT,
+                              status TEXT,
+                              updated_time DOUBLE PRECISION,
+                              payload TEXT NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
+                              ON monitor_sessions (status)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS system_logs (
+                              id BIGSERIAL PRIMARY KEY,
+                              created_at TIMESTAMPTZ NOT NULL,
+                              level TEXT NOT NULL,
+                              logger TEXT NOT NULL,
+                              message TEXT NOT NULL,
+                              payload TEXT
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_system_logs_created
+                              ON system_logs (created_at)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS session_locks (
+                              session_id TEXT PRIMARY KEY,
+                              user_id TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL,
+                              updated_time DOUBLE PRECISION NOT NULL,
+                              expires_at DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user
+                              ON session_locks (user_id)
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_session_locks_expires
+                              ON session_locks (expires_at)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS stream_events (
+                              session_id TEXT NOT NULL,
+                              event_id INTEGER NOT NULL,
+                              user_id TEXT NOT NULL,
+                              payload TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL,
+                              PRIMARY KEY (session_id, event_id)
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_stream_events_user
+                              ON stream_events (user_id)
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_stream_events_time
+                              ON stream_events (created_time)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS memory_settings (
+                              user_id TEXT PRIMARY KEY,
+                              enabled INTEGER NOT NULL,
+                              updated_time DOUBLE PRECISION NOT NULL
+                            )
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS memory_records (
+                              id BIGSERIAL PRIMARY KEY,
+                              user_id TEXT NOT NULL,
+                              session_id TEXT NOT NULL,
+                              summary TEXT NOT NULL,
+                              created_time DOUBLE PRECISION NOT NULL,
+                              updated_time DOUBLE PRECISION NOT NULL,
+                              UNIQUE(user_id, session_id)
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_memory_records_user_time
+                              ON memory_records (user_id, updated_time)
+                            """,
+                            """
+                            CREATE TABLE IF NOT EXISTS memory_task_logs (
+                              id BIGSERIAL PRIMARY KEY,
+                              task_id TEXT NOT NULL,
+                              user_id TEXT NOT NULL,
+                              session_id TEXT NOT NULL,
+                              status TEXT NOT NULL,
+                              queued_time DOUBLE PRECISION NOT NULL,
+                              started_time DOUBLE PRECISION NOT NULL,
+                              finished_time DOUBLE PRECISION NOT NULL,
+                              elapsed_s DOUBLE PRECISION NOT NULL,
+                              request_payload TEXT,
+                              result TEXT,
+                              error TEXT,
+                              updated_time DOUBLE PRECISION NOT NULL,
+                              UNIQUE(user_id, session_id)
+                            )
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_memory_task_logs_updated
+                              ON memory_task_logs (updated_time)
+                            """,
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
+                              ON memory_task_logs (task_id)
+                            """,
+                        ]
+                        for statement in statements:
+                            conn.execute(statement)
+                    break
+                except psycopg.OperationalError:
+                    attempts += 1
+                    if attempts >= 5:
+                        raise
+                    # 等待 PostgreSQL 就绪，避免启动时短暂拒绝连接。
+                    time.sleep(1)
             self._initialized = True
 
     def get_meta(self, key: str) -> Optional[str]:
         """读取元信息，用于迁移与版本控制。"""
         self.ensure_initialized()
         with self._connect() as conn:
-            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = %s", (key,)
+            ).fetchone()
             return row["value"] if row else None
 
     def set_meta(self, key: str, value: str) -> None:
@@ -185,7 +229,13 @@ class SQLiteStorage:
         self.ensure_initialized()
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value, updated_time) VALUES (?, ?, ?)",
+                """
+                INSERT INTO meta (key, value, updated_time)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (key) DO UPDATE SET
+                  value = EXCLUDED.value,
+                  updated_time = EXCLUDED.updated_time
+                """,
                 (key, value, time.time()),
             )
 
@@ -202,15 +252,15 @@ class SQLiteStorage:
             conn.execute(
                 """
                 INSERT INTO meta (key, value, updated_time)
-                VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                  value = CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER),
-                  updated_time = excluded.updated_time
+                VALUES (%s, %s, %s)
+                ON CONFLICT (key) DO UPDATE SET
+                  value = (meta.value::bigint + EXCLUDED.value::bigint)::text,
+                  updated_time = EXCLUDED.updated_time
                 """,
                 (key, str(delta), now),
             )
             row = conn.execute(
-                "SELECT value FROM meta WHERE key = ?", (key,)
+                "SELECT value FROM meta WHERE key = %s", (key,)
             ).fetchone()
         if not row:
             return 0
@@ -227,7 +277,7 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM meta WHERE key LIKE ?", (f"{cleaned}%",)
+                "DELETE FROM meta WHERE key LIKE %s", (f"{cleaned}%",)
             )
         return int(cursor.rowcount or 0)
 
@@ -242,51 +292,61 @@ class SQLiteStorage:
         cutoff = time.time() - (days * 86400)
         if cutoff <= 0:
             return {}
-        cutoff_int = int(cutoff)
+        cutoff_ts = datetime.fromtimestamp(cutoff, tz=timezone.utc)
 
         results: Dict[str, int] = {}
         with self._connect() as conn:
-            # 使用 created_time/updated_time 做时间判断，避免清理影响正在运行的会话
             results["chat_history"] = int(
-                (conn.execute("DELETE FROM chat_history WHERE created_time < ?", (cutoff,))).rowcount
+                (
+                    conn.execute(
+                        "DELETE FROM chat_history WHERE created_time < %s", (cutoff,)
+                    )
+                ).rowcount
                 or 0
             )
             results["tool_logs"] = int(
-                (conn.execute("DELETE FROM tool_logs WHERE created_time < ?", (cutoff,))).rowcount
+                (
+                    conn.execute(
+                        "DELETE FROM tool_logs WHERE created_time < %s", (cutoff,)
+                    )
+                ).rowcount
                 or 0
             )
             results["artifact_logs"] = int(
-                (conn.execute("DELETE FROM artifact_logs WHERE created_time < ?", (cutoff,))).rowcount
+                (
+                    conn.execute(
+                        "DELETE FROM artifact_logs WHERE created_time < %s", (cutoff,)
+                    )
+                ).rowcount
                 or 0
             )
             results["monitor_sessions"] = int(
                 (
                     conn.execute(
-                        "DELETE FROM monitor_sessions WHERE COALESCE(updated_time, 0) < ?",
+                        "DELETE FROM monitor_sessions WHERE COALESCE(updated_time, 0) < %s",
                         (cutoff,),
                     )
                 ).rowcount
                 or 0
             )
             results["stream_events"] = int(
-                (conn.execute("DELETE FROM stream_events WHERE created_time < ?", (cutoff,))).rowcount
+                (
+                    conn.execute(
+                        "DELETE FROM stream_events WHERE created_time < %s", (cutoff,)
+                    )
+                ).rowcount
                 or 0
             )
-            # 使用 strftime 解析 ISO 时间，避免因字符串格式差异导致比较错误
             results["system_logs"] = int(
                 (
                     conn.execute(
-                        """
-                        DELETE FROM system_logs
-                        WHERE CAST(strftime('%s', replace(created_at, 'Z', '')) AS INTEGER) < ?
-                        """,
-                        (cutoff_int,),
+                        "DELETE FROM system_logs WHERE created_at < %s",
+                        (cutoff_ts,),
                     )
                 ).rowcount
                 or 0
             )
         return results
-
     def try_acquire_session_lock(
         self,
         session_id: str,
@@ -307,13 +367,15 @@ class SQLiteStorage:
         expires_at = now + ttl_s
         with self._connect() as conn:
             try:
-                # 采用 IMMEDIATE 锁避免并发下计数与写入交叉
-                conn.execute("BEGIN IMMEDIATE")
+                # 使用 advisory lock 串行化锁竞争，避免并发下出现计数不一致。
                 conn.execute(
-                    "DELETE FROM session_locks WHERE expires_at <= ?", (now,)
+                    "SELECT pg_advisory_xact_lock(%s)", (self._ADVISORY_LOCK_KEY,)
+                )
+                conn.execute(
+                    "DELETE FROM session_locks WHERE expires_at <= %s", (now,)
                 )
                 row = conn.execute(
-                    "SELECT session_id FROM session_locks WHERE user_id = ?",
+                    "SELECT session_id FROM session_locks WHERE user_id = %s",
                     (cleaned_user,),
                 ).fetchone()
                 if row:
@@ -327,18 +389,13 @@ class SQLiteStorage:
                     """
                     INSERT INTO session_locks
                       (session_id, user_id, created_time, updated_time, expires_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (cleaned_session, cleaned_user, now, now, expires_at),
                 )
                 return "acquired"
-            except sqlite3.IntegrityError:
+            except psycopg.IntegrityError:
                 return "user_busy"
-            except sqlite3.OperationalError as exc:
-                message = str(exc).lower()
-                if "locked" in message or "busy" in message:
-                    return "global_busy"
-                raise
 
     def touch_session_lock(
         self, session_id: str, ttl_s: float, now_ts: Optional[float] = None
@@ -355,8 +412,8 @@ class SQLiteStorage:
             conn.execute(
                 """
                 UPDATE session_locks
-                SET updated_time = ?, expires_at = ?
-                WHERE session_id = ?
+                SET updated_time = %s, expires_at = %s
+                WHERE session_id = %s
                 """,
                 (now, expires_at, cleaned_session),
             )
@@ -369,7 +426,7 @@ class SQLiteStorage:
             return
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM session_locks WHERE session_id = ?",
+                "DELETE FROM session_locks WHERE session_id = %s",
                 (cleaned_session,),
             )
 
@@ -381,7 +438,7 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM session_locks WHERE user_id = ?",
+                "DELETE FROM session_locks WHERE user_id = %s",
                 (cleaned_user,),
             )
         return int(cursor.rowcount or 0)
@@ -409,9 +466,13 @@ class SQLiteStorage:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO stream_events
+                INSERT INTO stream_events
                   (session_id, event_id, user_id, payload, created_time)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (session_id, event_id) DO UPDATE SET
+                  user_id = EXCLUDED.user_id,
+                  payload = EXCLUDED.payload,
+                  created_time = EXCLUDED.created_time
                 """,
                 (cleaned_session, event_seq, cleaned_user, payload_json, now),
             )
@@ -419,45 +480,48 @@ class SQLiteStorage:
     def load_stream_events(
         self, session_id: str, after_event_id: int, limit: int
     ) -> List[Dict[str, Any]]:
-        """读取指定会话的 SSE 溢出事件。"""
+        """读取 SSE 溢出事件列表，用于重放恢复。"""
         self.ensure_initialized()
         cleaned_session = str(session_id or "").strip()
         if not cleaned_session or limit <= 0:
             return []
         try:
-            after_id = int(after_event_id)
+            after_event_id = int(after_event_id)
         except (TypeError, ValueError):
-            after_id = 0
+            after_event_id = -1
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT event_id, payload
+                SELECT event_id, payload, created_time
                 FROM stream_events
-                WHERE session_id = ? AND event_id > ?
+                WHERE session_id = %s AND event_id > %s
                 ORDER BY event_id ASC
-                LIMIT ?
+                LIMIT %s
                 """,
-                (cleaned_session, after_id, int(limit)),
+                (cleaned_session, after_event_id, int(limit)),
             ).fetchall()
-        records: List[Dict[str, Any]] = []
+        events: List[Dict[str, Any]] = []
         for row in rows:
             payload = self._json_loads(row["payload"])
             if not payload:
                 continue
             payload["event_id"] = int(row["event_id"] or 0)
-            records.append(payload)
-        return records
+            payload["created_time"] = float(row["created_time"] or 0)
+            events.append(payload)
+        return events
 
     def delete_stream_events_before(self, before_time: float) -> int:
-        """清理指定时间之前的 SSE 溢出事件。"""
+        """按时间戳清理 SSE 溢出事件，避免表膨胀。"""
         self.ensure_initialized()
         try:
             cutoff = float(before_time)
         except (TypeError, ValueError):
             return 0
+        if cutoff <= 0:
+            return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM stream_events WHERE created_time < ?",
+                "DELETE FROM stream_events WHERE created_time < %s",
                 (cutoff,),
             )
         return int(cursor.rowcount or 0)
@@ -470,11 +534,10 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM stream_events WHERE user_id = ?",
+                "DELETE FROM stream_events WHERE user_id = %s",
                 (cleaned_user,),
             )
         return int(cursor.rowcount or 0)
-
     def append_chat(self, user_id: str, payload: Dict[str, Any]) -> None:
         """写入对话历史记录。"""
         self.ensure_initialized()
@@ -490,7 +553,7 @@ class SQLiteStorage:
                 """
                 INSERT INTO chat_history
                   (user_id, session_id, role, content, timestamp, meta, payload, created_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     user_id,
@@ -512,21 +575,17 @@ class SQLiteStorage:
         ok_value = None if ok is None else 1 if bool(ok) else 0
         payload_json = self._json_dumps(payload)
         args_json = (
-            self._json_dumps(payload.get("args"))
-            if "args" in payload
-            else None
+            self._json_dumps(payload.get("args")) if "args" in payload else None
         )
         data_json = (
-            self._json_dumps(payload.get("data"))
-            if "data" in payload
-            else None
+            self._json_dumps(payload.get("data")) if "data" in payload else None
         )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO tool_logs
                   (user_id, session_id, tool, ok, error, args, data, timestamp, payload, created_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     user_id,
@@ -556,7 +615,7 @@ class SQLiteStorage:
                 """
                 INSERT INTO artifact_logs
                   (user_id, session_id, kind, name, payload, created_time)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     user_id,
@@ -582,9 +641,9 @@ class SQLiteStorage:
                 """
                 SELECT id, payload
                 FROM artifact_logs
-                WHERE user_id = ? AND session_id = ?
+                WHERE user_id = %s AND session_id = %s
                 ORDER BY id DESC
-                LIMIT ?
+                LIMIT %s
                 """,
                 (cleaned_user, cleaned_session, int(limit)),
             ).fetchall()
@@ -610,7 +669,6 @@ class SQLiteStorage:
                 limit_value = int(limit)
             except (TypeError, ValueError):
                 limit_value = None
-        # 数量小于等于 0 视为不限制，读取完整历史记录
         if limit_value is not None and limit_value <= 0:
             limit_value = None
 
@@ -620,7 +678,7 @@ class SQLiteStorage:
                     """
                     SELECT payload
                     FROM chat_history
-                    WHERE user_id = ? AND session_id = ?
+                    WHERE user_id = %s AND session_id = %s
                     ORDER BY id ASC
                     """,
                     (user_id, session_id),
@@ -630,9 +688,9 @@ class SQLiteStorage:
                     """
                     SELECT payload
                     FROM chat_history
-                    WHERE user_id = ? AND session_id = ?
+                    WHERE user_id = %s AND session_id = %s
                     ORDER BY id DESC
-                    LIMIT ?
+                    LIMIT %s
                     """,
                     (user_id, session_id, limit_value),
                 ).fetchall()
@@ -658,7 +716,7 @@ class SQLiteStorage:
                 """
                 SELECT payload
                 FROM chat_history
-                WHERE user_id = ? AND session_id = ? AND role = 'system'
+                WHERE user_id = %s AND session_id = %s AND role = 'system'
                 ORDER BY id ASC
                 """,
                 (user_id, session_id),
@@ -678,13 +736,11 @@ class SQLiteStorage:
                     if normalize_language(meta_language, fallback=True) != normalized_language:
                         continue
                 elif normalized_language != get_default_language():
-                    # 旧数据未记录语言时默认视为中文
                     continue
             content = payload.get("content")
             if isinstance(content, str) and content.strip():
                 return content
         return None
-
     def get_user_chat_stats(self) -> Dict[str, Dict[str, Any]]:
         """按用户统计对话记录数量与最近写入时间。"""
         self.ensure_initialized()
@@ -748,10 +804,10 @@ class SQLiteStorage:
         params: List[Any] = []
         filters: List[str] = []
         if isinstance(since_time, (int, float)) and since_time > 0:
-            filters.append("created_time >= ?")
+            filters.append("created_time >= %s")
             params.append(float(since_time))
         if isinstance(until_time, (int, float)) and until_time > 0:
-            filters.append("created_time <= ?")
+            filters.append("created_time <= %s")
             params.append(float(until_time))
         if filters:
             query += " WHERE " + " AND ".join(filters)
@@ -783,15 +839,15 @@ class SQLiteStorage:
                    COUNT(*) as tool_calls,
                    MAX(created_time) as last_time
             FROM tool_logs
-            WHERE tool = ?
+            WHERE tool = %s
         """
         params: List[Any] = [cleaned]
         filters: List[str] = []
         if isinstance(since_time, (int, float)) and since_time > 0:
-            filters.append("created_time >= ?")
+            filters.append("created_time >= %s")
             params.append(float(since_time))
         if isinstance(until_time, (int, float)) and until_time > 0:
-            filters.append("created_time <= ?")
+            filters.append("created_time <= %s")
             params.append(float(until_time))
         if filters:
             query += " AND " + " AND ".join(filters)
@@ -822,9 +878,14 @@ class SQLiteStorage:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO monitor_sessions
+                INSERT INTO monitor_sessions
                   (session_id, user_id, status, updated_time, payload)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (session_id) DO UPDATE SET
+                  user_id = EXCLUDED.user_id,
+                  status = EXCLUDED.status,
+                  updated_time = EXCLUDED.updated_time,
+                  payload = EXCLUDED.payload
                 """,
                 (
                     session_id,
@@ -851,14 +912,17 @@ class SQLiteStorage:
         """删除指定监控会话记录。"""
         self.ensure_initialized()
         with self._connect() as conn:
-            conn.execute("DELETE FROM monitor_sessions WHERE session_id = ?", (session_id,))
+            conn.execute(
+                "DELETE FROM monitor_sessions WHERE session_id = %s",
+                (session_id,),
+            )
 
     def delete_monitor_records_by_user(self, user_id: str) -> int:
         """按用户清理监控会话记录。"""
         self.ensure_initialized()
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM monitor_sessions WHERE user_id = ?", (user_id,)
+                "DELETE FROM monitor_sessions WHERE user_id = %s", (user_id,)
             )
         return int(cursor.rowcount or 0)
 
@@ -867,7 +931,7 @@ class SQLiteStorage:
         self.ensure_initialized()
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM chat_history WHERE user_id = ?", (user_id,)
+                "DELETE FROM chat_history WHERE user_id = %s", (user_id,)
             )
         return int(cursor.rowcount or 0)
 
@@ -876,7 +940,7 @@ class SQLiteStorage:
         self.ensure_initialized()
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM tool_logs WHERE user_id = ?", (user_id,)
+                "DELETE FROM tool_logs WHERE user_id = %s", (user_id,)
             )
         return int(cursor.rowcount or 0)
 
@@ -885,10 +949,9 @@ class SQLiteStorage:
         self.ensure_initialized()
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM artifact_logs WHERE user_id = ?", (user_id,)
+                "DELETE FROM artifact_logs WHERE user_id = %s", (user_id,)
             )
         return int(cursor.rowcount or 0)
-
     def get_memory_enabled(self, user_id: str) -> Optional[bool]:
         """获取用户长期记忆开关状态。"""
         self.ensure_initialized()
@@ -897,7 +960,7 @@ class SQLiteStorage:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT enabled FROM memory_settings WHERE user_id = ?",
+                "SELECT enabled FROM memory_settings WHERE user_id = %s",
                 (cleaned,),
             ).fetchone()
         if not row:
@@ -905,26 +968,23 @@ class SQLiteStorage:
         return bool(row["enabled"])
 
     def set_memory_enabled(
-        self,
-        user_id: str,
-        enabled: bool,
-        now_ts: Optional[float] = None,
+        self, user_id: str, enabled: bool, now_ts: Optional[float] = None
     ) -> None:
-        """更新用户长期记忆开关状态。"""
+        """设置用户长期记忆开关。"""
         self.ensure_initialized()
         cleaned = str(user_id or "").strip()
         if not cleaned:
             return
-        now = float(now_ts if now_ts is not None else time.time())
         enabled_value = 1 if bool(enabled) else 0
+        now = float(now_ts if now_ts is not None else time.time())
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO memory_settings (user_id, enabled, updated_time)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                  enabled = excluded.enabled,
-                  updated_time = excluded.updated_time
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                  enabled = EXCLUDED.enabled,
+                  updated_time = EXCLUDED.updated_time
                 """,
                 (cleaned, enabled_value, now),
             )
@@ -969,23 +1029,23 @@ class SQLiteStorage:
                 """
                 INSERT INTO memory_records
                   (user_id, session_id, summary, created_time, updated_time)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, session_id) DO UPDATE SET
-                  summary = excluded.summary,
-                  updated_time = excluded.updated_time
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, session_id) DO UPDATE SET
+                  summary = EXCLUDED.summary,
+                  updated_time = EXCLUDED.updated_time
                 """,
                 (cleaned_user, cleaned_session, cleaned_summary, now, now),
             )
             conn.execute(
                 """
                 DELETE FROM memory_records
-                WHERE user_id = ?
+                WHERE user_id = %s
                   AND id NOT IN (
                     SELECT id
                     FROM memory_records
-                    WHERE user_id = ?
+                    WHERE user_id = %s
                     ORDER BY updated_time DESC, id DESC
-                    LIMIT ?
+                    LIMIT %s
                   )
                 """,
                 (cleaned_user, cleaned_user, safe_limit),
@@ -993,11 +1053,11 @@ class SQLiteStorage:
             conn.execute(
                 """
                 DELETE FROM memory_task_logs
-                WHERE user_id = ?
+                WHERE user_id = %s
                   AND session_id NOT IN (
                     SELECT session_id
                     FROM memory_records
-                    WHERE user_id = ?
+                    WHERE user_id = %s
                   )
                 """,
                 (cleaned_user, cleaned_user),
@@ -1021,9 +1081,9 @@ class SQLiteStorage:
                 f"""
                 SELECT session_id, summary, created_time, updated_time
                 FROM memory_records
-                WHERE user_id = ?
+                WHERE user_id = %s
                 ORDER BY updated_time {direction}, id {direction}
-                LIMIT ?
+                LIMIT %s
                 """,
                 (cleaned, int(limit)),
             ).fetchall()
@@ -1072,7 +1132,7 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM memory_records WHERE user_id = ? AND session_id = ?",
+                "DELETE FROM memory_records WHERE user_id = %s AND session_id = %s",
                 (cleaned_user, cleaned_session),
             )
         return int(cursor.rowcount or 0)
@@ -1085,12 +1145,10 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM memory_records WHERE user_id = ?",
+                "DELETE FROM memory_records WHERE user_id = %s",
                 (cleaned_user,),
             )
         return int(cursor.rowcount or 0)
-
-
     def upsert_memory_task_log(
         self,
         user_id: str,
@@ -1130,18 +1188,18 @@ class SQLiteStorage:
                 INSERT INTO memory_task_logs
                   (task_id, user_id, session_id, status, queued_time, started_time,
                    finished_time, elapsed_s, request_payload, result, error, updated_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, session_id) DO UPDATE SET
-                  task_id = excluded.task_id,
-                  status = excluded.status,
-                  queued_time = excluded.queued_time,
-                  started_time = excluded.started_time,
-                  finished_time = excluded.finished_time,
-                  elapsed_s = excluded.elapsed_s,
-                  request_payload = excluded.request_payload,
-                  result = excluded.result,
-                  error = excluded.error,
-                  updated_time = excluded.updated_time
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id, session_id) DO UPDATE SET
+                  task_id = EXCLUDED.task_id,
+                  status = EXCLUDED.status,
+                  queued_time = EXCLUDED.queued_time,
+                  started_time = EXCLUDED.started_time,
+                  finished_time = EXCLUDED.finished_time,
+                  elapsed_s = EXCLUDED.elapsed_s,
+                  request_payload = EXCLUDED.request_payload,
+                  result = EXCLUDED.result,
+                  error = EXCLUDED.error,
+                  updated_time = EXCLUDED.updated_time
                 """,
                 (
                     cleaned_task,
@@ -1170,7 +1228,7 @@ class SQLiteStorage:
         params: List[Any] = []
         if limit is not None:
             safe_limit = max(1, int(limit))
-            sql += " LIMIT ?"
+            sql += " LIMIT %s"
             params.append(safe_limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -1191,11 +1249,13 @@ class SQLiteStorage:
             )
         return logs
 
-    def load_memory_task_log_by_task_id(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """读取指定 task_id 的长期记忆任务日志详情。"""
+    def load_memory_task_log_by_task_id(
+        self, task_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """按 task_id 获取单条任务日志。"""
         self.ensure_initialized()
-        cleaned_task = str(task_id or "").strip()
-        if not cleaned_task:
+        cleaned = str(task_id or "").strip()
+        if not cleaned:
             return None
         with self._connect() as conn:
             row = conn.execute(
@@ -1203,11 +1263,11 @@ class SQLiteStorage:
                 SELECT task_id, user_id, session_id, status, queued_time, started_time,
                        finished_time, elapsed_s, request_payload, result, error, updated_time
                 FROM memory_task_logs
-                WHERE task_id = ?
+                WHERE task_id = %s
                 ORDER BY updated_time DESC, id DESC
                 LIMIT 1
                 """,
-                (cleaned_task,),
+                (cleaned,),
             ).fetchone()
         if not row:
             return None
@@ -1220,14 +1280,14 @@ class SQLiteStorage:
             "started_time": float(row["started_time"] or 0),
             "finished_time": float(row["finished_time"] or 0),
             "elapsed_s": float(row["elapsed_s"] or 0),
-            "request_payload": str(row["request_payload"] or ""),
+            "request_payload": self._json_loads(row["request_payload"]),
             "result": str(row["result"] or ""),
             "error": str(row["error"] or ""),
             "updated_time": float(row["updated_time"] or 0),
         }
 
     def delete_memory_task_log(self, user_id: str, session_id: str) -> int:
-        """删除指定会话的长期记忆任务日志。"""
+        """删除指定会话的记忆任务日志。"""
         self.ensure_initialized()
         cleaned_user = str(user_id or "").strip()
         cleaned_session = str(session_id or "").strip()
@@ -1235,33 +1295,33 @@ class SQLiteStorage:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id = ?",
+                "DELETE FROM memory_task_logs WHERE user_id = %s AND session_id = %s",
                 (cleaned_user, cleaned_session),
             )
         return int(cursor.rowcount or 0)
 
     def delete_memory_task_logs_by_user(self, user_id: str) -> int:
-        """删除用户所有长期记忆任务日志。"""
+        """清理用户所有记忆任务日志。"""
         self.ensure_initialized()
         cleaned_user = str(user_id or "").strip()
         if not cleaned_user:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM memory_task_logs WHERE user_id = ?",
+                "DELETE FROM memory_task_logs WHERE user_id = %s",
                 (cleaned_user,),
             )
         return int(cursor.rowcount or 0)
 
     def delete_memory_settings_by_user(self, user_id: str) -> int:
-        """删除用户长期记忆开关配置。"""
+        """清理用户记忆开关配置。"""
         self.ensure_initialized()
         cleaned_user = str(user_id or "").strip()
         if not cleaned_user:
             return 0
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM memory_settings WHERE user_id = ?",
+                "DELETE FROM memory_settings WHERE user_id = %s",
                 (cleaned_user,),
             )
         return int(cursor.rowcount or 0)
@@ -1281,54 +1341,18 @@ class SQLiteStorage:
             conn.execute(
                 """
                 INSERT INTO system_logs (created_at, level, logger, message, payload)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (created_at, level, logger, message, payload_json),
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        """创建 SQLite 连接并开启 WAL 模式。"""
-        self._ensure_db_dir()
-        conn = sqlite3.connect(self._db_path, timeout=5, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        if self._wal_enabled is None:
-            try:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                self._wal_enabled = True
-            except sqlite3.OperationalError:
-                # åœ¨ä¸€äº›æŒ‚è½½å·/åªè¯»çŽ¯å¢ƒä¸­ WAL å¯èƒ½ä¸?å¯ç”¨ï¼Œéœ€è¦é™çº§é¿å…é‡è¯•æŠ¥é”™
-                self._wal_enabled = False
-                try:
-                    conn.execute("PRAGMA journal_mode=DELETE;")
-                except sqlite3.OperationalError:
-                    pass
-        elif self._wal_enabled is False:
-            try:
-                conn.execute("PRAGMA journal_mode=DELETE;")
-            except sqlite3.OperationalError:
-                pass
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        conn.execute("PRAGMA busy_timeout=3000;")
-        return conn
-
-    def _ensure_db_dir(self) -> None:
-        """ç¡®ä¿æ•°æ®åº“è·¯å¾„å¯ç”¨ï¼Œé¿å…å› ç›®å½•ä¸¢å¤±å¯¼è‡´æ— æ³•è¿žæŽ¥ã€?"""
-        if self._db_path.exists() and self._db_path.is_dir():
-            raise sqlite3.OperationalError(
-                f"æ•°æ®åº“è·¯å¾„æŒ‡å‘äº†ç›®å½•ï¼š{self._db_path}"
-            )
-        parent = self._db_path.parent
-        if parent.exists() and not parent.is_dir():
-            raise sqlite3.OperationalError(
-                f"æ•°æ®åº“ç›®å½•è·¯å¾„ä¸?æ˜¯ç›®å½•ï¼š{parent}"
-            )
-        try:
-            parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise sqlite3.OperationalError(
-                f"æ— æ³•åˆ›å»ºæ•°æ®åº“ç›®å½•ï¼š{parent}"
-            ) from exc
+    def _connect(self) -> psycopg.Connection:
+        """创建 PostgreSQL 连接并启用 dict_row 便于读取字段。"""
+        return psycopg.connect(
+            self._dsn,
+            connect_timeout=self._connect_timeout_s,
+            row_factory=dict_row,
+        )
 
     @staticmethod
     def _json_dumps(value: Any) -> str:
@@ -1347,46 +1371,3 @@ class SQLiteStorage:
         if isinstance(payload, dict):
             return payload
         return None
-
-
-class StorageLogHandler(logging.Handler):
-    """将日志写入存储层的日志处理器。"""
-
-    def __init__(self, storage: Any) -> None:
-        super().__init__()
-        self._storage = storage
-        self._lock = threading.Lock()
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """落库日志，失败时静默降级。"""
-        try:
-            created_at = datetime.utcfromtimestamp(record.created).isoformat() + "Z"
-            payload = {
-                "pathname": record.pathname,
-                "module": record.module,
-                "func_name": record.funcName,
-                "lineno": record.lineno,
-                "process": record.process,
-                "thread": record.thread,
-                "thread_name": record.threadName,
-            }
-            if record.exc_info:
-                payload["exception"] = self._format_exception(record)
-            if record.stack_info:
-                payload["stack"] = record.stack_info
-            with self._lock:
-                self._storage.write_system_log(
-                    created_at=created_at,
-                    level=record.levelname,
-                    logger=record.name,
-                    message=record.getMessage(),
-                    payload=payload,
-                )
-        except Exception:
-            return
-
-    def _format_exception(self, record: logging.LogRecord) -> str:
-        """格式化异常堆栈，避免丢失关键信息。"""
-        if self.formatter:
-            return self.formatter.formatException(record.exc_info)
-        return logging.Formatter().formatException(record.exc_info)

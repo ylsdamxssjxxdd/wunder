@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>内置工具：基础手脚</h2>
+        <h2>内置工具：手和脚</h2>
         <p class="section-lead">先把常用动作标准化</p>
         <div class="grid two">
           <div class="card stack">

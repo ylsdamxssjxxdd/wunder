@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 
 from app.schemas.wunder import StreamEvent
-from app.storage.sqlite import SQLiteStorage
+from app.storage import Storage
 
 
 class StreamEventStore:
@@ -12,7 +12,7 @@ class StreamEventStore:
 
     def __init__(
         self,
-        storage: SQLiteStorage,
+        storage: Storage,
         *,
         ttl_s: float,
         cleanup_interval_s: float,

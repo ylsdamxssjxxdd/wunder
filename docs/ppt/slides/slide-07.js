@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>Skills 工具：经验固化为流程</h2>
+        <h2>Skills 工具：通关攻略</h2>
         <p class="section-lead">把成功经验写成可重复的 SOP</p>
         <div class="grid two">
           <div class="card stack">

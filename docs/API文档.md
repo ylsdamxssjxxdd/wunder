@@ -824,7 +824,8 @@
 
 ### 4.5 存储说明
 
-- 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入 SQLite（配置项 `storage.db_path`）。
+- 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入数据库（默认 PostgreSQL，可选 SQLite）。
+- 存储后端由 `storage.backend` 控制，SQLite 使用 `storage.db_path`，PostgreSQL 使用 `storage.postgres.dsn`。
 - 旧版 `data/historys/` 仅用于迁移与兼容，不再作为主存储。
 
 ### 4.6 沙盒服务 API

@@ -29,7 +29,7 @@ from app.core.i18n import get_language, t
 from app.knowledge.service import build_knowledge_tool_specs
 from app.monitor.registry import monitor
 from app.schemas.wunder import WunderRequest
-from app.storage.sqlite import get_storage
+from app.storage import get_storage
 from app.tools.availability import (
     build_a2a_tool_specs,
     build_enabled_builtin_specs,
@@ -65,7 +65,7 @@ class A2AService:
 
     def __init__(self, orchestrator) -> None:
         self._orchestrator = orchestrator
-        self._storage = get_storage(orchestrator.config.storage.db_path)
+        self._storage = get_storage(orchestrator.config.storage)
         self._logger = logging.getLogger("wunder.a2a")
 
     def _resolve_agent_description(self) -> str:

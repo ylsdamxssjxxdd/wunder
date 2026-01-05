@@ -246,7 +246,9 @@ class ToolExecutor:
                 "allow_commands": ctx.config.security.allow_commands,
                 "allow_paths": allow_paths,
                 "deny_globs": ctx.config.security.deny_globs,
+                "storage_backend": ctx.config.storage.backend,
                 "storage_db_path": ctx.config.storage.db_path,
+                "storage_postgres_dsn": ctx.config.storage.postgres.dsn,
                 "api_key": ctx.config.security.api_key,
                 "server_port": ctx.config.server.port,
                 # 透传 A2A 服务配置，便于工具侧复用鉴权与默认超时

@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip active" href="#10">共享</a>
           </div>
         </div>
-        <h2>共享工具：团队复用能力</h2>
+        <h2>共享工具：装备市场</h2>
         <p class="section-lead">能力共享，但工作区仍独立</p>
         <div class="grid two">
           <div class="card stack">

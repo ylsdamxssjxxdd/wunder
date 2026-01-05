@@ -1,0 +1,166 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .title {
+        font: 600 20px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .subtitle {
+        font: 500 16px "Segoe UI", "Arial", sans-serif;
+        fill: #5b6b8c;
+      }
+      .center-title {
+        font: 700 22px "Segoe UI", "Arial", sans-serif;
+        fill: #ffffff;
+      }
+      .center-sub {
+        font: 500 16px "Segoe UI", "Arial", sans-serif;
+        fill: rgba(255, 255, 255, 0.92);
+      }
+      .center-meta {
+        font: 500 14px "Segoe UI", "Arial", sans-serif;
+        fill: rgba(255, 255, 255, 0.8);
+      }
+      .icon-box {
+        fill: #f5f7ff;
+        stroke: #e1e7f2;
+      }
+      .icon-stroke {
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+    </style>
+  </defs>
+
+  <rect x="24" y="24" width="1152" height="672" rx="28" fill="#F8FAFF" stroke="#E6ECF5" />
+
+  <line x1="600" y1="360" x2="600" y2="108" stroke="#C7D2E5" stroke-width="2" />
+  <line x1="600" y1="360" x2="970" y2="218" stroke="#C7D2E5" stroke-width="2" />
+  <line x1="600" y1="360" x2="970" y2="498" stroke="#C7D2E5" stroke-width="2" />
+  <line x1="600" y1="360" x2="600" y2="612" stroke="#C7D2E5" stroke-width="2" />
+  <line x1="600" y1="360" x2="230" y2="498" stroke="#C7D2E5" stroke-width="2" />
+  <line x1="600" y1="360" x2="230" y2="218" stroke="#C7D2E5" stroke-width="2" />
+
+  <g filter="url(#shadow)">
+    <rect x="420" y="300" width="360" height="120" rx="20" fill="#2F5DFF" />
+  </g>
+  <text x="600" y="352" text-anchor="middle" class="center-title">Orchestration Layer</text>
+  <text x="600" y="380" text-anchor="middle" class="center-sub">Orchestrator</text>
+  <text x="600" y="406" text-anchor="middle" class="center-meta">
+    Routing / Composition / Governance / Execution
+  </text>
+
+  <g filter="url(#shadow)">
+    <rect x="450" y="60" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- 内置工具图标 -->
+  <g transform="translate(468 78)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#4C6FFF">
+      <line x1="10" y1="7" x2="10" y2="14" />
+      <line x1="14" y1="7" x2="14" y2="14" />
+      <line x1="18" y1="7" x2="18" y2="14" />
+      <line x1="22" y1="9" x2="22" y2="14" />
+      <rect x="10" y="14" width="12" height="10" rx="4" />
+      <line x1="10" y1="19" x2="6" y2="15" />
+    </g>
+  </g>
+  <text x="510" y="98" class="title">Built-in tools</text>
+  <text x="510" y="126" class="subtitle">Hands &amp; Feet</text>
+
+  <g filter="url(#shadow)">
+    <rect x="820" y="170" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- MCP 工具图标 -->
+  <g transform="translate(838 188)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#FF8A4C">
+      <line x1="10" y1="22" x2="22" y2="10" />
+      <line x1="10" y1="10" x2="22" y2="22" />
+      <line x1="8" y1="24" x2="12" y2="20" />
+      <line x1="24" y1="8" x2="20" y2="12" />
+    </g>
+  </g>
+  <text x="880" y="208" class="title">MCP tools</text>
+  <text x="880" y="236" class="subtitle">Knife &amp; Sword</text>
+
+  <g filter="url(#shadow)">
+    <rect x="820" y="450" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- 共享工具图标 -->
+  <g transform="translate(838 468)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#4CB9FF">
+      <circle cx="12" cy="14" r="3" />
+      <circle cx="20" cy="14" r="3" />
+      <path d="M6 24c0-3 3-5 6-5" />
+      <path d="M14 24c0-3 3-5 6-5" />
+    </g>
+  </g>
+  <text x="880" y="488" class="title">Shared tools</text>
+  <text x="880" y="516" class="subtitle">Gear Market</text>
+
+  <g filter="url(#shadow)">
+    <rect x="450" y="564" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- 知识库工具图标 -->
+  <g transform="translate(468 582)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#24C18F">
+      <rect x="8" y="9" width="8" height="14" rx="2" />
+      <rect x="16" y="9" width="8" height="14" rx="2" />
+      <line x1="16" y1="9" x2="16" y2="23" />
+    </g>
+  </g>
+  <text x="510" y="602" class="title">Knowledge tools</text>
+  <text x="510" y="630" class="subtitle">Encyclopedia</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="450" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- 自建工具图标 -->
+  <g transform="translate(98 468)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#F5C542">
+      <rect x="8" y="14" width="16" height="10" rx="2" />
+      <rect x="12" y="9" width="8" height="5" rx="2" />
+      <line x1="8" y1="18" x2="24" y2="18" />
+    </g>
+  </g>
+  <text x="140" y="488" class="title">Custom tools</text>
+  <text x="140" y="516" class="subtitle">Private Gear</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="170" width="300" height="96" rx="18" fill="#FFFFFF" stroke="#E1E7F2" />
+  </g>
+  <!-- Skills 工具图标 -->
+  <g transform="translate(98 188)">
+    <rect class="icon-box" width="32" height="32" rx="8" />
+    <g class="icon-stroke" stroke="#9B8AFB">
+      <rect x="9" y="7" width="14" height="18" rx="3" />
+      <polyline points="12 12 13.5 13.5 16 10.5" />
+      <line x1="18" y1="12" x2="21" y2="12" />
+      <polyline points="12 18 13.5 19.5 16 16.5" />
+      <line x1="18" y1="18" x2="21" y2="18" />
+    </g>
+  </g>
+  <text x="140" y="208" class="title">Skills tools</text>
+  <text x="140" y="236" class="subtitle">Walkthrough Guide</text>
+</svg>

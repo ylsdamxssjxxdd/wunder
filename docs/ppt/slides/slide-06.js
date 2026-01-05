@@ -18,7 +18,7 @@ export default function buildSlide() {
             <a class="section-chip" href="#10">共享</a>
           </div>
         </div>
-        <h2>MCP 工具：接入外部系统</h2>
+        <h2>MCP 工具：刀和剑</h2>
         <p class="section-lead">当内置不够用，就把外部能力接进来</p>
         <div class="grid two">
           <div class="card stack">
