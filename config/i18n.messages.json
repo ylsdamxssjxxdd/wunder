@@ -1,0 +1,1370 @@
+{
+  "attachment.default_name": {
+    "en-US": "Attachment",
+    "zh-CN": "附件"
+  },
+  "attachment.image_prompt": {
+    "en-US": "Please refer to the following image.",
+    "zh-CN": "请参考以下图片。"
+  },
+  "attachment.label": {
+    "en-US": "Attachment",
+    "zh-CN": "附件"
+  },
+  "attachment.label.separator": {
+    "en-US": ": ",
+    "zh-CN": "："
+  },
+  "compaction.reason.context_too_long": {
+    "en-US": "Context too long; starting compaction.",
+    "zh-CN": "上下文过长，开始压缩"
+  },
+  "compaction.reason.history_threshold": {
+    "en-US": "History tokens reached the threshold; starting compaction.",
+    "zh-CN": "历史 token 已达阈值，开始压缩"
+  },
+  "compaction.summary_fallback": {
+    "en-US": "Summary generation failed; history was automatically trimmed.",
+    "zh-CN": "摘要生成失败，已自动裁剪历史。"
+  },
+  "error.absolute_path_forbidden": {
+    "en-US": "Absolute paths are not allowed",
+    "zh-CN": "不允许使用绝对路径"
+  },
+  "error.api_key_invalid": {
+    "en-US": "Invalid API key",
+    "zh-CN": "API key 无效"
+  },
+  "error.api_key_missing": {
+    "en-US": "API key is not configured",
+    "zh-CN": "API key 未配置"
+  },
+  "error.base_url_or_model_required": {
+    "en-US": "base_url or model is required",
+    "zh-CN": "base_url 或 model 不能为空"
+  },
+  "error.config_file_not_found": {
+    "en-US": "Config file not found: {path}",
+    "zh-CN": "配置文件不存在: {path}"
+  },
+  "error.content_required": {
+    "en-US": "Content is required",
+    "zh-CN": "内容不能为空"
+  },
+  "error.converter_doc2md_convert_failed": {
+    "en-US": "doc2md conversion failed",
+    "zh-CN": "doc2md 转换失败"
+  },
+  "error.converter_doc2md_failed": {
+    "en-US": "doc2md execution failed",
+    "zh-CN": "doc2md 执行失败"
+  },
+  "error.converter_doc2md_no_output": {
+    "en-US": "doc2md did not produce an output file",
+    "zh-CN": "doc2md 未生成输出文件"
+  },
+  "error.converter_empty_result": {
+    "en-US": "Conversion result is empty",
+    "zh-CN": "转换结果为空"
+  },
+  "error.converter_openpyxl_unavailable": {
+    "en-US": "openpyxl is unavailable: {detail}",
+    "zh-CN": "openpyxl 不可用: {detail}"
+  },
+  "error.converter_python_converter_not_found": {
+    "en-US": "No available Python converter for: {ext}",
+    "zh-CN": "未找到可用的 Python 转换器: {ext}"
+  },
+  "error.converter_python_docx_unavailable": {
+    "en-US": "python-docx is unavailable: {detail}",
+    "zh-CN": "python-docx 不可用: {detail}"
+  },
+  "error.converter_python_pptx_unavailable": {
+    "en-US": "python-pptx is unavailable: {detail}",
+    "zh-CN": "python-pptx 不可用: {detail}"
+  },
+  "error.converter_read_text_failed": {
+    "en-US": "Failed to read text",
+    "zh-CN": "文本读取失败"
+  },
+  "error.converter_unique_markdown_name": {
+    "en-US": "Unable to generate a unique Markdown filename",
+    "zh-CN": "无法生成唯一的 Markdown 文件名"
+  },
+  "error.empty_parse_result": {
+    "en-US": "Parsed result is empty",
+    "zh-CN": "解析结果为空"
+  },
+  "error.file_extension_missing": {
+    "en-US": "File extension is missing",
+    "zh-CN": "文件缺少扩展名"
+  },
+  "error.file_not_found": {
+    "en-US": "File not found",
+    "zh-CN": "文件不存在"
+  },
+  "error.internal_error": {
+    "en-US": "Internal error",
+    "zh-CN": "内部错误"
+  },
+  "error.knowledge_base_name_invalid": {
+    "en-US": "Invalid knowledge base name; cannot generate default directory",
+    "zh-CN": "知识库名称不合法，无法生成默认目录"
+  },
+  "error.knowledge_base_name_required": {
+    "en-US": "Knowledge base name is required",
+    "zh-CN": "知识库名称不能为空"
+  },
+  "error.knowledge_base_not_found": {
+    "en-US": "Knowledge base not found",
+    "zh-CN": "知识库不存在"
+  },
+  "error.knowledge_name_invalid_path": {
+    "en-US": "Knowledge base name contains invalid path segments",
+    "zh-CN": "知识库名称包含非法路径"
+  },
+  "error.knowledge_path_out_of_bounds": {
+    "en-US": "Knowledge base path traversal is forbidden",
+    "zh-CN": "知识库路径越界访问被禁止"
+  },
+  "error.knowledge_query_required": {
+    "en-US": "Knowledge query is required",
+    "zh-CN": "知识库查询不能为空"
+  },
+  "error.knowledge_root_create_failed": {
+    "en-US": "Failed to create knowledge base directory: {root}, {detail}",
+    "zh-CN": "无法创建知识库目录: {root}, {detail}"
+  },
+  "error.knowledge_root_not_dir": {
+    "en-US": "Knowledge base path is not a directory",
+    "zh-CN": "知识库目录不是文件夹"
+  },
+  "error.knowledge_root_not_found": {
+    "en-US": "Knowledge base directory not found",
+    "zh-CN": "知识库目录不存在"
+  },
+  "error.llm_call_failed": {
+    "en-US": "LLM call failed: {detail}",
+    "zh-CN": "模型调用失败: {detail}"
+  },
+  "error.llm_config_missing": {
+    "en-US": "LLM base_url or api_key is not configured.",
+    "zh-CN": "LLM 未配置 base_url 或 api_key。"
+  },
+  "error.llm_config_required": {
+    "en-US": "At least one LLM configuration is required",
+    "zh-CN": "至少需要一套模型配置"
+  },
+  "error.llm_not_configured": {
+    "en-US": "LLM is not configured; cannot generate a response.",
+    "zh-CN": "LLM 未配置，无法生成回复。"
+  },
+  "error.llm_request_failed": {
+    "en-US": "LLM request failed.",
+    "zh-CN": "LLM 请求失败。"
+  },
+  "error.llm_stream_interrupted": {
+    "en-US": "LLM streaming response was interrupted.",
+    "zh-CN": "LLM 流式响应中断。"
+  },
+  "error.llm_stream_retry_exhausted": {
+    "en-US": "Stream reconnect failed; maximum retries reached.",
+    "zh-CN": "流式重连失败，已达到最大重试次数。"
+  },
+  "error.llm_unavailable": {
+    "en-US": "LLM unavailable: {detail}",
+    "zh-CN": "模型不可用: {detail}"
+  },
+  "error.markdown_only": {
+    "en-US": "Only Markdown files are supported",
+    "zh-CN": "仅支持 Markdown 文件"
+  },
+  "error.max_rounds_no_final_answer": {
+    "en-US": "Unable to produce a final answer within the maximum rounds.",
+    "zh-CN": "未能在最大轮次内生成最终答复。"
+  },
+  "error.mcp_server_disabled": {
+    "en-US": "MCP server disabled: {name}",
+    "zh-CN": "MCP Server 未启用: {name}"
+  },
+  "error.mcp_server_not_found": {
+    "en-US": "MCP server not found: {name}",
+    "zh-CN": "MCP Server 不存在: {name}"
+  },
+  "error.mcp_tool_not_allowed": {
+    "en-US": "This tool is not allowed.",
+    "zh-CN": "该工具未被允许调用。"
+  },
+  "error.param_required": {
+    "en-US": "Parameters are required",
+    "zh-CN": "参数不能为空"
+  },
+  "error.path_out_of_bounds": {
+    "en-US": "Path traversal is forbidden",
+    "zh-CN": "路径越界访问被禁止"
+  },
+  "error.question_required": {
+    "en-US": "Question is required",
+    "zh-CN": "问题不能为空"
+  },
+  "error.session_cancelled": {
+    "en-US": "Session cancelled",
+    "zh-CN": "会话已取消"
+  },
+  "error.session_not_found": {
+    "en-US": "Session not found",
+    "zh-CN": "会话不存在"
+  },
+  "error.session_not_found_or_finished": {
+    "en-US": "Session not found or already finished",
+    "zh-CN": "会话不存在或已结束"
+  },
+  "error.session_not_found_or_running": {
+    "en-US": "Session not found or still running",
+    "zh-CN": "会话不存在或仍在运行"
+  },
+  "error.skill_delete_failed": {
+    "en-US": "Failed to delete skill: {detail}",
+    "zh-CN": "删除技能失败: {detail}"
+  },
+  "error.skill_delete_restricted": {
+    "en-US": "Only skills under EVA_SKILLS can be deleted",
+    "zh-CN": "仅支持删除 EVA_SKILLS 目录内的技能"
+  },
+  "error.skill_delete_update_failed": {
+    "en-US": "Skill deleted but failed to update config: {detail}",
+    "zh-CN": "技能已删除，但更新配置失败: {detail}"
+  },
+  "error.skill_file_not_found": {
+    "en-US": "Skill file not found",
+    "zh-CN": "技能文件不存在"
+  },
+  "error.skill_file_read_failed": {
+    "en-US": "Failed to read skill file: {detail}",
+    "zh-CN": "读取技能文件失败: {detail}"
+  },
+  "error.skill_name_required": {
+    "en-US": "Skill name is required",
+    "zh-CN": "技能名称不能为空"
+  },
+  "error.skill_not_executable": {
+    "en-US": "Skill not found or not executable: {name}",
+    "zh-CN": "技能不存在或不可执行: {name}"
+  },
+  "error.skill_not_found": {
+    "en-US": "Skill not found",
+    "zh-CN": "技能不存在"
+  },
+  "error.skill_upload_zip_only": {
+    "en-US": "Only .zip archives are supported",
+    "zh-CN": "仅支持上传 .zip 压缩包"
+  },
+  "error.skills_dir_missing": {
+    "en-US": "EVA_SKILLS directory not found",
+    "zh-CN": "EVA_SKILLS 目录不存在"
+  },
+  "error.system_prompt_failed": {
+    "en-US": "Failed to build system prompt: {detail}",
+    "zh-CN": "系统提示词构建失败: {detail}"
+  },
+  "error.task_id_required": {
+    "en-US": "Task ID is required",
+    "zh-CN": "任务ID不能为空"
+  },
+  "error.task_not_found": {
+    "en-US": "Task not found",
+    "zh-CN": "任务不存在"
+  },
+  "error.task_required": {
+    "en-US": "Task is required",
+    "zh-CN": "任务不能为空"
+  },
+  "error.tool_disabled_or_unavailable": {
+    "en-US": "Tool is disabled or unavailable",
+    "zh-CN": "工具未启用或不可用"
+  },
+  "error.tool_execution_failed": {
+    "en-US": "Tool execution failed: {name}",
+    "zh-CN": "工具执行失败: {name}"
+  },
+  "error.tool_name_required": {
+    "en-US": "Tool name is required",
+    "zh-CN": "工具名称不能为空"
+  },
+  "error.tool_not_found": {
+    "en-US": "Tool not found: {name}",
+    "zh-CN": "未找到工具: {name}"
+  },
+  "error.unsupported_file_type": {
+    "en-US": "Unsupported file type: {extension}",
+    "zh-CN": "不支持的文件类型: {extension}"
+  },
+  "error.user_id_required": {
+    "en-US": "user_id is required",
+    "zh-CN": "user_id 不能为空"
+  },
+  "error.user_session_busy": {
+    "en-US": "This user already has an active session running",
+    "zh-CN": "该用户已有会话正在执行"
+  },
+  "error.zip_invalid": {
+    "en-US": "Invalid archive format",
+    "zh-CN": "压缩包格式错误"
+  },
+  "error.zip_path_illegal": {
+    "en-US": "Archive contains illegal paths",
+    "zh-CN": "压缩包包含非法路径"
+  },
+  "error.zip_path_invalid": {
+    "en-US": "Invalid archive path",
+    "zh-CN": "压缩包路径非法"
+  },
+  "error.zip_path_out_of_bounds": {
+    "en-US": "Archive contains out-of-bounds paths",
+    "zh-CN": "压缩包包含越界路径"
+  },
+  "history.action.edit": {
+    "en-US": "Edit",
+    "zh-CN": "编辑"
+  },
+  "history.action.execute": {
+    "en-US": "Execute",
+    "zh-CN": "执行"
+  },
+  "history.action.read": {
+    "en-US": "Read",
+    "zh-CN": "读取"
+  },
+  "history.action.replace": {
+    "en-US": "Replace",
+    "zh-CN": "替换"
+  },
+  "history.action.run": {
+    "en-US": "Run",
+    "zh-CN": "运行"
+  },
+  "history.action.unknown": {
+    "en-US": "Change",
+    "zh-CN": "改动"
+  },
+  "history.action.write": {
+    "en-US": "Write",
+    "zh-CN": "写入"
+  },
+  "history.artifact_prefix": {
+    "en-US": "[Artifact Index]",
+    "zh-CN": "[产物索引]"
+  },
+  "history.compaction_prefix": {
+    "en-US": "[Context Summary]",
+    "zh-CN": "[上下文摘要]"
+  },
+  "history.compaction_prompt_fallback": {
+    "en-US": "Provide a handoff-ready structured summary covering goal, progress, decisions/constraints, key data/artifacts, and next steps. Use “None” when a section is empty.",
+    "zh-CN": "请输出可交接的结构化摘要，包含任务目标、已完成进度、关键决策与约束、关键数据与产物、待办与下一步。若某项为空请写“暂无”。"
+  },
+  "history.failure.execution": {
+    "en-US": "Execution failed",
+    "zh-CN": "执行失败"
+  },
+  "history.failure.unknown_item": {
+    "en-US": "Unknown item",
+    "zh-CN": "未知条目"
+  },
+  "history.items_suffix": {
+    "en-US": " …and {total} items",
+    "zh-CN": " …等{total}项"
+  },
+  "history.summary.command_runs": {
+    "en-US": "- Commands executed ({count}): {items}",
+    "zh-CN": "- 命令执行({count}): {items}"
+  },
+  "history.summary.failures": {
+    "en-US": "- Failures ({count}): {items}",
+    "zh-CN": "- 失败记录({count}): {items}"
+  },
+  "history.summary.file_changes": {
+    "en-US": "- Files changed ({count}): {items}",
+    "zh-CN": "- 文件改动({count}): {items}"
+  },
+  "history.summary.file_reads": {
+    "en-US": "- Files read ({count}): {items}",
+    "zh-CN": "- 文件读取({count}): {items}"
+  },
+  "history.summary.script_runs": {
+    "en-US": "- Scripts run ({count}): {items}",
+    "zh-CN": "- 脚本运行({count}): {items}"
+  },
+  "knowledge.fallback_reason": {
+    "en-US": "Lexical match",
+    "zh-CN": "词面匹配"
+  },
+  "knowledge.section.full_text": {
+    "en-US": "Full Text",
+    "zh-CN": "全文"
+  },
+  "knowledge.tool.description": {
+    "en-US": "Search knowledge base: {name}",
+    "zh-CN": "检索知识库：{name}"
+  },
+  "knowledge.tool.limit.description": {
+    "en-US": "Return limit (optional; defaults to system max).",
+    "zh-CN": "返回条数（可选，默认使用系统内置上限）"
+  },
+  "knowledge.tool.query.description": {
+    "en-US": "Query text",
+    "zh-CN": "查询内容"
+  },
+  "mcp.instructions": {
+    "en-US": "Call the wunder agent to execute a task and return the final response.",
+    "zh-CN": "调用 wunder 智能体执行任务并返回最终回复。"
+  },
+  "mcp.tool.run.description": {
+    "en-US": "Execute a wunder task and return the final response.",
+    "zh-CN": "执行 wunder 智能体任务并返回最终回复。"
+  },
+  "memory.block_prefix": {
+    "en-US": "[Long-term Memory]",
+    "zh-CN": "[长期记忆]"
+  },
+  "memory.empty_summary": {
+    "en-US": "No summary yet.",
+    "zh-CN": "暂无摘要。"
+  },
+  "memory.status.done": {
+    "en-US": "Completed",
+    "zh-CN": "已完成"
+  },
+  "memory.status.failed": {
+    "en-US": "Failed",
+    "zh-CN": "失败"
+  },
+  "memory.status.queued": {
+    "en-US": "Queued",
+    "zh-CN": "排队中"
+  },
+  "memory.status.running": {
+    "en-US": "Processing",
+    "zh-CN": "正在处理"
+  },
+  "memory.summary.image_placeholder": {
+    "en-US": "[Image]",
+    "zh-CN": "[图片]"
+  },
+  "memory.summary.role.assistant": {
+    "en-US": "Assistant",
+    "zh-CN": "助手"
+  },
+  "memory.summary.role.separator": {
+    "en-US": ": ",
+    "zh-CN": "："
+  },
+  "memory.summary.role.user": {
+    "en-US": "User",
+    "zh-CN": "用户"
+  },
+  "memory.summary_prompt_fallback": {
+    "en-US": "Extract the long-term valuable information for future conversations. Output plain text lines starting with “- ” only, without titles or explanations.",
+    "zh-CN": "请提取对后续对话长期有价值的核心信息，仅输出纯文本列表，每行以“- ”开头，禁止标题与解释。"
+  },
+  "memory.time_prefix": {
+    "en-US": "{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}",
+    "zh-CN": "{year}年{month:02d}月{day:02d}日{hour:02d}时{minute:02d}分"
+  },
+  "message.cancel_requested": {
+    "en-US": "Cancellation requested",
+    "zh-CN": "已请求终止"
+  },
+  "message.cleared": {
+    "en-US": "Cleared",
+    "zh-CN": "已清空"
+  },
+  "message.deleted": {
+    "en-US": "Deleted",
+    "zh-CN": "已删除"
+  },
+  "message.index_refreshed": {
+    "en-US": "Index refreshed",
+    "zh-CN": "已刷新索引"
+  },
+  "message.saved_and_reindexed": {
+    "en-US": "Saved and reindexed",
+    "zh-CN": "已保存并刷新索引"
+  },
+  "message.skill_deleted": {
+    "en-US": "Deleted",
+    "zh-CN": "已删除"
+  },
+  "message.updated": {
+    "en-US": "Updated",
+    "zh-CN": "已更新"
+  },
+  "message.upload_converted": {
+    "en-US": "Upload and conversion completed",
+    "zh-CN": "上传并转换完成"
+  },
+  "message.upload_success": {
+    "en-US": "Upload succeeded",
+    "zh-CN": "上传成功"
+  },
+  "message.user_deleted": {
+    "en-US": "User data cleared",
+    "zh-CN": "已清除用户数据"
+  },
+  "monitor.summary.cancel_requested": {
+    "en-US": "Cancellation requested",
+    "zh-CN": "已请求终止"
+  },
+  "monitor.summary.cancelled": {
+    "en-US": "Cancelled",
+    "zh-CN": "已终止"
+  },
+  "monitor.summary.exception": {
+    "en-US": "Execution error",
+    "zh-CN": "执行异常"
+  },
+  "monitor.summary.finished": {
+    "en-US": "Response completed.",
+    "zh-CN": "已完成回复。"
+  },
+  "monitor.summary.model_call": {
+    "en-US": "LLM request",
+    "zh-CN": "调用模型请求"
+  },
+  "monitor.summary.received": {
+    "en-US": "Request received; processing.",
+    "zh-CN": "已接收请求，开始处理。"
+  },
+  "monitor.summary.restarted": {
+    "en-US": "Service restarted; session unfinished.",
+    "zh-CN": "服务重启，线程未完成。"
+  },
+  "monitor.summary.tool_call": {
+    "en-US": "Tool call: {tool}",
+    "zh-CN": "调用工具：{tool}"
+  },
+  "monitor.summary.user_deleted_cancel": {
+    "en-US": "User deleted; cancellation requested",
+    "zh-CN": "用户已删除，已请求终止"
+  },
+  "probe.failed": {
+    "en-US": "Probe failed: {detail}",
+    "zh-CN": "探测失败: {detail}"
+  },
+  "probe.no_context": {
+    "en-US": "Context length not found",
+    "zh-CN": "未获取到上下文长度"
+  },
+  "probe.provider_unsupported": {
+    "en-US": "Current provider does not support probing",
+    "zh-CN": "当前 provider 暂不支持探测"
+  },
+  "probe.success": {
+    "en-US": "ok",
+    "zh-CN": "ok"
+  },
+  "prompt.engineer.ptc_guidance": {
+    "en-US": "- If ptc is available, prefer ptc to complete tasks directly instead of saving scripts first.",
+    "zh-CN": "- 若已挂载 ptc，优先使用 ptc 完成任务，不需要先写脚本保存到本地然后再去执行，提高效率。"
+  },
+  "prompt.skills.header": {
+    "en-US": "[Skill Usage]",
+    "zh-CN": "[技能使用协议]"
+  },
+  "prompt.skills.list_header": {
+    "en-US": "[Mounted Skills]",
+    "zh-CN": "[已挂载技能]"
+  },
+  "prompt.skills.rule1": {
+    "en-US": "1) Skills are optional playbooks; use them only when the task matches their YAML frontmatter.",
+    "zh-CN": "1) 技能是可选流程手册，仅在任务匹配其 YAML 前置信息时使用。"
+  },
+  "prompt.skills.rule2": {
+    "en-US": "2) Use the SKILL.md paths listed below. Read them via `读取文件` before applying a skill.",
+    "zh-CN": "2) 使用下方列出的 SKILL.md 路径，先用`读取文件`阅读后再使用技能。"
+  },
+  "prompt.skills.rule3": {
+    "en-US": "3) Follow the skill steps strictly. Do not invent missing steps. Prefer bundled scripts/templates/assets.",
+    "zh-CN": "3) 严格遵循技能流程，不要编造缺失步骤。优先使用随附脚本/模板/资产。"
+  },
+  "prompt.skills.rule4": {
+    "en-US": "4) Bundled scripts/templates/assets are located in the same directory as SKILL.md by default.",
+    "zh-CN": "4) 特别注意，随附的脚本/模板/资产默认与 SKILL.md 位于同一目录下。"
+  },
+  "prompt.skills.rule5": {
+    "en-US": "5) Only claim a skill is used after completing its steps.",
+    "zh-CN": "5) 只有在实际执行了技能步骤后，才可以声明已使用该技能。"
+  },
+  "prompt.skills.rule6": {
+    "en-US": "6) Run skill scripts via `执行命令`, and write outputs back to the workspace ({workdir}).",
+    "zh-CN": "6) 使用 `执行命令` 运行相关技能脚本，并将输出写回工程师工作区（{workdir}）。"
+  },
+  "response.a2ui_fallback": {
+    "en-US": "A2UI UI has been generated and rendered.",
+    "zh-CN": "已生成 A2UI 界面并完成渲染。"
+  },
+  "sandbox.error.image_missing": {
+    "en-US": "Sandbox image is not configured; cannot execute tool.",
+    "zh-CN": "沙盒镜像未配置，无法执行工具。"
+  },
+  "sandbox.error.path_out_of_bounds": {
+    "en-US": "Sandbox path is out of bounds.",
+    "zh-CN": "沙盒路径越界，已拒绝。"
+  },
+  "sandbox.error.path_required": {
+    "en-US": "Path is required.",
+    "zh-CN": "路径不能为空。"
+  },
+  "sandbox.error.payload_invalid": {
+    "en-US": "Sandbox payload is empty or invalid.",
+    "zh-CN": "沙盒请求为空或格式错误。"
+  },
+  "sandbox.error.release_failed": {
+    "en-US": "Sandbox release request failed: {detail}",
+    "zh-CN": "沙盒释放请求失败: {detail}"
+  },
+  "sandbox.error.release_response_error": {
+    "en-US": "Sandbox release failed: status={status} detail={detail}",
+    "zh-CN": "沙盒释放失败: status={status} detail={detail}"
+  },
+  "sandbox.error.request_failed": {
+    "en-US": "Sandbox request failed: {detail}",
+    "zh-CN": "沙盒请求失败: {detail}"
+  },
+  "sandbox.error.response_error": {
+    "en-US": "Sandbox response error: status={status} detail={detail}",
+    "zh-CN": "沙盒返回异常: status={status} detail={detail}"
+  },
+  "sandbox.error.response_not_json": {
+    "en-US": "Sandbox returned non-JSON response: {detail}",
+    "zh-CN": "沙盒返回非 JSON 响应: {detail}"
+  },
+  "sandbox.error.tool_failed": {
+    "en-US": "Sandbox tool execution failed: {detail}",
+    "zh-CN": "沙盒内工具执行失败: {detail}"
+  },
+  "sandbox.error.unsupported_tool": {
+    "en-US": "Sandbox does not support this built-in tool.",
+    "zh-CN": "沙盒不支持该内置工具。"
+  },
+  "sandbox.message.release_not_required": {
+    "en-US": "Shared sandbox release is not required.",
+    "zh-CN": "共享沙盒无需释放。"
+  },
+  "skill.description.missing": {
+    "en-US": "No description provided",
+    "zh-CN": "未提供描述"
+  },
+  "tool.a2a.depth_exceeded": {
+    "en-US": "Delegation depth exceeds limit ({max_depth}).",
+    "zh-CN": "委派深度超过上限({max_depth})。"
+  },
+  "tool.a2a.endpoint_required": {
+    "en-US": "A2A endpoint is required.",
+    "zh-CN": "A2A endpoint 不能为空。"
+  },
+  "tool.a2a.http_error": {
+    "en-US": "A2A returned error: status={status}",
+    "zh-CN": "A2A 返回错误: status={status}"
+  },
+  "tool.a2a.loop_detected": {
+    "en-US": "Delegation loop detected; call blocked.",
+    "zh-CN": "检测到委派链路循环，已阻止调用。"
+  },
+  "tool.a2a.message_required": {
+    "en-US": "A2A message is required.",
+    "zh-CN": "A2A 消息不能为空。"
+  },
+  "tool.a2a.method_unsupported": {
+    "en-US": "Unsupported A2A method: {method}",
+    "zh-CN": "不支持的 A2A 方法: {method}"
+  },
+  "tool.a2a.request_failed": {
+    "en-US": "A2A request failed: {detail}",
+    "zh-CN": "A2A 请求失败: {detail}"
+  },
+  "tool.a2a.response_invalid": {
+    "en-US": "Invalid A2A response format.",
+    "zh-CN": "A2A 响应格式错误。"
+  },
+  "tool.a2a.service_unavailable": {
+    "en-US": "A2A service unavailable: {name}",
+    "zh-CN": "A2A 服务不可用：{name}"
+  },
+  "tool.a2a.task_required": {
+    "en-US": "A2A task name/id is required.",
+    "zh-CN": "A2A 任务标识不能为空。"
+  },
+  "tool.edit.action_unsupported": {
+    "en-US": "Unsupported edit action.",
+    "zh-CN": "不支持的编辑动作。"
+  },
+  "tool.edit.delete_out_of_range": {
+    "en-US": "Delete range exceeds file length.",
+    "zh-CN": "删除范围超出文件行数。"
+  },
+  "tool.edit.file_not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.edit.invalid_start": {
+    "en-US": "Invalid start line.",
+    "zh-CN": "起始行号非法。"
+  },
+  "tool.edit.out_of_range": {
+    "en-US": "Edit lines out of range.",
+    "zh-CN": "编辑行号超出文件范围。"
+  },
+  "tool.edit.replace_out_of_range": {
+    "en-US": "Replace range exceeds file length.",
+    "zh-CN": "替换范围超出文件行数。"
+  },
+  "tool.exec.command_failed": {
+    "en-US": "Command execution error: {detail}",
+    "zh-CN": "命令执行异常: {detail}"
+  },
+  "tool.exec.command_required": {
+    "en-US": "Command is required.",
+    "zh-CN": "命令不能为空。"
+  },
+  "tool.exec.failed": {
+    "en-US": "Command execution failed.",
+    "zh-CN": "命令执行失败。"
+  },
+  "tool.exec.not_allowed": {
+    "en-US": "Command not in allow list.",
+    "zh-CN": "命令不在允许列表中。"
+  },
+  "tool.exec.parse_failed": {
+    "en-US": "Command parse failed.",
+    "zh-CN": "命令解析失败。"
+  },
+  "tool.exec.shell_not_allowed": {
+    "en-US": "Shell execution requires allow_commands to include \"*\".",
+    "zh-CN": "启用 shell 执行需要 allow_commands 包含 \"*\"。"
+  },
+  "tool.exec.workdir_not_dir": {
+    "en-US": "Working directory is not a directory.",
+    "zh-CN": "工作目录不是目录。"
+  },
+  "tool.exec.workdir_not_found": {
+    "en-US": "Working directory not found.",
+    "zh-CN": "工作目录不存在。"
+  },
+  "tool.fs.absolute_forbidden": {
+    "en-US": "Absolute paths are not allowed.",
+    "zh-CN": "不允许使用绝对路径。"
+  },
+  "tool.fs.path_forbidden": {
+    "en-US": "Path is forbidden by security policy.",
+    "zh-CN": "路径被安全策略禁止。"
+  },
+  "tool.fs.path_out_of_bounds": {
+    "en-US": "Path traversal is forbidden.",
+    "zh-CN": "路径越界访问被禁止。"
+  },
+  "tool.invoke.mcp_call_failed": {
+    "en-US": "MCP tool call failed: {detail}",
+    "zh-CN": "MCP 工具调用失败: {detail}"
+  },
+  "tool.invoke.mcp_name_invalid": {
+    "en-US": "Invalid MCP tool name format",
+    "zh-CN": "MCP 工具名称格式错误"
+  },
+  "tool.invoke.mcp_result_error": {
+    "en-US": "MCP tool returned an error",
+    "zh-CN": "MCP 工具返回错误"
+  },
+  "tool.invoke.mcp_server_unavailable": {
+    "en-US": "MCP server not configured or enabled",
+    "zh-CN": "MCP 服务未配置或未启用"
+  },
+  "tool.invoke.skill_failed": {
+    "en-US": "Skill execution failed: {detail}",
+    "zh-CN": "技能执行失败: {detail}"
+  },
+  "tool.invoke.user_skill_failed": {
+    "en-US": "User skill execution failed: {detail}",
+    "zh-CN": "用户技能执行失败: {detail}"
+  },
+  "tool.invoke.user_skill_not_found": {
+    "en-US": "User skill not found",
+    "zh-CN": "用户技能不存在"
+  },
+  "tool.invoke.user_skill_not_loaded": {
+    "en-US": "User skills not loaded",
+    "zh-CN": "用户技能未加载"
+  },
+  "tool.invoke.user_tool_unknown": {
+    "en-US": "Unknown user tool type",
+    "zh-CN": "未知的自建工具类型"
+  },
+  "tool.invoke.wunder_run_failed": {
+    "en-US": "wunder@run call failed: {detail}",
+    "zh-CN": "wunder@run 调用失败: {detail}"
+  },
+  "tool.list.path_not_found": {
+    "en-US": "Path not found.",
+    "zh-CN": "路径不存在。"
+  },
+  "tool.ptc.content_required": {
+    "en-US": "Script content is required.",
+    "zh-CN": "脚本内容不能为空。"
+  },
+  "tool.ptc.exec_error": {
+    "en-US": "Script execution error: {detail}",
+    "zh-CN": "脚本执行异常: {detail}"
+  },
+  "tool.ptc.exec_failed": {
+    "en-US": "Script execution failed.",
+    "zh-CN": "脚本执行失败。"
+  },
+  "tool.ptc.ext_invalid": {
+    "en-US": "Only .py scripts are supported.",
+    "zh-CN": "仅支持 .py 脚本文件。"
+  },
+  "tool.ptc.filename_invalid": {
+    "en-US": "Script filename cannot include paths.",
+    "zh-CN": "脚本文件名不能包含路径。"
+  },
+  "tool.ptc.filename_required": {
+    "en-US": "Script filename is required.",
+    "zh-CN": "脚本文件名不能为空。"
+  },
+  "tool.read.empty_file": {
+    "en-US": "(empty file)",
+    "zh-CN": "（空文件）"
+  },
+  "tool.read.empty_result": {
+    "en-US": "No readable files",
+    "zh-CN": "无可读取文件"
+  },
+  "tool.read.no_path": {
+    "en-US": "No file path provided.",
+    "zh-CN": "未提供文件路径。"
+  },
+  "tool.read.not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.read.range_out_of_file": {
+    "en-US": "(range {start}-{end} out of file size {total})",
+    "zh-CN": "（范围 {start}-{end} 超出文件长度 {total}）"
+  },
+  "tool.read.too_large": {
+    "en-US": "File too large to read.",
+    "zh-CN": "文件过大，已拒绝读取。"
+  },
+  "tool.replace.count_mismatch": {
+    "en-US": "Replacement count mismatch.",
+    "zh-CN": "实际替换数量与期望不一致。"
+  },
+  "tool.replace.file_not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.replace.not_found": {
+    "en-US": "Text to replace not found.",
+    "zh-CN": "未找到要替换的内容。"
+  },
+  "tool.search.empty": {
+    "en-US": "Search query is required.",
+    "zh-CN": "搜索关键字不能为空。"
+  },
+  "tool.search.path_not_found": {
+    "en-US": "Path not found.",
+    "zh-CN": "路径不存在。"
+  },
+  "tool.spec.a2a.args.allow_self": {
+    "en-US": "Allow calling local A2A endpoint (default false).",
+    "zh-CN": "是否允许调用本地 A2A 入口（默认 false）。"
+  },
+  "tool.spec.a2a.args.blocking": {
+    "en-US": "Whether SendMessage blocks for result (default true).",
+    "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。"
+  },
+  "tool.spec.a2a.args.content": {
+    "en-US": "Text prompt used when message is not provided.",
+    "zh-CN": "简要文本问题，未提供 message 时使用。"
+  },
+  "tool.spec.a2a.args.delegation_chain": {
+    "en-US": "Delegation chain to prevent loops.",
+    "zh-CN": "委派链路（用于防止循环）。"
+  },
+  "tool.spec.a2a.args.endpoint": {
+    "en-US": "A2A JSON-RPC endpoint (usually ends with /a2a).",
+    "zh-CN": "A2A JSON-RPC 接口地址（通常以 /a2a 结尾）。"
+  },
+  "tool.spec.a2a.args.headers": {
+    "en-US": "Extra headers (e.g., auth).",
+    "zh-CN": "额外请求头（如鉴权）。"
+  },
+  "tool.spec.a2a.args.max_depth": {
+    "en-US": "Max delegation depth (optional).",
+    "zh-CN": "委派链路最大深度（可选）。"
+  },
+  "tool.spec.a2a.args.message": {
+    "en-US": "Full A2A Message (optional, preferred when provided).",
+    "zh-CN": "完整 A2A Message（可选，优先使用）。"
+  },
+  "tool.spec.a2a.args.method": {
+    "en-US": "Method to call (SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask).",
+    "zh-CN": "调用方法（SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask）。"
+  },
+  "tool.spec.a2a.args.model_name": {
+    "en-US": "Remote model configuration name (optional).",
+    "zh-CN": "远端模型配置名称（可选）。"
+  },
+  "tool.spec.a2a.args.session_id": {
+    "en-US": "Session id used for taskId/contextId (defaults to current session).",
+    "zh-CN": "会话标识（写入 taskId/contextId，默认当前会话）。"
+  },
+  "tool.spec.a2a.args.stream": {
+    "en-US": "Use streaming interface (SendStreamingMessage).",
+    "zh-CN": "是否使用流式接口（SendStreamingMessage）。"
+  },
+  "tool.spec.a2a.args.task_id": {
+    "en-US": "Task id for GetTask/SubscribeToTask.",
+    "zh-CN": "任务标识（用于 GetTask/SubscribeToTask 等方法）。"
+  },
+  "tool.spec.a2a.args.task_name": {
+    "en-US": "Task name (e.g., tasks/{id}).",
+    "zh-CN": "任务名称（如 tasks/{id}）。"
+  },
+  "tool.spec.a2a.args.timeout": {
+    "en-US": "Timeout in seconds (default 120).",
+    "zh-CN": "请求超时秒数（默认 120）。"
+  },
+  "tool.spec.a2a.args.tool_names": {
+    "en-US": "Allowed tool list for the remote agent (optional).",
+    "zh-CN": "远端允许调用的工具列表（可选）。"
+  },
+  "tool.spec.a2a.args.user_id": {
+    "en-US": "Remote userId (optional, defaults to current user_id).",
+    "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。"
+  },
+  "tool.spec.a2a.description": {
+    "en-US": "Delegate a task to an external agent via A2A JSON-RPC and return the result.",
+    "zh-CN": "通过 A2A JSON-RPC 委派任务给外部智能体并获取结果。"
+  },
+  "tool.spec.a2a_observe.args.endpoint": {
+    "en-US": "Filter by A2A endpoint (optional).",
+    "zh-CN": "过滤指定的 A2A 端点（可选）。"
+  },
+  "tool.spec.a2a_observe.args.refresh": {
+    "en-US": "Refresh remote task status (default true).",
+    "zh-CN": "是否主动刷新远端任务状态（默认 true）。"
+  },
+  "tool.spec.a2a_observe.args.service_name": {
+    "en-US": "Filter by A2A service name (optional).",
+    "zh-CN": "过滤指定的 A2A 服务名（可选）。"
+  },
+  "tool.spec.a2a_observe.args.task_ids": {
+    "en-US": "List of task_ids to observe (optional).",
+    "zh-CN": "需要观察的 task_id 列表（可选）。"
+  },
+  "tool.spec.a2a_observe.args.tasks": {
+    "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。"
+  },
+  "tool.spec.a2a_observe.args.timeout": {
+    "en-US": "Timeout seconds for remote refresh (optional).",
+    "zh-CN": "刷新远端任务的超时秒数（可选）。"
+  },
+  "tool.spec.a2a_observe.description": {
+    "en-US": "Observe A2A tasks in the current session and return aggregated status/results.",
+    "zh-CN": "观察当前会话内 A2A 任务的状态与结果，并汇总返回。"
+  },
+  "tool.spec.a2a_service.args.blocking": {
+    "en-US": "Whether SendMessage blocks for result (default true).",
+    "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。"
+  },
+  "tool.spec.a2a_service.args.content": {
+    "en-US": "Text message sent to the agent.",
+    "zh-CN": "发送给智能体的文本内容。"
+  },
+  "tool.spec.a2a_service.args.message": {
+    "en-US": "Optional full A2A Message payload.",
+    "zh-CN": "可选的完整 A2A Message 对象。"
+  },
+  "tool.spec.a2a_service.args.model_name": {
+    "en-US": "Remote model configuration name (optional).",
+    "zh-CN": "远端模型配置名称（可选）。"
+  },
+  "tool.spec.a2a_service.args.session_id": {
+    "en-US": "Session id used for taskId/contextId.",
+    "zh-CN": "会话标识（写入 taskId/contextId）。"
+  },
+  "tool.spec.a2a_service.args.stream": {
+    "en-US": "Use streaming interface (SendStreamingMessage).",
+    "zh-CN": "是否使用流式接口（SendStreamingMessage）。"
+  },
+  "tool.spec.a2a_service.args.timeout": {
+    "en-US": "Timeout in seconds (optional).",
+    "zh-CN": "请求超时秒数（可选）。"
+  },
+  "tool.spec.a2a_service.args.tool_names": {
+    "en-US": "Allowed tool list for the remote agent (optional).",
+    "zh-CN": "远端允许调用的工具列表（可选）。"
+  },
+  "tool.spec.a2a_service.args.user_id": {
+    "en-US": "Remote userId (optional, defaults to current user_id).",
+    "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。"
+  },
+  "tool.spec.a2a_service.description": {
+    "en-US": "Delegate tasks to A2A agent {name} and return the result.",
+    "zh-CN": "委派给 A2A 智能体 {name} 执行任务并返回结果。"
+  },
+  "tool.spec.a2a_service.summary.skills": {
+    "en-US": "Skills: {skills}",
+    "zh-CN": "技能：{skills}"
+  },
+  "tool.spec.a2a_service.summary.skills_more": {
+    "en-US": "Skills: {names} (total {count})",
+    "zh-CN": "技能：{names} 等 {count} 项"
+  },
+  "tool.spec.a2a_service.summary.tool.a2a": {
+    "en-US": "A2A {count}",
+    "zh-CN": "A2A{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.builtin": {
+    "en-US": "builtin {count}",
+    "zh-CN": "内置{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.knowledge": {
+    "en-US": "knowledge {count}",
+    "zh-CN": "知识库{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.mcp": {
+    "en-US": "MCP {count}",
+    "zh-CN": "MCP{count}"
+  },
+  "tool.spec.a2a_service.summary.tools": {
+    "en-US": "Tools: {tools}",
+    "zh-CN": "工具：{tools}"
+  },
+  "tool.spec.a2a_wait.args.endpoint": {
+    "en-US": "Filter by A2A endpoint (optional).",
+    "zh-CN": "过滤指定的 A2A 端点（可选）。"
+  },
+  "tool.spec.a2a_wait.args.poll_interval": {
+    "en-US": "Polling interval in seconds (optional).",
+    "zh-CN": "轮询间隔秒数（可选）。"
+  },
+  "tool.spec.a2a_wait.args.refresh": {
+    "en-US": "Refresh remote task status while waiting (default true).",
+    "zh-CN": "等待期间是否刷新远端任务状态（默认 true）。"
+  },
+  "tool.spec.a2a_wait.args.service_name": {
+    "en-US": "Filter by A2A service name (optional).",
+    "zh-CN": "过滤指定的 A2A 服务名（可选）。"
+  },
+  "tool.spec.a2a_wait.args.task_ids": {
+    "en-US": "List of task_ids to wait for (optional).",
+    "zh-CN": "需要等待的 task_id 列表（可选）。"
+  },
+  "tool.spec.a2a_wait.args.tasks": {
+    "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。"
+  },
+  "tool.spec.a2a_wait.args.wait_s": {
+    "en-US": "Wait seconds (optional, default 30s).",
+    "zh-CN": "等待秒数（可选，默认 30 秒）。"
+  },
+  "tool.spec.a2a_wait.description": {
+    "en-US": "Wait for A2A tasks to finish or timeout, useful for long-running jobs.",
+    "zh-CN": "等待 A2A 任务完成或超时返回，可用于长任务休眠。"
+  },
+  "tool.spec.a2ui.args.content": {
+    "en-US": "Optional short textual note.",
+    "zh-CN": "可选的简短文本说明。"
+  },
+  "tool.spec.a2ui.args.messages": {
+    "en-US": "Array of A2UI JSON messages (beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface).",
+    "zh-CN": "A2UI JSON 消息数组（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。"
+  },
+  "tool.spec.a2ui.args.uid": {
+    "en-US": "UI Surface identifier used to bind the rendering area.",
+    "zh-CN": "UI Surface 标识，用于绑定渲染区域。"
+  },
+  "tool.spec.a2ui.description": {
+    "en-US": "Generate A2UI UI and send it to the client for rendering.",
+    "zh-CN": "生成 A2UI 界面并返回给客户端渲染。"
+  },
+  "tool.spec.edit.args.edits": {
+    "en-US": "List of edits to apply in order.",
+    "zh-CN": "按顺序执行的编辑操作列表。"
+  },
+  "tool.spec.edit.args.edits.action": {
+    "en-US": "Edit action type.",
+    "zh-CN": "要应用的编辑类型。"
+  },
+  "tool.spec.edit.args.edits.end_line": {
+    "en-US": "End line number (inclusive).",
+    "zh-CN": "编辑结束的行号（包含）。"
+  },
+  "tool.spec.edit.args.edits.new_content": {
+    "en-US": "Content to replace or insert.",
+    "zh-CN": "替换或插入的内容。"
+  },
+  "tool.spec.edit.args.edits.start_line": {
+    "en-US": "Start line number (1-based).",
+    "zh-CN": "编辑开始的行号（从 1 开始）。"
+  },
+  "tool.spec.edit.args.ensure_newline": {
+    "en-US": "Ensure the file ends with a newline when true.",
+    "zh-CN": "为 true 时确保文件以换行结束。"
+  },
+  "tool.spec.edit.args.path": {
+    "en-US": "File path to edit.",
+    "zh-CN": "要编辑的文件路径。"
+  },
+  "tool.spec.edit.description": {
+    "en-US": "Apply structured line-based edits to a text file.",
+    "zh-CN": "对现有文本文件应用结构化的行级编辑。"
+  },
+  "tool.spec.exec.args.content": {
+    "en-US": "CLI command.",
+    "zh-CN": "CLI 命令。"
+  },
+  "tool.spec.exec.args.shell": {
+    "en-US": "Optional. Execute via shell, only allowed when allow_commands is *.",
+    "zh-CN": "可选，使用 shell 执行，仅在 allow_commands 为 * 时允许。"
+  },
+  "tool.spec.exec.args.timeout": {
+    "en-US": "Optional. Command timeout in seconds (default 30).",
+    "zh-CN": "可选，命令超时秒数，默认 30 秒。"
+  },
+  "tool.spec.exec.args.workdir": {
+    "en-US": "Optional. Working directory under the workspace or an allowed path.",
+    "zh-CN": "可选，工作目录，相对工作区或白名单目录的绝对路径。"
+  },
+  "tool.spec.exec.description": {
+    "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. When allow_commands is *, shell is enabled by default; pass shell=false to disable. For cd/&& or other shell syntax, ensure shell is true.",
+    "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。"
+  },
+  "tool.spec.final.args.content": {
+    "en-US": "Final response content.",
+    "zh-CN": "最终回复内容。"
+  },
+  "tool.spec.final.description": {
+    "en-US": "Final response to return to the user.",
+    "zh-CN": "返回给用户的最终回复。"
+  },
+  "tool.spec.list.args.path": {
+    "en-US": "Optional. Directory to list, relative to the workspace root. Empty uses the current directory.",
+    "zh-CN": "可选，要列出的目录（相对工程师工作目录）。留空则使用当前工作目录。"
+  },
+  "tool.spec.list.description": {
+    "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted.",
+    "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。"
+  },
+  "tool.spec.ptc.args.content": {
+    "en-US": "Full Python script content.",
+    "zh-CN": "完整的 Python 脚本内容。"
+  },
+  "tool.spec.ptc.args.filename": {
+    "en-US": "Python script filename, e.g., helper.py.",
+    "zh-CN": "Python 脚本文件名，例如 helper.py。"
+  },
+  "tool.spec.ptc.args.workdir": {
+    "en-US": "Working directory relative to the workspace; use . for root.",
+    "zh-CN": "相对工作区的工作目录，使用 . 表示根目录。"
+  },
+  "tool.spec.ptc.description": {
+    "en-US": "Programmatic tool call: write and run a temporary Python script when CLI commands are too many or fragile, or when structured processing is needed. The script is saved to ptc_temp in the workspace and executed immediately, returning stdout/stderr.",
+    "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
+  },
+  "tool.spec.read.args.files": {
+    "en-US": "List of files to read, with optional line ranges.",
+    "zh-CN": "要读取的文件列表，可选指定行号范围。"
+  },
+  "tool.spec.read.args.files.end_line": {
+    "en-US": "Optional end line (inclusive).",
+    "zh-CN": "可选结束行（包含）。"
+  },
+  "tool.spec.read.args.files.line_ranges": {
+    "en-US": "Optional list of line ranges.",
+    "zh-CN": "可选的行号范围列表。"
+  },
+  "tool.spec.read.args.files.path": {
+    "en-US": "Path to read.",
+    "zh-CN": "要读取的路径。"
+  },
+  "tool.spec.read.args.files.start_line": {
+    "en-US": "Optional start line (inclusive).",
+    "zh-CN": "可选起始行（包含）。"
+  },
+  "tool.spec.read.description": {
+    "en-US": "Read file contents from specified paths, with batch and line-range support.",
+    "zh-CN": "读取指定路径的文件内容，支持批量读取并指定行号范围。"
+  },
+  "tool.spec.replace.args.expected_replacements": {
+    "en-US": "Expected number of replacements (default 1).",
+    "zh-CN": "期望替换的次数，省略则默认 1。"
+  },
+  "tool.spec.replace.args.new_string": {
+    "en-US": "Exact replacement text.",
+    "zh-CN": "用于替换 old_string 的精确文本。"
+  },
+  "tool.spec.replace.args.old_string": {
+    "en-US": "Exact text to replace (include context).",
+    "zh-CN": "要被替换的精确文本（请包含上下文）。"
+  },
+  "tool.spec.replace.args.path": {
+    "en-US": "File path to edit.",
+    "zh-CN": "要编辑的文件路径。"
+  },
+  "tool.spec.replace.description": {
+    "en-US": "Replace text in an existing file. By default, only the first occurrence of old_string is replaced.",
+    "zh-CN": "请求在现有文件中替换文本。默认只替换一次 old_string 的出现。"
+  },
+  "tool.spec.search.args.file_pattern": {
+    "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
+    "zh-CN": "可选，用于过滤文件的 glob，例如 *.cpp 或 src/**.ts。"
+  },
+  "tool.spec.search.args.path": {
+    "en-US": "Optional. Directory to limit the search, relative to the workspace.",
+    "zh-CN": "可选，限制搜索范围的目录，相对工程师工作目录。"
+  },
+  "tool.spec.search.args.query": {
+    "en-US": "Search text (case-insensitive literal).",
+    "zh-CN": "要搜索的文本（不区分大小写的字面量）。"
+  },
+  "tool.spec.search.description": {
+    "en-US": "Search all text files under the workspace for the query string (case-insensitive). Returns <path>:<line>:<content>.",
+    "zh-CN": "在工程师工作目录下搜索所有文本文件中的查询字符串（不区分大小写）。返回格式为 <path>:<line>:<content>。"
+  },
+  "tool.spec.write.args.content": {
+    "en-US": "File content.",
+    "zh-CN": "文件内容。"
+  },
+  "tool.spec.write.args.path": {
+    "en-US": "File path to write.",
+    "zh-CN": "要写入的文件路径。"
+  },
+  "tool.spec.write.description": {
+    "en-US": "Write content to a path. Existing files are overwritten.",
+    "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
+  },
+  "workspace.error.batch_action_unsupported": {
+    "en-US": "Unsupported batch action",
+    "zh-CN": "不支持的批量操作"
+  },
+  "workspace.error.batch_paths_missing": {
+    "en-US": "Batch paths are required",
+    "zh-CN": "未提供批量路径"
+  },
+  "workspace.error.copy_to_self_or_child": {
+    "en-US": "Cannot copy into itself or a child directory",
+    "zh-CN": "禁止复制到自身或子目录"
+  },
+  "workspace.error.delete_root_forbidden": {
+    "en-US": "Deleting root directory is forbidden",
+    "zh-CN": "禁止删除根目录"
+  },
+  "workspace.error.destination_dir_missing": {
+    "en-US": "Destination directory not found",
+    "zh-CN": "目标目录不存在"
+  },
+  "workspace.error.destination_exists": {
+    "en-US": "Destination path already exists",
+    "zh-CN": "目标路径已存在"
+  },
+  "workspace.error.destination_parent_missing": {
+    "en-US": "Destination parent directory does not exist",
+    "zh-CN": "目标父目录不存在"
+  },
+  "workspace.error.destination_path_required": {
+    "en-US": "Destination path is required",
+    "zh-CN": "目标路径不能为空"
+  },
+  "workspace.error.destination_unready": {
+    "en-US": "Destination directory not ready",
+    "zh-CN": "目标目录未准备好"
+  },
+  "workspace.error.dir_path_required": {
+    "en-US": "Directory path is required",
+    "zh-CN": "目录路径不能为空"
+  },
+  "workspace.error.file_path_required": {
+    "en-US": "File path is required",
+    "zh-CN": "文件路径不能为空"
+  },
+  "workspace.error.move_to_self_or_child": {
+    "en-US": "Cannot move into itself or a child directory",
+    "zh-CN": "禁止移动到自身或子目录"
+  },
+  "workspace.error.path_not_dir": {
+    "en-US": "Path is not a directory",
+    "zh-CN": "路径不是目录"
+  },
+  "workspace.error.path_not_found": {
+    "en-US": "Path not found",
+    "zh-CN": "路径不存在"
+  },
+  "workspace.error.path_required": {
+    "en-US": "Path is required",
+    "zh-CN": "路径不能为空"
+  },
+  "workspace.error.source_destination_same": {
+    "en-US": "Source and destination are the same",
+    "zh-CN": "源路径与目标路径相同"
+  },
+  "workspace.error.source_not_found": {
+    "en-US": "Source path not found",
+    "zh-CN": "源路径不存在"
+  },
+  "workspace.error.source_path_required": {
+    "en-US": "Source path is required",
+    "zh-CN": "源路径不能为空"
+  },
+  "workspace.error.target_exists_not_dir": {
+    "en-US": "Target exists and is not a directory",
+    "zh-CN": "目标已存在且不是目录"
+  },
+  "workspace.error.target_not_dir": {
+    "en-US": "Target is not a directory",
+    "zh-CN": "目标不是目录"
+  },
+  "workspace.error.target_not_file": {
+    "en-US": "Target is not a file",
+    "zh-CN": "目标不是文件"
+  },
+  "workspace.error.workspace_not_found": {
+    "en-US": "Workspace not found",
+    "zh-CN": "工作区不存在"
+  },
+  "workspace.message.batch_partial": {
+    "en-US": "Batch operation partially failed",
+    "zh-CN": "批量操作部分失败"
+  },
+  "workspace.message.batch_success": {
+    "en-US": "Batch operation completed",
+    "zh-CN": "批量操作完成"
+  },
+  "workspace.message.copied": {
+    "en-US": "Copied",
+    "zh-CN": "已复制"
+  },
+  "workspace.message.dir_created": {
+    "en-US": "Directory created",
+    "zh-CN": "已创建目录"
+  },
+  "workspace.message.file_saved": {
+    "en-US": "File saved",
+    "zh-CN": "已保存文件"
+  },
+  "workspace.message.moved": {
+    "en-US": "Moved",
+    "zh-CN": "已移动"
+  },
+  "workspace.message.path_unchanged": {
+    "en-US": "Path unchanged",
+    "zh-CN": "路径未变化"
+  },
+  "workspace.tree.empty": {
+    "en-US": "(empty)",
+    "zh-CN": "（空）"
+  }
+}

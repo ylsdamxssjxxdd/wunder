@@ -17,6 +17,7 @@ use sysinfo::{Disks, Networks, System};
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
 const MIN_PAYLOAD_LIMIT: usize = 256;
+const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 
 #[derive(Debug, Clone)]
 struct MonitorEvent {
@@ -88,6 +89,8 @@ struct SessionRecord {
     rounds: i64,
     token_usage: i64,
     events: VecDeque<MonitorEvent>,
+    dirty: bool,
+    last_persisted: f64,
 }
 
 impl SessionRecord {
@@ -106,6 +109,8 @@ impl SessionRecord {
             rounds: 1,
             token_usage: 0,
             events: VecDeque::new(),
+            dirty: true,
+            last_persisted: 0.0,
         }
     }
 
@@ -222,6 +227,8 @@ impl SessionRecord {
             rounds,
             token_usage,
             events,
+            dirty: false,
+            last_persisted: updated_time,
         })
     }
 }
@@ -257,6 +264,7 @@ pub struct MonitorState {
     networks: Mutex<Networks>,
     event_limit: Option<usize>,
     payload_limit: Option<usize>,
+    persist_interval_s: f64,
     drop_event_types: HashSet<String>,
     history_dir: PathBuf,
     history_ready: AtomicBool,
@@ -286,6 +294,7 @@ impl MonitorState {
         networks.refresh();
         let event_limit = resolve_event_limit(observability.monitor_event_limit);
         let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
+        let persist_interval_s = DEFAULT_PERSIST_INTERVAL_S;
         let drop_event_types = observability
             .monitor_drop_event_types
             .into_iter()
@@ -303,6 +312,7 @@ impl MonitorState {
             networks: Mutex::new(networks),
             event_limit,
             payload_limit,
+            persist_interval_s,
             drop_event_types,
             history_dir,
             history_ready: AtomicBool::new(false),
@@ -342,51 +352,63 @@ impl MonitorState {
     pub fn register(&self, session_id: &str, user_id: &str, question: &str) {
         let now = now_ts();
         let mut sessions = self.sessions.lock().unwrap();
-        self.register_locked(&mut sessions, session_id, user_id, question, now, false);
+        let to_persist =
+            self.register_locked(&mut sessions, session_id, user_id, question, now, false);
+        drop(sessions);
+        if let Some(record) = to_persist {
+            self.save_record(&record);
+        }
     }
 
     pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
         let now = now_ts();
-        let mut sessions = self.sessions.lock().unwrap();
-        let Some(record) = sessions.get_mut(session_id) else {
-            return;
-        };
-        record.updated_time = now;
-        if event_type == "token_usage" {
-            if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
-                record.token_usage = total;
+        let mut to_persist = None;
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(record) = sessions.get_mut(session_id) else {
+                return;
+            };
+            record.updated_time = now;
+            if event_type == "token_usage" {
+                if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
+                    record.token_usage = total;
+                }
             }
+            if event_type == "progress" {
+                if let Some(stage) = data.get("stage").and_then(Value::as_str) {
+                    record.stage = stage.to_string();
+                }
+                if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+                    record.summary = summary.to_string();
+                }
+            } else if event_type == "tool_call" {
+                record.stage = "tool_call".to_string();
+                let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
+                record.summary = i18n::t_with_params(
+                    "monitor.summary.tool_call",
+                    &HashMap::from([("tool".to_string(), tool.to_string())]),
+                );
+            } else if event_type == "llm_request" {
+                record.stage = "llm_request".to_string();
+                record.summary = i18n::t("monitor.summary.model_call");
+            } else if event_type == "final" {
+                record.stage = "final".to_string();
+                record.summary = i18n::t("monitor.summary.finished");
+            } else if event_type == "error" {
+                record.stage = "error".to_string();
+                record.summary = data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
+            }
+            self.append_event(record, event_type, data, now);
+            record.dirty = true;
+            to_persist = self.maybe_persist_record(record, now, false);
         }
-        if event_type == "progress" {
-            if let Some(stage) = data.get("stage").and_then(Value::as_str) {
-                record.stage = stage.to_string();
-            }
-            if let Some(summary) = data.get("summary").and_then(Value::as_str) {
-                record.summary = summary.to_string();
-            }
-        } else if event_type == "tool_call" {
-            record.stage = "tool_call".to_string();
-            let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
-            record.summary = i18n::t_with_params(
-                "monitor.summary.tool_call",
-                &HashMap::from([("tool".to_string(), tool.to_string())]),
-            );
-        } else if event_type == "llm_request" {
-            record.stage = "llm_request".to_string();
-            record.summary = i18n::t("monitor.summary.model_call");
-        } else if event_type == "final" {
-            record.stage = "final".to_string();
-            record.summary = i18n::t("monitor.summary.finished");
-        } else if event_type == "error" {
-            record.stage = "error".to_string();
-            record.summary = data
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
+        if let Some(record) = to_persist {
+            self.save_record(&record);
         }
-        self.append_event(record, event_type, data, now);
-        self.save_record(record);
     }
 
     pub fn mark_finished(&self, session_id: &str) {
@@ -405,24 +427,31 @@ impl MonitorState {
         );
     }
     pub fn cancel(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
-        let Some(record) = sessions.get_mut(session_id) else {
-            return false;
-        };
-        if record.status != Self::STATUS_RUNNING && record.status != Self::STATUS_CANCELLING {
-            return false;
+        let mut to_persist = None;
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(record) = sessions.get_mut(session_id) else {
+                return false;
+            };
+            if record.status != Self::STATUS_RUNNING && record.status != Self::STATUS_CANCELLING {
+                return false;
+            }
+            record.cancel_requested = true;
+            record.status = Self::STATUS_CANCELLING.to_string();
+            record.updated_time = now_ts();
+            let updated_time = record.updated_time;
+            self.append_event(
+                record,
+                "cancel",
+                &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
+                updated_time,
+            );
+            record.dirty = true;
+            to_persist = self.maybe_persist_record(record, updated_time, true);
         }
-        record.cancel_requested = true;
-        record.status = Self::STATUS_CANCELLING.to_string();
-        record.updated_time = now_ts();
-        let updated_time = record.updated_time;
-        self.append_event(
-            record,
-            "cancel",
-            &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
-            updated_time,
-        );
-        self.save_record(record);
+        if let Some(record) = to_persist {
+            self.save_record(&record);
+        }
         true
     }
 
@@ -811,9 +840,9 @@ impl MonitorState {
         question: &str,
         now: f64,
         append_received: bool,
-    ) {
+    ) -> Option<SessionRecord> {
         if session_id.trim().is_empty() {
-            return;
+            return None;
         }
         {
             let mut forced = self.forced_cancelled.lock().unwrap();
@@ -842,8 +871,8 @@ impl MonitorState {
                 }),
                 now,
             );
-            self.save_record(record);
-            return;
+            record.dirty = true;
+            return self.maybe_persist_record(record, now, false);
         }
         let mut record = SessionRecord::new(
             session_id.to_string(),
@@ -868,53 +897,62 @@ impl MonitorState {
             }),
             now,
         );
-        self.save_record(&record);
+        record.dirty = true;
+        let to_persist = self.maybe_persist_record(&mut record, now, false);
         sessions.insert(session_id.to_string(), record);
+        to_persist
     }
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
         let now = now_ts();
-        let mut sessions = self.sessions.lock().unwrap();
-        let Some(record) = sessions.get_mut(session_id) else {
-            return;
-        };
-        record.status = status.to_string();
-        record.updated_time = now;
-        record.ended_time = Some(now);
-        match status {
-            Self::STATUS_FINISHED => {
-                record.stage = "final".to_string();
-                record.summary = summary
-                    .map(str::to_string)
-                    .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
-            }
-            Self::STATUS_ERROR => {
-                record.stage = "error".to_string();
-                if let Some(summary) = summary {
-                    record.summary = summary.to_string();
+        let mut to_persist = None;
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            let Some(record) = sessions.get_mut(session_id) else {
+                return;
+            };
+            record.status = status.to_string();
+            record.updated_time = now;
+            record.ended_time = Some(now);
+            match status {
+                Self::STATUS_FINISHED => {
+                    record.stage = "final".to_string();
+                    record.summary = summary
+                        .map(str::to_string)
+                        .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+                }
+                Self::STATUS_ERROR => {
+                    record.stage = "error".to_string();
+                    if let Some(summary) = summary {
+                        record.summary = summary.to_string();
+                    }
+                }
+                Self::STATUS_CANCELLED => {
+                    record.stage = "cancelled".to_string();
+                    if let Some(summary) = summary {
+                        record.summary = summary.to_string();
+                    }
+                }
+                Self::STATUS_CANCELLING => {
+                    record.stage = "cancelling".to_string();
+                    if let Some(summary) = summary {
+                        record.summary = summary.to_string();
+                    }
+                }
+                _ => {
+                    if let Some(summary) = summary {
+                        record.summary = summary.to_string();
+                    }
                 }
             }
-            Self::STATUS_CANCELLED => {
-                record.stage = "cancelled".to_string();
-                if let Some(summary) = summary {
-                    record.summary = summary.to_string();
-                }
-            }
-            Self::STATUS_CANCELLING => {
-                record.stage = "cancelling".to_string();
-                if let Some(summary) = summary {
-                    record.summary = summary.to_string();
-                }
-            }
-            _ => {
-                if let Some(summary) = summary {
-                    record.summary = summary.to_string();
-                }
-            }
+            let summary = record.summary.clone();
+            self.append_event(record, status, &json!({ "summary": summary }), now);
+            record.dirty = true;
+            to_persist = self.maybe_persist_record(record, now, true);
         }
-        let summary = record.summary.clone();
-        self.append_event(record, status, &json!({ "summary": summary }), now);
-        self.save_record(record);
+        if let Some(record) = to_persist {
+            self.save_record(&record);
+        }
     }
 
     fn append_event(
@@ -966,6 +1004,26 @@ impl MonitorState {
             return trimmed;
         }
         trim_string_fields(data, self.payload_limit)
+    }
+
+    fn maybe_persist_record(
+        &self,
+        record: &mut SessionRecord,
+        now: f64,
+        force: bool,
+    ) -> Option<SessionRecord> {
+        if !record.dirty && !force {
+            return None;
+        }
+        let should_persist = force
+            || record.last_persisted <= 0.0
+            || now - record.last_persisted >= self.persist_interval_s;
+        if !should_persist {
+            return None;
+        }
+        record.dirty = false;
+        record.last_persisted = now;
+        Some(record.clone())
     }
 
     fn save_record(&self, record: &SessionRecord) {

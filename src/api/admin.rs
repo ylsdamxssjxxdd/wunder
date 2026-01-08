@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, McpServerConfig};
 use crate::i18n;
 use crate::knowledge;
+use crate::llm;
 use crate::path_utils::{
     normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -857,10 +858,41 @@ async fn admin_llm_update(
     Ok(Json(json!({ "llm": updated.llm })))
 }
 
-async fn admin_llm_context_window() -> Result<Json<Value>, Response> {
-    Ok(Json(
-        json!({ "max_context": null, "message": "暂不支持自动探测" }),
-    ))
+async fn admin_llm_context_window(
+    Json(payload): Json<LlmContextProbeRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_url = payload.base_url.trim();
+    let model = payload.model.trim();
+    if base_url.is_empty() || model.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.base_url_or_model_required"),
+        ));
+    }
+    let provider = payload.provider.as_deref().unwrap_or("openai_compatible");
+    if provider != "openai_compatible" {
+        return Ok(Json(json!({
+            "max_context": Value::Null,
+            "message": i18n::t("probe.provider_unsupported")
+        })));
+    }
+
+    let timeout_s = payload.timeout_s.unwrap_or(15);
+    let timeout_s = if timeout_s == 0 { 15 } else { timeout_s };
+    let api_key = payload.api_key.as_deref().unwrap_or("");
+    let result = llm::probe_openai_context_window(base_url, api_key, model, timeout_s).await;
+    let payload = match result {
+        Ok(Some(value)) => json!({ "max_context": value, "message": i18n::t("probe.success") }),
+        Ok(None) => json!({ "max_context": Value::Null, "message": i18n::t("probe.no_context") }),
+        Err(err) => {
+            let message = i18n::t_with_params(
+                "probe.failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            );
+            json!({ "max_context": Value::Null, "message": message })
+        }
+    };
+    Ok(Json(payload))
 }
 
 async fn admin_monitor(
@@ -1956,6 +1988,18 @@ struct UserSessionsQuery {
 #[derive(Debug, Deserialize)]
 struct LlmUpdateRequest {
     llm: crate::config::LlmConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmContextProbeRequest {
+    #[serde(default)]
+    provider: Option<String>,
+    base_url: String,
+    #[serde(default)]
+    api_key: Option<String>,
+    model: String,
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

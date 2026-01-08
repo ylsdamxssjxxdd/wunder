@@ -1,7 +1,9 @@
 // i18n 支持：语言解析、上下文管理与翻译文本读取。
 use regex::Regex;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use tokio::task_local;
 
@@ -37,10 +39,16 @@ task_local! {
     static CURRENT_LANGUAGE: String;
 }
 
+const DEFAULT_I18N_MESSAGES_PATH: &str = "config/i18n.messages.json";
+
 fn state() -> &'static RwLock<I18nState> {
     I18N_STATE.get_or_init(|| {
         let mut state = I18nState::new();
-        if let Some(messages) = load_messages_from_python() {
+        let mut messages = load_messages_from_json().unwrap_or_default();
+        if let Some(fallback) = load_messages_from_python() {
+            merge_messages(&mut messages, fallback);
+        }
+        if !messages.is_empty() {
             state.messages = messages;
         }
         RwLock::new(state)
@@ -262,8 +270,70 @@ fn format_with_spec(value: &str, spec: &str) -> Option<String> {
     Some(format!("{number:0width$}", width = width))
 }
 
+fn resolve_messages_path() -> PathBuf {
+    let env_path = std::env::var("WUNDER_I18N_MESSAGES_PATH")
+        .ok()
+        .unwrap_or_default();
+    let env_path = env_path.trim();
+    if env_path.is_empty() {
+        PathBuf::from(DEFAULT_I18N_MESSAGES_PATH)
+    } else {
+        PathBuf::from(env_path)
+    }
+}
+
+fn load_messages_from_json() -> Option<HashMap<String, HashMap<String, String>>> {
+    let path = resolve_messages_path();
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_json_messages(&content)
+}
+
+fn parse_json_messages(text: &str) -> Option<HashMap<String, HashMap<String, String>>> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    let Value::Object(map) = value else {
+        return None;
+    };
+    let mut output: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for (key, item) in map {
+        let Value::Object(lang_map) = item else {
+            continue;
+        };
+        let mut translations = HashMap::new();
+        for (lang, value) in lang_map {
+            if let Value::String(text) = value {
+                if !text.trim().is_empty() {
+                    translations.insert(lang, text);
+                }
+            }
+        }
+        if !translations.is_empty() {
+            output.insert(key, translations);
+        }
+    }
+    if output.is_empty() {
+        None
+    } else {
+        Some(output)
+    }
+}
+
+fn merge_messages(
+    base: &mut HashMap<String, HashMap<String, String>>,
+    extra: HashMap<String, HashMap<String, String>>,
+) {
+    for (key, values) in extra {
+        let entry = base.entry(key).or_default();
+        for (lang, text) in values {
+            entry.entry(lang).or_insert(text);
+        }
+    }
+}
+
 fn load_messages_from_python() -> Option<HashMap<String, HashMap<String, String>>> {
-    let path = std::path::Path::new("app/core/i18n.py");
+    let path = Path::new("app/core/i18n.py");
     if !path.exists() {
         return None;
     }
