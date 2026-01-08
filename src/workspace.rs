@@ -20,6 +20,9 @@ use walkdir::WalkDir;
 const MIGRATION_MARKER: &str = ".wunder_workspace_v2";
 const LEGACY_CHAT_FILE: &str = "chat_history.jsonl";
 const LEGACY_TOOL_FILE: &str = "tool_log.jsonl";
+const TREE_CACHE_TTL_S: f64 = 5.0;
+const SEARCH_INDEX_TTL_S: f64 = 10.0;
+const SEARCH_INDEX_MAX_ITEMS: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
@@ -33,9 +36,22 @@ pub struct WorkspaceEntry {
     pub children: Option<Vec<WorkspaceEntry>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkspaceTreeSnapshot {
+    pub tree: String,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TreeCacheEntry {
+    tree: String,
+    built_ts: f64,
+    version: u64,
+}
+
 #[derive(Default)]
 struct TreeCache {
-    cache: HashMap<String, String>,
+    cache: HashMap<String, TreeCacheEntry>,
     dirty: HashSet<String>,
 }
 
@@ -49,6 +65,20 @@ struct RetentionState {
 struct UserUsageCache {
     data: HashMap<String, HashMap<String, i64>>,
     updated_ts: f64,
+}
+
+#[derive(Debug, Clone)]
+struct SearchIndexEntry {
+    entry: WorkspaceEntry,
+    name_lower: String,
+    is_dir: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SearchIndex {
+    entries: Arc<Vec<SearchIndexEntry>>,
+    built_ts: f64,
+    version: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +99,10 @@ pub struct WorkspaceManager {
     versions: DashMap<String, u64>,
     path_guard: Regex,
     tree_cache: Mutex<TreeCache>,
+    tree_cache_ttl_s: f64,
+    search_cache: Mutex<HashMap<String, SearchIndex>>,
+    search_cache_ttl_s: f64,
+    search_cache_max_items: usize,
     user_usage_cache: Mutex<UserUsageCache>,
     user_usage_cache_ttl_s: f64,
 }
@@ -88,6 +122,10 @@ impl WorkspaceManager {
             versions: DashMap::new(),
             path_guard: Regex::new(r#"[\\:*?\"<>|]"#).unwrap(),
             tree_cache: Mutex::new(TreeCache::default()),
+            tree_cache_ttl_s: TREE_CACHE_TTL_S,
+            search_cache: Mutex::new(HashMap::new()),
+            search_cache_ttl_s: SEARCH_INDEX_TTL_S,
+            search_cache_max_items: SEARCH_INDEX_MAX_ITEMS,
             user_usage_cache: Mutex::new(UserUsageCache::default()),
             user_usage_cache_ttl_s: 5.0,
         }
@@ -345,6 +383,19 @@ impl WorkspaceManager {
         Ok(entries)
     }
 
+    pub async fn list_entries_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        path: &str,
+    ) -> Result<Vec<WorkspaceEntry>> {
+        let user_id = user_id.to_string();
+        let path = path.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || workspace.list_entries(&user_id, &path))
+            .await
+            .map_err(|err| anyhow!("workspace list cancelled: {err}"))?
+    }
+
     pub fn list_workspace_entries(
         &self,
         user_id: &str,
@@ -485,6 +536,37 @@ impl WorkspaceManager {
         };
         let tree_version = self.get_tree_version(user_id);
         Ok((sliced, tree_version, normalized, parent, total))
+    }
+
+    pub async fn list_workspace_entries_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        relative_path: &str,
+        keyword: Option<&str>,
+        offset: u64,
+        limit: u64,
+        sort_by: &str,
+        order: &str,
+    ) -> Result<(Vec<WorkspaceEntry>, u64, String, Option<String>, u64)> {
+        let user_id = user_id.to_string();
+        let relative_path = relative_path.to_string();
+        let keyword = keyword.map(|value| value.to_string());
+        let sort_by = sort_by.to_string();
+        let order = order.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.list_workspace_entries(
+                &user_id,
+                &relative_path,
+                keyword.as_deref(),
+                offset,
+                limit,
+                &sort_by,
+                &order,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!("workspace list cancelled: {err}"))?
     }
 
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
@@ -661,6 +743,10 @@ impl WorkspaceManager {
             cache.cache.remove(&safe_id);
             cache.dirty.remove(&safe_id);
         }
+        {
+            let mut cache = self.search_cache.lock().unwrap();
+            cache.remove(&safe_id);
+        }
         let _ = self.versions.remove(&safe_id);
         let _ = self
             .storage
@@ -703,12 +789,6 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    pub fn search(&self, user_id: &str, keyword: &str) -> Result<Vec<WorkspaceEntry>> {
-        let (entries, _total) =
-            self.search_workspace_entries(user_id, keyword, 0, 0, true, true)?;
-        Ok(entries)
-    }
-
     pub fn search_workspace_entries(
         &self,
         user_id: &str,
@@ -723,28 +803,191 @@ impl WorkspaceManager {
             return Ok((Vec::new(), 0));
         }
         let root = self.ensure_user_root(user_id)?;
+        let safe_id = self.safe_user_id(user_id);
         let safe_offset = offset.max(0);
         let safe_limit = limit.max(0);
-        let mut matched = 0u64;
-        let mut results = Vec::new();
-        for entry in WalkDir::new(&root)
+        let version = self.get_tree_version(user_id);
+        let now = now_ts();
+        if let Some(index) = self.get_search_index(&safe_id, version, now) {
+            return Ok(search_from_index(
+                &index,
+                &keyword,
+                safe_offset,
+                safe_limit,
+                include_files,
+                include_dirs,
+            ));
+        }
+        if let Some(index) = self.build_search_index(&root, version) {
+            let result = search_from_index(
+                &index,
+                &keyword,
+                safe_offset,
+                safe_limit,
+                include_files,
+                include_dirs,
+            );
+            self.store_search_index(safe_id, index);
+            return Ok(result);
+        }
+        Ok(search_by_walkdir(
+            &root,
+            &keyword,
+            safe_offset,
+            safe_limit,
+            include_files,
+            include_dirs,
+        ))
+    }
+
+    pub async fn search_workspace_entries_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        keyword: &str,
+        offset: u64,
+        limit: u64,
+        include_files: bool,
+        include_dirs: bool,
+    ) -> Result<(Vec<WorkspaceEntry>, u64)> {
+        let user_id = user_id.to_string();
+        let keyword = keyword.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.search_workspace_entries(
+                &user_id,
+                &keyword,
+                offset,
+                limit,
+                include_files,
+                include_dirs,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!("workspace search cancelled: {err}"))?
+    }
+
+    pub fn get_workspace_tree_snapshot(&self, user_id: &str) -> WorkspaceTreeSnapshot {
+        let safe_id = self.safe_user_id(user_id);
+        let now = now_ts();
+        {
+            let cache = self.tree_cache.lock().unwrap();
+            if let Some(entry) = cache.cache.get(&safe_id) {
+                let dirty = cache.dirty.contains(&safe_id);
+                let stale = now - entry.built_ts >= self.tree_cache_ttl_s;
+                if !dirty || !stale {
+                    return WorkspaceTreeSnapshot {
+                        tree: entry.tree.clone(),
+                        version: entry.version,
+                    };
+                }
+            }
+        }
+        let tree = self.refresh_workspace_tree(user_id);
+        WorkspaceTreeSnapshot {
+            tree,
+            version: self.get_tree_cache_version(user_id),
+        }
+    }
+
+    pub fn refresh_workspace_tree(&self, user_id: &str) -> String {
+        let root = match self.ensure_user_root(user_id) {
+            Ok(path) => path,
+            Err(_) => return i18n::t("workspace.tree.empty"),
+        };
+        let tree = if Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| build_workspace_tree(&root, 2))
+        } else {
+            build_workspace_tree(&root, 2)
+        };
+        let now = now_ts();
+        let safe_id = self.safe_user_id(user_id);
+        let mut cache = self.tree_cache.lock().unwrap();
+        let was_dirty = cache.dirty.remove(&safe_id);
+        let entry = cache
+            .cache
+            .entry(safe_id.clone())
+            .or_insert(TreeCacheEntry {
+                tree: String::new(),
+                built_ts: 0.0,
+                version: 0,
+            });
+        let changed = entry.tree != tree;
+        if changed {
+            entry.version = entry.version.saturating_add(1).max(1);
+            if !was_dirty {
+                self.increment_version(&safe_id);
+            }
+        }
+        entry.tree = tree.clone();
+        entry.built_ts = now;
+        tree
+    }
+
+    pub fn mark_tree_dirty(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        self.increment_version(&safe_id);
+        let mut cache = self.tree_cache.lock().unwrap();
+        cache.dirty.insert(safe_id);
+    }
+
+    pub fn get_tree_version(&self, user_id: &str) -> u64 {
+        let safe_id = self.safe_user_id(user_id);
+        self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
+    }
+
+    pub fn get_tree_cache_version(&self, user_id: &str) -> u64 {
+        let safe_id = self.safe_user_id(user_id);
+        let cache = self.tree_cache.lock().unwrap();
+        cache
+            .cache
+            .get(&safe_id)
+            .map(|entry| entry.version)
+            .unwrap_or(0)
+    }
+
+    pub fn bump_version(&self, user_id: &str) {
+        self.mark_tree_dirty(user_id);
+    }
+
+    fn increment_version(&self, safe_id: &str) {
+        let mut entry = self.versions.entry(safe_id.to_string()).or_insert(0);
+        *entry += 1;
+    }
+
+    fn get_search_index(&self, safe_id: &str, version: u64, now: f64) -> Option<SearchIndex> {
+        let mut cache = self.search_cache.lock().unwrap();
+        let Some(entry) = cache.get(safe_id) else {
+            return None;
+        };
+        if entry.version != version {
+            cache.remove(safe_id);
+            return None;
+        }
+        if now - entry.built_ts >= self.search_cache_ttl_s {
+            cache.remove(safe_id);
+            return None;
+        }
+        Some(entry.clone())
+    }
+
+    fn store_search_index(&self, safe_id: String, index: SearchIndex) {
+        let mut cache = self.search_cache.lock().unwrap();
+        cache.insert(safe_id, index);
+    }
+
+    fn build_search_index(&self, root: &Path, version: u64) -> Option<SearchIndex> {
+        let mut entries = Vec::new();
+        for entry in WalkDir::new(root)
             .min_depth(1)
             .into_iter()
             .filter_map(|entry| entry.ok())
         {
+            if entries.len() >= self.search_cache_max_items {
+                return None;
+            }
             let file_type = entry.file_type();
-            if file_type.is_dir() && !include_dirs {
-                continue;
-            }
-            if file_type.is_file() && !include_files {
-                continue;
-            }
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.to_lowercase().contains(&keyword) {
-                continue;
-            }
-            matched += 1;
-            if matched <= safe_offset {
+            if name.is_empty() {
                 continue;
             }
             let meta = entry.metadata().ok();
@@ -757,76 +1000,30 @@ impl WorkspaceManager {
                 });
             let rel = entry
                 .path()
-                .strip_prefix(&root)
+                .strip_prefix(root)
                 .unwrap_or(entry.path())
                 .to_string_lossy()
                 .to_string();
-            if safe_limit == 0 || results.len() < safe_limit as usize {
-                results.push(WorkspaceEntry {
-                    name,
-                    path: rel.replace('\\', "/"),
-                    entry_type: if file_type.is_dir() { "dir" } else { "file" }.to_string(),
-                    size: meta.map(|meta| meta.len()).unwrap_or(0),
-                    updated_time: updated.unwrap_or_default(),
-                    children: None,
-                });
-            }
+            let is_dir = file_type.is_dir();
+            let entry = WorkspaceEntry {
+                name: name.clone(),
+                path: rel.replace('\\', "/"),
+                entry_type: if is_dir { "dir" } else { "file" }.to_string(),
+                size: meta.map(|meta| meta.len()).unwrap_or(0),
+                updated_time: updated.unwrap_or_default(),
+                children: None,
+            };
+            entries.push(SearchIndexEntry {
+                entry,
+                name_lower: name.to_lowercase(),
+                is_dir,
+            });
         }
-        Ok((results, matched))
-    }
-
-    pub fn get_workspace_tree(&self, user_id: &str) -> String {
-        let safe_id = self.safe_user_id(user_id);
-        {
-            let cache = self.tree_cache.lock().unwrap();
-            if let Some(tree) = cache.cache.get(&safe_id) {
-                if !cache.dirty.contains(&safe_id) {
-                    return tree.clone();
-                }
-            }
-        }
-        self.refresh_workspace_tree(user_id)
-    }
-
-    pub fn refresh_workspace_tree(&self, user_id: &str) -> String {
-        let root = match self.ensure_user_root(user_id) {
-            Ok(path) => path,
-            Err(_) => return i18n::t("workspace.tree.empty"),
-        };
-        let tree = build_workspace_tree(&root, 2);
-        let safe_id = self.safe_user_id(user_id);
-        let mut cache = self.tree_cache.lock().unwrap();
-        let previous = cache.cache.get(&safe_id).cloned();
-        let dirty = cache.dirty.remove(&safe_id);
-        if previous.as_deref() != Some(&tree) {
-            cache.cache.insert(safe_id.clone(), tree.clone());
-            if !dirty {
-                self.increment_version(&safe_id);
-            }
-        }
-        tree
-    }
-
-    pub fn mark_tree_dirty(&self, user_id: &str) {
-        let safe_id = self.safe_user_id(user_id);
-        self.increment_version(&safe_id);
-        let mut cache = self.tree_cache.lock().unwrap();
-        cache.dirty.insert(safe_id.clone());
-        cache.cache.remove(&safe_id);
-    }
-
-    pub fn get_tree_version(&self, user_id: &str) -> u64 {
-        let safe_id = self.safe_user_id(user_id);
-        self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
-    }
-
-    pub fn bump_version(&self, user_id: &str) {
-        self.mark_tree_dirty(user_id);
-    }
-
-    fn increment_version(&self, safe_id: &str) {
-        let mut entry = self.versions.entry(safe_id.to_string()).or_insert(0);
-        *entry += 1;
+        Some(SearchIndex {
+            entries: Arc::new(entries),
+            built_ts: now_ts(),
+            version,
+        })
     }
 }
 
@@ -891,6 +1088,95 @@ fn build_workspace_tree_inner(
     for name in files {
         lines.push(format!("{prefix}{name}"));
     }
+}
+
+fn search_from_index(
+    index: &SearchIndex,
+    keyword: &str,
+    offset: u64,
+    limit: u64,
+    include_files: bool,
+    include_dirs: bool,
+) -> (Vec<WorkspaceEntry>, u64) {
+    let mut matched = 0u64;
+    let mut results = Vec::new();
+    for item in index.entries.iter() {
+        if item.is_dir && !include_dirs {
+            continue;
+        }
+        if !item.is_dir && !include_files {
+            continue;
+        }
+        if !item.name_lower.contains(keyword) {
+            continue;
+        }
+        matched += 1;
+        if matched <= offset {
+            continue;
+        }
+        if limit == 0 || results.len() < limit as usize {
+            results.push(item.entry.clone());
+        }
+    }
+    (results, matched)
+}
+
+fn search_by_walkdir(
+    root: &Path,
+    keyword: &str,
+    offset: u64,
+    limit: u64,
+    include_files: bool,
+    include_dirs: bool,
+) -> (Vec<WorkspaceEntry>, u64) {
+    let mut matched = 0u64;
+    let mut results = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        let file_type = entry.file_type();
+        if file_type.is_dir() && !include_dirs {
+            continue;
+        }
+        if file_type.is_file() && !include_files {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.to_lowercase().contains(keyword) {
+            continue;
+        }
+        matched += 1;
+        if matched <= offset {
+            continue;
+        }
+        let meta = entry.metadata().ok();
+        let updated = meta
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| {
+                let dt: DateTime<Local> = time.into();
+                Some(dt.to_rfc3339())
+            });
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .to_string();
+        if limit == 0 || results.len() < limit as usize {
+            results.push(WorkspaceEntry {
+                name,
+                path: rel.replace('\\', "/"),
+                entry_type: if file_type.is_dir() { "dir" } else { "file" }.to_string(),
+                size: meta.map(|meta| meta.len()).unwrap_or(0),
+                updated_time: updated.unwrap_or_default(),
+                children: None,
+            });
+        }
+    }
+    (results, matched)
 }
 
 fn resolve_collision(path: &Path) -> PathBuf {

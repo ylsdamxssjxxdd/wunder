@@ -12,12 +12,13 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread;
-use sysinfo::{Disks, Networks, System};
+use sysinfo::{Disks, Networks, ProcessRefreshKind, System};
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
+const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
 
 #[derive(Debug, Clone)]
 struct MonitorEvent {
@@ -262,6 +263,8 @@ pub struct MonitorState {
     system: Mutex<System>,
     disks: Mutex<Disks>,
     networks: Mutex<Networks>,
+    system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
+    system_snapshot_ttl_s: f64,
     event_limit: Option<usize>,
     payload_limit: Option<usize>,
     persist_interval_s: f64,
@@ -310,6 +313,8 @@ impl MonitorState {
             system: Mutex::new(system),
             disks: Mutex::new(disks),
             networks: Mutex::new(networks),
+            system_snapshot_cache: Mutex::new(None),
+            system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
             event_limit,
             payload_limit,
             persist_interval_s,
@@ -591,21 +596,48 @@ impl MonitorState {
     }
 
     pub fn get_system_metrics(&self) -> SystemSnapshot {
+        let now = now_ts();
+        {
+            let cache = self.system_snapshot_cache.lock().unwrap();
+            if let Some((snapshot, ts)) = cache.as_ref() {
+                if now - *ts < self.system_snapshot_ttl_s {
+                    return snapshot.clone();
+                }
+            }
+        }
+
+        let snapshot = self.collect_system_snapshot();
+        let mut cache = self.system_snapshot_cache.lock().unwrap();
+        *cache = Some((snapshot.clone(), now));
+        snapshot
+    }
+
+    fn collect_system_snapshot(&self) -> SystemSnapshot {
         let mut system = self.system.lock().unwrap();
-        system.refresh_all();
+        system.refresh_cpu_usage();
+        system.refresh_memory();
+        let pid = sysinfo::get_current_pid().ok();
+        let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
+        if let Some(pid) = pid {
+            system.refresh_process_specifics(pid, refresh_kind);
+        } else {
+            system.refresh_processes_specifics(refresh_kind);
+        }
         let cpu_percent = system.global_cpu_info().cpu_usage();
         let total_memory = system.total_memory();
         let used_memory = system.used_memory();
         let available = total_memory.saturating_sub(used_memory);
         let mut process_rss = 0;
         let mut process_cpu = 0.0;
-        if let Ok(pid) = sysinfo::get_current_pid() {
+        if let Some(pid) = pid {
             if let Some(process) = system.process(pid) {
                 process_rss = process.memory();
                 process_cpu = process.cpu_usage();
             }
         }
         let load_avg = System::load_average();
+        drop(system);
+
         let mut disk_total: u64 = 0;
         let mut disk_used: u64 = 0;
         let mut disk_free: u64 = 0;
@@ -623,6 +655,7 @@ impl MonitorState {
             disk_used = disk_total.saturating_sub(disk_free);
             disk_percent = (disk_used as f64 / disk_total as f64 * 100.0) as f32;
         }
+
         let mut net_sent: u64 = 0;
         let mut net_recv: u64 = 0;
         let mut networks = self.networks.lock().unwrap();
@@ -634,6 +667,7 @@ impl MonitorState {
             net_sent = net_sent.saturating_add(data.total_transmitted());
             net_recv = net_recv.saturating_add(data.total_received());
         }
+
         let uptime_s = {
             let start = *self.app_start_ts.lock().unwrap();
             let now = now_ts();

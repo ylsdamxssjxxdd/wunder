@@ -26,8 +26,8 @@ use rmcp::transport::{
 use serde_json::{json, Value};
 use sse_stream::SseStream;
 use std::borrow::Cow;
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -355,16 +355,13 @@ fn request_id_matches(expected: &RequestId, actual: &RequestId) -> bool {
 impl SseClientSession {
     async fn connect(config: &Config, server: &McpServerConfig) -> Result<Self> {
         let headers = build_mcp_headers(config, server)?;
-        let timeout = if config.mcp.timeout_s > 0 {
-            Some(Duration::from_secs(config.mcp.timeout_s))
+        let timeout_s = if config.mcp.timeout_s > 0 {
+            Some(config.mcp.timeout_s)
         } else {
             None
         };
-        let mut builder = reqwest::Client::builder().default_headers(headers);
-        if let Some(timeout) = timeout {
-            builder = builder.timeout(timeout);
-        }
-        let client = builder.build()?;
+        let timeout = timeout_s.map(Duration::from_secs);
+        let client = build_mcp_client(headers, timeout_s)?;
         let response = client
             .get(&server.endpoint)
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
@@ -632,6 +629,44 @@ pub(crate) fn normalize_transport(transport: Option<&str>) -> String {
     value.to_lowercase()
 }
 
+fn mcp_client_cache() -> &'static Mutex<HashMap<String, reqwest::Client>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_mcp_client_key(headers: &HeaderMap, timeout_s: Option<u64>) -> String {
+    let mut pairs = headers
+        .iter()
+        .map(|(key, value)| {
+            let value_text = value
+                .to_str()
+                .map(|text| text.to_string())
+                .unwrap_or_else(|_| String::from_utf8_lossy(value.as_bytes()).to_string());
+            format!("{}={}", key.as_str().to_lowercase(), value_text)
+        })
+        .collect::<Vec<_>>();
+    pairs.sort();
+    let timeout = timeout_s.unwrap_or(0);
+    format!("timeout={timeout};{}", pairs.join(";"))
+}
+
+fn build_mcp_client(headers: HeaderMap, timeout_s: Option<u64>) -> Result<reqwest::Client> {
+    let key = build_mcp_client_key(&headers, timeout_s);
+    let cache = mcp_client_cache();
+    if let Some(client) = cache.lock().unwrap().get(&key) {
+        return Ok(client.clone());
+    }
+    let mut builder = reqwest::Client::builder().default_headers(headers);
+    if let Some(timeout_s) = timeout_s {
+        if timeout_s > 0 {
+            builder = builder.timeout(Duration::from_secs(timeout_s));
+        }
+    }
+    let client = builder.build()?;
+    cache.lock().unwrap().insert(key, client.clone());
+    Ok(client)
+}
+
 fn build_transport(
     config: &Config,
     server: &McpServerConfig,
@@ -642,15 +677,11 @@ fn build_transport(
     }
     let headers = build_mcp_headers(config, server)?;
     let timeout_s = if config.mcp.timeout_s > 0 {
-        Some(Duration::from_secs(config.mcp.timeout_s))
+        Some(config.mcp.timeout_s)
     } else {
         None
     };
-    let mut builder = reqwest::Client::builder().default_headers(headers);
-    if let Some(timeout) = timeout_s {
-        builder = builder.timeout(timeout);
-    }
-    let client = builder.build()?;
+    let client = build_mcp_client(headers, timeout_s)?;
     let http_config = StreamableHttpClientTransportConfig::with_uri(server.endpoint.clone());
     Ok(StreamableHttpClientTransport::with_client(
         client,

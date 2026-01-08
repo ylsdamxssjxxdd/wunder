@@ -1165,13 +1165,14 @@ impl Orchestrator {
                     let tool_context = ToolContext {
                         user_id: &user_id,
                         session_id: &session_id,
-                        workspace: &self.workspace,
+                        workspace: self.workspace.clone(),
                         config: &config,
                         a2a_store: &self.a2a_store,
                         skills: &skills_snapshot,
                         user_tool_manager: Some(self.user_tool_manager.as_ref()),
                         user_tool_bindings: Some(&user_tool_bindings),
                         user_tool_store: Some(self.user_tool_manager.store()),
+                        http: &self.http,
                     };
 
                     let tool_result = if !allowed_tool_names.contains(&name) {

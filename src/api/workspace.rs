@@ -12,6 +12,7 @@ use chrono::{DateTime, Local};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -68,7 +69,7 @@ async fn workspace_list(
     let limit = params.limit.max(0) as u64;
     let (entries, tree_version, current_path, parent, total) = state
         .workspace
-        .list_workspace_entries(
+        .list_workspace_entries_async(
             &user_id,
             target_path,
             keyword,
@@ -77,6 +78,7 @@ async fn workspace_list(
             params.sort_by.trim(),
             params.order.trim(),
         )
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(WorkspaceListResponse {
         user_id,
@@ -131,7 +133,7 @@ async fn workspace_content(
         };
         let (entries, _tree_version, current_path, _parent, total) = state
             .workspace
-            .list_workspace_entries(
+            .list_workspace_entries_async(
                 &user_id,
                 &target_path,
                 keyword,
@@ -140,6 +142,7 @@ async fn workspace_content(
                 params.sort_by.trim(),
                 params.order.trim(),
             )
+            .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let mut content_entries = entries
             .into_iter()
@@ -153,7 +156,8 @@ async fn workspace_content(
                 safe_depth - 1,
                 params.sort_by.trim(),
                 params.order.trim(),
-            )?;
+            )
+            .await?;
         }
         let entries = if params.include_content {
             content_entries
@@ -230,7 +234,7 @@ async fn workspace_search(
     let limit = params.limit.max(0) as u64;
     let (entries, total) = state
         .workspace
-        .search_workspace_entries(
+        .search_workspace_entries_async(
             &user_id,
             &params.keyword,
             offset,
@@ -238,6 +242,7 @@ async fn workspace_search(
             params.include_files,
             params.include_dirs,
         )
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(WorkspaceSearchResponse {
         user_id,
@@ -993,42 +998,46 @@ async fn workspace_delete(
         files: Vec::new(),
     }))
 }
-fn attach_children(
-    state: &Arc<AppState>,
-    user_id: &str,
-    entries: &mut [WorkspaceContentEntry],
+fn attach_children<'a>(
+    state: &'a Arc<AppState>,
+    user_id: &'a str,
+    entries: &'a mut [WorkspaceContentEntry],
     remaining_depth: u64,
-    sort_by: &str,
-    order: &str,
-) -> Result<(), Response> {
-    if remaining_depth == 0 {
-        return Ok(());
-    }
-    for entry in entries {
-        if entry.entry_type != "dir" {
-            continue;
+    sort_by: &'a str,
+    order: &'a str,
+) -> Pin<Box<dyn Future<Output = Result<(), Response>> + Send + 'a>> {
+    Box::pin(async move {
+        if remaining_depth == 0 {
+            return Ok(());
         }
-        let (children, _tree_version, _current, _parent, _total) = state
-            .workspace
-            .list_workspace_entries(user_id, &entry.path, None, 0, 0, sort_by, order)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let mut converted = children
-            .into_iter()
-            .map(WorkspaceContentEntry::from)
-            .collect::<Vec<_>>();
-        if remaining_depth > 1 {
-            attach_children(
-                state,
-                user_id,
-                &mut converted,
-                remaining_depth - 1,
-                sort_by,
-                order,
-            )?;
+        for entry in entries {
+            if entry.entry_type != "dir" {
+                continue;
+            }
+            let (children, _tree_version, _current, _parent, _total) = state
+                .workspace
+                .list_workspace_entries_async(user_id, &entry.path, None, 0, 0, sort_by, order)
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let mut converted = children
+                .into_iter()
+                .map(WorkspaceContentEntry::from)
+                .collect::<Vec<_>>();
+            if remaining_depth > 1 {
+                attach_children(
+                    state,
+                    user_id,
+                    &mut converted,
+                    remaining_depth - 1,
+                    sort_by,
+                    order,
+                )
+                .await?;
+            }
+            entry.children = converted;
         }
-        entry.children = converted;
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn normalize_relative_path(value: &str) -> String {

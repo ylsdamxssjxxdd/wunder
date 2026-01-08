@@ -17,6 +17,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::sleep;
@@ -26,13 +27,14 @@ use uuid::Uuid;
 pub struct ToolContext<'a> {
     pub user_id: &'a str,
     pub session_id: &'a str,
-    pub workspace: &'a WorkspaceManager,
+    pub workspace: Arc<WorkspaceManager>,
     pub config: &'a Config,
     pub a2a_store: &'a A2aStore,
     pub skills: &'a SkillRegistry,
     pub user_tool_manager: Option<&'a UserToolManager>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
+    pub http: &'a reqwest::Client,
 }
 
 pub fn builtin_tool_specs() -> Vec<ToolSpec> {
@@ -487,8 +489,8 @@ pub async fn execute_builtin_tool(
         })),
         "执行命令" => execute_command(context, args).await,
         "ptc" => execute_ptc(context, args).await,
-        "列出文件" => list_files(context, args),
-        "搜索内容" => search_content(context, args),
+        "列出文件" => list_files(context, args).await,
+        "搜索内容" => search_content(context, args).await,
         "读取文件" => read_files(context, args),
         "写入文件" => write_file(context, args),
         "替换文本" => replace_text(context, args),
@@ -712,7 +714,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
             context.config,
-            context.workspace,
+            context.workspace.as_ref(),
             context.user_id,
             context.session_id,
             "执行命令",
@@ -767,7 +769,7 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
             context.config,
-            context.workspace,
+            context.workspace.as_ref(),
             context.user_id,
             context.session_id,
             "ptc",
@@ -802,15 +804,21 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }))
 }
 
-fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args.get("path").and_then(Value::as_str).unwrap_or("");
-    let entries = context.workspace.list_entries(context.user_id, path)?;
+    let entries = context
+        .workspace
+        .list_entries_async(context.user_id, path)
+        .await?;
     Ok(serde_json::to_value(entries)?)
 }
 
-fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let query = args.get("query").and_then(Value::as_str).unwrap_or("");
-    let entries = context.workspace.search(context.user_id, query)?;
+    let (entries, _total) = context
+        .workspace
+        .search_workspace_entries_async(context.user_id, query, 0, 0, true, true)
+        .await?;
     Ok(serde_json::to_value(entries)?)
 }
 
@@ -1042,7 +1050,14 @@ async fn execute_a2a_service(context: &ToolContext<'_>, name: &str, args: &Value
         .get("timeout_s")
         .and_then(Value::as_u64)
         .unwrap_or(context.config.a2a.timeout_s);
-    let response = send_a2a_request(&service.endpoint, headers, &payload, timeout_s).await?;
+    let response = send_a2a_request(
+        context.http,
+        &service.endpoint,
+        headers,
+        &payload,
+        timeout_s,
+    )
+    .await?;
     let info = parse_a2a_task_info(&response).ok_or_else(|| anyhow!("A2A 返回缺少任务信息"))?;
     let now = Utc::now();
     context.a2a_store.insert(A2aTask {
@@ -1380,7 +1395,7 @@ async fn refresh_a2a_task(
         "method": "GetTask",
         "params": { "name": format!("tasks/{}", snapshot.task_id) }
     });
-    let response = send_a2a_request(&endpoint, headers, &payload, timeout_s).await?;
+    let response = send_a2a_request(context.http, &endpoint, headers, &payload, timeout_s).await?;
     if let Some(info) = parse_a2a_task_info(&response) {
         snapshot.context_id = info.context_id.clone();
         snapshot.status = info.status.clone();
@@ -1490,17 +1505,17 @@ fn should_attach_a2a_api_key(config: &Config, service: &A2aServiceConfig) -> boo
 }
 
 async fn send_a2a_request(
+    client: &reqwest::Client,
     endpoint: &str,
     headers: HeaderMap,
     payload: &Value,
     timeout_s: u64,
 ) -> Result<Value> {
-    let mut builder = reqwest::Client::builder().default_headers(headers);
+    let mut request = client.post(endpoint).headers(headers).json(payload);
     if timeout_s > 0 {
-        builder = builder.timeout(Duration::from_secs(timeout_s));
+        request = request.timeout(Duration::from_secs(timeout_s));
     }
-    let client = builder.build()?;
-    let response = client.post(endpoint).json(payload).send().await?;
+    let response = request.send().await?;
     let status = response.status();
     let text = response.text().await?;
     let body: Value =

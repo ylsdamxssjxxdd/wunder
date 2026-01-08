@@ -20,6 +20,7 @@ const DEFAULT_CACHE_MAX_ITEMS: usize = 128;
 
 pub struct PromptComposer {
     cache: Mutex<PromptCache>,
+    tool_cache: Mutex<ToolSpecCache>,
     ttl_s: f64,
     max_items: usize,
 }
@@ -32,6 +33,17 @@ struct PromptCacheEntry {
 #[derive(Default)]
 struct PromptCache {
     entries: HashMap<String, PromptCacheEntry>,
+    order: VecDeque<String>,
+}
+
+struct ToolSpecCacheEntry {
+    specs: Vec<ToolSpec>,
+    timestamp: f64,
+}
+
+#[derive(Default)]
+struct ToolSpecCache {
+    entries: HashMap<String, ToolSpecCacheEntry>,
     order: VecDeque<String>,
 }
 
@@ -63,6 +75,7 @@ impl PromptComposer {
     pub fn new(ttl_s: f64, max_items: usize) -> Self {
         Self {
             cache: Mutex::new(PromptCache::default()),
+            tool_cache: Mutex::new(ToolSpecCache::default()),
             ttl_s: if ttl_s <= 0.0 {
                 DEFAULT_CACHE_TTL_S
             } else {
@@ -90,7 +103,8 @@ impl PromptComposer {
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
         let language = i18n::get_language();
-        let workspace_version = workspace.get_tree_version(user_id);
+        let tree_snapshot = workspace.get_workspace_tree_snapshot(user_id);
+        let workspace_version = tree_snapshot.version;
         let user_tool_version = user_tool_bindings
             .map(|item| item.user_version)
             .unwrap_or(0.0);
@@ -107,7 +121,7 @@ impl PromptComposer {
             return prompt;
         }
 
-        let workspace_tree = workspace.get_workspace_tree(user_id);
+        let workspace_tree = tree_snapshot.tree;
         let include_tools_protocol = !allowed_tool_names.is_empty();
         let base_skill_specs = skills.list_specs();
         let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
@@ -119,8 +133,17 @@ impl PromptComposer {
                 }
             }
         }
-        let tool_specs =
-            collect_prompt_tool_specs(config, skills, allowed_tool_names, user_tool_bindings);
+        let tool_cache_key = format!(
+            "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
+        );
+        let tool_specs = if let Some(specs) = self.get_cached_tool_specs(&tool_cache_key, now) {
+            specs
+        } else {
+            let specs =
+                collect_prompt_tool_specs(config, skills, allowed_tool_names, user_tool_bindings);
+            self.insert_cached_tool_specs(tool_cache_key, specs.clone(), now);
+            specs
+        };
         let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
         let mut prompt = build_system_prompt(
             &base_prompt,
@@ -183,6 +206,32 @@ impl PromptComposer {
             key.clone(),
             PromptCacheEntry {
                 prompt,
+                timestamp: now,
+            },
+        );
+        cache.order.push_back(key);
+        while cache.order.len() > self.max_items {
+            if let Some(old_key) = cache.order.pop_front() {
+                cache.entries.remove(&old_key);
+            }
+        }
+    }
+
+    fn get_cached_tool_specs(&self, key: &str, now: f64) -> Option<Vec<ToolSpec>> {
+        let cache = self.tool_cache.lock().unwrap();
+        let entry = cache.entries.get(key)?;
+        if now - entry.timestamp > self.ttl_s {
+            return None;
+        }
+        Some(entry.specs.clone())
+    }
+
+    fn insert_cached_tool_specs(&self, key: String, specs: Vec<ToolSpec>, now: f64) {
+        let mut cache = self.tool_cache.lock().unwrap();
+        cache.entries.insert(
+            key.clone(),
+            ToolSpecCacheEntry {
+                specs,
                 timestamp: now,
             },
         );
