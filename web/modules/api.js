@@ -1,7 +1,7 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 
-// èŽ·å–å½“å‰è§„èŒƒåŒ–åŽçš„ /wunder æ ¹è·¯å¾„
+// »ñÈ¡µ±Ç°¹æ·¶»¯ºóµÄ /wunder ¸ùÂ·¾¶
 export const getWunderBase = () => normalizeApiBase(elements.apiBase.value);
 
 

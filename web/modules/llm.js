@@ -1,9 +1,9 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
 let contextProbeTimer = null;
 let lastProbeKey = "";
@@ -11,7 +11,7 @@ let lastAutoContext = null;
 let probeInFlight = false;
 let pendingProbe = false;
 
-// è§„èŒƒåŒ– LLM é…ç½®ï¼Œé¿å…ç©ºå€¼å½±å“å±•ç¤ºã€‚
+// ¹æ·¶»¯ LLM ÅäÖÃ£¬±ÜÃâ¿ÕÖµÓ°ÏìÕ¹Ê¾¡£
 const normalizeLlmConfig = (raw) => ({
   enable: raw?.enable !== false,
   provider: raw?.provider || "openai_compatible",
@@ -44,7 +44,7 @@ const normalizeLlmConfig = (raw) => ({
   mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
 });
 
-// è§„èŒƒåŒ–å¤šæ¨¡å‹é…ç½®é›†åˆã€‚
+// ¹æ·¶»¯¶àÄ£ĞÍÅäÖÃ¼¯ºÏ¡£
 const normalizeLlmSet = (raw) => {
   const llm = raw || {};
   const models = llm.models || {};
@@ -97,7 +97,7 @@ const clearLlmForm = () => {
   elements.llmHistoryCompactionReset.value = "zero";
 };
 
-// å°† LLM é…ç½®æ¸²æŸ“åˆ°è¡¨å•ã€‚
+// ½« LLM ÅäÖÃäÖÈ¾µ½±íµ¥¡£
 const applyLlmConfigToForm = (name, config) => {
   if (!name || !config) {
     clearLlmForm();
@@ -157,7 +157,7 @@ const updateDetailHeader = () => {
     if (config.base_url) {
       parts.push(config.base_url);
     }
-    elements.llmDetailMeta.textContent = parts.join(" Â· ") || t("llm.detail.selected");
+    elements.llmDetailMeta.textContent = parts.join(" ¡¤ ") || t("llm.detail.selected");
   }
   if (elements.llmSetDefaultBtn) {
     const isDefault = activeName === state.llm.defaultName;
@@ -169,7 +169,7 @@ const updateDetailHeader = () => {
   }
 };
 
-// æ¸²æŸ“æ¨¡å‹é…ç½®åˆ—è¡¨ï¼Œæ”¯æŒé»˜è®¤æ ‡è®°ä¸å½“å‰é€‰ä¸­çŠ¶æ€ã€‚
+// äÖÈ¾Ä£ĞÍÅäÖÃÁĞ±í£¬Ö§³ÖÄ¬ÈÏ±ê¼ÇÓëµ±Ç°Ñ¡ÖĞ×´Ì¬¡£
 const renderLlmList = () => {
   if (!elements.llmConfigList) {
     return;
@@ -208,7 +208,7 @@ const renderLlmList = () => {
     if (config?.base_url) {
       metaParts.push(config.base_url);
     }
-    meta.textContent = metaParts.join(" Â· ") || t("llm.meta.empty");
+    meta.textContent = metaParts.join(" ¡¤ ") || t("llm.meta.empty");
 
     item.appendChild(title);
     item.appendChild(meta);
@@ -219,7 +219,7 @@ const renderLlmList = () => {
   });
 };
 
-// ä»è¡¨å•æ„å»º LLM é…ç½®ã€‚
+// ´Ó±íµ¥¹¹½¨ LLM ÅäÖÃ¡£
 const buildLlmConfigFromForm = (baseConfig) => {
   const base = normalizeLlmConfig(baseConfig || {});
   const temperature = Number.parseFloat(elements.llmTemperature.value);
@@ -260,7 +260,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
   };
 };
 
-// å°†å½“å‰è¡¨å•å†…å®¹å†™å›çŠ¶æ€ï¼Œé¿å…åˆ‡æ¢æ—¶ä¸¢å¤±ç¼–è¾‘å†…å®¹ã€‚
+// ½«µ±Ç°±íµ¥ÄÚÈİĞ´»Ø×´Ì¬£¬±ÜÃâÇĞ»»Ê±¶ªÊ§±à¼­ÄÚÈİ¡£
 const syncActiveConfigToState = () => {
   const activeName = state.llm.activeName;
   if (!activeName || !state.llm.configs[activeName]) {
@@ -281,7 +281,7 @@ const selectLlmConfig = (name) => {
   updateDetailHeader();
 };
 
-// æ„å»ºæ¨¡å‹ä¸Šä¸‹æ–‡æ¢æµ‹è¯·æ±‚ä½“ã€‚
+// ¹¹½¨Ä£ĞÍÉÏÏÂÎÄÌ½²âÇëÇóÌå¡£
 const buildContextProbePayload = () => {
   const provider = elements.llmProvider.value.trim() || "openai_compatible";
   const baseUrl = elements.llmBaseUrl.value.trim();
@@ -299,7 +299,7 @@ const buildContextProbePayload = () => {
   };
 };
 
-// åˆ¤æ–­æ˜¯å¦éœ€è¦è¦†ç›–å½“å‰ max_context è¾“å…¥ã€‚
+// ÅĞ¶ÏÊÇ·ñĞèÒª¸²¸Çµ±Ç° max_context ÊäÈë¡£
 const shouldApplyContextValue = (probeKey, value) => {
   const currentValue = elements.llmMaxContext.value.trim();
   if (!currentValue) {
@@ -311,7 +311,7 @@ const shouldApplyContextValue = (probeKey, value) => {
   return lastAutoContext !== null && String(currentValue) === String(lastAutoContext);
 };
 
-// è¯·æ±‚æ¨¡å‹æœ€å¤§ä¸Šä¸‹æ–‡é•¿åº¦ã€‚
+// ÇëÇóÄ£ĞÍ×î´óÉÏÏÂÎÄ³¤¶È¡£
 const requestContextWindow = async (force = false) => {
   if (probeInFlight) {
     pendingProbe = true;
@@ -378,7 +378,7 @@ const requestContextWindow = async (force = false) => {
   }
 };
 
-// å»¶è¿Ÿè§¦å‘æ¢æµ‹ï¼Œé¿å…é¢‘ç¹è¯·æ±‚ã€‚
+// ÑÓ³Ù´¥·¢Ì½²â£¬±ÜÃâÆµ·±ÇëÇó¡£
 const scheduleContextProbe = () => {
   if (contextProbeTimer) {
     clearTimeout(contextProbeTimer);
@@ -416,7 +416,7 @@ const renderDebugModelOptions = () => {
 const applyLlmSet = (raw, options = {}) => {
   const normalized = normalizeLlmSet(raw || {});
   if (!normalized.order.length) {
-    // é¦–æ¬¡æ— æ¨¡å‹é…ç½®æ—¶ï¼Œæ¨¡æ‹Ÿç‚¹å‡»æ–°å¢çš„çŠ¶æ€ï¼Œé¿å…è¡¨å•æ— æ³•ä¿å­˜ã€‚
+    // Ê×´ÎÎŞÄ£ĞÍÅäÖÃÊ±£¬Ä£Äâµã»÷ĞÂÔöµÄ×´Ì¬£¬±ÜÃâ±íµ¥ÎŞ·¨±£´æ¡£
     const baseName = t("llm.newName");
     let name = baseName;
     let index = 1;
@@ -452,7 +452,7 @@ const applyLlmSet = (raw, options = {}) => {
   }
 };
 
-// è·å–å½“å‰ LLM é…ç½®ã€‚
+// »ñÈ¡µ±Ç° LLM ÅäÖÃ¡£
 export const loadLlmConfig = async (options = {}) => {
   if (state.llm.loaded && options.force !== true) {
     renderLlmList();
@@ -526,7 +526,7 @@ const buildLlmPayload = () => {
   return { default: defaultName, models };
 };
 
-// ä¿å­˜ LLM é…ç½®ã€‚
+// ±£´æ LLM ÅäÖÃ¡£
 export const saveLlmConfig = async () => {
   commitActiveConfigEdits();
   const wunderBase = getWunderBase();
@@ -626,7 +626,7 @@ const handleNameEdit = () => {
   updateDetailHeader();
 };
 
-// åˆå§‹åŒ–æ¨¡å‹é…ç½®é¢æ¿äº¤äº’ã€‚
+// ³õÊ¼»¯Ä£ĞÍÅäÖÃÃæ°å½»»¥¡£
 export const initLlmPanel = () => {
   elements.saveLlmBtn.addEventListener("click", async () => {
     try {
@@ -644,7 +644,7 @@ export const initLlmPanel = () => {
   elements.llmSetDefaultBtn?.addEventListener("click", handleSetDefault);
   elements.llmConfigName?.addEventListener("input", handleNameEdit);
   elements.llmProbeContextBtn?.addEventListener("click", () => {
-    // æ‰‹åŠ¨è§¦å‘æœ€å¤§ä¸Šä¸‹æ–‡æ¢æµ‹ï¼Œç¼ºå°‘å¿…è¦å­—æ®µæ—¶ç»™å‡ºæç¤º
+    // ÊÖ¶¯´¥·¢×î´óÉÏÏÂÎÄÌ½²â£¬È±ÉÙ±ØÒª×Ö¶ÎÊ±¸ø³öÌáÊ¾
     if (!buildContextProbePayload()) {
       notify(t("llm.error.probeMissing"), "warn");
       return;

@@ -5,9 +5,9 @@ import { isPlainObject, parseHeadersValue } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251231-01";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// 规范化 A2A 服务字段，兼容后端与导入结构
+// 规范�?A2A 服务字段，兼容后端与导入结构
 const normalizeA2aService = (service) => {
   const headers = isPlainObject(service.headers) ? service.headers : {};
   const agentCard = isPlainObject(service.agent_card)
@@ -153,7 +153,7 @@ const renderAgentCardList = (container, items, mapper) => {
   });
 };
 
-// 按分组展示 AgentCard.tooling，补齐内置/MCP/知识库/A2A 能力信息
+// 按分组展�?AgentCard.tooling，补齐内�?MCP/知识�?A2A 能力信息
 const renderAgentCardTools = (container, tooling) => {
   if (!container) {
     return;

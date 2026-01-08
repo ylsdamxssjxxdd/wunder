@@ -1,8 +1,8 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { formatToolSchema } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// æ‰“å¼€å·¥å…·è¯¦æƒ…å¼¹çª—ï¼šå†…ç½®å·¥å…·ä¸Ž MCP å·¥å…·å…±ç”¨å±•ç¤ºé€»è¾‘
+// ´ò¿ª¹¤¾ßÏêÇéµ¯´°£ºÄÚÖÃ¹¤¾ßÓë MCP ¹¤¾ß¹²ÓÃÕ¹Ê¾Âß¼­
 export const openToolDetailModal = (payload) => {
   const title = String(payload?.title || payload?.name || "").trim();
   elements.toolDetailTitle.textContent = title || t("tool.detail.title");
@@ -13,12 +13,12 @@ export const openToolDetailModal = (payload) => {
   elements.toolDetailModal.classList.add("active");
 };
 
-// å…³é—­å·¥å…·è¯¦æƒ…å¼¹çª—ï¼Œä¿ç•™å†…å®¹ä¾¿äºŽå¿«é€Ÿåˆ‡æ¢æŸ¥çœ‹
+// ¹Ø±Õ¹¤¾ßÏêÇéµ¯´°£¬±£ÁôÄÚÈÝ±ãÓÚ¿ìËÙÇÐ»»²é¿´
 export const closeToolDetailModal = () => {
   elements.toolDetailModal.classList.remove("active");
 };
 
-// åˆå§‹åŒ–å·¥å…·è¯¦æƒ…å¼¹çª—äº¤äº’
+// ³õÊ¼»¯¹¤¾ßÏêÇéµ¯´°½»»¥
 export const initToolDetailModal = () => {
   elements.toolDetailClose.addEventListener("click", closeToolDetailModal);
   elements.toolDetailCloseBtn.addEventListener("click", closeToolDetailModal);

@@ -1,16 +1,16 @@
 // 前端统一配置：集中管理默认值与页面行为参数
 const APP_CONFIG_DEFAULTS = {
-  // 默认 API 地址：用于初始化调试面板输入框
+  // 默认 API 地址：用于初始化调试面板输入�?
   defaultApiBase: "http://127.0.0.1:8000/wunder",
   // 默认 API Key：为空表示由用户自行输入
   defaultApiKey: "",
-  // 默认用户 ID：用于初始化调试面板输入框
+  // 默认用户 ID：用于初始化调试面板输入�?
   defaultUserId: "demo_user",
-  // 调试面板问题预设：右键问题区域快速填充
+  // 调试面板问题预设：右键问题区域快速填�?
   debugQuestionPresets: {
     "zh-CN": [
-      "你好，介绍一下 wunder 的核心能力。",
-      "请列出当前可用工具，并说明用途。",
+      "你好，介绍一�?wunder 的核心能力�?,
+      "请列出当前可用工具，并说明用途�?,
       "用python绘制一个爱心保存到本地png",
       "广州今天的天气如何？",
     ],
@@ -25,7 +25,7 @@ const APP_CONFIG_DEFAULTS = {
   defaultPanel: "monitor",
   // 监控轮询间隔（毫秒）
   monitorPollIntervalMs: 3000,
-  // 系统提示词自动刷新延迟（毫秒）
+  // 系统提示词自动刷新延迟（毫秒�?
   promptReloadDelayMs: 300,
   // 默认语言：用于控制前端显示与请求语言
   language: "zh-CN",
@@ -67,7 +67,7 @@ const sanitizeConfig = (raw) => {
   return next;
 };
 
-// 读取本地存储配置，合并到默认配置中
+// 读取本地存储配置，合并到默认配置�?
 export const readStoredConfig = () => {
   try {
     const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
@@ -81,7 +81,7 @@ export const readStoredConfig = () => {
   }
 };
 
-// 应用本地配置到 APP_CONFIG，用于初始化默认值
+// 应用本地配置�?APP_CONFIG，用于初始化默认�?
 export const applyStoredConfig = () => {
   const stored = readStoredConfig();
   Object.assign(APP_CONFIG, APP_CONFIG_DEFAULTS, stored);
@@ -101,7 +101,7 @@ export const updateStoredConfig = (patch) => {
   return { ...APP_CONFIG };
 };
 
-// 清空本地配置并恢复默认值
+// 清空本地配置并恢复默认�?
 export const resetStoredConfig = () => {
   try {
     localStorage.removeItem(CONFIG_STORAGE_KEY);
@@ -121,7 +121,7 @@ export const updateDefaultConfig = (patch) => {
   return { ...APP_CONFIG_DEFAULTS };
 };
 
-// 应用默认配置到界面输入框，避免在 HTML 中硬编码默认值
+// 应用默认配置到界面输入框，避免在 HTML 中硬编码默认�?
 export const applyDefaultConfig = (elements) => {
   if (elements.apiBase && !elements.apiBase.value.trim()) {
     elements.apiBase.value = APP_CONFIG.defaultApiBase;

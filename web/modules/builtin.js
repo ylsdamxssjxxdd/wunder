@@ -1,4 +1,4 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { getToolInputSchema } from "./utils.js?v=20251229-02";
@@ -6,9 +6,9 @@ import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// æ‹‰å–å†…ç½®å·¥å…·æ¸…å•ä¸Žå¯ç”¨çŠ¶æ€
+// À­È¡ÄÚÖÃ¹¤¾ßÇåµ¥ÓëÆôÓÃ×´Ì¬
 export const loadBuiltinTools = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/tools`;
@@ -21,7 +21,7 @@ export const loadBuiltinTools = async () => {
   renderBuiltinTools();
 };
 
-// æ¸²æŸ“å†…ç½®å·¥å…·å‹¾é€‰åˆ—è¡¨
+// äÖÈ¾ÄÚÖÃ¹¤¾ß¹´Ñ¡ÁÐ±í
 const renderBuiltinTools = () => {
   elements.builtinToolsList.textContent = "";
   if (!state.builtin.tools.length) {
@@ -53,7 +53,7 @@ const renderBuiltinTools = () => {
     label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${
       tool.description || ""
     }</span>`;
-    // ç‚¹å‡»å·¥å…·æ¡ç›®æŸ¥çœ‹è¯¦æƒ…ï¼Œé¿å…ä¸Žå‹¾é€‰åŠ¨ä½œå†²çª
+    // µã»÷¹¤¾ßÌõÄ¿²é¿´ÏêÇé£¬±ÜÃâÓë¹´Ñ¡¶¯×÷³åÍ»
     item.addEventListener("click", (event) => {
       if (event.target === checkbox) {
         return;
@@ -64,7 +64,7 @@ const renderBuiltinTools = () => {
       ];
       openToolDetailModal({
         title: tool.name || t("tool.detail.title"),
-        meta: metaParts.join(" Â· "),
+        meta: metaParts.join(" ¡¤ "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
       });
@@ -75,7 +75,7 @@ const renderBuiltinTools = () => {
   });
 };
 
-// ä¿å­˜å†…ç½®å·¥å…·å¯ç”¨çŠ¶æ€
+// ±£´æÄÚÖÃ¹¤¾ßÆôÓÃ×´Ì¬
 const saveBuiltinTools = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/tools`;
@@ -96,7 +96,7 @@ const saveBuiltinTools = async () => {
   syncPromptTools();
 };
 
-// åˆå§‹åŒ–å†…ç½®å·¥å…·é¢æ¿äº¤äº’
+// ³õÊ¼»¯ÄÚÖÃ¹¤¾ßÃæ°å½»»¥
 export const initBuiltinPanel = () => {
   elements.refreshBuiltinBtn.addEventListener("click", async () => {
     try {

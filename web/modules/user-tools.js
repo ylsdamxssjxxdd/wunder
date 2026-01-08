@@ -1,4 +1,4 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import {
@@ -16,9 +16,9 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// è‡ªå»ºå·¥å…·ç»Ÿä¸€ä½¿ç”¨è¾“å…¥å³ä¿å­˜çš„èŠ‚æµæ—¶é—´ï¼Œé¿å…é¢‘ç¹å†™å…¥
+// ×Ô½¨¹¤¾ßÍ³Ò»Ê¹ÓÃÊäÈë¼´±£´æµÄ½ÚÁ÷Ê±¼ä£¬±ÜÃâÆµ·±Ð´Èë
 const SAVE_DEBOUNCE_MS = 600;
 
 let mcpSaveTimer = null;
@@ -73,7 +73,7 @@ const updateUserKnowledgeEditorHighlight = () => {
       elements.userKnowledgeFileContent.clientHeight -
       borderY
   );
-  // åŒæ­¥æ»šåŠ¨æ¡å ä½ï¼Œé¿å…è‡ªåŠ¨æ¢è¡Œå®½åº¦ä¸ä¸€è‡´å¯¼è‡´é«˜äº®é”™ä½
+  // Í¬²½¹ö¶¯ÌõÕ¼Î»£¬±ÜÃâ×Ô¶¯»»ÐÐ¿í¶È²»Ò»ÖÂµ¼ÖÂ¸ßÁÁ´íÎ»
   elements.userKnowledgeFileHighlight.style.setProperty(
     "--knowledge-scrollbar-width",
     `${scrollbarWidth}px`
@@ -82,7 +82,7 @@ const updateUserKnowledgeEditorHighlight = () => {
     "--knowledge-scrollbar-height",
     `${scrollbarHeight}px`
   );
-  // åŒæ­¥æ¸²æŸ“ä¸€çº§æ ‡é¢˜é«˜äº®ï¼Œæ–¹ä¾¿è¯†åˆ«çŸ¥è¯†æ¡ç›®
+  // Í¬²½äÖÈ¾Ò»¼¶±êÌâ¸ßÁÁ£¬·½±ãÊ¶±ðÖªÊ¶ÌõÄ¿
   elements.userKnowledgeFileHighlight.innerHTML = buildHeadingHighlightHtml(
     elements.userKnowledgeFileContent.value
   );
@@ -212,7 +212,7 @@ export const resetUserToolsState = () => {
   }
 };
 
-// MCP è‡ªå»ºå·¥å…·ï¼šæœåŠ¡é…ç½®ã€å·¥å…·å¯ç”¨ä¸Žå…±äº«
+// MCP ×Ô½¨¹¤¾ß£º·þÎñÅäÖÃ¡¢¹¤¾ßÆôÓÃÓë¹²Ïí
 const buildUserMcpStructPreview = (server) => {
   if (!server || !server.name || !server.endpoint) {
     return "";
@@ -438,7 +438,7 @@ const renderUserMcpServers = () => {
       subtitleParts.push(`ID: ${server.name}`);
     }
     subtitleParts.push(server.endpoint || "-");
-    item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" Â· ")}</small>`;
+    item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" ¡¤ ")}</small>`;
     item.addEventListener("click", () => {
       state.userTools.mcp.selectedIndex = index;
       renderUserMcpServers();
@@ -521,7 +521,7 @@ const renderUserMcpDetail = () => {
     server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
   );
   elements.userMcpDetailTitle.textContent = title;
-  elements.userMcpDetailMeta.textContent = metaParts.join(" Â· ");
+  elements.userMcpDetailMeta.textContent = metaParts.join(" ¡¤ ");
   elements.userMcpDetailDesc.textContent = server.description || "";
   elements.userMcpName.value = server.name || "";
   elements.userMcpDisplayName.value = server.display_name || "";
@@ -631,7 +631,7 @@ const renderUserMcpTools = () => {
       );
       openToolDetailModal({
         title: tool.name || t("tool.detail.title"),
-        meta: metaParts.join(" Â· "),
+        meta: metaParts.join(" ¡¤ "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
       });
@@ -1036,7 +1036,7 @@ const bindUserMcpInputs = () => {
   });
 };
 
-// æŠ€èƒ½è‡ªå»ºå·¥å…·ï¼šä¸Šä¼ ã€å¯ç”¨ä¸Žå…±äº«
+// ¼¼ÄÜ×Ô½¨¹¤¾ß£ºÉÏ´«¡¢ÆôÓÃÓë¹²Ïí
 const loadUserSkills = async () => {
   ensureUserToolsState();
   const userId = getUserId();
@@ -1129,7 +1129,7 @@ const renderUserSkills = () => {
     if (skill.path) {
       descParts.push(skill.path);
     }
-    const desc = descParts.length ? `<span class="muted">${descParts.join(" Â· ")}</span>` : "";
+    const desc = descParts.length ? `<span class="muted">${descParts.join(" ¡¤ ")}</span>` : "";
     info.innerHTML = `<strong>${skill.name}</strong>${desc}`;
 
     enableCheckbox.addEventListener("change", (event) => {
@@ -1267,7 +1267,7 @@ const uploadUserSkillZip = async (file) => {
   syncPromptTools();
 };
 
-// çŸ¥è¯†åº“è‡ªå»ºå·¥å…·ï¼šé…ç½®ã€å…±äº«ä¸Žæ–‡æ¡£ç®¡ç†
+// ÖªÊ¶¿â×Ô½¨¹¤¾ß£ºÅäÖÃ¡¢¹²ÏíÓëÎÄµµ¹ÜÀí
 const normalizeUserKnowledgeConfig = (raw) => {
   const config = raw || {};
   return {
@@ -1285,7 +1285,7 @@ const normalizeUserKnowledgeConfig = (raw) => {
   };
 };
 
-// doc2md æ”¯æŒçš„æ‰©å±•ååˆ—è¡¨ï¼ˆç”¨äºŽå‰ç«¯é€‰æ‹©è¿‡æ»¤ï¼‰
+// doc2md Ö§³ÖµÄÀ©Õ¹ÃûÁÐ±í£¨ÓÃÓÚÇ°¶ËÑ¡Ôñ¹ýÂË£©
 const USER_KNOWLEDGE_UPLOAD_EXTENSIONS = [
   ".txt",
   ".md",
@@ -1321,7 +1321,7 @@ const USER_KNOWLEDGE_UPLOAD_ACCEPT = USER_KNOWLEDGE_UPLOAD_EXTENSIONS.join(",");
 const getActiveUserKnowledgeBase = () =>
   state.userTools.knowledge.bases[state.userTools.knowledge.selectedIndex] || null;
 
-// æ‰“å¼€ç”¨æˆ·çŸ¥è¯†åº“é…ç½®å¼¹çª—
+// ´ò¿ªÓÃ»§ÖªÊ¶¿âÅäÖÃµ¯´°
 const openUserKnowledgeModal = (base = null, index = -1) => {
   if (!elements.userKnowledgeModal) {
     return;
@@ -1350,7 +1350,7 @@ const openUserKnowledgeModal = (base = null, index = -1) => {
   elements.userKnowledgeModalName?.focus();
 };
 
-// å…³é—­ç”¨æˆ·çŸ¥è¯†åº“é…ç½®å¼¹çª—å¹¶æ¸…ç†çŠ¶æ€
+// ¹Ø±ÕÓÃ»§ÖªÊ¶¿âÅäÖÃµ¯´°²¢ÇåÀí×´Ì¬
 const closeUserKnowledgeModal = () => {
   if (!elements.userKnowledgeModal) {
     return;
@@ -1359,7 +1359,7 @@ const closeUserKnowledgeModal = () => {
   userKnowledgeEditingIndex = -1;
 };
 
-// ä»Žå¼¹çª—ä¸­è¯»å–ç”¨æˆ·çŸ¥è¯†åº“é…ç½®
+// ´Óµ¯´°ÖÐ¶ÁÈ¡ÓÃ»§ÖªÊ¶¿âÅäÖÃ
 const getUserKnowledgeModalPayload = () => ({
   name: elements.userKnowledgeModalName?.value?.trim() || "",
   description: elements.userKnowledgeModalDesc?.value?.trim() || "",
@@ -1369,7 +1369,7 @@ const getUserKnowledgeModalPayload = () => ({
   shared: elements.userKnowledgeModalShared?.checked === true,
 });
 
-// æ ¡éªŒç”¨æˆ·çŸ¥è¯†åº“é…ç½®ï¼Œé¿å…ç©ºå€¼æˆ–é‡å
+// Ð£ÑéÓÃ»§ÖªÊ¶¿âÅäÖÃ£¬±ÜÃâ¿ÕÖµ»òÖØÃû
 const validateUserKnowledgeBase = (payload, index) => {
   if (!payload.name) {
     return t("knowledge.name.required");
@@ -1437,7 +1437,7 @@ const renderUserKnowledgeDetailHeader = () => {
   if (base.shared) {
     metaParts.push(t("userTools.shared.on"));
   }
-  elements.userKnowledgeDetailMeta.textContent = metaParts.join(" Â· ");
+  elements.userKnowledgeDetailMeta.textContent = metaParts.join(" ¡¤ ");
   if (elements.userKnowledgeDetailDesc) {
     elements.userKnowledgeDetailDesc.textContent = base.description || "";
   }
@@ -1684,7 +1684,7 @@ const saveUserKnowledgeFile = async () => {
   notify(t("knowledge.file.saved"), "success");
 };
 
-// æ”¯æŒä»Žåˆ—è¡¨é¡¹ç›´æŽ¥åˆ é™¤æŒ‡å®šæ–‡æ¡£
+// Ö§³Ö´ÓÁÐ±íÏîÖ±½ÓÉ¾³ýÖ¸¶¨ÎÄµµ
 const deleteUserKnowledgeFile = async (targetPath = "") => {
   const base = getActiveUserKnowledgeBase();
   const userId = getUserId();
@@ -1937,7 +1937,7 @@ const deleteUserKnowledgeBase = async () => {
   }
 };
 
-// é™„åŠ æç¤ºè¯ï¼šè¾“å…¥å³ä¿å­˜å¹¶è§¦å‘æç¤ºè¯åˆ·æ–°
+// ¸½¼ÓÌáÊ¾´Ê£ºÊäÈë¼´±£´æ²¢´¥·¢ÌáÊ¾´ÊË¢ÐÂ
 const saveExtraPrompt = async () => {
   const userId = getUserId();
   if (!userId) {
@@ -1979,7 +1979,7 @@ const scheduleExtraPromptSave = () => {
   }, SAVE_DEBOUNCE_MS);
 };
 
-// åˆå§‹åŒ–è‡ªå»ºå·¥å…·å¼¹çª—äº¤äº’
+// ³õÊ¼»¯×Ô½¨¹¤¾ßµ¯´°½»»¥
 export const initUserTools = () => {
   ensureUserToolsState();
   elements.promptUserToolAdd.addEventListener("click", openUserToolModal);

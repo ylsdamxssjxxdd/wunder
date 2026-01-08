@@ -1,15 +1,15 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { loadMonitorData, setMonitorUserFilter } from "./monitor.js";
 import { formatTokenCount } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
 const DEFAULT_USER_STATS_PAGE_SIZE = 100;
 
-// å…¼å®¹æ—§ç‰ˆæœ¬çŠ¶æ€ç»“æ„ï¼Œé¿å…ç¼“å­˜æ—§ state.js æ—¶å¯¼è‡´ç©ºæŒ‡é’ˆ
+// ¼æÈİ¾É°æ±¾×´Ì¬½á¹¹£¬±ÜÃâ»º´æ¾É state.js Ê±µ¼ÖÂ¿ÕÖ¸Õë
 const ensureUsersState = () => {
   if (!state.users) {
     state.users = {
@@ -46,7 +46,7 @@ const ensureUsersState = () => {
   }
 };
 
-// ç»Ÿä¸€æ£€æŸ¥ç”¨æˆ·ç®¡ç†é¢æ¿ä¾èµ–çš„ DOM æ˜¯å¦å­˜åœ¨ï¼Œé¿å…ç»‘å®šæ—¶æŠ¥é”™
+// Í³Ò»¼ì²éÓÃ»§¹ÜÀíÃæ°åÒÀÀµµÄ DOM ÊÇ·ñ´æÔÚ£¬±ÜÃâ°ó¶¨Ê±±¨´í
 const ensureUserElements = () => {
   const requiredKeys = [
     "userRefreshBtn",
@@ -68,10 +68,10 @@ const ensureUserElements = () => {
   return true;
 };
 
-// ç»Ÿä¸€å¤„ç†æœç´¢å…³é”®è¯ï¼Œé¿å…ç©ºå€¼å½±å“ç­›é€‰é€»è¾‘
+// Í³Ò»´¦ÀíËÑË÷¹Ø¼ü´Ê£¬±ÜÃâ¿ÕÖµÓ°ÏìÉ¸Ñ¡Âß¼­
 const getUserSearchKeyword = () => String(state.users.search || "").trim();
 
-// æ ¹æ®æœç´¢å…³é”®è¯è¿‡æ»¤ç”¨æˆ·åˆ—è¡¨ï¼Œæ”¯æŒæ¨¡ç³ŠåŒ¹é… user_id
+// ¸ù¾İËÑË÷¹Ø¼ü´Ê¹ıÂËÓÃ»§ÁĞ±í£¬Ö§³ÖÄ£ºıÆ¥Åä user_id
 const getFilteredUsers = () => {
   const keyword = getUserSearchKeyword();
   if (!keyword) {
@@ -83,7 +83,7 @@ const getFilteredUsers = () => {
   );
 };
 
-// è§£æç”¨æˆ·ç»Ÿè®¡åˆ†é¡µå¤§å°ï¼Œå…œåº•ä¸ºé»˜è®¤å€¼
+// ½âÎöÓÃ»§Í³¼Æ·ÖÒ³´óĞ¡£¬¶µµ×ÎªÄ¬ÈÏÖµ
 const resolveUserStatsPageSize = () => {
   const rawValue = Math.floor(Number(state.users.pagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -92,7 +92,7 @@ const resolveUserStatsPageSize = () => {
   return rawValue;
 };
 
-// çº¦æŸåˆ†é¡µé¡µç ï¼Œé¿å…è¶…å‡ºèŒƒå›´
+// Ô¼Êø·ÖÒ³Ò³Âë£¬±ÜÃâ³¬³ö·¶Î§
 const clampUserStatsPage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -104,7 +104,7 @@ const clampUserStatsPage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// æ ¹æ®å½“å‰åˆ†é¡µçŠ¶æ€è£å‰ªç”¨æˆ·ç»Ÿè®¡åˆ—è¡¨
+// ¸ù¾İµ±Ç°·ÖÒ³×´Ì¬²Ã¼ôÓÃ»§Í³¼ÆÁĞ±í
 const resolveUserStatsPageSlice = (users) => {
   const pageSize = resolveUserStatsPageSize();
   const total = Array.isArray(users) ? users.length : 0;
@@ -116,7 +116,7 @@ const resolveUserStatsPageSlice = (users) => {
   return { total, totalPages, currentPage, pageSize, users: pageUsers };
 };
 
-// æ¸²æŸ“ç”¨æˆ·ç»Ÿè®¡åˆ†é¡µæ§ä»¶
+// äÖÈ¾ÓÃ»§Í³¼Æ·ÖÒ³¿Ø¼ş
 const renderUserStatsPagination = (pageData) => {
   const { userStatsPagination, userStatsPageInfo, userStatsPrevBtn, userStatsNextBtn } =
     elements;
@@ -138,7 +138,7 @@ const renderUserStatsPagination = (pageData) => {
   userStatsNextBtn.disabled = pageData.currentPage >= pageData.totalPages;
 };
 
-// åˆ‡æ¢ç”¨æˆ·ç»Ÿè®¡åˆ†é¡µé¡µç å¹¶åˆ·æ–°åˆ—è¡¨
+// ÇĞ»»ÓÃ»§Í³¼Æ·ÖÒ³Ò³Âë²¢Ë¢ĞÂÁĞ±í
 const updateUserStatsPage = (delta) => {
   const current = Number(state.users.pagination?.page) || 1;
   const nextPage = Math.max(1, current + delta);
@@ -146,7 +146,7 @@ const updateUserStatsPage = (delta) => {
   renderUserStats();
 };
 
-// è§„èŒƒåŒ–ç”¨æˆ·ç»Ÿè®¡æ•°æ®ï¼Œé¿å…åç«¯å­—æ®µç¼ºå¤±å¯¼è‡´æ¸²æŸ“å¼‚å¸¸
+// ¹æ·¶»¯ÓÃ»§Í³¼ÆÊı¾İ£¬±ÜÃâºó¶Ë×Ö¶ÎÈ±Ê§µ¼ÖÂäÖÈ¾Òì³£
 const normalizeUserStats = (item) => ({
   user_id: String(item?.user_id || ""),
   active_sessions: Number(item?.active_sessions) || 0,
@@ -157,7 +157,7 @@ const normalizeUserStats = (item) => ({
   token_usage: Number(item?.token_usage) || 0,
 });
 
-// æ±‡æ€»å…¨éƒ¨ç”¨æˆ·ç»Ÿè®¡ï¼Œä¾¿äºå±•ç¤ºå…¨å±€è§†è§’
+// »ã×ÜÈ«²¿ÓÃ»§Í³¼Æ£¬±ãÓÚÕ¹Ê¾È«¾ÖÊÓ½Ç
 const resolveAllUserStats = () => {
   const summary = {
     user_count: 0,
@@ -178,13 +178,13 @@ const resolveAllUserStats = () => {
     summary.total_sessions += Number(item?.total_sessions) || 0;
     summary.chat_records += Number(item?.chat_records) || 0;
     summary.tool_calls += Number(item?.tool_calls) || 0;
-    // ç´¯åŠ æ‰€æœ‰ç”¨æˆ·çš„ token_usageï¼Œå±•ç¤ºæ€»å ç”¨ Token
+    // ÀÛ¼ÓËùÓĞÓÃ»§µÄ token_usage£¬Õ¹Ê¾×ÜÕ¼ÓÃ Token
     summary.token_usage += Number(item?.token_usage) || 0;
   });
   return summary;
 };
 
-// åˆ·æ–°ç”¨æˆ·è¯¦æƒ…æ ‡é¢˜ä¸æ“ä½œåŒºçŠ¶æ€
+// Ë¢ĞÂÓÃ»§ÏêÇé±êÌâÓë²Ù×÷Çø×´Ì¬
 const renderUserDetailHeader = () => {
   const allStats = resolveAllUserStats();
   if (!state.users.selectedId) {
@@ -222,7 +222,7 @@ const renderUserDetailHeader = () => {
   });
 };
 
-// åˆ‡æ¢å½“å‰é€‰ä¸­çš„ç”¨æˆ·ï¼ŒåŒæ—¶åŒæ­¥ç›‘æ§ç­›é€‰
+// ÇĞ»»µ±Ç°Ñ¡ÖĞµÄÓÃ»§£¬Í¬Ê±Í¬²½¼à¿ØÉ¸Ñ¡
 const applyUserSelection = (userId) => {
   const normalizedId = String(userId || "").trim();
   state.users.selectedId = normalizedId;
@@ -231,10 +231,10 @@ const applyUserSelection = (userId) => {
   setMonitorUserFilter(normalizedId);
 };
 
-// é€‰ä¸­å…¨éƒ¨ç”¨æˆ·è§†å›¾
+// Ñ¡ÖĞÈ«²¿ÓÃ»§ÊÓÍ¼
 const selectAllUsers = () => applyUserSelection("");
 
-// æ¸²æŸ“ç”¨æˆ·ç»Ÿè®¡è¡¨æ ¼
+// äÖÈ¾ÓÃ»§Í³¼Æ±í¸ñ
 const renderUserStats = () => {
   elements.userStatsBody.textContent = "";
   const hasUsers = Array.isArray(state.users.list) && state.users.list.length > 0;
@@ -341,13 +341,13 @@ const renderUserStats = () => {
     return;
   }
   elements.userStatsEmpty.style.display = "none";
-  // æŒ‰åˆ†é¡µåˆ‡ç‰‡æ¸²æŸ“ï¼Œé¿å…é•¿åˆ—è¡¨ä¸€æ¬¡æ€§åŠ è½½
+  // °´·ÖÒ³ÇĞÆ¬äÖÈ¾£¬±ÜÃâ³¤ÁĞ±íÒ»´ÎĞÔ¼ÓÔØ
   const pageData = resolveUserStatsPageSlice(filteredUsers);
   renderUserStatsPagination(pageData);
   pageData.users.forEach((user) => renderRow(user));
 };
 
-// æ‹‰å–ç”¨æˆ·ç»Ÿè®¡æ•°æ®å¹¶åˆ·æ–°åˆ—è¡¨
+// À­È¡ÓÃ»§Í³¼ÆÊı¾İ²¢Ë¢ĞÂÁĞ±í
 export const loadUserStats = async () => {
   ensureUsersState();
   if (!ensureUserElements()) {
@@ -387,7 +387,7 @@ export const loadUserStats = async () => {
   }
 };
 
-// åˆ‡æ¢å½“å‰é€‰ä¸­çš„ç”¨æˆ·
+// ÇĞ»»µ±Ç°Ñ¡ÖĞµÄÓÃ»§
 const selectUser = (userId) => {
   ensureUsersState();
   if (!ensureUserElements()) {
@@ -399,7 +399,7 @@ const selectUser = (userId) => {
   applyUserSelection(userId);
 };
 
-// åˆ é™¤å½“å‰é€‰ä¸­çš„ç”¨æˆ·åŠå…¶æ•°æ®
+// É¾³ıµ±Ç°Ñ¡ÖĞµÄÓÃ»§¼°ÆäÊı¾İ
 const requestDeleteUser = async (userId) => {
   ensureUsersState();
   if (!ensureUserElements()) {
@@ -433,14 +433,14 @@ const requestDeleteUser = async (userId) => {
   }
   try {
     await loadUserStats();
-    // ç”¨æˆ·ç®¡ç†é¡µä»…éœ€è¦ä¼šè¯åˆ—è¡¨ï¼Œé¿å…è§¦å‘ç›‘æ§å›¾è¡¨çš„å®Œæ•´åˆ·æ–°
+    // ÓÃ»§¹ÜÀíÒ³½öĞèÒª»á»°ÁĞ±í£¬±ÜÃâ´¥·¢¼à¿ØÍ¼±íµÄÍêÕûË¢ĞÂ
     await loadMonitorData({ mode: "sessions" });
   } catch (error) {
     appendLog(t("users.refreshFailed", { message: error.message }));
   }
 };
 
-// ç”¨æˆ·ç®¡ç†é¢æ¿åˆå§‹åŒ–ï¼šç»‘å®šåˆ·æ–°ä¸åˆ é™¤æ“ä½œ
+// ÓÃ»§¹ÜÀíÃæ°å³õÊ¼»¯£º°ó¶¨Ë¢ĞÂÓëÉ¾³ı²Ù×÷
 export const initUserManagementPanel = () => {
   ensureUsersState();
   if (!ensureUserElements()) {
@@ -449,7 +449,7 @@ export const initUserManagementPanel = () => {
   elements.userSearchInput.value = state.users.search || "";
   elements.userSearchInput.addEventListener("input", (event) => {
     state.users.search = String(event.target.value || "").trim();
-    // æœç´¢æ¡ä»¶å˜åŒ–æ—¶å›åˆ°ç¬¬ä¸€é¡µï¼Œé¿å…åˆ†é¡µæº¢å‡º
+    // ËÑË÷Ìõ¼ş±ä»¯Ê±»Øµ½µÚÒ»Ò³£¬±ÜÃâ·ÖÒ³Òç³ö
     state.users.pagination.page = 1;
     if (
       state.users.selectedId &&

@@ -1,14 +1,14 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// æ¸²æŸ“ç³»ç»Ÿæç¤ºè¯ï¼Œå¹¶é«˜äº® <tools> åŒºåŸŸå†…çš„å·¥å…·åç§°ä¸æŠ€èƒ½å
+// äÖÈ¾ÏµÍ³ÌáÊ¾´Ê£¬²¢¸ßÁÁ <tools> ÇøÓòÄÚµÄ¹¤¾ßÃû³ÆÓë¼¼ÄÜÃû
 const renderPromptSegmentWithSkills = (segment, segmentState) => {
-  const skillHeaders = new Set(["[Mounted Skills]", "[å·²æŒ‚è½½æŠ€èƒ½]"]);
+  const skillHeaders = new Set(["[Mounted Skills]", "[ÒÑ¹ÒÔØ¼¼ÄÜ]"]);
   const lines = segment.split(/\r?\n/);
   const output = lines.map((line) => {
     const trimmed = line.trim();
@@ -31,7 +31,7 @@ const renderPromptSegmentWithSkills = (segment, segmentState) => {
   return output.join("\n");
 };
 
-// æ¸²æŸ“ç³»ç»Ÿæç¤ºè¯ï¼Œå¹¶é«˜äº® <tools> åŒºåŸŸå†…çš„å·¥å…·åç§°ä¸æŠ€èƒ½å
+// äÖÈ¾ÏµÍ³ÌáÊ¾´Ê£¬²¢¸ßÁÁ <tools> ÇøÓòÄÚµÄ¹¤¾ßÃû³ÆÓë¼¼ÄÜÃû
 const renderSystemPrompt = (rawText) => {
   if (!rawText) {
     return "";
@@ -97,7 +97,7 @@ const renderSystemPrompt = (rawText) => {
   return output;
 };
 
-// æ›´æ–°ç³»ç»Ÿæç¤ºè¯æ„å»ºè€—æ—¶å±•ç¤º
+// ¸üĞÂÏµÍ³ÌáÊ¾´Ê¹¹½¨ºÄÊ±Õ¹Ê¾
 const updatePromptBuildTime = (value, options = {}) => {
   if (!elements.promptBuildTime) {
     return;
@@ -115,7 +115,7 @@ const updatePromptBuildTime = (value, options = {}) => {
   elements.promptBuildTime.textContent = t("prompt.buildTime.value", { duration: display });
 };
 
-// æ‹‰å–ç³»ç»Ÿæç¤ºè¯å¹¶å±•ç¤ºåœ¨ä¾§è¾¹æ é¢æ¿
+// À­È¡ÏµÍ³ÌáÊ¾´Ê²¢Õ¹Ê¾ÔÚ²à±ßÀ¸Ãæ°å
 export const loadSystemPrompt = async (options = {}) => {
   const showToast = Boolean(options.showToast);
   const wunderBase = getWunderBase();
@@ -165,7 +165,7 @@ export const loadSystemPrompt = async (options = {}) => {
   }
 };
 
-// åˆå§‹åŒ–ç³»ç»Ÿæç¤ºè¯é¢æ¿äº¤äº’
+// ³õÊ¼»¯ÏµÍ³ÌáÊ¾´ÊÃæ°å½»»¥
 export const initPromptPanel = () => {
   state.runtime.promptReloadHandler = loadSystemPrompt;
   elements.loadPromptBtn.addEventListener("click", () => loadSystemPrompt({ showToast: true }));

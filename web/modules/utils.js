@@ -1,11 +1,11 @@
-import { getCurrentLanguage, t } from "./i18n.js?v=20260105-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
 
 // 工具函数：纯逻辑处理，便于多模块复用
 
-// 判断是否为普通对象，避免数组或空值影响解析
+// 判断是否为普通对象，避免数组或空值影响解�?
 export const isPlainObject = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
-// 解析请求头 JSON，便于在输入错误时给出提示
+// 解析请求�?JSON，便于在输入错误时给出提�?
 export const parseHeadersValue = (raw) => {
   if (!raw || !raw.trim()) {
     return { headers: {}, error: "" };
@@ -30,7 +30,7 @@ export const escapeHtml = (text) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
-// 将 Markdown 文本转换为标题高亮的 HTML，用于编辑区背景标记一级标题
+// �?Markdown 文本转换为标题高亮的 HTML，用于编辑区背景标记一级标�?
 export const buildHeadingHighlightHtml = (text) => {
   const raw = String(text ?? "");
   const lines = raw.replace(/\r/g, "").split("\n");
@@ -68,7 +68,7 @@ export const formatToolSchema = (schema) => {
   }
 };
 
-// 读取工具输入结构字段，兼容 input_schema/inputSchema/args_schema 等命名
+// 读取工具输入结构字段，兼�?input_schema/inputSchema/args_schema 等命�?
 export const getToolInputSchema = (tool) =>
   tool?.input_schema ?? tool?.inputSchema ?? tool?.args_schema ?? tool?.argsSchema ?? null;
 
@@ -123,7 +123,7 @@ export const formatDurationLong = (seconds) => {
   return t("time.format.seconds", { seconds: secs });
 };
 
-// 格式化 token 数量：小于 100 万用 k，达到 100 万及以上用 m
+// 格式�?token 数量：小�?100 万用 k，达�?100 万及以上�?m
 export const formatTokenCount = (value) => {
   if (!Number.isFinite(value)) {
     return "-";
@@ -154,7 +154,7 @@ export const formatTimestamp = (value) => {
   return parsed.toLocaleString(getCurrentLanguage());
 };
 
-// 规范化 API 地址，确保以 /wunder 结尾并清理重复路径
+// 规范�?API 地址，确保以 /wunder 结尾并清理重复路�?
 export const normalizeApiBase = (raw) => {
   const trimmed = String(raw || "").trim();
   if (!trimmed) {

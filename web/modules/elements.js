@@ -1,4 +1,4 @@
-// DOM 元素集中管理，避免在逻辑中重复查询
+// DOM 元素集中管理，避免在逻辑中重复查�?
 export const elements = {
   apiBase: document.getElementById("apiBase"),
   apiKey: document.getElementById("apiKey"),

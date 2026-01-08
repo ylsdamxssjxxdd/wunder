@@ -1,7 +1,7 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260105-01";
+import { elements } from "./elements.js?v=20260105-02";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
 
-// æŽ§åˆ¶æ—¥å¿—æ•°é‡ä¸Šé™ï¼Œé¿å…è¯¦æƒ…èŠ‚ç‚¹å †ç§¯å¯¼è‡´é¡µé¢å¡é¡¿
+// ¿ØÖÆÈÕÖ¾ÊýÁ¿ÉÏÏÞ£¬±ÜÃâÏêÇé½Úµã¶Ñ»ýµ¼ÖÂÒ³Ãæ¿¨¶Ù
 const MAX_LOG_ITEMS = 300;
 const lastLogTimestamps = new WeakMap();
 
@@ -56,7 +56,7 @@ const normalizeLogTimestampText = (value) => {
   return normalized;
 };
 
-// ç»Ÿä¸€æ ¼å¼åŒ–æ—¥å¿—æ—¶é—´ï¼Œå…¼å®¹ ISO å­—ç¬¦ä¸²/æ—¶é—´æˆ³/Date
+// Í³Ò»¸ñÊ½»¯ÈÕÖ¾Ê±¼ä£¬¼æÈÝ ISO ×Ö·û´®/Ê±¼ä´Á/Date
 const resolveLogTimestamp = (value, fallbackMs) => {
   const fallbackTime = Number.isFinite(fallbackMs) ? new Date(fallbackMs) : new Date();
   if (!value) {
@@ -79,7 +79,7 @@ const resolveLogTimestamp = (value, fallbackMs) => {
   return fallbackTime.toLocaleTimeString(getCurrentLanguage());
 };
 
-// è§£æžæ—¥å¿—æ—¶é—´ä¸ºæ¯«ç§’æ—¶é—´æˆ³ï¼Œä¾¿äºŽç»Ÿè®¡ç›¸é‚»äº‹ä»¶é—´éš”
+// ½âÎöÈÕÖ¾Ê±¼äÎªºÁÃëÊ±¼ä´Á£¬±ãÓÚÍ³¼ÆÏàÁÚÊÂ¼þ¼ä¸ô
 const resolveLogTimestampMs = (value) => {
   if (!value) {
     return null;
@@ -98,7 +98,7 @@ const resolveLogTimestampMs = (value) => {
   return null;
 };
 
-// ç»Ÿä¸€æ ¼å¼åŒ–è€—æ—¶æ–‡æœ¬ï¼Œç»Ÿä¸€ä½¿ç”¨ç§’å•ä½å±•ç¤º
+// Í³Ò»¸ñÊ½»¯ºÄÊ±ÎÄ±¾£¬Í³Ò»Ê¹ÓÃÃëµ¥Î»Õ¹Ê¾
 const formatDuration = (durationMs) => {
   if (!Number.isFinite(durationMs)) {
     return "";
@@ -107,7 +107,7 @@ const formatDuration = (durationMs) => {
   return `${seconds.toFixed(2)}s`;
 };
 
-// è®¡ç®—ä¸Žä¸Šä¸€æ¡æ—¥å¿—çš„è€—æ—¶å·®ï¼Œå…è®¸å¤–éƒ¨è¦†ç›–å±•ç¤º
+// ¼ÆËãÓëÉÏÒ»ÌõÈÕÖ¾µÄºÄÊ±²î£¬ÔÊÐíÍâ²¿¸²¸ÇÕ¹Ê¾
 const resolveDurationMs = (container, timestampMs, overrideMs) => {
   if (Number.isFinite(overrideMs)) {
     if (Number.isFinite(timestampMs)) {
@@ -121,7 +121,7 @@ const resolveDurationMs = (container, timestampMs, overrideMs) => {
   const lastMs = lastLogTimestamps.get(container);
   lastLogTimestamps.set(container, timestampMs);
   if (!Number.isFinite(lastMs)) {
-    // é¦–æ¡æ—¥å¿—æ˜¾ç¤º 0msï¼Œé¿å…ç”¨æˆ·è¯¯ä»¥ä¸ºè€—æ—¶æ ‡ç­¾æœªæ¸²æŸ“
+    // Ê×ÌõÈÕÖ¾ÏÔÊ¾ 0ms£¬±ÜÃâÓÃ»§ÎóÒÔÎªºÄÊ±±êÇ©Î´äÖÈ¾
     return 0;
   }
   const diff = timestampMs - lastMs;
@@ -132,7 +132,7 @@ const appendLogItem = (container, title, options = {}) => {
   const timestampMs = resolveLogTimestampMs(options.timestamp);
   const fallbackMs = Number.isFinite(timestampMs) ? timestampMs : Date.now();
   const timestamp = resolveLogTimestamp(options.timestamp, fallbackMs);
-  // è¯·æ±‚æ—¥å¿—ä¸å±•ç¤ºè€—æ—¶ï¼Œäº‹ä»¶æ—¥å¿—é»˜è®¤å±•ç¤ºï¼Œå…è®¸å¤–éƒ¨æ˜¾å¼å…³é—­
+  // ÇëÇóÈÕÖ¾²»Õ¹Ê¾ºÄÊ±£¬ÊÂ¼þÈÕÖ¾Ä¬ÈÏÕ¹Ê¾£¬ÔÊÐíÍâ²¿ÏÔÊ½¹Ø±Õ
   const showDuration = options.showDuration !== false && container !== elements.requestLog;
   const durationMs = showDuration
     ? resolveDurationMs(
@@ -192,7 +192,7 @@ const appendLogItem = (container, title, options = {}) => {
   titleNode.textContent = title;
   summary.appendChild(titleNode);
 
-  // å°†è€—æ—¶ä¸Žå³ä¾§æ ‡ç­¾ç»Ÿä¸€æ”¾åœ¨å³ä¾§å®¹å™¨ï¼Œç¡®ä¿å¯¹é½
+  // ½«ºÄÊ±ÓëÓÒ²à±êÇ©Í³Ò»·ÅÔÚÓÒ²àÈÝÆ÷£¬È·±£¶ÔÆë
   const rightWrap = document.createElement("span");
   rightWrap.className = "log-right";
   let hasRightItems = false;
@@ -239,17 +239,17 @@ const appendLogItem = (container, title, options = {}) => {
   return item;
 };
 
-// å°†äº‹ä»¶æ—¥å¿—è¿½åŠ åˆ°é¡µé¢ä¸­ï¼Œé»˜è®¤æŠ˜å æ˜¾ç¤º
+// ½«ÊÂ¼þÈÕÖ¾×·¼Óµ½Ò³ÃæÖÐ£¬Ä¬ÈÏÕÛµþÏÔÊ¾
 export const appendLog = (text, options = {}) => {
   return appendLogItem(elements.eventLog, text, options);
 };
 
-// å°†è¯·æ±‚æ—¥å¿—è¿½åŠ åˆ°é¡µé¢ä¸­ï¼Œé»˜è®¤æŠ˜å æ˜¾ç¤º
+// ½«ÇëÇóÈÕÖ¾×·¼Óµ½Ò³ÃæÖÐ£¬Ä¬ÈÏÕÛµþÏÔÊ¾
 export const appendRequestLog = (title, detail, options = {}) => {
   return appendLogItem(elements.requestLog, title, { detail, ...options });
 };
 
-// æ¸…ç©ºæ—¥å¿—ä¸Žå›žå¤åŒºåŸŸï¼Œä¾¿äºŽå¼€å§‹æ–°ä¸€è½®è°ƒè¯•
+// Çå¿ÕÈÕÖ¾Óë»Ø¸´ÇøÓò£¬±ãÓÚ¿ªÊ¼ÐÂÒ»ÂÖµ÷ÊÔ
 export const clearOutput = () => {
   elements.eventLog.innerHTML = "";
   elements.requestLog.innerHTML = "";

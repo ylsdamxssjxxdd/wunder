@@ -1,15 +1,15 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
 const MEMORY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_MEMORY_USERS_PAGE_SIZE = 100;
 const DEFAULT_MEMORY_QUEUE_PAGE_SIZE = 100;
 
-// ç»Ÿä¸€ç®¡ç†é•¿æœŸè®°å¿†é¢æ¿çŠ¶æ€ï¼Œé¿å…æ—§ç¼“å­˜å¯¼è‡´å­—æ®µç¼ºå¤±
+// Í³Ò»¹ÜÀí³¤ÆÚ¼ÇÒäÃæ°å×´Ì¬£¬±ÜÃâ¾É»º´æµ¼ÖÂ×Ö¶ÎÈ±Ê§
 const ensureMemoryState = () => {
   if (!state.memory) {
     state.memory = {
@@ -107,7 +107,7 @@ const ensureMemoryState = () => {
   }
 };
 
-// æ£€æŸ¥é¡µé¢å…ƒç´ æ˜¯å¦é½å…¨ï¼Œé¿å…ç»‘å®šäº‹ä»¶æ—¶æŠ¥é”™
+// ¼ì²éÒ³ÃæÔªËØÊÇ·ñÆëÈ«£¬±ÜÃâ°ó¶¨ÊÂ¼şÊ±±¨´í
 const ensureMemoryElements = () => {
   const requiredKeys = [
     "memoryRefreshBtn",
@@ -162,7 +162,7 @@ const ensureMemoryElements = () => {
   return true;
 };
 
-// è§„èŒƒåŒ–ç”¨æˆ·è®°å¿†ç»Ÿè®¡æ•°æ®
+// ¹æ·¶»¯ÓÃ»§¼ÇÒäÍ³¼ÆÊı¾İ
 const normalizeMemoryUser = (item) => ({
   user_id: String(item?.user_id || ""),
   enabled: Boolean(item?.enabled),
@@ -171,7 +171,7 @@ const normalizeMemoryUser = (item) => ({
   last_updated_time_ts: Number(item?.last_updated_time_ts) || 0,
 });
 
-// è§„èŒƒåŒ–è®°å¿†è®°å½•æ•°æ®
+// ¹æ·¶»¯¼ÇÒä¼ÇÂ¼Êı¾İ
 const normalizeMemoryRecord = (item) => ({
   session_id: String(item?.session_id || ""),
   summary: String(item?.summary || ""),
@@ -181,7 +181,7 @@ const normalizeMemoryRecord = (item) => ({
   updated_time_ts: Number(item?.updated_time_ts) || 0,
 });
 
-// è§„èŒƒåŒ–é˜Ÿåˆ—ä»»åŠ¡æ•°æ®
+// ¹æ·¶»¯¶ÓÁĞÈÎÎñÊı¾İ
 const normalizeMemoryQueueItem = (item) => ({
   task_id: String(item?.task_id || ""),
   user_id: String(item?.user_id || ""),
@@ -196,7 +196,7 @@ const normalizeMemoryQueueItem = (item) => ({
   elapsed_s: Number(item?.elapsed_s) || 0,
 });
 
-// è§„èŒƒåŒ–é˜Ÿåˆ—è¯¦æƒ…æ•°æ®
+// ¹æ·¶»¯¶ÓÁĞÏêÇéÊı¾İ
 const normalizeMemoryQueueDetail = (item) => ({
   ...normalizeMemoryQueueItem(item),
   request: item?.request && typeof item.request === "object" ? item.request : {},
@@ -216,7 +216,7 @@ const getFilteredMemoryUsers = () => {
   );
 };
 
-// è§£æè®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µå¤§å°ï¼Œé¿å…æ— æ•ˆå€¼å¯¼è‡´æ¸²æŸ“å¼‚å¸¸
+// ½âÎö¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³´óĞ¡£¬±ÜÃâÎŞĞ§Öµµ¼ÖÂäÖÈ¾Òì³£
 const resolveMemoryUsersPageSize = () => {
   const rawValue = Math.floor(Number(state.memory.pagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -225,7 +225,7 @@ const resolveMemoryUsersPageSize = () => {
   return rawValue;
 };
 
-// çº¦æŸè®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µé¡µç ï¼Œé˜²æ­¢è¶Šç•Œ
+// Ô¼Êø¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³Ò³Âë£¬·ÀÖ¹Ô½½ç
 const clampMemoryUsersPage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -237,7 +237,7 @@ const clampMemoryUsersPage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// æ ¹æ®åˆ†é¡µçŠ¶æ€è£å‰ªè®°å¿†ç”¨æˆ·åˆ—è¡¨ï¼Œé¿å…ä¸€æ¬¡æ¸²æŸ“è¿‡å¤šè¡Œ
+// ¸ù¾İ·ÖÒ³×´Ì¬²Ã¼ô¼ÇÒäÓÃ»§ÁĞ±í£¬±ÜÃâÒ»´ÎäÖÈ¾¹ı¶àĞĞ
 const resolveMemoryUsersPageSlice = (users) => {
   const pageSize = resolveMemoryUsersPageSize();
   const total = Array.isArray(users) ? users.length : 0;
@@ -249,7 +249,7 @@ const resolveMemoryUsersPageSlice = (users) => {
   return { total, totalPages, currentPage, pageSize, users: pageUsers };
 };
 
-// æ¸²æŸ“è®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µæ§ä»¶
+// äÖÈ¾¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³¿Ø¼ş
 const renderMemoryUsersPagination = (pageData) => {
   const {
     memoryUsersPagination,
@@ -272,7 +272,7 @@ const renderMemoryUsersPagination = (pageData) => {
   memoryUsersNextBtn.disabled = pageData.currentPage >= pageData.totalPages;
 };
 
-// åˆ‡æ¢è®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µé¡µç å¹¶åˆ·æ–°åˆ—è¡¨
+// ÇĞ»»¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³Ò³Âë²¢Ë¢ĞÂÁĞ±í
 const updateMemoryUsersPage = (delta) => {
   const current = Number(state.memory.pagination?.page) || 1;
   const nextPage = Math.max(1, current + delta);
@@ -280,7 +280,7 @@ const updateMemoryUsersPage = (delta) => {
   renderMemoryUsers();
 };
 
-// è§£æè®°å¿†é˜Ÿåˆ—åˆ†é¡µå¤§å°ï¼Œé¿å…æ— æ•ˆå€¼å½±å“å±•ç¤º
+// ½âÎö¼ÇÒä¶ÓÁĞ·ÖÒ³´óĞ¡£¬±ÜÃâÎŞĞ§ÖµÓ°ÏìÕ¹Ê¾
 const resolveMemoryQueuePageSize = () => {
   const rawValue = Math.floor(Number(state.memory.queuePagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -289,7 +289,7 @@ const resolveMemoryQueuePageSize = () => {
   return rawValue;
 };
 
-// çº¦æŸè®°å¿†é˜Ÿåˆ—åˆ†é¡µé¡µç ï¼Œé¿å…è¶…å‡ºé¡µç èŒƒå›´
+// Ô¼Êø¼ÇÒä¶ÓÁĞ·ÖÒ³Ò³Âë£¬±ÜÃâ³¬³öÒ³Âë·¶Î§
 const clampMemoryQueuePage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -301,7 +301,7 @@ const clampMemoryQueuePage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// æ ¹æ®åˆ†é¡µçŠ¶æ€è£å‰ªé˜Ÿåˆ—åˆ—è¡¨ï¼Œå‡å°‘ä¸€æ¬¡æ€§æ¸²æŸ“å‹åŠ›
+// ¸ù¾İ·ÖÒ³×´Ì¬²Ã¼ô¶ÓÁĞÁĞ±í£¬¼õÉÙÒ»´ÎĞÔäÖÈ¾Ñ¹Á¦
 const resolveMemoryQueuePageSlice = (items, pageKey) => {
   const pageSize = resolveMemoryQueuePageSize();
   const total = Array.isArray(items) ? items.length : 0;
@@ -315,7 +315,7 @@ const resolveMemoryQueuePageSlice = (items, pageKey) => {
   return { total, totalPages, currentPage, pageSize, items: pageItems };
 };
 
-// æ¸²æŸ“è®°å¿†é˜Ÿåˆ—åˆ†é¡µæ§ä»¶
+// äÖÈ¾¼ÇÒä¶ÓÁĞ·ÖÒ³¿Ø¼ş
 const renderMemoryQueuePagination = (kind, pageData) => {
   const map = {
     active: {
@@ -350,7 +350,7 @@ const renderMemoryQueuePagination = (kind, pageData) => {
   target.next.disabled = pageData.currentPage >= pageData.totalPages;
 };
 
-// åˆ‡æ¢è®°å¿†é˜Ÿåˆ—åˆ†é¡µé¡µç å¹¶åˆ·æ–°åˆ—è¡¨
+// ÇĞ»»¼ÇÒä¶ÓÁĞ·ÖÒ³Ò³Âë²¢Ë¢ĞÂÁĞ±í
 const updateMemoryQueuePage = (pageKey, delta) => {
   const current = Number(state.memory.queuePagination?.[pageKey]) || 1;
   const nextPage = Math.max(1, current + delta);
@@ -360,7 +360,7 @@ const updateMemoryQueuePage = (pageKey, delta) => {
   renderMemoryStatus();
 };
 
-// æ¸²æŸ“ç”¨æˆ·åˆ—è¡¨
+// äÖÈ¾ÓÃ»§ÁĞ±í
 const renderMemoryUsers = () => {
   elements.memoryUsersBody.textContent = "";
   const hasUsers = Array.isArray(state.memory.users) && state.memory.users.length > 0;
@@ -432,7 +432,7 @@ const renderMemoryUsers = () => {
   });
 };
 
-// æ¸²æŸ“è®°å¿†å¼¹çª—å¤´éƒ¨ä¸æ“ä½œåŒº
+// äÖÈ¾¼ÇÒäµ¯´°Í·²¿Óë²Ù×÷Çø
 const renderMemoryModalHeader = () => {
   const userId = state.memory.selectedId;
   if (!userId) {
@@ -453,7 +453,7 @@ const renderMemoryModalHeader = () => {
   elements.memoryModalClearBtn.disabled = recordCount <= 0;
 };
 
-// æ¸²æŸ“è®°å¿†è®°å½•åˆ—è¡¨
+// äÖÈ¾¼ÇÒä¼ÇÂ¼ÁĞ±í
 const renderMemoryRecords = () => {
   elements.memoryModalRecordBody.textContent = "";
   const records = Array.isArray(state.memory.records) ? state.memory.records : [];
@@ -513,7 +513,7 @@ const renderMemoryRecords = () => {
   });
 };
 
-// æ‰“å¼€è®°å¿†è®°å½•ç¼–è¾‘å¼¹çª—ï¼Œå…è®¸ç®¡ç†å‘˜ç›´æ¥ä¿®æ”¹å†…å®¹
+// ´ò¿ª¼ÇÒä¼ÇÂ¼±à¼­µ¯´°£¬ÔÊĞí¹ÜÀíÔ±Ö±½ÓĞŞ¸ÄÄÚÈİ
 const openMemoryRecordEditor = (record) => {
   const userId = state.memory.selectedId;
   const sessionId = String(record?.session_id || "").trim();
@@ -532,12 +532,12 @@ const openMemoryRecordEditor = (record) => {
   } else if (record?.created_time) {
     metaParts.push(t("memory.record.createdAt", { time: formatTimestamp(record.created_time) }));
   }
-  elements.memoryRecordEditMeta.textContent = metaParts.join(" Â· ");
+  elements.memoryRecordEditMeta.textContent = metaParts.join(" ¡¤ ");
   elements.memoryRecordEditInput.value = String(record?.summary || "");
   elements.memoryRecordEditModal.classList.add("active");
 };
 
-// å…³é—­è®°å¿†ç¼–è¾‘å¼¹çª—å¹¶æ¸…ç†çŠ¶æ€
+// ¹Ø±Õ¼ÇÒä±à¼­µ¯´°²¢ÇåÀí×´Ì¬
 const closeMemoryRecordEditor = () => {
   elements.memoryRecordEditModal.classList.remove("active");
   elements.memoryRecordEditInput.value = "";
@@ -545,7 +545,7 @@ const closeMemoryRecordEditor = () => {
   state.memory.editingRecord = null;
 };
 
-// ä¿å­˜è®°å¿†ç¼–è¾‘å†…å®¹
+// ±£´æ¼ÇÒä±à¼­ÄÚÈİ
 const requestUpdateMemoryRecord = async () => {
   const editing = state.memory.editingRecord;
   if (!editing?.user_id || !editing?.session_id) {
@@ -607,7 +607,7 @@ const closeMemoryModal = () => {
   closeMemoryRecordEditor();
 };
 
-// æ‹‰å–ç”¨æˆ·åˆ—è¡¨
+// À­È¡ÓÃ»§ÁĞ±í
 export const loadMemoryUsers = async () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -650,7 +650,7 @@ export const loadMemoryUsers = async () => {
   }
 };
 
-// æ‹‰å–æŒ‡å®šç”¨æˆ·çš„è®°å¿†è®°å½•
+// À­È¡Ö¸¶¨ÓÃ»§µÄ¼ÇÒä¼ÇÂ¼
 const loadMemoryRecords = async (userId) => {
   const cleaned = String(userId || "").trim();
   if (!cleaned) {
@@ -679,7 +679,7 @@ const loadMemoryRecords = async (userId) => {
   }
 };
 
-// æ›´æ–°ç”¨æˆ·é•¿æœŸè®°å¿†å¼€å…³
+// ¸üĞÂÓÃ»§³¤ÆÚ¼ÇÒä¿ª¹Ø
 const updateMemoryEnabled = async (userId, enabled) => {
   const cleaned = String(userId || "").trim();
   if (!cleaned) {
@@ -718,7 +718,7 @@ const updateMemoryEnabled = async (userId, enabled) => {
   }
 };
 
-// åˆ é™¤å•æ¡è®°å¿†è®°å½•
+// É¾³ıµ¥Ìõ¼ÇÒä¼ÇÂ¼
 const requestDeleteMemoryRecord = async (sessionId) => {
   const userId = state.memory.selectedId;
   if (!userId || !sessionId) {
@@ -740,7 +740,7 @@ const requestDeleteMemoryRecord = async (sessionId) => {
   }
 };
 
-// æ¸…ç©ºç”¨æˆ·æ‰€æœ‰è®°å¿†è®°å½•
+// Çå¿ÕÓÃ»§ËùÓĞ¼ÇÒä¼ÇÂ¼
 const requestClearMemoryRecords = async () => {
   const userId = state.memory.selectedId;
   if (!userId) {
@@ -832,7 +832,7 @@ const renderMemoryQueueTable = (body, emptyElement, items, emptyText) => {
   });
 };
 
-// æ¸²æŸ“è®°å¿†ä½“è¿è¡ŒçŠ¶æ€
+// äÖÈ¾¼ÇÒäÌåÔËĞĞ×´Ì¬
 const renderMemoryStatus = () => {
   const status = state.memory.status || {};
   const active = Array.isArray(status.active) ? status.active : [];
@@ -900,7 +900,7 @@ const renderMemoryQueueDetail = () => {
   if (detail.error) {
     metaParts.push(t("memory.queue.error", { message: detail.error }));
   }
-  elements.memoryQueueMeta.textContent = metaParts.join(" Â· ");
+  elements.memoryQueueMeta.textContent = metaParts.join(" ¡¤ ");
   const payload =
     detail.request && typeof detail.request === "object" ? detail.request : {};
   const text = JSON.stringify(payload, null, 2);
@@ -956,7 +956,7 @@ const closeMemoryQueueDetail = () => {
   elements.memoryQueueResult.textContent = "";
 };
 
-// æ‹‰å–è®°å¿†ä½“è¿è¡ŒçŠ¶æ€
+// À­È¡¼ÇÒäÌåÔËĞĞ×´Ì¬
 export const loadMemoryStatus = async () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -1005,7 +1005,7 @@ const stopMemoryPolling = () => {
   state.runtime.memoryPollTimer = null;
 };
 
-// æ§åˆ¶è®°å¿†ä½“è¿è¡ŒçŠ¶æ€çš„è½®è¯¢å¼€å…³
+// ¿ØÖÆ¼ÇÒäÌåÔËĞĞ×´Ì¬µÄÂÖÑ¯¿ª¹Ø
 export const toggleMemoryPolling = (active) => {
   ensureMemoryState();
   if (active) {
@@ -1015,7 +1015,7 @@ export const toggleMemoryPolling = (active) => {
   }
 };
 
-// åˆå§‹åŒ–é•¿æœŸè®°å¿†é¢æ¿äº¤äº’
+// ³õÊ¼»¯³¤ÆÚ¼ÇÒäÃæ°å½»»¥
 export const initMemoryPanel = () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -1027,7 +1027,7 @@ export const initMemoryPanel = () => {
   });
   elements.memorySearchInput.addEventListener("input", () => {
     state.memory.search = String(elements.memorySearchInput.value || "").trim();
-    // æœç´¢æ¡ä»¶å˜åŒ–æ—¶å›åˆ°ç¬¬ä¸€é¡µï¼Œé¿å…åˆ†é¡µæº¢å‡º
+    // ËÑË÷Ìõ¼ş±ä»¯Ê±»Øµ½µÚÒ»Ò³£¬±ÜÃâ·ÖÒ³Òç³ö
     state.memory.pagination.page = 1;
     renderMemoryUsers();
   });

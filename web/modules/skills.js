@@ -1,12 +1,12 @@
-ï»¿import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260105-01";
+import { t } from "./i18n.js?v=20260110-01";
 
-// æ‹‰å–æŠ€èƒ½æ¸…å•ä¸Žå¯ç”¨çŠ¶æ€
+// À­È¡¼¼ÄÜÇåµ¥ÓëÆôÓÃ×´Ì¬
 export const loadSkills = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills`;
@@ -20,7 +20,7 @@ export const loadSkills = async () => {
   renderSkills();
 };
 
-// æ‹‰å–æŒ‡å®šæŠ€èƒ½çš„ SKILL.md å†…å®¹ï¼Œä¾›è¯¦æƒ…å¼¹çª—å®Œæ•´å±•ç¤º
+// À­È¡Ö¸¶¨¼¼ÄÜµÄ SKILL.md ÄÚÈÝ£¬¹©ÏêÇéµ¯´°ÍêÕûÕ¹Ê¾
 const loadSkillContent = async (skillName) => {
   if (!skillName) {
     throw new Error(t("skills.nameRequired"));
@@ -74,7 +74,7 @@ const deleteSkill = async (skill) => {
   return skillName;
 };
 
-// æ‰“å¼€æŠ€èƒ½è¯¦æƒ…å¼¹çª—ï¼Œå¹¶æŒ‰å½“å‰æŠ€èƒ½åŠ è½½å®Œæ•´å†…å®¹
+// ´ò¿ª¼¼ÄÜÏêÇéµ¯´°£¬²¢°´µ±Ç°¼¼ÄÜ¼ÓÔØÍêÕûÄÚÈÝ
 const openSkillDetailModal = async (skill) => {
   const currentVersion = ++state.skills.detailVersion;
   elements.skillModalTitle.textContent = skill.name || t("skills.detail.title");
@@ -97,12 +97,12 @@ const openSkillDetailModal = async (skill) => {
   }
 };
 
-// å…³é—­æŠ€èƒ½è¯¦æƒ…å¼¹çª—ï¼ŒåŒæ—¶ä¿ç•™ä¸Šæ¬¡å†…å®¹ä¾›ä¸‹æ¬¡å¤ç”¨
+// ¹Ø±Õ¼¼ÄÜÏêÇéµ¯´°£¬Í¬Ê±±£ÁôÉÏ´ÎÄÚÈÝ¹©ÏÂ´Î¸´ÓÃ
 const closeSkillDetailModal = () => {
   elements.skillModal.classList.remove("active");
 };
 
-// æ¸²æŸ“æŠ€èƒ½å‹¾é€‰åˆ—è¡¨
+// äÖÈ¾¼¼ÄÜ¹´Ñ¡ÁÐ±í
 const renderSkills = () => {
   elements.skillsList.textContent = "";
   if (!state.skills.skills.length) {
@@ -131,7 +131,7 @@ const renderSkills = () => {
         });
     });
     const label = document.createElement("label");
-    label.innerHTML = `<strong>${skill.name}</strong><span class="muted">${skill.description} Â· ${skill.path}</span>`;
+    label.innerHTML = `<strong>${skill.name}</strong><span class="muted">${skill.description} ¡¤ ${skill.path}</span>`;
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "danger btn-with-icon btn-compact skill-delete-btn";
@@ -173,7 +173,7 @@ const renderSkills = () => {
   });
 };
 
-// ä¿å­˜æŠ€èƒ½å¯ç”¨çŠ¶æ€ä¸Žç›®å½•é…ç½®
+// ±£´æ¼¼ÄÜÆôÓÃ×´Ì¬ÓëÄ¿Â¼ÅäÖÃ
 const saveSkills = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills`;
@@ -195,7 +195,7 @@ const saveSkills = async () => {
   syncPromptTools();
 };
 
-// ä¸Šä¼ æŠ€èƒ½åŽ‹ç¼©åŒ…å¹¶åˆ·æ–°æŠ€èƒ½åˆ—è¡¨
+// ÉÏ´«¼¼ÄÜÑ¹Ëõ°ü²¢Ë¢ÐÂ¼¼ÄÜÁÐ±í
 const uploadSkillZip = async (file) => {
   if (!file) {
     return;
@@ -219,9 +219,9 @@ const uploadSkillZip = async (file) => {
   syncPromptTools();
 };
 
-// åˆå§‹åŒ–æŠ€èƒ½é¢æ¿äº¤äº’
+// ³õÊ¼»¯¼¼ÄÜÃæ°å½»»¥
 export const initSkillsPanel = () => {
-  // æŠ€èƒ½è¯¦æƒ…å¼¹çª—ï¼šæ”¯æŒç‚¹å‡»å…³é—­æŒ‰é’®æˆ–é®ç½©å±‚å…³é—­
+  // ¼¼ÄÜÏêÇéµ¯´°£ºÖ§³Öµã»÷¹Ø±Õ°´Å¥»òÕÚÕÖ²ã¹Ø±Õ
   elements.skillModalClose.addEventListener("click", closeSkillDetailModal);
   elements.skillModalCloseBtn.addEventListener("click", closeSkillDetailModal);
   elements.skillModal.addEventListener("click", (event) => {
