@@ -16,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use walkdir::WalkDir;
-use zip::write::FileOptions;
 
 const MIGRATION_MARKER: &str = ".wunder_workspace_v2";
 const LEGACY_CHAT_FILE: &str = "chat_history.jsonl";
@@ -704,50 +703,6 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    pub fn delete_path(&self, user_id: &str, path: &str) -> Result<()> {
-        let target = self.resolve_path(user_id, path)?;
-        if target.is_dir() {
-            fs::remove_dir_all(&target)?;
-        } else if target.exists() {
-            fs::remove_file(&target)?;
-        }
-        self.bump_version(user_id);
-        Ok(())
-    }
-
-    pub fn create_dir(&self, user_id: &str, path: &str) -> Result<()> {
-        let target = self.resolve_path(user_id, path)?;
-        fs::create_dir_all(&target)?;
-        self.bump_version(user_id);
-        Ok(())
-    }
-
-    pub fn move_path(&self, user_id: &str, source: &str, destination: &str) -> Result<()> {
-        let source_path = self.resolve_path(user_id, source)?;
-        let destination_path = self.resolve_path(user_id, destination)?;
-        if let Some(parent) = destination_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::rename(&source_path, &destination_path)?;
-        self.bump_version(user_id);
-        Ok(())
-    }
-
-    pub fn copy_path(&self, user_id: &str, source: &str, destination: &str) -> Result<()> {
-        let source_path = self.resolve_path(user_id, source)?;
-        let destination_path = self.resolve_path(user_id, destination)?;
-        if source_path.is_dir() {
-            copy_dir_all(&source_path, &destination_path)?;
-        } else {
-            if let Some(parent) = destination_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::copy(&source_path, &destination_path)?;
-        }
-        self.bump_version(user_id);
-        Ok(())
-    }
-
     pub fn search(&self, user_id: &str, keyword: &str) -> Result<Vec<WorkspaceEntry>> {
         let (entries, _total) =
             self.search_workspace_entries(user_id, keyword, 0, 0, true, true)?;
@@ -820,53 +775,6 @@ impl WorkspaceManager {
         Ok((results, matched))
     }
 
-    pub fn archive(&self, user_id: &str, path: Option<&str>) -> Result<Vec<u8>> {
-        let root = self.ensure_user_root(user_id)?;
-        let target = match path {
-            Some(path) if !path.is_empty() => self.resolve_path(user_id, path)?,
-            _ => root.clone(),
-        };
-        let cursor = std::io::Cursor::new(Vec::new());
-        let mut zip = zip::ZipWriter::new(cursor);
-        let options = FileOptions::default();
-
-        if target.is_dir() {
-            for entry in WalkDir::new(&target)
-                .into_iter()
-                .filter_map(|entry| entry.ok())
-            {
-                let file_path = entry.path();
-                if file_path.is_dir() {
-                    continue;
-                }
-                let rel = file_path
-                    .strip_prefix(&root)
-                    .unwrap_or(file_path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                let mut file = fs::File::open(file_path)?;
-                zip.start_file(rel, options)?;
-                let mut data = Vec::new();
-                file.read_to_end(&mut data)?;
-                zip.write_all(&data)?;
-            }
-        } else if target.is_file() {
-            let rel = target
-                .strip_prefix(&root)
-                .unwrap_or(&target)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let mut file = fs::File::open(&target)?;
-            zip.start_file(rel, options)?;
-            let mut data = Vec::new();
-            file.read_to_end(&mut data)?;
-            zip.write_all(&data)?;
-        }
-
-        let cursor = zip.finish()?;
-        Ok(cursor.into_inner())
-    }
-
     pub fn get_workspace_tree(&self, user_id: &str) -> String {
         let safe_id = self.safe_user_id(user_id);
         {
@@ -910,10 +818,6 @@ impl WorkspaceManager {
     pub fn get_tree_version(&self, user_id: &str) -> u64 {
         let safe_id = self.safe_user_id(user_id);
         self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
-    }
-
-    pub fn tree_version(&self, user_id: &str) -> u64 {
-        self.get_tree_version(user_id)
     }
 
     pub fn bump_version(&self, user_id: &str) {
@@ -987,23 +891,6 @@ fn build_workspace_tree_inner(
     for name in files {
         lines.push(format!("{prefix}{name}"));
     }
-}
-
-fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
-    if !dst.exists() {
-        fs::create_dir_all(dst)?;
-    }
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let new_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_all(&entry.path(), &new_path)?;
-        } else {
-            fs::copy(entry.path(), new_path)?;
-        }
-    }
-    Ok(())
 }
 
 fn resolve_collision(path: &Path) -> PathBuf {

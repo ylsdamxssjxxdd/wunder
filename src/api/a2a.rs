@@ -133,7 +133,7 @@ fn resolve_agent_description() -> String {
     if language.starts_with("en") {
         return "Wunder agent router".to_string();
     }
-    "Wunder ??????".to_string()
+    "Wunder 智能体路由器".to_string()
 }
 
 fn resolve_request_base_url(headers: &HeaderMap, config: &Config) -> String {
@@ -212,10 +212,10 @@ fn default_skill_spec() -> Value {
     }
     json!({
         "id": "wunder-general",
-        "name": "????",
-        "description": "????????????????????",
+        "name": "通用对话",
+        "description": "支持工具调用与知识检索的通用智能体能力。",
         "tags": ["general", "tools"],
-        "examples": ["????????????"],
+        "examples": ["请帮我总结当前工作区内容"],
         "inputModes": ["text/plain"],
         "outputModes": ["text/plain"]
     })
@@ -375,23 +375,27 @@ impl A2AError {
     fn task_not_cancelable(task_id: &str) -> Self {
         Self::new(
             A2A_TASK_NOT_CANCELABLE,
-            "??????".to_string(),
+            "任务不可取消".to_string(),
             Some(json!({ "taskId": task_id })),
         )
     }
 
     fn content_type_not_supported() -> Self {
-        Self::new(A2A_CONTENT_TYPE_NOT_SUPPORTED, "????????".to_string(), None)
+        Self::new(
+            A2A_CONTENT_TYPE_NOT_SUPPORTED,
+            "不支持的内容类型".to_string(),
+            None,
+        )
     }
 
     fn push_notification_not_supported() -> Self {
-        Self::new(A2A_PUSH_NOT_SUPPORTED, "????????".to_string(), None)
+        Self::new(A2A_PUSH_NOT_SUPPORTED, "暂不支持推送通知".to_string(), None)
     }
 
     fn version_not_supported(version: &str) -> Self {
         Self::new(
             A2A_VERSION_NOT_SUPPORTED,
-            "???? A2A ????".to_string(),
+            "不支持的 A2A 协议版本".to_string(),
             Some(json!({ "version": version })),
         )
     }
@@ -693,7 +697,6 @@ impl A2aService {
             let mut stream_state = A2aStreamState {
                 session_id: session_id.clone(),
                 context_id: context_id.clone(),
-                user_id: user_id.clone(),
                 final_sent: false,
             };
             let initial_status = build_status(
@@ -740,8 +743,9 @@ impl A2aService {
             };
             tokio::pin!(stream);
             while let Some(item) = stream.next().await {
-                let Ok(event) = item else {
-                    continue;
+                let event = match item {
+                    Ok(event) => event,
+                    Err(err) => match err {},
                 };
                 let mapped = map_wunder_event(&mut stream_state, &event);
                 for (payload, final_flag) in mapped {
@@ -772,12 +776,6 @@ impl A2aService {
             .monitor
             .get_record(&session_id)
             .ok_or_else(|| A2AError::task_not_found(&session_id))?;
-        let user_id = record
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("a2a")
-            .trim()
-            .to_string();
         let status = build_status_from_record(&record, &session_id);
         let task = build_task(
             &session_id,
@@ -800,7 +798,6 @@ impl A2aService {
             let mut stream_state = A2aStreamState {
                 session_id: session_id.clone(),
                 context_id: session_id.clone(),
-                user_id: user_id.clone(),
                 final_sent: false,
             };
             let mut last_event_index = 0usize;
@@ -1123,7 +1120,6 @@ impl A2aService {
 struct A2aStreamState {
     session_id: String,
     context_id: String,
-    user_id: String,
     final_sent: bool,
 }
 

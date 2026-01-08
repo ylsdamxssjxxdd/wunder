@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use chrono::{DateTime, Local};

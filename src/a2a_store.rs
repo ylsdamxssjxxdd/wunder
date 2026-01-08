@@ -33,14 +33,6 @@ impl A2aStore {
         self.tasks.insert(task.id.clone(), task);
     }
 
-    pub fn get(&self, task_id: &str) -> Option<A2aTask> {
-        self.tasks.get(task_id).map(|entry| entry.clone())
-    }
-
-    pub fn list(&self) -> Vec<A2aTask> {
-        self.tasks.iter().map(|entry| entry.clone()).collect()
-    }
-
     pub fn list_by_user(&self, user_id: &str) -> Vec<A2aTask> {
         self.tasks
             .iter()
@@ -52,13 +44,6 @@ impl A2aStore {
     pub fn update(&self, task_id: &str, updater: impl FnOnce(&mut A2aTask)) {
         if let Some(mut entry) = self.tasks.get_mut(task_id) {
             updater(&mut entry);
-        }
-    }
-
-    pub fn cancel(&self, task_id: &str) {
-        if let Some(mut entry) = self.tasks.get_mut(task_id) {
-            entry.status = "cancelled".to_string();
-            entry.updated_time = Utc::now();
         }
     }
 }

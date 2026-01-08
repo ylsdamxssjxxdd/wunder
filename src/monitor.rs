@@ -362,8 +362,7 @@ impl MonitorState {
 
     pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
         let now = now_ts();
-        let mut to_persist = None;
-        {
+        let to_persist = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(record) = sessions.get_mut(session_id) else {
                 return;
@@ -404,8 +403,8 @@ impl MonitorState {
             }
             self.append_event(record, event_type, data, now);
             record.dirty = true;
-            to_persist = self.maybe_persist_record(record, now, false);
-        }
+            self.maybe_persist_record(record, now, false)
+        };
         if let Some(record) = to_persist {
             self.save_record(&record);
         }
@@ -427,8 +426,7 @@ impl MonitorState {
         );
     }
     pub fn cancel(&self, session_id: &str) -> bool {
-        let mut to_persist = None;
-        {
+        let to_persist = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(record) = sessions.get_mut(session_id) else {
                 return false;
@@ -447,8 +445,8 @@ impl MonitorState {
                 updated_time,
             );
             record.dirty = true;
-            to_persist = self.maybe_persist_record(record, updated_time, true);
-        }
+            self.maybe_persist_record(record, updated_time, true)
+        };
         if let Some(record) = to_persist {
             self.save_record(&record);
         }
@@ -932,8 +930,7 @@ impl MonitorState {
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
         let now = now_ts();
-        let mut to_persist = None;
-        {
+        let to_persist = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(record) = sessions.get_mut(session_id) else {
                 return;
@@ -975,8 +972,8 @@ impl MonitorState {
             let summary = record.summary.clone();
             self.append_event(record, status, &json!({ "summary": summary }), now);
             record.dirty = true;
-            to_persist = self.maybe_persist_record(record, now, true);
-        }
+            self.maybe_persist_record(record, now, true)
+        };
         if let Some(record) = to_persist {
             self.save_record(&record);
         }
