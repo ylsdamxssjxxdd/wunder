@@ -497,6 +497,7 @@ impl RequestLimiter {
 impl Orchestrator {
     pub async fn run(&self, request: WunderRequest) -> Result<WunderResponse> {
         let prepared = self.prepare_request(request)?;
+        let language = prepared.language.clone();
         let emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),
@@ -504,7 +505,10 @@ impl Orchestrator {
             None,
             self.monitor.clone(),
         );
-        let response = self.execute_request(prepared, emitter).await?;
+        let response = i18n::with_language(language, async {
+            self.execute_request(prepared, emitter).await
+        })
+        .await?;
         Ok(response)
     }
 
@@ -513,6 +517,7 @@ impl Orchestrator {
         request: WunderRequest,
     ) -> Result<impl Stream<Item = Result<StreamEvent, std::convert::Infallible>>> {
         let prepared = self.prepare_request(request)?;
+        let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);
         let emitter = EventEmitter::new(
@@ -526,8 +531,13 @@ impl Orchestrator {
             let orchestrator = self.clone();
             let emitter = emitter.clone();
             let prepared = prepared.clone();
+            let language = language.clone();
             tokio::spawn(async move {
-                if let Err(err) = orchestrator.execute_request(prepared, emitter).await {
+                let result = i18n::with_language(language, async {
+                    orchestrator.execute_request(prepared, emitter).await
+                })
+                .await;
+                if let Err(err) = result {
                     warn!("流式请求执行失败: {}", err);
                 }
             })
