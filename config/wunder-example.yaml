@@ -132,6 +132,6 @@ sandbox: # 沙盒执行配置
   idle_ttl_s: 0 # 空闲回收秒数（0 表示不回收）
   timeout_s: 300 # 单次执行超时时间（秒）
   resources: # 资源限制配置
-    cpu: 1.0 # CPU 核心数限制
-    memory_mb: 2048 # 内存上限（MB）
+    cpu: 8.0 # CPU 核心数限制
+    memory_mb: 8096 # 内存上限（MB）
     pids: 256 # 进程数上限
