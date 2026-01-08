@@ -1,5 +1,5 @@
-﻿flowchart LR
-  Client[Client/Debug UI] -->|/wunder| API[FastAPI API Layer]
+flowchart LR
+  Client[Client/Debug UI] -->|/wunder| API[Axum API Layer]
   API --> Orchestrator[Orchestrator Engine]
   Orchestrator --> Prompt[Prompt Builder]
   Orchestrator --> LLM[LLM Adapter]
@@ -11,5 +11,5 @@
   Tools --> UserTools[Custom/Shared Tools]
   Builtin -->|Command/ptc| Sandbox[Shared Sandbox Service]
   Orchestrator --> Monitor[Session Monitoring]
-  Orchestrator --> Storage[SQLite/Workspaces]
+  Orchestrator --> Storage[PostgreSQL/SQLite/Workspaces]
   Storage --> Workspaces[Multi-user Workspaces]

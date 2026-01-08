@@ -188,7 +188,7 @@ const renderAgentCardTools = (container, tooling) => {
       const summary = document.createElement("summary");
       const name = String(tool?.tool || tool?.name || "-");
       const server = String(tool?.server || "").trim();
-      summary.textContent = server ? `${server}@${name}` : name;
+      summary.textContent = server ? `${name} @ ${server}` : name;
       item.appendChild(summary);
       const desc = document.createElement("div");
       desc.className = "agentcard-item-desc";

@@ -28,6 +28,34 @@ const buildDetailText = (detail, fallback) => {
   }
 };
 
+const normalizeLogTimestampText = (value) => {
+  if (!value) {
+    return "";
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return "";
+  }
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/
+  );
+  if (!match) {
+    return text;
+  }
+  const base = match[1];
+  const fraction = match[2];
+  const zone = match[3] || "";
+  let normalized = base;
+  if (fraction) {
+    const digits = fraction.slice(1, 4);
+    if (digits) {
+      normalized += `.${digits}`;
+    }
+  }
+  normalized += zone;
+  return normalized;
+};
+
 // 统一格式化日志时间，兼容 ISO 字符串/时间戳/Date
 const resolveLogTimestamp = (value, fallbackMs) => {
   const fallbackTime = Number.isFinite(fallbackMs) ? new Date(fallbackMs) : new Date();
@@ -42,7 +70,7 @@ const resolveLogTimestamp = (value, fallbackMs) => {
     return Number.isNaN(parsed.getTime()) ? fallbackTime.toLocaleTimeString(getCurrentLanguage()) : parsed.toLocaleTimeString(getCurrentLanguage());
   }
   if (typeof value === "string") {
-    const parsed = new Date(value);
+    const parsed = new Date(normalizeLogTimestampText(value));
     if (!Number.isNaN(parsed.getTime())) {
       return parsed.toLocaleTimeString(getCurrentLanguage());
     }
@@ -64,7 +92,7 @@ const resolveLogTimestampMs = (value) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
   }
   if (typeof value === "string") {
-    const parsed = new Date(value);
+    const parsed = new Date(normalizeLogTimestampText(value));
     return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
   }
   return null;

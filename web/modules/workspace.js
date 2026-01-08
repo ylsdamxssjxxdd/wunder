@@ -1,6 +1,6 @@
 ﻿import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
-import { appendLog } from "./log.js?v=20251229-02";
+import { appendLog } from "./log.js?v=20260108-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";

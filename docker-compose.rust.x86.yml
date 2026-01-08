@@ -1,0 +1,62 @@
+x-rust-build: &rust-build
+  context: .
+  dockerfile: Dockerfile.rust
+  args:
+    RUST_BASE_IMAGE: rust:1.92-slim-bookworm
+
+services:
+  WUNDER_RUST:
+    build: *rust-build
+    image: wunder-rust
+    platform: linux/amd64
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/workspaces
+    environment:
+      - TZ=Asia/Shanghai
+      - WUNDER_SANDBOX_ENDPOINT=http://sandbox:9001
+      - WUNDER_POSTGRES_DSN=postgresql://wunder:wunder@postgres:5432/wunder
+      - RUST_LOG=info
+      - CARGO_HOME=/workspaces/.cargo/amd64
+      - CARGO_TARGET_DIR=/workspaces/target/amd64
+    command: ["bash", "-lc", "cargo run --bin wunder-server"]
+    depends_on:
+      sandbox:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: always
+
+  sandbox:
+    build: *rust-build
+    image: wunder-rust
+    platform: linux/amd64
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./app:/workspaces/app:ro
+      - ./data/user_tools:/workspaces/data/user_tools:ro
+      - ./data/workspaces:/workspaces/data/workspaces
+      - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
+    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001
+    restart: always
+
+  postgres:
+    image: postgres:16
+    platform: linux/amd64
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_DB=wunder
+      - POSTGRES_USER=wunder
+      - POSTGRES_PASSWORD=wunder
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always

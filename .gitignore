@@ -29,5 +29,8 @@ images/x86/
 .pytest_cache
 **/__pycache__/
 *.pyc
+target/
+.cargo/
+.rustup/
 config/wunder.yaml
 EVA_SKILLS

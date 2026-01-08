@@ -1,7 +1,7 @@
 ﻿import { APP_CONFIG } from "../app.config.js";
 import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
-import { appendLog } from "./log.js?v=20251229-02";
+import { appendLog } from "./log.js?v=20260108-02";
 import {
   formatBytes,
   formatDuration,
@@ -1986,8 +1986,21 @@ const escapeMonitorHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const unwrapMonitorEventData = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const hasSessionId = typeof payload.session_id === "string" && payload.session_id.trim();
+  const hasTimestamp = typeof payload.timestamp === "string" && payload.timestamp.trim();
+  const inner = payload.data;
+  if (hasSessionId && hasTimestamp && inner && typeof inner === "object") {
+    return inner;
+  }
+  return payload;
+};
+
 const MONITOR_TIMESTAMP_RE =
-  /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]/g;
+  /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)\]/g;
 
 // 高亮事件详情里的时间戳，方便快速定位条目
 const highlightMonitorTimestamps = (detailText) =>
@@ -2002,7 +2015,8 @@ const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCa
 // 格式化事件数据为可展示文本，确保异常数据不会打断渲染
 const stringifyMonitorEventData = (data) => {
   try {
-    const text = JSON.stringify(data);
+    const resolved = unwrapMonitorEventData(data);
+    const text = JSON.stringify(resolved);
     return typeof text === "string" ? text : String(text);
   } catch (error) {
     return String(data);
@@ -2019,7 +2033,7 @@ const buildMonitorEventLine = (event) => {
 
 // 从事件数据中提取工具名称，便于定位工具调用位置
 const resolveMonitorEventToolName = (event) => {
-  const data = event?.data;
+  const data = unwrapMonitorEventData(event?.data);
   if (!data || typeof data !== "object") {
     return "";
   }

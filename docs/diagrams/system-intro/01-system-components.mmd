@@ -1,5 +1,5 @@
-﻿flowchart LR
-  Client[客户端/调试页] -->|/wunder| API[FastAPI API层]
+flowchart LR
+  Client[客户端/调试页] -->|/wunder| API[Axum API层]
   API --> Orchestrator[Orchestrator 调度引擎]
   Orchestrator --> Prompt[Prompt Builder]
   Orchestrator --> LLM[LLM 适配层]
@@ -11,5 +11,5 @@
   Tools --> UserTools[自建/共享工具]
   Builtin -->|命令/ptc| Sandbox[共享沙盒服务]
   Orchestrator --> Monitor[线程监控]
-  Orchestrator --> Storage[SQLite/工作区]
+  Orchestrator --> Storage[PostgreSQL/SQLite/工作区]
   Storage --> Workspaces[多用户工作区]

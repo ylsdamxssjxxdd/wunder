@@ -21,35 +21,32 @@ wunder可以暴露自身作为mcp工具，成为最终武器
 - 调试与监控：/wunder/web 调试页面，/wunder/admin/monitor 资源与会话监控。
 
 ## 2. 快速开始
-### 2.1 构建基础镜像
-x86
-```bash
-docker buildx build --platform linux/x86_64 -t wunder:20250105-x86 -f Dockerfile .
-```
-arm
-```bash
-docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfile .
-```
-### 2.2 修改配置文件
+### 2.1 修改配置文件
 先将示例配置复制为正式配置：`config/wunder-example.yaml` -> `config/wunder.yaml`
 设置api_key，将ylsdamxssjxxdd改成你自己的
 
-### 2.3 启动服务
+### 2.2 启动服务
+x86
 ```bash
-docker compose up
+docker compose -f docker-compose.rust.x86.yml up
 ```
+arm
+```bash
+docker compose -f docker-compose.rust.arm.yml up
+```
+初次启动会下载基础镜像并构建依赖，需要一定时间
 
-### 2.4 打开系统设置页面
+### 2.3 打开系统设置页面
 浏览器访问：
 ```
 http://127.0.0.1:8000/wunder/web
 ```
 点击系统设置页面，填入api地址和key，自动会接上后端
 
-### 2.5 打开模型配置页面
+### 2.4 打开模型配置页面
 新增模型并保存，可点击自动探测按钮快速获取最大上下文长度
 
-### 2.6 打开调试面板页面
+### 2.5 打开调试面板页面
 点击调试面板，进行提问测试
 
 

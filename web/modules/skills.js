@@ -1,7 +1,7 @@
 ﻿import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { appendLog } from "./log.js?v=20251229-02";
+import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260105-01";

@@ -7,10 +7,10 @@ import {
 import { elements } from "./modules/elements.js?v=20260105-02";
 import { state } from "./modules/state.js";
 import { normalizeApiBase } from "./modules/utils.js";
-import { appendLog } from "./modules/log.js?v=20251231-01";
+import { appendLog } from "./modules/log.js?v=20260108-02";
 import { loadI18nConfig } from "./modules/i18n-config.js";
 import { initToolDetailModal } from "./modules/tool-detail.js";
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260101-02";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260108-02";
 import {
   applyPromptToolError,
   ensureToolSelectionLoaded,
@@ -18,9 +18,9 @@ import {
   resetToolSelection,
 } from "./modules/tools.js?v=20251231-01";
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260101-02";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260105-03";
-import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20251231-01";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260108-02";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260108-02";
+import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
   initMemoryPanel,
   loadMemoryStatus,
@@ -29,9 +29,9 @@ import {
 } from "./modules/memory.js?v=20251231-05";
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js";
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js";
-import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20251231-01";
+import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260108-02";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20251231-01";
-import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20251231-01";
+import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260108-02";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20251231-01";
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";

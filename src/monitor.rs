@@ -1,0 +1,1104 @@
+// 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
+use crate::config::{ObservabilityConfig, SandboxConfig};
+use crate::i18n;
+use crate::storage::StorageBackend;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread;
+use sysinfo::{Disks, Networks, System};
+
+const DEFAULT_EVENT_LIMIT: usize = 500;
+const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
+const MIN_PAYLOAD_LIMIT: usize = 256;
+
+#[derive(Debug, Clone)]
+struct MonitorEvent {
+    timestamp: f64,
+    event_type: String,
+    data: Value,
+}
+
+impl MonitorEvent {
+    fn to_storage(&self) -> Value {
+        json!({
+            "timestamp": self.timestamp,
+            "type": self.event_type,
+            "data": self.data,
+        })
+    }
+
+    fn from_storage(payload: &Value) -> Option<Self> {
+        let timestamp = payload
+            .get("timestamp")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let event_type = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let data = payload
+            .get("data")
+            .cloned()
+            .unwrap_or(Value::Object(Default::default()));
+        Some(Self {
+            timestamp,
+            event_type,
+            data,
+        })
+    }
+
+    fn to_dict(&self) -> Value {
+        let mut data = self.data.clone();
+        if let Value::Object(ref mut map) = data {
+            if let Some(Value::String(summary)) = map.get("summary") {
+                map.insert(
+                    "summary".to_string(),
+                    Value::String(localize_summary(summary)),
+                );
+            }
+        }
+        json!({
+            "timestamp": format_ts(self.timestamp),
+            "type": self.event_type,
+            "data": data,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionRecord {
+    session_id: String,
+    user_id: String,
+    question: String,
+    status: String,
+    stage: String,
+    summary: String,
+    start_time: f64,
+    updated_time: f64,
+    cancel_requested: bool,
+    ended_time: Option<f64>,
+    rounds: i64,
+    token_usage: i64,
+    events: VecDeque<MonitorEvent>,
+}
+
+impl SessionRecord {
+    fn new(session_id: String, user_id: String, question: String, now: f64) -> Self {
+        Self {
+            session_id,
+            user_id,
+            question,
+            status: MonitorState::STATUS_RUNNING.to_string(),
+            stage: "received".to_string(),
+            summary: i18n::t("monitor.summary.received"),
+            start_time: now,
+            updated_time: now,
+            cancel_requested: false,
+            ended_time: None,
+            rounds: 1,
+            token_usage: 0,
+            events: VecDeque::new(),
+        }
+    }
+
+    fn elapsed_s(&self) -> f64 {
+        let end = self.ended_time.unwrap_or_else(now_ts);
+        (end - self.start_time).max(0.0)
+    }
+
+    fn to_summary(&self) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "question": self.question,
+            "status": self.status,
+            "stage": self.stage,
+            "summary": localize_summary(&self.summary),
+            "start_time": format_ts(self.start_time),
+            "updated_time": format_ts(self.updated_time),
+            "elapsed_s": round2(self.elapsed_s()),
+            "cancel_requested": self.cancel_requested,
+            "token_usage": self.token_usage,
+        })
+    }
+
+    fn to_storage(&self) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "question": self.question,
+            "status": self.status,
+            "stage": self.stage,
+            "summary": self.summary,
+            "start_time": self.start_time,
+            "updated_time": self.updated_time,
+            "ended_time": self.ended_time,
+            "cancel_requested": self.cancel_requested,
+            "rounds": self.rounds,
+            "token_usage": self.token_usage,
+            "events": self
+                .events
+                .iter()
+                .map(|event| event.to_storage())
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn from_storage(payload: &Value) -> Option<Self> {
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)?
+            .to_string();
+        let user_id = payload
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let question = payload
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("finished")
+            .to_string();
+        let stage = payload
+            .get("stage")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let summary = payload
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let start_time = payload
+            .get("start_time")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let updated_time = payload
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let ended_time = payload.get("ended_time").and_then(Value::as_f64);
+        let cancel_requested = payload
+            .get("cancel_requested")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let rounds = payload.get("rounds").and_then(Value::as_i64).unwrap_or(1);
+        let token_usage = payload
+            .get("token_usage")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut events = VecDeque::new();
+        if let Some(Value::Array(items)) = payload.get("events") {
+            for item in items {
+                if let Some(event) = MonitorEvent::from_storage(item) {
+                    events.push_back(event);
+                }
+            }
+        }
+        Some(Self {
+            session_id,
+            user_id,
+            question,
+            status,
+            stage,
+            summary,
+            start_time,
+            updated_time,
+            cancel_requested,
+            ended_time,
+            rounds,
+            token_usage,
+            events,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemSnapshot {
+    pub cpu_percent: f32,
+    pub memory_total: u64,
+    pub memory_used: u64,
+    pub memory_available: u64,
+    pub process_rss: u64,
+    pub process_cpu_percent: f32,
+    pub load_avg_1: f64,
+    pub load_avg_5: f64,
+    pub load_avg_15: f64,
+    pub disk_total: u64,
+    pub disk_used: u64,
+    pub disk_free: u64,
+    pub disk_percent: f32,
+    pub disk_read_bytes: u64,
+    pub disk_write_bytes: u64,
+    pub net_sent_bytes: u64,
+    pub net_recv_bytes: u64,
+    pub uptime_s: u64,
+}
+
+pub struct MonitorState {
+    sessions: Mutex<HashMap<String, SessionRecord>>,
+    forced_cancelled: Mutex<HashSet<String>>,
+    storage: Arc<dyn StorageBackend>,
+    system: Mutex<System>,
+    disks: Mutex<Disks>,
+    networks: Mutex<Networks>,
+    event_limit: Option<usize>,
+    payload_limit: Option<usize>,
+    drop_event_types: HashSet<String>,
+    history_dir: PathBuf,
+    history_ready: AtomicBool,
+    history_loading: AtomicBool,
+    history_lock: Mutex<()>,
+    app_start_ts: Mutex<f64>,
+    sandbox_config: SandboxConfig,
+}
+
+impl MonitorState {
+    pub const STATUS_RUNNING: &'static str = "running";
+    pub const STATUS_FINISHED: &'static str = "finished";
+    pub const STATUS_ERROR: &'static str = "error";
+    pub const STATUS_CANCELLED: &'static str = "cancelled";
+    pub const STATUS_CANCELLING: &'static str = "cancelling";
+
+    pub fn new(
+        storage: Arc<dyn StorageBackend>,
+        observability: ObservabilityConfig,
+        sandbox: SandboxConfig,
+    ) -> Self {
+        let mut system = System::new_all();
+        system.refresh_all();
+        let mut disks = Disks::new_with_refreshed_list();
+        disks.refresh();
+        let mut networks = Networks::new_with_refreshed_list();
+        networks.refresh();
+        let event_limit = resolve_event_limit(observability.monitor_event_limit);
+        let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
+        let drop_event_types = observability
+            .monitor_drop_event_types
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect::<HashSet<_>>();
+        let history_dir = PathBuf::from("data/historys/monitor");
+        let _ = storage.ensure_initialized();
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            forced_cancelled: Mutex::new(HashSet::new()),
+            storage,
+            system: Mutex::new(system),
+            disks: Mutex::new(disks),
+            networks: Mutex::new(networks),
+            event_limit,
+            payload_limit,
+            drop_event_types,
+            history_dir,
+            history_ready: AtomicBool::new(false),
+            history_loading: AtomicBool::new(false),
+            history_lock: Mutex::new(()),
+            app_start_ts: Mutex::new(now_ts()),
+            sandbox_config: sandbox,
+        }
+    }
+
+    pub fn warm_history(self: &Arc<Self>, background: bool) -> bool {
+        if self.history_ready.load(Ordering::SeqCst) {
+            return true;
+        }
+        let _guard = self.history_lock.lock().unwrap();
+        if self.history_ready.load(Ordering::SeqCst) {
+            return true;
+        }
+        if self.history_loading.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let this = Arc::clone(self);
+        if background {
+            thread::spawn(move || {
+                this.load_history();
+                this.history_loading.store(false, Ordering::SeqCst);
+                this.history_ready.store(true, Ordering::SeqCst);
+            });
+            return false;
+        }
+        this.load_history();
+        this.history_loading.store(false, Ordering::SeqCst);
+        this.history_ready.store(true, Ordering::SeqCst);
+        true
+    }
+
+    pub fn register(&self, session_id: &str, user_id: &str, question: &str) {
+        let now = now_ts();
+        let mut sessions = self.sessions.lock().unwrap();
+        self.register_locked(&mut sessions, session_id, user_id, question, now, false);
+    }
+
+    pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
+        let now = now_ts();
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(record) = sessions.get_mut(session_id) else {
+            return;
+        };
+        record.updated_time = now;
+        if event_type == "token_usage" {
+            if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
+                record.token_usage = total;
+            }
+        }
+        if event_type == "progress" {
+            if let Some(stage) = data.get("stage").and_then(Value::as_str) {
+                record.stage = stage.to_string();
+            }
+            if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+                record.summary = summary.to_string();
+            }
+        } else if event_type == "tool_call" {
+            record.stage = "tool_call".to_string();
+            let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
+            record.summary = i18n::t_with_params(
+                "monitor.summary.tool_call",
+                &HashMap::from([("tool".to_string(), tool.to_string())]),
+            );
+        } else if event_type == "llm_request" {
+            record.stage = "llm_request".to_string();
+            record.summary = i18n::t("monitor.summary.model_call");
+        } else if event_type == "final" {
+            record.stage = "final".to_string();
+            record.summary = i18n::t("monitor.summary.finished");
+        } else if event_type == "error" {
+            record.stage = "error".to_string();
+            record.summary = data
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
+        }
+        self.append_event(record, event_type, data, now);
+        self.save_record(record);
+    }
+
+    pub fn mark_finished(&self, session_id: &str) {
+        self.mark_status(session_id, Self::STATUS_FINISHED, None);
+    }
+
+    pub fn mark_error(&self, session_id: &str, message: &str) {
+        self.mark_status(session_id, Self::STATUS_ERROR, Some(message));
+    }
+
+    pub fn mark_cancelled(&self, session_id: &str) {
+        self.mark_status(
+            session_id,
+            Self::STATUS_CANCELLED,
+            Some(&i18n::t("monitor.summary.cancelled")),
+        );
+    }
+    pub fn cancel(&self, session_id: &str) -> bool {
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(record) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if record.status != Self::STATUS_RUNNING && record.status != Self::STATUS_CANCELLING {
+            return false;
+        }
+        record.cancel_requested = true;
+        record.status = Self::STATUS_CANCELLING.to_string();
+        record.updated_time = now_ts();
+        let updated_time = record.updated_time;
+        self.append_event(
+            record,
+            "cancel",
+            &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
+            updated_time,
+        );
+        self.save_record(record);
+        true
+    }
+
+    pub fn delete_session(&self, session_id: &str) -> bool {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(record) = sessions.get(session_id) {
+            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        sessions.remove(session_id);
+        let _ = self.storage.delete_monitor_record(session_id);
+        true
+    }
+
+    pub fn purge_user_sessions(&self, user_id: &str) -> HashMap<String, i64> {
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return HashMap::from([
+                ("cancelled".to_string(), 0),
+                ("deleted".to_string(), 0),
+                ("deleted_storage".to_string(), 0),
+            ]);
+        }
+        let mut cancelled = 0;
+        let mut session_ids = Vec::new();
+        let mut forced = Vec::new();
+        let mut sessions = self.sessions.lock().unwrap();
+        for (session_id, record) in sessions.iter_mut() {
+            if record.user_id != cleaned {
+                continue;
+            }
+            session_ids.push(session_id.clone());
+            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
+                record.cancel_requested = true;
+                record.status = Self::STATUS_CANCELLING.to_string();
+                record.updated_time = now_ts();
+                let updated_time = record.updated_time;
+                self.append_event(
+                    record,
+                    "cancel",
+                    &json!({ "summary": i18n::t("monitor.summary.user_deleted_cancel") }),
+                    updated_time,
+                );
+                cancelled += 1;
+                forced.push(session_id.clone());
+            }
+        }
+        for session_id in &session_ids {
+            sessions.remove(session_id);
+        }
+        drop(sessions);
+        if !forced.is_empty() {
+            let mut forced_guard = self.forced_cancelled.lock().unwrap();
+            for session_id in forced {
+                forced_guard.insert(session_id);
+            }
+        }
+        let deleted_storage = self
+            .storage
+            .delete_monitor_records_by_user(cleaned)
+            .unwrap_or(0);
+        HashMap::from([
+            ("cancelled".to_string(), cancelled),
+            ("deleted".to_string(), session_ids.len() as i64),
+            ("deleted_storage".to_string(), deleted_storage),
+        ])
+    }
+
+    pub fn is_cancelled(&self, session_id: &str) -> bool {
+        {
+            let forced = self.forced_cancelled.lock().unwrap();
+            if forced.contains(session_id) {
+                return true;
+            }
+        }
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .get(session_id)
+            .map(|record| record.cancel_requested)
+            .unwrap_or(false)
+    }
+
+    pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .values()
+            .filter(|record| {
+                if !active_only {
+                    return true;
+                }
+                record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING
+            })
+            .map(|record| record.to_summary())
+            .collect()
+    }
+
+    pub fn get_detail(&self, session_id: &str) -> Option<Value> {
+        let sessions = self.sessions.lock().unwrap();
+        let record = sessions.get(session_id)?;
+        let events = record
+            .events
+            .iter()
+            .map(|event| event.to_dict())
+            .collect::<Vec<_>>();
+        Some(json!({
+            "session": record.to_summary(),
+            "events": events,
+        }))
+    }
+
+    pub fn get_system_metrics(&self) -> SystemSnapshot {
+        let mut system = self.system.lock().unwrap();
+        system.refresh_all();
+        let cpu_percent = system.global_cpu_info().cpu_usage();
+        let total_memory = system.total_memory();
+        let used_memory = system.used_memory();
+        let available = total_memory.saturating_sub(used_memory);
+        let mut process_rss = 0;
+        let mut process_cpu = 0.0;
+        if let Ok(pid) = sysinfo::get_current_pid() {
+            if let Some(process) = system.process(pid) {
+                process_rss = process.memory();
+                process_cpu = process.cpu_usage();
+            }
+        }
+        let load_avg = System::load_average();
+        let mut disk_total: u64 = 0;
+        let mut disk_used: u64 = 0;
+        let mut disk_free: u64 = 0;
+        let mut disk_percent = 0.0;
+        let mut disks = self.disks.lock().unwrap();
+        if disks.list().is_empty() {
+            disks.refresh_list();
+        }
+        disks.refresh();
+        for disk in disks.list() {
+            disk_total = disk_total.saturating_add(disk.total_space());
+            disk_free = disk_free.saturating_add(disk.available_space());
+        }
+        if disk_total > 0 {
+            disk_used = disk_total.saturating_sub(disk_free);
+            disk_percent = (disk_used as f64 / disk_total as f64 * 100.0) as f32;
+        }
+        let mut net_sent: u64 = 0;
+        let mut net_recv: u64 = 0;
+        let mut networks = self.networks.lock().unwrap();
+        if networks.list().is_empty() {
+            networks.refresh_list();
+        }
+        networks.refresh();
+        for (_, data) in networks.iter() {
+            net_sent = net_sent.saturating_add(data.total_transmitted());
+            net_recv = net_recv.saturating_add(data.total_received());
+        }
+        let uptime_s = {
+            let start = *self.app_start_ts.lock().unwrap();
+            let now = now_ts();
+            (now - start).max(0.0) as u64
+        };
+        SystemSnapshot {
+            cpu_percent,
+            memory_total: total_memory,
+            memory_used: used_memory,
+            memory_available: available,
+            process_rss,
+            process_cpu_percent: process_cpu,
+            load_avg_1: load_avg.one as f64,
+            load_avg_5: load_avg.five as f64,
+            load_avg_15: load_avg.fifteen as f64,
+            disk_total,
+            disk_used,
+            disk_free,
+            disk_percent,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            net_sent_bytes: net_sent,
+            net_recv_bytes: net_recv,
+            uptime_s,
+        }
+    }
+
+    pub fn get_service_metrics(
+        &self,
+        recent_window_s: Option<f64>,
+        current_ts: Option<f64>,
+    ) -> Value {
+        let now = current_ts.unwrap_or_else(now_ts);
+        let window = recent_window_s.unwrap_or(3600.0).max(1.0);
+        let sessions = self.sessions.lock().unwrap();
+        let mut active_sessions = 0;
+        let mut finished_sessions = 0;
+        let mut error_sessions = 0;
+        let mut cancelled_sessions = 0;
+        let mut recent_completed = 0;
+        let mut elapsed_total = 0.0;
+        let mut elapsed_count = 0.0;
+        for record in sessions.values() {
+            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
+                active_sessions += 1;
+                continue;
+            }
+            if record.status == Self::STATUS_FINISHED {
+                finished_sessions += 1;
+            } else if record.status == Self::STATUS_ERROR {
+                error_sessions += 1;
+            } else if record.status == Self::STATUS_CANCELLED {
+                cancelled_sessions += 1;
+            }
+            let end_ts = record.ended_time.unwrap_or(record.updated_time);
+            if now - end_ts <= window {
+                recent_completed += 1;
+            }
+            elapsed_total += (end_ts - record.start_time).max(0.0);
+            elapsed_count += 1.0;
+        }
+        let total_sessions = sessions.len() as i64;
+        let history_sessions = total_sessions - active_sessions;
+        let avg_elapsed = if elapsed_count > 0.0 {
+            round2(elapsed_total / elapsed_count)
+        } else {
+            0.0
+        };
+        json!({
+            "active_sessions": active_sessions,
+            "history_sessions": history_sessions,
+            "finished_sessions": finished_sessions,
+            "error_sessions": error_sessions,
+            "cancelled_sessions": cancelled_sessions,
+            "total_sessions": total_sessions,
+            "recent_completed": recent_completed,
+            "avg_elapsed_s": avg_elapsed,
+        })
+    }
+
+    pub fn get_sandbox_metrics(&self, since_time: Option<f64>, until_time: Option<f64>) -> Value {
+        let mut call_count = 0;
+        let mut session_ids = HashSet::new();
+        let sessions = self.sessions.lock().unwrap();
+        for record in sessions.values() {
+            for event in &record.events {
+                if event.event_type != "tool_result" {
+                    continue;
+                }
+                if !event
+                    .data
+                    .get("sandbox")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                if let Some(since) = since_time {
+                    if event.timestamp < since {
+                        continue;
+                    }
+                }
+                if let Some(until) = until_time {
+                    if event.timestamp > until {
+                        continue;
+                    }
+                }
+                call_count += 1;
+                session_ids.insert(record.session_id.clone());
+            }
+        }
+        json!({
+            "mode": self.sandbox_config.mode,
+            "network": self.sandbox_config.network,
+            "readonly_rootfs": self.sandbox_config.readonly_rootfs,
+            "idle_ttl_s": self.sandbox_config.idle_ttl_s,
+            "timeout_s": self.sandbox_config.timeout_s,
+            "endpoint": self.sandbox_config.endpoint,
+            "image": self.sandbox_config.image,
+            "resources": {
+                "cpu": self.sandbox_config.resources.cpu,
+                "memory_mb": self.sandbox_config.resources.memory_mb,
+                "pids": self.sandbox_config.resources.pids,
+            },
+            "recent_calls": call_count,
+            "recent_sessions": session_ids.len(),
+        })
+    }
+
+    fn load_history(&self) {
+        self.migrate_legacy_history();
+        let records = self.storage.load_monitor_records().unwrap_or_default();
+        let mut rebuilt = HashMap::new();
+        for payload in records {
+            let Some(mut record) = SessionRecord::from_storage(&payload) else {
+                continue;
+            };
+            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
+                record.status = Self::STATUS_ERROR.to_string();
+                record.summary = i18n::t("monitor.summary.restarted");
+                record.ended_time = Some(record.updated_time);
+                let summary = record.summary.clone();
+                let updated_time = record.updated_time;
+                self.append_event(
+                    &mut record,
+                    "restart",
+                    &json!({ "summary": summary }),
+                    updated_time,
+                );
+            }
+            if record.status == Self::STATUS_FINISHED {
+                record.stage = "final".to_string();
+                record.summary = i18n::t("monitor.summary.finished");
+            } else if record.status == Self::STATUS_ERROR {
+                record.stage = "error".to_string();
+            } else if record.status == Self::STATUS_CANCELLED {
+                record.stage = "cancelled".to_string();
+            } else if record.status == Self::STATUS_CANCELLING {
+                record.stage = "cancelling".to_string();
+            }
+            if let Some(limit) = self.event_limit {
+                while record.events.len() > limit {
+                    record.events.pop_front();
+                }
+            }
+            rebuilt.insert(record.session_id.clone(), record);
+        }
+        if rebuilt.is_empty() {
+            return;
+        }
+        let mut sessions = self.sessions.lock().unwrap();
+        for (session_id, record) in rebuilt {
+            if let Some(current) = sessions.get(&session_id) {
+                if current.status == Self::STATUS_RUNNING
+                    || current.status == Self::STATUS_CANCELLING
+                {
+                    continue;
+                }
+                if current.updated_time >= record.updated_time {
+                    continue;
+                }
+            }
+            sessions.insert(session_id, record);
+        }
+    }
+
+    fn migrate_legacy_history(&self) {
+        let migration_key = "monitor_migrated";
+        if self
+            .storage
+            .get_meta(migration_key)
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("1")
+        {
+            return;
+        }
+        if !self.history_dir.exists() {
+            let _ = self.storage.set_meta(migration_key, "1");
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(&self.history_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(content) => content,
+                    Err(_) => continue,
+                };
+                let Ok(payload) = serde_json::from_str::<Value>(&content) else {
+                    continue;
+                };
+                if payload.is_object() {
+                    let _ = self.storage.upsert_monitor_record(&payload);
+                }
+            }
+        }
+        let _ = self.storage.set_meta(migration_key, "1");
+    }
+
+    fn register_locked(
+        &self,
+        sessions: &mut HashMap<String, SessionRecord>,
+        session_id: &str,
+        user_id: &str,
+        question: &str,
+        now: f64,
+        append_received: bool,
+    ) {
+        if session_id.trim().is_empty() {
+            return;
+        }
+        {
+            let mut forced = self.forced_cancelled.lock().unwrap();
+            forced.remove(session_id);
+        }
+        if let Some(record) = sessions.get_mut(session_id) {
+            record.rounds += 1;
+            record.question = question.to_string();
+            record.status = Self::STATUS_RUNNING.to_string();
+            record.stage = "received".to_string();
+            record.summary = i18n::t("monitor.summary.received");
+            record.start_time = now;
+            record.updated_time = now;
+            record.ended_time = None;
+            record.cancel_requested = false;
+            record.token_usage = 0;
+            let summary = record.summary.clone();
+            let rounds = record.rounds;
+            self.append_event(
+                record,
+                "round_start",
+                &json!({
+                    "summary": summary,
+                    "round": rounds,
+                    "question": question
+                }),
+                now,
+            );
+            self.save_record(record);
+            return;
+        }
+        let mut record = SessionRecord::new(
+            session_id.to_string(),
+            user_id.to_string(),
+            question.to_string(),
+            now,
+        );
+        let event_type = if append_received {
+            "received"
+        } else {
+            "round_start"
+        };
+        let summary = record.summary.clone();
+        let rounds = record.rounds;
+        self.append_event(
+            &mut record,
+            event_type,
+            &json!({
+                "summary": summary,
+                "round": rounds,
+                "question": question
+            }),
+            now,
+        );
+        self.save_record(&record);
+        sessions.insert(session_id.to_string(), record);
+    }
+
+    fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
+        let now = now_ts();
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(record) = sessions.get_mut(session_id) else {
+            return;
+        };
+        record.status = status.to_string();
+        record.updated_time = now;
+        record.ended_time = Some(now);
+        match status {
+            Self::STATUS_FINISHED => {
+                record.stage = "final".to_string();
+                record.summary = summary
+                    .map(str::to_string)
+                    .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+            }
+            Self::STATUS_ERROR => {
+                record.stage = "error".to_string();
+                if let Some(summary) = summary {
+                    record.summary = summary.to_string();
+                }
+            }
+            Self::STATUS_CANCELLED => {
+                record.stage = "cancelled".to_string();
+                if let Some(summary) = summary {
+                    record.summary = summary.to_string();
+                }
+            }
+            Self::STATUS_CANCELLING => {
+                record.stage = "cancelling".to_string();
+                if let Some(summary) = summary {
+                    record.summary = summary.to_string();
+                }
+            }
+            _ => {
+                if let Some(summary) = summary {
+                    record.summary = summary.to_string();
+                }
+            }
+        }
+        let summary = record.summary.clone();
+        self.append_event(record, status, &json!({ "summary": summary }), now);
+        self.save_record(record);
+    }
+
+    fn append_event(
+        &self,
+        record: &mut SessionRecord,
+        event_type: &str,
+        data: &Value,
+        timestamp: f64,
+    ) {
+        if self.drop_event_types.contains(event_type) {
+            return;
+        }
+        let sanitized = self.sanitize_event_data(event_type, data);
+        record.events.push_back(MonitorEvent {
+            timestamp,
+            event_type: event_type.to_string(),
+            data: sanitized,
+        });
+        if let Some(limit) = self.event_limit {
+            while record.events.len() > limit {
+                record.events.pop_front();
+            }
+        }
+    }
+
+    fn sanitize_event_data(&self, event_type: &str, data: &Value) -> Value {
+        if !data.is_object() {
+            return data.clone();
+        }
+        if event_type == "llm_request" {
+            return trim_string_fields(data, self.payload_limit);
+        }
+        if event_type == "llm_output" {
+            let mut trimmed = trim_string_fields(data, self.payload_limit);
+            if let Value::Object(ref mut map) = trimmed {
+                if let Some(Value::String(text)) = map.get("content") {
+                    map.insert(
+                        "content".to_string(),
+                        Value::String(trim_text(text, self.payload_limit)),
+                    );
+                }
+                if let Some(Value::String(text)) = map.get("reasoning") {
+                    map.insert(
+                        "reasoning".to_string(),
+                        Value::String(trim_text(text, self.payload_limit)),
+                    );
+                }
+            }
+            return trimmed;
+        }
+        trim_string_fields(data, self.payload_limit)
+    }
+
+    fn save_record(&self, record: &SessionRecord) {
+        let payload = record.to_storage();
+        let _ = self.storage.upsert_monitor_record(&payload);
+    }
+}
+
+fn resolve_event_limit(raw: i64) -> Option<usize> {
+    if raw == 0 {
+        return Some(DEFAULT_EVENT_LIMIT);
+    }
+    if raw < 0 {
+        return None;
+    }
+    let value = raw as usize;
+    if value == 0 {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn resolve_payload_limit(raw: i64) -> Option<usize> {
+    if raw == 0 {
+        return Some(DEFAULT_PAYLOAD_LIMIT);
+    }
+    if raw < 0 {
+        return None;
+    }
+    let value = raw as usize;
+    if value == 0 {
+        None
+    } else {
+        Some(value.max(MIN_PAYLOAD_LIMIT))
+    }
+}
+
+fn trim_text(text: &str, limit: Option<usize>) -> String {
+    let Some(limit) = limit else {
+        return text.to_string();
+    };
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    format!("{}...(truncated)", &text[..limit])
+}
+
+fn trim_string_fields(data: &Value, limit: Option<usize>) -> Value {
+    let Value::Object(map) = data else {
+        return data.clone();
+    };
+    let mut output = serde_json::Map::new();
+    for (key, value) in map {
+        if let Value::String(text) = value {
+            output.insert(key.clone(), Value::String(trim_text(text, limit)));
+        } else {
+            output.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(output)
+}
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn format_ts(ts: f64) -> String {
+    if ts <= 0.0 {
+        return String::new();
+    }
+    let Some(dt) = DateTime::<Utc>::from_timestamp(ts as i64, 0) else {
+        return String::new();
+    };
+    dt.to_rfc3339()
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn split_tool_summary_template(template: &str) -> (String, String) {
+    if let Some((prefix, suffix)) = template.split_once("{tool}") {
+        return (prefix.to_string(), suffix.to_string());
+    }
+    (template.to_string(), String::new())
+}
+
+fn localize_summary(summary: &str) -> String {
+    let cleaned = summary.trim();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    let tool_templates = i18n::get_known_prefixes("monitor.summary.tool_call")
+        .into_iter()
+        .map(|item| split_tool_summary_template(&item))
+        .collect::<Vec<_>>();
+    for (prefix, suffix) in tool_templates {
+        if prefix.is_empty() {
+            continue;
+        }
+        if !cleaned.starts_with(&prefix) {
+            continue;
+        }
+        if !suffix.is_empty() && !cleaned.ends_with(&suffix) {
+            continue;
+        }
+        let mut tool_name = cleaned[prefix.len()..].to_string();
+        if !suffix.is_empty() && cleaned.len() >= suffix.len() {
+            tool_name = cleaned[prefix.len()..cleaned.len() - suffix.len()].to_string();
+        }
+        return i18n::t_with_params(
+            "monitor.summary.tool_call",
+            &HashMap::from([("tool".to_string(), tool_name.trim().to_string())]),
+        );
+    }
+    let summary_keys = [
+        "monitor.summary.restarted",
+        "monitor.summary.finished",
+        "monitor.summary.received",
+        "monitor.summary.model_call",
+        "monitor.summary.exception",
+        "monitor.summary.cancelled",
+        "monitor.summary.cancel_requested",
+        "monitor.summary.user_deleted_cancel",
+    ];
+    for key in summary_keys {
+        if i18n::get_known_prefixes(key)
+            .iter()
+            .any(|item| item == cleaned)
+        {
+            return i18n::t(key);
+        }
+    }
+    cleaned.to_string()
+}

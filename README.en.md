@@ -39,6 +39,8 @@ Update `api_key`, replace `ylsdamxssjxxdd` with your own key.
 ```bash
 docker compose up
 ```
+The first `docker compose up` downloads images and dependencies and may take a few minutes, so it is normal to see sparse logs initially.
+
 
 ### 2.4 Open the settings panel
 Open in browser:

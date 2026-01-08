@@ -4,6 +4,7 @@ import random
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
+from urllib.parse import quote
 
 from app.core.config import LLMConfig
 from app.core.i18n import t
@@ -289,6 +290,8 @@ _PRIMARY_CONTEXT_KEYS = (
     "max_context_length",
     "context_tokens",
     "max_model_len",
+    "max_seq_len",
+    "maxSeqLen",
     "max_sequence_length",
     "max_input_tokens",
 )
@@ -367,6 +370,18 @@ def _normalize_llama_props_url(base_url: str) -> Optional[str]:
     return f"{cleaned}/props"
 
 
+def _normalize_root_url(base_url: str) -> Optional[str]:
+    """规范化服务根路径，去掉尾部 /v1，便于拼接 /v2 等非 OpenAI 路由。"""
+    if not base_url:
+        return None
+    cleaned = base_url.strip().rstrip("/")
+    if not cleaned:
+        return None
+    if cleaned.endswith("/v1"):
+        cleaned = cleaned[:-3].rstrip("/")
+    return cleaned or None
+
+
 def _extract_llama_props_context(payload: Any) -> Optional[int]:
     """从 llama.cpp /props 响应中提取最大上下文长度（n_ctx）。"""
     if not isinstance(payload, dict):
@@ -390,6 +405,7 @@ async def probe_openai_context_window(
     api_key: str,
     model: str,
     timeout_s: int = 15,
+    client: Optional[httpx.AsyncClient] = None,
 ) -> Optional[int]:
     """尝试从 OpenAI 兼容服务探测模型最大上下文长度。"""
     endpoint = OpenAICompatibleClient._normalize_base_url(base_url)
@@ -400,7 +416,8 @@ async def probe_openai_context_window(
         headers["Authorization"] = f"Bearer {api_key}"
     timeout = httpx.Timeout(max(timeout_s, 5))
 
-    client = await get_async_client()
+    if client is None:
+        client = await get_async_client()
     # 优先请求单模型详情
     try:
         detail_resp = await client.get(
@@ -445,5 +462,32 @@ async def probe_openai_context_window(
                     return value
         except (httpx.HTTPError, json.JSONDecodeError):
             pass
+
+    # MindIE 服务：可通过 /v2/models/{model}/config 或 /v1/config 获取 max_seq_len/maxSeqLen
+    root_url = _normalize_root_url(base_url)
+    if root_url:
+        try:
+            triton_resp = await client.get(
+                f"{root_url}/v2/models/{quote(model, safe='')}/config",
+                headers=headers,
+                timeout=timeout,
+            )
+            if triton_resp.status_code == 200:
+                triton_payload = triton_resp.json()
+                value = _find_context_value(triton_payload, ("max_seq_len", "maxSeqLen"))
+                if value:
+                    return value
+        except (httpx.HTTPError, json.JSONDecodeError):
+            pass
+
+    try:
+        config_resp = await client.get(f"{endpoint}/config", headers=headers, timeout=timeout)
+        if config_resp.status_code == 200:
+            config_payload = config_resp.json()
+            value = _find_context_value(config_payload, ("maxSeqLen", "max_seq_len"))
+            if value:
+                return value
+    except (httpx.HTTPError, json.JSONDecodeError):
+        pass
 
     return None

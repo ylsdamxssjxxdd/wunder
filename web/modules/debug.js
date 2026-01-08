@@ -1,7 +1,7 @@
 ﻿import { APP_CONFIG } from "../app.config.js";
 import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
-import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20251229-02";
+import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20260108-02";
 import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
@@ -278,6 +278,34 @@ const formatStatNumber = (value, fallback = "-") => {
   return parsed.toLocaleString();
 };
 
+const normalizeTimestampText = (value) => {
+  if (!value) {
+    return "";
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return "";
+  }
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/
+  );
+  if (!match) {
+    return text;
+  }
+  const base = match[1];
+  const fraction = match[2];
+  const zone = match[3] || "";
+  let normalized = base;
+  if (fraction) {
+    const digits = fraction.slice(1, 4);
+    if (digits) {
+      normalized += `.${digits}`;
+    }
+  }
+  normalized += zone;
+  return normalized;
+};
+
 // 解析事件时间为毫秒，用于统计会话耗时
 const resolveTimestampMs = (value) => {
   if (!value) {
@@ -291,7 +319,7 @@ const resolveTimestampMs = (value) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
   }
   if (typeof value === "string") {
-    const parsed = new Date(value);
+    const parsed = new Date(normalizeTimestampText(value));
     return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
   }
   return null;
@@ -842,7 +870,7 @@ const formatEventTime = (value) => {
   if (!value) {
     return new Date().toLocaleTimeString();
   }
-  const parsed = new Date(value);
+  const parsed = new Date(normalizeTimestampText(value));
   if (Number.isNaN(parsed.getTime())) {
     return new Date().toLocaleTimeString();
   }
@@ -1594,6 +1622,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   applyEventTimestamp(eventTimestamp || Date.now());
 
   if (eventType === "final") {
+    state.runtime.debugSawFinal = true;
     const usage = payload.data?.usage;
     // 最终事件里包含的 usage 也要写入事件日志，避免漏看整体用量
     applyTokenUsageSnapshot(usage, { override: true });
@@ -1627,6 +1656,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   }
 
   if (eventType === "error") {
+    state.runtime.debugSawFinal = true;
     debugStats.errorCount += 1;
     renderDebugStats();
     const errorMessage =
@@ -2062,6 +2092,38 @@ const fetchMonitorDetail = async (sessionId) => {
   return response.json();
 };
 
+const syncDebugEventCursor = async (sessionId) => {
+  const cleaned = String(sessionId || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  try {
+    const detail = await fetchMonitorDetail(cleaned);
+    const session = detail?.session || {};
+    const events = Array.isArray(detail?.events) ? detail.events : [];
+    if (session.status) {
+      state.runtime.debugSessionStatus = session.status;
+    }
+    state.runtime.debugEventCursor = events.length;
+    state.runtime.debugRestored = true;
+  } catch (error) {
+    // 静默失败，避免影响当前会话输出
+  }
+};
+
+const unwrapMonitorEventData = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const hasSessionId = typeof payload.session_id === "string" && payload.session_id.trim();
+  const hasTimestamp = typeof payload.timestamp === "string" && payload.timestamp.trim();
+  const inner = payload.data;
+  if (hasSessionId && hasTimestamp && inner && typeof inner === "object") {
+    return inner;
+  }
+  return payload;
+};
+
 // 使用监控事件恢复调试面板日志
 const applyMonitorDetail = (detail, options = {}) => {
   const session = detail?.session || {};
@@ -2096,7 +2158,10 @@ const applyMonitorDetail = (detail, options = {}) => {
     if (!DEBUG_RESTORE_EVENT_TYPES.has(item.type)) {
       return;
     }
-    const dataText = JSON.stringify({ data: item.data, session_id: sessionId });
+    const dataText = JSON.stringify({
+      data: unwrapMonitorEventData(item.data),
+      session_id: sessionId,
+    });
     handleEvent(item.type, dataText, { timestamp: item.timestamp });
   });
   state.runtime.debugEventCursor = events.length;
@@ -2167,6 +2232,7 @@ export const toggleDebugPolling = (enabled) => {
 const sendStreamRequest = async (endpoint, payload) => {
   stopDebugPolling();
   state.runtime.debugStreaming = true;
+  state.runtime.debugSawFinal = false;
   updateDebugLogWaiting();
   state.runtime.activeController = new AbortController();
   try {
@@ -2218,9 +2284,13 @@ const sendStreamRequest = async (endpoint, payload) => {
     renderDebugStats();
     if (state.runtime.debugSyncAfterStream) {
       state.runtime.debugSyncAfterStream = false;
-      state.runtime.debugEventCursor = 0;
-      state.runtime.debugRestored = false;
-      await restoreDebugPanel({ refresh: true, syncInputs: false });
+      if (!state.runtime.debugSawFinal) {
+        state.runtime.debugEventCursor = 0;
+        state.runtime.debugRestored = false;
+        await restoreDebugPanel({ refresh: true, syncInputs: false });
+      } else {
+        await syncDebugEventCursor(state.runtime.debugSessionId);
+      }
     }
   }
 };
@@ -2321,6 +2391,7 @@ const handleSend = async () => {
   if (!debugStats) {
     resetDebugStats();
   }
+  state.runtime.debugSawFinal = false;
   markRequestStart();
   renderDebugStats();
   updateDebugLogWaiting(true);
@@ -2405,6 +2476,7 @@ const handleNewSession = async () => {
   const status = String(state.runtime.debugSessionStatus || "").trim();
   const shouldStop = Boolean(state.runtime.debugStreaming) || DEBUG_ACTIVE_STATUSES.has(status);
   state.runtime.debugSyncAfterStream = false;
+  state.runtime.debugSawFinal = false;
   if (shouldStop) {
     await handleStop();
     await waitForStreamStop();

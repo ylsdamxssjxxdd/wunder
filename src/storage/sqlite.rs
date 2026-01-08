@@ -1,0 +1,1397 @@
+// SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
+use crate::i18n;
+use crate::storage::{SessionLockStatus, StorageBackend};
+use anyhow::Result;
+use chrono::Utc;
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
+
+pub struct SqliteStorage {
+    db_path: PathBuf,
+    initialized: AtomicBool,
+    init_guard: Mutex<()>,
+}
+
+impl SqliteStorage {
+    pub fn new(db_path: String) -> Self {
+        let path = if db_path.trim().is_empty() {
+            PathBuf::from("./data/wunder.db")
+        } else {
+            PathBuf::from(db_path)
+        };
+        Self {
+            db_path: path,
+            initialized: AtomicBool::new(false),
+            init_guard: Mutex::new(()),
+        }
+    }
+
+    fn ensure_db_dir(&self) -> Result<()> {
+        if let Some(parent) = self.db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    fn open(&self) -> Result<Connection> {
+        self.ensure_db_dir()?;
+        let conn = Connection::open(&self.db_path)?;
+        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        conn.pragma_update(None, "synchronous", "NORMAL").ok();
+        Ok(conn)
+    }
+
+    fn now_ts() -> f64 {
+        Utc::now().timestamp_millis() as f64 / 1000.0
+    }
+
+    fn json_to_string(value: &Value) -> String {
+        serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    fn json_from_str(text: &str) -> Option<Value> {
+        if text.trim().is_empty() {
+            return None;
+        }
+        serde_json::from_str::<Value>(text).ok()
+    }
+
+    fn parse_string(value: Option<&Value>) -> Option<String> {
+        match value {
+            Some(Value::String(text)) => Some(text.clone()),
+            Some(other) => Some(other.to_string()),
+            None => None,
+        }
+    }
+
+    fn parse_bool(value: Option<&Value>) -> Option<i64> {
+        match value {
+            Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+            Some(Value::Number(num)) => num.as_i64(),
+            Some(Value::String(text)) => text.parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+}
+
+impl StorageBackend for SqliteStorage {
+    fn ensure_initialized(&self) -> Result<()> {
+        if self.initialized.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let _guard = self.init_guard.lock().unwrap();
+        if self.initialized.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS meta (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_time REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS chat_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              content TEXT,
+              timestamp TEXT,
+              meta TEXT,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_history_session
+              ON chat_history (user_id, session_id, id);
+            CREATE TABLE IF NOT EXISTS tool_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              tool TEXT,
+              ok INTEGER,
+              error TEXT,
+              args TEXT,
+              data TEXT,
+              timestamp TEXT,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_tool_logs_session
+              ON tool_logs (user_id, session_id, id);
+            CREATE TABLE IF NOT EXISTS artifact_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              name TEXT,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_artifact_logs_session
+              ON artifact_logs (user_id, session_id, id);
+            CREATE TABLE IF NOT EXISTS monitor_sessions (
+              session_id TEXT PRIMARY KEY,
+              user_id TEXT,
+              status TEXT,
+              updated_time REAL,
+              payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
+              ON monitor_sessions (status);
+            CREATE TABLE IF NOT EXISTS session_locks (
+              session_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              created_time REAL NOT NULL,
+              updated_time REAL NOT NULL,
+              expires_at REAL NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user
+              ON session_locks (user_id);
+            CREATE INDEX IF NOT EXISTS idx_session_locks_expires
+              ON session_locks (expires_at);
+            CREATE TABLE IF NOT EXISTS stream_events (
+              session_id TEXT NOT NULL,
+              event_id INTEGER NOT NULL,
+              user_id TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL,
+              PRIMARY KEY (session_id, event_id)
+            );
+            CREATE TABLE IF NOT EXISTS memory_settings (
+              user_id TEXT PRIMARY KEY,
+              enabled INTEGER NOT NULL,
+              updated_time REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_records (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              created_time REAL NOT NULL,
+              updated_time REAL NOT NULL,
+              UNIQUE(user_id, session_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_records_user_time
+              ON memory_records (user_id, updated_time);
+            CREATE TABLE IF NOT EXISTS memory_task_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              status TEXT,
+              queued_time REAL,
+              started_time REAL,
+              finished_time REAL,
+              elapsed_s REAL,
+              request_payload TEXT,
+              result TEXT,
+              error TEXT,
+              updated_time REAL NOT NULL,
+              UNIQUE(user_id, session_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_task_logs_updated
+              ON memory_task_logs (updated_time);
+            CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
+              ON memory_task_logs (task_id);
+            "#,
+        )?;
+        self.initialized.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value)
+    }
+
+    fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let now = Self::now_ts();
+        conn.execute(
+            "INSERT INTO meta (key, value, updated_time) VALUES (?, ?, ?) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_time = excluded.updated_time",
+            params![key, value, now],
+        )?;
+        Ok(())
+    }
+
+    fn delete_meta_prefix(&self, prefix: &str) -> Result<usize> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let pattern = format!("{prefix}%");
+        let affected = conn.execute("DELETE FROM meta WHERE key LIKE ?", params![pattern])?;
+        Ok(affected)
+    }
+
+    fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        let role = payload
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if role.is_empty() {
+            return Ok(());
+        }
+        let content = Self::parse_string(payload.get("content"));
+        let timestamp = Self::parse_string(payload.get("timestamp"));
+        let meta = payload
+            .get("meta")
+            .and_then(|value| serde_json::to_string(value).ok());
+        let payload_text = Self::json_to_string(payload);
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO chat_history (user_id, session_id, role, content, timestamp, meta, payload, created_time) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                user_id,
+                session_id,
+                role,
+                content,
+                timestamp,
+                meta,
+                payload_text,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        let tool = Self::parse_string(payload.get("tool"));
+        let ok = Self::parse_bool(payload.get("ok"));
+        let error = Self::parse_string(payload.get("error"));
+        let args = payload
+            .get("args")
+            .and_then(|value| serde_json::to_string(value).ok());
+        let data = payload
+            .get("data")
+            .and_then(|value| serde_json::to_string(value).ok());
+        let timestamp = Self::parse_string(payload.get("timestamp"));
+        let payload_text = Self::json_to_string(payload);
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO tool_logs (user_id, session_id, tool, ok, error, args, data, timestamp, payload, created_time) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                user_id,
+                session_id,
+                tool,
+                ok,
+                error,
+                args,
+                data,
+                timestamp,
+                payload_text,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let kind = payload
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if session_id.is_empty() || kind.is_empty() {
+            return Ok(());
+        }
+        let name = Self::parse_string(payload.get("name"));
+        let payload_text = Self::json_to_string(payload);
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO artifact_logs (user_id, session_id, kind, name, payload, created_time) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![user_id, session_id, kind, name, payload_text, now],
+        )?;
+        Ok(())
+    }
+
+    fn load_chat_history(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let limit_value = limit.filter(|value| *value > 0);
+        let conn = self.open()?;
+        let mut rows = if let Some(limit_value) = limit_value {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+            )?;
+            let rows = stmt
+                .query_map(params![user_id, session_id, limit_value], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<std::result::Result<Vec<String>, _>>()?;
+            rows
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
+            )?;
+            let rows = stmt
+                .query_map(params![user_id, session_id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<String>, _>>()?;
+            rows
+        };
+        if limit_value.is_some() {
+            rows.reverse();
+        }
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn load_artifact_logs(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() || session_id.trim().is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM artifact_logs WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+        )?;
+        let mut rows = stmt
+            .query_map(params![user_id, session_id, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+        rows.reverse();
+        let mut records = Vec::new();
+        for (artifact_id, payload) in rows {
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("artifact_id".to_string(), json!(artifact_id));
+                }
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn get_session_system_prompt(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        language: Option<&str>,
+    ) -> Result<Option<String>> {
+        self.ensure_initialized()?;
+        let normalized_language = language.map(|value| i18n::normalize_language(Some(value), true));
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM chat_history WHERE user_id = ? AND session_id = ? AND role = 'system' ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![user_id, session_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        for payload in rows {
+            let Some(value) = Self::json_from_str(&payload) else {
+                continue;
+            };
+            let meta = value.get("meta");
+            let Some(meta) = meta.and_then(Value::as_object) else {
+                continue;
+            };
+            if meta.get("type").and_then(Value::as_str) != Some("system_prompt") {
+                continue;
+            }
+            if let Some(ref normalized) = normalized_language {
+                let meta_language = meta
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if !meta_language.is_empty() {
+                    let meta_normalized = i18n::normalize_language(Some(meta_language), true);
+                    if &meta_normalized != normalized {
+                        continue;
+                    }
+                } else if normalized != &i18n::get_default_language() {
+                    continue;
+                }
+            }
+            if let Some(content) = value.get("content").and_then(Value::as_str) {
+                let cleaned = content.trim();
+                if !cleaned.is_empty() {
+                    return Ok(Some(cleaned.to_string()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn get_user_chat_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, COUNT(*) as chat_records, MAX(created_time) as last_time FROM chat_history GROUP BY user_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (user_id, count, last_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("chat_records".to_string(), count);
+            entry.insert("last_time".to_string(), last_time.floor() as i64);
+            stats.insert(cleaned.to_string(), entry);
+        }
+        Ok(stats)
+    }
+
+    fn get_user_tool_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs GROUP BY user_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (user_id, count, last_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("tool_records".to_string(), count);
+            entry.insert("last_time".to_string(), last_time.floor() as i64);
+            stats.insert(cleaned.to_string(), entry);
+        }
+        Ok(stats)
+    }
+
+    fn get_tool_usage_stats(
+        &self,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let mut query = String::from("SELECT tool, COUNT(*) as tool_records FROM tool_logs");
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        let mut filters = Vec::new();
+        if let Some(since) = since_time.filter(|value| *value > 0.0) {
+            filters.push("created_time >= ?".to_string());
+            params_list.push(SqlValue::from(since));
+        }
+        if let Some(until) = until_time.filter(|value| *value > 0.0) {
+            filters.push("created_time <= ?".to_string());
+            params_list.push(SqlValue::from(until));
+        }
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY tool ORDER BY tool_records DESC");
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (tool, count) in rows {
+            let cleaned = tool.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            stats.insert(cleaned.to_string(), count);
+        }
+        Ok(stats)
+    }
+
+    fn get_tool_session_usage(
+        &self,
+        tool: &str,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let cleaned = tool.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = String::from(
+            "SELECT session_id, user_id, COUNT(*) as tool_calls, MAX(created_time) as last_time FROM tool_logs WHERE tool = ?",
+        );
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::Text(cleaned.to_string())];
+        let mut filters = Vec::new();
+        if let Some(since) = since_time.filter(|value| *value > 0.0) {
+            filters.push("created_time >= ?".to_string());
+            params_list.push(SqlValue::from(since));
+        }
+        if let Some(until) = until_time.filter(|value| *value > 0.0) {
+            filters.push("created_time <= ?".to_string());
+            params_list.push(SqlValue::from(until));
+        }
+        if !filters.is_empty() {
+            query.push_str(" AND ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY session_id, user_id ORDER BY last_time DESC");
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, String, i64, f64)>, _>>()?;
+        let mut sessions = Vec::new();
+        for (session_id, user_id, tool_calls, last_time) in rows {
+            let cleaned_session = session_id.trim();
+            if cleaned_session.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("session_id".to_string(), json!(cleaned_session));
+            entry.insert("user_id".to_string(), json!(user_id.trim()));
+            entry.insert("tool_calls".to_string(), json!(tool_calls));
+            entry.insert("last_time".to_string(), json!(last_time));
+            sessions.push(entry);
+        }
+        Ok(sessions)
+    }
+
+    fn delete_chat_history(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM chat_history WHERE user_id = ?",
+            params![user_id],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_tool_logs(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute("DELETE FROM tool_logs WHERE user_id = ?", params![user_id])?;
+        Ok(affected as i64)
+    }
+
+    fn delete_artifact_logs(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM artifact_logs WHERE user_id = ?",
+            params![user_id],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_monitor_record(&self, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if session_id.is_empty() {
+            return Ok(());
+        }
+        let user_id = payload
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let updated_time = payload
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, status = excluded.status, updated_time = excluded.updated_time, payload = excluded.payload",
+            params![session_id, user_id, status, updated_time, payload_text],
+        )?;
+        Ok(())
+    }
+
+    fn load_monitor_records(&self) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT payload FROM monitor_sessions")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn delete_monitor_record(&self, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        if session_id.trim().is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM monitor_sessions WHERE session_id = ?",
+            params![session_id],
+        )?;
+        Ok(())
+    }
+
+    fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM monitor_sessions WHERE user_id = ?",
+            params![user_id],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn try_acquire_session_lock(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        ttl_s: f64,
+        max_sessions: i64,
+    ) -> Result<SessionLockStatus> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        let cleaned_user = user_id.trim();
+        if cleaned_session.is_empty() || cleaned_user.is_empty() {
+            return Ok(SessionLockStatus::SystemBusy);
+        }
+        let max_sessions = max_sessions.max(1);
+        let ttl_s = ttl_s.max(1.0);
+        let now = Self::now_ts();
+        let expires_at = now + ttl_s;
+        let mut conn = self.open()?;
+        let tx = match conn.transaction_with_behavior(TransactionBehavior::Immediate) {
+            Ok(tx) => tx,
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if matches!(
+                    err.code,
+                    ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+                ) =>
+            {
+                return Ok(SessionLockStatus::SystemBusy)
+            }
+            Err(err) => return Err(err.into()),
+        };
+        tx.execute(
+            "DELETE FROM session_locks WHERE expires_at <= ?",
+            params![now],
+        )?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT session_id FROM session_locks WHERE user_id = ? LIMIT 1",
+                params![cleaned_user],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            tx.commit()?;
+            return Ok(SessionLockStatus::UserBusy);
+        }
+        let total: i64 =
+            tx.query_row("SELECT COUNT(*) FROM session_locks", [], |row| row.get(0))?;
+        if total >= max_sessions {
+            tx.commit()?;
+            return Ok(SessionLockStatus::SystemBusy);
+        }
+        let insert = tx.execute(
+            "INSERT INTO session_locks (session_id, user_id, created_time, updated_time, expires_at) VALUES (?, ?, ?, ?, ?)",
+            params![cleaned_session, cleaned_user, now, now, expires_at],
+        );
+        match insert {
+            Ok(_) => {
+                tx.commit()?;
+                Ok(SessionLockStatus::Acquired)
+            }
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if matches!(err.code, ErrorCode::ConstraintViolation) =>
+            {
+                tx.commit()?;
+                Ok(SessionLockStatus::SystemBusy)
+            }
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if matches!(
+                    err.code,
+                    ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+                ) =>
+            {
+                tx.commit()?;
+                Ok(SessionLockStatus::SystemBusy)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn touch_session_lock(&self, session_id: &str, ttl_s: f64) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let ttl_s = ttl_s.max(1.0);
+        let now = Self::now_ts();
+        let expires_at = now + ttl_s;
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE session_locks SET updated_time = ?, expires_at = ? WHERE session_id = ?",
+            params![now, expires_at, cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn release_session_lock(&self, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM session_locks WHERE session_id = ?",
+            params![cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM session_locks WHERE user_id = ?",
+            params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn append_stream_event(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        event_id: i64,
+        payload: &Value,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        let cleaned_user = user_id.trim();
+        if cleaned_session.is_empty() || cleaned_user.is_empty() {
+            return Ok(());
+        }
+        let now = Self::now_ts();
+        let payload_text = Self::json_to_string(payload);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO stream_events (session_id, event_id, user_id, payload, created_time) VALUES (?, ?, ?, ?, ?)",
+            params![cleaned_session, event_id, cleaned_user, payload_text, now],
+        )?;
+        Ok(())
+    }
+
+    fn load_stream_events(
+        &self,
+        session_id: &str,
+        after_event_id: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT event_id, payload FROM stream_events WHERE session_id = ? AND event_id > ? ORDER BY event_id ASC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![cleaned_session, after_event_id, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+        let mut records = Vec::new();
+        for (event_id, payload) in rows {
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("event_id".to_string(), json!(event_id));
+                    records.push(value);
+                } else {
+                    records.push(json!({ "event_id": event_id, "data": value }));
+                }
+            }
+        }
+        Ok(records)
+    }
+
+    fn delete_stream_events_before(&self, before_time: f64) -> Result<i64> {
+        self.ensure_initialized()?;
+        if before_time <= 0.0 {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM stream_events WHERE created_time < ?",
+            params![before_time],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM stream_events WHERE user_id = ?",
+            params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn get_memory_enabled(&self, user_id: &str) -> Result<Option<bool>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let value: Option<i64> = conn
+            .query_row(
+                "SELECT enabled FROM memory_settings WHERE user_id = ?",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value.map(|flag| flag != 0))
+    }
+
+    fn set_memory_enabled(&self, user_id: &str, enabled: bool) -> Result<()> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() {
+            return Ok(());
+        }
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_settings (user_id, enabled, updated_time) VALUES (?, ?, ?) \
+             ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, updated_time = excluded.updated_time",
+            params![user_id, if enabled { 1 } else { 0 }, now],
+        )?;
+        Ok(())
+    }
+
+    fn load_memory_settings(&self) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt =
+            conn.prepare("SELECT user_id, enabled, updated_time FROM memory_settings")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut output = Vec::new();
+        for (user_id, enabled, updated_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("user_id".to_string(), json!(cleaned));
+            entry.insert("enabled".to_string(), json!(enabled != 0));
+            entry.insert("updated_time".to_string(), json!(updated_time));
+            output.push(entry);
+        }
+        Ok(output)
+    }
+
+    fn upsert_memory_record(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        summary: &str,
+        max_records: i64,
+        now_ts: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        let cleaned_summary = summary.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_summary.is_empty() {
+            return Ok(());
+        }
+        let safe_limit = max_records.max(1);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_records (user_id, session_id, summary, created_time, updated_time) VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(user_id, session_id) DO UPDATE SET summary = excluded.summary, updated_time = excluded.updated_time",
+            params![cleaned_user, cleaned_session, cleaned_summary, now_ts, now_ts],
+        )?;
+        conn.execute(
+            "DELETE FROM memory_records WHERE user_id = ? AND id NOT IN (\
+                SELECT id FROM memory_records WHERE user_id = ? ORDER BY updated_time DESC, id DESC LIMIT ?\
+             )",
+            params![cleaned_user, cleaned_user, safe_limit],
+        )?;
+        conn.execute(
+            "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id NOT IN (\
+                SELECT session_id FROM memory_records WHERE user_id = ?\
+             )",
+            params![cleaned_user, cleaned_user],
+        )?;
+        Ok(())
+    }
+
+    fn load_memory_records(
+        &self,
+        user_id: &str,
+        limit: i64,
+        order_desc: bool,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let direction = if order_desc { "DESC" } else { "ASC" };
+        let query = format!(
+            "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction} LIMIT ?"
+        );
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(params![cleaned, limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?;
+        let mut records = Vec::new();
+        for (session_id, summary, created_time, updated_time) in rows {
+            let mut entry = HashMap::new();
+            entry.insert("session_id".to_string(), json!(session_id));
+            entry.insert("summary".to_string(), json!(summary));
+            entry.insert("created_time".to_string(), json!(created_time));
+            entry.insert("updated_time".to_string(), json!(updated_time));
+            records.push(entry);
+        }
+        Ok(records)
+    }
+
+    fn get_memory_record_stats(&self) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, COUNT(*) as record_count, MAX(updated_time) as last_time FROM memory_records GROUP BY user_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut stats = Vec::new();
+        for (user_id, record_count, last_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("user_id".to_string(), json!(cleaned));
+            entry.insert("record_count".to_string(), json!(record_count));
+            entry.insert("last_time".to_string(), json!(last_time));
+            stats.push(entry);
+        }
+        Ok(stats)
+    }
+
+    fn delete_memory_record(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_records WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_memory_records_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_records WHERE user_id = ?",
+            params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_memory_settings_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_settings WHERE user_id = ?",
+            params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_memory_task_log(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        task_id: &str,
+        status: &str,
+        queued_time: f64,
+        started_time: f64,
+        finished_time: f64,
+        elapsed_s: f64,
+        request_payload: Option<&Value>,
+        result: &str,
+        error: &str,
+        updated_time: Option<f64>,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        let cleaned_task = task_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_task.is_empty() {
+            return Ok(());
+        }
+        let status_text = status.trim();
+        let payload_text = request_payload
+            .map(Self::json_to_string)
+            .unwrap_or_default();
+        let now = updated_time.unwrap_or_else(Self::now_ts);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(user_id, session_id) DO UPDATE SET \
+               task_id = excluded.task_id, status = excluded.status, queued_time = excluded.queued_time, started_time = excluded.started_time, \
+               finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, request_payload = excluded.request_payload, result = excluded.result, \
+               error = excluded.error, updated_time = excluded.updated_time",
+            params![
+                cleaned_task,
+                cleaned_user,
+                cleaned_session,
+                status_text,
+                queued_time,
+                started_time,
+                finished_time,
+                elapsed_s,
+                payload_text,
+                result,
+                error,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn load_memory_task_logs(&self, limit: Option<i64>) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let mut query = String::from(
+            "SELECT task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, updated_time FROM memory_task_logs ORDER BY updated_time DESC, id DESC",
+        );
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(limit) = limit.filter(|value| *value > 0) {
+            query.push_str(" LIMIT ?");
+            params_list.push(SqlValue::from(limit));
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, f64>(4).unwrap_or(0.0),
+                    row.get::<_, f64>(5).unwrap_or(0.0),
+                    row.get::<_, f64>(6).unwrap_or(0.0),
+                    row.get::<_, f64>(7).unwrap_or(0.0),
+                    row.get::<_, f64>(8).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<
+                Vec<(String, String, String, String, f64, f64, f64, f64, f64)>,
+                _,
+            >>()?;
+        let mut logs = Vec::new();
+        for (
+            task_id,
+            user_id,
+            session_id,
+            status,
+            queued_time,
+            started_time,
+            finished_time,
+            elapsed_s,
+            updated_time,
+        ) in rows
+        {
+            let mut entry = HashMap::new();
+            entry.insert("task_id".to_string(), json!(task_id));
+            entry.insert("user_id".to_string(), json!(user_id));
+            entry.insert("session_id".to_string(), json!(session_id));
+            entry.insert("status".to_string(), json!(status));
+            entry.insert("queued_time".to_string(), json!(queued_time));
+            entry.insert("started_time".to_string(), json!(started_time));
+            entry.insert("finished_time".to_string(), json!(finished_time));
+            entry.insert("elapsed_s".to_string(), json!(elapsed_s));
+            entry.insert("updated_time".to_string(), json!(updated_time));
+            logs.push(entry);
+        }
+        Ok(logs)
+    }
+
+    fn load_memory_task_log_by_task_id(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time FROM memory_task_logs WHERE task_id = ? ORDER BY updated_time DESC, id DESC LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row(params![cleaned], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, f64>(4).unwrap_or(0.0),
+                    row.get::<_, f64>(5).unwrap_or(0.0),
+                    row.get::<_, f64>(6).unwrap_or(0.0),
+                    row.get::<_, f64>(7).unwrap_or(0.0),
+                    row.get::<_, String>(8).unwrap_or_default(),
+                    row.get::<_, String>(9).unwrap_or_default(),
+                    row.get::<_, String>(10).unwrap_or_default(),
+                    row.get::<_, f64>(11).unwrap_or(0.0),
+                ))
+            })
+            .optional()?;
+        let Some((
+            task_id,
+            user_id,
+            session_id,
+            status,
+            queued_time,
+            started_time,
+            finished_time,
+            elapsed_s,
+            request_payload,
+            result,
+            error,
+            updated_time,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let mut entry = HashMap::new();
+        entry.insert("task_id".to_string(), json!(task_id));
+        entry.insert("user_id".to_string(), json!(user_id));
+        entry.insert("session_id".to_string(), json!(session_id));
+        entry.insert("status".to_string(), json!(status));
+        entry.insert("queued_time".to_string(), json!(queued_time));
+        entry.insert("started_time".to_string(), json!(started_time));
+        entry.insert("finished_time".to_string(), json!(finished_time));
+        entry.insert("elapsed_s".to_string(), json!(elapsed_s));
+        entry.insert("request_payload".to_string(), json!(request_payload));
+        entry.insert("result".to_string(), json!(result));
+        entry.insert("error".to_string(), json!(error));
+        entry.insert("updated_time".to_string(), json!(updated_time));
+        Ok(Some(entry))
+    }
+
+    fn delete_memory_task_log(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_memory_task_logs_by_user(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_task_logs WHERE user_id = ?",
+            params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        if retention_days <= 0 {
+            return Ok(HashMap::new());
+        }
+        let cutoff = Self::now_ts() - (retention_days as f64 * 86400.0);
+        if cutoff <= 0.0 {
+            return Ok(HashMap::new());
+        }
+        let conn = self.open()?;
+        let mut results = HashMap::new();
+        let chat = conn.execute(
+            "DELETE FROM chat_history WHERE created_time < ?",
+            params![cutoff],
+        )?;
+        results.insert("chat_history".to_string(), chat as i64);
+        let tool = conn.execute(
+            "DELETE FROM tool_logs WHERE created_time < ?",
+            params![cutoff],
+        )?;
+        results.insert("tool_logs".to_string(), tool as i64);
+        let artifact = conn.execute(
+            "DELETE FROM artifact_logs WHERE created_time < ?",
+            params![cutoff],
+        )?;
+        results.insert("artifact_logs".to_string(), artifact as i64);
+        let monitor = conn.execute(
+            "DELETE FROM monitor_sessions WHERE COALESCE(updated_time, 0) < ?",
+            params![cutoff],
+        )?;
+        results.insert("monitor_sessions".to_string(), monitor as i64);
+        let stream = conn.execute(
+            "DELETE FROM stream_events WHERE created_time < ?",
+            params![cutoff],
+        )?;
+        results.insert("stream_events".to_string(), stream as i64);
+        Ok(results)
+    }
+}

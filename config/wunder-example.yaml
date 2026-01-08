@@ -109,10 +109,10 @@ workspace: # 工作区配置
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
 storage: # 存储配置
-  backend: postgres # sqlite | postgres
+  backend: auto # auto | sqlite | postgres
   db_path: ./data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）
   postgres:
-    dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder} # PostgreSQL DSN
+    dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@127.0.0.1:5432/wunder} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
     connect_timeout_s: 5 # PostgreSQL 连接超时（秒）
 
 observability: # 可观测性配置

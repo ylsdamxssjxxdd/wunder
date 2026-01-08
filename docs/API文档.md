@@ -4,14 +4,14 @@
 
 ### 4.0 实现说明
 
-- 接口实现按 core/admin/workspace/user_tools 路由模块拆分，统一由 `app/services` 提供配置与工具装配服务。
-- 工具清单与提示词注入共享统一的工具规格构建逻辑，确保输出一致性。
-- 启动优化：MCP 服务、监控与调度器采用惰性初始化，首次访问相关接口可能有冷启动延迟。
-- 轻量入口：推荐使用 `uvicorn app.asgi:app` 启动，可通过 `WUNDER_LAZY_WARMUP_S` 控制后台预热延迟（秒，负数/关闭值表示禁用预热）。
+- 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
+- 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml`。
+- 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
-- 鉴权：所有 `/wunder`、`/wunder/mcp`、`/a2a` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
-- A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage`/`SubscribeToTask` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
-- 多语言：请求头可携带 `X-Wunder-Language` 或 `Accept-Language`（也支持 query 参数 `lang`/`language`），支持语言以 `i18n.supported_languages` 为准，响应会返回 `Content-Language` 并影响系统提示词与返回消息语言。
+- 鉴权：所有 `/wunder`、`/a2a` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
+- A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
+- 多语言：当前 Rust 版主要提供 `/wunder/i18n` 配置读取，`Content-Language` header 与多语提示词仍在迁移中。
+- Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
 
 ### 4.1 `/wunder` 请求
 
@@ -212,8 +212,9 @@
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
+- Rust 版已实现该入口，基于 rmcp 的 streamable-http 传输。
 - 鉴权：请求头需携带 `X-API-Key` 或 `Authorization: Bearer <key>`。
-- 工具：`wunder@run`
+- 工具：`run`（在 wunder 内部映射为 `wunder@run`）
   - 入参：`task` 字符串，任务描述
   - 行为：使用固定 `user_id = wunder` 执行任务，按管理员启用的工具清单运行，并剔除 `wunder@run` 避免递归调用
   - 返回：`answer`/`session_id`/`usage`
@@ -760,13 +761,14 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
+- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`tool_call`、`tool_result`、`final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；监控持久化会裁剪为 `payload_summary`，若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
 - `event: llm_output_delta`：模型流式增量片段（调试用，`data.delta` 为正文增量，`data.reasoning_delta` 为思考增量，需按顺序拼接）
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
-- `event: token_usage`：单轮 token 统计（input/output/total）
+- `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_result`：工具执行结果
 - `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
@@ -825,8 +827,9 @@
 
 ### 4.5 存储说明
 
-- 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入数据库（默认 PostgreSQL，可选 SQLite）。
-- 存储后端由 `storage.backend` 控制，SQLite 使用 `storage.db_path`，PostgreSQL 使用 `storage.postgres.dsn`。
+- 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入数据库（优先 PostgreSQL，可选 SQLite）。
+- 存储后端由 `storage.backend` 控制：`auto`（默认，优先 PostgreSQL，不可用则自动降级 SQLite）、`postgres`、`sqlite`。
+- SQLite 使用 `storage.db_path`，PostgreSQL 使用 `storage.postgres.dsn`（支持 `${VAR:-default}` 环境变量占位符）。
 - 旧版 `data/historys/` 仅用于迁移与兼容，不再作为主存储。
 
 ### 4.6 沙盒服务 API
@@ -882,15 +885,20 @@
 - 返回（JSON）：AgentCard 元数据（protocolVersion、supportedInterfaces、skills、capabilities、tooling 等）。
 - 备注：`tooling` 汇总内置工具/MCP/A2A/知识库工具清单，用于客户端能力展示，默认仅保留名称/描述，不包含参数 schema。
 
-#### 4.7.2 `GET /a2a/extendedAgentCard`
+#### 4.7.2 `GET /a2a/agentCard`
 
-- 说明：返回扩展 AgentCard（当前与基础版一致，保持轻量清单结构）。
+- 说明：返回基础 AgentCard（与 `/.well-known/agent-card.json` 一致），用于兼容只探测 `/a2a/*` 路径的客户端。
 - 鉴权：需携带 API Key。
 
-#### 4.7.3 `POST /a2a`
+#### 4.7.3 `GET /a2a/extendedAgentCard`
+
+- 说明：返回扩展 AgentCard（相比基础版可能补充 `documentationUrl` 等字段，仍保持轻量清单结构）。
+- 鉴权：需携带 API Key。
+
+#### 4.7.4 `POST /a2a`
 
 - 类型：JSON-RPC 2.0
-- 说明：A2A 标准方法入口，支持 `SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`、`GetExtendedAgentCard`。
+- 说明：A2A 标准方法入口，支持 `SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`GetExtendedAgentCard`。
 - 鉴权：需携带 API Key。
 - JSON-RPC 请求结构：
   - `jsonrpc`: 固定 `2.0`
@@ -898,7 +906,7 @@
   - `method`: A2A 方法名
   - `params`: A2A 参数对象
 - 流式返回：
-  - `SendStreamingMessage` 与 `SubscribeToTask` 返回 `text/event-stream`
+  - `SendStreamingMessage` 返回 `text/event-stream`
   - SSE data 内容为 A2A StreamResponse（`task`/`statusUpdate`/`artifactUpdate`）
   - `statusUpdate.final=true` 表示任务结束
 

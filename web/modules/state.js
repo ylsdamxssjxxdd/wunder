@@ -12,6 +12,7 @@ export const state = {
     debugRestored: false,
     debugStreaming: false,
     debugSyncAfterStream: false,
+    debugSawFinal: false,
     promptReloadTimer: null,
     promptNeedsRefresh: false,
     promptReloadHandler: null,

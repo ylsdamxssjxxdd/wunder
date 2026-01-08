@@ -496,8 +496,8 @@ Example:
 
 ## 4.5 Storage
 
-- Storage backend is configurable via `storage.backend`: `postgres` (default) or `sqlite`.
-- PostgreSQL config uses `storage.postgres.dsn` (env: `WUNDER_POSTGRES_DSN`) and `storage.postgres.connect_timeout_s`.
+- Storage backend is configurable via `storage.backend`: `auto` (default, prefer PostgreSQL and fall back to SQLite), `postgres`, or `sqlite`.
+- PostgreSQL config uses `storage.postgres.dsn` (env: `WUNDER_POSTGRES_DSN`) and `storage.postgres.connect_timeout_s` (supports `${VAR:-default}` placeholders in YAML strings).
 - SQLite uses `storage.db_path`.
 - System logs, chat history, tool logs, artifacts, monitor records, session locks, and overflow events are stored in the selected backend.
 - Legacy `data/historys/` is kept for migration only.
