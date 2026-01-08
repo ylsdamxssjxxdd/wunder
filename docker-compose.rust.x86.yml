@@ -7,7 +7,7 @@ x-rust-build: &rust-build
 services:
   WUNDER_RUST:
     build: *rust-build
-    image: wunder-rust
+    image: wunder-x86
     platform: linux/amd64
     ports:
       - "8000:8000"
@@ -30,7 +30,7 @@ services:
 
   sandbox:
     build: *rust-build
-    image: wunder-rust
+    image: wunder-x86
     platform: linux/amd64
     environment:
       - TZ=Asia/Shanghai
