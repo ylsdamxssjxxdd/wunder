@@ -5,6 +5,7 @@ import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
+import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260105-01";
 
 // 规范化 MCP 服务字段，兼容后端与导入结构
@@ -246,11 +247,23 @@ const renderMcpTools = () => {
         server.enabled = false;
         renderMcpHeader();
       }
+      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+      const actionMessage = event.target.checked
+        ? t("mcp.tool.enabled", { name: tool.name, server: serverTitle })
+        : t("mcp.tool.disabled", { name: tool.name, server: serverTitle });
       // 勾选状态变更后立即保存，避免依赖手动保存按钮
-      saveMcpServers({ refreshUI: false }).catch((error) => {
-        console.error(t("mcp.saveFailed", { message: error.message }), error);
-        notify(t("mcp.saveFailed", { message: error.message }), "error");
-      });
+      saveMcpServers({ refreshUI: false })
+        .then((ok) => {
+          if (ok === false) {
+            return;
+          }
+          appendLog(actionMessage);
+          notify(actionMessage, "success");
+        })
+        .catch((error) => {
+          console.error(t("mcp.saveFailed", { message: error.message }), error);
+          notify(t("mcp.saveFailed", { message: error.message }), "error");
+        });
     });
     const label = document.createElement("label");
     label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
@@ -344,11 +357,11 @@ const saveMcpServers = async (options = {}) => {
   }
   const result = await response.json();
   if (saveVersion !== state.mcp.saveVersion) {
-    return;
+    return false;
   }
   syncPromptTools();
   if (!refreshUI) {
-    return;
+    return true;
   }
   state.mcp.servers = Array.isArray(result.servers) ? result.servers.map(normalizeMcpServer) : [];
   state.mcp.toolsByIndex = state.mcp.servers.map((server) =>
@@ -368,6 +381,7 @@ const saveMcpServers = async (options = {}) => {
     renderMcpServers();
     renderMcpDetail();
   }
+  return true;
 };
 
 // 调用后端接口拉取指定 MCP 服务的工具清单
@@ -675,8 +689,13 @@ export const initMcpPanel = () => {
     server.allow_tools = tools.map((tool) => tool.name);
     renderMcpDetail();
     try {
-      await saveMcpServers({ refreshUI: false });
-      notify(t("mcp.tools.enableAll"), "success");
+      const ok = await saveMcpServers({ refreshUI: false });
+      if (ok === false) {
+        return;
+      }
+      const message = t("mcp.tools.enableAllSuccess");
+      appendLog(message);
+      notify(message, "success");
     } catch (error) {
       console.error(t("mcp.saveFailed", { message: error.message }), error);
       notify(t("mcp.saveFailed", { message: error.message }), "error");
@@ -691,8 +710,13 @@ export const initMcpPanel = () => {
     server.enabled = false;
     renderMcpDetail();
     try {
-      await saveMcpServers({ refreshUI: false });
-      notify(t("mcp.tools.disableAll"), "success");
+      const ok = await saveMcpServers({ refreshUI: false });
+      if (ok === false) {
+        return;
+      }
+      const message = t("mcp.tools.disableAllSuccess");
+      appendLog(message);
+      notify(message, "success");
     } catch (error) {
       console.error(t("mcp.saveFailed", { message: error.message }), error);
       notify(t("mcp.saveFailed", { message: error.message }), "error");
@@ -704,7 +728,11 @@ export const initMcpPanel = () => {
       return;
     }
     try {
-      await saveMcpServers();
+      const saved = await saveMcpServers();
+      if (saved === false) {
+        return;
+      }
+      appendLog(t("mcp.save.success"));
       notify(t("mcp.save.success"), "success");
     } catch (error) {
       console.error(t("mcp.saveFailed", { message: error.message }), error);

@@ -23,6 +23,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
 use url::Url;
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -126,6 +127,7 @@ async fn admin_mcp_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<McpUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    let previous = state.config_store.get().await;
     let updated = state
         .config_store
         .update(|config| {
@@ -133,6 +135,70 @@ async fn admin_mcp_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let previous_map: HashMap<String, bool> = previous
+        .mcp
+        .servers
+        .iter()
+        .map(|server| (server.name.clone(), server.enabled))
+        .collect();
+    let updated_map: HashMap<String, bool> = updated
+        .mcp
+        .servers
+        .iter()
+        .map(|server| (server.name.clone(), server.enabled))
+        .collect();
+    let mut added: Vec<String> = updated_map
+        .keys()
+        .filter(|name| !previous_map.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut removed: Vec<String> = previous_map
+        .keys()
+        .filter(|name| !updated_map.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut enabled_changed = Vec::new();
+    let mut disabled_changed = Vec::new();
+    for (name, enabled) in previous_map {
+        if let Some(next_enabled) = updated_map.get(&name) {
+            if enabled != *next_enabled {
+                if *next_enabled {
+                    enabled_changed.push(name);
+                } else {
+                    disabled_changed.push(name);
+                }
+            }
+        }
+    }
+    added.sort();
+    removed.sort();
+    enabled_changed.sort();
+    disabled_changed.sort();
+    if !added.is_empty()
+        || !removed.is_empty()
+        || !enabled_changed.is_empty()
+        || !disabled_changed.is_empty()
+    {
+        info!(
+            "MCP 配置已更新: 新增 +{added_len}, 移除 -{removed_len}, 启用 +{enabled_len}, 停用 -{disabled_len}",
+            added_len = added.len(),
+            removed_len = removed.len(),
+            enabled_len = enabled_changed.len(),
+            disabled_len = disabled_changed.len(),
+        );
+        if !added.is_empty() {
+            info!("MCP 服务已新增: {}", added.join(", "));
+        }
+        if !removed.is_empty() {
+            info!("MCP 服务已移除: {}", removed.join(", "));
+        }
+        if !enabled_changed.is_empty() {
+            info!("MCP 服务已启用: {}", enabled_changed.join(", "));
+        }
+        if !disabled_changed.is_empty() {
+            info!("MCP 服务已停用: {}", disabled_changed.join(", "));
+        }
+    }
     Ok(Json(json!({ "servers": updated.mcp.servers })))
 }
 
@@ -211,6 +277,7 @@ async fn admin_a2a_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<A2aUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    let previous = state.config_store.get().await;
     let updated = state
         .config_store
         .update(|config| {
@@ -218,6 +285,70 @@ async fn admin_a2a_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let previous_map: HashMap<String, bool> = previous
+        .a2a
+        .services
+        .iter()
+        .map(|service| (service.name.clone(), service.enabled))
+        .collect();
+    let updated_map: HashMap<String, bool> = updated
+        .a2a
+        .services
+        .iter()
+        .map(|service| (service.name.clone(), service.enabled))
+        .collect();
+    let mut added: Vec<String> = updated_map
+        .keys()
+        .filter(|name| !previous_map.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut removed: Vec<String> = previous_map
+        .keys()
+        .filter(|name| !updated_map.contains_key(*name))
+        .cloned()
+        .collect();
+    let mut enabled_changed = Vec::new();
+    let mut disabled_changed = Vec::new();
+    for (name, enabled) in previous_map {
+        if let Some(next_enabled) = updated_map.get(&name) {
+            if enabled != *next_enabled {
+                if *next_enabled {
+                    enabled_changed.push(name);
+                } else {
+                    disabled_changed.push(name);
+                }
+            }
+        }
+    }
+    added.sort();
+    removed.sort();
+    enabled_changed.sort();
+    disabled_changed.sort();
+    if !added.is_empty()
+        || !removed.is_empty()
+        || !enabled_changed.is_empty()
+        || !disabled_changed.is_empty()
+    {
+        info!(
+            "A2A 服务配置已更新: 新增 +{added_len}, 移除 -{removed_len}, 启用 +{enabled_len}, 停用 -{disabled_len}",
+            added_len = added.len(),
+            removed_len = removed.len(),
+            enabled_len = enabled_changed.len(),
+            disabled_len = disabled_changed.len(),
+        );
+        if !added.is_empty() {
+            info!("A2A 服务已新增: {}", added.join(", "));
+        }
+        if !removed.is_empty() {
+            info!("A2A 服务已移除: {}", removed.join(", "));
+        }
+        if !enabled_changed.is_empty() {
+            info!("A2A 服务已启用: {}", enabled_changed.join(", "));
+        }
+        if !disabled_changed.is_empty() {
+            info!("A2A 服务已停用: {}", disabled_changed.join(", "));
+        }
+    }
     Ok(Json(json!({ "services": updated.a2a.services })))
 }
 
@@ -377,6 +508,7 @@ async fn admin_skills_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SkillsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    let previous = state.config_store.get().await;
     let updated = state
         .config_store
         .update(|config| {
@@ -387,6 +519,38 @@ async fn admin_skills_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let previous_enabled: HashSet<String> = previous.skills.enabled.iter().cloned().collect();
+    let updated_enabled: HashSet<String> = updated.skills.enabled.iter().cloned().collect();
+    let mut enabled_added: Vec<String> = updated_enabled
+        .difference(&previous_enabled)
+        .cloned()
+        .collect();
+    let mut enabled_removed: Vec<String> = previous_enabled
+        .difference(&updated_enabled)
+        .cloned()
+        .collect();
+    enabled_added.sort();
+    enabled_removed.sort();
+    let paths_changed = payload
+        .paths
+        .as_ref()
+        .map_or(false, |paths| *paths != previous.skills.paths);
+    if !enabled_added.is_empty() || !enabled_removed.is_empty() || paths_changed {
+        info!(
+            "技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, paths_changed={paths_changed}",
+            enabled_added_len = enabled_added.len(),
+            enabled_removed_len = enabled_removed.len(),
+        );
+        if !enabled_added.is_empty() {
+            info!("技能已启用: {}", enabled_added.join(", "));
+        }
+        if !enabled_removed.is_empty() {
+            info!("技能已停用: {}", enabled_removed.join(", "));
+        }
+        if paths_changed {
+            info!("技能扫描目录已更新: {:?}", updated.skills.paths);
+        }
+    }
     state.reload_skills(&updated).await;
     let mut scan_paths = updated.skills.paths.clone();
     let eva_skills = Path::new("EVA_SKILLS");
@@ -601,6 +765,7 @@ async fn admin_tools_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ToolsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    let previous = state.config_store.get().await;
     let updated = state
         .config_store
         .update(|config| {
@@ -608,6 +773,32 @@ async fn admin_tools_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let previous_enabled: HashSet<String> =
+        previous.tools.builtin.enabled.iter().cloned().collect();
+    let updated_enabled: HashSet<String> = updated.tools.builtin.enabled.iter().cloned().collect();
+    let mut enabled_added: Vec<String> = updated_enabled
+        .difference(&previous_enabled)
+        .cloned()
+        .collect();
+    let mut enabled_removed: Vec<String> = previous_enabled
+        .difference(&updated_enabled)
+        .cloned()
+        .collect();
+    enabled_added.sort();
+    enabled_removed.sort();
+    if !enabled_added.is_empty() || !enabled_removed.is_empty() {
+        info!(
+            "内置工具配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}",
+            enabled_added_len = enabled_added.len(),
+            enabled_removed_len = enabled_removed.len(),
+        );
+        if !enabled_added.is_empty() {
+            info!("内置工具已启用: {}", enabled_added.join(", "));
+        }
+        if !enabled_removed.is_empty() {
+            info!("内置工具已停用: {}", enabled_removed.join(", "));
+        }
+    }
     let (enabled, tools) = build_builtin_tools_payload(&updated);
     Ok(Json(json!({
         "enabled": enabled,

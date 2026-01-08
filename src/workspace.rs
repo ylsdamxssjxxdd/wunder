@@ -749,14 +749,47 @@ impl WorkspaceManager {
     }
 
     pub fn search(&self, user_id: &str, keyword: &str) -> Result<Vec<WorkspaceEntry>> {
+        let (entries, _total) =
+            self.search_workspace_entries(user_id, keyword, 0, 0, true, true)?;
+        Ok(entries)
+    }
+
+    pub fn search_workspace_entries(
+        &self,
+        user_id: &str,
+        keyword: &str,
+        offset: u64,
+        limit: u64,
+        include_files: bool,
+        include_dirs: bool,
+    ) -> Result<(Vec<WorkspaceEntry>, u64)> {
+        let keyword = keyword.trim().to_lowercase();
+        if keyword.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
         let root = self.ensure_user_root(user_id)?;
-        let mut matches = Vec::new();
+        let safe_offset = offset.max(0);
+        let safe_limit = limit.max(0);
+        let mut matched = 0u64;
+        let mut results = Vec::new();
         for entry in WalkDir::new(&root)
+            .min_depth(1)
             .into_iter()
             .filter_map(|entry| entry.ok())
         {
+            let file_type = entry.file_type();
+            if file_type.is_dir() && !include_dirs {
+                continue;
+            }
+            if file_type.is_file() && !include_files {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.contains(keyword) {
+            if !name.to_lowercase().contains(&keyword) {
+                continue;
+            }
+            matched += 1;
+            if matched <= safe_offset {
                 continue;
             }
             let meta = entry.metadata().ok();
@@ -773,21 +806,18 @@ impl WorkspaceManager {
                 .unwrap_or(entry.path())
                 .to_string_lossy()
                 .to_string();
-            matches.push(WorkspaceEntry {
-                name,
-                path: rel.replace('\\', "/"),
-                entry_type: if entry.file_type().is_dir() {
-                    "dir"
-                } else {
-                    "file"
-                }
-                .to_string(),
-                size: meta.map(|meta| meta.len()).unwrap_or(0),
-                updated_time: updated.unwrap_or_default(),
-                children: None,
-            });
+            if safe_limit == 0 || results.len() < safe_limit as usize {
+                results.push(WorkspaceEntry {
+                    name,
+                    path: rel.replace('\\', "/"),
+                    entry_type: if file_type.is_dir() { "dir" } else { "file" }.to_string(),
+                    size: meta.map(|meta| meta.len()).unwrap_or(0),
+                    updated_time: updated.unwrap_or_default(),
+                    children: None,
+                });
+            }
         }
-        Ok(matches)
+        Ok((results, matched))
     }
 
     pub fn archive(&self, user_id: &str, path: Option<&str>) -> Result<Vec<u8>> {

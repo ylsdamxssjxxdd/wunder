@@ -14,10 +14,11 @@ use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tracing::info;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -196,10 +197,51 @@ async fn user_skills_update(
             i18n::t("error.user_id_required"),
         ));
     }
+    let previous = state.user_tool_store.load_user_tools(user_id);
     let updated = state
         .user_tool_store
         .update_skills(user_id, payload.enabled.clone(), payload.shared.clone())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let before_enabled: HashSet<String> = previous.skills.enabled.iter().cloned().collect();
+    let after_enabled: HashSet<String> = updated.skills.enabled.iter().cloned().collect();
+    let mut enabled_added: Vec<String> =
+        after_enabled.difference(&before_enabled).cloned().collect();
+    let mut enabled_removed: Vec<String> =
+        before_enabled.difference(&after_enabled).cloned().collect();
+    enabled_added.sort();
+    enabled_removed.sort();
+    let before_shared: HashSet<String> = previous.skills.shared.iter().cloned().collect();
+    let after_shared: HashSet<String> = updated.skills.shared.iter().cloned().collect();
+    let mut shared_added: Vec<String> = after_shared.difference(&before_shared).cloned().collect();
+    let mut shared_removed: Vec<String> =
+        before_shared.difference(&after_shared).cloned().collect();
+    shared_added.sort();
+    shared_removed.sort();
+    if !enabled_added.is_empty()
+        || !enabled_removed.is_empty()
+        || !shared_added.is_empty()
+        || !shared_removed.is_empty()
+    {
+        info!(
+            "用户 {user_id} 技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, 共享 +{shared_added_len}, 取消共享 -{shared_removed_len}",
+            enabled_added_len = enabled_added.len(),
+            enabled_removed_len = enabled_removed.len(),
+            shared_added_len = shared_added.len(),
+            shared_removed_len = shared_removed.len(),
+        );
+        if !enabled_added.is_empty() {
+            info!("用户 {user_id} 启用技能: {}", enabled_added.join(", "));
+        }
+        if !enabled_removed.is_empty() {
+            info!("用户 {user_id} 停用技能: {}", enabled_removed.join(", "));
+        }
+        if !shared_added.is_empty() {
+            info!("用户 {user_id} 共享技能: {}", shared_added.join(", "));
+        }
+        if !shared_removed.is_empty() {
+            info!("用户 {user_id} 取消共享技能: {}", shared_removed.join(", "));
+        }
+    }
     state.user_tool_manager.clear_skill_cache(Some(user_id));
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(user_id);

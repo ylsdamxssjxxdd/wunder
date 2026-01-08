@@ -90,6 +90,7 @@ export const state = {
       selectedIndex: -1,
       saveVersion: 0,
       loaded: false,
+      lastAction: null,
     },
     skills: {
       skills: [],
@@ -97,6 +98,7 @@ export const state = {
       shared: [],
       detailVersion: 0,
       loaded: false,
+      lastAction: null,
     },
     knowledge: {
       bases: [],

@@ -28,16 +28,21 @@ pub fn is_protected_path(path: &str) -> bool {
 pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     // 兼容 X-API-Key 与 Authorization: Bearer 的两种格式。
     if let Some(value) = headers.get("x-api-key") {
-        return value.to_str().ok().map(|text| text.trim().to_string());
+        if let Ok(text) = value.to_str() {
+            let cleaned = text.trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
     }
     if let Some(value) = headers.get(AUTHORIZATION) {
-        let text = value.to_str().ok()?.trim().to_string();
-        let lower = text.to_lowercase();
-        if lower.starts_with("bearer ") {
-            let raw = &text[7..];
-            return Some(raw.trim().to_string());
+        let text = value.to_str().ok()?.trim();
+        if text.len() >= 7 && text[..7].eq_ignore_ascii_case("bearer ") {
+            let raw = text[7..].trim();
+            if !raw.is_empty() {
+                return Some(raw.to_string());
+            }
         }
-        return Some(text);
     }
     None
 }

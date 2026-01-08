@@ -117,10 +117,18 @@ const renderSkills = () => {
     checkbox.checked = Boolean(skill.enabled);
     checkbox.addEventListener("change", (event) => {
       skill.enabled = event.target.checked;
-      saveSkills().catch((error) => {
-        console.error(t("skills.saveFailed", { message: error.message }), error);
-        notify(t("skills.saveFailed", { message: error.message }), "error");
-      });
+      const actionMessage = skill.enabled
+        ? t("skills.enabled", { name: skill.name })
+        : t("skills.disabled", { name: skill.name });
+      saveSkills()
+        .then(() => {
+          appendLog(actionMessage);
+          notify(actionMessage, "success");
+        })
+        .catch((error) => {
+          console.error(t("skills.saveFailed", { message: error.message }), error);
+          notify(t("skills.saveFailed", { message: error.message }), "error");
+        });
     });
     const label = document.createElement("label");
     label.innerHTML = `<strong>${skill.name}</strong><span class="muted">${skill.description} · ${skill.path}</span>`;

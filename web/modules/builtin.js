@@ -5,6 +5,7 @@ import { getToolInputSchema } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
+import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260105-01";
 
 // 拉取内置工具清单与启用状态
@@ -35,10 +36,18 @@ const renderBuiltinTools = () => {
     checkbox.checked = Boolean(tool.enabled);
     checkbox.addEventListener("change", (event) => {
       tool.enabled = event.target.checked;
-      saveBuiltinTools().catch((error) => {
-        console.error(t("builtin.saveFailed", { message: error.message }), error);
-        notify(t("builtin.saveFailed", { message: error.message }), "error");
-      });
+      const actionMessage = tool.enabled
+        ? t("builtin.enabled", { name: tool.name })
+        : t("builtin.disabled", { name: tool.name });
+      saveBuiltinTools()
+        .then(() => {
+          appendLog(actionMessage);
+          notify(actionMessage, "success");
+        })
+        .catch((error) => {
+          console.error(t("builtin.saveFailed", { message: error.message }), error);
+          notify(t("builtin.saveFailed", { message: error.message }), "error");
+        });
     });
     const label = document.createElement("label");
     label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${

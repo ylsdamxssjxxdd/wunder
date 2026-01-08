@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251231-01";
 import { notify } from "./notify.js";
+import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260105-01";
 
 // 规范化 A2A 服务字段，兼容后端与导入结构
@@ -454,10 +455,11 @@ const connectA2aService = async () => {
     const card = await requestA2aAgentCard(service);
     service.agent_card = card;
     renderA2aDetail();
-    notify(
-      wasConnected ? t("a2aServices.connect.refreshed") : t("a2aServices.connect.connected"),
-      "success"
-    );
+    const message = wasConnected
+      ? t("a2aServices.connect.refreshed")
+      : t("a2aServices.connect.connected");
+    appendLog(message);
+    notify(message, "success");
     await saveA2aServices({ refreshUI: false });
   } catch (error) {
     renderA2aDetail();
@@ -482,7 +484,12 @@ const toggleA2aServiceEnabled = async () => {
   service.enabled = next;
   try {
     await saveA2aServices();
-    notify(t("a2aServices.save.success"), "success");
+    const serviceName = service.display_name || service.name || t("a2aServices.detail.none");
+    const message = next
+      ? t("a2aServices.enabled", { name: serviceName })
+      : t("a2aServices.disabled", { name: serviceName });
+    appendLog(message);
+    notify(message, "success");
   } catch (error) {
     service.enabled = previous;
     elements.a2aServiceEnabled.checked = previous;
@@ -605,7 +612,9 @@ const deleteA2aService = async () => {
   renderA2aDetail();
   try {
     await saveA2aServices();
-    notify(t("a2aServices.delete.success", { name: removedName }), "success");
+    const message = t("a2aServices.delete.success", { name: removedName });
+    appendLog(message);
+    notify(message, "success");
   } catch (error) {
     notify(t("a2aServices.saveFailed", { message: error.message || "-" }), "error");
   }
@@ -645,6 +654,7 @@ export const initA2aServicesPanel = () => {
     }
     try {
       await saveA2aServices();
+      appendLog(t("a2aServices.save.success"));
       notify(t("a2aServices.save.success"), "success");
       closeA2aModal();
     } catch (error) {

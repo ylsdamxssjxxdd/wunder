@@ -802,6 +802,24 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
+    fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT payload FROM monitor_sessions WHERE session_id = $1",
+            &[&cleaned],
+        )?;
+        if let Some(row) = rows.first() {
+            let payload: String = row.get(0);
+            return Ok(Self::json_from_str(&payload));
+        }
+        Ok(None)
+    }
+
     fn load_monitor_records(&self) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

@@ -525,6 +525,7 @@ Example:
 ### 4.6.4 Notes
 
 - Shared sandbox does not create child containers; it relies on the same image and workspace mounts.
+- For docker compose deployments, prefer internal DNS `http://sandbox:9001` (no published port 9001). At runtime, `WUNDER_SANDBOX_ENDPOINT` is preferred and the client falls back between common `sandbox`/`127.0.0.1` endpoints to reduce IP-related failures.
 
 ## 5. Appendix: helper scripts
 

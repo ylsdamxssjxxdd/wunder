@@ -565,6 +565,33 @@ impl MonitorState {
         }))
     }
 
+    pub fn get_record(&self, session_id: &str) -> Option<Value> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+        if let Some(record) = self.sessions.lock().unwrap().get(cleaned) {
+            return Some(record.to_storage());
+        }
+        self.storage.get_monitor_record(cleaned).ok().flatten()
+    }
+
+    pub fn list_records(&self) -> Vec<Value> {
+        let mut map = HashMap::new();
+        if let Ok(records) = self.storage.load_monitor_records() {
+            for record in records {
+                if let Some(session_id) = record.get("session_id").and_then(Value::as_str) {
+                    map.insert(session_id.to_string(), record);
+                }
+            }
+        }
+        let sessions = self.sessions.lock().unwrap();
+        for (session_id, record) in sessions.iter() {
+            map.insert(session_id.clone(), record.to_storage());
+        }
+        map.into_values().collect()
+    }
+
     pub fn get_system_metrics(&self) -> SystemSnapshot {
         let mut system = self.system.lock().unwrap();
         system.refresh_all();

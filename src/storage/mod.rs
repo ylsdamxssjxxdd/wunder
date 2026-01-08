@@ -65,6 +65,7 @@ pub trait StorageBackend: Send + Sync {
     fn delete_artifact_logs(&self, user_id: &str) -> Result<i64>;
 
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
+    fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
     fn load_monitor_records(&self) -> Result<Vec<Value>>;
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;

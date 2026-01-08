@@ -7,6 +7,7 @@ rust-version = "1.92"
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["macros", "multipart"] }
+bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "5"
@@ -30,6 +31,7 @@ serde_yaml = "0.9"
 sysinfo = "0.30"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"

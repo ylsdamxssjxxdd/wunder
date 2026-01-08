@@ -8,6 +8,7 @@ import {
   ensureUserToolsState,
 } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
+import { appendLog } from "./log.js?v=20260108-02";
 import { openToolDetailModal } from "./tool-detail.js?v=20251227-13";
 import {
   buildHeadingHighlightHtml,
@@ -182,6 +183,7 @@ export const resetUserToolsState = () => {
     selectedIndex: -1,
     saveVersion: 0,
     loaded: false,
+    lastAction: null,
   };
   state.userTools.skills = {
     skills: [],
@@ -189,6 +191,7 @@ export const resetUserToolsState = () => {
     shared: [],
     detailVersion: 0,
     loaded: false,
+    lastAction: null,
   };
   state.userTools.knowledge = {
     bases: [],
@@ -654,6 +657,12 @@ const renderUserMcpTools = () => {
           server.enabled = false;
         }
       }
+      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+      state.userTools.mcp.lastAction = {
+        type: event.target.checked ? "tool_enabled" : "tool_disabled",
+        name: tool.name,
+        server: serverTitle,
+      };
       server.allow_tools = nextAllow;
       scheduleUserMcpSave();
       renderUserMcpDetail();
@@ -677,6 +686,12 @@ const renderUserMcpTools = () => {
       } else {
         nextShared = nextShared.filter((name) => name !== tool.name);
       }
+      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+      state.userTools.mcp.lastAction = {
+        type: event.target.checked ? "tool_shared" : "tool_unshared",
+        name: tool.name,
+        server: serverTitle,
+      };
       server.allow_tools = nextAllow;
       server.shared_tools = nextShared;
       scheduleUserMcpSave();
@@ -689,6 +704,35 @@ const renderUserMcpTools = () => {
     elements.userMcpToolList.appendChild(item);
   });
   updateUserMcpRefreshAllButton();
+};
+
+const resolveUserMcpActionMessage = () => {
+  const action = state.userTools.mcp.lastAction;
+  if (!action || !action.name) {
+    return "";
+  }
+  const name = action.name;
+  const server = action.server || "";
+  switch (action.type) {
+    case "tool_enabled":
+      return t("mcp.tool.enabled", { name, server });
+    case "tool_disabled":
+      return t("mcp.tool.disabled", { name, server });
+    case "tool_shared":
+      return t("userTools.mcp.tool.shared", { name, server });
+    case "tool_unshared":
+      return t("userTools.mcp.tool.unshared", { name, server });
+    case "tools_enabled_all":
+      return t("mcp.tools.enableAllSuccess");
+    case "tools_disabled_all":
+      return t("mcp.tools.disableAllSuccess");
+    case "server_enabled":
+      return t("userTools.mcp.server.enabled", { name });
+    case "server_disabled":
+      return t("userTools.mcp.server.disabled", { name });
+    default:
+      return "";
+  }
 };
 
 const loadUserMcpServers = async () => {
@@ -766,6 +810,12 @@ const saveUserMcpServers = async () => {
     renderUserMcpServers();
     updateModalStatus(t("userTools.autoSaved"));
     syncPromptTools();
+    const actionMessage = resolveUserMcpActionMessage();
+    if (actionMessage) {
+      appendLog(actionMessage);
+      notify(actionMessage, "success");
+    }
+    state.userTools.mcp.lastAction = null;
     return true;
   } catch (error) {
     updateModalStatus(t("userTools.saveFailed", { message: error.message }));
@@ -975,6 +1025,11 @@ const bindUserMcpInputs = () => {
       return;
     }
     server.enabled = event.target.checked;
+    const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+    state.userTools.mcp.lastAction = {
+      type: server.enabled ? "server_enabled" : "server_disabled",
+      name: serverTitle,
+    };
     renderUserMcpDetail();
     updateUserMcpStructPreview();
     scheduleUserMcpSave();
@@ -1082,6 +1137,10 @@ const renderUserSkills = () => {
       if (!skill.enabled) {
         skill.shared = false;
       }
+      state.userTools.skills.lastAction = {
+        type: skill.enabled ? "enabled" : "disabled",
+        name: skill.name,
+      };
       renderUserSkills();
       scheduleUserSkillsSave();
     });
@@ -1090,6 +1149,10 @@ const renderUserSkills = () => {
       if (skill.shared) {
         skill.enabled = true;
       }
+      state.userTools.skills.lastAction = {
+        type: skill.shared ? "shared" : "unshared",
+        name: skill.name,
+      };
       renderUserSkills();
       scheduleUserSkillsSave();
     });
@@ -1100,6 +1163,26 @@ const renderUserSkills = () => {
     item.appendChild(info);
     elements.userSkillsList.appendChild(item);
   });
+};
+
+const resolveUserSkillActionMessage = () => {
+  const action = state.userTools.skills.lastAction;
+  if (!action || !action.name) {
+    return "";
+  }
+  const name = action.name;
+  switch (action.type) {
+    case "enabled":
+      return t("userTools.skills.enabled", { name });
+    case "disabled":
+      return t("userTools.skills.disabled", { name });
+    case "shared":
+      return t("userTools.skills.shared", { name });
+    case "unshared":
+      return t("userTools.skills.unshared", { name });
+    default:
+      return "";
+  }
 };
 
 const saveUserSkills = async () => {
@@ -1134,6 +1217,12 @@ const saveUserSkills = async () => {
     renderUserSkills();
     updateModalStatus(t("userTools.autoSaved"));
     syncPromptTools();
+    const actionMessage = resolveUserSkillActionMessage();
+    if (actionMessage) {
+      appendLog(actionMessage);
+      notify(actionMessage, "success");
+    }
+    state.userTools.skills.lastAction = null;
   } catch (error) {
     updateModalStatus(t("userTools.saveFailed", { message: error.message }));
     notify(t("userTools.skills.saveFailed", { message: error.message }), "error");
@@ -1928,6 +2017,10 @@ export const initUserTools = () => {
     }
     server.enabled = true;
     server.allow_tools = tools.map((tool) => tool.name);
+    state.userTools.mcp.lastAction = {
+      type: "tools_enabled_all",
+      name: server.display_name || server.name || t("mcp.server.unnamed"),
+    };
     scheduleUserMcpSave();
     renderUserMcpDetail();
   });
@@ -1939,6 +2032,10 @@ export const initUserTools = () => {
     server.allow_tools = [];
     server.shared_tools = [];
     server.enabled = false;
+    state.userTools.mcp.lastAction = {
+      type: "tools_disabled_all",
+      name: server.display_name || server.name || t("mcp.server.unnamed"),
+    };
     scheduleUserMcpSave();
     renderUserMcpDetail();
   });
