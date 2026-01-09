@@ -2113,14 +2113,11 @@ impl Orchestrator {
             let content = obj.get("content").cloned().unwrap_or(Value::Null);
             let mut new_message = obj.clone();
             if let Value::String(text) = &content {
-                let mut target = max_tokens.max(1);
-                if text.starts_with(OBSERVATION_PREFIX) {
-                    target = target.max(COMPACTION_MIN_OBSERVATION_TOKENS);
-                }
+                let target = max_tokens.max(1);
                 if approx_token_count(text) > target {
                     new_message.insert(
                         "content".to_string(),
-                        Value::String(trim_text_to_tokens(text, target, "...")),
+                        Value::String(trim_text_to_tokens(text, target, "...(truncated)")),
                     );
                 }
             }
