@@ -779,7 +779,8 @@
 - `event: a2a_result`：A2A 任务结束摘要（status/elapsed_ms）
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态）
-- `event: final`：最终回复
+- `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
+  - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`max_rounds`（达到最大轮次兜底）、`unknown`（兜底）
 - `event: error`：错误信息（包含错误码与建议）
 - SSE 会附带 `id` 行，代表事件序号，可用于客户端排序或去重。
 - 当 SSE 队列满时事件会写入 `stream_events`，流式通道会回放补齐。
@@ -804,6 +805,7 @@
   - `session_id`
   - `answer`
   - `usage`（可选）
+  - `stop_reason`（可选，停止原因，同 `event: final`）
   - `uid`（可选，A2UI Surface 标识）
   - `a2ui`（可选，A2UI 消息数组）
 

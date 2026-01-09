@@ -679,6 +679,7 @@ class WunderOrchestrator:
             # 仅保留最新一次模型调用的用量，避免跨轮次累加
             last_usage: Optional[Dict[str, int]] = None
             answer = ""
+            stop_reason = ""
             a2ui_uid: Optional[str] = None
             a2ui_messages: Optional[List[Dict[str, Any]]] = None
             last_response: Optional[LLMResponse] = None
@@ -731,6 +732,7 @@ class WunderOrchestrator:
                 tool_calls = ToolCallParser.parse(content or "")
                 if not tool_calls:
                     answer = self._resolve_final_answer(content, reasoning)
+                    stop_reason = "model_response"
                     if answer:
                         await self._append_chat(
                             user_id, session_id, "assistant", answer, reasoning
@@ -784,6 +786,7 @@ class WunderOrchestrator:
                         a2ui_uid = uid or None
                         a2ui_messages = messages or None
                         answer = content or t("response.a2ui_fallback")
+                        stop_reason = "a2ui"
                         await self._log_a2ui_tool_call(
                             user_id,
                             session_id,
@@ -800,6 +803,7 @@ class WunderOrchestrator:
                         break
                     if name == "最终回复":
                         answer = self._resolve_final_answer_from_tool(args)
+                        stop_reason = "final_tool"
                         await self._log_final_tool_call(
                             user_id, session_id, name, args
                         )
@@ -868,14 +872,19 @@ class WunderOrchestrator:
                 answer = self._resolve_final_answer(
                     last_response.content, last_response.reasoning
                 )
+                if not stop_reason:
+                    stop_reason = "max_rounds"
             if not answer:
                 answer = t("error.max_rounds_no_final_answer")
+                if not stop_reason:
+                    stop_reason = "max_rounds"
 
             # 仅在正常结束时排队长期记忆总结任务
             await self._enqueue_memory_summary(
                 prepared, last_request_messages, answer
             )
 
+            stop_reason = stop_reason or "unknown"
             usage_payload = (
                 last_usage if last_usage and last_usage.get("total_tokens", 0) > 0 else None
             )
@@ -883,10 +892,18 @@ class WunderOrchestrator:
                 session_id=session_id,
                 answer=answer,
                 usage=usage_payload,
+                stop_reason=stop_reason,
                 uid=a2ui_uid,
                 a2ui=a2ui_messages,
             )
-            emitter.emit("final", {"answer": answer, "usage": usage_payload or {}})
+            emitter.emit(
+                "final",
+                {
+                    "answer": answer,
+                    "usage": usage_payload or {},
+                    "stop_reason": stop_reason,
+                },
+            )
             monitor.mark_finished(session_id)
             return response
         except WunderError as exc:

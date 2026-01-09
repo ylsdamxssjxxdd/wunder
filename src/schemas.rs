@@ -42,6 +42,8 @@ pub struct WunderResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub a2ui: Option<Value>,

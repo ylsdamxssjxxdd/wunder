@@ -13,6 +13,22 @@ import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
+const STOP_REASON_LABELS = {
+  "zh-CN": {
+    model_response: "正常结束",
+    final_tool: "最终回复工具",
+    a2ui: "A2UI 工具",
+    max_rounds: "达到最大轮次",
+    unknown: "未知",
+  },
+  "en-US": {
+    model_response: "Normal completion",
+    final_tool: "Final reply tool",
+    a2ui: "A2UI tool",
+    max_rounds: "Max rounds reached",
+    unknown: "Unknown",
+  },
+};
 // 调试面板附件支持：图片走多模态，文件走 doc2md 解析
 const DEBUG_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"]);
 const DEBUG_DOC_EXTENSIONS = [
@@ -101,6 +117,21 @@ let debugAttachmentBusy = 0;
 let debugStats = null;
 const pendingRequestLogs = [];
 let pendingRequestSeq = 0;
+let stopReasonHint = "";
+
+const resetStopReasonHint = () => {
+  stopReasonHint = "";
+};
+
+const resolveStopReasonLabel = (reason) => {
+  const normalized = String(reason || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const language = getCurrentLanguage();
+  const labels = STOP_REASON_LABELS[language] || STOP_REASON_LABELS["zh-CN"];
+  return labels?.[normalized] || normalized;
+};
 
 // 重置请求-回复关联状态，避免日志错位
 const resetPendingRequestLogs = () => {
@@ -286,6 +317,7 @@ const createDebugStats = () => ({
 
 const resetDebugStats = () => {
   debugStats = createDebugStats();
+  resetStopReasonHint();
   renderDebugStats();
 };
 
@@ -1643,18 +1675,27 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "final") {
     state.runtime.debugSawFinal = true;
     const usage = payload.data?.usage;
+    const rawStopReason = payload.data?.stop_reason;
+    const stopReason =
+      String(rawStopReason || "").trim() || stopReasonHint || "model_response";
+    const stopReasonLabel = resolveStopReasonLabel(stopReason);
     // 最终事件里包含的 usage 也要写入事件日志，避免漏看整体用量
     applyTokenUsageSnapshot(usage, { override: true });
     renderDebugStats();
     const summary = t("debug.event.final");
-    const detail =
-      usage && typeof usage === "object"
-        ? JSON.stringify({ usage }, null, 2)
-        : undefined;
+    const detailPayload = {
+      stop_reason: stopReason,
+      stop_reason_label: stopReasonLabel,
+    };
+    if (usage && typeof usage === "object") {
+      detailPayload.usage = usage;
+    }
+    const detail = JSON.stringify(detailPayload, null, 2);
     appendLog(summary, { detail, timestamp: eventTimestamp });
     finalizePendingRequestDurations(eventTimestamp);
     resetPendingRequestLogs();
     loadWorkspace({ refreshTree: true });
+    resetStopReasonHint();
     return;
   }
 
@@ -1663,6 +1704,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const messages = normalizeA2uiMessages(data);
     recordA2uiMessages(data, eventTimestamp);
     const messageCount = messages.length;
+    stopReasonHint = "a2ui";
     const detail = JSON.stringify(
       {
         uid: data?.uid || "",
@@ -1745,6 +1787,9 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const toolName = typeof data?.tool === "string" ? data.tool : "";
     const title = toolName ? `tool_call - ${toolName}` : "tool_call";
     const category = resolveToolCategory(toolName);
+    if (toolName === "最终回复" || toolName === "final_response") {
+      stopReasonHint = "final_tool";
+    }
     debugStats.toolCalls += 1;
     renderDebugStats();
     appendLog(title, {

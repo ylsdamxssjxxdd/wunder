@@ -1016,6 +1016,7 @@ impl Orchestrator {
             let max_rounds = llm_config.max_rounds.unwrap_or(1).max(1) as i64;
             let mut last_usage: Option<TokenUsage> = None;
             let mut answer = String::new();
+            let mut stop_reason: Option<String> = None;
             let mut a2ui_uid: Option<String> = None;
             let mut a2ui_messages: Option<Value> = None;
             let mut last_response: Option<(String, String)> = None;
@@ -1071,6 +1072,7 @@ impl Orchestrator {
                 let tool_calls = parse_tool_calls_from_text(&content);
                 if tool_calls.is_empty() {
                     answer = self.resolve_final_answer(&content);
+                    stop_reason = Some("model_response".to_string());
                     let assistant_content = if answer.is_empty() { content.clone() } else { answer.clone() };
                     if !assistant_content.trim().is_empty() {
                         self.append_chat(
@@ -1147,6 +1149,7 @@ impl Orchestrator {
                         } else {
                             content
                         };
+                        stop_reason = Some("a2ui".to_string());
                         self.log_a2ui_tool_call(&user_id, &session_id, &name, &args, &uid, &a2ui_messages, &answer);
                         if !answer.trim().is_empty() {
                             self.append_chat(
@@ -1162,6 +1165,7 @@ impl Orchestrator {
                     }
                     if name == "最终回复" {
                         answer = self.resolve_final_answer_from_tool(&args);
+                        stop_reason = Some("final_tool".to_string());
                         self.log_final_tool_call(&user_id, &session_id, &name, &args);
                         if !answer.trim().is_empty() {
                             self.append_chat(
@@ -1262,26 +1266,38 @@ impl Orchestrator {
             if answer.is_empty() {
                 if let Some((content, _)) = last_response.as_ref() {
                     answer = self.resolve_final_answer(content);
+                    if stop_reason.is_none() {
+                        stop_reason = Some("max_rounds".to_string());
+                    }
                 }
             }
             if answer.is_empty() {
                 answer = i18n::t("error.max_rounds_no_final_answer");
+                if stop_reason.is_none() {
+                    stop_reason = Some("max_rounds".to_string());
+                }
             }
 
             self.enqueue_memory_summary(&prepared, last_request_messages, &answer)
                 .await;
 
+            let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
             let response = WunderResponse {
                 session_id: session_id.clone(),
                 answer: answer.clone(),
                 usage: last_usage.clone(),
+                stop_reason: Some(stop_reason.clone()),
                 uid: a2ui_uid.clone(),
                 a2ui: a2ui_messages.clone(),
             };
             emitter
                 .emit(
                     "final",
-                    json!({ "answer": answer, "usage": last_usage.clone().unwrap_or(TokenUsage { input: 0, output: 0, total: 0 }) }),
+                    json!({
+                        "answer": answer,
+                        "usage": last_usage.clone().unwrap_or(TokenUsage { input: 0, output: 0, total: 0 }),
+                        "stop_reason": stop_reason
+                    }),
                 )
                 .await;
             self.monitor.mark_finished(&session_id);
