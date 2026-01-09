@@ -1127,7 +1127,11 @@ fn trim_text(text: &str, limit: Option<usize>) -> String {
     if text.len() <= limit {
         return text.to_string();
     }
-    format!("{}...(truncated)", &text[..limit])
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!("{}...(truncated)", &text[..end])
 }
 
 fn trim_string_fields(data: &Value, limit: Option<usize>) -> Value {

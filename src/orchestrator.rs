@@ -2017,24 +2017,86 @@ impl Orchestrator {
         )))
     }
 
-    fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
+    fn locate_tail_block_start(messages: &[Value]) -> usize {
         if messages.is_empty() {
+            return 0;
+        }
+        let last_user_index = messages
+            .iter()
+            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let Some(last_user_index) = last_user_index else {
+            return messages.len().saturating_sub(1);
+        };
+        let assistant_index = (0..last_user_index).rev().find(|&index| {
+            messages[index].get("role").and_then(Value::as_str) == Some("assistant")
+        });
+        let Some(assistant_index) = assistant_index else {
+            return last_user_index;
+        };
+        let previous_user_index = (0..assistant_index)
+            .rev()
+            .find(|&index| messages[index].get("role").and_then(Value::as_str) == Some("user"));
+        previous_user_index.unwrap_or(assistant_index)
+    }
+
+    fn trim_messages_keep_tail(&self, messages: &[Value], max_tokens: i64) -> Vec<Value> {
+        if messages.is_empty() {
+            return Vec::new();
+        }
+        if max_tokens <= 0 {
+            return vec![messages[messages.len() - 1].clone()];
+        }
+        let mut tail_start = Self::locate_tail_block_start(messages);
+        if tail_start >= messages.len() {
+            tail_start = messages.len().saturating_sub(1);
+        }
+        let tail_messages = messages[tail_start..].to_vec();
+        let tail_tokens = estimate_messages_tokens(&tail_messages);
+        if tail_tokens >= max_tokens {
+            return tail_messages;
+        }
+        let remaining = max_tokens - tail_tokens;
+        let head_messages = trim_messages_to_budget(&messages[..tail_start], remaining);
+        let mut output = head_messages;
+        output.extend(tail_messages);
+        output
+    }
+
+    fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
+        let total_tokens = estimate_messages_tokens(&messages);
+        if total_tokens <= limit {
             return messages;
         }
-        let first_is_system = messages
-            .first()
-            .and_then(|message| message.get("role").and_then(Value::as_str))
-            == Some("system");
-        if !first_is_system {
-            return trim_messages_to_budget(&messages, limit);
+        let mut overflow = total_tokens - limit;
+        let mut trimmed = messages;
+        for message in &mut trimmed {
+            if overflow <= 0 {
+                break;
+            }
+            let Some(obj) = message.as_object_mut() else {
+                continue;
+            };
+            let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
+            let content = obj.get("content").unwrap_or(&Value::Null);
+            if !Self::is_observation_message(role, content) {
+                continue;
+            }
+            let Value::String(text) = content else {
+                continue;
+            };
+            let current_tokens = approx_token_count(text);
+            if current_tokens <= COMPACTION_MIN_OBSERVATION_TOKENS {
+                continue;
+            }
+            let target_tokens = (current_tokens - overflow).max(COMPACTION_MIN_OBSERVATION_TOKENS);
+            let new_content = trim_text_to_tokens(text, target_tokens, "...(truncated)");
+            if new_content == *text {
+                continue;
+            }
+            obj.insert("content".to_string(), Value::String(new_content));
+            overflow = (estimate_messages_tokens(&trimmed) - limit).max(0);
         }
-        let system_message = messages[0].clone();
-        let rest = messages.get(1..).unwrap_or(&[]).to_vec();
-        let remaining = (limit - estimate_message_tokens(&system_message)).max(1);
-        let mut output = Vec::new();
-        output.push(system_message);
-        output.extend(trim_messages_to_budget(&rest, remaining));
-        output
+        trimmed
     }
 
     fn prepare_summary_messages(&self, messages: Vec<Value>, max_tokens: i64) -> Vec<Value> {
@@ -2172,7 +2234,8 @@ impl Orchestrator {
         }
 
         let keep_recent_tokens = (limit / 2).max(1).min(COMPACTION_KEEP_RECENT_TOKENS);
-        let mut recent_messages = trim_messages_to_budget(&candidate_messages, keep_recent_tokens);
+        let mut recent_messages =
+            self.trim_messages_keep_tail(&candidate_messages, keep_recent_tokens);
         let recent_tokens = estimate_messages_tokens(&recent_messages);
         let force_history_compaction = should_compact_by_history && candidate_messages.len() > 1;
         if recent_messages.len() >= candidate_messages.len() && recent_tokens <= keep_recent_tokens
@@ -2224,7 +2287,22 @@ impl Orchestrator {
             None => summary_input.push(json!({ "role": "user", "content": compaction_prompt })),
         }
 
-        let summary_input = self.shrink_messages_to_limit(summary_input, limit);
+        let summary_input = if summary_input
+            .first()
+            .and_then(|message| message.get("role").and_then(Value::as_str))
+            == Some("system")
+        {
+            let system_snapshot = summary_input[0].clone();
+            let rest = summary_input.get(1..).unwrap_or(&[]).to_vec();
+            let remaining = (limit - estimate_message_tokens(&system_snapshot)).max(1);
+            let rest = self.trim_messages_keep_tail(&rest, remaining);
+            let mut combined = Vec::with_capacity(1 + rest.len());
+            combined.push(system_snapshot);
+            combined.extend(rest);
+            combined
+        } else {
+            self.trim_messages_keep_tail(&summary_input, limit)
+        };
         let summary_max_message_tokens = limit.min(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS).max(1);
         let summary_input =
             self.prepare_summary_messages(summary_input, summary_max_message_tokens);

@@ -101,6 +101,8 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
 
 // 模型输出文本区可能拆成独立容器，优先使用专用节点。
 const resolveModelOutputText = () => elements.modelOutputText || elements.modelOutput;
+// 滚动应作用于外层容器，避免 <pre> 本身不滚动。
+const resolveModelOutputScrollContainer = () => elements.modelOutput || resolveModelOutputText();
 // 缓冲模型输出，降低频繁 DOM 拼接导致的卡顿
 const modelOutputBuffer = {
   chunks: [],
@@ -968,9 +970,9 @@ const resetModelOutputState = (options = {}) => {
     outputState.selectedRound = null;
     outputState.userSelectedRound = false;
     resetModelOutputBuffer();
-    const outputContainer = resolveModelOutputText();
-    if (outputContainer) {
-      outputContainer.textContent = "";
+    const outputText = resolveModelOutputText();
+    if (outputText) {
+      outputText.textContent = "";
     }
     // 清空 A2UI 渲染状态，避免旧 UI 残留。
     resetA2uiState(elements.modelOutputA2ui);
@@ -1005,9 +1007,9 @@ const resetRoundOutput = (roundId) => {
   entry.contentChunks = [];
   if (outputState.selectedRound === entry.id) {
     resetModelOutputBuffer();
-    const outputContainer = resolveModelOutputText();
-    if (outputContainer) {
-      outputContainer.textContent = "";
+    const outputText = resolveModelOutputText();
+    if (outputText) {
+      outputText.textContent = "";
     }
   }
   renderRoundSelectOptions(outputState);
@@ -1065,22 +1067,25 @@ const resetModelOutputBuffer = () => {
 
 // 合并缓冲并刷新到 DOM，集中处理滚动
 const flushModelOutput = () => {
-  const outputContainer = resolveModelOutputText();
-  if (!outputContainer) {
+  const outputText = resolveModelOutputText();
+  if (!outputText) {
     return;
   }
   if (modelOutputBuffer.chunks.length) {
     const text = modelOutputBuffer.chunks.join("");
     modelOutputBuffer.chunks = [];
-    const lastNode = outputContainer.lastChild;
+    const lastNode = outputText.lastChild;
     if (lastNode && lastNode.nodeType === Node.TEXT_NODE) {
       lastNode.appendData(text);
     } else {
-      outputContainer.appendChild(document.createTextNode(text));
+      outputText.appendChild(document.createTextNode(text));
     }
   }
   if (modelOutputBuffer.pendingScroll) {
-    outputContainer.scrollTop = outputContainer.scrollHeight;
+    const scrollContainer = resolveModelOutputScrollContainer();
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
     modelOutputBuffer.pendingScroll = false;
   }
 };
@@ -1438,17 +1443,18 @@ const shouldAutoSelectRound = (outputState, roundId) => {
 
 // 渲染指定轮次的输出内容
 const renderSelectedRound = (outputState, entry, options = {}) => {
-  const outputContainer = resolveModelOutputText();
-  if (!outputContainer) {
+  const outputText = resolveModelOutputText();
+  if (!outputText) {
     return;
   }
   resetModelOutputBuffer();
-  outputContainer.textContent = entry ? buildRoundText(entry) : "";
+  outputText.textContent = entry ? buildRoundText(entry) : "";
+  const scrollContainer = resolveModelOutputScrollContainer();
   const scrollTo = options.scrollTo || (entry && entry.id === outputState.currentRound ? "bottom" : "top");
   if (scrollTo === "bottom") {
     scheduleModelOutputScroll();
-  } else {
-    outputContainer.scrollTop = 0;
+  } else if (scrollContainer) {
+    scrollContainer.scrollTop = 0;
   }
 };
 
