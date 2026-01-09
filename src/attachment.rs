@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tokio::process::Command;
+use tracing::error;
 
 #[derive(Debug, Clone)]
 pub struct ConversionResult {
@@ -64,7 +65,10 @@ pub fn get_supported_extensions() -> Vec<String> {
 }
 
 pub fn sanitize_filename_stem(name: &str) -> String {
-    let cleaned = filename_safe_regex().replace_all(name.trim(), "_");
+    let cleaned = match filename_safe_regex() {
+        Some(regex) => regex.replace_all(name.trim(), "_").to_string(),
+        None => name.trim().to_string(),
+    };
     let cleaned = cleaned.trim_matches(['.', ' '].as_ref()).to_string();
     cleaned.replace("..", "_")
 }
@@ -113,9 +117,11 @@ fn load_doc2md_extensions() -> Option<Vec<String>> {
     }
     let content = std::fs::read_to_string(readme).ok()?;
     let mut exts: HashSet<String> = HashSet::new();
-    for cap in doc2md_ext_regex().captures_iter(&content) {
-        if let Some(ext) = cap.get(1) {
-            exts.insert(format!(".{}", ext.as_str().to_lowercase()));
+    if let Some(regex) = doc2md_ext_regex() {
+        for cap in regex.captures_iter(&content) {
+            if let Some(ext) = cap.get(1) {
+                exts.insert(format!(".{}", ext.as_str().to_lowercase()));
+            }
         }
     }
     if exts.is_empty() {
@@ -243,20 +249,39 @@ fn wrap_code_block(text: &str, language: &str) -> String {
 }
 
 fn convert_html(text: &str) -> String {
-    html_tag_regex().replace_all(text, "").to_string()
+    match html_tag_regex() {
+        Some(regex) => regex.replace_all(text, "").to_string(),
+        None => text.to_string(),
+    }
 }
 
-fn doc2md_ext_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"\*\.([a-z0-9]+)").expect("invalid doc2md regex"))
+fn doc2md_ext_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"\*\.([a-z0-9]+)", "doc2md"))
+        .as_ref()
 }
 
-fn filename_safe_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r#"[\\/:*?"<>|]+"#).expect("invalid filename regex"))
+fn filename_safe_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r#"[\\/:*?"<>|]+"#, "filename_safe"))
+        .as_ref()
 }
 
-fn html_tag_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"<[^>]+>").expect("invalid html regex"))
+fn html_tag_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"<[^>]+>", "html_tag"))
+        .as_ref()
+}
+
+fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            error!("invalid attachment regex {label}: {err}");
+            None
+        }
+    }
 }

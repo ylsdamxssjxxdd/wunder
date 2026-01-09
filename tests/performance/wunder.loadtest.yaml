@@ -1,0 +1,35 @@
+server:
+  host: 127.0.0.1
+  port: 8000
+  stream_chunk_size: 1024
+  max_active_sessions: 200
+security:
+  api_key: loadtest-key
+  allow_commands:
+    - '*'
+  allow_paths:
+    - ./skills
+    - ./EVA_SKILLS
+  deny_globs:
+    - '**/.git/**'
+    - '**/node_modules/**'
+    - '**/__pycache__/**'
+llm:
+  default: mock
+  models:
+    mock:
+      enable: true
+      mock_if_unconfigured: true
+sandbox:
+  mode: local
+storage:
+  backend: sqlite
+  db_path: ./data/wunder.loadtest.db
+workspace:
+  root: ./data/workspaces
+observability:
+  log_level: INFO
+  monitor_event_limit: 100
+  monitor_payload_max_chars: 0
+  monitor_drop_event_types:
+    - llm_output_delta

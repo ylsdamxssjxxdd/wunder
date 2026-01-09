@@ -39,9 +39,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 const MEMORY_SUMMARY_PROMPT_PATH: &str = "app/prompts/memory_summary.txt";
@@ -1090,20 +1091,24 @@ impl Orchestrator {
                     break;
                 }
 
-                let cleaned_content = strip_tool_calls(&content);
-                if !cleaned_content.trim().is_empty() {
-                    messages.push(json!({
+                let assistant_content = content.clone();
+                let assistant_reasoning = reasoning.clone();
+                if !assistant_content.trim().is_empty() || !assistant_reasoning.trim().is_empty() {
+                    let mut assistant_message = json!({
                         "role": "assistant",
-                        "content": cleaned_content,
-                        "reasoning_content": reasoning,
-                    }));
+                        "content": assistant_content.clone(),
+                    });
+                    if !assistant_reasoning.trim().is_empty() {
+                        assistant_message["reasoning_content"] = json!(assistant_reasoning.clone());
+                    }
+                    messages.push(assistant_message);
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
-                        Some(&json!(cleaned_content)),
+                        Some(&json!(assistant_content)),
                         None,
-                        None,
+                        Some(&assistant_reasoning),
                     );
                 }
 
@@ -1207,7 +1212,12 @@ impl Orchestrator {
                         emitter
                             .emit("tool_call", json!({ "tool": name, "args": args }))
                             .await;
-                        let result = crate::tools::execute_tool(&tool_context, &name, &args).await;
+                        let result = tokio::select! {
+                            res = crate::tools::execute_tool(&tool_context, &name, &args) => res,
+                            err = self.wait_for_cancelled(&session_id) => {
+                                return Err(err);
+                            }
+                        };
                         match result {
                             Ok(value) => ToolResultPayload::from_value(value),
                             Err(err) => ToolResultPayload::error(err.to_string(), json!({ "tool": name })),
@@ -1372,6 +1382,53 @@ impl Orchestrator {
             )));
         }
         Ok(())
+    }
+
+    async fn wait_for_cancelled(&self, session_id: &str) -> OrchestratorError {
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            if self.monitor.is_cancelled(session_id) {
+                return OrchestratorError::cancelled(i18n::t("error.session_cancelled"));
+            }
+        }
+    }
+
+    async fn sleep_or_cancel(
+        &self,
+        session_id: &str,
+        duration: Duration,
+    ) -> Result<(), OrchestratorError> {
+        let cancel = self.wait_for_cancelled(session_id);
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => Ok(()),
+            err = cancel => Err(err),
+        }
+    }
+
+    async fn await_with_cancel<F, T>(
+        &self,
+        session_id: &str,
+        timeout_s: u64,
+        fut: F,
+    ) -> Result<Result<T, anyhow::Error>, OrchestratorError>
+    where
+        F: std::future::Future<Output = Result<T, anyhow::Error>>,
+    {
+        let cancel = self.wait_for_cancelled(session_id);
+        if timeout_s > 0 {
+            tokio::select! {
+                res = tokio::time::timeout(Duration::from_secs(timeout_s), fut) => {
+                    Ok(res.map_err(|_| anyhow::anyhow!("timeout")).and_then(|inner| inner))
+                }
+                err = cancel => Err(err),
+            }
+        } else {
+            tokio::select! {
+                res = fut => Ok(res),
+                err = cancel => Err(err),
+            }
+        }
     }
 
     fn append_chat(
@@ -1858,12 +1915,13 @@ impl Orchestrator {
         llm_config: &LlmModelConfig,
         messages: &[Value],
         emitter: &EventEmitter,
-        _session_id: &str,
+        session_id: &str,
         stream: bool,
         round_index: i64,
         emit_events: bool,
         llm_config_override: Option<LlmModelConfig>,
     ) -> Result<(String, String, TokenUsage), OrchestratorError> {
+        self.ensure_not_cancelled(session_id)?;
         let effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
         if !is_llm_configured(&effective_config) {
             if effective_config.mock_if_unconfigured.unwrap_or(false) {
@@ -1937,24 +1995,10 @@ impl Orchestrator {
                     }
                 };
                 let fut = client.stream_complete_with_callback(&chat_messages, on_delta);
-                if timeout_s > 0 {
-                    tokio::time::timeout(std::time::Duration::from_secs(timeout_s), fut)
-                        .await
-                        .map_err(|_| anyhow::anyhow!("timeout"))
-                        .and_then(|inner| inner)
-                } else {
-                    fut.await
-                }
+                self.await_with_cancel(session_id, timeout_s, fut).await?
             } else {
                 let fut = client.complete(&chat_messages);
-                if timeout_s > 0 {
-                    tokio::time::timeout(std::time::Duration::from_secs(timeout_s), fut)
-                        .await
-                        .map_err(|_| anyhow::anyhow!("timeout"))
-                        .and_then(|inner| inner)
-                } else {
-                    fut.await
-                }
+                self.await_with_cancel(session_id, timeout_s, fut).await?
             };
 
             match result {
@@ -2006,7 +2050,8 @@ impl Orchestrator {
                         }),
                     )
                     .await;
-                tokio::time::sleep(std::time::Duration::from_secs_f64(delay_s)).await;
+                self.sleep_or_cancel(session_id, Duration::from_secs_f64(delay_s))
+                    .await?;
             }
         }
 
@@ -3113,6 +3158,9 @@ impl Orchestrator {
             if !text.contains("data:image/") {
                 return text.to_string();
             }
+            let Some(pattern) = pattern else {
+                return text.to_string();
+            };
             let mut output = String::with_capacity(text.len());
             let mut last = 0usize;
             for m in pattern.find_iter(text) {
@@ -3264,33 +3312,38 @@ fn merge_json(base: &mut Value, override_value: &Value) {
     }
 }
 
-fn tool_call_block_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
+fn tool_call_block_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?is)<tool_call\b[^>]*>(?P<payload>.*?)</tool_call\s*>")
-            .expect("invalid tool_call regex")
+        compile_regex(
+            r"(?is)<tool_call\b[^>]*>(?P<payload>.*?)</tool_call\s*>",
+            "tool_call_block",
+        )
     })
+    .as_ref()
 }
 
-fn tool_block_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
+fn tool_block_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?is)<tool\b[^>]*>(?P<payload>.*?)</tool\s*>").expect("invalid tool regex")
+        compile_regex(
+            r"(?is)<tool\b[^>]*>(?P<payload>.*?)</tool\s*>",
+            "tool_block",
+        )
     })
+    .as_ref()
 }
 
-fn tool_open_tag_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?is)<(tool_call|tool)\b[^>]*>").expect("invalid tool open tag regex")
-    })
+fn tool_open_tag_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"(?is)<(tool_call|tool)\b[^>]*>", "tool_open_tag"))
+        .as_ref()
 }
 
-fn tool_close_tag_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?is)</(tool_call|tool)\s*>").expect("invalid tool close tag regex")
-    })
+fn tool_close_tag_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"(?is)</(tool_call|tool)\s*>", "tool_close_tag"))
+        .as_ref()
 }
 
 fn find_json_end(text: &str, start: usize) -> Option<usize> {
@@ -3423,16 +3476,20 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
     }
 
     let mut blocks: Vec<(usize, String)> = Vec::new();
-    for captures in tool_call_block_regex().captures_iter(content) {
-        if let Some(mat) = captures.get(0) {
-            let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
-            blocks.push((mat.start(), payload.to_string()));
+    if let Some(regex) = tool_call_block_regex() {
+        for captures in regex.captures_iter(content) {
+            if let Some(mat) = captures.get(0) {
+                let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
+                blocks.push((mat.start(), payload.to_string()));
+            }
         }
     }
-    for captures in tool_block_regex().captures_iter(content) {
-        if let Some(mat) = captures.get(0) {
-            let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
-            blocks.push((mat.start(), payload.to_string()));
+    if let Some(regex) = tool_block_regex() {
+        for captures in regex.captures_iter(content) {
+            if let Some(mat) = captures.get(0) {
+                let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
+                blocks.push((mat.start(), payload.to_string()));
+            }
         }
     }
     blocks.sort_by_key(|(start, _)| *start);
@@ -3447,7 +3504,9 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
         }
     }
 
-    let open_matches = tool_open_tag_regex().find_iter(content).collect::<Vec<_>>();
+    let open_matches = tool_open_tag_regex()
+        .map(|regex| regex.find_iter(content).collect::<Vec<_>>())
+        .unwrap_or_default();
     if !open_matches.is_empty() {
         let mut calls = Vec::new();
         for (index, mat) in open_matches.iter().enumerate() {
@@ -3474,10 +3533,19 @@ fn strip_tool_calls(content: &str) -> String {
     if content.is_empty() {
         return String::new();
     }
-    let stripped = tool_call_block_regex().replace_all(content, "");
-    let stripped = tool_block_regex().replace_all(&stripped, "");
-    let stripped = tool_open_tag_regex().replace_all(&stripped, "");
-    let stripped = tool_close_tag_regex().replace_all(&stripped, "");
+    let mut stripped = content.to_string();
+    if let Some(regex) = tool_call_block_regex() {
+        stripped = regex.replace_all(&stripped, "").to_string();
+    }
+    if let Some(regex) = tool_block_regex() {
+        stripped = regex.replace_all(&stripped, "").to_string();
+    }
+    if let Some(regex) = tool_open_tag_regex() {
+        stripped = regex.replace_all(&stripped, "").to_string();
+    }
+    if let Some(regex) = tool_close_tag_regex() {
+        stripped = regex.replace_all(&stripped, "").to_string();
+    }
     stripped.trim().to_string()
 }
 
@@ -3554,12 +3622,26 @@ fn extract_command_lines(args: &Value) -> Vec<String> {
     commands
 }
 
-fn data_url_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"data:image/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+")
-            .expect("invalid data url regex")
-    })
+fn data_url_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| {
+            compile_regex(
+                r"data:image/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+",
+                "data_url",
+            )
+        })
+        .as_ref()
+}
+
+fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            error!("invalid orchestrator regex {label}: {err}");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

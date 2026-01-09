@@ -1,11 +1,13 @@
 // i18n 支持：语言解析、上下文管理与翻译文本读取。
+use parking_lot::RwLock;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::OnceLock;
 use tokio::task_local;
+use tracing::error;
 
 #[derive(Clone, Debug)]
 struct I18nState {
@@ -61,7 +63,7 @@ pub fn configure_i18n(
     supported_languages: Option<Vec<String>>,
     aliases: Option<HashMap<String, String>>,
 ) {
-    let mut guard = state().write().expect("i18n state poisoned");
+    let mut guard = state().write();
     if let Some(value) = default_language {
         let cleaned = value.trim().to_string();
         if !cleaned.is_empty() {
@@ -108,25 +110,17 @@ pub fn get_language() -> String {
 
 /// 获取默认语言。
 pub fn get_default_language() -> String {
-    state()
-        .read()
-        .expect("i18n state poisoned")
-        .default_language
-        .clone()
+    state().read().default_language.clone()
 }
 
 /// 获取支持语言列表。
 pub fn get_supported_languages() -> Vec<String> {
-    state()
-        .read()
-        .expect("i18n state poisoned")
-        .supported_languages
-        .clone()
+    state().read().supported_languages.clone()
 }
 
 /// 获取语言别名映射。
 pub fn get_language_aliases() -> HashMap<String, String> {
-    state().read().expect("i18n state poisoned").aliases.clone()
+    state().read().aliases.clone()
 }
 
 /// 输出 i18n 配置，供接口使用。
@@ -140,7 +134,7 @@ pub fn t_with_params(key: &str, params: &HashMap<String, String>) -> String {
         return "".to_string();
     }
     let language = get_language();
-    let state = state().read().expect("i18n state poisoned");
+    let state = state().read();
     let entry = state.messages.get(key);
     let template = entry
         .and_then(|map| map.get(&language))
@@ -158,7 +152,7 @@ pub fn get_known_prefixes(key: &str) -> Vec<String> {
     if key.trim().is_empty() {
         return Vec::new();
     }
-    let state = state().read().expect("i18n state poisoned");
+    let state = state().read();
     let entry = match state.messages.get(key) {
         Some(entry) => entry,
         None => return Vec::new(),
@@ -223,7 +217,7 @@ fn normalize_language_code(value: &str) -> Option<String> {
         return None;
     }
     let lower = cleaned.to_lowercase();
-    let state = state().read().expect("i18n state poisoned");
+    let state = state().read();
     if let Some(mapped) = state.aliases.get(&lower) {
         return Some(mapped.clone());
     }
@@ -234,9 +228,13 @@ fn normalize_language_code(value: &str) -> Option<String> {
 }
 
 fn format_template(template: &str, params: &HashMap<String, String>) -> String {
-    static FORMAT_RE: OnceLock<Regex> = OnceLock::new();
-    let regex = FORMAT_RE
-        .get_or_init(|| Regex::new(r"\{([a-zA-Z0-9_]+)(:[^}]+)?\}").expect("format regex invalid"));
+    static FORMAT_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    let Some(regex) = FORMAT_RE
+        .get_or_init(|| compile_regex(r"\{([a-zA-Z0-9_]+)(:[^}]+)?\}", "format_placeholder"))
+        .as_ref()
+    else {
+        return template.to_string();
+    };
     regex
         .replace_all(template, |caps: &regex::Captures| {
             let key = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -252,6 +250,16 @@ fn format_template(template: &str, params: &HashMap<String, String>) -> String {
             value.clone()
         })
         .to_string()
+}
+
+fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            error!("invalid i18n regex {label}: {err}");
+            None
+        }
+    }
 }
 
 fn format_with_spec(value: &str, spec: &str) -> Option<String> {

@@ -23,6 +23,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
+use tracing::error;
 use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -57,15 +58,23 @@ async fn wunder_entry(
             .stream(request)
             .await
             .map_err(map_orchestrator_error)?;
-        let mapped = stream.map(|event| {
-            let event = event.unwrap();
-            let mut builder = Event::default()
-                .event(event.event)
-                .data(event.data.to_string());
-            if let Some(id) = event.id {
-                builder = builder.id(id);
+        let mapped = stream.map(|event| match event {
+            Ok(event) => {
+                let mut builder = Event::default()
+                    .event(event.event)
+                    .data(event.data.to_string());
+                if let Some(id) = event.id {
+                    builder = builder.id(id);
+                }
+                Ok::<Event, std::convert::Infallible>(builder)
             }
-            Ok::<Event, std::convert::Infallible>(builder)
+            Err(err) => {
+                error!("sse stream error: {err}");
+                let payload = json!({ "event": "error", "message": err.to_string() });
+                Ok::<Event, std::convert::Infallible>(
+                    Event::default().event("error").data(payload.to_string()),
+                )
+            }
         });
         let sse = Sse::new(mapped)
             .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));

@@ -9,10 +9,11 @@ use crate::tools::{
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use sysinfo::System;
 
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
@@ -58,16 +59,13 @@ pub fn read_prompt_template(path: &Path) -> String {
         .unwrap_or(0.0);
     let cache_key = resolved.to_string_lossy().to_string();
     let cache = prompt_file_cache();
-    if let Some((cached_mtime, cached_text)) = cache.lock().unwrap().get(&cache_key) {
+    if let Some((cached_mtime, cached_text)) = cache.lock().get(&cache_key) {
         if *cached_mtime == mtime {
             return cached_text.clone();
         }
     }
     let text = std::fs::read_to_string(&resolved).unwrap_or_default();
-    cache
-        .lock()
-        .unwrap()
-        .insert(cache_key, (mtime, text.clone()));
+    cache.lock().insert(cache_key, (mtime, text.clone()));
     text
 }
 
@@ -192,7 +190,7 @@ impl PromptComposer {
     }
 
     fn get_cached_prompt(&self, key: &str, now: f64) -> Option<String> {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock();
         let entry = cache.entries.get(key)?;
         if now - entry.timestamp > self.ttl_s {
             return None;
@@ -201,7 +199,7 @@ impl PromptComposer {
     }
 
     fn insert_cached_prompt(&self, key: String, prompt: String, now: f64) {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
         cache.entries.insert(
             key.clone(),
             PromptCacheEntry {
@@ -218,7 +216,7 @@ impl PromptComposer {
     }
 
     fn get_cached_tool_specs(&self, key: &str, now: f64) -> Option<Vec<ToolSpec>> {
-        let cache = self.tool_cache.lock().unwrap();
+        let cache = self.tool_cache.lock();
         let entry = cache.entries.get(key)?;
         if now - entry.timestamp > self.ttl_s {
             return None;
@@ -227,7 +225,7 @@ impl PromptComposer {
     }
 
     fn insert_cached_tool_specs(&self, key: String, specs: Vec<ToolSpec>, now: f64) {
-        let mut cache = self.tool_cache.lock().unwrap();
+        let mut cache = self.tool_cache.lock();
         cache.entries.insert(
             key.clone(),
             ToolSpecCacheEntry {

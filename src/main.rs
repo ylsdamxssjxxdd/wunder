@@ -29,19 +29,22 @@ mod workspace;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::middleware::{from_fn_with_state, Next};
-use axum::response::Response;
+use axum::middleware::{from_fn, from_fn_with_state, Next};
+use axum::response::{IntoResponse, Response};
 use axum::Router;
 use config::Config;
 use config_store::ConfigStore;
+use futures::FutureExt;
 use shutdown::shutdown_signal;
 use state::AppState;
+use std::any::Any as StdAny;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -63,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(from_fn_with_state(state.clone(), language_guard))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(from_fn(panic_guard))
         .with_state(state.clone());
 
     let addr = bind_address(&config);
@@ -242,6 +246,32 @@ async fn language_guard(
         }
     }
     Ok(response)
+}
+
+async fn panic_guard(request: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let language = resolve_language_from_request(&request);
+    let result = AssertUnwindSafe(next.run(request)).catch_unwind().await;
+    match result {
+        Ok(response) => Ok(response),
+        Err(panic) => {
+            let detail = panic_message(panic.as_ref());
+            error!("panic while handling {method} {path}: {detail}");
+            let message = i18n::with_language(language, async { i18n::t("error.internal") }).await;
+            Ok((StatusCode::INTERNAL_SERVER_ERROR, message).into_response())
+        }
+    }
+}
+
+fn panic_message(panic: &(dyn StdAny + Send)) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        return message.to_string();
+    }
+    if let Some(message) = panic.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic".to_string()
 }
 
 fn resolve_language_from_request(request: &Request<Body>) -> String {

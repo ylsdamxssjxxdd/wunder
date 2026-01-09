@@ -1,5 +1,7 @@
 // 统一处理退出信号，便于优雅停机。
 use tracing::info;
+#[cfg(unix)]
+use tracing::warn;
 
 pub async fn shutdown_signal() {
     // 同时监听 Ctrl+C 与 SIGTERM，保证容器关闭时优雅退出。
@@ -12,8 +14,14 @@ pub async fn shutdown_signal() {
     #[cfg(unix)]
     let terminate = async {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut stream = signal(SignalKind::terminate()).expect("无法注册 SIGTERM 监听器");
-        stream.recv().await;
+        match signal(SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(err) => {
+                warn!("无法注册 SIGTERM 监听器: {err}");
+            }
+        }
     };
 
     #[cfg(not(unix))]

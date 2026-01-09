@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
+use tracing::error;
 use walkdir::WalkDir;
 
 const DEFAULT_MAX_DOCUMENTS: usize = 5;
@@ -360,12 +361,15 @@ fn parse_markdown_sections(path: &Path) -> Vec<KnowledgeSection> {
         });
     };
 
+    let heading_re = heading_regex();
     for line in text.lines() {
-        if let Some(caps) = heading_regex().captures(line.trim()) {
-            flush(&mut sections, &mut buffer, &current_h1);
-            current_h1 = Some(caps[1].trim().to_string());
-            buffer.clear();
-            continue;
+        if let Some(regex) = heading_re {
+            if let Some(caps) = regex.captures(line.trim()) {
+                flush(&mut sections, &mut buffer, &current_h1);
+                current_h1 = Some(caps[1].trim().to_string());
+                buffer.clear();
+                continue;
+            }
         }
         buffer.push(line.to_string());
     }
@@ -458,7 +462,10 @@ fn build_question(base_name: &str, query: &str, candidates: &[KnowledgeSection])
 }
 
 fn extract_structured_documents(reply: &str) -> Vec<Value> {
-    let Some(caps) = knowledge_block_regex().captures(reply) else {
+    let Some(regex) = knowledge_block_regex() else {
+        return Vec::new();
+    };
+    let Some(caps) = regex.captures(reply) else {
         return Vec::new();
     };
     let block = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
@@ -607,10 +614,12 @@ fn select_candidate_sections(
 fn extract_tokens(query: &str) -> Vec<String> {
     let lowered = query.to_lowercase();
     let mut tokens = Vec::new();
-    for mat in ascii_token_regex().find_iter(&lowered) {
-        let text = mat.as_str().trim();
-        if text.len() >= 2 {
-            tokens.push(text.to_string());
+    if let Some(regex) = ascii_token_regex() {
+        for mat in regex.find_iter(&lowered) {
+            let text = mat.as_str().trim();
+            if text.len() >= 2 {
+                tokens.push(text.to_string());
+            }
         }
     }
     for ch in query.chars() {
@@ -653,8 +662,14 @@ fn resolve_positive_int(value: Option<usize>, default: usize) -> usize {
 }
 
 fn strip_markdown(content: &str) -> String {
-    let cleaned = markdown_clean_regex().replace_all(content, "");
-    let collapsed = whitespace_regex().replace_all(&cleaned, " ");
+    let cleaned = match markdown_clean_regex() {
+        Some(regex) => regex.replace_all(content, "").to_string(),
+        None => content.to_string(),
+    };
+    let collapsed = match whitespace_regex() {
+        Some(regex) => regex.replace_all(&cleaned, " ").to_string(),
+        None => cleaned,
+    };
     collapsed.trim().to_string()
 }
 
@@ -662,31 +677,49 @@ fn is_chinese(ch: char) -> bool {
     ('\u{4e00}'..='\u{9fff}').contains(&ch)
 }
 
-fn heading_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"^#\\s+(.+?)\\s*$").expect("invalid heading regex"))
+fn heading_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"^#\\s+(.+?)\\s*$", "heading"))
+        .as_ref()
 }
 
-fn markdown_clean_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"[#>`*_`]+").expect("invalid markdown regex"))
+fn markdown_clean_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"[#>`*_`]+", "markdown_clean"))
+        .as_ref()
 }
 
-fn whitespace_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"\\s+").expect("invalid whitespace regex"))
+fn whitespace_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"\\s+", "whitespace"))
+        .as_ref()
 }
 
-fn ascii_token_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"[a-z0-9]+").expect("invalid token regex"))
+fn ascii_token_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"[a-z0-9]+", "ascii_token"))
+        .as_ref()
 }
 
-fn knowledge_block_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"(?s)<knowledge>(.*?)</knowledge>").expect("invalid knowledge regex")
-    })
+fn knowledge_block_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"(?s)<knowledge>(.*?)</knowledge>", "knowledge_block"))
+        .as_ref()
+}
+
+fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            error!("invalid knowledge regex {label}: {err}");
+            None
+        }
+    }
 }
 
 fn full_text_labels() -> &'static HashSet<String> {

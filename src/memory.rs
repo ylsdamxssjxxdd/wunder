@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::error;
 
 const DEFAULT_MAX_RECORDS: i64 = 30;
 
@@ -59,7 +60,10 @@ impl MemoryStore {
         let mut segments = Vec::new();
         let bullet_re = bullet_regex();
         for line in raw.lines() {
-            let cleaned = bullet_re.replace(line.trim(), "").trim().to_string();
+            let cleaned = match bullet_re {
+                Some(regex) => regex.replace(line.trim(), "").trim().to_string(),
+                None => line.trim().to_string(),
+            };
             if !cleaned.is_empty() {
                 segments.push(cleaned);
             }
@@ -315,7 +319,7 @@ fn extract_tagged_summary(text: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let regex = tagged_summary_regex();
+    let regex = tagged_summary_regex()?;
     let mut parts = Vec::new();
     for caps in regex.captures_iter(trimmed) {
         if let Some(content) = caps.get(1) {
@@ -492,15 +496,26 @@ fn now_ts_value() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
-fn bullet_regex() -> &'static Regex {
-    static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"^[-*\u2022]\s*").expect("invalid bullet regex"))
+fn bullet_regex() -> Option<&'static Regex> {
+    static REGEX: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"^[-*\u2022]\s*", "bullet"))
+        .as_ref()
 }
 
-fn tagged_summary_regex() -> &'static Regex {
-    static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"(?is)<memory_summary>(.*?)</memory_summary>")
-            .expect("invalid memory_summary regex")
-    })
+fn tagged_summary_regex() -> Option<&'static Regex> {
+    static REGEX: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    REGEX
+        .get_or_init(|| compile_regex(r"(?is)<memory_summary>(.*?)</memory_summary>", "summary"))
+        .as_ref()
+}
+
+fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            error!("invalid memory regex {label}: {err}");
+            None
+        }
+    }
 }

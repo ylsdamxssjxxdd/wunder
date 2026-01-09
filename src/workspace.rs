@@ -5,6 +5,7 @@ use crate::storage::StorageBackend;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
 use dashmap::DashMap;
+use parking_lot::Mutex;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -14,7 +15,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -159,7 +160,7 @@ pub struct WorkspaceManager {
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
     versions: DashMap<String, u64>,
-    path_guard: Regex,
+    path_guard: Option<Regex>,
     tree_cache: Mutex<TreeCache>,
     tree_cache_ttl_s: f64,
     tree_cache_idle_ttl_s: f64,
@@ -188,7 +189,13 @@ impl WorkspaceManager {
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             versions: DashMap::new(),
-            path_guard: Regex::new(r#"[\\:*?\"<>|]"#).unwrap(),
+            path_guard: match Regex::new(r#"[\\:*?\"<>|]"#) {
+                Ok(regex) => Some(regex),
+                Err(err) => {
+                    warn!("invalid workspace path guard regex: {err}");
+                    None
+                }
+            },
             tree_cache: Mutex::new(TreeCache::default()),
             tree_cache_ttl_s: TREE_CACHE_TTL_S,
             tree_cache_idle_ttl_s: TREE_CACHE_IDLE_TTL_S,
@@ -363,7 +370,7 @@ impl WorkspaceManager {
         }
         let now = now_ts();
         {
-            let mut state = self.retention_state.lock().unwrap();
+            let mut state = self.retention_state.lock();
             if state.running || now - state.last_cleanup < self.retention_interval_s {
                 return;
             }
@@ -378,12 +385,12 @@ impl WorkspaceManager {
                 let _ =
                     tokio::task::spawn_blocking(move || storage.cleanup_retention(retention_days))
                         .await;
-                let mut guard = state.lock().unwrap();
+                let mut guard = state.lock();
                 guard.running = false;
             });
         } else {
             let _ = storage.cleanup_retention(retention_days);
-            let mut guard = state.lock().unwrap();
+            let mut guard = state.lock();
             guard.running = false;
         }
     }
@@ -398,8 +405,10 @@ impl WorkspaceManager {
             }
             return Err(anyhow!("路径越界"));
         }
-        if self.path_guard.is_match(trimmed) && !trimmed.is_empty() {
-            return Err(anyhow!("路径包含非法字符"));
+        if let Some(ref guard) = self.path_guard {
+            if guard.is_match(trimmed) && !trimmed.is_empty() {
+                return Err(anyhow!("路径包含非法字符"));
+            }
         }
         for component in target_path.components() {
             match component {
@@ -742,7 +751,7 @@ impl WorkspaceManager {
     pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {
         let now = now_ts();
         {
-            let cache = self.user_usage_cache.lock().unwrap();
+            let cache = self.user_usage_cache.lock();
             if cache.updated_ts > 0.0 && now - cache.updated_ts < self.user_usage_cache_ttl_s {
                 return cache.data.clone();
             }
@@ -769,7 +778,7 @@ impl WorkspaceManager {
             let count = *stats.get("tool_records").unwrap_or(&0);
             entry.insert("tool_records".to_string(), count);
         }
-        let mut cache = self.user_usage_cache.lock().unwrap();
+        let mut cache = self.user_usage_cache.lock();
         cache.data = combined.clone();
         cache.updated_ts = now;
         combined
@@ -827,12 +836,12 @@ impl WorkspaceManager {
         let legacy_history_deleted = fs::remove_dir_all(&legacy_root).is_ok();
         let safe_id = self.safe_user_id(cleaned);
         {
-            let mut cache = self.tree_cache.lock().unwrap();
+            let mut cache = self.tree_cache.lock();
             cache.cache.remove(&safe_id);
             cache.dirty.remove(&safe_id);
         }
         {
-            let mut cache = self.search_cache.lock().unwrap();
+            let mut cache = self.search_cache.lock();
             cache.remove(&safe_id);
         }
         let _ = self.versions.remove(&safe_id);
@@ -958,7 +967,7 @@ impl WorkspaceManager {
         let safe_id = self.safe_user_id(user_id);
         let now = now_ts();
         {
-            let mut cache = self.tree_cache.lock().unwrap();
+            let mut cache = self.tree_cache.lock();
             let dirty = cache.dirty.contains(&safe_id);
             if let Some(entry) = cache.cache.get_mut(&safe_id) {
                 entry.last_access_ts = now;
@@ -993,7 +1002,7 @@ impl WorkspaceManager {
         };
         let now = now_ts();
         let safe_id = self.safe_user_id(user_id);
-        let mut cache = self.tree_cache.lock().unwrap();
+        let mut cache = self.tree_cache.lock();
         let was_dirty = cache.dirty.remove(&safe_id);
         let entry = cache
             .cache
@@ -1021,7 +1030,7 @@ impl WorkspaceManager {
     pub fn mark_tree_dirty(&self, user_id: &str) {
         let safe_id = self.safe_user_id(user_id);
         self.increment_version(&safe_id);
-        let mut cache = self.tree_cache.lock().unwrap();
+        let mut cache = self.tree_cache.lock();
         cache.dirty.insert(safe_id);
     }
 
@@ -1032,7 +1041,7 @@ impl WorkspaceManager {
 
     pub fn get_tree_cache_version(&self, user_id: &str) -> u64 {
         let safe_id = self.safe_user_id(user_id);
-        let cache = self.tree_cache.lock().unwrap();
+        let cache = self.tree_cache.lock();
         cache
             .cache
             .get(&safe_id)
@@ -1135,7 +1144,7 @@ impl WorkspaceManager {
     }
 
     fn get_search_index(&self, safe_id: &str, version: u64, now: f64) -> Option<SearchIndex> {
-        let mut cache = self.search_cache.lock().unwrap();
+        let mut cache = self.search_cache.lock();
         let Some(entry) = cache.get_mut(safe_id) else {
             return None;
         };
@@ -1156,7 +1165,7 @@ impl WorkspaceManager {
     }
 
     fn store_search_index(&self, safe_id: String, index: SearchIndex) {
-        let mut cache = self.search_cache.lock().unwrap();
+        let mut cache = self.search_cache.lock();
         cache.insert(safe_id, index);
         self.evict_search_cache_locked(&mut cache, now_ts());
     }

@@ -3,15 +3,13 @@ use crate::i18n;
 use crate::storage::{SessionLockStatus, StorageBackend};
 use anyhow::Result;
 use chrono::Utc;
+use parking_lot::Mutex;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Mutex,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct SqliteStorage {
     db_path: PathBuf,
@@ -86,7 +84,7 @@ impl StorageBackend for SqliteStorage {
         if self.initialized.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let _guard = self.init_guard.lock().unwrap();
+        let _guard = self.init_guard.lock();
         if self.initialized.load(Ordering::SeqCst) {
             return Ok(());
         }

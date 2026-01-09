@@ -3,11 +3,11 @@ use crate::storage::{SessionLockStatus, StorageBackend};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
+use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
@@ -27,12 +27,14 @@ struct PgConn<'a> {
 
 impl PgConn<'_> {
     fn batch_execute(&mut self, query: &str) -> Result<()> {
-        self.storage.block_on(self.client.batch_execute(query))?;
+        self.storage.block_on(self.client.batch_execute(query))??;
         Ok(())
     }
 
     fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
-        Ok(self.storage.block_on(self.client.execute(query, params))?)
+        Ok(self
+            .storage
+            .block_on(self.client.execute(query, params))??)
     }
 
     fn query(
@@ -40,7 +42,7 @@ impl PgConn<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<tokio_postgres::Row>> {
-        Ok(self.storage.block_on(self.client.query(query, params))?)
+        Ok(self.storage.block_on(self.client.query(query, params))??)
     }
 
     fn query_opt(
@@ -50,11 +52,11 @@ impl PgConn<'_> {
     ) -> Result<Option<tokio_postgres::Row>> {
         Ok(self
             .storage
-            .block_on(self.client.query_opt(query, params))?)
+            .block_on(self.client.query_opt(query, params))??)
     }
 
     fn transaction<'a>(&'a mut self) -> Result<PgTx<'a>> {
-        let tx = self.storage.block_on(self.client.transaction())?;
+        let tx = self.storage.block_on(self.client.transaction())??;
         Ok(PgTx {
             storage: self.storage,
             tx,
@@ -69,7 +71,7 @@ struct PgTx<'a> {
 
 impl PgTx<'_> {
     fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
-        Ok(self.storage.block_on(self.tx.execute(query, params))?)
+        Ok(self.storage.block_on(self.tx.execute(query, params))??)
     }
 
     fn query_one(
@@ -77,7 +79,7 @@ impl PgTx<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<tokio_postgres::Row> {
-        Ok(self.storage.block_on(self.tx.query_one(query, params))?)
+        Ok(self.storage.block_on(self.tx.query_one(query, params))??)
     }
 
     fn query_opt(
@@ -85,11 +87,11 @@ impl PgTx<'_> {
         query: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<tokio_postgres::Row>> {
-        Ok(self.storage.block_on(self.tx.query_opt(query, params))?)
+        Ok(self.storage.block_on(self.tx.query_opt(query, params))??)
     }
 
     fn commit(self) -> Result<()> {
-        self.storage.block_on(self.tx.commit())?;
+        self.storage.block_on(self.tx.commit())??;
         Ok(())
     }
 }
@@ -115,15 +117,17 @@ impl PostgresStorage {
         })
     }
 
-    fn block_on<F, T>(&self, fut: F) -> T
+    fn block_on<F, T>(&self, fut: F) -> Result<T>
     where
         F: Future<Output = T>,
     {
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
-            Err(_) => tokio::runtime::Runtime::new()
-                .expect("create tokio runtime for postgres")
-                .block_on(fut),
+            Ok(handle) => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
+            Err(_) => {
+                let runtime = tokio::runtime::Runtime::new()
+                    .map_err(|err| anyhow!("create tokio runtime for postgres: {err}"))?;
+                Ok(runtime.block_on(fut))
+            }
         }
     }
 
@@ -160,7 +164,7 @@ impl PostgresStorage {
     }
 
     fn conn(&self) -> Result<PgConn<'_>> {
-        let client = self.block_on(self.pool.get())?;
+        let client = self.block_on(self.pool.get())??;
         Ok(PgConn {
             storage: self,
             client,
@@ -173,7 +177,7 @@ impl StorageBackend for PostgresStorage {
         if self.initialized.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let _guard = self.init_guard.lock().unwrap();
+        let _guard = self.init_guard.lock();
         if self.initialized.load(Ordering::SeqCst) {
             return Ok(());
         }

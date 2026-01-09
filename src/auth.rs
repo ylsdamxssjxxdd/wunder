@@ -37,10 +37,14 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     }
     if let Some(value) = headers.get(AUTHORIZATION) {
         let text = value.to_str().ok()?.trim();
-        if text.len() >= 7 && text[..7].eq_ignore_ascii_case("bearer ") {
-            let raw = text[7..].trim();
-            if !raw.is_empty() {
-                return Some(raw.to_string());
+        if let Some(prefix) = text.get(..7) {
+            if prefix.eq_ignore_ascii_case("bearer ") {
+                if let Some(raw) = text.get(7..) {
+                    let cleaned = raw.trim();
+                    if !cleaned.is_empty() {
+                        return Some(cleaned.to_string());
+                    }
+                }
             }
         }
     }

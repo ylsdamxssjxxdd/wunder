@@ -7,6 +7,7 @@ use crate::tools::{builtin_aliases, resolve_tool_name};
 use anyhow::{anyhow, Result};
 use axum::Router;
 use futures::StreamExt;
+use parking_lot::Mutex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION};
 use rmcp::handler::client::ClientHandler;
 use rmcp::handler::server::ServerHandler;
@@ -27,7 +28,7 @@ use serde_json::{json, Value};
 use sse_stream::SseStream;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -653,7 +654,7 @@ fn build_mcp_client_key(headers: &HeaderMap, timeout_s: Option<u64>) -> String {
 fn build_mcp_client(headers: HeaderMap, timeout_s: Option<u64>) -> Result<reqwest::Client> {
     let key = build_mcp_client_key(&headers, timeout_s);
     let cache = mcp_client_cache();
-    if let Some(client) = cache.lock().unwrap().get(&key) {
+    if let Some(client) = cache.lock().get(&key) {
         return Ok(client.clone());
     }
     let mut builder = reqwest::Client::builder().default_headers(headers);
@@ -663,7 +664,7 @@ fn build_mcp_client(headers: HeaderMap, timeout_s: Option<u64>) -> Result<reqwes
         }
     }
     let client = builder.build()?;
-    cache.lock().unwrap().insert(key, client.clone());
+    cache.lock().insert(key, client.clone());
     Ok(client)
 }
 

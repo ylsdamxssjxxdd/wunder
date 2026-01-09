@@ -365,6 +365,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
+- 说明：取消会中断正在进行的 LLM/工具调用，内部轮询取消标记，通常 200ms 内生效。
 
 ### 4.1.11 `/wunder/admin/monitor/{session_id}`
 
@@ -764,7 +765,7 @@
 - 响应类型：`text/event-stream`
 - 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`tool_call`、`tool_result`、`final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
-- `event: llm_request`：模型 API 请求体（调试用；监控持久化会裁剪为 `payload_summary`，若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`）
+- `event: llm_request`：模型 API 请求体（调试用；监控持久化会裁剪为 `payload_summary`，若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
 - `event: llm_output_delta`：模型流式增量片段（调试用，`data.delta` 为正文增量，`data.reasoning_delta` 为思考增量，需按顺序拼接）
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）

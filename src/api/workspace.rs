@@ -302,10 +302,13 @@ async fn workspace_upload(
                             error_response(StatusCode::BAD_REQUEST, err.to_string())
                         })?);
                 }
-                let temp_path = temp_dir
-                    .as_ref()
-                    .unwrap()
-                    .join(format!("upload_{}", Uuid::new_v4().simple()));
+                let Some(temp_dir_ref) = temp_dir.as_ref() else {
+                    return Err(error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        i18n::t("error.internal"),
+                    ));
+                };
+                let temp_path = temp_dir_ref.join(format!("upload_{}", Uuid::new_v4().simple()));
                 save_multipart_file(field, &temp_path).await?;
                 pending_files.push(PendingUpload {
                     temp_path,

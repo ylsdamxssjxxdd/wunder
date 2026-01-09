@@ -2,6 +2,7 @@
 use regex::Regex;
 use serde_json::Value;
 use std::sync::OnceLock;
+use tracing::error;
 
 const APPROX_BYTES_PER_TOKEN: f64 = 4.0;
 const MESSAGE_TOKEN_OVERHEAD: i64 = 4;
@@ -115,7 +116,9 @@ fn estimate_string_tokens(text: &str) -> i64 {
         return IMAGE_TOKEN_ESTIMATE;
     }
     if text.contains("data:image/") {
-        let re = data_url_regex();
+        let Some(re) = data_url_regex() else {
+            return approx_token_count(text);
+        };
         let matches = re.find_iter(text).count() as i64;
         let stripped = re.replace_all(text, "[image]");
         return approx_token_count(&stripped) + matches * IMAGE_TOKEN_ESTIMATE;
@@ -123,10 +126,17 @@ fn estimate_string_tokens(text: &str) -> i64 {
     approx_token_count(text)
 }
 
-fn data_url_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        Regex::new(r"data:image/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+")
-            .expect("invalid data url regex")
-    })
+fn data_url_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| {
+            match Regex::new(r"data:image/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+") {
+                Ok(regex) => Some(regex),
+                Err(err) => {
+                    error!("invalid token_utils data url regex: {err}");
+                    None
+                }
+            }
+        })
+        .as_ref()
 }

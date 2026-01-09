@@ -744,21 +744,22 @@ class WunderOrchestrator:
                         answer = str(content or "").strip()
                     break
 
-                cleaned_content = self._strip_tool_calls(content)
-                if cleaned_content.strip():
+                assistant_content = str(content or "")
+                assistant_reasoning = str(reasoning or "")
+                if assistant_content.strip() or assistant_reasoning.strip():
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": cleaned_content,
-                            "reasoning_content": reasoning,
+                            "content": assistant_content,
+                            "reasoning_content": assistant_reasoning,
                         }
                     )
                     await self._append_chat(
                         user_id,
                         session_id,
                         "assistant",
-                        cleaned_content,
-                        reasoning,
+                        assistant_content,
+                        assistant_reasoning,
                     )
 
                 for call in tool_calls:
@@ -2006,7 +2007,8 @@ class WunderOrchestrator:
                 else:
                     raise LLMUnavailableError(t("error.llm_stream_retry_exhausted"))
             else:
-                response = await client.complete(messages)
+                response_task = asyncio.create_task(client.complete(messages))
+                response = await self._await_llm_completion(response_task, session_id)
                 # 非流式请求返回后检查取消状态，避免继续处理
                 self._ensure_not_cancelled(session_id)
                 content = self._extract_llm_content(response)
@@ -2086,6 +2088,26 @@ class WunderOrchestrator:
                     raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled")) from exc
             if monitor.is_cancelled(session_id):
                 # 取消时主动打断工具执行，避免线程一直挂起
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled"))
+
+    async def _await_llm_completion(
+        self,
+        task: asyncio.Task[Any],
+        session_id: str,
+    ) -> Any:
+        """等待 LLM 请求结束，支持在取消会话时中断阻塞调用。"""
+        poll_interval = SESSION_LOCK_POLL_INTERVAL_S
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=poll_interval)
+            if done:
+                try:
+                    return await task
+                except asyncio.CancelledError as exc:
+                    raise WunderError(ErrorCodes.CANCELLED, t("error.session_cancelled")) from exc
+            if monitor.is_cancelled(session_id):
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
