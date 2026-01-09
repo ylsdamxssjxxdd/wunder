@@ -37,7 +37,7 @@ import {
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260109-01";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-02";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-03";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
 

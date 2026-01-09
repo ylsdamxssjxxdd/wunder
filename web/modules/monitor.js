@@ -1919,13 +1919,14 @@ export const loadMonitorData = async (options = {}) => {
   // 用户管理页仅需会话列表，使用 sessions 模式避免无关的图表与热力图刷新
   const mode = options?.mode === "sessions" ? "sessions" : "full";
   const wunderBase = getWunderBase();
+  // 工具列表在后台加载，避免阻塞图表首屏渲染。
   const toolListPromise =
     mode === "full"
       ? loadAvailableTools().catch((error) => {
           appendLog(t("monitor.toolListLoadFailed", { message: error.message }));
-          return [];
+          return null;
         })
-      : Promise.resolve([]);
+      : Promise.resolve(null);
   const params = new URLSearchParams({ active_only: "false" });
   const timeRange = resolveMonitorTimeFilterRange();
   if (timeRange) {
@@ -1944,7 +1945,6 @@ export const loadMonitorData = async (options = {}) => {
   const sessions = Array.isArray(result.sessions) ? result.sessions : [];
   state.monitor.sessions = sessions;
   if (mode === "full") {
-    await toolListPromise;
     renderMonitorMetrics(result.system);
     renderServiceMetrics(result.service);
     renderSandboxMetrics(result.sandbox);
@@ -1954,10 +1954,16 @@ export const loadMonitorData = async (options = {}) => {
   }
   renderMonitorSessions(state.monitor.sessions);
   if (mode === "full") {
-    renderToolHeatmap(state.monitor.toolStats);
     if (elements.metricServiceTokenTotal) {
       renderServiceCharts(result.service, state.monitor.sessions);
     }
+    renderToolHeatmap(state.monitor.toolStats);
+    toolListPromise.then((tools) => {
+      if (!tools) {
+        return;
+      }
+      renderToolHeatmap(state.monitor.toolStats);
+    });
   }
 };
 
@@ -2308,6 +2314,5 @@ export const initMonitorPanel = () => {
     });
   }
 };
-
 
 

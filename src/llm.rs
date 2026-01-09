@@ -81,7 +81,7 @@ impl LlmClient {
         mut on_delta: F,
     ) -> Result<LlmResponse>
     where
-        F: FnMut(String) -> Fut,
+        F: FnMut(String, String) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
         let mut include_usage = self.config.stream_include_usage.unwrap_or(true);
@@ -146,10 +146,13 @@ impl LlmClient {
                             .unwrap_or("");
                         if !content_delta.is_empty() {
                             combined.push_str(content_delta);
-                            on_delta(content_delta.to_string()).await?;
                         }
                         if !reasoning_delta.is_empty() {
                             reasoning_combined.push_str(reasoning_delta);
+                        }
+                        if !content_delta.is_empty() || !reasoning_delta.is_empty() {
+                            on_delta(content_delta.to_string(), reasoning_delta.to_string())
+                                .await?;
                         }
                     }
                 }

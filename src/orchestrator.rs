@@ -1914,15 +1914,23 @@ impl Orchestrator {
             attempt += 1;
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
-                let on_delta = move |delta: String| {
+                let on_delta = move |delta: String, reasoning_delta: String| {
                     let emitter = emitter_snapshot.clone();
                     async move {
                         if emit_events {
+                            let mut payload = serde_json::Map::new();
+                            if !delta.is_empty() {
+                                payload.insert("delta".to_string(), Value::String(delta));
+                            }
+                            if !reasoning_delta.is_empty() {
+                                payload.insert(
+                                    "reasoning_delta".to_string(),
+                                    Value::String(reasoning_delta),
+                                );
+                            }
+                            payload.insert("round".to_string(), json!(round_index));
                             emitter
-                                .emit(
-                                    "llm_output_delta",
-                                    json!({ "delta": delta, "round": round_index }),
-                                )
+                                .emit("llm_output_delta", Value::Object(payload))
                                 .await;
                         }
                         Ok(())
