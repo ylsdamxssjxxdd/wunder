@@ -9,7 +9,7 @@ const MEMORY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_MEMORY_USERS_PAGE_SIZE = 100;
 const DEFAULT_MEMORY_QUEUE_PAGE_SIZE = 100;
 
-// Í³Ò»¹ÜÀí³¤ÆÚ¼ÇÒäÃæ°å×´Ì¬£¬±ÜÃâ¾É»º´æµ¼ÖÂ×Ö¶ÎÈ±Ê§
+// ç»Ÿä¸€ç®¡ç†é•¿æœŸè®°å¿†é¢æ¿çŠ¶æ€ï¼Œé¿å…æ—§ç¼“å­˜å¯¼è‡´å­—æ®µç¼ºå¤±
 const ensureMemoryState = () => {
   if (!state.memory) {
     state.memory = {
@@ -107,7 +107,7 @@ const ensureMemoryState = () => {
   }
 };
 
-// ¼ì²éÒ³ÃæÔªËØÊÇ·ñÆëÈ«£¬±ÜÃâ°ó¶¨ÊÂ¼şÊ±±¨´í
+// æ£€æŸ¥é¡µé¢å…ƒç´ æ˜¯å¦é½å…¨ï¼Œé¿å…ç»‘å®šäº‹ä»¶æ—¶æŠ¥é”™
 const ensureMemoryElements = () => {
   const requiredKeys = [
     "memoryRefreshBtn",
@@ -162,7 +162,7 @@ const ensureMemoryElements = () => {
   return true;
 };
 
-// ¹æ·¶»¯ÓÃ»§¼ÇÒäÍ³¼ÆÊı¾İ
+// è§„èŒƒåŒ–ç”¨æˆ·è®°å¿†ç»Ÿè®¡æ•°æ®
 const normalizeMemoryUser = (item) => ({
   user_id: String(item?.user_id || ""),
   enabled: Boolean(item?.enabled),
@@ -171,7 +171,7 @@ const normalizeMemoryUser = (item) => ({
   last_updated_time_ts: Number(item?.last_updated_time_ts) || 0,
 });
 
-// ¹æ·¶»¯¼ÇÒä¼ÇÂ¼Êı¾İ
+// è§„èŒƒåŒ–è®°å¿†è®°å½•æ•°æ®
 const normalizeMemoryRecord = (item) => ({
   session_id: String(item?.session_id || ""),
   summary: String(item?.summary || ""),
@@ -181,7 +181,7 @@ const normalizeMemoryRecord = (item) => ({
   updated_time_ts: Number(item?.updated_time_ts) || 0,
 });
 
-// ¹æ·¶»¯¶ÓÁĞÈÎÎñÊı¾İ
+// è§„èŒƒåŒ–é˜Ÿåˆ—ä»»åŠ¡æ•°æ®
 const normalizeMemoryQueueItem = (item) => ({
   task_id: String(item?.task_id || ""),
   user_id: String(item?.user_id || ""),
@@ -196,7 +196,7 @@ const normalizeMemoryQueueItem = (item) => ({
   elapsed_s: Number(item?.elapsed_s) || 0,
 });
 
-// ¹æ·¶»¯¶ÓÁĞÏêÇéÊı¾İ
+// è§„èŒƒåŒ–é˜Ÿåˆ—è¯¦æƒ…æ•°æ®
 const normalizeMemoryQueueDetail = (item) => ({
   ...normalizeMemoryQueueItem(item),
   request: item?.request && typeof item.request === "object" ? item.request : {},
@@ -216,7 +216,7 @@ const getFilteredMemoryUsers = () => {
   );
 };
 
-// ½âÎö¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³´óĞ¡£¬±ÜÃâÎŞĞ§Öµµ¼ÖÂäÖÈ¾Òì³£
+// è§£æè®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µå¤§å°ï¼Œé¿å…æ— æ•ˆå€¼å¯¼è‡´æ¸²æŸ“å¼‚å¸¸
 const resolveMemoryUsersPageSize = () => {
   const rawValue = Math.floor(Number(state.memory.pagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -225,7 +225,7 @@ const resolveMemoryUsersPageSize = () => {
   return rawValue;
 };
 
-// Ô¼Êø¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³Ò³Âë£¬·ÀÖ¹Ô½½ç
+// çº¦æŸè®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µé¡µç ï¼Œé˜²æ­¢è¶Šç•Œ
 const clampMemoryUsersPage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -237,7 +237,7 @@ const clampMemoryUsersPage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// ¸ù¾İ·ÖÒ³×´Ì¬²Ã¼ô¼ÇÒäÓÃ»§ÁĞ±í£¬±ÜÃâÒ»´ÎäÖÈ¾¹ı¶àĞĞ
+// æ ¹æ®åˆ†é¡µçŠ¶æ€è£å‰ªè®°å¿†ç”¨æˆ·åˆ—è¡¨ï¼Œé¿å…ä¸€æ¬¡æ¸²æŸ“è¿‡å¤šè¡Œ
 const resolveMemoryUsersPageSlice = (users) => {
   const pageSize = resolveMemoryUsersPageSize();
   const total = Array.isArray(users) ? users.length : 0;
@@ -249,7 +249,7 @@ const resolveMemoryUsersPageSlice = (users) => {
   return { total, totalPages, currentPage, pageSize, users: pageUsers };
 };
 
-// äÖÈ¾¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³¿Ø¼ş
+// æ¸²æŸ“è®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µæ§ä»¶
 const renderMemoryUsersPagination = (pageData) => {
   const {
     memoryUsersPagination,
@@ -272,7 +272,7 @@ const renderMemoryUsersPagination = (pageData) => {
   memoryUsersNextBtn.disabled = pageData.currentPage >= pageData.totalPages;
 };
 
-// ÇĞ»»¼ÇÒäÓÃ»§ÁĞ±í·ÖÒ³Ò³Âë²¢Ë¢ĞÂÁĞ±í
+// åˆ‡æ¢è®°å¿†ç”¨æˆ·åˆ—è¡¨åˆ†é¡µé¡µç å¹¶åˆ·æ–°åˆ—è¡¨
 const updateMemoryUsersPage = (delta) => {
   const current = Number(state.memory.pagination?.page) || 1;
   const nextPage = Math.max(1, current + delta);
@@ -280,7 +280,7 @@ const updateMemoryUsersPage = (delta) => {
   renderMemoryUsers();
 };
 
-// ½âÎö¼ÇÒä¶ÓÁĞ·ÖÒ³´óĞ¡£¬±ÜÃâÎŞĞ§ÖµÓ°ÏìÕ¹Ê¾
+// è§£æè®°å¿†é˜Ÿåˆ—åˆ†é¡µå¤§å°ï¼Œé¿å…æ— æ•ˆå€¼å½±å“å±•ç¤º
 const resolveMemoryQueuePageSize = () => {
   const rawValue = Math.floor(Number(state.memory.queuePagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -289,7 +289,7 @@ const resolveMemoryQueuePageSize = () => {
   return rawValue;
 };
 
-// Ô¼Êø¼ÇÒä¶ÓÁĞ·ÖÒ³Ò³Âë£¬±ÜÃâ³¬³öÒ³Âë·¶Î§
+// çº¦æŸè®°å¿†é˜Ÿåˆ—åˆ†é¡µé¡µç ï¼Œé¿å…è¶…å‡ºé¡µç èŒƒå›´
 const clampMemoryQueuePage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -301,7 +301,7 @@ const clampMemoryQueuePage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// ¸ù¾İ·ÖÒ³×´Ì¬²Ã¼ô¶ÓÁĞÁĞ±í£¬¼õÉÙÒ»´ÎĞÔäÖÈ¾Ñ¹Á¦
+// æ ¹æ®åˆ†é¡µçŠ¶æ€è£å‰ªé˜Ÿåˆ—åˆ—è¡¨ï¼Œå‡å°‘ä¸€æ¬¡æ€§æ¸²æŸ“å‹åŠ›
 const resolveMemoryQueuePageSlice = (items, pageKey) => {
   const pageSize = resolveMemoryQueuePageSize();
   const total = Array.isArray(items) ? items.length : 0;
@@ -315,7 +315,7 @@ const resolveMemoryQueuePageSlice = (items, pageKey) => {
   return { total, totalPages, currentPage, pageSize, items: pageItems };
 };
 
-// äÖÈ¾¼ÇÒä¶ÓÁĞ·ÖÒ³¿Ø¼ş
+// æ¸²æŸ“è®°å¿†é˜Ÿåˆ—åˆ†é¡µæ§ä»¶
 const renderMemoryQueuePagination = (kind, pageData) => {
   const map = {
     active: {
@@ -350,7 +350,7 @@ const renderMemoryQueuePagination = (kind, pageData) => {
   target.next.disabled = pageData.currentPage >= pageData.totalPages;
 };
 
-// ÇĞ»»¼ÇÒä¶ÓÁĞ·ÖÒ³Ò³Âë²¢Ë¢ĞÂÁĞ±í
+// åˆ‡æ¢è®°å¿†é˜Ÿåˆ—åˆ†é¡µé¡µç å¹¶åˆ·æ–°åˆ—è¡¨
 const updateMemoryQueuePage = (pageKey, delta) => {
   const current = Number(state.memory.queuePagination?.[pageKey]) || 1;
   const nextPage = Math.max(1, current + delta);
@@ -360,7 +360,7 @@ const updateMemoryQueuePage = (pageKey, delta) => {
   renderMemoryStatus();
 };
 
-// äÖÈ¾ÓÃ»§ÁĞ±í
+// æ¸²æŸ“ç”¨æˆ·åˆ—è¡¨
 const renderMemoryUsers = () => {
   elements.memoryUsersBody.textContent = "";
   const hasUsers = Array.isArray(state.memory.users) && state.memory.users.length > 0;
@@ -432,7 +432,7 @@ const renderMemoryUsers = () => {
   });
 };
 
-// äÖÈ¾¼ÇÒäµ¯´°Í·²¿Óë²Ù×÷Çø
+// æ¸²æŸ“è®°å¿†å¼¹çª—å¤´éƒ¨ä¸æ“ä½œåŒº
 const renderMemoryModalHeader = () => {
   const userId = state.memory.selectedId;
   if (!userId) {
@@ -453,7 +453,7 @@ const renderMemoryModalHeader = () => {
   elements.memoryModalClearBtn.disabled = recordCount <= 0;
 };
 
-// äÖÈ¾¼ÇÒä¼ÇÂ¼ÁĞ±í
+// æ¸²æŸ“è®°å¿†è®°å½•åˆ—è¡¨
 const renderMemoryRecords = () => {
   elements.memoryModalRecordBody.textContent = "";
   const records = Array.isArray(state.memory.records) ? state.memory.records : [];
@@ -513,7 +513,7 @@ const renderMemoryRecords = () => {
   });
 };
 
-// ´ò¿ª¼ÇÒä¼ÇÂ¼±à¼­µ¯´°£¬ÔÊĞí¹ÜÀíÔ±Ö±½ÓĞŞ¸ÄÄÚÈİ
+// æ‰“å¼€è®°å¿†è®°å½•ç¼–è¾‘å¼¹çª—ï¼Œå…è®¸ç®¡ç†å‘˜ç›´æ¥ä¿®æ”¹å†…å®¹
 const openMemoryRecordEditor = (record) => {
   const userId = state.memory.selectedId;
   const sessionId = String(record?.session_id || "").trim();
@@ -532,12 +532,12 @@ const openMemoryRecordEditor = (record) => {
   } else if (record?.created_time) {
     metaParts.push(t("memory.record.createdAt", { time: formatTimestamp(record.created_time) }));
   }
-  elements.memoryRecordEditMeta.textContent = metaParts.join(" ¡¤ ");
+  elements.memoryRecordEditMeta.textContent = metaParts.join(" Â· ");
   elements.memoryRecordEditInput.value = String(record?.summary || "");
   elements.memoryRecordEditModal.classList.add("active");
 };
 
-// ¹Ø±Õ¼ÇÒä±à¼­µ¯´°²¢ÇåÀí×´Ì¬
+// å…³é—­è®°å¿†ç¼–è¾‘å¼¹çª—å¹¶æ¸…ç†çŠ¶æ€
 const closeMemoryRecordEditor = () => {
   elements.memoryRecordEditModal.classList.remove("active");
   elements.memoryRecordEditInput.value = "";
@@ -545,7 +545,7 @@ const closeMemoryRecordEditor = () => {
   state.memory.editingRecord = null;
 };
 
-// ±£´æ¼ÇÒä±à¼­ÄÚÈİ
+// ä¿å­˜è®°å¿†ç¼–è¾‘å†…å®¹
 const requestUpdateMemoryRecord = async () => {
   const editing = state.memory.editingRecord;
   if (!editing?.user_id || !editing?.session_id) {
@@ -607,7 +607,7 @@ const closeMemoryModal = () => {
   closeMemoryRecordEditor();
 };
 
-// À­È¡ÓÃ»§ÁĞ±í
+// æ‹‰å–ç”¨æˆ·åˆ—è¡¨
 export const loadMemoryUsers = async () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -650,7 +650,7 @@ export const loadMemoryUsers = async () => {
   }
 };
 
-// À­È¡Ö¸¶¨ÓÃ»§µÄ¼ÇÒä¼ÇÂ¼
+// æ‹‰å–æŒ‡å®šç”¨æˆ·çš„è®°å¿†è®°å½•
 const loadMemoryRecords = async (userId) => {
   const cleaned = String(userId || "").trim();
   if (!cleaned) {
@@ -679,7 +679,7 @@ const loadMemoryRecords = async (userId) => {
   }
 };
 
-// ¸üĞÂÓÃ»§³¤ÆÚ¼ÇÒä¿ª¹Ø
+// æ›´æ–°ç”¨æˆ·é•¿æœŸè®°å¿†å¼€å…³
 const updateMemoryEnabled = async (userId, enabled) => {
   const cleaned = String(userId || "").trim();
   if (!cleaned) {
@@ -718,7 +718,7 @@ const updateMemoryEnabled = async (userId, enabled) => {
   }
 };
 
-// É¾³ıµ¥Ìõ¼ÇÒä¼ÇÂ¼
+// åˆ é™¤å•æ¡è®°å¿†è®°å½•
 const requestDeleteMemoryRecord = async (sessionId) => {
   const userId = state.memory.selectedId;
   if (!userId || !sessionId) {
@@ -740,7 +740,7 @@ const requestDeleteMemoryRecord = async (sessionId) => {
   }
 };
 
-// Çå¿ÕÓÃ»§ËùÓĞ¼ÇÒä¼ÇÂ¼
+// æ¸…ç©ºç”¨æˆ·æ‰€æœ‰è®°å¿†è®°å½•
 const requestClearMemoryRecords = async () => {
   const userId = state.memory.selectedId;
   if (!userId) {
@@ -832,7 +832,7 @@ const renderMemoryQueueTable = (body, emptyElement, items, emptyText) => {
   });
 };
 
-// äÖÈ¾¼ÇÒäÌåÔËĞĞ×´Ì¬
+// æ¸²æŸ“è®°å¿†ä½“è¿è¡ŒçŠ¶æ€
 const renderMemoryStatus = () => {
   const status = state.memory.status || {};
   const active = Array.isArray(status.active) ? status.active : [];
@@ -900,7 +900,7 @@ const renderMemoryQueueDetail = () => {
   if (detail.error) {
     metaParts.push(t("memory.queue.error", { message: detail.error }));
   }
-  elements.memoryQueueMeta.textContent = metaParts.join(" ¡¤ ");
+  elements.memoryQueueMeta.textContent = metaParts.join(" Â· ");
   const payload =
     detail.request && typeof detail.request === "object" ? detail.request : {};
   const text = JSON.stringify(payload, null, 2);
@@ -956,7 +956,7 @@ const closeMemoryQueueDetail = () => {
   elements.memoryQueueResult.textContent = "";
 };
 
-// À­È¡¼ÇÒäÌåÔËĞĞ×´Ì¬
+// æ‹‰å–è®°å¿†ä½“è¿è¡ŒçŠ¶æ€
 export const loadMemoryStatus = async () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -1005,7 +1005,7 @@ const stopMemoryPolling = () => {
   state.runtime.memoryPollTimer = null;
 };
 
-// ¿ØÖÆ¼ÇÒäÌåÔËĞĞ×´Ì¬µÄÂÖÑ¯¿ª¹Ø
+// æ§åˆ¶è®°å¿†ä½“è¿è¡ŒçŠ¶æ€çš„è½®è¯¢å¼€å…³
 export const toggleMemoryPolling = (active) => {
   ensureMemoryState();
   if (active) {
@@ -1015,7 +1015,7 @@ export const toggleMemoryPolling = (active) => {
   }
 };
 
-// ³õÊ¼»¯³¤ÆÚ¼ÇÒäÃæ°å½»»¥
+// åˆå§‹åŒ–é•¿æœŸè®°å¿†é¢æ¿äº¤äº’
 export const initMemoryPanel = () => {
   ensureMemoryState();
   if (!ensureMemoryElements()) {
@@ -1027,7 +1027,7 @@ export const initMemoryPanel = () => {
   });
   elements.memorySearchInput.addEventListener("input", () => {
     state.memory.search = String(elements.memorySearchInput.value || "").trim();
-    // ËÑË÷Ìõ¼ş±ä»¯Ê±»Øµ½µÚÒ»Ò³£¬±ÜÃâ·ÖÒ³Òç³ö
+    // æœç´¢æ¡ä»¶å˜åŒ–æ—¶å›åˆ°ç¬¬ä¸€é¡µï¼Œé¿å…åˆ†é¡µæº¢å‡º
     state.memory.pagination.page = 1;
     renderMemoryUsers();
   });

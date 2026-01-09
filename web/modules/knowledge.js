@@ -20,7 +20,7 @@ const knowledgeDetailDesc = document.getElementById("knowledgeDetailDesc");
 const knowledgeFileUploadBtn = document.getElementById("knowledgeFileUploadBtn");
 const knowledgeFileUploadInput = document.getElementById("knowledgeFileUploadInput");
 
-// ¼ÇÂ¼µ±Ç°ÕýÔÚ±à¼­µÄÖªÊ¶¿âË÷Òý£¨-1 ±íÊ¾ÐÂÔö£©
+// è®°å½•å½“å‰æ­£åœ¨ç¼–è¾‘çš„çŸ¥è¯†åº“ç´¢å¼•ï¼ˆ-1 è¡¨ç¤ºæ–°å¢žï¼‰
 let knowledgeEditingIndex = -1;
 
 const syncKnowledgeEditorStyles = () => {
@@ -80,7 +80,7 @@ const syncKnowledgeEditorMetrics = () => {
       elements.knowledgeFileContent.clientHeight -
       borderY
   );
-  // Í¬²½¹ö¶¯ÌõÕ¼Î»£¬±ÜÃâ×Ô¶¯»»ÐÐ¿í¶È²»Ò»ÖÂµ¼ÖÂ¸ßÁÁ´íÎ»
+  // åŒæ­¥æ»šåŠ¨æ¡å ä½ï¼Œé¿å…è‡ªåŠ¨æ¢è¡Œå®½åº¦ä¸ä¸€è‡´å¯¼è‡´é«˜äº®é”™ä½
   elements.knowledgeFileHighlight.style.setProperty(
     "--knowledge-scrollbar-width",
     `${scrollbarWidth}px`
@@ -96,7 +96,7 @@ const updateKnowledgeEditorHighlight = () => {
     return;
   }
   syncKnowledgeEditorMetrics();
-  // Í¬²½äÖÈ¾Ò»¼¶±êÌâ¸ßÁÁ£¬°ïÖú¶¨Î»ÖªÊ¶ÌõÄ¿
+  // åŒæ­¥æ¸²æŸ“ä¸€çº§æ ‡é¢˜é«˜äº®ï¼Œå¸®åŠ©å®šä½çŸ¥è¯†æ¡ç›®
   elements.knowledgeFileHighlight.innerHTML = buildHeadingHighlightHtml(
     elements.knowledgeFileContent.value
   );
@@ -111,7 +111,7 @@ const syncKnowledgeEditorScroll = () => {
   elements.knowledgeFileHighlight.scrollLeft = elements.knowledgeFileContent.scrollLeft;
 };
 
-// doc2md Ö§³ÖµÄÀ©Õ¹ÃûÁÐ±í£¨ÓÃÓÚÇ°¶ËÑ¡Ôñ¹ýÂË£©
+// doc2md æ”¯æŒçš„æ‰©å±•ååˆ—è¡¨ï¼ˆç”¨äºŽå‰ç«¯é€‰æ‹©è¿‡æ»¤ï¼‰
 const SUPPORTED_UPLOAD_EXTENSIONS = [
   ".txt",
   ".md",
@@ -144,7 +144,7 @@ const SUPPORTED_UPLOAD_EXTENSIONS = [
 ];
 const SUPPORTED_UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
 
-// ¹æ·¶»¯ÖªÊ¶¿âÅäÖÃ£¬È·±£×Ö¶ÎÆëÈ«
+// è§„èŒƒåŒ–çŸ¥è¯†åº“é…ç½®ï¼Œç¡®ä¿å­—æ®µé½å…¨
 const normalizeKnowledgeConfig = (raw) => {
   const config = raw || {};
   return {
@@ -161,7 +161,7 @@ const normalizeKnowledgeConfig = (raw) => {
 
 const getActiveBase = () => state.knowledge.bases[state.knowledge.selectedIndex] || null;
 
-// ´ò¿ªÖªÊ¶¿âÅäÖÃµ¯´°
+// æ‰“å¼€çŸ¥è¯†åº“é…ç½®å¼¹çª—
 const openKnowledgeModal = (base = null, index = -1) => {
   if (!knowledgeModal) {
     return;
@@ -190,7 +190,7 @@ const openKnowledgeModal = (base = null, index = -1) => {
   knowledgeModalName?.focus();
 };
 
-// ¹Ø±ÕÖªÊ¶¿âÅäÖÃµ¯´°²¢ÇåÀí×´Ì¬
+// å…³é—­çŸ¥è¯†åº“é…ç½®å¼¹çª—å¹¶æ¸…ç†çŠ¶æ€
 const closeKnowledgeModal = () => {
   if (!knowledgeModal) {
     return;
@@ -199,7 +199,7 @@ const closeKnowledgeModal = () => {
   knowledgeEditingIndex = -1;
 };
 
-// ´Óµ¯´°ÖÐ¶ÁÈ¡ÅäÖÃÄÚÈÝ
+// ä»Žå¼¹çª—ä¸­è¯»å–é…ç½®å†…å®¹
 const getKnowledgeModalPayload = () => ({
   name: knowledgeModalName?.value?.trim() || "",
   description: knowledgeModalDesc?.value?.trim() || "",
@@ -207,7 +207,7 @@ const getKnowledgeModalPayload = () => ({
   enabled: knowledgeModalEnabled ? knowledgeModalEnabled.checked : true,
 });
 
-// Ð£Ñéµ¥¸öÖªÊ¶¿âÅäÖÃ£¬±ÜÃâ¿ÕÖµ»òÖØÃû
+// æ ¡éªŒå•ä¸ªçŸ¥è¯†åº“é…ç½®ï¼Œé¿å…ç©ºå€¼æˆ–é‡å
 const validateKnowledgeBase = (payload, index) => {
   if (!payload.name) {
     return t("knowledge.name.required");
@@ -269,7 +269,7 @@ const renderKnowledgeDetailHeader = () => {
   elements.knowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
   const metaParts = [base.root || t("knowledge.root.unset")];
   metaParts.push(base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled"));
-  elements.knowledgeDetailMeta.textContent = metaParts.join(" ¡¤ ");
+  elements.knowledgeDetailMeta.textContent = metaParts.join(" Â· ");
   if (knowledgeDetailDesc) {
     knowledgeDetailDesc.textContent = base.description || "";
   }
@@ -531,7 +531,7 @@ const createKnowledgeFile = async () => {
   await saveKnowledgeFile();
 };
 
-// Ö§³Ö´ÓÁÐ±íÏîÖ±½ÓÉ¾³ýÖ¸¶¨ÎÄµµ
+// æ”¯æŒä»Žåˆ—è¡¨é¡¹ç›´æŽ¥åˆ é™¤æŒ‡å®šæ–‡æ¡£
 const deleteKnowledgeFile = async (targetPath = "") => {
   const base = getActiveBase();
   if (!base || !base.name) {

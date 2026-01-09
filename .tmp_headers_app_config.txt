@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+content-type: text/javascript
+accept-ranges: bytes
+last-modified: Fri, 09 Jan 2026 01:06:32 GMT
+content-length: 4617
+content-language: zh-CN
+vary: origin, access-control-request-method, access-control-request-headers
+access-control-allow-origin: *
+date: Fri, 09 Jan 2026 01:22:35 GMT
+

@@ -50,7 +50,7 @@ let previewObjectUrl = null;
 let editorEntry = null;
 let editorLoading = false;
 
-// ¶µµ×ĞŞ¸´¹¤×÷Çø×´Ì¬£¬±ÜÃâÇĞ»»Ãæ°åÊ±×´Ì¬½á¹¹±»ÆÆ»µµ¼ÖÂäÖÈ¾Òì³£
+// å…œåº•ä¿®å¤å·¥ä½œåŒºçŠ¶æ€ï¼Œé¿å…åˆ‡æ¢é¢æ¿æ—¶çŠ¶æ€ç»“æ„è¢«ç ´åå¯¼è‡´æ¸²æŸ“å¼‚å¸¸
 const ensureWorkspaceState = () => {
   if (!(state.workspace.selectedPaths instanceof Set)) {
     state.workspace.selectedPaths = new Set();
@@ -69,7 +69,7 @@ const ensureWorkspaceState = () => {
 const normalizeWorkspaceEntries = (entries) =>
   (Array.isArray(entries) ? entries : []).filter((entry) => entry && typeof entry === "object");
 
-// Í³Ò»½âÎöÎÄ¼şºó×º£¬¹©Í¼±êÓëÔ¤ÀÀÅĞ¶ÏÊ¹ÓÃ
+// ç»Ÿä¸€è§£ææ–‡ä»¶åç¼€ï¼Œä¾›å›¾æ ‡ä¸é¢„è§ˆåˆ¤æ–­ä½¿ç”¨
 const getWorkspaceExtension = (entry) => {
   const rawName = String(entry?.name || entry?.path || "");
   const baseName = rawName.split("/").pop().split("\\").pop();
@@ -80,7 +80,7 @@ const getWorkspaceExtension = (entry) => {
   return baseName.slice(dotIndex + 1).toLowerCase();
 };
 
-// ¸ù¾İÎÄ¼şÀàĞÍÑ¡ÔñÍ¼±êÓëÅäÉ«
+// æ ¹æ®æ–‡ä»¶ç±»å‹é€‰æ‹©å›¾æ ‡ä¸é…è‰²
 const getWorkspaceEntryIcon = (entry) => {
   if (entry.type === "dir") {
     return { icon: "fa-folder", className: "icon-folder" };
@@ -119,7 +119,7 @@ const getWorkspaceEntryIcon = (entry) => {
   return { icon: "fa-file", className: "icon-file" };
 };
 
-// ¹æ·¶»¯¹¤×÷ÇøÂ·¾¶£¬Í³Ò»·Ö¸ô·û²¢ÒÆ³ıÇ°µ¼Ğ±¸Ü
+// è§„èŒƒåŒ–å·¥ä½œåŒºè·¯å¾„ï¼Œç»Ÿä¸€åˆ†éš”ç¬¦å¹¶ç§»é™¤å‰å¯¼æ–œæ 
 const normalizeWorkspacePath = (path) => {
   if (!path) {
     return "";
@@ -127,7 +127,7 @@ const normalizeWorkspacePath = (path) => {
   return String(path).replace(/\\/g, "/").replace(/^\/+/, "");
 };
 
-// ÅĞ¶ÏÎÄ¼şÊÇ·ñ¿É±à¼­£¨ÎÄ±¾ÀàĞÍÇÒ´óĞ¡¿É¿Ø£©
+// åˆ¤æ–­æ–‡ä»¶æ˜¯å¦å¯ç¼–è¾‘ï¼ˆæ–‡æœ¬ç±»å‹ä¸”å¤§å°å¯æ§ï¼‰
 const isWorkspaceTextEditable = (entry) => {
   if (!entry || entry.type !== "file") {
     return false;
@@ -140,11 +140,11 @@ const isWorkspaceTextEditable = (entry) => {
   return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 };
 
-// ¹æ·¶»¯Æ´½Ó¹¤×÷ÇøÂ·¾¶£¬±ÜÃâ³öÏÖÖØ¸´Ğ±¸Ü
+// è§„èŒƒåŒ–æ‹¼æ¥å·¥ä½œåŒºè·¯å¾„ï¼Œé¿å…å‡ºç°é‡å¤æ–œæ 
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join("/"));
 
-// ÌáÈ¡Â·¾¶µÄ¸¸¼¶Ä¿Â¼
+// æå–è·¯å¾„çš„çˆ¶çº§ç›®å½•
 const getWorkspaceParentPath = (path) => {
   const normalized = normalizeWorkspacePath(path);
   if (!normalized) {
@@ -155,7 +155,7 @@ const getWorkspaceParentPath = (path) => {
   return parts.join("/");
 };
 
-// Ğ£ÑéÃû³ÆºÏ·¨ĞÔ£¬½ûÖ¹°üº¬Â·¾¶·Ö¸ô·û
+// æ ¡éªŒåç§°åˆæ³•æ€§ï¼Œç¦æ­¢åŒ…å«è·¯å¾„åˆ†éš”ç¬¦
 const isValidWorkspaceName = (value) => {
   const trimmed = String(value || "").trim();
   if (!trimmed) {
@@ -167,7 +167,7 @@ const isValidWorkspaceName = (value) => {
   return !/[\\/]/.test(trimmed);
 };
 
-// Ğ£ÑéÂ·¾¶Æ¬¶ÎÊÇ·ñÈ«²¿ºÏ·¨
+// æ ¡éªŒè·¯å¾„ç‰‡æ®µæ˜¯å¦å…¨éƒ¨åˆæ³•
 const isValidWorkspacePath = (value) => {
   const normalized = normalizeWorkspacePath(value);
   if (!normalized) {
@@ -176,7 +176,7 @@ const isValidWorkspacePath = (value) => {
   return normalized.split("/").filter(Boolean).every(isValidWorkspaceName);
 };
 
-// ¸ù¾İµ±Ç°ÅÅĞò·½ÏòË¢ĞÂ°´Å¥Í¼±ê
+// æ ¹æ®å½“å‰æ’åºæ–¹å‘åˆ·æ–°æŒ‰é’®å›¾æ ‡
 const updateWorkspaceSortIcon = () => {
   const icon = elements.workspaceSortOrderBtn?.querySelector("i");
   if (!icon) {
@@ -186,7 +186,7 @@ const updateWorkspaceSortIcon = () => {
   icon.className = `fa-solid ${WORKSPACE_SORT_ICONS[order]}`;
 };
 
-// Ñ¡ÖĞ×´Ì¬¹ÜÀí£¨Ö§³Ö¶àÑ¡/·¶Î§Ñ¡Ôñ£©
+// é€‰ä¸­çŠ¶æ€ç®¡ç†ï¼ˆæ”¯æŒå¤šé€‰/èŒƒå›´é€‰æ‹©ï¼‰
 const updateWorkspaceSelectionMeta = () => {
   ensureWorkspaceState();
   if (!elements.workspaceSelectionMeta) {
@@ -234,9 +234,9 @@ const getWorkspaceSelectionPaths = () => {
   return Array.from(state.workspace.selectedPaths);
 };
 
-// Õ¹¿ªÊ÷ĞÎ½á¹¹ÎªÏßĞÔÁĞ±í£¬±ãÓÚ Shift Çø¼äÑ¡Ôñ
+// å±•å¼€æ ‘å½¢ç»“æ„ä¸ºçº¿æ€§åˆ—è¡¨ï¼Œä¾¿äº Shift åŒºé—´é€‰æ‹©
 const flattenWorkspaceEntries = (entries, depth = 0, result = []) => {
-  // ½öÕ¹¿ªºÏ·¨ÌõÄ¿£¬±ÜÃâÒì³£Êı¾İµ¼ÖÂäÖÈ¾±¨´í
+  // ä»…å±•å¼€åˆæ³•æ¡ç›®ï¼Œé¿å…å¼‚å¸¸æ•°æ®å¯¼è‡´æ¸²æŸ“æŠ¥é”™
   normalizeWorkspaceEntries(entries).forEach((entry) => {
     result.push(entry);
     if (entry.type !== "dir" || !state.workspace.expanded.has(entry.path)) {
@@ -277,13 +277,13 @@ const attachWorkspaceChildren = (entries, targetPath, children) => {
   if (!target || target.type !== "dir") {
     return false;
   }
-  // ¹ıÂË·Ç·¨×Ó½Úµã£¬±ÜÃâÕ¹¿ªÄ¿Â¼Ê±³öÏÖ undefined
+  // è¿‡æ»¤éæ³•å­èŠ‚ç‚¹ï¼Œé¿å…å±•å¼€ç›®å½•æ—¶å‡ºç° undefined
   target.children = normalizeWorkspaceEntries(children);
   target.childrenLoaded = true;
   return true;
 };
 
-// ½âÎöÍÏ×§ÄÚÈİ£¬Ö§³ÖÎÄ¼şÓëÎÄ¼ş¼Ğ£¨Chrome/Edge Ê¹ÓÃ webkitGetAsEntry£©
+// è§£ææ‹–æ‹½å†…å®¹ï¼Œæ”¯æŒæ–‡ä»¶ä¸æ–‡ä»¶å¤¹ï¼ˆChrome/Edge ä½¿ç”¨ webkitGetAsEntryï¼‰
 const readDirectoryEntries = (reader) =>
   new Promise((resolve) => {
     const entries = [];
@@ -353,11 +353,11 @@ const collectDroppedFiles = async (dataTransfer) => {
   }));
 };
 
-// ÅĞ¶ÏÊÇ·ñÎª¹¤×÷ÇøÄÚ²¿ÍÏ×§
+// åˆ¤æ–­æ˜¯å¦ä¸ºå·¥ä½œåŒºå†…éƒ¨æ‹–æ‹½
 const hasWorkspaceDrag = (dataTransfer) =>
   Array.from(dataTransfer?.types || []).includes(WORKSPACE_DRAG_KEY);
 
-// »ñÈ¡ÄÚ²¿ÍÏ×§Ğ¯´øµÄÂ·¾¶ÁĞ±í
+// è·å–å†…éƒ¨æ‹–æ‹½æºå¸¦çš„è·¯å¾„åˆ—è¡¨
 const getWorkspaceDragPaths = (dataTransfer) => {
   const raw = dataTransfer?.getData(WORKSPACE_DRAG_KEY) || "";
   if (!raw) {
@@ -369,12 +369,12 @@ const getWorkspaceDragPaths = (dataTransfer) => {
       return parsed.filter(Boolean);
     }
   } catch (error) {
-    // ·Ç JSON Ê±°´µ¥Ò»Â·¾¶´¦Àí
+    // é JSON æ—¶æŒ‰å•ä¸€è·¯å¾„å¤„ç†
   }
   return [raw].filter(Boolean);
 };
 
-// Ê¹ÓÃÏà¶ÔÂ·¾¶Ò»´ÎĞÔÉÏ´«£¬±ÜÃâ´óÁ¿ÇëÇó
+// ä½¿ç”¨ç›¸å¯¹è·¯å¾„ä¸€æ¬¡æ€§ä¸Šä¼ ï¼Œé¿å…å¤§é‡è¯·æ±‚
 const uploadWorkspaceGroups = async (items, basePath = "") => {
   const targetBase = normalizeWorkspacePath(basePath || state.workspace.path);
   const files = items.map((item) => item.file).filter(Boolean);
@@ -478,7 +478,7 @@ const renderWorkspaceList = (entries) => {
       metaParts.push(entry.path);
       meta.title = entry.path;
     }
-    meta.textContent = metaParts.join(" ¡¤ ");
+    meta.textContent = metaParts.join(" Â· ");
 
     main.appendChild(caret);
     main.appendChild(iconNode);
@@ -823,7 +823,7 @@ const buildWorkspaceDownloadUrl = (entry) => {
   return `${wunderBase}/workspace/download?${params.toString()}`;
 };
 
-// Éú³É¹¤×÷ÇøÑ¹Ëõ°üÏÂÔØµØÖ·£¨Ö§³ÖÈ«Á¿»òÖ¸¶¨Ä¿Â¼£©
+// ç”Ÿæˆå·¥ä½œåŒºå‹ç¼©åŒ…ä¸‹è½½åœ°å€ï¼ˆæ”¯æŒå…¨é‡æˆ–æŒ‡å®šç›®å½•ï¼‰
 const buildWorkspaceArchiveUrl = (path = "") => {
   const wunderBase = getWunderBase();
   const userId = elements.userId.value.trim();
@@ -878,7 +878,7 @@ const downloadWorkspaceEntry = (entry) => {
     return;
   }
   if (entry.type === "dir") {
-    // Ä¿Â¼ÏÂÔØ×ßÑ¹Ëõ°ü½Ó¿Ú£¬±£³ÖÄ¿Â¼½á¹¹
+    // ç›®å½•ä¸‹è½½èµ°å‹ç¼©åŒ…æ¥å£ï¼Œä¿æŒç›®å½•ç»“æ„
     const userId = getWorkspaceUserId();
     if (!userId) {
       return;
@@ -899,7 +899,7 @@ const downloadWorkspaceEntry = (entry) => {
   downloadWorkspaceByFetch(url, entry.name || "download");
 };
 
-// ÏÂÔØ¹¤×÷ÇøÈ«Á¿Ñ¹Ëõ°ü£¬±ãÓÚÒ»´ÎĞÔ±£´æËùÓĞÎÄ¼ş
+// ä¸‹è½½å·¥ä½œåŒºå…¨é‡å‹ç¼©åŒ…ï¼Œä¾¿äºä¸€æ¬¡æ€§ä¿å­˜æ‰€æœ‰æ–‡ä»¶
 const downloadWorkspaceArchive = () => {
   const url = buildWorkspaceArchiveUrl();
   if (!url) {
@@ -910,7 +910,7 @@ const downloadWorkspaceArchive = () => {
   return downloadWorkspaceByFetch(url, `workspace_${userId || "all"}.zip`);
 };
 
-// Í³Ò»»ñÈ¡ user_id£¬±ÜÃâÖØ¸´ÌáÊ¾
+// ç»Ÿä¸€è·å– user_idï¼Œé¿å…é‡å¤æç¤º
 const getWorkspaceUserId = () => {
   const userId = elements.userId.value.trim();
   if (!userId) {
@@ -920,7 +920,7 @@ const getWorkspaceUserId = () => {
   return userId;
 };
 
-// Í³Ò»ÌáÈ¡ºó¶Ë±¨´íĞÅÏ¢£¬¼æÈİ detail.message ¸ñÊ½
+// ç»Ÿä¸€æå–åç«¯æŠ¥é”™ä¿¡æ¯ï¼Œå…¼å®¹ detail.message æ ¼å¼
 const getWorkspaceErrorMessage = (result, fallback) => {
   if (result?.message) {
     return result.message;
@@ -1041,7 +1041,7 @@ const reloadWorkspaceView = async (options = {}) => {
   return loadWorkspace(options);
 };
 
-// ÇëÇóºó¶ËĞÂ½¨Ä¿Â¼
+// è¯·æ±‚åç«¯æ–°å»ºç›®å½•
 const createWorkspaceDirectory = async (path) => {
   const userId = getWorkspaceUserId();
   if (!userId) {
@@ -1065,7 +1065,7 @@ const createWorkspaceDirectory = async (path) => {
   return true;
 };
 
-// ÇëÇóºó¶ËÒÆ¶¯/ÖØÃüÃûÌõÄ¿
+// è¯·æ±‚åç«¯ç§»åŠ¨/é‡å‘½åæ¡ç›®
 const moveWorkspaceEntry = async (source, destination) => {
   const userId = getWorkspaceUserId();
   if (!userId) {
@@ -1089,7 +1089,7 @@ const moveWorkspaceEntry = async (source, destination) => {
   return true;
 };
 
-// ±£´æÎÄ¼şÄÚÈİµ½ºó¶Ë
+// ä¿å­˜æ–‡ä»¶å†…å®¹åˆ°åç«¯
 const saveWorkspaceFileContent = async (path, content, options = {}) => {
   const userId = getWorkspaceUserId();
   if (!userId) {
@@ -1247,7 +1247,7 @@ const openWorkspacePreview = async (entry) => {
       metaParts.push(updated.toLocaleString());
     }
   }
-  elements.workspacePreviewMeta.textContent = metaParts.join(" ¡¤ ");
+  elements.workspacePreviewMeta.textContent = metaParts.join(" Â· ");
   setPreviewHint("");
   resetPreviewContainer();
   elements.workspacePreviewModal.classList.add("active");
@@ -1288,7 +1288,7 @@ const openWorkspacePreview = async (entry) => {
   await renderTextPreview(entry, downloadUrl);
 };
 
-// ´ò¿ªÎÄ¼ş±à¼­µ¯´°
+// æ‰“å¼€æ–‡ä»¶ç¼–è¾‘å¼¹çª—
 const openWorkspaceEditor = async (entry) => {
   if (!entry || entry.type !== "file") {
     return;
@@ -1331,7 +1331,7 @@ const openWorkspaceEditor = async (entry) => {
   }
 };
 
-// ¹Ø±Õ±à¼­µ¯´°²¢ÇåÀí×´Ì¬
+// å…³é—­ç¼–è¾‘å¼¹çª—å¹¶æ¸…ç†çŠ¶æ€
 const closeWorkspaceEditor = () => {
   editorEntry = null;
   editorLoading = false;
@@ -1339,7 +1339,7 @@ const closeWorkspaceEditor = () => {
   elements.workspaceEditorModal.classList.remove("active");
 };
 
-// ±£´æ±à¼­ÄÚÈİ
+// ä¿å­˜ç¼–è¾‘å†…å®¹
 const saveWorkspaceEditor = async () => {
   if (!editorEntry || editorLoading) {
     return;
@@ -1542,7 +1542,7 @@ const createWorkspaceFile = async () => {
   }
 };
 
-// ĞÂ½¨ÎÄ¼ş¼Ğ
+// æ–°å»ºæ–‡ä»¶å¤¹
 const createWorkspaceFolder = async () => {
   const folderName = window.prompt(t("workspace.folder.prompt"));
   if (folderName === null) {
@@ -1598,7 +1598,7 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
   }
 };
 
-// ´¦ÀíÍÏ×§ÉÏ´«£ºÔÊĞíÎÄ¼şÓëÎÄ¼ş¼ĞÖ±½ÓÍÏÈë¹¤×÷Çø
+// å¤„ç†æ‹–æ‹½ä¸Šä¼ ï¼šå…è®¸æ–‡ä»¶ä¸æ–‡ä»¶å¤¹ç›´æ¥æ‹–å…¥å·¥ä½œåŒº
 const handleWorkspaceDragEnter = (event) => {
   event.preventDefault();
   elements.workspaceList.classList.add("dragover");
@@ -1638,7 +1638,7 @@ const handleWorkspaceDrop = async (event) => {
   }
 };
 
-// ÔÚÉÏ¼¶°´Å¥ÉÏÍÏ×§£ºÔÊĞíÖ±½ÓÒÆ¶¯µ½¸¸Ä¿Â¼
+// åœ¨ä¸Šçº§æŒ‰é’®ä¸Šæ‹–æ‹½ï¼šå…è®¸ç›´æ¥ç§»åŠ¨åˆ°çˆ¶ç›®å½•
 const handleWorkspaceUpDragOver = (event) => {
   if (!hasWorkspaceDrag(event.dataTransfer)) {
     return;
@@ -1653,14 +1653,14 @@ const handleWorkspaceUpDragOver = (event) => {
   }
 };
 
-// Àë¿ªÉÏ¼¶°´Å¥Ê±È¡Ïû¸ßÁÁ
+// ç¦»å¼€ä¸Šçº§æŒ‰é’®æ—¶å–æ¶ˆé«˜äº®
 const handleWorkspaceUpDragLeave = (event) => {
   if (!event.currentTarget?.contains(event.relatedTarget)) {
     event.currentTarget?.classList?.remove("dragover");
   }
 };
 
-// ·ÅÖÃµ½ÉÏ¼¶°´Å¥£¬´¥·¢ÒÆ¶¯µ½¸¸Ä¿Â¼
+// æ”¾ç½®åˆ°ä¸Šçº§æŒ‰é’®ï¼Œè§¦å‘ç§»åŠ¨åˆ°çˆ¶ç›®å½•
 const handleWorkspaceUpDrop = async (event) => {
   if (!state.workspace.path) {
     return;
@@ -1684,7 +1684,7 @@ const handleWorkspaceUpDrop = async (event) => {
   }
 };
 
-// ¹¤×÷ÇøÌõÄ¿ÍÏ×§£º¿ªÊ¼Ê±Ğ´ÈëÍÏ×§Â·¾¶
+// å·¥ä½œåŒºæ¡ç›®æ‹–æ‹½ï¼šå¼€å§‹æ—¶å†™å…¥æ‹–æ‹½è·¯å¾„
 const handleWorkspaceItemDragStart = (event, entry) => {
   if (!event.dataTransfer || !entry?.path) {
     return;
@@ -1696,24 +1696,24 @@ const handleWorkspaceItemDragStart = (event, entry) => {
     ? getWorkspaceSelectionPaths()
     : [entry.path];
   event.dataTransfer.setData(WORKSPACE_DRAG_KEY, JSON.stringify(selectedPaths));
-  // Í¬²½Ğ´Èë text/plain£¬ÌáÉıä¯ÀÀÆ÷¼æÈİĞÔ
+  // åŒæ­¥å†™å…¥ text/plainï¼Œæå‡æµè§ˆå™¨å…¼å®¹æ€§
   event.dataTransfer.setData("text/plain", selectedPaths[0] || entry.path);
   event.dataTransfer.effectAllowed = "move";
   event.currentTarget?.classList?.add("dragging");
 };
 
-// ÍÏ×§½áÊøÊ±ÇåÀíÑùÊ½
+// æ‹–æ‹½ç»“æŸæ—¶æ¸…ç†æ ·å¼
 const handleWorkspaceItemDragEnd = (event) => {
   event.currentTarget?.classList?.remove("dragging");
 };
 
-// ÍÏ×§½øÈëÄ¿Â¼Ê±¸ßÁÁ
+// æ‹–æ‹½è¿›å…¥ç›®å½•æ—¶é«˜äº®
 const handleWorkspaceItemDragEnter = (event) => {
   event.preventDefault();
   event.currentTarget?.classList?.add("drop-target");
 };
 
-// ÍÏ×§ĞüÍ£Ä¿Â¼Ê±ÔÊĞí·ÅÖÃ
+// æ‹–æ‹½æ‚¬åœç›®å½•æ—¶å…è®¸æ”¾ç½®
 const handleWorkspaceItemDragOver = (event) => {
   event.preventDefault();
   if (event.dataTransfer) {
@@ -1721,14 +1721,14 @@ const handleWorkspaceItemDragOver = (event) => {
   }
 };
 
-// ÍÏ×§Àë¿ªÄ¿Â¼Ê±È¡Ïû¸ßÁÁ
+// æ‹–æ‹½ç¦»å¼€ç›®å½•æ—¶å–æ¶ˆé«˜äº®
 const handleWorkspaceItemDragLeave = (event) => {
   if (!event.currentTarget?.contains(event.relatedTarget)) {
     event.currentTarget?.classList?.remove("drop-target");
   }
 };
 
-// ·ÅÖÃµ½Ä¿Â¼£ºÄÚ²¿ÍÏ×§ÔòÒÆ¶¯£¬Íâ²¿ÍÏ×§ÔòÉÏ´«
+// æ”¾ç½®åˆ°ç›®å½•ï¼šå†…éƒ¨æ‹–æ‹½åˆ™ç§»åŠ¨ï¼Œå¤–éƒ¨æ‹–æ‹½åˆ™ä¸Šä¼ 
 const handleWorkspaceItemDrop = async (event, entry) => {
   event.preventDefault();
   event.stopPropagation();
@@ -1772,7 +1772,7 @@ const handleWorkspaceItemDrop = async (event, entry) => {
   }
 };
 
-// ÖØÖÃ¹¤×÷Çø×´Ì¬£¬±ãÓÚÇĞ»»ÓÃ»§»òÖØĞÂ¼ÓÔØ
+// é‡ç½®å·¥ä½œåŒºçŠ¶æ€ï¼Œä¾¿äºåˆ‡æ¢ç”¨æˆ·æˆ–é‡æ–°åŠ è½½
 export const resetWorkspaceState = () => {
   state.workspace.path = "";
   state.workspace.parent = null;
@@ -1792,7 +1792,7 @@ export const resetWorkspaceState = () => {
   closeWorkspaceEditor();
 };
 
-// ³õÊ¼»¯¹¤×÷ÇøÏà¹Ø½»»¥
+// åˆå§‹åŒ–å·¥ä½œåŒºç›¸å…³äº¤äº’
 export const initWorkspace = () => {
   updateWorkspaceSortIcon();
   if (elements.workspaceSortSelect) {
@@ -1902,7 +1902,7 @@ export const initWorkspace = () => {
   elements.workspaceList.addEventListener("dragleave", handleWorkspaceDragLeave);
   elements.workspaceList.addEventListener("drop", handleWorkspaceDrop);
   elements.workspaceList.addEventListener("contextmenu", (event) => {
-    // ÓÒ¼ü¿Õ°×ÇøÓòÊ±½öÌá¹©ĞÂ½¨ÎÄ¼ş¼ĞµÈ²Ù×÷
+    // å³é”®ç©ºç™½åŒºåŸŸæ—¶ä»…æä¾›æ–°å»ºæ–‡ä»¶å¤¹ç­‰æ“ä½œ
     if (event.target.closest(".workspace-item")) {
       return;
     }

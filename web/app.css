@@ -93,6 +93,40 @@ body {
   color: #fff;
 }
 
+body.sidebar-collapsed .sidebar {
+  width: 64px;
+  padding: 12px 8px;
+}
+
+body.sidebar-collapsed .sidebar-title {
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 4px;
+}
+
+body.sidebar-collapsed .sidebar-title span {
+  display: none;
+}
+
+body.sidebar-collapsed .sidebar-nav {
+  padding-right: 0;
+}
+
+body.sidebar-collapsed .nav-btn {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+body.sidebar-collapsed .nav-btn span {
+  display: none;
+}
+
+body.sidebar-collapsed .nav-btn i {
+  width: auto;
+}
+
 /* 内容区：保持满高并承载多面板 */
 .content {
   flex: 1;

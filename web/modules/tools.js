@@ -4,20 +4,20 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { t } from "./i18n.js?v=20260110-01";
 
-// ¹¤¾ß¹´Ñ¡×´Ì¬Ê¹ÓÃ±¾µØ»º´æ£¬°´ user_id ¸ôÀë
+// å·¥å…·å‹¾é€‰çŠ¶æ€ä½¿ç”¨æœ¬åœ°ç¼“å­˜ï¼ŒæŒ‰ user_id éš”ç¦»
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
 const A2UI_TOOL_NAME = "a2ui";
-const FINAL_TOOL_NAMES = new Set(["×îÖÕ»Ø¸´", "final_response"]);
+const FINAL_TOOL_NAMES = new Set(["æœ€ç»ˆå›žå¤", "final_response"]);
 const DEFAULT_UNSELECTED_TOOLS = new Set([A2UI_TOOL_NAME]);
 
-// ¼æÈÝÏµÍ³ÌáÊ¾´Ê/µ÷ÊÔÃæ°åÁ½´¦ user_id ÊäÈë
+// å…¼å®¹ç³»ç»Ÿæç¤ºè¯/è°ƒè¯•é¢æ¿ä¸¤å¤„ user_id è¾“å…¥
 const getToolSelectionUserId = () =>
   String(elements.userId?.value || elements.promptUserId?.value || "").trim();
 
 const getToolSelectionStorageKey = (userId) =>
   `${TOOL_SELECTION_STORAGE_PREFIX}${userId || "anonymous"}`;
 
-// ¶ÁÈ¡»º´æ£¬¼æÈÝ¾É¸ñÊ½£¨½ö±£´æ selected Êý×é£©
+// è¯»å–ç¼“å­˜ï¼Œå…¼å®¹æ—§æ ¼å¼ï¼ˆä»…ä¿å­˜ selected æ•°ç»„ï¼‰
 const loadCachedSelection = (userId) => {
   if (!userId) {
     return null;
@@ -50,7 +50,7 @@ const loadCachedSelection = (userId) => {
   }
 };
 
-// ±£´æ¹´Ñ¡×´Ì¬ÓëÒÑÖª¹¤¾ßÁÐ±í£¬±ÜÃâË¢ÐÂºóÖØÖÃÑ¡Ôñ
+// ä¿å­˜å‹¾é€‰çŠ¶æ€ä¸Žå·²çŸ¥å·¥å…·åˆ—è¡¨ï¼Œé¿å…åˆ·æ–°åŽé‡ç½®é€‰æ‹©
 const persistToolSelection = () => {
   const userId = getToolSelectionUserId();
   if (!userId) {
@@ -74,7 +74,7 @@ const persistToolSelection = () => {
       })
     );
   } catch (error) {
-    // ºöÂÔ±¾µØ´æ´¢²»¿ÉÓÃµÄÇé¿ö
+    // å¿½ç•¥æœ¬åœ°å­˜å‚¨ä¸å¯ç”¨çš„æƒ…å†µ
   }
 };
 
@@ -242,13 +242,13 @@ export const ensureUserToolsState = () => {
 ensureToolSelectionState();
 ensureUserToolsState();
 
-// »ñÈ¡µ±Ç°ÒÑÑ¡ÔñµÄ¹¤¾ßÃû³ÆÁÐ±í
+// èŽ·å–å½“å‰å·²é€‰æ‹©çš„å·¥å…·åç§°åˆ—è¡¨
 export const getSelectedToolNames = () => {
   ensureToolSelectionState();
   return Array.from(state.toolSelection.selected);
 };
 
-// äÖÈ¾ÏµÍ³ÌáÊ¾´ÊÒ³µÄ¹¤¾ßÑ¡ÔñÁÐ±í
+// æ¸²æŸ“ç³»ç»Ÿæç¤ºè¯é¡µçš„å·¥å…·é€‰æ‹©åˆ—è¡¨
 const renderPromptToolList = (container, items, emptyText) => {
   container.textContent = "";
   if (!Array.isArray(items) || items.length === 0) {
@@ -290,7 +290,7 @@ const renderPromptToolList = (container, items, emptyText) => {
     if (item.owner_id) {
       metaParts.push(t("tools.owner", { owner: item.owner_id }));
     }
-    const description = metaParts.length ? `<span class="muted">${metaParts.join(" ¡¤ ")}</span>` : "";
+    const description = metaParts.length ? `<span class="muted">${metaParts.join(" Â· ")}</span>` : "";
     label.innerHTML = `<strong>${item.name}</strong>${description}`;
     row.appendChild(checkbox);
     row.appendChild(label);
@@ -344,7 +344,7 @@ export const applyPromptToolError = (message) => {
   }
 };
 
-// ¼ÓÔØ¿ÉÓÃ¹¤¾ßÇåµ¥£¬Ä¬ÈÏÈ«Ñ¡²¢äÖÈ¾ÌáÊ¾´ÊÒ³
+// åŠ è½½å¯ç”¨å·¥å…·æ¸…å•ï¼Œé»˜è®¤å…¨é€‰å¹¶æ¸²æŸ“æç¤ºè¯é¡µ
 export const loadAvailableTools = async () => {
   ensureToolSelectionState();
   ensureUserToolsState();
@@ -393,7 +393,7 @@ export const loadAvailableTools = async () => {
       )
     : new Set();
 
-  // Ê×´Î¼ÓÔØÓÅÏÈÓÃ»º´æ£»ÎÞ»º´æÊ±Ä¬ÈÏÈ«Ñ¡£¬µ«¹²Ïí¹¤¾ßÄ¬ÈÏ²»Ñ¡
+  // é¦–æ¬¡åŠ è½½ä¼˜å…ˆç”¨ç¼“å­˜ï¼›æ— ç¼“å­˜æ—¶é»˜è®¤å…¨é€‰ï¼Œä½†å…±äº«å·¥å…·é»˜è®¤ä¸é€‰
   if (!state.toolSelection.loaded) {
     const cached = loadCachedSelection(userId);
     if (cached && cached.selected.size) {
@@ -451,7 +451,7 @@ export const loadAvailableTools = async () => {
   schedulePromptReload();
 };
 
-// ¶ÔÍâÍ¬²½¹¤¾ßÇåµ¥£¨ÓÃÓÚ MCP/¼¼ÄÜ/ÄÚÖÃ¹¤¾ß±ä¸üºóË¢ÐÂÌáÊ¾´ÊÃæ°å£©
+// å¯¹å¤–åŒæ­¥å·¥å…·æ¸…å•ï¼ˆç”¨äºŽ MCP/æŠ€èƒ½/å†…ç½®å·¥å…·å˜æ›´åŽåˆ·æ–°æç¤ºè¯é¢æ¿ï¼‰
 export const syncPromptTools = () => {
   loadAvailableTools().catch((error) => {
     applyPromptToolError(error.message);
@@ -471,7 +471,7 @@ export const resetToolSelection = () => {
   state.toolSelection.selected = new Set();
 };
 
-// ÔÚÌáÊ¾´ÊÒ³Ãæ¿É¼ûÊ±×Ô¶¯Ë¢ÐÂÌáÊ¾´ÊÄÚÈÝ
+// åœ¨æç¤ºè¯é¡µé¢å¯è§æ—¶è‡ªåŠ¨åˆ·æ–°æç¤ºè¯å†…å®¹
 export const schedulePromptReload = () => {
   if (state.runtime.activePanel !== "prompt") {
     return;

@@ -1,6 +1,6 @@
 ﻿server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
-  host: 0.0.0.0 # 服务监听地址，0.0.0.0 表示监听所有网卡
-  port: 8000 # 服务监听端口
+  host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
+  port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 30 # 全局最大并发会话数，超过后请求排队
 
@@ -18,7 +18,7 @@ i18n: # 多语言配置
     en-us: en-US
 
 security: # 安全与权限配置
-  api_key: ylsdamxssjxxdd # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入
+  api_key: ${WUNDER_API_KEY} # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
     - '*'
   allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）
@@ -42,7 +42,7 @@ mcp: # MCP 工具配置
   timeout_s: 1200 # MCP 调用超时（秒），避免外部服务长期阻塞
   servers: # MCP 服务列表
     - name: wunder # MCP 服务名称（用于 server@tool 标识）
-      endpoint: http://127.0.0.1:8000/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
+      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
       allow_tools: # 允许调用的工具白名单（为空表示全部）
         - run
       enabled: false # 是否启用该 MCP 服务
@@ -50,7 +50,7 @@ mcp: # MCP 工具配置
       description: wunder 自托管 MCP 服务，用于执行内部智能体任务。 # 服务描述信息（用于前端展示）
       display_name: Wunder 智能体 # 服务展示名（用于前端展示）
       headers: # 额外请求头（如鉴权信息）
-        Authorization: Bearer ylsdamxssjxxdd
+        Authorization: Bearer ${WUNDER_API_KEY}
       auth: null # MCP auth 字段（可选，保留原始接入参数）
       tool_specs: # 预缓存的工具规格（避免首次调用远端探测）
         - name: run # 工具名称
@@ -67,7 +67,7 @@ a2a: # A2A 配置
   timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表
     - name: wunder # A2A 服务名称（工具名为 a2a@name）
-      endpoint: http://127.0.0.1:8000/a2a # A2A JSON-RPC 端点
+      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/a2a # A2A JSON-RPC 端点
       service_type: internal # internal 表示 Wunder 内部 A2A
       user_id: demo_user # 内部 A2A 需固定 user_id，挂载工具后无需模型传入
       enabled: false # 是否启用该服务

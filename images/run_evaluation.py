@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8000/wunder",
+        default="http://127.0.0.1:18000/wunder",
         help="目标接口地址（默认 /wunder）",
     )
     parser.add_argument(

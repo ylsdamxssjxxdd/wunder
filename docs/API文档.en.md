@@ -182,7 +182,7 @@
   - Input: `task` string
   - Behavior: fixed `user_id = wunder`, uses enabled tools, filters `wunder@run` itself
   - Output: `answer`/`session_id`/`usage`
-- Endpoint config: `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:8000/wunder/mcp}`
+- Endpoint config: `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - Timeout: `config.mcp.timeout_s`
 
 ### 4.1.2.13 `/wunder/i18n`

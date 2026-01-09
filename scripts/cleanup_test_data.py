@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="清理测试产生的用户数据与工作区残留")
     parser.add_argument(
         "--base-url",
-        default="http://127.0.0.1:8000",
+        default="http://127.0.0.1:18000",
         help="服务地址根路径（用于调用 /wunder/admin/users）",
     )
     parser.add_argument(

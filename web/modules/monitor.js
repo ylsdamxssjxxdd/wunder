@@ -15,21 +15,21 @@ import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
-// Token Ç÷ÊÆÄ¬ÈÏÕ¹Ê¾µÄÊ±¼äÍ°ÊýÁ¿£¬±ÜÃâÕÛÏßÍ¼´Ó×îÔç¼ÇÂ¼¿ªÊ¼µ¼ÖÂ¿¨¶Ù
+// Token è¶‹åŠ¿é»˜è®¤å±•ç¤ºçš„æ—¶é—´æ¡¶æ•°é‡ï¼Œé¿å…æŠ˜çº¿å›¾ä»Žæœ€æ—©è®°å½•å¼€å§‹å¯¼è‡´å¡é¡¿
 const TOKEN_TREND_MAX_BUCKETS = 24;
-// Token Ç÷ÊÆ±£ÁôµÄ×î´óÊ±¼äÍ°ÊýÁ¿£¬±ÜÃâ³¤ÆÚÔËÐÐÀÛ»ý¹ý¶àÀúÊ·Êý¾Ý
+// Token è¶‹åŠ¿ä¿ç•™çš„æœ€å¤§æ—¶é—´æ¡¶æ•°é‡ï¼Œé¿å…é•¿æœŸè¿è¡Œç´¯ç§¯è¿‡å¤šåŽ†å²æ•°æ®
 const TOKEN_TREND_RETENTION_BUCKETS = 96;
-// ÓÃ»§¹ÜÀíÏß³ÌÁÐ±í·ÖÒ³³ß´ç£¬±ÜÃâÒ»´ÎäÖÈ¾¹ý¶àÐÐ
+// ç”¨æˆ·ç®¡ç†çº¿ç¨‹åˆ—è¡¨åˆ†é¡µå°ºå¯¸ï¼Œé¿å…ä¸€æ¬¡æ¸²æŸ“è¿‡å¤šè¡Œ
 const DEFAULT_MONITOR_SESSION_PAGE_SIZE = 100;
 let tokenTrendChart = null;
 let statusChart = null;
 let statusChartClickBound = false;
 let tokenTrendZoomBound = false;
 let mcpToolNameSet = new Set();
-// ¼à¿ØÂÖÑ¯ÅäÖÃ£ºfull ÎªÍêÕû¼à¿ØÃæ°å£¬sessions ÎªÓÃ»§¹ÜÀíÒ³ÇáÁ¿ÂÖÑ¯
+// ç›‘æŽ§è½®è¯¢é…ç½®ï¼šfull ä¸ºå®Œæ•´ç›‘æŽ§é¢æ¿ï¼Œsessions ä¸ºç”¨æˆ·ç®¡ç†é¡µè½»é‡è½®è¯¢
 let monitorPollMode = "full";
 let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
-// ¹¤¾ßÈÈÁ¦Í¼°´×Üµ÷ÓÃ´ÎÊý½¥±äÅäÉ«£¨10/20/30/40 ´ÎÎªÀ¶/ÂÌ/»Æ/ºì£©
+// å·¥å…·çƒ­åŠ›å›¾æŒ‰æ€»è°ƒç”¨æ¬¡æ•°æ¸å˜é…è‰²ï¼ˆ10/20/30/40 æ¬¡ä¸ºè“/ç»¿/é»„/çº¢ï¼‰
 const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
 const TOOL_HEATMAP_MAX_VALUE = 40;
 const TOOL_HEATMAP_MIN_LIGHTNESS = 46;
@@ -45,32 +45,32 @@ const TOOL_HEATMAP_HUE_ANCHORS = [
 const TOOL_HEATMAP_TILE_SIZE = 68;
 const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
-// ÈÈÁ¦Í¼ÐèÒªÇø·Ö³£¼ûÎÄ¼þ²Ù×÷¹¤¾ßµÄÍ¼±ê£¬±ÜÃâÈ«²¿ÏÔÊ¾ÎªÍ¬Ò»ÎÄ¼þÑùÊ½
+// çƒ­åŠ›å›¾éœ€è¦åŒºåˆ†å¸¸è§æ–‡ä»¶æ“ä½œå·¥å…·çš„å›¾æ ‡ï¼Œé¿å…å…¨éƒ¨æ˜¾ç¤ºä¸ºåŒä¸€æ–‡ä»¶æ ·å¼
 const TOOL_HEATMAP_ICON_RULES = [
-  { keyword: "a2a¹Û²ì", icon: "fa-glasses" },
+  { keyword: "a2a\u89c2\u5bdf", icon: "fa-glasses" },
   { keyword: "a2a_observe", icon: "fa-glasses" },
-  { keyword: "a2aµÈ´ý", icon: "fa-clock" },
+  { keyword: "a2a\u7b49\u5f85", icon: "fa-clock" },
   { keyword: "a2a_wait", icon: "fa-clock" },
   { keyword: "a2a@", icon: "fa-diagram-project" },
   { keyword: "a2ui", icon: "fa-image" },
-  { keyword: "ÁÐ³öÎÄ¼þ", icon: "fa-folder-open" },
+  { keyword: "\u5217\u51fa\u6587\u4ef6", icon: "fa-folder-open" },
   { keyword: "list files", icon: "fa-folder-open" },
   { keyword: "list_file", icon: "fa-folder-open" },
   { keyword: "list_files", icon: "fa-folder-open" },
-  { keyword: "¶ÁÈ¡ÎÄ¼þ", icon: "fa-file-lines" },
+  { keyword: "\u8bfb\u53d6\u6587\u4ef6", icon: "fa-file-lines" },
   { keyword: "read file", icon: "fa-file-lines" },
   { keyword: "read_file", icon: "fa-file-lines" },
-  { keyword: "Ð´ÈëÎÄ¼þ", icon: "fa-file-circle-plus" },
+  { keyword: "\u5199\u5165\u6587\u4ef6", icon: "fa-file-circle-plus" },
   { keyword: "write file", icon: "fa-file-circle-plus" },
   { keyword: "write_file", icon: "fa-file-circle-plus" },
-  { keyword: "±à¼­ÎÄ¼þ", icon: "fa-pen-to-square" },
+  { keyword: "\u7f16\u8f91\u6587\u4ef6", icon: "fa-pen-to-square" },
   { keyword: "edit file", icon: "fa-pen-to-square" },
   { keyword: "edit_file", icon: "fa-pen-to-square" },
-  { keyword: "Ìæ»»ÎÄ±¾", icon: "fa-arrow-right-arrow-left" },
+  { keyword: "\u66ff\u6362\u6587\u672c", icon: "fa-arrow-right-arrow-left" },
   { keyword: "replace text", icon: "fa-arrow-right-arrow-left" },
   { keyword: "replace_text", icon: "fa-arrow-right-arrow-left" },
 ];
-// Ïß³Ì×´Ì¬»·Í¼ÅäÉ«ÓëÍ¼ÀýÅäÖÃ
+// çº¿ç¨‹çŠ¶æ€çŽ¯å›¾é…è‰²ä¸Žå›¾ä¾‹é…ç½®
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
 const STATUS_CHART_EMPTY_COLOR = "#ffffff";
 const getStatusLegend = () => [
@@ -80,7 +80,7 @@ const getStatusLegend = () => [
   t("monitor.status.cancelled"),
 ];
 const STATUS_CHART_EMPTY_NAME = "__empty__";
-// Ïß³Ì×´Ì¬Í¼ÀýÓëºó¶Ë×´Ì¬×Ö¶ÎµÄÓ³Éä£¬±ãÓÚµã»÷ºó¹ýÂË¼ÇÂ¼
+// çº¿ç¨‹çŠ¶æ€å›¾ä¾‹ä¸ŽåŽç«¯çŠ¶æ€å­—æ®µçš„æ˜ å°„ï¼Œä¾¿äºŽç‚¹å‡»åŽè¿‡æ»¤è®°å½•
 const getStatusLabelToKey = () => ({
   [t("monitor.status.active")]: "active",
   [t("monitor.status.finished")]: "finished",
@@ -88,7 +88,7 @@ const getStatusLabelToKey = () => ({
   [t("monitor.status.cancelled")]: "cancelled",
 });
 
-// ¼æÈÝ¾É°æ±¾×´Ì¬½á¹¹£¬±ÜÃâ»º´æ¾É state.js Ê±µ¼ÖÂ¼à¿ØÍ¼±íÒì³£
+// å…¼å®¹æ—§ç‰ˆæœ¬çŠ¶æ€ç»“æž„ï¼Œé¿å…ç¼“å­˜æ—§ state.js æ—¶å¯¼è‡´ç›‘æŽ§å›¾è¡¨å¼‚å¸¸
 const ensureMonitorState = () => {
   if (!state.monitor) {
     state.monitor = {
@@ -173,7 +173,7 @@ const ensureMonitorState = () => {
   if (typeof state.monitor.timeFilter.end !== "string") {
     state.monitor.timeFilter.end = "";
   }
-  // ·ÖÒ³×´Ì¬¼æÈÝ¾É»º´æ£¬±ÜÃâÇÐ»»ÓÃ»§»òË¢ÐÂºóÒ³ÂëÒì³£
+  // åˆ†é¡µçŠ¶æ€å…¼å®¹æ—§ç¼“å­˜ï¼Œé¿å…åˆ‡æ¢ç”¨æˆ·æˆ–åˆ·æ–°åŽé¡µç å¼‚å¸¸
   if (!state.monitor.pagination || typeof state.monitor.pagination !== "object") {
     state.monitor.pagination = {
       pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
@@ -201,7 +201,7 @@ const ensureMonitorState = () => {
   }
 };
 
-// ¸ñÊ½»¯¼àÊÓÊ±¼ä£¬±£Ö¤Õ¹Ê¾¼ò½à
+// æ ¼å¼åŒ–ç›‘è§†æ—¶é—´ï¼Œä¿è¯å±•ç¤ºç®€æ´
 const formatMonitorHours = (value) => {
   const hours = Number(value);
   if (!Number.isFinite(hours)) {
@@ -210,7 +210,7 @@ const formatMonitorHours = (value) => {
   return hours.toFixed(2).replace(/\.?0+$/, "");
 };
 
-// ½âÎö¼àÊÓÊ±¼ä·¶Î§£¨Ð¡Ê±£©£¬Ö§³Ö¹ÜÀíÔ±×Ô¶¨Òå
+// è§£æžç›‘è§†æ—¶é—´èŒƒå›´ï¼ˆå°æ—¶ï¼‰ï¼Œæ”¯æŒç®¡ç†å‘˜è‡ªå®šä¹‰
 const resolveMonitorTimeRangeHours = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -219,14 +219,14 @@ const resolveMonitorTimeRangeHours = (value) => {
   return parsed;
 };
 
-// »ñÈ¡µ±Ç°¼àÊÓÊ±¼ä·¶Î§£¨Ð¡Ê±£©
+// èŽ·å–å½“å‰ç›‘è§†æ—¶é—´èŒƒå›´ï¼ˆå°æ—¶ï¼‰
 const getMonitorTimeRangeHours = () => resolveMonitorTimeRangeHours(state.monitor.timeRangeHours);
 
-// »ñÈ¡µ±Ç°¼àÊÓÊ±¼ä·¶Î§£¨ºÁÃë£©£¬±ÜÃâÐ¡Êýµ¼ÖÂÊ±¼ä´Á¶ÔÆëÎó²î
+// èŽ·å–å½“å‰ç›‘è§†æ—¶é—´èŒƒå›´ï¼ˆæ¯«ç§’ï¼‰ï¼Œé¿å…å°æ•°å¯¼è‡´æ—¶é—´æˆ³å¯¹é½è¯¯å·®
 const getMonitorTimeRangeMs = () =>
   Math.max(1, Math.round(getMonitorTimeRangeHours() * ONE_HOUR_MS));
 
-// »ñÈ¡ Token Ç÷ÊÆµÄ±£Áô´°¿Ú£¬±ÜÃâÇ°¶Ë³¤Ê±¼äÔËÐÐºó¶Ñ»ý¹ý¶àÀúÊ·
+// èŽ·å– Token è¶‹åŠ¿çš„ä¿ç•™çª—å£ï¼Œé¿å…å‰ç«¯é•¿æ—¶é—´è¿è¡ŒåŽå †ç§¯è¿‡å¤šåŽ†å²
 const getTokenTrendRetentionMs = () => {
   const intervalMs = getMonitorTimeRangeMs();
   if (!intervalMs) {
@@ -235,7 +235,7 @@ const getTokenTrendRetentionMs = () => {
   return Math.max(intervalMs, intervalMs * TOKEN_TREND_RETENTION_BUCKETS);
 };
 
-// ½âÎöÉ¸Ñ¡Ê±¼äÊäÈë£¬·µ»ØºÁÃëÊ±¼ä´Á
+// è§£æžç­›é€‰æ—¶é—´è¾“å…¥ï¼Œè¿”å›žæ¯«ç§’æ—¶é—´æˆ³
 const parseMonitorFilterTimestamp = (value) => {
   if (!value) {
     return null;
@@ -244,7 +244,7 @@ const parseMonitorFilterTimestamp = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// »ñÈ¡É¸Ñ¡Ê±¼ä·¶Î§£¬Î´ÆôÓÃ»òÎÞÐ§Ê±·µ»Ø null
+// èŽ·å–ç­›é€‰æ—¶é—´èŒƒå›´ï¼Œæœªå¯ç”¨æˆ–æ— æ•ˆæ—¶è¿”å›ž null
 const resolveMonitorTimeFilterRange = () => {
   if (!state.monitor.timeFilter?.enabled) {
     return null;
@@ -260,7 +260,7 @@ const resolveMonitorTimeFilterRange = () => {
   return { start, end };
 };
 
-// ¸ñÊ½»¯É¸Ñ¡Çø¼ä±êÇ©£¬±ãÓÚÍ¼±í±êÌâÌáÊ¾
+// æ ¼å¼åŒ–ç­›é€‰åŒºé—´æ ‡ç­¾ï¼Œä¾¿äºŽå›¾è¡¨æ ‡é¢˜æç¤º
 const formatMonitorFilterLabel = (range) => {
   const locale = getCurrentLanguage();
   const format = (timestamp) =>
@@ -273,13 +273,13 @@ const formatMonitorFilterLabel = (range) => {
   return t("monitor.filter.range", { start: format(range.start), end: format(range.end) });
 };
 
-// Éú³É¼àÊÓÊ±¼ä·¶Î§µÄÎÄ°¸±êÇ©
+// ç”Ÿæˆç›‘è§†æ—¶é—´èŒƒå›´çš„æ–‡æ¡ˆæ ‡ç­¾
 const getMonitorTimeRangeLabel = () => {
   const hours = getMonitorTimeRangeHours();
   return t("monitor.window.everyHours", { hours: formatMonitorHours(hours) });
 };
 
-// Éú³É¼àÊÓÊ±¼ä´°¿ÚµÄÎÄ°¸±êÇ©£¬ÓÃÓÚ½ü¿öÍ³¼Æ
+// ç”Ÿæˆç›‘è§†æ—¶é—´çª—å£çš„æ–‡æ¡ˆæ ‡ç­¾ï¼Œç”¨äºŽè¿‘å†µç»Ÿè®¡
 const getMonitorTimeWindowLabel = () => {
   const range = resolveMonitorTimeFilterRange();
   if (range) {
@@ -289,7 +289,7 @@ const getMonitorTimeWindowLabel = () => {
   return t("monitor.window.recentHours", { hours: formatMonitorHours(hours) });
 };
 
-// Í¬²½¼àÊÓÊ±¼ä±êÌâÎÄ°¸£¬±£³ÖÍ¼±íÃèÊöÒ»ÖÂ
+// åŒæ­¥ç›‘è§†æ—¶é—´æ ‡é¢˜æ–‡æ¡ˆï¼Œä¿æŒå›¾è¡¨æè¿°ä¸€è‡´
 const updateMonitorChartTitles = () => {
   const label = getMonitorTimeRangeLabel();
   if (elements.serviceTokenTitle) {
@@ -331,7 +331,7 @@ const updateMonitorChartTitles = () => {
   }
 };
 
-// ¹æ·¶»¯¼àÊÓÊ±¼äÉèÖÃ²¢Ë¢ÐÂÏà¹ØÕ¹Ê¾
+// è§„èŒƒåŒ–ç›‘è§†æ—¶é—´è®¾ç½®å¹¶åˆ·æ–°ç›¸å…³å±•ç¤º
 const applyMonitorTimeRange = (value, options = {}) => {
   const { resetTrend = false } = options;
   const hours = resolveMonitorTimeRangeHours(value);
@@ -353,7 +353,7 @@ const applyMonitorTimeRange = (value, options = {}) => {
   }
 };
 
-// Í¬²½É¸Ñ¡Ê±¼äÊäÈë¿ò×´Ì¬
+// åŒæ­¥ç­›é€‰æ—¶é—´è¾“å…¥æ¡†çŠ¶æ€
 const syncMonitorTimeFilterInputs = () => {
   if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
     return;
@@ -371,7 +371,7 @@ const syncMonitorTimeFilterInputs = () => {
   elements.monitorTimeEnd.disabled = disabled;
 };
 
-// Ó¦ÓÃÉ¸Ñ¡Ê±¼ä²¢Ë¢ÐÂÍ¼±í
+// åº”ç”¨ç­›é€‰æ—¶é—´å¹¶åˆ·æ–°å›¾è¡¨
 const applyMonitorTimeFilter = async (options = {}) => {
   const { refresh = false } = options;
   if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
@@ -410,7 +410,7 @@ const applyMonitorTimeFilter = async (options = {}) => {
   }
 };
 
-// ³õÊ¼»¯Í¼±íÊµÀý£¬±ÜÃâÖØ¸´´´½¨µ¼ÖÂÄÚ´æÕ¼ÓÃÔö³¤
+// åˆå§‹åŒ–å›¾è¡¨å®žä¾‹ï¼Œé¿å…é‡å¤åˆ›å»ºå¯¼è‡´å†…å­˜å ç”¨å¢žé•¿
 const ensureMonitorCharts = () => {
   if (!window.echarts) {
     return false;
@@ -427,7 +427,7 @@ const ensureMonitorCharts = () => {
   return Boolean(tokenTrendChart || statusChart);
 };
 
-// µã»÷Ïß³Ì×´Ì¬»·Í¼Ê±´ò¿ª¶ÔÓ¦¼ÇÂ¼ÁÐ±í
+// ç‚¹å‡»çº¿ç¨‹çŠ¶æ€çŽ¯å›¾æ—¶æ‰“å¼€å¯¹åº”è®°å½•åˆ—è¡¨
 const handleStatusChartClick = (params) => {
   const label = String(params?.name || "");
   if (!label || label === STATUS_CHART_EMPTY_NAME) {
@@ -440,7 +440,7 @@ const handleStatusChartClick = (params) => {
   openMonitorStatusModal(label);
 };
 
-// ½ö°ó¶¨Ò»´Îµã»÷ÊÂ¼þ£¬±ÜÃâÖØ¸´×¢²áµ¼ÖÂ¶à´Îµ¯´°
+// ä»…ç»‘å®šä¸€æ¬¡ç‚¹å‡»äº‹ä»¶ï¼Œé¿å…é‡å¤æ³¨å†Œå¯¼è‡´å¤šæ¬¡å¼¹çª—
 const bindStatusChartClick = () => {
   if (!statusChart || statusChartClickBound) {
     return;
@@ -449,7 +449,7 @@ const bindStatusChartClick = () => {
   statusChart.on("click", handleStatusChartClick);
 };
 
-// ¼àÌý Token Ç÷ÊÆÍ¼Ëõ·Å£¬±ÜÃâË¢ÐÂÊ±¸²¸ÇÓÃ»§ÊÓÍ¼
+// ç›‘å¬ Token è¶‹åŠ¿å›¾ç¼©æ”¾ï¼Œé¿å…åˆ·æ–°æ—¶è¦†ç›–ç”¨æˆ·è§†å›¾
 const bindTokenTrendZoom = () => {
   if (!tokenTrendChart || tokenTrendZoomBound) {
     return;
@@ -462,7 +462,7 @@ const bindTokenTrendZoom = () => {
   });
 };
 
-// ¸ñÊ½»¯Ç÷ÊÆÍ¼Ê±¼ä±êÇ©£¬±£ÁôÈÕÆÚ±ãÓÚ¿çÌì¶Ô±È
+// æ ¼å¼åŒ–è¶‹åŠ¿å›¾æ—¶é—´æ ‡ç­¾ï¼Œä¿ç•™æ—¥æœŸä¾¿äºŽè·¨å¤©å¯¹æ¯”
 const formatTokenTrendLabel = (timestamp) =>
   new Date(timestamp).toLocaleString(getCurrentLanguage(), {
     month: "2-digit",
@@ -471,7 +471,7 @@ const formatTokenTrendLabel = (timestamp) =>
     minute: "2-digit",
   });
 
-// °´¼àÊÓÊ±¼äÁ£¶È¶ÔÆëÊ±¼ä´Á£¬±£Ö¤¿Ì¶È´ÓÕûµã¿ªÊ¼
+// æŒ‰ç›‘è§†æ—¶é—´ç²’åº¦å¯¹é½æ—¶é—´æˆ³ï¼Œä¿è¯åˆ»åº¦ä»Žæ•´ç‚¹å¼€å§‹
 const floorToIntervalBoundary = (timestamp, intervalMs) => {
   const date = new Date(timestamp);
   const midnight = new Date(date);
@@ -481,7 +481,7 @@ const floorToIntervalBoundary = (timestamp, intervalMs) => {
   return midnight.getTime() + index * intervalMs;
 };
 
-// ¼ÇÂ¼ token ÔöÁ¿£¬±ãÓÚ°´Ð¡Ê±»ã×Ü
+// è®°å½• token å¢žé‡ï¼Œä¾¿äºŽæŒ‰å°æ—¶æ±‡æ€»
 const recordTokenDeltas = (sessions) => {
   const usageMap = state.monitor.tokenUsageBySession;
   (sessions || []).forEach((session) => {
@@ -501,7 +501,7 @@ const recordTokenDeltas = (sessions) => {
   pruneTokenDeltas(Date.now());
 };
 
-// ²Ã¼ô¹ý¾ÉµÄ token ÔöÁ¿£¬±ÜÃâ³¤ÆÚÔËÐÐºóÇ÷ÊÆÊý¾ÝÅòÕÍ
+// è£å‰ªè¿‡æ—§çš„ token å¢žé‡ï¼Œé¿å…é•¿æœŸè¿è¡ŒåŽè¶‹åŠ¿æ•°æ®è†¨èƒ€
 const pruneTokenDeltas = (nowMs) => {
   const deltas = state.monitor.tokenDeltas;
   if (!Array.isArray(deltas) || !deltas.length) {
@@ -529,7 +529,7 @@ const pruneTokenDeltas = (nowMs) => {
   }
 };
 
-// »ã×Ü token ÔöÁ¿£¬Éú³É°´Ê±¼ä¼ä¸ôµÄÕÛÏßÍ¼Êý¾Ý
+// æ±‡æ€» token å¢žé‡ï¼Œç”ŸæˆæŒ‰æ—¶é—´é—´éš”çš„æŠ˜çº¿å›¾æ•°æ®
 const buildTokenSeries = (sessions) => {
   const deltas = state.monitor.tokenDeltas || [];
   const intervalMs = getMonitorTimeRangeMs();
@@ -595,7 +595,7 @@ const buildTokenSeries = (sessions) => {
     return { labels: [], values: [], latestValue: 0 };
   }
   const startBoundary = floorToIntervalBoundary(startBase, intervalMs);
-  // Ê¹ÓÃÇø¼äË÷Òý¾ÛºÏ£¬±ÜÃâÐ¡Êý¼ä¸ôµ¼ÖÂµÄÊ±¼ä´Á¾«¶ÈÎó²î
+  // ä½¿ç”¨åŒºé—´ç´¢å¼•èšåˆï¼Œé¿å…å°æ•°é—´éš”å¯¼è‡´çš„æ—¶é—´æˆ³ç²¾åº¦è¯¯å·®
   const totals = new Map();
   if (Array.isArray(deltas)) {
     deltas.forEach((item) => {
@@ -630,7 +630,7 @@ const buildTokenSeries = (sessions) => {
   return { labels, values, latestValue };
 };
 
-// ¹æ·¶»¯¹¤¾ßÁÐ±í£¬±£ÁôÀà±ðÓÃÓÚÍ¼±êÑ¡Ôñ
+// è§„èŒƒåŒ–å·¥å…·åˆ—è¡¨ï¼Œä¿ç•™ç±»åˆ«ç”¨äºŽå›¾æ ‡é€‰æ‹©
 const normalizeAvailableTools = (payload) => {
   const tools = [];
   mcpToolNameSet = new Set();
@@ -655,7 +655,7 @@ const normalizeAvailableTools = (payload) => {
   return tools;
 };
 
-// »ñÈ¡ËùÓÐ¿ÉÓÃ¹¤¾ßÁÐ±í£¬±ÜÃâÂÖÑ¯Ê±ÖØ¸´ÇëÇó
+// èŽ·å–æ‰€æœ‰å¯ç”¨å·¥å…·åˆ—è¡¨ï¼Œé¿å…è½®è¯¢æ—¶é‡å¤è¯·æ±‚
 const loadAvailableTools = async (options = {}) => {
   const { force = false } = options;
   const now = Date.now();
@@ -682,7 +682,7 @@ const loadAvailableTools = async (options = {}) => {
   return state.monitor.availableTools;
 };
 
-// ½« HSL ×ªÎª RGB£¬±ãÓÚ¼ÆËãÎÄ×Ö¶Ô±ÈÉ«
+// å°† HSL è½¬ä¸º RGBï¼Œä¾¿äºŽè®¡ç®—æ–‡å­—å¯¹æ¯”è‰²
 const hslToRgb = (hue, saturation, lightness) => {
   const h = ((Number(hue) || 0) % 360) / 360;
   const s = Math.max(0, Math.min(1, (Number(saturation) || 0) / 100));
@@ -709,7 +709,7 @@ const hslToRgb = (hue, saturation, lightness) => {
   ];
 };
 
-// ¼ÆËãÈÈÁ¦Í¼ÅäÉ«µÄ»ù´¡É«Ïà£¬±£Ö¤´ÓÀ¶¹ý¶Éµ½ºì
+// è®¡ç®—çƒ­åŠ›å›¾é…è‰²çš„åŸºç¡€è‰²ç›¸ï¼Œä¿è¯ä»Žè“è¿‡æ¸¡åˆ°çº¢
 const resolveHeatmapHue = (value) => {
   const anchors = TOOL_HEATMAP_HUE_ANCHORS;
   if (!anchors.length) {
@@ -730,7 +730,7 @@ const resolveHeatmapHue = (value) => {
   return anchors[anchors.length - 1].hue;
 };
 
-// Éú³ÉÈÈÁ¦Í¼ÑÕÉ«£¬°´×Ü´ÎÊý½¥±äÇÒ´ÎÊýÔ½¶àÔ½Éî
+// ç”Ÿæˆçƒ­åŠ›å›¾é¢œè‰²ï¼ŒæŒ‰æ€»æ¬¡æ•°æ¸å˜ä¸”æ¬¡æ•°è¶Šå¤šè¶Šæ·±
 const resolveHeatmapColor = (totalCalls) => {
   const value = Math.max(0, Number(totalCalls) || 0);
   if (value <= 0) {
@@ -749,23 +749,42 @@ const resolveHeatmapColor = (totalCalls) => {
   return { color: `rgb(${rgb.join(", ")})`, rgb };
 };
 
-// °´ÁÁ¶È¶Ô±Èµ÷ÕûÎÄ×ÖÑÕÉ«£¬±£Ö¤¿É¶ÁÐÔ
+// æŒ‰äº®åº¦å¯¹æ¯”è°ƒæ•´æ–‡å­—é¢œè‰²ï¼Œä¿è¯å¯è¯»æ€§
 const resolveHeatmapTextColor = (rgb) => {
   const [r, g, b] = rgb;
   const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
   return luminance >= 0.65 ? "#0f172a" : "#f8fafc";
 };
 
-// ¸ù¾Ý¹¤¾ßÃû³ÆÑ¡Ôñ¸üÌùºÏµÄÍ¼±ê
+
+const normalizeToolMatchKey = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_.-]+/g, "");
+
+const matchesToolKeyword = (lowerName, normalizedName, keyword) => {
+  if (!keyword) {
+    return false;
+  }
+  if (lowerName.includes(keyword)) {
+    return true;
+  }
+  const normalizedKeyword = normalizeToolMatchKey(keyword);
+  return normalizedKeyword ? normalizedName.includes(normalizedKeyword) : false;
+};
+
+// æ ¹æ®å·¥å…·åç§°é€‰æ‹©æ›´è´´åˆçš„å›¾æ ‡
 const resolveToolIcon = (name, category) => {
   const toolName = String(name || "").trim();
   const lowerName = toolName.toLowerCase();
-  // wunder@run ÊÇÌØÊâ MCP ¹¤¾ß£¬ÓÃÁúÍ¼±êÍ»³öÊ¶±ð
+  const normalizedName = normalizeToolMatchKey(lowerName);
+  // wunder@run ??? MCP ???????????
   if (lowerName === "wunder@run" || lowerName.endsWith("@wunder@run")) {
     return "fa-dragon";
   }
   for (const rule of TOOL_HEATMAP_ICON_RULES) {
-    if (lowerName.includes(rule.keyword)) {
+    if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {
       return rule.icon;
     }
   }
@@ -789,43 +808,55 @@ const resolveToolIcon = (name, category) => {
     return "fa-wrench";
   }
   if (
-    lowerName.includes("Ö´ÐÐÃüÁî") ||
-    lowerName.includes("run command") ||
-    lowerName.includes("execute command") ||
-    lowerName.includes("shell")
+    matchesToolKeyword(lowerName, normalizedName, "\u6267\u884c\u547d\u4ee4") ||
+    matchesToolKeyword(lowerName, normalizedName, "run command") ||
+    matchesToolKeyword(lowerName, normalizedName, "execute command") ||
+    matchesToolKeyword(lowerName, normalizedName, "execute_command") ||
+    matchesToolKeyword(lowerName, normalizedName, "shell")
   ) {
     return "fa-terminal";
   }
-  if (toolName.toLowerCase().includes("ptc")) {
+  if (
+    matchesToolKeyword(lowerName, normalizedName, "ptc") ||
+    matchesToolKeyword(lowerName, normalizedName, "programmatic_tool_call")
+  ) {
     return "fa-code";
   }
   if (
-    lowerName.includes("ËÑË÷") ||
-    lowerName.includes("¼ìË÷") ||
-    lowerName.includes("search") ||
-    lowerName.includes("query") ||
-    lowerName.includes("retrieve")
+    matchesToolKeyword(lowerName, normalizedName, "\u641c\u7d22") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u68c0\u7d22") ||
+    matchesToolKeyword(lowerName, normalizedName, "search") ||
+    matchesToolKeyword(lowerName, normalizedName, "query") ||
+    matchesToolKeyword(lowerName, normalizedName, "retrieve") ||
+    matchesToolKeyword(lowerName, normalizedName, "search_content")
   ) {
     return "fa-magnifying-glass";
   }
   if (
-    lowerName.includes("¶ÁÈ¡") ||
-    lowerName.includes("Ð´Èë") ||
-    lowerName.includes("±à¼­") ||
-    lowerName.includes("Ìæ»»") ||
-    lowerName.includes("ÁÐ³ö") ||
-    lowerName.includes("read") ||
-    lowerName.includes("write") ||
-    lowerName.includes("edit") ||
-    lowerName.includes("replace") ||
-    lowerName.includes("list")
+    matchesToolKeyword(lowerName, normalizedName, "\u8bfb\u53d6") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u5199\u5165") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u7f16\u8f91") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u66ff\u6362") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u5217\u51fa") ||
+    matchesToolKeyword(lowerName, normalizedName, "read") ||
+    matchesToolKeyword(lowerName, normalizedName, "write") ||
+    matchesToolKeyword(lowerName, normalizedName, "edit") ||
+    matchesToolKeyword(lowerName, normalizedName, "replace") ||
+    matchesToolKeyword(lowerName, normalizedName, "list")
   ) {
     return "fa-file-lines";
   }
-  if (lowerName.includes("ÖªÊ¶") || lowerName.includes("knowledge")) {
+  if (
+    matchesToolKeyword(lowerName, normalizedName, "\u77e5\u8bc6") ||
+    matchesToolKeyword(lowerName, normalizedName, "knowledge")
+  ) {
     return "fa-book";
   }
-  if (lowerName.includes("×îÖÕ»Ø¸´") || lowerName.includes("final answer") || lowerName.includes("final_response")) {
+  if (
+    matchesToolKeyword(lowerName, normalizedName, "\u6700\u7ec8\u56de\u590d") ||
+    matchesToolKeyword(lowerName, normalizedName, "final answer") ||
+    matchesToolKeyword(lowerName, normalizedName, "final_response")
+  ) {
     return "fa-flag-checkered";
   }
   if (category === "builtin") {
@@ -834,7 +865,7 @@ const resolveToolIcon = (name, category) => {
   return "fa-toolbox";
 };
 
-// ¹æ·¶»¯¹¤¾ßµ÷ÓÃ´ÎÊý£¬±ÜÃâÊ¹ÓÃ k µ¥Î»
+// è§„èŒƒåŒ–å·¥å…·è°ƒç”¨æ¬¡æ•°ï¼Œé¿å…ä½¿ç”¨ k å•ä½
 const formatHeatmapCount = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -843,7 +874,7 @@ const formatHeatmapCount = (value) => {
   return String(Math.max(0, Math.round(parsed)));
 };
 
-// ¹æÕû¹¤¾ßÍ³¼Æ½á¹¹£¬±ÜÃâÈ±×Ö¶Îµ¼ÖÂäÖÈ¾Òì³£
+// è§„æ•´å·¥å…·ç»Ÿè®¡ç»“æž„ï¼Œé¿å…ç¼ºå­—æ®µå¯¼è‡´æ¸²æŸ“å¼‚å¸¸
 const normalizeToolStats = (toolStats) =>
   (Array.isArray(toolStats) ? toolStats : [])
     .map((item) => ({
@@ -852,7 +883,7 @@ const normalizeToolStats = (toolStats) =>
     }))
     .filter((item) => item.name);
 
-// ºÏ²¢¹¤¾ßÁÐ±íÓëµ÷ÓÃ´ÎÊý£¬È·±£Î´µ÷ÓÃ¹¤¾ßÒ²Õ¹Ê¾
+// åˆå¹¶å·¥å…·åˆ—è¡¨ä¸Žè°ƒç”¨æ¬¡æ•°ï¼Œç¡®ä¿æœªè°ƒç”¨å·¥å…·ä¹Ÿå±•ç¤º
 const buildHeatmapItems = (toolStats) => {
   const normalized = normalizeToolStats(toolStats);
   const callsMap = new Map(normalized.map((item) => [item.name, item.calls]));
@@ -880,7 +911,7 @@ const buildHeatmapItems = (toolStats) => {
   return items;
 };
 
-// äÖÈ¾¹¤¾ßµ÷ÓÃÈÈÁ¦Í¼
+// æ¸²æŸ“å·¥å…·è°ƒç”¨çƒ­åŠ›å›¾
 const renderToolHeatmap = (toolStats) => {
   if (!elements.toolHeatmapGrid || !elements.toolHeatmapEmpty) {
     return;
@@ -917,7 +948,7 @@ const renderToolHeatmap = (toolStats) => {
     name.textContent = item.name;
     tile.appendChild(icon);
     tile.appendChild(name);
-    // µã»÷ÈÈÁ¦Í¼¿éÊ±µ¯³ö¸Ã¹¤¾ßµÄµ÷ÓÃÏß³ÌÁÐ±í
+    // ç‚¹å‡»çƒ­åŠ›å›¾å—æ—¶å¼¹å‡ºè¯¥å·¥å…·çš„è°ƒç”¨çº¿ç¨‹åˆ—è¡¨
     tile.addEventListener("click", () => {
       openMonitorToolModal(item.name);
     });
@@ -925,7 +956,7 @@ const renderToolHeatmap = (toolStats) => {
   });
 };
 
-// äÖÈ¾ÏµÍ³¼àÊÓÖ¸±ê
+// æ¸²æŸ“ç³»ç»Ÿç›‘è§†æŒ‡æ ‡
 const renderMonitorMetrics = (system) => {
   if (!system) {
     elements.metricCpu.textContent = "-";
@@ -979,7 +1010,7 @@ const renderMonitorMetrics = (system) => {
   elements.metricNetRecv.textContent = formatBytes(system.net_recv_bytes);
 };
 
-// äÖÈ¾·þÎñ²ãÏß³ÌÖ¸±ê£¬Í³Ò»±£³ÖÊýÖµÓëÕ¹Ê¾ÎÄ°¸·ÖÀë
+// æ¸²æŸ“æœåŠ¡å±‚çº¿ç¨‹æŒ‡æ ‡ï¼Œç»Ÿä¸€ä¿æŒæ•°å€¼ä¸Žå±•ç¤ºæ–‡æ¡ˆåˆ†ç¦»
 const renderServiceMetrics = (service) => {
   if (!service) {
     elements.metricServiceActive.textContent = "-";
@@ -1002,7 +1033,7 @@ const renderServiceMetrics = (service) => {
   elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
 };
 
-// äÖÈ¾É³ºÐ×´Ì¬Ö¸±ê£¬¼æ¹ËÅäÖÃÓë½üÆÚµ÷ÓÃÍ³¼Æ
+// æ¸²æŸ“æ²™ç›’çŠ¶æ€æŒ‡æ ‡ï¼Œå…¼é¡¾é…ç½®ä¸Žè¿‘æœŸè°ƒç”¨ç»Ÿè®¡
 const renderSandboxMetrics = (sandbox) => {
   if (!elements.metricSandboxMode) {
     return;
@@ -1050,17 +1081,17 @@ const renderSandboxMetrics = (sandbox) => {
   elements.metricSandboxSessions.textContent = `${sandbox.recent_sessions ?? 0}`;
 };
 
-// ¼ÆËãËùÓÐ»á»°ÀÛ¼Æ token ÊýÁ¿
+// è®¡ç®—æ‰€æœ‰ä¼šè¯ç´¯è®¡ token æ•°é‡
 const resolveTotalTokens = (sessions) =>
   (sessions || []).reduce((sum, session) => sum + (Number(session?.token_usage) || 0), 0);
 
-// ½âÎö¼à¿ØÊ±¼ä×Ö¶Î£¬±ÜÃâ¸ñÊ½Òì³£µ¼ÖÂÉ¸Ñ¡Ê§°Ü
+// è§£æžç›‘æŽ§æ—¶é—´å­—æ®µï¼Œé¿å…æ ¼å¼å¼‚å¸¸å¯¼è‡´ç­›é€‰å¤±è´¥
 const parseMonitorTimestamp = (value) => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// »ñÈ¡»á»°µÄ¿É±È½ÏÊ±¼ä´Á
+// èŽ·å–ä¼šè¯çš„å¯æ¯”è¾ƒæ—¶é—´æˆ³
 const resolveSessionTimestamp = (session) => {
   const updated = parseMonitorTimestamp(session?.updated_time);
   if (updated) {
@@ -1070,7 +1101,7 @@ const resolveSessionTimestamp = (session) => {
   return started || null;
 };
 
-// ¸ù¾Ý¼àÊÓÊ±¼ä·¶Î§É¸Ñ¡»á»°£¬ÓÃÓÚµ±Ç°Çø¼äµÄ×´Ì¬Í³¼Æ
+// æ ¹æ®ç›‘è§†æ—¶é—´èŒƒå›´ç­›é€‰ä¼šè¯ï¼Œç”¨äºŽå½“å‰åŒºé—´çš„çŠ¶æ€ç»Ÿè®¡
 const filterSessionsByInterval = (sessions) => {
   const timeRange = resolveMonitorTimeFilterRange();
   if (timeRange) {
@@ -1096,7 +1127,7 @@ const filterSessionsByInterval = (sessions) => {
   });
 };
 
-// ¸üÐÂ token Ç÷ÊÆÕÛÏßÍ¼
+// æ›´æ–° token è¶‹åŠ¿æŠ˜çº¿å›¾
 const renderTokenTrendChart = () => {
   if (!tokenTrendChart) {
     return;
@@ -1168,7 +1199,7 @@ const renderTokenTrendChart = () => {
       zoomConfig.startValue = labels[startIndex];
       zoomConfig.endValue = labels[labels.length - 1];
     }
-    // ÆôÓÃÄÚÖÃËõ·Å£¬Ä¬ÈÏ¾Û½¹×î½ü´°¿Ú
+    // å¯ç”¨å†…ç½®ç¼©æ”¾ï¼Œé»˜è®¤èšç„¦æœ€è¿‘çª—å£
     option.dataZoom = [zoomConfig];
   }
   tokenTrendChart.setOption(option, false);
@@ -1178,7 +1209,7 @@ const renderTokenTrendChart = () => {
   }
 };
 
-// »ã×ÜÏß³Ì×´Ì¬Õ¼±È£¬±ãÓÚÍ¼±íÕ¹Ê¾
+// æ±‡æ€»çº¿ç¨‹çŠ¶æ€å æ¯”ï¼Œä¾¿äºŽå›¾è¡¨å±•ç¤º
 const resolveStatusCounts = (sessions) => {
   const counts = {
     active: 0,
@@ -1203,7 +1234,7 @@ const resolveStatusCounts = (sessions) => {
   return counts;
 };
 
-// Éú³É×´Ì¬»·Í¼Êý¾Ý£¬¿ÕÊý¾ÝÊ±·µ»Ø°×É«¿ÕÐÄ»·Õ¼Î»
+// ç”ŸæˆçŠ¶æ€çŽ¯å›¾æ•°æ®ï¼Œç©ºæ•°æ®æ—¶è¿”å›žç™½è‰²ç©ºå¿ƒçŽ¯å ä½
 const buildStatusChartData = (counts) => {
   const [activeLabel, finishedLabel, failedLabel, cancelledLabel] = getStatusLegend();
   const raw = [
@@ -1248,7 +1279,7 @@ const buildStatusChartData = (counts) => {
   return { data: normalized, isEmpty: false, visibleCount };
 };
 
-// ¸üÐÂ·þÎñ×´Ì¬Õ¼±ÈÍ¼±í
+// æ›´æ–°æœåŠ¡çŠ¶æ€å æ¯”å›¾è¡¨
 const renderServiceStatusChart = (service, sessions) => {
   if (!statusChart) {
     return;
@@ -1325,7 +1356,7 @@ const renderServiceStatusChart = (service, sessions) => {
   );
 };
 
-// »ã×Ü·þÎñÍ¼±íÊý¾Ý²¢Ë¢ÐÂäÖÈ¾
+// æ±‡æ€»æœåŠ¡å›¾è¡¨æ•°æ®å¹¶åˆ·æ–°æ¸²æŸ“
 const renderServiceCharts = (service, sessions) => {
   updateMonitorChartTitles();
   const totalTokens = resolveTotalTokens(sessions);
@@ -1341,7 +1372,7 @@ const renderServiceCharts = (service, sessions) => {
   resizeMonitorCharts();
 };
 
-// Í¼±í³ß´çËæÈÝÆ÷±ä»¯×Ô¶¯ÊÊÅä
+// å›¾è¡¨å°ºå¯¸éšå®¹å™¨å˜åŒ–è‡ªåŠ¨é€‚é…
 const resizeMonitorCharts = () => {
   if (tokenTrendChart) {
     renderTokenTrendChart();
@@ -1376,7 +1407,7 @@ const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
 const sortSessionsByUpdate = (sessions) =>
   [...sessions].sort((a, b) => new Date(b.updated_time).getTime() - new Date(a.updated_time).getTime());
 
-// ¸ù¾ÝÓÃ»§É¸Ñ¡Ïß³ÌÁÐ±í£¬¿ÕÖµÊ±·µ»ØÈ«Á¿
+// æ ¹æ®ç”¨æˆ·ç­›é€‰çº¿ç¨‹åˆ—è¡¨ï¼Œç©ºå€¼æ—¶è¿”å›žå…¨é‡
 const filterSessionsByUser = (sessions) => {
   const userId = String(state.monitor.userFilter || "").trim();
   if (!userId) {
@@ -1385,7 +1416,7 @@ const filterSessionsByUser = (sessions) => {
   return (sessions || []).filter((session) => String(session?.user_id || "") === userId);
 };
 
-// ¶ÁÈ¡·ÖÒ³ÅäÖÃ£¬È·±£·ÖÒ³³ß´çÎªÕýÕûÊý
+// è¯»å–åˆ†é¡µé…ç½®ï¼Œç¡®ä¿åˆ†é¡µå°ºå¯¸ä¸ºæ­£æ•´æ•°
 const resolveMonitorPageSize = () => {
   const rawValue = Math.floor(Number(state.monitor.pagination?.pageSize));
   if (!Number.isFinite(rawValue) || rawValue <= 0) {
@@ -1394,7 +1425,7 @@ const resolveMonitorPageSize = () => {
   return rawValue;
 };
 
-// Í³Ò»Ô¼ÊøÒ³Âë·¶Î§£¬±ÜÃâÔ½½çµ¼ÖÂ·ÖÒ³Îª¿Õ
+// ç»Ÿä¸€çº¦æŸé¡µç èŒƒå›´ï¼Œé¿å…è¶Šç•Œå¯¼è‡´åˆ†é¡µä¸ºç©º
 const clampMonitorPage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -1406,7 +1437,7 @@ const clampMonitorPage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// ¸ù¾Ý·ÖÒ³×´Ì¬ÇÐÆ¬Ïß³ÌÁÐ±í£¬²¢»ØÐ´ºÏ·¨Ò³Âë
+// æ ¹æ®åˆ†é¡µçŠ¶æ€åˆ‡ç‰‡çº¿ç¨‹åˆ—è¡¨ï¼Œå¹¶å›žå†™åˆæ³•é¡µç 
 const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
   const { sorted = false } = options;
   const pageSize = resolveMonitorPageSize();
@@ -1422,7 +1453,7 @@ const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
   return { total, totalPages, currentPage, pageSize, sessions: pageSessions };
 };
 
-// ¼æÈÝ¾É°æ±¾ elements.js Î´°üº¬·ÖÒ³ÔªËØµÄÇé¿ö
+// å…¼å®¹æ—§ç‰ˆæœ¬ elements.js æœªåŒ…å«åˆ†é¡µå…ƒç´ çš„æƒ…å†µ
 const resolveMonitorPaginationElement = (key, id) => {
   if (elements[key]) {
     return elements[key];
@@ -1434,7 +1465,7 @@ const resolveMonitorPaginationElement = (key, id) => {
   return node;
 };
 
-// »ñÈ¡·ÖÒ³¿Ø¼þ DOM£¬±ãÓÚ¸´ÓÃ¸üÐÂÂß¼­
+// èŽ·å–åˆ†é¡µæŽ§ä»¶ DOMï¼Œä¾¿äºŽå¤ç”¨æ›´æ–°é€»è¾‘
 const getMonitorPaginationElements = (type) => {
   if (type === "active") {
     return {
@@ -1455,7 +1486,7 @@ const getMonitorPaginationElements = (type) => {
   return null;
 };
 
-// Í¬²½·ÖÒ³ÇøÓòÎÄ°¸Óë°´Å¥×´Ì¬
+// åŒæ­¥åˆ†é¡µåŒºåŸŸæ–‡æ¡ˆä¸ŽæŒ‰é’®çŠ¶æ€
 const renderMonitorPagination = (type, pageData) => {
   const controls = getMonitorPaginationElements(type);
   if (!controls?.container || !controls.info || !controls.prev || !controls.next) {
@@ -1490,7 +1521,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     return;
   }
   emptyNode.style.display = "none";
-  // ·ÖÒ³Âß¼­ÒÑÅÅÐòÊ±Ìø¹ý¶þ´ÎÅÅÐò£¬¼õÉÙäÖÈ¾¿ªÏú
+  // åˆ†é¡µé€»è¾‘å·²æŽ’åºæ—¶è·³è¿‡äºŒæ¬¡æŽ’åºï¼Œå‡å°‘æ¸²æŸ“å¼€é”€
   const sorted = skipSort ? sessions : sortSessionsByUpdate(sessions);
   sorted.forEach((session) => {
     const row = document.createElement("tr");
@@ -1562,7 +1593,7 @@ const renderMonitorSessions = (sessions) => {
       history.push(session);
     }
   });
-  // »î¶¯Ïß³Ì·ÖÒ³äÖÈ¾£¬±ÜÃâÒ»´ÎÊä³ö¹ý¶à¼ÇÂ¼
+  // æ´»åŠ¨çº¿ç¨‹åˆ†é¡µæ¸²æŸ“ï¼Œé¿å…ä¸€æ¬¡è¾“å‡ºè¿‡å¤šè®°å½•
   const activePage = resolveMonitorPageSlice(active, "activePage", { sorted: true });
   renderMonitorTable(elements.monitorTableBody, elements.monitorEmpty, activePage.sessions, {
     showCancel: true,
@@ -1571,7 +1602,7 @@ const renderMonitorSessions = (sessions) => {
   });
   renderMonitorPagination("active", activePage);
 
-  // ÀúÊ·Ïß³Ì·ÖÒ³äÖÈ¾£¬±£³ÖÅÅÐòÓëÒ³ÂëÒ»ÖÂ
+  // åŽ†å²çº¿ç¨‹åˆ†é¡µæ¸²æŸ“ï¼Œä¿æŒæŽ’åºä¸Žé¡µç ä¸€è‡´
   const historyPage = resolveMonitorPageSlice(history, "historyPage", { sorted: true });
   renderMonitorTable(
     elements.monitorHistoryBody,
@@ -1586,7 +1617,7 @@ const renderMonitorSessions = (sessions) => {
   renderMonitorPagination("history", historyPage);
 };
 
-// ÇÐ»»·ÖÒ³Ò³Âë²¢´¥·¢ÁÐ±íË¢ÐÂ
+// åˆ‡æ¢åˆ†é¡µé¡µç å¹¶è§¦å‘åˆ—è¡¨åˆ·æ–°
 const updateMonitorPage = (pageKey, delta) => {
   ensureMonitorState();
   const current = Number(state.monitor.pagination?.[pageKey]) || 1;
@@ -1597,7 +1628,7 @@ const updateMonitorPage = (pageKey, delta) => {
   renderMonitorSessions(state.monitor.sessions);
 };
 
-// °ó¶¨·ÖÒ³°´Å¥ÊÂ¼þ£¬±ÜÃâÖØ¸´²éÕÒ DOM
+// ç»‘å®šåˆ†é¡µæŒ‰é’®äº‹ä»¶ï¼Œé¿å…é‡å¤æŸ¥æ‰¾ DOM
 const bindMonitorPagination = () => {
   if (elements.monitorActivePrevBtn) {
     elements.monitorActivePrevBtn.addEventListener("click", () => {
@@ -1621,10 +1652,10 @@ const bindMonitorPagination = () => {
   }
 };
 
-// ¸ù¾ÝÍ¼Àý±êÇ©½âÎö¶ÔÓ¦µÄ×´Ì¬ key
+// æ ¹æ®å›¾ä¾‹æ ‡ç­¾è§£æžå¯¹åº”çš„çŠ¶æ€ key
 const resolveStatusKey = (label) => getStatusLabelToKey()[label] || "";
 
-// ÅÐ¶Ï»á»°ÊÇ·ñÊôÓÚÖ¸¶¨×´Ì¬·Ö×é
+// åˆ¤æ–­ä¼šè¯æ˜¯å¦å±žäºŽæŒ‡å®šçŠ¶æ€åˆ†ç»„
 const matchSessionByStatusKey = (session, key) => {
   const status = session?.status;
   if (key === "active") {
@@ -1642,7 +1673,7 @@ const matchSessionByStatusKey = (session, key) => {
   return false;
 };
 
-// äÖÈ¾×´Ì¬ÏêÇéÁÐ±í£¬Ö§³Öµã»÷´ò¿ªÏß³ÌÏêÇé
+// æ¸²æŸ“çŠ¶æ€è¯¦æƒ…åˆ—è¡¨ï¼Œæ”¯æŒç‚¹å‡»æ‰“å¼€çº¿ç¨‹è¯¦æƒ…
 const renderMonitorStatusList = (sessions) => {
   if (!elements.monitorStatusList) {
     return;
@@ -1674,7 +1705,7 @@ const renderMonitorStatusList = (sessions) => {
       metaParts.push(timeText);
     }
     const meta = document.createElement("small");
-    meta.textContent = metaParts.join(" ¡¤ ");
+    meta.textContent = metaParts.join(" Â· ");
 
     const detailParts = [];
     const tokenText = formatTokenCount(session?.token_usage);
@@ -1689,7 +1720,7 @@ const renderMonitorStatusList = (sessions) => {
       detailParts.push(t("monitor.session.stage", { stage: session.stage }));
     }
     const detail = document.createElement("small");
-    detail.textContent = detailParts.join(" ¡¤ ");
+    detail.textContent = detailParts.join(" Â· ");
 
     item.appendChild(header);
     item.appendChild(meta);
@@ -1706,14 +1737,14 @@ const renderMonitorStatusList = (sessions) => {
   });
 };
 
-// ½âÎö¹¤¾ßµ÷ÓÃ»á»°µÄÊ±¼ä´Á£¬ÓÅÏÈÊ¹ÓÃ×î½üµ÷ÓÃÊ±¼ä
+// è§£æžå·¥å…·è°ƒç”¨ä¼šè¯çš„æ—¶é—´æˆ³ï¼Œä¼˜å…ˆä½¿ç”¨æœ€è¿‘è°ƒç”¨æ—¶é—´
 const resolveToolSessionTimestamp = (session) => {
   const raw = session?.last_time || session?.updated_time || session?.start_time;
   const parsed = new Date(raw).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-// äÖÈ¾¹¤¾ßµ÷ÓÃ»á»°ÁÐ±í£¬±£³ÖÓëÏß³Ì×´Ì¬µ¯´°Ò»ÖÂµÄ·ç¸ñ
+// æ¸²æŸ“å·¥å…·è°ƒç”¨ä¼šè¯åˆ—è¡¨ï¼Œä¿æŒä¸Žçº¿ç¨‹çŠ¶æ€å¼¹çª—ä¸€è‡´çš„é£Žæ ¼
 const renderMonitorToolList = (sessions, toolName = "") => {
   if (!elements.monitorToolList) {
     return;
@@ -1750,7 +1781,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
         metaParts.push(timeText);
       }
       const meta = document.createElement("small");
-      meta.textContent = metaParts.join(" ¡¤ ");
+      meta.textContent = metaParts.join(" Â· ");
 
       const detailParts = [];
       detailParts.push(
@@ -1768,7 +1799,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
         detailParts.push(t("monitor.session.stage", { stage: session.stage }));
       }
       const detail = document.createElement("small");
-      detail.textContent = detailParts.join(" ¡¤ ");
+      detail.textContent = detailParts.join(" Â· ");
 
       item.appendChild(header);
       item.appendChild(meta);
@@ -1785,7 +1816,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
     });
 };
 
-// »ñÈ¡Ö¸¶¨¹¤¾ßµÄµ÷ÓÃ»á»°ÁÐ±í
+// èŽ·å–æŒ‡å®šå·¥å…·çš„è°ƒç”¨ä¼šè¯åˆ—è¡¨
 const fetchMonitorToolSessions = async (toolName) => {
   const wunderBase = getWunderBase();
   const params = new URLSearchParams({ tool: toolName });
@@ -1808,7 +1839,7 @@ const fetchMonitorToolSessions = async (toolName) => {
   };
 };
 
-// ´ò¿ª¹¤¾ßµ÷ÓÃÃ÷Ï¸µ¯´°
+// æ‰“å¼€å·¥å…·è°ƒç”¨æ˜Žç»†å¼¹çª—
 const openMonitorToolModal = async (toolName) => {
   if (!elements.monitorToolModal) {
     return;
@@ -1848,12 +1879,12 @@ const openMonitorToolModal = async (toolName) => {
   }
 };
 
-// ¹Ø±Õ¹¤¾ßµ÷ÓÃµ¯´°
+// å…³é—­å·¥å…·è°ƒç”¨å¼¹çª—
 const closeMonitorToolModal = () => {
   elements.monitorToolModal?.classList.remove("active");
 };
 
-// ´ò¿ªÏß³Ì×´Ì¬Ã÷Ï¸µ¯´°£¬ÏÔÊ¾¶ÔÓ¦×´Ì¬µÄ»á»°¼ÇÂ¼
+// æ‰“å¼€çº¿ç¨‹çŠ¶æ€æ˜Žç»†å¼¹çª—ï¼Œæ˜¾ç¤ºå¯¹åº”çŠ¶æ€çš„ä¼šè¯è®°å½•
 const openMonitorStatusModal = (label) => {
   if (!elements.monitorStatusModal) {
     return;
@@ -1878,14 +1909,14 @@ const openMonitorStatusModal = (label) => {
   elements.monitorStatusModal.classList.add("active");
 };
 
-// ¹Ø±ÕÏß³Ì×´Ì¬Ã÷Ï¸µ¯´°
+// å…³é—­çº¿ç¨‹çŠ¶æ€æ˜Žç»†å¼¹çª—
 const closeMonitorStatusModal = () => {
   elements.monitorStatusModal?.classList.remove("active");
 };
 
 export const loadMonitorData = async (options = {}) => {
   ensureMonitorState();
-  // ÓÃ»§¹ÜÀíÒ³½öÐè»á»°ÁÐ±í£¬Ê¹ÓÃ sessions Ä£Ê½±ÜÃâÎÞ¹ØµÄÍ¼±íÓëÈÈÁ¦Í¼Ë¢ÐÂ
+  // ç”¨æˆ·ç®¡ç†é¡µä»…éœ€ä¼šè¯åˆ—è¡¨ï¼Œä½¿ç”¨ sessions æ¨¡å¼é¿å…æ— å…³çš„å›¾è¡¨ä¸Žçƒ­åŠ›å›¾åˆ·æ–°
   const mode = options?.mode === "sessions" ? "sessions" : "full";
   const wunderBase = getWunderBase();
   const toolListPromise =
@@ -1930,11 +1961,11 @@ export const loadMonitorData = async (options = {}) => {
   }
 };
 
-// ÇÐ»»ÓÃ»§É¸Ñ¡Ìõ¼þ²¢¼´Ê±Ë¢ÐÂÏß³Ì±í¸ñ
+// åˆ‡æ¢ç”¨æˆ·ç­›é€‰æ¡ä»¶å¹¶å³æ—¶åˆ·æ–°çº¿ç¨‹è¡¨æ ¼
 export const setMonitorUserFilter = (userId) => {
   ensureMonitorState();
   state.monitor.userFilter = String(userId || "").trim();
-  // ÇÐ»»ÓÃ»§ºóÖØÖÃ·ÖÒ³£¬±ÜÃâÒ³ÂëÂäÔÚ¿ÕÒ³Ãæ
+  // åˆ‡æ¢ç”¨æˆ·åŽé‡ç½®åˆ†é¡µï¼Œé¿å…é¡µç è½åœ¨ç©ºé¡µé¢
   if (state.monitor.pagination) {
     state.monitor.pagination.activePage = 1;
     state.monitor.pagination.historyPage = 1;
@@ -1966,7 +1997,7 @@ export const toggleMonitorPolling = (enabled, options = {}) => {
           appendLog(t("monitor.refreshFailed", { message: error.message }));
         });
       }
-      // ÓÃ»§¹ÜÀíÒ³Ê¹ÓÃ sessions Ä£Ê½ÂÖÑ¯£¬½µµÍ¶ÔÍ¼±íäÖÈ¾µÄÓ°Ïì
+      // ç”¨æˆ·ç®¡ç†é¡µä½¿ç”¨ sessions æ¨¡å¼è½®è¯¢ï¼Œé™ä½Žå¯¹å›¾è¡¨æ¸²æŸ“çš„å½±å“
       state.runtime.monitorPollTimer = setInterval(() => {
         loadMonitorData({ mode }).catch(() => {});
       }, intervalMs);
@@ -1977,7 +2008,7 @@ export const toggleMonitorPolling = (enabled, options = {}) => {
   }
 };
 
-// ×ªÒå HTML£¬±ÜÃâÊÂ¼þÏêÇéÖÐµÄÓÃ»§ÄÚÈÝÎÛÈ¾Õ¹Ê¾
+// è½¬ä¹‰ HTMLï¼Œé¿å…äº‹ä»¶è¯¦æƒ…ä¸­çš„ç”¨æˆ·å†…å®¹æ±¡æŸ“å±•ç¤º
 const escapeMonitorHtml = (value) =>
   String(value || "")
     .replace(/&/g, "&amp;")
@@ -2002,17 +2033,17 @@ const unwrapMonitorEventData = (payload) => {
 const MONITOR_TIMESTAMP_RE =
   /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)\]/g;
 
-// ¸ßÁÁÊÂ¼þÏêÇéÀïµÄÊ±¼ä´Á£¬·½±ã¿ìËÙ¶¨Î»ÌõÄ¿
+// é«˜äº®äº‹ä»¶è¯¦æƒ…é‡Œçš„æ—¶é—´æˆ³ï¼Œæ–¹ä¾¿å¿«é€Ÿå®šä½æ¡ç›®
 const highlightMonitorTimestamps = (detailText) =>
   escapeMonitorHtml(detailText).replace(
     MONITOR_TIMESTAMP_RE,
     '<span class="log-timestamp">[$1]</span>'
   );
 
-// Í³Ò»¹æÕû¹¤¾ßÃû³Æ£¬±ÜÃâ´óÐ¡Ð´»ò¶àÓà¿Õ¸ñµ¼ÖÂ¶¨Î»Ê§°Ü
+// ç»Ÿä¸€è§„æ•´å·¥å…·åç§°ï¼Œé¿å…å¤§å°å†™æˆ–å¤šä½™ç©ºæ ¼å¯¼è‡´å®šä½å¤±è´¥
 const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCase();
 
-// ¸ñÊ½»¯ÊÂ¼þÊý¾ÝÎª¿ÉÕ¹Ê¾ÎÄ±¾£¬È·±£Òì³£Êý¾Ý²»»á´ò¶ÏäÖÈ¾
+// æ ¼å¼åŒ–äº‹ä»¶æ•°æ®ä¸ºå¯å±•ç¤ºæ–‡æœ¬ï¼Œç¡®ä¿å¼‚å¸¸æ•°æ®ä¸ä¼šæ‰“æ–­æ¸²æŸ“
 const stringifyMonitorEventData = (data) => {
   try {
     const resolved = unwrapMonitorEventData(data);
@@ -2023,7 +2054,7 @@ const stringifyMonitorEventData = (data) => {
   }
 };
 
-// Æ´½Óµ¥ÌõÊÂ¼þÎÄ±¾£¬±£³ÖÓëÀúÊ·Õ¹Ê¾Ò»ÖÂ
+// æ‹¼æŽ¥å•æ¡äº‹ä»¶æ–‡æœ¬ï¼Œä¿æŒä¸ŽåŽ†å²å±•ç¤ºä¸€è‡´
 const buildMonitorEventLine = (event) => {
   const timestamp = event?.timestamp || "";
   const eventType = event?.type || "unknown";
@@ -2031,7 +2062,7 @@ const buildMonitorEventLine = (event) => {
   return `[${timestamp}] ${eventType}: ${dataText}`;
 };
 
-// ´ÓÊÂ¼þÊý¾ÝÖÐÌáÈ¡¹¤¾ßÃû³Æ£¬±ãÓÚ¶¨Î»¹¤¾ßµ÷ÓÃÎ»ÖÃ
+// ä»Žäº‹ä»¶æ•°æ®ä¸­æå–å·¥å…·åç§°ï¼Œä¾¿äºŽå®šä½å·¥å…·è°ƒç”¨ä½ç½®
 const resolveMonitorEventToolName = (event) => {
   const data = unwrapMonitorEventData(event?.data);
   if (!data || typeof data !== "object") {
@@ -2041,7 +2072,7 @@ const resolveMonitorEventToolName = (event) => {
   return typeof tool === "string" ? tool.trim() : "";
 };
 
-// äÖÈ¾Ïß³ÌÊÂ¼þÁÐ±í£¬²¢·µ»ØÐèÒª¶¨Î»µÄÄ¿±ê½Úµã
+// æ¸²æŸ“çº¿ç¨‹äº‹ä»¶åˆ—è¡¨ï¼Œå¹¶è¿”å›žéœ€è¦å®šä½çš„ç›®æ ‡èŠ‚ç‚¹
 const renderMonitorDetailEvents = (events, options = {}) => {
   if (!elements.monitorDetailEvents) {
     return null;
@@ -2088,8 +2119,8 @@ const renderMonitorDetailEvents = (events, options = {}) => {
   return focusNode;
 };
 
-// ¹ö¶¯ÊÂ¼þÁÐ±íµ½Ä¿±êÎ»ÖÃ£¬±ÜÃâÓÃ»§ÊÖ¶¯²éÕÒ
-// ²éÕÒ¿É¹ö¶¯µÄ¸¸ÈÝÆ÷£¬¼æÈÝµ¯´°ÄÚ²¿¶à¼¶¹ö¶¯²¼¾Ö
+// æ»šåŠ¨äº‹ä»¶åˆ—è¡¨åˆ°ç›®æ ‡ä½ç½®ï¼Œé¿å…ç”¨æˆ·æ‰‹åŠ¨æŸ¥æ‰¾
+// æŸ¥æ‰¾å¯æ»šåŠ¨çš„çˆ¶å®¹å™¨ï¼Œå…¼å®¹å¼¹çª—å†…éƒ¨å¤šçº§æ»šåŠ¨å¸ƒå±€
 const resolveMonitorScrollContainer = (line) => {
   let current = line?.parentElement || null;
   while (current && current !== document.body) {
@@ -2106,7 +2137,7 @@ const resolveMonitorScrollContainer = (line) => {
   return elements.monitorDetailEvents || null;
 };
 
-// ¹ö¶¯ÊÂ¼þÁÐ±íµ½Ä¿±êÎ»ÖÃ£¬±ÜÃâÓÃ»§ÊÖ¶¯²éÕÒ
+// æ»šåŠ¨äº‹ä»¶åˆ—è¡¨åˆ°ç›®æ ‡ä½ç½®ï¼Œé¿å…ç”¨æˆ·æ‰‹åŠ¨æŸ¥æ‰¾
 const scrollMonitorDetailToLine = (line) => {
   if (!line) {
     return;
@@ -2141,9 +2172,9 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
     elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
       sessionId: session.session_id || "-",
     });
-    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} ¡¤ ${getSessionStatusLabel(
+    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} Â· ${getSessionStatusLabel(
       session.status
-    )} ¡¤ ${formatDuration(session.elapsed_s)}`;
+    )} Â· ${formatDuration(session.elapsed_s)}`;
     elements.monitorDetailQuestion.textContent = session.question || "";
     const events = Array.isArray(result.events) ? result.events : [];
     const focusTool =
@@ -2207,7 +2238,7 @@ const requestCancelSession = async (sessionId) => {
   }
 };
 
-// ³õÊ¼»¯¼à¿ØÃæ°å½»»¥
+// åˆå§‹åŒ–ç›‘æŽ§é¢æ¿äº¤äº’
 export const initMonitorPanel = () => {
   ensureMonitorState();
   ensureMonitorCharts();

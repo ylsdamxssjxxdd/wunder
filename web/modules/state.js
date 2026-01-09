@@ -1,4 +1,4 @@
-// 页面状态集中管理，避免跨模块重复声�?
+// 页面状态集中管理，避免跨模块重复声明
 export const state = {
   runtime: {
     activeController: null,
@@ -19,7 +19,7 @@ export const state = {
     llmOutput: {
       globalRound: 0,
       currentRound: null,
-      // 模型输出按轮次拆分的运行时状�?      rounds: [],
+      // 模型输出按轮次拆分的运行时状态      rounds: [],
       selectedRound: null,
       userSelectedRound: false,
     },

@@ -10,17 +10,19 @@ services:
     image: wunder-arm
     platform: linux/arm64
     ports:
-      - "8000:8000"
+      - "${WUNDER_PORT:-8000}:${WUNDER_PORT:-8000}"
     volumes:
       - ./:/workspaces
     environment:
       - TZ=Asia/Shanghai
-      - WUNDER_SANDBOX_ENDPOINT=http://sandbox:9001
-      - WUNDER_POSTGRES_DSN=postgresql://wunder:wunder@postgres:5432/wunder
+      - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
+      - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder}
+      - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
+      - WUNDER_PORT=${WUNDER_PORT:-8000}
       - RUST_LOG=info
       - CARGO_HOME=/workspaces/.cargo/arm64
       - CARGO_TARGET_DIR=/workspaces/target/arm64
-    command: ["bash", "-lc", "cargo run --release --bin wunder-server"]
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
     depends_on:
       sandbox:
         condition: service_healthy
@@ -39,7 +41,7 @@ services:
       - ./data/user_tools:/workspaces/data/user_tools:ro
       - ./data/workspaces:/workspaces/data/workspaces
       - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
-    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log
+    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log --workers 2
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       interval: 5s

@@ -30,7 +30,7 @@ const resolveNumberInput = (rawValue, fallback, minValue) => {
   return Math.max(minValue, rounded);
 };
 
-// 确保下拉框值可用，避免缓存旧值导致异�?
+// 确保下拉框值可用，避免缓存旧值导致异常
 const resolveSelectValue = (select, value) => {
   if (!select) {
     return value;
@@ -42,7 +42,7 @@ const resolveSelectValue = (select, value) => {
   return options[0] || "";
 };
 
-// 渲染语言下拉选项，保持与后端 i18n 配置一�?
+// 渲染语言下拉选项，保持与后端 i18n 配置一致
 const renderLanguageOptions = () => {
   if (!elements.settingsLanguage) {
     return;
@@ -96,7 +96,7 @@ const refreshMonitorInterval = (intervalMs) => {
   }
 };
 
-// 将配置值同步回设置页表�?
+// 将配置值同步回设置页表单
 const applySettingsForm = (config) => {
   if (elements.settingsDefaultUserId) {
     elements.settingsDefaultUserId.value = config.defaultUserId || "";
@@ -120,7 +120,7 @@ const applySettingsForm = (config) => {
   }
 };
 
-// 保存设置并应用到运行�?
+// 保存设置并应用到运行时
 const handleSaveSettings = () => {
   const previous = { ...APP_CONFIG };
   const nextApiBase = normalizeApiBase(elements.apiBase?.value || "");
@@ -185,7 +185,7 @@ const handleResetSettings = () => {
   notify(t("settings.toast.reset"), "success");
 };
 
-// 初始化设置面板交�?
+// 初始化设置面板交互
 export const initSettingsPanel = () => {
   applyStoredConfig();
   renderLanguageOptions();

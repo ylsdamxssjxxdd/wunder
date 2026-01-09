@@ -23,7 +23,7 @@ wunder可以暴露自身作为mcp工具，成为最终武器
 ## 2. 快速开始
 ### 2.1 修改配置文件
 先将示例配置复制为正式配置：`config/wunder-example.yaml` -> `config/wunder.yaml`
-设置api_key，将ylsdamxssjxxdd改成你自己的
+再复制环境变量示例：`.env.example` -> `.env`，并修改 `WUNDER_API_KEY` 为你自己的
 
 ### 2.2 启动服务
 x86
@@ -39,7 +39,7 @@ docker compose -f docker-compose.rust.arm.yml up
 ### 2.3 打开系统设置页面
 浏览器访问：
 ```
-http://127.0.0.1:8000/wunder/web
+http://127.0.0.1:18000/wunder/web
 ```
 点击系统设置页面，填入api地址和key，自动会接上后端
 
@@ -53,7 +53,7 @@ http://127.0.0.1:8000/wunder/web
 ## 3. 请求示例
 ### 3.1 非流式请求
 ```
-curl -X POST http://127.0.0.1:8000/wunder ^
+curl -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"你好\",\"stream\":false}"
@@ -61,7 +61,7 @@ curl -X POST http://127.0.0.1:8000/wunder ^
 
 ### 3.2 流式 SSE 请求
 ```
-curl -N -X POST http://127.0.0.1:8000/wunder ^
+curl -N -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"你好\",\"stream\":true}"
@@ -72,7 +72,7 @@ SSE 事件类型包括：
 
 ### 3.3 按需启用工具
 ```
-curl -X POST http://127.0.0.1:8000/wunder ^
+curl -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"列出当前目录\",\"tool_names\":[\"列出文件\"],\"stream\":false}"
@@ -80,7 +80,7 @@ curl -X POST http://127.0.0.1:8000/wunder ^
 
 工具清单请先调用：
 ```
-curl -X GET http://127.0.0.1:8000/wunder/tools ^
+curl -X GET http://127.0.0.1:18000/wunder/tools ^
   -H "X-API-Key: <your-api-key>"
 ```
 

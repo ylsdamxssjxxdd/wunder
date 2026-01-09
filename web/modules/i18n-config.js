@@ -1,6 +1,6 @@
 import { configureI18n } from "./i18n.js?v=20260110-01";
 
-// 统一拉取后端 i18n 配置，保持语言设置一�?
+// 统一拉取后端 i18n 配置，保持语言设置一致
 const resolveI18nEndpoint = (apiBase) => {
   const base = String(apiBase || "").trim();
   if (!base) {

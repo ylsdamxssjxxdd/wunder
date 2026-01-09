@@ -34,3 +34,4 @@ target/
 .rustup/
 config/wunder.yaml
 EVA_SKILLS
+.env

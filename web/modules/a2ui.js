@@ -1,6 +1,6 @@
 import { t } from "./i18n.js?v=20260110-01";
 
-// A2UI 消息类型顺序，用于定位消息主体�?
+// A2UI 消息类型顺序，用于定位消息主体。
 const A2UI_MESSAGE_KEYS = [
   "beginRendering",
   "surfaceUpdate",
@@ -8,12 +8,12 @@ const A2UI_MESSAGE_KEYS = [
   "deleteSurface",
 ];
 
-// 内存态：记录 surface 与组�?数据模型，便于增量更新�?
+// 内存态：记录 surface 与组件数据模型，便于增量更新。
 const a2uiState = {
   surfaces: new Map(),
 };
 
-// A2UI 图标名到 Font Awesome 图标类的映射，提升调试面板可读性�?
+// A2UI 图标名到 Font Awesome 图标类的映射，提升调试面板可读性。
 const A2UI_ICON_MAP = {
   accountCircle: "fa-user-circle",
   add: "fa-plus",
@@ -65,7 +65,7 @@ const A2UI_ICON_MAP = {
   warning: "fa-triangle-exclamation",
 };
 
-// �?a2ui 消息转为统一数组结构�?
+// 将a2ui 消息转为统一数组结构。
 const normalizeMessages = (raw) => {
   if (!raw) {
     return [];
@@ -87,7 +87,7 @@ const normalizeMessages = (raw) => {
   return [];
 };
 
-// 获取消息类型与对�?payload�?
+// 获取消息类型与对应payload。
 const resolveMessage = (message) => {
   if (!message || typeof message !== "object") {
     return { type: "", payload: null };
@@ -100,7 +100,7 @@ const resolveMessage = (message) => {
   return { type: "", payload: null };
 };
 
-// 确保 surface 容器存在�?
+// 确保 surface 容器存在。
 const ensureSurface = (container, surfaceId) => {
   if (!container || !surfaceId) {
     return null;
@@ -132,7 +132,7 @@ const ensureSurface = (container, surfaceId) => {
   return surface;
 };
 
-// 清理指定 surface�?
+// 清理指定 surface。
 const removeSurface = (surfaceId) => {
   const surface = a2uiState.surfaces.get(surfaceId);
   if (!surface) {
@@ -144,7 +144,7 @@ const removeSurface = (surfaceId) => {
   a2uiState.surfaces.delete(surfaceId);
 };
 
-// 解析路径为数组�?
+// 解析路径为数组。
 const splitPath = (path) => {
   if (!path) {
     return [];
@@ -156,7 +156,7 @@ const splitPath = (path) => {
     .filter(Boolean);
 };
 
-// 读取路径值，支持绝对路径与相对路径�?
+// 读取路径值，支持绝对路径与相对路径。
 const resolvePathValue = (root, path) => {
   if (!path || path === "/") {
     return root;
@@ -172,7 +172,7 @@ const resolvePathValue = (root, path) => {
   return current;
 };
 
-// 写入路径值，必要时创建中间对象�?
+// 写入路径值，必要时创建中间对象。
 const setPathValue = (root, path, value) => {
   const segments = splitPath(path);
   if (!segments.length) {
@@ -193,7 +193,7 @@ const setPathValue = (root, path, value) => {
   return root;
 };
 
-// �?valueMap 结构还原为对象�?
+// 将valueMap 结构还原为对象。
 const buildValueFromEntry = (entry) => {
   if (!entry || typeof entry !== "object") {
     return null;
@@ -213,7 +213,7 @@ const buildValueFromEntry = (entry) => {
   return null;
 };
 
-// 解析 dataModelUpdate.contents 为对象�?
+// 解析 dataModelUpdate.contents 为对象。
 const buildMapFromEntries = (entries) => {
   if (!Array.isArray(entries)) {
     return {};
@@ -232,7 +232,7 @@ const buildMapFromEntries = (entries) => {
   return output;
 };
 
-// �?contents 转换为数据模型�?
+// 将contents 转换为数据模型。
 const buildDataModel = (contents) => {
   if (!contents) {
     return {};
@@ -246,7 +246,7 @@ const buildDataModel = (contents) => {
   return {};
 };
 
-// 解析绑定值，优先使用 path，其�?literal 值�?
+// 解析绑定值，优先使用 path，其次literal 值。
 const resolveBoundValue = (value, context) => {
   if (!value || typeof value !== "object") {
     return value;
@@ -282,14 +282,14 @@ const resolveBoundValue = (value, context) => {
   return "";
 };
 
-// 将字符串转换�?kebab-case，便�?CSS 类名复用�?
+// 将字符串转换为kebab-case，便于CSS 类名复用。
 const toKebabCase = (value) =>
   String(value || "")
     .replace(/([a-z])([A-Z])/g, "$1-$2")
     .replace(/[_\s]+/g, "-")
     .toLowerCase();
 
-// 根据组件布局配置同步 flex 对齐与分布，提升布局一致性�?
+// 根据组件布局配置同步 flex 对齐与分布，提升布局一致性。
 const applyFlexLayout = (element, props) => {
   if (!element || !props || typeof props !== "object") {
     return;
@@ -318,7 +318,7 @@ const applyFlexLayout = (element, props) => {
   }
 };
 
-// 解析图标名称并返回对应的 Font Awesome 类名�?
+// 解析图标名称并返回对应的 Font Awesome 类名。
 const resolveIconClass = (name) => {
   const key = String(name || "").trim();
   if (!key) {
@@ -327,7 +327,7 @@ const resolveIconClass = (name) => {
   return A2UI_ICON_MAP[key] || "";
 };
 
-// 渲染文本组件，支�?usageHint�?
+// 渲染文本组件，支持usageHint。
 const renderText = (props, context) => {
   const raw = resolveBoundValue(props.text, context);
   const text = raw === undefined || raw === null ? "" : String(raw);
@@ -341,7 +341,7 @@ const renderText = (props, context) => {
   return element;
 };
 
-// 渲染容器类组件：Row / Column / List�?
+// 渲染容器类组件：Row / Column / List。
 const renderContainer = (type, props, context, renderChildById) => {
   const element = document.createElement("div");
   if (type === "Row") {
@@ -391,7 +391,7 @@ const renderContainer = (type, props, context, renderChildById) => {
   return element;
 };
 
-// 渲染按钮组件，显�?action 名称�?
+// 渲染按钮组件，显示action 名称。
 const renderButton = (props, context, renderChildById) => {
   const button = document.createElement("button");
   button.className = "a2ui-button";
@@ -426,7 +426,7 @@ const renderButton = (props, context, renderChildById) => {
   return button;
 };
 
-// 渲染卡片组件�?
+// 渲染卡片组件。
 const renderCard = (props, context, renderChildById) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-card";
@@ -439,7 +439,7 @@ const renderCard = (props, context, renderChildById) => {
   return wrapper;
 };
 
-// 渲染图片组件�?
+// 渲染图片组件。
 const renderImage = (props, context) => {
   const url = resolveBoundValue(props.url, context);
   const img = document.createElement("img");
@@ -458,7 +458,7 @@ const renderImage = (props, context) => {
   return img;
 };
 
-// 渲染分割线组件�?
+// 渲染分割线组件。
 const renderDivider = (props = {}) => {
   const divider = document.createElement("hr");
   divider.className = "a2ui-divider";
@@ -468,7 +468,7 @@ const renderDivider = (props = {}) => {
   return divider;
 };
 
-// 渲染图标组件（调试环境仅展示名字）�?
+// 渲染图标组件（调试环境仅展示名字）。
 const renderIcon = (props, context) => {
   const name = resolveBoundValue(props.name || props.icon, context);
   const icon = document.createElement("span");
@@ -493,7 +493,7 @@ const renderIcon = (props, context) => {
   return icon;
 };
 
-// 渲染视频组件，提供基础播放控件�?
+// 渲染视频组件，提供基础播放控件。
 const renderVideo = (props, context) => {
   const url = resolveBoundValue(props.url, context);
   const video = document.createElement("video");
@@ -506,7 +506,7 @@ const renderVideo = (props, context) => {
   return video;
 };
 
-// 渲染音频播放器组件，可选加入描述文本�?
+// 渲染音频播放器组件，可选加入描述文本。
 const renderAudioPlayer = (props, context) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-audio";
@@ -529,7 +529,7 @@ const renderAudioPlayer = (props, context) => {
   return wrapper;
 };
 
-// 渲染复选框，调试场景下只读展示�?
+// 渲染复选框，调试场景下只读展示。
 const renderCheckbox = (props, context) => {
   const wrapper = document.createElement("label");
   wrapper.className = "a2ui-checkbox";
@@ -547,7 +547,7 @@ const renderCheckbox = (props, context) => {
   return wrapper;
 };
 
-// 渲染文本输入组件，便于可视化数据绑定结果�?
+// 渲染文本输入组件，便于可视化数据绑定结果。
 const renderTextField = (props, context) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-field";
@@ -586,7 +586,7 @@ const renderTextField = (props, context) => {
   return wrapper;
 };
 
-// �?ISO 时间转换�?input 组件可读格式，避免时区与秒数干扰�?
+// 将ISO 时间转换为input 组件可读格式，避免时区与秒数干扰。
 const normalizeDateTimeValue = (raw, inputType) => {
   if (!raw) {
     return "";
@@ -613,7 +613,7 @@ const normalizeDateTimeValue = (raw, inputType) => {
   )}:${pad(parsed.getMinutes())}`;
 };
 
-// 渲染日期/时间输入组件，以只读样式呈现数值�?
+// 渲染日期/时间输入组件，以只读样式呈现数值。
 const renderDateTimeInput = (props, context) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-field";
@@ -637,7 +637,7 @@ const renderDateTimeInput = (props, context) => {
   return wrapper;
 };
 
-// 渲染多选组件，使用 disabled select 呈现选项状态�?
+// 渲染多选组件，使用 disabled select 呈现选项状态。
 const renderMultipleChoice = (props, context) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-field";
@@ -671,7 +671,7 @@ const renderMultipleChoice = (props, context) => {
   return wrapper;
 };
 
-// 渲染滑块组件，展示当前数值�?
+// 渲染滑块组件，展示当前数值。
 const renderSlider = (props, context) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-slider";
@@ -694,7 +694,7 @@ const renderSlider = (props, context) => {
   return wrapper;
 };
 
-// 渲染 Tab 组件，以简易切换实现基础体验�?
+// 渲染 Tab 组件，以简易切换实现基础体验。
 const renderTabs = (props, context, renderChildById) => {
   const wrapper = document.createElement("div");
   wrapper.className = "a2ui-tabs";
@@ -741,7 +741,7 @@ const renderTabs = (props, context, renderChildById) => {
   return wrapper;
 };
 
-// 渲染 Modal 组件，使�?details/summary 轻量展开�?
+// 渲染 Modal 组件，使用details/summary 轻量展开。
 const renderModal = (props, context, renderChildById) => {
   const wrapper = document.createElement("details");
   wrapper.className = "a2ui-modal";
@@ -764,7 +764,7 @@ const renderModal = (props, context, renderChildById) => {
   return wrapper;
 };
 
-// 渲染未知组件，避免渲染失败�?
+// 渲染未知组件，避免渲染失败。
 const renderUnknown = (type) => {
   const element = document.createElement("div");
   element.className = "a2ui-unknown";
@@ -772,7 +772,7 @@ const renderUnknown = (type) => {
   return element;
 };
 
-// 根据组件类型渲染 DOM�?
+// 根据组件类型渲染 DOM。
 const renderComponent = (component, context, renderChildById) => {
   const componentDef = component.component || {};
   const types = Object.keys(componentDef);
@@ -844,7 +844,7 @@ const renderComponent = (component, context, renderChildById) => {
   return element;
 };
 
-// �?rootId 渲染整个 surface�?
+// 按rootId 渲染整个 surface。
 const renderSurface = (surface) => {
   if (!surface || !surface.rootId) {
     return;
@@ -853,7 +853,7 @@ const renderSurface = (surface) => {
   if (!contentRoot) {
     return;
   }
-  // 清空旧渲染，保留标题�?
+  // 清空旧渲染，保留标题。
   if (contentRoot === surface.container) {
     while (contentRoot.children.length > 1) {
       contentRoot.removeChild(contentRoot.lastChild);
@@ -882,7 +882,7 @@ const renderSurface = (surface) => {
   }
 };
 
-// 更新数据模型并触发渲染�?
+// 更新数据模型并触发渲染。
 const applyDataModelUpdate = (surface, update) => {
   const path = typeof update.path === "string" ? update.path : "";
   const data = buildDataModel(update.contents);
@@ -893,7 +893,7 @@ const applyDataModelUpdate = (surface, update) => {
   }
 };
 
-// 应用 beginRendering 样式�?
+// 应用 beginRendering 样式。
 const applySurfaceStyles = (surface, styles) => {
   if (!styles || typeof styles !== "object") {
     return;
@@ -907,7 +907,7 @@ const applySurfaceStyles = (surface, styles) => {
   }
 };
 
-// 对外：清�?A2UI 渲染状态�?
+// 对外：清空A2UI 渲染状态。
 export const resetA2uiState = (container) => {
   a2uiState.surfaces.clear();
   if (container) {
@@ -915,7 +915,7 @@ export const resetA2uiState = (container) => {
   }
 };
 
-// 对外：应�?A2UI 消息列表并渲染�?
+// 对外：应用A2UI 消息列表并渲染。
 export const applyA2uiMessages = (container, payload) => {
   if (!container) {
     return;

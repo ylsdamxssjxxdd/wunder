@@ -18,7 +18,7 @@ async def test_a2a_internal_service_injects_user_id(orchestrator, monkeypatch):
     config.a2a.services = [
         A2AServiceConfig(
             name="wunder",
-            endpoint="http://127.0.0.1:8000/a2a",
+            endpoint="http://127.0.0.1:18000/a2a",
             service_type="internal",
             user_id="preset_user",
             enabled=True,

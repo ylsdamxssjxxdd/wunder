@@ -3,7 +3,7 @@ import { check, sleep } from 'k6';
 
 // 统一压测脚本：通过 WUNDER_PROFILE 选择 quick/load/spike/soak。
 const PROFILE = (__ENV.WUNDER_PROFILE || 'load').toLowerCase();
-const BASE_URL = __ENV.WUNDER_BASE_URL || 'http://127.0.0.1:8000/wunder';
+const BASE_URL = __ENV.WUNDER_BASE_URL || 'http://127.0.0.1:18000/wunder';
 const QUESTION_OVERRIDE = (__ENV.WUNDER_QUESTION || '').trim();
 const USER_PREFIX_OVERRIDE = (__ENV.WUNDER_USER_PREFIX || '').trim();
 const FIXED_USER_ID = (__ENV.WUNDER_USER_ID || '').trim();

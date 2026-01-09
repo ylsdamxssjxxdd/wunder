@@ -37,7 +37,7 @@ import {
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260108-02";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260108-02";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-02";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
 
@@ -71,7 +71,7 @@ import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110
 
 const patchApiFetch = () => {
 
-  // Í³Ò»ÎªÇ°¶ËÇëÇó²¹Æë API Key£¬±ÜÃâÃ¿´¦µ÷ÓÃÊÖ¶¯Ìí¼Ó¡£
+  // ç»Ÿä¸€ä¸ºå‰ç«¯è¯·æ±‚è¡¥é½ API Keyï¼Œé¿å…æ¯å¤„è°ƒç”¨æ‰‹åŠ¨æ·»åŠ ã€‚
 
   const originalFetch = window.fetch.bind(window);
 
@@ -111,7 +111,27 @@ const patchApiFetch = () => {
 
 
 
-// ÇÐ»»²à±ßÀ¸Ãæ°å£¬±£³Öµ¥Ò³ÎÞÕûÌå¹ö¶¯
+// åˆ‡æ¢ä¾§è¾¹æ é¢æ¿ï¼Œä¿æŒå•é¡µæ— æ•´ä½“æ»šåŠ¨
+
+
+// ?????????????
+const SIDEBAR_COLLAPSE_WIDTH = 1200;
+let sidebarCollapsed = null;
+
+const updateSidebarCollapse = () => {
+  const width = window.innerWidth || document.documentElement.clientWidth;
+  const shouldCollapse = Number.isFinite(width) && width > 0 && width <= SIDEBAR_COLLAPSE_WIDTH;
+  if (shouldCollapse === sidebarCollapsed) {
+    return;
+  }
+  sidebarCollapsed = shouldCollapse;
+  document.body.classList.toggle("sidebar-collapsed", shouldCollapse);
+};
+
+const bindSidebarCollapse = () => {
+  updateSidebarCollapse();
+  window.addEventListener("resize", updateSidebarCollapse);
+};
 
 const panelMap = {
 
@@ -175,7 +195,7 @@ const switchPanel = (panel) => {
 
 
 
-// ¸ù¾ÝÓïÑÔÇÐ»»ÏµÍ³½éÉÜ PPT µØÖ·£¬Í¬Ê±¸½´ø°æ±¾ºÅ±ÜÃâä¯ÀÀÆ÷»º´æ¾ÉÒ³
+// æ ¹æ®è¯­è¨€åˆ‡æ¢ç³»ç»Ÿä»‹ç» PPT åœ°å€ï¼ŒåŒæ—¶é™„å¸¦ç‰ˆæœ¬å·é¿å…æµè§ˆå™¨ç¼“å­˜æ—§é¡µ
 
 const INTRO_PPT_VERSION = "20260105-11";
 const appendIntroVersion = (src) => `${src}?v=${INTRO_PPT_VERSION}`;
@@ -216,7 +236,7 @@ const syncIntroFrameLanguage = (language) => {
 
 
 
-// °ó¶¨µ¼º½ÊÂ¼þÓë¿çÒ³Ãæ½»»¥
+// ç»‘å®šå¯¼èˆªäº‹ä»¶ä¸Žè·¨é¡µé¢äº¤äº’
 
 const bindNavigation = () => {
 
@@ -298,7 +318,7 @@ const bindNavigation = () => {
 
   });
 
-  // µã»÷²à±ßÀ¸±êÌâ½øÈëÏµÍ³½éÉÜÃæ°å
+  // ç‚¹å‡»ä¾§è¾¹æ æ ‡é¢˜è¿›å…¥ç³»ç»Ÿä»‹ç»é¢æ¿
 
   if (elements.sidebarTitle) {
 
@@ -498,7 +518,7 @@ const bindNavigation = () => {
 
 
 
-// ÏµÍ³½éÉÜÃæ°å£ºÈ«ÆÁ°´Å¥ÓëÕ¹Ê¾ÈÝÆ÷°ó¶¨
+// ç³»ç»Ÿä»‹ç»é¢æ¿ï¼šå…¨å±æŒ‰é’®ä¸Žå±•ç¤ºå®¹å™¨ç»‘å®š
 
 const bindIntroPanel = () => {
 
@@ -604,11 +624,11 @@ const bindLanguageRefresh = () => {
 
 
 
-// °ó¶¨»ù´¡ÊäÈëÓëÈ«¾ÖÐÐÎª
+// ç»‘å®šåŸºç¡€è¾“å…¥ä¸Žå…¨å±€è¡Œä¸º
 
 const bindGlobalInputs = () => {
 
-  // API Key ÏÔÊ¾/Òþ²ØÇÐ»»£¬±ãÓÚÈ·ÈÏÊäÈëÊÇ·ñÕýÈ·¡£
+  // API Key æ˜¾ç¤º/éšè—åˆ‡æ¢ï¼Œä¾¿äºŽç¡®è®¤è¾“å…¥æ˜¯å¦æ­£ç¡®ã€‚
 
   if (elements.apiKeyToggle && elements.apiKey) {
 
@@ -742,7 +762,7 @@ const bindGlobalInputs = () => {
 
 
 
-// Æô¶¯Èë¿Ú£º³õÊ¼»¯Ä¬ÈÏÖµ¡¢Ä£¿é½»»¥ÓëÊ×ÆÁÊý¾Ý
+// å¯åŠ¨å…¥å£ï¼šåˆå§‹åŒ–é»˜è®¤å€¼ã€æ¨¡å—äº¤äº’ä¸Žé¦–å±æ•°æ®
 
 const bootstrap = async () => {
 
@@ -809,6 +829,7 @@ const bootstrap = async () => {
   bindLanguageRefresh();
 
   bindGlobalInputs();
+  bindSidebarCollapse();
 
   const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
 

@@ -33,7 +33,8 @@ docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfil
 
 ### 2.2 Update configuration
 Copy the example config to the real config: `config/wunder-example.yaml` -> `config/wunder.yaml`
-Update `api_key`, replace `ylsdamxssjxxdd` with your own key.
+Copy the env example: `.env.example` -> `.env`
+Update `WUNDER_API_KEY` (and any other overrides) in `.env`.
 
 ### 2.3 Start the service
 ```bash
@@ -45,7 +46,7 @@ The first `docker compose up` downloads images and dependencies and may take a f
 ### 2.4 Open the settings panel
 Open in browser:
 ```
-http://127.0.0.1:8000/wunder/web
+http://127.0.0.1:18000/wunder/web
 ```
 Go to the Settings page, fill in the API base and key, and it will connect to the backend.
 
@@ -58,7 +59,7 @@ Go to Debug and send a test question.
 ## 3. Request Examples
 ### 3.1 Non-stream request
 ```
-curl -X POST http://127.0.0.1:8000/wunder ^
+curl -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"Hello\",\"stream\":false}"
@@ -66,7 +67,7 @@ curl -X POST http://127.0.0.1:8000/wunder ^
 
 ### 3.2 Streaming SSE request
 ```
-curl -N -X POST http://127.0.0.1:8000/wunder ^
+curl -N -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"Hello\",\"stream\":true}"
@@ -77,7 +78,7 @@ SSE event types include:
 
 ### 3.3 Enable tools on demand
 ```
-curl -X POST http://127.0.0.1:8000/wunder ^
+curl -X POST http://127.0.0.1:18000/wunder ^
   -H "Content-Type: application/json" ^
   -H "X-API-Key: <your-api-key>" ^
   -d "{\"user_id\":\"u001\",\"question\":\"List current directory\",\"tool_names\":[\"列出文件\"],\"stream\":false}"
@@ -85,7 +86,7 @@ curl -X POST http://127.0.0.1:8000/wunder ^
 
 Fetch the tool catalog first:
 ```
-curl -X GET http://127.0.0.1:8000/wunder/tools ^
+curl -X GET http://127.0.0.1:18000/wunder/tools ^
   -H "X-API-Key: <your-api-key>"
 ```
 

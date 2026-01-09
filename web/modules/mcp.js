@@ -8,7 +8,7 @@ import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260110-01";
 
-// ¹æ·¶»¯ MCP ·þÎñ×Ö¶Î£¬¼æÈÝºó¶ËÓëµ¼Èë½á¹¹
+// è§„èŒƒåŒ– MCP æœåŠ¡å­—æ®µï¼Œå…¼å®¹åŽç«¯ä¸Žå¯¼å…¥ç»“æž„
 const normalizeMcpServer = (server) => {
   const headers = isPlainObject(server.headers) ? server.headers : {};
   const rawToolSpecs = Array.isArray(server.tool_specs)
@@ -31,7 +31,7 @@ const normalizeMcpServer = (server) => {
   };
 };
 
-// ½« mcpServers ½á¹¹Ìå×ª»»ÎªÄÚ²¿·þÎñ¶ÔÏó
+// å°† mcpServers ç»“æž„ä½“è½¬æ¢ä¸ºå†…éƒ¨æœåŠ¡å¯¹è±¡
 const buildServerFromMcpConfig = (serverId, rawConfig) => {
   const config = rawConfig || {};
   const endpoint = config.baseUrl || config.base_url || config.url || config.endpoint || "";
@@ -65,7 +65,7 @@ const buildServerFromMcpConfig = (serverId, rawConfig) => {
   });
 };
 
-// Éú³É¿É¸´ÖÆµÄ MCP ½á¹¹ÌåÔ¤ÀÀ£¬·½±ã¹ÜÀíÔ±¸´ÓÃÅäÖÃ
+// ç”Ÿæˆå¯å¤åˆ¶çš„ MCP ç»“æž„ä½“é¢„è§ˆï¼Œæ–¹ä¾¿ç®¡ç†å‘˜å¤ç”¨é…ç½®
 const buildMcpStructPreview = (server) => {
   if (!server || !server.name || !server.endpoint) {
     return "";
@@ -87,7 +87,7 @@ const buildMcpStructPreview = (server) => {
   return JSON.stringify({ mcpServers: { [server.name]: cleaned } }, null, 2);
 };
 
-// ´Ó±à¼­µ¯´°×Ö¶ÎÖÐ¹¹ÔìÔ¤ÀÀÓÃµÄ·þÎñ¶ÔÏó
+// ä»Žç¼–è¾‘å¼¹çª—å­—æ®µä¸­æž„é€ é¢„è§ˆç”¨çš„æœåŠ¡å¯¹è±¡
 const collectModalServer = () => {
   const headersResult = parseHeadersValue(elements.mcpHeaders.value);
   const headers = headersResult.error ? {} : headersResult.headers || {};
@@ -102,20 +102,20 @@ const collectModalServer = () => {
   });
 };
 
-// ¸üÐÂ MCP ½á¹¹ÌåÔ¤ÀÀÄÚÈÝ
+// æ›´æ–° MCP ç»“æž„ä½“é¢„è§ˆå†…å®¹
 const updateMcpStructPreview = () => {
   const server = collectModalServer();
   const preview = buildMcpStructPreview(server);
   elements.mcpStructPreview.value = preview || t("mcp.struct.preview.empty");
 };
 
-// ÅÐ¶ÏÖ¸¶¨·þÎñÊÇ·ñÒÑÓÐ¹¤¾ß»º´æ£¬ÓÃÓÚÇø·Ö¡°Á¬½Ó/Ë¢ÐÂ¡±×´Ì¬
+// åˆ¤æ–­æŒ‡å®šæœåŠ¡æ˜¯å¦å·²æœ‰å·¥å…·ç¼“å­˜ï¼Œç”¨äºŽåŒºåˆ†â€œè¿žæŽ¥/åˆ·æ–°â€çŠ¶æ€
 const isMcpServerConnected = (index) => {
   const tools = state.mcp.toolsByIndex[index];
   return Array.isArray(tools) && tools.length > 0;
 };
 
-// ¸ù¾Ýµ±Ç°Ñ¡ÖÐ·þÎñ¸üÐÂÁ¬½Ó°´Å¥ÎÄ°¸ÓëÍ¼±ê
+// æ ¹æ®å½“å‰é€‰ä¸­æœåŠ¡æ›´æ–°è¿žæŽ¥æŒ‰é’®æ–‡æ¡ˆä¸Žå›¾æ ‡
 const updateMcpConnectButton = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
   const connected = server ? isMcpServerConnected(state.mcp.selectedIndex) : false;
@@ -125,7 +125,7 @@ const updateMcpConnectButton = () => {
   elements.mcpConnectBtn.disabled = !server;
 };
 
-// ¸ù¾Ý¹¤¾ß»º´æ×´Ì¬ÆôÓÃ/½ûÓÃ¡°È«²¿Ë¢ÐÂ¡±°´Å¥
+// æ ¹æ®å·¥å…·ç¼“å­˜çŠ¶æ€å¯ç”¨/ç¦ç”¨â€œå…¨éƒ¨åˆ·æ–°â€æŒ‰é’®
 const updateMcpRefreshAllButton = () => {
   const hasConnected = state.mcp.servers.some((_, index) => isMcpServerConnected(index));
   elements.mcpRefreshAllBtn.disabled = !hasConnected;
@@ -147,7 +147,7 @@ const resolveMcpServerActionMessage = () => {
   }
 };
 
-// äÖÈ¾ MCP ·þÎñÁÐ±íÓëµ±Ç°Ñ¡ÖÐÏî
+// æ¸²æŸ“ MCP æœåŠ¡åˆ—è¡¨ä¸Žå½“å‰é€‰ä¸­é¡¹
 const renderMcpServers = () => {
   elements.mcpServerList.textContent = "";
   if (!state.mcp.servers.length) {
@@ -169,7 +169,7 @@ const renderMcpServers = () => {
       subtitleParts.push(`ID: ${server.name}`);
     }
     subtitleParts.push(server.endpoint || "-");
-    item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" ¡¤ ")}</small>`;
+    item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" Â· ")}</small>`;
     item.addEventListener("click", () => {
       state.mcp.selectedIndex = index;
       renderMcpDetail();
@@ -207,14 +207,14 @@ const renderMcpHeader = () => {
     server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
   );
   elements.mcpDetailTitle.textContent = title;
-  elements.mcpDetailMeta.textContent = metaParts.join(" ¡¤ ");
+  elements.mcpDetailMeta.textContent = metaParts.join(" Â· ");
   elements.mcpDetailDesc.textContent = server.description || "";
   elements.mcpEditBtn.disabled = false;
   elements.mcpDeleteBtn.disabled = false;
   updateMcpConnectButton();
 };
 
-// äÖÈ¾ MCP ¹¤¾ß¹´Ñ¡ÁÐ±í
+// æ¸²æŸ“ MCP å·¥å…·å‹¾é€‰åˆ—è¡¨
 const renderMcpTools = () => {
   elements.mcpToolList.textContent = "";
   const server = state.mcp.servers[state.mcp.selectedIndex];
@@ -235,7 +235,7 @@ const renderMcpTools = () => {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
-    // ÆôÓÃÇÒÎ´ÏÔÊ½ÅäÖÃ allow_tools Ê±£¬Ä¬ÈÏÊÓÎªÈ«Ñ¡
+    // å¯ç”¨ä¸”æœªæ˜¾å¼é…ç½® allow_tools æ—¶ï¼Œé»˜è®¤è§†ä¸ºå…¨é€‰
     const implicitAll = server.enabled !== false && allowList.length === 0;
     const checked = implicitAll || allowList.includes(tool.name);
     checkbox.checked = checked;
@@ -267,7 +267,7 @@ const renderMcpTools = () => {
       const actionMessage = event.target.checked
         ? t("mcp.tool.enabled", { name: tool.name, server: serverTitle })
         : t("mcp.tool.disabled", { name: tool.name, server: serverTitle });
-      // ¹´Ñ¡×´Ì¬±ä¸üºóÁ¢¼´±£´æ£¬±ÜÃâÒÀÀµÊÖ¶¯±£´æ°´Å¥
+      // å‹¾é€‰çŠ¶æ€å˜æ›´åŽç«‹å³ä¿å­˜ï¼Œé¿å…ä¾èµ–æ‰‹åŠ¨ä¿å­˜æŒ‰é’®
       saveMcpServers({ refreshUI: false })
         .then((ok) => {
           if (ok === false) {
@@ -283,7 +283,7 @@ const renderMcpTools = () => {
     });
     const label = document.createElement("label");
     label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
-    // µã»÷¹¤¾ßÌõÄ¿²é¿´ÏêÇé£¬±ÜÃâÓë¹´Ñ¡¶¯×÷³åÍ»
+    // ç‚¹å‡»å·¥å…·æ¡ç›®æŸ¥çœ‹è¯¦æƒ…ï¼Œé¿å…ä¸Žå‹¾é€‰åŠ¨ä½œå†²çª
     item.addEventListener("click", (event) => {
       if (event.target === checkbox) {
         return;
@@ -301,7 +301,7 @@ const renderMcpTools = () => {
       );
       openToolDetailModal({
         title: tool.name || t("tool.detail.title"),
-        meta: metaParts.join(" ¡¤ "),
+        meta: metaParts.join(" Â· "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
       });
@@ -313,7 +313,7 @@ const renderMcpTools = () => {
   renderMcpHeader();
 };
 
-// äÖÈ¾ MCP ·þÎñÏêÇéÓë¹¤¾ßÁÐ±í
+// æ¸²æŸ“ MCP æœåŠ¡è¯¦æƒ…ä¸Žå·¥å…·åˆ—è¡¨
 const renderMcpDetail = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
   if (!server) {
@@ -324,7 +324,7 @@ const renderMcpDetail = () => {
   renderMcpTools();
 };
 
-// ´Óºó¶Ë¼ÓÔØ MCP ÅäÖÃ
+// ä»ŽåŽç«¯åŠ è½½ MCP é…ç½®
 export const loadMcpServers = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/mcp`;
@@ -342,7 +342,7 @@ export const loadMcpServers = async () => {
   renderMcpDetail();
 };
 
-// ±£´æ MCP ÅäÖÃµ½ºó¶Ë£¬±ÜÃâÆµ·±¸²¸Çµ±Ç°Ñ¡ÔñµÄ·þÎñ
+// ä¿å­˜ MCP é…ç½®åˆ°åŽç«¯ï¼Œé¿å…é¢‘ç¹è¦†ç›–å½“å‰é€‰æ‹©çš„æœåŠ¡
 const saveMcpServers = async (options = {}) => {
   const { refreshUI = true } = options;
   const selectedName = state.mcp.servers[state.mcp.selectedIndex]?.name || "";
@@ -400,7 +400,7 @@ const saveMcpServers = async (options = {}) => {
   return true;
 };
 
-// µ÷ÓÃºó¶Ë½Ó¿ÚÀ­È¡Ö¸¶¨ MCP ·þÎñµÄ¹¤¾ßÇåµ¥
+// è°ƒç”¨åŽç«¯æŽ¥å£æ‹‰å–æŒ‡å®š MCP æœåŠ¡çš„å·¥å…·æ¸…å•
 const requestMcpTools = async (server) => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/mcp/tools`;
@@ -424,7 +424,7 @@ const requestMcpTools = async (server) => {
   return { ok: true, tools: result.tools || [] };
 };
 
-// °´Ë÷ÒýÁ¬½Ó/Ë¢ÐÂµ¥¸ö MCP ·þÎñ£¬²¢¸ù¾ÝÐèÒªÍ¬²½ UI
+// æŒ‰ç´¢å¼•è¿žæŽ¥/åˆ·æ–°å•ä¸ª MCP æœåŠ¡ï¼Œå¹¶æ ¹æ®éœ€è¦åŒæ­¥ UI
 const connectMcpServerAtIndex = async (index, options = {}) => {
   const { updateUI = false } = options;
   const server = state.mcp.servers[index];
@@ -456,7 +456,7 @@ const connectMcpServerAtIndex = async (index, options = {}) => {
   return true;
 };
 
-// Á¬½Ó MCP ·þÎñ²¢À­È¡¹¤¾ßÁÐ±í
+// è¿žæŽ¥ MCP æœåŠ¡å¹¶æ‹‰å–å·¥å…·åˆ—è¡¨
 const connectMcpServer = async () => {
   const index = state.mcp.selectedIndex;
   const wasConnected = index >= 0 ? isMcpServerConnected(index) : false;
@@ -475,7 +475,7 @@ const connectMcpServer = async () => {
   });
 };
 
-// Ë¢ÐÂËùÓÐÒÑÁ¬½Ó MCP ·þÎñµÄ¹¤¾ß»º´æ
+// åˆ·æ–°æ‰€æœ‰å·²è¿žæŽ¥ MCP æœåŠ¡çš„å·¥å…·ç¼“å­˜
 const refreshAllMcpServers = async () => {
   const connectedIndexes = state.mcp.servers
     .map((_, index) => index)
@@ -598,7 +598,7 @@ const applyMcpModal = () => {
   return true;
 };
 
-// °´·þÎñÃû¸²¸Ç»òÐÂÔö MCP ·þÎñ
+// æŒ‰æœåŠ¡åè¦†ç›–æˆ–æ–°å¢ž MCP æœåŠ¡
 const upsertMcpServer = (incoming) => {
   const targetIndex = state.mcp.servers.findIndex((item) => item.name === incoming.name);
   if (targetIndex >= 0) {
@@ -624,7 +624,7 @@ const upsertMcpServer = (incoming) => {
   return state.mcp.servers.length - 1;
 };
 
-// ´Ó MCP ½á¹¹Ìå JSON µ¼Èë·þÎñÅäÖÃ
+// ä»Ž MCP ç»“æž„ä½“ JSON å¯¼å…¥æœåŠ¡é…ç½®
 const importMcpServers = async (raw) => {
   const content = (raw || "").trim();
   if (!content) {
@@ -674,7 +674,7 @@ const importMcpServers = async (raw) => {
   return true;
 };
 
-// É¾³ýµ±Ç°Ñ¡ÖÐµÄ MCP ·þÎñ
+// åˆ é™¤å½“å‰é€‰ä¸­çš„ MCP æœåŠ¡
 const deleteMcpServer = async () => {
   if (state.mcp.selectedIndex < 0) {
     return;
@@ -699,7 +699,7 @@ const deleteMcpServer = async () => {
   }
 };
 
-// ³õÊ¼»¯ MCP ¹ÜÀíÃæ°å½»»¥
+// åˆå§‹åŒ– MCP ç®¡ç†é¢æ¿äº¤äº’
 export const initMcpPanel = () => {
   elements.mcpConnectBtn.addEventListener("click", connectMcpServer);
   elements.mcpRefreshAllBtn.addEventListener("click", refreshAllMcpServers);

@@ -8,21 +8,30 @@ use dashmap::DashMap;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
+use tracing::warn;
 use walkdir::WalkDir;
 
 const MIGRATION_MARKER: &str = ".wunder_workspace_v2";
 const LEGACY_CHAT_FILE: &str = "chat_history.jsonl";
 const LEGACY_TOOL_FILE: &str = "tool_log.jsonl";
 const TREE_CACHE_TTL_S: f64 = 5.0;
+const TREE_CACHE_IDLE_TTL_S: f64 = 300.0;
+const TREE_CACHE_MAX_USERS: usize = 512;
 const SEARCH_INDEX_TTL_S: f64 = 10.0;
 const SEARCH_INDEX_MAX_ITEMS: usize = 200_000;
+const SEARCH_CACHE_IDLE_TTL_S: f64 = 300.0;
+const SEARCH_CACHE_MAX_USERS: usize = 256;
+const STORAGE_WRITE_QUEUE_SIZE: usize = 2048;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
@@ -46,6 +55,7 @@ pub struct WorkspaceTreeSnapshot {
 struct TreeCacheEntry {
     tree: String,
     built_ts: f64,
+    last_access_ts: f64,
     version: u64,
 }
 
@@ -78,7 +88,58 @@ struct SearchIndexEntry {
 struct SearchIndex {
     entries: Arc<Vec<SearchIndexEntry>>,
     built_ts: f64,
+    last_access_ts: f64,
     version: u64,
+}
+
+enum StorageWrite {
+    Chat { user_id: String, payload: Value },
+    ToolLog { user_id: String, payload: Value },
+    ArtifactLog { user_id: String, payload: Value },
+}
+
+struct StorageWriteQueue {
+    sender: SyncSender<StorageWrite>,
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl StorageWriteQueue {
+    fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(STORAGE_WRITE_QUEUE_SIZE);
+        let worker_storage = storage.clone();
+        thread::Builder::new()
+            .name("wunder-storage-writer".to_string())
+            .spawn(move || {
+                while let Ok(task) = receiver.recv() {
+                    if let Err(err) = Self::apply_write(&worker_storage, task) {
+                        warn!("storage write failed: {err}");
+                    }
+                }
+            })
+            .ok();
+        Self { sender, storage }
+    }
+
+    fn enqueue(&self, task: StorageWrite) -> Result<()> {
+        match self.sender.try_send(task) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
+                Self::apply_write(&self.storage, task)
+            }
+        }
+    }
+
+    fn apply_write(storage: &Arc<dyn StorageBackend>, task: StorageWrite) -> Result<()> {
+        match task {
+            StorageWrite::Chat { user_id, payload } => storage.append_chat(&user_id, &payload),
+            StorageWrite::ToolLog { user_id, payload } => {
+                storage.append_tool_log(&user_id, &payload)
+            }
+            StorageWrite::ArtifactLog { user_id, payload } => {
+                storage.append_artifact_log(&user_id, &payload)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +154,7 @@ pub struct WorkspaceManager {
     root: PathBuf,
     history_root: PathBuf,
     storage: Arc<dyn StorageBackend>,
+    write_queue: StorageWriteQueue,
     retention_days: i64,
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
@@ -100,9 +162,13 @@ pub struct WorkspaceManager {
     path_guard: Regex,
     tree_cache: Mutex<TreeCache>,
     tree_cache_ttl_s: f64,
+    tree_cache_idle_ttl_s: f64,
+    tree_cache_max_users: usize,
     search_cache: Mutex<HashMap<String, SearchIndex>>,
     search_cache_ttl_s: f64,
     search_cache_max_items: usize,
+    search_cache_idle_ttl_s: f64,
+    search_cache_max_users: usize,
     user_usage_cache: Mutex<UserUsageCache>,
     user_usage_cache_ttl_s: f64,
 }
@@ -112,10 +178,12 @@ impl WorkspaceManager {
         let retention_days = normalize_retention_days(retention_days);
         let history_root = PathBuf::from("data/historys");
         let _ = storage.ensure_initialized();
+        let write_queue = StorageWriteQueue::new(storage.clone());
         Self {
             root: PathBuf::from(root),
             history_root,
             storage,
+            write_queue,
             retention_days,
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
@@ -123,9 +191,13 @@ impl WorkspaceManager {
             path_guard: Regex::new(r#"[\\:*?\"<>|]"#).unwrap(),
             tree_cache: Mutex::new(TreeCache::default()),
             tree_cache_ttl_s: TREE_CACHE_TTL_S,
+            tree_cache_idle_ttl_s: TREE_CACHE_IDLE_TTL_S,
+            tree_cache_max_users: TREE_CACHE_MAX_USERS,
             search_cache: Mutex::new(HashMap::new()),
             search_cache_ttl_s: SEARCH_INDEX_TTL_S,
             search_cache_max_items: SEARCH_INDEX_MAX_ITEMS,
+            search_cache_idle_ttl_s: SEARCH_CACHE_IDLE_TTL_S,
+            search_cache_max_users: SEARCH_CACHE_MAX_USERS,
             user_usage_cache: Mutex::new(UserUsageCache::default()),
             user_usage_cache_ttl_s: 5.0,
         }
@@ -570,19 +642,28 @@ impl WorkspaceManager {
     }
 
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.storage.append_chat(user_id, payload)?;
+        self.write_queue.enqueue(StorageWrite::Chat {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
         self.maybe_schedule_retention_cleanup();
         Ok(())
     }
 
     pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.storage.append_tool_log(user_id, payload)?;
+        self.write_queue.enqueue(StorageWrite::ToolLog {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
         self.maybe_schedule_retention_cleanup();
         Ok(())
     }
 
     pub fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.storage.append_artifact_log(user_id, payload)?;
+        self.write_queue.enqueue(StorageWrite::ArtifactLog {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
         self.maybe_schedule_retention_cleanup();
         Ok(())
     }
@@ -870,17 +951,21 @@ impl WorkspaceManager {
         let safe_id = self.safe_user_id(user_id);
         let now = now_ts();
         {
-            let cache = self.tree_cache.lock().unwrap();
-            if let Some(entry) = cache.cache.get(&safe_id) {
-                let dirty = cache.dirty.contains(&safe_id);
+            let mut cache = self.tree_cache.lock().unwrap();
+            let dirty = cache.dirty.contains(&safe_id);
+            if let Some(entry) = cache.cache.get_mut(&safe_id) {
+                entry.last_access_ts = now;
                 let stale = now - entry.built_ts >= self.tree_cache_ttl_s;
                 if !dirty || !stale {
-                    return WorkspaceTreeSnapshot {
+                    let snapshot = WorkspaceTreeSnapshot {
                         tree: entry.tree.clone(),
                         version: entry.version,
                     };
+                    self.evict_tree_cache_locked(&mut cache, now);
+                    return snapshot;
                 }
             }
+            self.evict_tree_cache_locked(&mut cache, now);
         }
         let tree = self.refresh_workspace_tree(user_id);
         WorkspaceTreeSnapshot {
@@ -909,6 +994,7 @@ impl WorkspaceManager {
             .or_insert(TreeCacheEntry {
                 tree: String::new(),
                 built_ts: 0.0,
+                last_access_ts: now,
                 version: 0,
             });
         let changed = entry.tree != tree;
@@ -920,6 +1006,8 @@ impl WorkspaceManager {
         }
         entry.tree = tree.clone();
         entry.built_ts = now;
+        entry.last_access_ts = now;
+        self.evict_tree_cache_locked(&mut cache, now);
         tree
     }
 
@@ -954,25 +1042,116 @@ impl WorkspaceManager {
         *entry += 1;
     }
 
+    fn evict_tree_cache_locked(&self, cache: &mut TreeCache, now: f64) {
+        let idle_ttl = self.tree_cache_idle_ttl_s;
+        if idle_ttl > 0.0 {
+            let cutoff = now - idle_ttl;
+            let mut stale_keys = Vec::new();
+            for (key, entry) in cache.cache.iter() {
+                let last_access = if entry.last_access_ts > 0.0 {
+                    entry.last_access_ts
+                } else {
+                    entry.built_ts
+                };
+                if last_access > 0.0 && last_access < cutoff {
+                    stale_keys.push(key.clone());
+                }
+            }
+            for key in stale_keys {
+                cache.cache.remove(&key);
+                cache.dirty.remove(&key);
+            }
+        }
+
+        let max_entries = self.tree_cache_max_users;
+        if max_entries > 0 && cache.cache.len() > max_entries {
+            let mut items = cache
+                .cache
+                .iter()
+                .map(|(key, entry)| {
+                    let last_access = if entry.last_access_ts > 0.0 {
+                        entry.last_access_ts
+                    } else {
+                        entry.built_ts
+                    };
+                    (key.clone(), last_access)
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            let overflow = cache.cache.len().saturating_sub(max_entries);
+            for (key, _) in items.into_iter().take(overflow) {
+                cache.cache.remove(&key);
+                cache.dirty.remove(&key);
+            }
+        }
+    }
+
+    fn evict_search_cache_locked(&self, cache: &mut HashMap<String, SearchIndex>, now: f64) {
+        let idle_ttl = self.search_cache_idle_ttl_s;
+        if idle_ttl > 0.0 {
+            let cutoff = now - idle_ttl;
+            let mut stale_keys = Vec::new();
+            for (key, entry) in cache.iter() {
+                let last_access = if entry.last_access_ts > 0.0 {
+                    entry.last_access_ts
+                } else {
+                    entry.built_ts
+                };
+                if last_access > 0.0 && last_access < cutoff {
+                    stale_keys.push(key.clone());
+                }
+            }
+            for key in stale_keys {
+                cache.remove(&key);
+            }
+        }
+
+        let max_entries = self.search_cache_max_users;
+        if max_entries > 0 && cache.len() > max_entries {
+            let mut items = cache
+                .iter()
+                .map(|(key, entry)| {
+                    let last_access = if entry.last_access_ts > 0.0 {
+                        entry.last_access_ts
+                    } else {
+                        entry.built_ts
+                    };
+                    (key.clone(), last_access)
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            let overflow = cache.len().saturating_sub(max_entries);
+            for (key, _) in items.into_iter().take(overflow) {
+                cache.remove(&key);
+            }
+        }
+    }
+
     fn get_search_index(&self, safe_id: &str, version: u64, now: f64) -> Option<SearchIndex> {
         let mut cache = self.search_cache.lock().unwrap();
-        let Some(entry) = cache.get(safe_id) else {
+        let Some(entry) = cache.get_mut(safe_id) else {
             return None;
         };
         if entry.version != version {
             cache.remove(safe_id);
+            self.evict_search_cache_locked(&mut cache, now);
             return None;
         }
         if now - entry.built_ts >= self.search_cache_ttl_s {
             cache.remove(safe_id);
+            self.evict_search_cache_locked(&mut cache, now);
             return None;
         }
-        Some(entry.clone())
+        entry.last_access_ts = now;
+        let cloned = entry.clone();
+        self.evict_search_cache_locked(&mut cache, now);
+        Some(cloned)
     }
 
     fn store_search_index(&self, safe_id: String, index: SearchIndex) {
         let mut cache = self.search_cache.lock().unwrap();
         cache.insert(safe_id, index);
+        self.evict_search_cache_locked(&mut cache, now_ts());
     }
 
     fn build_search_index(&self, root: &Path, version: u64) -> Option<SearchIndex> {
@@ -1019,9 +1198,11 @@ impl WorkspaceManager {
                 is_dir,
             });
         }
+        let now = now_ts();
         Some(SearchIndex {
             entries: Arc::new(entries),
-            built_ts: now_ts(),
+            built_ts: now,
+            last_access_ts: now,
             version,
         })
     }

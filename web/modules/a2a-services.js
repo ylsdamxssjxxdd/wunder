@@ -7,7 +7,7 @@ import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260110-01";
 
-// 规范�?A2A 服务字段，兼容后端与导入结构
+// 规范化 A2A 服务信息，兼容字段命名并补齐默认值。
 const normalizeA2aService = (service) => {
   const headers = isPlainObject(service.headers) ? service.headers : {};
   const agentCard = isPlainObject(service.agent_card)
@@ -153,7 +153,7 @@ const renderAgentCardList = (container, items, mapper) => {
   });
 };
 
-// 按分组展�?AgentCard.tooling，补齐内�?MCP/知识�?A2A 能力信息
+// 渲染 AgentCard.tooling 的工具分组，覆盖 MCP/A2A/内置/知识库。
 const renderAgentCardTools = (container, tooling) => {
   if (!container) {
     return;

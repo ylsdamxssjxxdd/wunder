@@ -13,7 +13,7 @@ import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
-// µ÷ÊÔÃæ°å¸½¼şÖ§³Ö£ºÍ¼Æ¬×ß¶àÄ£Ì¬£¬ÎÄ¼ş×ß doc2md ½âÎö
+// è°ƒè¯•é¢æ¿é™„ä»¶æ”¯æŒï¼šå›¾ç‰‡èµ°å¤šæ¨¡æ€ï¼Œæ–‡ä»¶èµ° doc2md è§£æ
 const DEBUG_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"]);
 const DEBUG_DOC_EXTENSIONS = [
   ".txt",
@@ -76,23 +76,23 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "llm_output_delta",
   "llm_output",
   "llm_stream_retry",
-  // Token ÓÃÁ¿ÊÂ¼şÔÚË¢ĞÂºóÒ²ĞèÒª±£Áô£¬±ÜÃâµ÷ÊÔÈÕÖ¾¶ªÊ§
+  // Token ç”¨é‡äº‹ä»¶åœ¨åˆ·æ–°åä¹Ÿéœ€è¦ä¿ç•™ï¼Œé¿å…è°ƒè¯•æ—¥å¿—ä¸¢å¤±
   "token_usage",
   "a2ui",
   "final",
   "error",
 ]);
 
-// Ä£ĞÍÊä³öÎÄ±¾Çø¿ÉÄÜ²ğ³É¶ÀÁ¢ÈİÆ÷£¬ÓÅÏÈÊ¹ÓÃ×¨ÓÃ½Úµã¡£
+// æ¨¡å‹è¾“å‡ºæ–‡æœ¬åŒºå¯èƒ½æ‹†æˆç‹¬ç«‹å®¹å™¨ï¼Œä¼˜å…ˆä½¿ç”¨ä¸“ç”¨èŠ‚ç‚¹ã€‚
 const resolveModelOutputText = () => elements.modelOutputText || elements.modelOutput;
-// »º³åÄ£ĞÍÊä³ö£¬½µµÍÆµ·± DOM Æ´½Óµ¼ÖÂµÄ¿¨¶Ù
+// ç¼“å†²æ¨¡å‹è¾“å‡ºï¼Œé™ä½é¢‘ç¹ DOM æ‹¼æ¥å¯¼è‡´çš„å¡é¡¿
 const modelOutputBuffer = {
   chunks: [],
   scheduled: false,
   pendingScroll: false,
   rafId: 0,
 };
-// Ô¤ÀÀµ¯´°×´Ì¬£º¼ÇÂ¼ markdown äÖÈ¾Æ÷³õÊ¼»¯×´Ì¬
+// é¢„è§ˆå¼¹çª—çŠ¶æ€ï¼šè®°å½• markdown æ¸²æŸ“å™¨åˆå§‹åŒ–çŠ¶æ€
 const outputPreviewState = {
   markedReady: false,
 };
@@ -102,7 +102,7 @@ let debugStats = null;
 const pendingRequestLogs = [];
 let pendingRequestSeq = 0;
 
-// ÖØÖÃÇëÇó-»Ø¸´¹ØÁª×´Ì¬£¬±ÜÃâÈÕÖ¾´íÎ»
+// é‡ç½®è¯·æ±‚-å›å¤å…³è”çŠ¶æ€ï¼Œé¿å…æ—¥å¿—é”™ä½
 const resetPendingRequestLogs = () => {
   pendingRequestLogs.length = 0;
   pendingRequestSeq = 0;
@@ -127,7 +127,7 @@ const buildResponseText = (data) => {
   return sections.join("\n\n");
 };
 
-// ÔÚÇëÇóÈÕÖ¾ÌõÄ¿ÉÏ²¹³äºÄÊ±±êÇ©£¬±£³ÖÓëÊÂ¼şÈÕÖ¾Õ¹Ê¾Ò»ÖÂ
+// åœ¨è¯·æ±‚æ—¥å¿—æ¡ç›®ä¸Šè¡¥å……è€—æ—¶æ ‡ç­¾ï¼Œä¿æŒä¸äº‹ä»¶æ—¥å¿—å±•ç¤ºä¸€è‡´
 const appendRequestDurationBadge = (item, durationText) => {
   if (!item || !durationText || durationText === "-") {
     return;
@@ -204,7 +204,7 @@ const flushPendingRequests = (message, options = {}) => {
   }
 };
 
-// ¿ØÖÆµ÷ÊÔÈÕÖ¾µÈ´ıÌ¬£¬±ãÓÚ¹ÜÀíÔ±ÅĞ¶Ï¶Ô»°ÊÇ·ñÈÔÔÚ½øĞĞ
+// æ§åˆ¶è°ƒè¯•æ—¥å¿—ç­‰å¾…æ€ï¼Œä¾¿äºç®¡ç†å‘˜åˆ¤æ–­å¯¹è¯æ˜¯å¦ä»åœ¨è¿›è¡Œ
 const setDebugLogWaiting = (waiting) => {
   [elements.eventLog, elements.requestLog].forEach((target) => {
     if (!target) {
@@ -245,7 +245,7 @@ const updateDebugLogWaiting = (force) => {
   setSendToggleState(shouldWait);
 };
 
-// ³õÊ¼»¯Í³¼ÆĞÅÏ¢½á¹¹£¬±ãÓÚµ÷ÊÔÃæ°å¸´ÓÃ
+// åˆå§‹åŒ–ç»Ÿè®¡ä¿¡æ¯ç»“æ„ï¼Œä¾¿äºè°ƒè¯•é¢æ¿å¤ç”¨
 const createDebugStats = () => ({
   tokenInput: 0,
   tokenOutput: 0,
@@ -306,7 +306,7 @@ const normalizeTimestampText = (value) => {
   return normalized;
 };
 
-// ½âÎöÊÂ¼şÊ±¼äÎªºÁÃë£¬ÓÃÓÚÍ³¼Æ»á»°ºÄÊ±
+// è§£æäº‹ä»¶æ—¶é—´ä¸ºæ¯«ç§’ï¼Œç”¨äºç»Ÿè®¡ä¼šè¯è€—æ—¶
 const resolveTimestampMs = (value) => {
   if (!value) {
     return null;
@@ -325,7 +325,7 @@ const resolveTimestampMs = (value) => {
   return null;
 };
 
-// ¼ÇÂ¼ÊÂ¼şÊ±¼ä·¶Î§£¬¼ÆËãÕûÌåºÄÊ±
+// è®°å½•äº‹ä»¶æ—¶é—´èŒƒå›´ï¼Œè®¡ç®—æ•´ä½“è€—æ—¶
 const applyEventTimestamp = (timestamp) => {
   const ts = resolveTimestampMs(timestamp);
   if (!Number.isFinite(ts)) {
@@ -339,7 +339,7 @@ const applyEventTimestamp = (timestamp) => {
   }
 };
 
-// ÇëÇó¿ªÊ¼/½áÊøÊ±²¹ÆëÊ±¼ä·¶Î§£¬±ÜÃâÎŞÊÂ¼şÊ±ºÄÊ±Îª¿Õ
+// è¯·æ±‚å¼€å§‹/ç»“æŸæ—¶è¡¥é½æ—¶é—´èŒƒå›´ï¼Œé¿å…æ— äº‹ä»¶æ—¶è€—æ—¶ä¸ºç©º
 const markRequestStart = () => {
   const now = Date.now();
   debugStats.requestStartMs = now;
@@ -401,7 +401,7 @@ const renderDebugStats = () => {
       : debugStats.requestEndMs;
   const durationText = formatDurationSeconds(startMs, endMs);
 
-  // Ê¹ÓÃ±í¸ñ³ÊÏÖÍ³¼ÆĞÅÏ¢£¬ÌáÉı¿É¶ÁĞÔÓë¶ÔÆëĞ§¹û
+  // ä½¿ç”¨è¡¨æ ¼å‘ˆç°ç»Ÿè®¡ä¿¡æ¯ï¼Œæå‡å¯è¯»æ€§ä¸å¯¹é½æ•ˆæœ
   const rows = [
     { label: t("debug.stats.sessionId"), value: sessionId || "-" },
     { label: t("debug.stats.duration"), value: durationText },
@@ -498,10 +498,10 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   }
 };
 
-// Éú³É¸½¼şÎ¨Ò»±êÊ¶£¬±ãÓÚÉ¾³ı²Ù×÷¶¨Î»
+// ç”Ÿæˆé™„ä»¶å”¯ä¸€æ ‡è¯†ï¼Œä¾¿äºåˆ é™¤æ“ä½œå®šä½
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-// ¸üĞÂ¸½¼şÌáÊ¾ĞÅÏ¢£¬±ÜÃâÓÃ»§Íü¼Çµ±Ç°°ó¶¨µÄÎÄ¼ş/Í¼Æ¬
+// æ›´æ–°é™„ä»¶æç¤ºä¿¡æ¯ï¼Œé¿å…ç”¨æˆ·å¿˜è®°å½“å‰ç»‘å®šçš„æ–‡ä»¶/å›¾ç‰‡
 const updateAttachmentMeta = () => {
   if (!elements.debugAttachmentMeta) {
     return;
@@ -518,7 +518,7 @@ const updateAttachmentMeta = () => {
     : t("debug.attachments.none");
 };
 
-// äÖÈ¾¸½¼şÁĞ±í£¬Ìá¹©É¾³ıÈë¿ÚÓë×´Ì¬ÌáÊ¾
+// æ¸²æŸ“é™„ä»¶åˆ—è¡¨ï¼Œæä¾›åˆ é™¤å…¥å£ä¸çŠ¶æ€æç¤º
 const renderAttachmentList = () => {
   if (!elements.debugAttachmentList) {
     return;
@@ -576,7 +576,7 @@ const renderAttachmentList = () => {
   updateAttachmentMeta();
 };
 
-// É¾³ıÖ¸¶¨¸½¼ş£¬±ÜÃâÎŞĞ§ÄÚÈİËæÇëÇó·¢ËÍ
+// åˆ é™¤æŒ‡å®šé™„ä»¶ï¼Œé¿å…æ— æ•ˆå†…å®¹éšè¯·æ±‚å‘é€
 const removeDebugAttachment = (id) => {
   const index = debugAttachments.findIndex((item) => item.id === id);
   if (index < 0) {
@@ -586,13 +586,13 @@ const removeDebugAttachment = (id) => {
   renderAttachmentList();
 };
 
-// ¹éÒ»»¯Ô¤ÉèÎÊÌâÁĞ±í£¬±ÜÃâ¿ÕÖµÓëÎŞĞ§ÄÚÈİ
+// å½’ä¸€åŒ–é¢„è®¾é—®é¢˜åˆ—è¡¨ï¼Œé¿å…ç©ºå€¼ä¸æ— æ•ˆå†…å®¹
 const normalizeQuestionPresets = (presets) =>
   (Array.isArray(presets) ? presets : [])
     .map((item) => String(item || "").trim())
     .filter(Boolean);
 
-// äÖÈ¾ÓÒ¼üÔ¤ÉèÎÊÌâ²Ëµ¥£¬Ö§³Ö¶¯Ì¬ÅäÖÃÓë¿ÕÌ¬ÌáÊ¾
+// æ¸²æŸ“å³é”®é¢„è®¾é—®é¢˜èœå•ï¼Œæ”¯æŒåŠ¨æ€é…ç½®ä¸ç©ºæ€æç¤º
 const renderQuestionPresetMenu = () => {
   if (!elements.debugQuestionMenu) {
     return;
@@ -619,7 +619,7 @@ const renderQuestionPresetMenu = () => {
   });
 };
 
-// Ó¦ÓÃÔ¤ÉèÎÊÌâ²¢´¥·¢ÊäÈëÍ¬²½
+// åº”ç”¨é¢„è®¾é—®é¢˜å¹¶è§¦å‘è¾“å…¥åŒæ­¥
 const applyQuestionPreset = (preset) => {
   if (!elements.question) {
     return;
@@ -630,7 +630,7 @@ const applyQuestionPreset = (preset) => {
   closeQuestionPresetMenu();
 };
 
-// ´ò¿ªÓÒ¼ü²Ëµ¥£¬È·±£²»»á³¬³öÊÓ¿Ú
+// æ‰“å¼€å³é”®èœå•ï¼Œç¡®ä¿ä¸ä¼šè¶…å‡ºè§†å£
 const openQuestionPresetMenu = (event) => {
   if (!elements.debugQuestionMenu) {
     return;
@@ -647,7 +647,7 @@ const openQuestionPresetMenu = (event) => {
   menu.style.top = `${Math.max(8, top)}px`;
 };
 
-// ¹Ø±ÕÓÒ¼ü²Ëµ¥
+// å…³é—­å³é”®èœå•
 const closeQuestionPresetMenu = () => {
   if (!elements.debugQuestionMenu) {
     return;
@@ -655,7 +655,7 @@ const closeQuestionPresetMenu = () => {
   elements.debugQuestionMenu.style.display = "none";
 };
 
-// ÌáÈ¡ÎÄ¼şÀ©Õ¹Ãû£¬Í³Ò»ÓÃÓÚÍ¼Æ¬ÓëÎÄµµÅĞ¶Ï
+// æå–æ–‡ä»¶æ‰©å±•åï¼Œç»Ÿä¸€ç”¨äºå›¾ç‰‡ä¸æ–‡æ¡£åˆ¤æ–­
 const resolveFileExtension = (filename) => {
   const parts = String(filename || "").trim().split(".");
   if (parts.length < 2) {
@@ -664,7 +664,7 @@ const resolveFileExtension = (filename) => {
   return parts.pop().toLowerCase();
 };
 
-// ÅĞ¶ÏÊÇ·ñÎªÍ¼Æ¬ÎÄ¼ş£¬ÓÅÏÈÊ¹ÓÃ MIME ÀàĞÍ¶µµ×À©Õ¹Ãû
+// åˆ¤æ–­æ˜¯å¦ä¸ºå›¾ç‰‡æ–‡ä»¶ï¼Œä¼˜å…ˆä½¿ç”¨ MIME ç±»å‹å…œåº•æ‰©å±•å
 const isImageFile = (file) => {
   if (file?.type && file.type.startsWith("image/")) {
     return true;
@@ -673,7 +673,7 @@ const isImageFile = (file) => {
   return ext ? DEBUG_IMAGE_EXTENSIONS.has(ext) : false;
 };
 
-// ¶ÁÈ¡Í¼Æ¬Îª data URL£¬±ãÓÚ°´¶àÄ£Ì¬¸ñÊ½·¢ËÍ
+// è¯»å–å›¾ç‰‡ä¸º data URLï¼Œä¾¿äºæŒ‰å¤šæ¨¡æ€æ ¼å¼å‘é€
 const readFileAsDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -682,7 +682,7 @@ const readFileAsDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
-// ¹¹½¨¸½¼şÔØºÉ£¬·¢ËÍÊ±Ö»Í¸³ö±ØÒª×Ö¶Î
+// æ„å»ºé™„ä»¶è½½è·ï¼Œå‘é€æ—¶åªé€å‡ºå¿…è¦å­—æ®µ
 const buildAttachmentPayload = () => {
   return debugAttachments
     .filter((item) => String(item?.content || "").trim())
@@ -699,7 +699,7 @@ const buildAttachmentPayload = () => {
     });
 };
 
-// µ÷ÓÃºó¶Ë×ª»»¸½¼şÎª Markdown£¬È·±£×ß doc2md ½âÎöÁ´Â·
+// è°ƒç”¨åç«¯è½¬æ¢é™„ä»¶ä¸º Markdownï¼Œç¡®ä¿èµ° doc2md è§£æé“¾è·¯
 const convertAttachmentFile = async (file) => {
   const wunderBase = getWunderBase();
   if (!wunderBase) {
@@ -725,7 +725,7 @@ const convertAttachmentFile = async (file) => {
   return response.json();
 };
 
-// ´¦ÀíÓÃ»§Ñ¡ÔñµÄ¸½¼ş£¬Çø·ÖÍ¼Æ¬ÓëÎÄ¼ş½âÎö
+// å¤„ç†ç”¨æˆ·é€‰æ‹©çš„é™„ä»¶ï¼ŒåŒºåˆ†å›¾ç‰‡ä¸æ–‡ä»¶è§£æ
 const handleAttachmentSelection = async (file) => {
   if (!file) {
     return;
@@ -784,7 +784,7 @@ const handleAttachmentSelection = async (file) => {
   }
 };
 
-// ×é×°ÇëÇóÌå£¬Í³Ò»´¦ÀíÊäÈë×Ö¶ÎÓë¿ÉÑ¡²ÎÊı
+// ç»„è£…è¯·æ±‚ä½“ï¼Œç»Ÿä¸€å¤„ç†è¾“å…¥å­—æ®µä¸å¯é€‰å‚æ•°
 const buildPayload = () => {
   const payload = {
     user_id: elements.userId.value.trim(),
@@ -807,7 +807,7 @@ const buildPayload = () => {
   return payload;
 };
 
-// ½« SSE ¿é½âÎöÎªÊÂ¼şÀàĞÍÓëÊı¾İÄÚÈİ
+// å°† SSE å—è§£æä¸ºäº‹ä»¶ç±»å‹ä¸æ•°æ®å†…å®¹
 const parseSseBlock = (block) => {
   const lines = block.split(/\r?\n/);
   let eventType = "message";
@@ -825,7 +825,7 @@ const parseSseBlock = (block) => {
   };
 };
 
-// ¶ÁÈ¡±¾µØ³Ö¾Ã»¯µÄµ÷ÊÔÃæ°å×´Ì¬
+// è¯»å–æœ¬åœ°æŒä¹…åŒ–çš„è°ƒè¯•é¢æ¿çŠ¶æ€
 const readDebugState = () => {
   try {
     const raw = localStorage.getItem(DEBUG_STATE_KEY);
@@ -842,18 +842,18 @@ const readDebugState = () => {
   }
 };
 
-// Ğ´Èë±¾µØµ÷ÊÔÃæ°å×´Ì¬£¬±ÜÃâË¢ĞÂºó¶ªÊ§ÊäÈë
+// å†™å…¥æœ¬åœ°è°ƒè¯•é¢æ¿çŠ¶æ€ï¼Œé¿å…åˆ·æ–°åä¸¢å¤±è¾“å…¥
 const writeDebugState = (patch) => {
   const next = { ...readDebugState(), ...patch };
   try {
     localStorage.setItem(DEBUG_STATE_KEY, JSON.stringify(next));
   } catch (error) {
-    // ºöÂÔä¯ÀÀÆ÷´æ´¢Òì³££¬±ÜÃâ´ò¶Ï½»»¥
+    // å¿½ç•¥æµè§ˆå™¨å­˜å‚¨å¼‚å¸¸ï¼Œé¿å…æ‰“æ–­äº¤äº’
   }
   return next;
 };
 
-// ½«µ±Ç°ÊäÈëÍ¬²½µ½±¾µØ´æ´¢
+// å°†å½“å‰è¾“å…¥åŒæ­¥åˆ°æœ¬åœ°å­˜å‚¨
 const syncDebugInputs = () => {
   writeDebugState({
     apiBase: elements.apiBase?.value || "",
@@ -865,7 +865,7 @@ const syncDebugInputs = () => {
   });
 };
 
-// ¸ñÊ½»¯ÊÂ¼şÊ±¼ä£¬¼æÈİ ISO ×Ö·û´®/Ê±¼ä´Á
+// æ ¼å¼åŒ–äº‹ä»¶æ—¶é—´ï¼Œå…¼å®¹ ISO å­—ç¬¦ä¸²/æ—¶é—´æˆ³
 const formatEventTime = (value) => {
   if (!value) {
     return new Date().toLocaleTimeString();
@@ -877,7 +877,7 @@ const formatEventTime = (value) => {
   return parsed.toLocaleTimeString();
 };
 
-// ¸üĞÂ»á»° ID ²¢Í¬²½´æ´¢£¬È·±£Ë¢ĞÂºóÄÜ»Ö¸´
+// æ›´æ–°ä¼šè¯ ID å¹¶åŒæ­¥å­˜å‚¨ï¼Œç¡®ä¿åˆ·æ–°åèƒ½æ¢å¤
 const updateSessionId = (sessionId) => {
   const trimmed = String(sessionId || "").trim();
   if (!trimmed) {
@@ -894,7 +894,7 @@ const updateSessionId = (sessionId) => {
   writeDebugState({ sessionId: trimmed });
 };
 
-// ÖØÖÃÄ£ĞÍÊä³öµÄÁ÷Ê½×´Ì¬£¬±ÜÃâĞÂ¾ÉÇëÇó´®Áª
+// é‡ç½®æ¨¡å‹è¾“å‡ºçš„æµå¼çŠ¶æ€ï¼Œé¿å…æ–°æ—§è¯·æ±‚ä¸²è”
 const resetModelOutputState = (options = {}) => {
   const resetRound = options.resetRound !== false;
   const resetContent = options.resetContent === true;
@@ -921,14 +921,14 @@ const resetModelOutputState = (options = {}) => {
     if (outputContainer) {
       outputContainer.textContent = "";
     }
-    // Çå¿Õ A2UI äÖÈ¾×´Ì¬£¬±ÜÃâ¾É UI ²ĞÁô¡£
+    // æ¸…ç©º A2UI æ¸²æŸ“çŠ¶æ€ï¼Œé¿å…æ—§ UI æ®‹ç•™ã€‚
     resetA2uiState(elements.modelOutputA2ui);
     renderRoundSelectOptions(outputState);
     updateModelOutputPreviewButton(outputState);
   }
 };
 
-// ÖØÖÃÖ¸¶¨ÂÖ´ÎµÄÊä³öÄÚÈİ£¬±ÜÃâÁ÷Ê½ÖØÁ¬Ê±ÖØ¸´Æ´½Ó
+// é‡ç½®æŒ‡å®šè½®æ¬¡çš„è¾“å‡ºå†…å®¹ï¼Œé¿å…æµå¼é‡è¿æ—¶é‡å¤æ‹¼æ¥
 const resetRoundOutput = (roundId) => {
   const outputState = getModelOutputState();
   const targetRound = Number.isFinite(roundId) ? roundId : outputState.currentRound;
@@ -992,7 +992,7 @@ const getModelOutputState = () => {
   return state.runtime.llmOutput;
 };
 
-// Í³Ò»ÍÆ½øÄ£ĞÍÂÖ´Î£¬²¢×¼±¸¶ÔÓ¦µÄÂÖ´ÎÈİÆ÷
+// ç»Ÿä¸€æ¨è¿›æ¨¡å‹è½®æ¬¡ï¼Œå¹¶å‡†å¤‡å¯¹åº”çš„è½®æ¬¡å®¹å™¨
 const advanceModelRound = (timestamp) => {
   const outputState = getModelOutputState();
   outputState.globalRound = (Number.isFinite(outputState.globalRound) ? outputState.globalRound : 0) + 1;
@@ -1001,7 +1001,7 @@ const advanceModelRound = (timestamp) => {
   return outputState.currentRound;
 };
 
-// ÖØÖÃÄ£ĞÍÊä³ö»º³å£¬±ÜÃâÇå¿ÕºóÈÔĞ´Èë¾ÉÊı¾İ
+// é‡ç½®æ¨¡å‹è¾“å‡ºç¼“å†²ï¼Œé¿å…æ¸…ç©ºåä»å†™å…¥æ—§æ•°æ®
 const resetModelOutputBuffer = () => {
   if (modelOutputBuffer.rafId) {
     cancelAnimationFrame(modelOutputBuffer.rafId);
@@ -1012,7 +1012,7 @@ const resetModelOutputBuffer = () => {
   modelOutputBuffer.pendingScroll = false;
 };
 
-// ºÏ²¢»º³å²¢Ë¢ĞÂµ½ DOM£¬¼¯ÖĞ´¦Àí¹ö¶¯
+// åˆå¹¶ç¼“å†²å¹¶åˆ·æ–°åˆ° DOMï¼Œé›†ä¸­å¤„ç†æ»šåŠ¨
 const flushModelOutput = () => {
   const outputContainer = resolveModelOutputText();
   if (!outputContainer) {
@@ -1034,7 +1034,7 @@ const flushModelOutput = () => {
   }
 };
 
-// ¼Æ»®ÔÚÏÂÒ»Ö¡Ë¢ĞÂÊä³ö£¬±ÜÃâÃ¿¸ö token ¶¼´¥·¢ DOM ¸üĞÂ
+// è®¡åˆ’åœ¨ä¸‹ä¸€å¸§åˆ·æ–°è¾“å‡ºï¼Œé¿å…æ¯ä¸ª token éƒ½è§¦å‘ DOM æ›´æ–°
 const scheduleModelOutputFlush = () => {
   if (modelOutputBuffer.scheduled) {
     return;
@@ -1047,13 +1047,13 @@ const scheduleModelOutputFlush = () => {
   });
 };
 
-// ½ö´¥·¢¹ö¶¯µ½µ×²¿£¬²»×·¼ÓĞÂÄÚÈİ
+// ä»…è§¦å‘æ»šåŠ¨åˆ°åº•éƒ¨ï¼Œä¸è¿½åŠ æ–°å†…å®¹
 const scheduleModelOutputScroll = () => {
   modelOutputBuffer.pendingScroll = true;
   scheduleModelOutputFlush();
 };
 
-// ½«Êä³ö×·¼Óµ½µ±Ç°¿É¼ûµÄÄ£ĞÍÊä³öÇø
+// å°†è¾“å‡ºè¿½åŠ åˆ°å½“å‰å¯è§çš„æ¨¡å‹è¾“å‡ºåŒº
 const appendModelOutputChunk = (text, options = {}) => {
   if (!text) {
     return;
@@ -1066,7 +1066,7 @@ const appendModelOutputChunk = (text, options = {}) => {
   scheduleModelOutputFlush();
 };
 
-// ¼ÇÂ¼ÂÖ´ÎÊä³öÎ²²¿×Ö·û£¬±ÜÃâÆµ·±¶ÁÈ¡ÍêÕû×Ö·û´®
+// è®°å½•è½®æ¬¡è¾“å‡ºå°¾éƒ¨å­—ç¬¦ï¼Œé¿å…é¢‘ç¹è¯»å–å®Œæ•´å­—ç¬¦ä¸²
 const updateRoundTail = (entry, text) => {
   if (!text) {
     return;
@@ -1082,7 +1082,7 @@ const updateRoundTail = (entry, text) => {
   entry.lastChar = tailSource.slice(-1);
 };
 
-// ×é×°ÏÂÀ­¿òÕ¹Ê¾ÎÄ°¸
+// ç»„è£…ä¸‹æ‹‰æ¡†å±•ç¤ºæ–‡æ¡ˆ
 const buildRoundLabel = (entry) => {
   if (!entry) {
     return "";
@@ -1092,7 +1092,7 @@ const buildRoundLabel = (entry) => {
     : t("debug.round.label", { id: entry.id });
 };
 
-// »ñÈ¡ÂÖ´ÎÊä³öÎÄ±¾£¬ÇĞ»»ÂÖ´ÎÊ±ÓÃÓÚÖØ½¨¿ÉÊÓÇøÓò
+// è·å–è½®æ¬¡è¾“å‡ºæ–‡æœ¬ï¼Œåˆ‡æ¢è½®æ¬¡æ—¶ç”¨äºé‡å»ºå¯è§†åŒºåŸŸ
 const buildRoundText = (entry) => {
   if (!entry || !Array.isArray(entry.chunks)) {
     return "";
@@ -1100,7 +1100,7 @@ const buildRoundText = (entry) => {
   return entry.chunks.join("");
 };
 
-// Í¬²½ÂÖ´ÎÏÂÀ­¿òÑ¡Ïî£¬±£³Ö UI ÓëÔËĞĞÊ±Ò»ÖÂ
+// åŒæ­¥è½®æ¬¡ä¸‹æ‹‰æ¡†é€‰é¡¹ï¼Œä¿æŒ UI ä¸è¿è¡Œæ—¶ä¸€è‡´
 const renderRoundSelectOptions = (outputState) => {
   if (!elements.modelOutputRoundSelect) {
     return;
@@ -1135,7 +1135,7 @@ const renderRoundSelectOptions = (outputState) => {
   });
 };
 
-// ²éÕÒÒÑÓĞÂÖ´Î¼ÇÂ¼
+// æŸ¥æ‰¾å·²æœ‰è½®æ¬¡è®°å½•
 const findRoundEntry = (outputState, roundId) => {
   if (!Number.isFinite(roundId)) {
     return null;
@@ -1144,7 +1144,7 @@ const findRoundEntry = (outputState, roundId) => {
   return rounds.find((entry) => entry.id === roundId) || null;
 };
 
-// ´´½¨ĞÂµÄÂÖ´ÎÊä³öÈİÆ÷
+// åˆ›å»ºæ–°çš„è½®æ¬¡è¾“å‡ºå®¹å™¨
 const buildRoundEntry = (roundId, timestamp) => ({
   id: roundId,
   timeText: timestamp ? formatEventTime(timestamp) : "",
@@ -1163,7 +1163,7 @@ const buildRoundEntry = (roundId, timestamp) => ({
   a2uiContent: "",
 });
 
-// ¹éÒ»»¯ A2UI ÏûÏ¢£¬±£Ö¤äÖÈ¾Ê±ÄÜÖ±½Ó»Ø·Å
+// å½’ä¸€åŒ– A2UI æ¶ˆæ¯ï¼Œä¿è¯æ¸²æŸ“æ—¶èƒ½ç›´æ¥å›æ”¾
 const normalizeA2uiMessages = (payload) => {
   if (!payload) {
     return [];
@@ -1196,7 +1196,7 @@ const normalizeA2uiMessages = (payload) => {
   return [];
 };
 
-// »ñÈ¡Ô¤ÀÀÓÃÎÄ±¾£¬ÓÅÏÈÕ¹Ê¾´¿Êä³öÄÚÈİ£¬±ÜÃâ»ìÈëµ÷ÊÔ±ê¼Ç
+// è·å–é¢„è§ˆç”¨æ–‡æœ¬ï¼Œä¼˜å…ˆå±•ç¤ºçº¯è¾“å‡ºå†…å®¹ï¼Œé¿å…æ··å…¥è°ƒè¯•æ ‡è®°
 const resolvePreviewEntryText = (entry) => {
   if (!entry) {
     return "";
@@ -1215,7 +1215,7 @@ const hasPreviewText = (entry) => Boolean(resolvePreviewEntryText(entry).trim())
 const hasPreviewA2ui = (entry) =>
   Array.isArray(entry?.a2uiMessages) && entry.a2uiMessages.length > 0;
 
-// Í¬²½Ô¤ÀÀ°´Å¥¿ÉÓÃ×´Ì¬£ºÖ»ÒªÎÄ±¾»ò A2UI ´æÔÚ¼´¿ÉÔ¤ÀÀ
+// åŒæ­¥é¢„è§ˆæŒ‰é’®å¯ç”¨çŠ¶æ€ï¼šåªè¦æ–‡æœ¬æˆ– A2UI å­˜åœ¨å³å¯é¢„è§ˆ
 const updateModelOutputPreviewButton = (outputState) => {
   if (!elements.modelOutputPreviewBtn) {
     return;
@@ -1234,7 +1234,7 @@ const updateModelOutputPreviewButton = (outputState) => {
 const isModelOutputPreviewOpen = () =>
   Boolean(elements.modelOutputPreviewModal?.classList.contains("active"));
 
-// ³õÊ¼»¯ markdown äÖÈ¾Æ÷£¬È·±£Ô¤ÀÀÖ§³Ö»»ĞĞ
+// åˆå§‹åŒ– markdown æ¸²æŸ“å™¨ï¼Œç¡®ä¿é¢„è§ˆæ”¯æŒæ¢è¡Œ
 const ensureMarkedReady = () => {
   if (outputPreviewState.markedReady) {
     return;
@@ -1246,7 +1246,7 @@ const ensureMarkedReady = () => {
   outputPreviewState.markedReady = true;
 };
 
-// äÖÈ¾ÎÄ±¾Ô¤ÀÀ£¬Ä¬ÈÏ°´ Markdown ´¦Àí
+// æ¸²æŸ“æ–‡æœ¬é¢„è§ˆï¼Œé»˜è®¤æŒ‰ Markdown å¤„ç†
 const renderPreviewText = (entry) => {
   if (!elements.modelOutputPreviewText) {
     return;
@@ -1272,7 +1272,7 @@ const renderPreviewText = (entry) => {
   }
 };
 
-// äÖÈ¾ A2UI Ô¤ÀÀ
+// æ¸²æŸ“ A2UI é¢„è§ˆ
 const renderPreviewA2ui = (entry) => {
   if (!elements.modelOutputPreviewA2ui) {
     return;
@@ -1292,17 +1292,17 @@ const renderPreviewA2ui = (entry) => {
   });
 };
 
-// ×Ô¶¯Ñ¡ÔñÔ¤ÀÀÄ£Ê½£ºÓÅÏÈÕ¹Ê¾ A2UI£¬Æä´ÎÎªÎÄ±¾äÖÈ¾
+// è‡ªåŠ¨é€‰æ‹©é¢„è§ˆæ¨¡å¼ï¼šä¼˜å…ˆå±•ç¤º A2UIï¼Œå…¶æ¬¡ä¸ºæ–‡æœ¬æ¸²æŸ“
 const resolvePreviewMode = (entry) => (hasPreviewA2ui(entry) ? "a2ui" : "text");
 
-// ÇĞ»»Ô¤ÀÀÄ£Ê½£¬½öÕ¹Ê¾¶ÔÓ¦µÄäÖÈ¾½á¹û
+// åˆ‡æ¢é¢„è§ˆæ¨¡å¼ï¼Œä»…å±•ç¤ºå¯¹åº”çš„æ¸²æŸ“ç»“æœ
 const applyModelOutputPreviewMode = (mode) => {
   const showText = mode !== "a2ui";
   elements.modelOutputPreviewText?.classList.toggle("active", showText);
   elements.modelOutputPreviewA2ui?.classList.toggle("active", !showText);
 };
 
-// Ë¢ĞÂÔ¤ÀÀÄÚÈİ£¬È·±£ÇĞ»»ÂÖ´ÎºóÍ¬²½¸üĞÂ
+// åˆ·æ–°é¢„è§ˆå†…å®¹ï¼Œç¡®ä¿åˆ‡æ¢è½®æ¬¡ååŒæ­¥æ›´æ–°
 const refreshModelOutputPreview = () => {
   if (!isModelOutputPreviewOpen()) {
     return;
@@ -1318,7 +1318,7 @@ const refreshModelOutputPreview = () => {
   applyModelOutputPreviewMode(mode);
 };
 
-// ´ò¿ªÄ£ĞÍÊä³öÔ¤ÀÀµ¯´°
+// æ‰“å¼€æ¨¡å‹è¾“å‡ºé¢„è§ˆå¼¹çª—
 const openModelOutputPreview = () => {
   if (!elements.modelOutputPreviewModal) {
     return;
@@ -1336,7 +1336,7 @@ const openModelOutputPreview = () => {
   elements.modelOutputPreviewBtn?.classList.add("is-active");
 };
 
-// ¹Ø±ÕÄ£ĞÍÊä³öÔ¤ÀÀµ¯´°
+// å…³é—­æ¨¡å‹è¾“å‡ºé¢„è§ˆå¼¹çª—
 const closeModelOutputPreview = () => {
   elements.modelOutputPreviewModal?.classList.remove("active");
   elements.modelOutputPreviewBtn?.classList.remove("is-active");
@@ -1377,7 +1377,7 @@ const recordA2uiMessages = (payload, timestamp) => {
   return entry;
 };
 
-// ÅĞ¶ÏÊÇ·ñ×Ô¶¯ÇĞ»»µ½ĞÂÂÖ´Î
+// åˆ¤æ–­æ˜¯å¦è‡ªåŠ¨åˆ‡æ¢åˆ°æ–°è½®æ¬¡
 const shouldAutoSelectRound = (outputState, roundId) => {
   if (!outputState.userSelectedRound) {
     return true;
@@ -1385,7 +1385,7 @@ const shouldAutoSelectRound = (outputState, roundId) => {
   return outputState.selectedRound === roundId;
 };
 
-// äÖÈ¾Ö¸¶¨ÂÖ´ÎµÄÊä³öÄÚÈİ
+// æ¸²æŸ“æŒ‡å®šè½®æ¬¡çš„è¾“å‡ºå†…å®¹
 const renderSelectedRound = (outputState, entry, options = {}) => {
   const outputContainer = resolveModelOutputText();
   if (!outputContainer) {
@@ -1401,7 +1401,7 @@ const renderSelectedRound = (outputState, entry, options = {}) => {
   }
 };
 
-// ÇĞ»»µ±Ç°Ñ¡ÖĞµÄÂÖ´Î£¬¸üĞÂÏÂÀ­¿òÓëÊä³öÇøÓò
+// åˆ‡æ¢å½“å‰é€‰ä¸­çš„è½®æ¬¡ï¼Œæ›´æ–°ä¸‹æ‹‰æ¡†ä¸è¾“å‡ºåŒºåŸŸ
 const selectRound = (outputState, roundId, options = {}) => {
   const entry = findRoundEntry(outputState, roundId);
   outputState.selectedRound = entry ? entry.id : null;
@@ -1417,7 +1417,7 @@ const selectRound = (outputState, roundId, options = {}) => {
   refreshModelOutputPreview();
 };
 
-// È·±£ÂÖ´Î´æÔÚ£¬²¢ÔÚĞèÒªÊ±×Ô¶¯ÇĞ»»
+// ç¡®ä¿è½®æ¬¡å­˜åœ¨ï¼Œå¹¶åœ¨éœ€è¦æ—¶è‡ªåŠ¨åˆ‡æ¢
 const ensureRoundEntry = (outputState, roundId, timestamp, options = {}) => {
   if (!Number.isFinite(roundId)) {
     return null;
@@ -1451,7 +1451,7 @@ const ensureRoundEntry = (outputState, roundId, timestamp, options = {}) => {
   return entry;
 };
 
-// ½«ÂÖ´ÎÌ§Í·²¹Æëµ½Êä³öÖĞ£¬±£Ö¤Ã¿ÂÖÓĞ¶ÀÁ¢ÆğÊ¼±ê¼Ç
+// å°†è½®æ¬¡æŠ¬å¤´è¡¥é½åˆ°è¾“å‡ºä¸­ï¼Œä¿è¯æ¯è½®æœ‰ç‹¬ç«‹èµ·å§‹æ ‡è®°
 const ensureRoundHeader = (outputState, entry, timestamp) => {
   if (!entry || entry.headerWritten) {
     if (entry && timestamp && !entry.timeText) {
@@ -1474,7 +1474,7 @@ const ensureRoundHeader = (outputState, entry, timestamp) => {
   entry.section = null;
 };
 
-// È·±£Ë¼¿¼/Êä³ö·ÖÇø±êÌâ´æÔÚ£¬±ÜÃâ»ìÔÓÏÔÊ¾
+// ç¡®ä¿æ€è€ƒ/è¾“å‡ºåˆ†åŒºæ ‡é¢˜å­˜åœ¨ï¼Œé¿å…æ··æ‚æ˜¾ç¤º
 const ensureRoundSection = (outputState, entry, label) => {
   if (!entry || entry.section === label) {
     return;
@@ -1486,7 +1486,7 @@ const ensureRoundSection = (outputState, entry, label) => {
   entry.section = label;
 };
 
-// ×·¼ÓÂÖ´ÎÊä³ö£¬Í¬Ê±ÔÚµ±Ç°Ñ¡ÖĞÂÖ´ÎÊ±Ë¢ĞÂ DOM
+// è¿½åŠ è½®æ¬¡è¾“å‡ºï¼ŒåŒæ—¶åœ¨å½“å‰é€‰ä¸­è½®æ¬¡æ—¶åˆ·æ–° DOM
 const appendRoundText = (outputState, entry, text, options = {}) => {
   if (!entry || !text) {
     return;
@@ -1511,7 +1511,7 @@ const appendRoundText = (outputState, entry, text, options = {}) => {
   }
 };
 
-// ½âÎöÊÂ¼şĞ¯´øµÄÂÖ´Î±àºÅ£¬È·±£ÄÜÓëµ±Ç°ÂÖ´Î±£³ÖÍ¬²½
+// è§£æäº‹ä»¶æºå¸¦çš„è½®æ¬¡ç¼–å·ï¼Œç¡®ä¿èƒ½ä¸å½“å‰è½®æ¬¡ä¿æŒåŒæ­¥
 const resolveOutputRoundId = (outputState, dataRound) => {
   const fallbackRound = Number.isFinite(dataRound) ? dataRound : null;
   if (Number.isFinite(outputState.currentRound)) {
@@ -1527,7 +1527,7 @@ const resolveOutputRoundId = (outputState, dataRound) => {
   return null;
 };
 
-// ÏÂÀ­¿òÇĞ»»ÂÖ´ÎÊ±Ö»Õ¹Ê¾Ñ¡ÖĞÄÚÈİ
+// ä¸‹æ‹‰æ¡†åˆ‡æ¢è½®æ¬¡æ—¶åªå±•ç¤ºé€‰ä¸­å†…å®¹
 const handleModelOutputRoundChange = () => {
   if (!elements.modelOutputRoundSelect) {
     return;
@@ -1542,7 +1542,7 @@ const handleModelOutputRoundChange = () => {
   selectRound(outputState, roundId, { manual: true, scrollTo: "top" });
 };
 
-// ½«Ä£ĞÍÔöÁ¿Êä³ö×·¼Óµ½µ÷ÊÔÃæ°å£¬±£³ÖÁ÷Ê½ÔÄ¶ÁÌåÑé
+// å°†æ¨¡å‹å¢é‡è¾“å‡ºè¿½åŠ åˆ°è°ƒè¯•é¢æ¿ï¼Œä¿æŒæµå¼é˜…è¯»ä½“éªŒ
 const appendModelOutputDelta = (data, timestamp) => {
   const delta = typeof data?.delta === "string" ? data.delta : "";
   const reasoningDelta = typeof data?.reasoning_delta === "string" ? data.reasoning_delta : "";
@@ -1568,7 +1568,7 @@ const appendModelOutputDelta = (data, timestamp) => {
   }
 };
 
-// ¸ù¾İ¹¤¾ßÃû³ÆÅĞ¶ÏËùÊôÀà±ğ£¬±ãÓÚÓëÏµÍ³ÌáÊ¾´Ê¸ßÁÁÑÕÉ«±£³ÖÒ»ÖÂ
+// æ ¹æ®å·¥å…·åç§°åˆ¤æ–­æ‰€å±ç±»åˆ«ï¼Œä¾¿äºä¸ç³»ç»Ÿæç¤ºè¯é«˜äº®é¢œè‰²ä¿æŒä¸€è‡´
 const resolveToolCategory = (toolName) => {
   const name = String(toolName || "").trim();
   if (!name) {
@@ -1598,7 +1598,7 @@ const resolveToolCategory = (toolName) => {
   return "default";
 };
 
-// Í³Ò»´¦Àí SSE ÊÂ¼ş£¬°´ÀàĞÍ¸üĞÂ½çÃæ
+// ç»Ÿä¸€å¤„ç† SSE äº‹ä»¶ï¼ŒæŒ‰ç±»å‹æ›´æ–°ç•Œé¢
 const handleEvent = (eventType, dataText, options = {}) => {
   if (!dataText) {
     return;
@@ -1624,7 +1624,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "final") {
     state.runtime.debugSawFinal = true;
     const usage = payload.data?.usage;
-    // ×îÖÕÊÂ¼şÀï°üº¬µÄ usage Ò²ÒªĞ´ÈëÊÂ¼şÈÕÖ¾£¬±ÜÃâÂ©¿´ÕûÌåÓÃÁ¿
+    // æœ€ç»ˆäº‹ä»¶é‡ŒåŒ…å«çš„ usage ä¹Ÿè¦å†™å…¥äº‹ä»¶æ—¥å¿—ï¼Œé¿å…æ¼çœ‹æ•´ä½“ç”¨é‡
     applyTokenUsageSnapshot(usage, { override: true });
     renderDebugStats();
     const summary = t("debug.event.final");
@@ -1861,7 +1861,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const isReasoningStreaming = entry.reasoningStreaming;
 
     if (isContentStreaming && (!hasReasoning || isReasoningStreaming) && !hasContent) {
-      // ÒÑÍ¨¹ıÔöÁ¿Êä³öäÖÈ¾¹ıÄÚÈİÊ±£¬½ö²¹Æë»»ĞĞ²¢½áÊø¸ÃÂÖÁ÷Ê½×´Ì¬
+      // å·²é€šè¿‡å¢é‡è¾“å‡ºæ¸²æŸ“è¿‡å†…å®¹æ—¶ï¼Œä»…è¡¥é½æ¢è¡Œå¹¶ç»“æŸè¯¥è½®æµå¼çŠ¶æ€
       if (entry.totalChars > 0 && entry.tail !== "\n\n") {
         appendRoundText(outputState, entry, "\n\n");
       }
@@ -1898,7 +1898,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
 
   if (eventType === "token_usage") {
     const data = payload.data || payload;
-    // Á÷Ê½ token_usage ½ö¼ÇÂ¼ÈÕÖ¾£¬Í³¼ÆĞÅÏ¢µÈ´ı final usage ÔÙ¶ÔÆë
+    // æµå¼ token_usage ä»…è®°å½•æ—¥å¿—ï¼Œç»Ÿè®¡ä¿¡æ¯ç­‰å¾… final usage å†å¯¹é½
     if (!state.runtime.debugStreaming) {
       applyTokenUsage(data);
       renderDebugStats();
@@ -1913,9 +1913,9 @@ const handleEvent = (eventType, dataText, options = {}) => {
   appendLog(summary, { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
 };
 
-// ·¢ËÍÁ÷Ê½ÇëÇó²¢½âÎö SSE
+// å‘é€æµå¼è¯·æ±‚å¹¶è§£æ SSE
 
-// »¹Ô­±¾µØ±£´æµÄµ÷ÊÔÊäÈë£¬±ãÓÚË¢ĞÂºó¼ÌĞø²é¿´
+// è¿˜åŸæœ¬åœ°ä¿å­˜çš„è°ƒè¯•è¾“å…¥ï¼Œä¾¿äºåˆ·æ–°åç»§ç»­æŸ¥çœ‹
 const applyStoredDebugInputs = () => {
   const stored = readDebugState();
   if (stored.apiBase && elements.apiBase) {
@@ -1942,18 +1942,18 @@ const applyStoredDebugInputs = () => {
   return stored;
 };
 
-// »ñÈ¡ÀúÊ·»á»°Ê¹ÓÃµÄ user_id£¬¿ÕÖµ±íÊ¾²»ÏŞ¶¨ÓÃ»§
+// è·å–å†å²ä¼šè¯ä½¿ç”¨çš„ user_idï¼Œç©ºå€¼è¡¨ç¤ºä¸é™å®šç”¨æˆ·
 const getHistoryUserId = () => String(elements.userId?.value || "").trim();
 
 const resolveHistoryTime = (session) => session?.updated_time || session?.start_time || "";
 
-// °´¸üĞÂÊ±¼äµ¹ĞòÅÅÁĞ£¬±ãÓÚ¿ìËÙ¶¨Î»×îĞÂ»á»°
+// æŒ‰æ›´æ–°æ—¶é—´å€’åºæ’åˆ—ï¼Œä¾¿äºå¿«é€Ÿå®šä½æœ€æ–°ä¼šè¯
 const sortSessionsByUpdate = (sessions) =>
   [...sessions].sort(
     (a, b) => new Date(resolveHistoryTime(b)).getTime() - new Date(resolveHistoryTime(a)).getTime()
   );
 
-// À­È¡µ÷ÊÔÀúÊ·»á»°ÁĞ±í£¬Ö§³Ö°´ÓÃ»§¹ıÂË
+// æ‹‰å–è°ƒè¯•å†å²ä¼šè¯åˆ—è¡¨ï¼Œæ”¯æŒæŒ‰ç”¨æˆ·è¿‡æ»¤
 const fetchDebugSessions = async () => {
   const wunderBase = getWunderBase();
   const userId = getHistoryUserId();
@@ -1971,7 +1971,7 @@ const fetchDebugSessions = async () => {
   };
 };
 
-// äÖÈ¾ÀúÊ·»á»°ÁĞ±í£¬Ö§³Öµã»÷»Ö¸´
+// æ¸²æŸ“å†å²ä¼šè¯åˆ—è¡¨ï¼Œæ”¯æŒç‚¹å‡»æ¢å¤
 const renderDebugHistoryList = (sessions, options = {}) => {
   if (!elements.debugHistoryList) {
     return;
@@ -2003,7 +2003,7 @@ const renderDebugHistoryList = (sessions, options = {}) => {
       metaParts.push(timeText);
     }
     const meta = document.createElement("small");
-    meta.textContent = metaParts.join(" ¡¤ ");
+    meta.textContent = metaParts.join(" Â· ");
 
     item.appendChild(title);
     item.appendChild(meta);
@@ -2079,7 +2079,7 @@ const closeDebugHistoryModal = () => {
   elements.debugHistoryModal?.classList.remove("active");
 };
 
-// ¶ÁÈ¡¼à¿ØÏêÇé²¢·µ»ØÊÂ¼şÁĞ±í
+// è¯»å–ç›‘æ§è¯¦æƒ…å¹¶è¿”å›äº‹ä»¶åˆ—è¡¨
 const fetchMonitorDetail = async (sessionId) => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
@@ -2107,7 +2107,7 @@ const syncDebugEventCursor = async (sessionId) => {
     state.runtime.debugEventCursor = events.length;
     state.runtime.debugRestored = true;
   } catch (error) {
-    // ¾²Ä¬Ê§°Ü£¬±ÜÃâÓ°Ïìµ±Ç°»á»°Êä³ö
+    // é™é»˜å¤±è´¥ï¼Œé¿å…å½±å“å½“å‰ä¼šè¯è¾“å‡º
   }
 };
 
@@ -2124,7 +2124,7 @@ const unwrapMonitorEventData = (payload) => {
   return payload;
 };
 
-// Ê¹ÓÃ¼à¿ØÊÂ¼ş»Ö¸´µ÷ÊÔÃæ°åÈÕÖ¾
+// ä½¿ç”¨ç›‘æ§äº‹ä»¶æ¢å¤è°ƒè¯•é¢æ¿æ—¥å¿—
 const applyMonitorDetail = (detail, options = {}) => {
   const session = detail?.session || {};
   const events = Array.isArray(detail?.events) ? detail.events : [];
@@ -2169,7 +2169,7 @@ const applyMonitorDetail = (detail, options = {}) => {
   syncDebugInputs();
 };
 
-// Ë¢ĞÂµ÷ÊÔÃæ°å²¢»Ö¸´ÀúÊ·ÊÂ¼ş
+// åˆ·æ–°è°ƒè¯•é¢æ¿å¹¶æ¢å¤å†å²äº‹ä»¶
 export const restoreDebugPanel = async (options = {}) => {
   const refresh = options.refresh === true;
   const syncInputs = options.syncInputs !== false;
@@ -2214,7 +2214,7 @@ const startDebugPolling = () => {
   }, APP_CONFIG.monitorPollIntervalMs);
 };
 
-// ¿ØÖÆµ÷ÊÔÃæ°å×Ô¶¯Ë¢ĞÂ
+// æ§åˆ¶è°ƒè¯•é¢æ¿è‡ªåŠ¨åˆ·æ–°
 export const toggleDebugPolling = (enabled) => {
   if (!enabled || state.runtime.debugStreaming) {
     stopDebugPolling();
@@ -2295,7 +2295,7 @@ const sendStreamRequest = async (endpoint, payload) => {
   }
 };
 
-// ·¢ËÍ·ÇÁ÷Ê½ÇëÇó£¬Ö±½Ó½âÎö JSON ÏìÓ¦
+// å‘é€éæµå¼è¯·æ±‚ï¼Œç›´æ¥è§£æ JSON å“åº”
 const sendNonStreamRequest = async (endpoint, payload) => {
   const response = await fetch(endpoint, {
     method: "POST",
@@ -2331,7 +2331,7 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   appendLog(t("debug.nonStream.response", { payload: JSON.stringify(result) }));
 };
 
-// Í³Ò»Èë¿Ú£º¸ù¾İÊÇ·ñ¿ªÆô SSE Ñ¡ÔñÇëÇó·½Ê½
+// ç»Ÿä¸€å…¥å£ï¼šæ ¹æ®æ˜¯å¦å¼€å¯ SSE é€‰æ‹©è¯·æ±‚æ–¹å¼
 const handleSend = async () => {
   if (!elements.question.value.trim()) {
     appendLog(t("debug.question.empty"));
@@ -2413,7 +2413,7 @@ const handleSend = async () => {
   }
 };
 
-// ÇëÇóºó¶ËÖÕÖ¹Ö¸¶¨»á»°£¬È·±£ÕæÕıÍ£Ö¹ÖÇÄÜÌåÏß³Ì
+// è¯·æ±‚åç«¯ç»ˆæ­¢æŒ‡å®šä¼šè¯ï¼Œç¡®ä¿çœŸæ­£åœæ­¢æ™ºèƒ½ä½“çº¿ç¨‹
 const requestCancelSession = async (sessionId) => {
   if (!sessionId) {
     return;
@@ -2428,7 +2428,7 @@ const requestCancelSession = async (sessionId) => {
   appendLog(result.message || t("debug.stopRequested"));
 };
 
-// Í£Ö¹Á÷Ê½ÇëÇó£ºÇ°¶ËÖĞ¶ÏÁ¬½Ó²¢Í¨Öªºó¶ËÈ¡ÏûÖ´ĞĞ
+// åœæ­¢æµå¼è¯·æ±‚ï¼šå‰ç«¯ä¸­æ–­è¿æ¥å¹¶é€šçŸ¥åç«¯å–æ¶ˆæ‰§è¡Œ
 const handleStop = async () => {
   if (state.runtime.activeController) {
     state.runtime.activeController.abort();
@@ -2447,7 +2447,7 @@ const handleStop = async () => {
   }
 };
 
-// µÈ´ıÁ÷Ê½×´Ì¬ÍêÈ«½áÊø£¬±ÜÃâÇå¿ÕºóÓÖ±»Á÷Ê½»ØĞ´ÈÕÖ¾
+// ç­‰å¾…æµå¼çŠ¶æ€å®Œå…¨ç»“æŸï¼Œé¿å…æ¸…ç©ºååˆè¢«æµå¼å›å†™æ—¥å¿—
 const waitForStreamStop = async (timeoutMs = 4000) => {
   const start = Date.now();
   while (state.runtime.debugStreaming) {
@@ -2458,7 +2458,7 @@ const waitForStreamStop = async (timeoutMs = 4000) => {
   }
 };
 
-// ÖØÖÃ»á»°±êÊ¶Óë±¾µØ»º´æ£¬È·±£ÏÂÒ»´ÎÇëÇóÊÇÈ«ĞÂ»á»°
+// é‡ç½®ä¼šè¯æ ‡è¯†ä¸æœ¬åœ°ç¼“å­˜ï¼Œç¡®ä¿ä¸‹ä¸€æ¬¡è¯·æ±‚æ˜¯å…¨æ–°ä¼šè¯
 const resetDebugSessionState = () => {
   if (elements.sessionId) {
     elements.sessionId.value = "";
@@ -2471,7 +2471,7 @@ const resetDebugSessionState = () => {
   writeDebugState({ sessionId: "" });
 };
 
-// ĞÂ»á»°£ºÇå¿ÕÈÕÖ¾ÓëÍ³¼Æ£¬²¢Çå³ı»á»° ID£¬±ÜÃâ¾ÉÉÏÏÂÎÄ²ĞÁô
+// æ–°ä¼šè¯ï¼šæ¸…ç©ºæ—¥å¿—ä¸ç»Ÿè®¡ï¼Œå¹¶æ¸…é™¤ä¼šè¯ IDï¼Œé¿å…æ—§ä¸Šä¸‹æ–‡æ®‹ç•™
 const handleNewSession = async () => {
   const status = String(state.runtime.debugSessionStatus || "").trim();
   const shouldStop = Boolean(state.runtime.debugStreaming) || DEBUG_ACTIVE_STATUSES.has(status);
@@ -2501,7 +2501,7 @@ const handleSendToggle = async () => {
   await handleSend();
 };
 
-// Çå¿ÕÊä³öÊ±Í¬²½ÖØÖÃÁ÷Ê½äÖÈ¾×´Ì¬
+// æ¸…ç©ºè¾“å‡ºæ—¶åŒæ­¥é‡ç½®æµå¼æ¸²æŸ“çŠ¶æ€
 const handleClear = () => {
   clearOutput();
   resetPendingRequestLogs();
@@ -2510,7 +2510,7 @@ const handleClear = () => {
   closeModelOutputPreview();
 };
 
-// ³õÊ¼»¯µ÷ÊÔÃæ°å½»»¥
+// åˆå§‹åŒ–è°ƒè¯•é¢æ¿äº¤äº’
 export const initDebugPanel = () => {
   resetDebugStats();
   applyStoredDebugInputs();
@@ -2559,7 +2559,7 @@ export const initDebugPanel = () => {
   }
   if (elements.debugUploadBtn && elements.debugUploadInput) {
     elements.debugUploadBtn.addEventListener("click", () => {
-      // ÖØÖÃ input Öµ£¬È·±£ÖØ¸´Ñ¡ÔñÍ¬Ò»ÎÄ¼şÒ²ÄÜ´¥·¢ change
+      // é‡ç½® input å€¼ï¼Œç¡®ä¿é‡å¤é€‰æ‹©åŒä¸€æ–‡ä»¶ä¹Ÿèƒ½è§¦å‘ change
       elements.debugUploadInput.value = "";
       elements.debugUploadInput.click();
     });
