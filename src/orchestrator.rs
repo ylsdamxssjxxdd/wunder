@@ -24,7 +24,9 @@ use crate::token_utils::{
     approx_token_count, estimate_message_tokens, estimate_messages_tokens, trim_messages_to_budget,
     trim_text_to_tokens,
 };
-use crate::tools::{collect_available_tool_names, resolve_tool_name, ToolContext};
+use crate::tools::{
+    collect_available_tool_names, resolve_tool_name, ToolContext, ToolEventEmitter,
+};
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -1103,6 +1105,17 @@ impl Orchestrator {
                     );
                 }
 
+                let tool_event_emitter = ToolEventEmitter::new({
+                    let emitter = emitter.clone();
+                    move |event_type, data| {
+                        let emitter = emitter.clone();
+                        let event_name = event_type.to_string();
+                        tokio::spawn(async move {
+                            emitter.emit(&event_name, data).await;
+                        });
+                    }
+                });
+
                 for call in tool_calls {
                     let mut name = call.name.clone();
                     let args = call.arguments.clone();
@@ -1173,6 +1186,7 @@ impl Orchestrator {
                         user_tool_manager: Some(self.user_tool_manager.as_ref()),
                         user_tool_bindings: Some(&user_tool_bindings),
                         user_tool_store: Some(self.user_tool_manager.store()),
+                        event_emitter: Some(tool_event_emitter.clone()),
                         http: &self.http,
                     };
 

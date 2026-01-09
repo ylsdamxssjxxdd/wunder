@@ -213,7 +213,17 @@ pub async fn query_knowledge_documents(
     ];
     if let Some(logger) = request_logger {
         let payload = build_llm_payload(&messages, llm_config);
-        logger(payload);
+        let base_url = llm_config
+            .and_then(|config| config.base_url.clone())
+            .unwrap_or_default();
+        logger(json!({
+            "knowledge_base": base.name.clone(),
+            "query": normalized_query.to_string(),
+            "limit": max_docs,
+            "candidate_count": candidates.len(),
+            "payload": payload,
+            "base_url": base_url,
+        }));
     }
 
     let reply = match llm_config {

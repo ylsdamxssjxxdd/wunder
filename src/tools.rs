@@ -26,6 +26,26 @@ use tokio::time::sleep;
 use tracing::warn;
 use uuid::Uuid;
 
+#[derive(Clone)]
+pub struct ToolEventEmitter {
+    callback: Arc<dyn Fn(&str, Value) + Send + Sync>,
+}
+
+impl ToolEventEmitter {
+    pub fn new<F>(callback: F) -> Self
+    where
+        F: Fn(&str, Value) + Send + Sync + 'static,
+    {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn emit(&self, event_type: &str, data: Value) {
+        (self.callback)(event_type, data);
+    }
+}
+
 pub struct ToolContext<'a> {
     pub user_id: &'a str,
     pub session_id: &'a str,
@@ -36,6 +56,7 @@ pub struct ToolContext<'a> {
     pub user_tool_manager: Option<&'a UserToolManager>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
+    pub event_emitter: Option<ToolEventEmitter>,
     pub http: &'a reqwest::Client,
 }
 
@@ -612,14 +633,28 @@ async fn execute_user_knowledge(
         shared: None,
     };
     let llm_config = knowledge::resolve_llm_config(context.config, None);
-    let docs = knowledge::query_knowledge_documents(
-        &query,
-        &base,
-        llm_config.as_ref(),
-        extract_limit(args),
-        None,
-    )
-    .await;
+    let docs = if let Some(emitter) = context.event_emitter.as_ref() {
+        let log_request = |payload: Value| {
+            emitter.emit("knowledge_request", payload);
+        };
+        knowledge::query_knowledge_documents(
+            &query,
+            &base,
+            llm_config.as_ref(),
+            extract_limit(args),
+            Some(&log_request),
+        )
+        .await
+    } else {
+        knowledge::query_knowledge_documents(
+            &query,
+            &base,
+            llm_config.as_ref(),
+            extract_limit(args),
+            None,
+        )
+        .await
+    };
     let documents = docs
         .into_iter()
         .map(|doc| doc.to_value())
@@ -647,14 +682,28 @@ async fn execute_knowledge_tool(
     let _ =
         knowledge::resolve_knowledge_root(base, false).map_err(|err| anyhow!(err.to_string()))?;
     let llm_config = knowledge::resolve_llm_config(context.config, None);
-    let docs = knowledge::query_knowledge_documents(
-        &query,
-        base,
-        llm_config.as_ref(),
-        extract_limit(args),
-        None,
-    )
-    .await;
+    let docs = if let Some(emitter) = context.event_emitter.as_ref() {
+        let log_request = |payload: Value| {
+            emitter.emit("knowledge_request", payload);
+        };
+        knowledge::query_knowledge_documents(
+            &query,
+            base,
+            llm_config.as_ref(),
+            extract_limit(args),
+            Some(&log_request),
+        )
+        .await
+    } else {
+        knowledge::query_knowledge_documents(
+            &query,
+            base,
+            llm_config.as_ref(),
+            extract_limit(args),
+            None,
+        )
+        .await
+    };
     let documents = docs
         .into_iter()
         .map(|doc| doc.to_value())
