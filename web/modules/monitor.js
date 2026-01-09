@@ -471,6 +471,65 @@ const formatTokenTrendLabel = (timestamp) =>
     minute: "2-digit",
   });
 
+const formatTokenRate = (value, options = {}) => {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  const tokens = Math.max(0, Number(value));
+  const useMillion = tokens >= 1_000_000;
+  const useThousand = tokens >= 1_000 && tokens < 1_000_000;
+  const base = useMillion ? 1_000_000 : useThousand ? 1_000 : 1;
+  const unit = useMillion ? "m" : useThousand ? "k" : "";
+  const scaled = tokens / base;
+  let decimals = 2;
+  if (scaled >= 100) {
+    decimals = 0;
+  } else if (scaled >= 10) {
+    decimals = 1;
+  }
+  const prefix = options.lowerBound ? "≥" : "";
+  return `${prefix}${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
+};
+
+const formatDurationPrecise = (seconds) => {
+  if (!Number.isFinite(seconds)) {
+    return "-";
+  }
+  const value = Math.max(0, Number(seconds));
+  if (value < 1) {
+    return `${value.toFixed(2)}s`;
+  }
+  if (value < 10) {
+    return `${value.toFixed(2)}s`;
+  }
+  if (value < 60) {
+    return `${value.toFixed(1)}s`;
+  }
+  return formatDuration(value);
+};
+
+const parseMetricNumber = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildSpeedMeta = (tokens, duration, options = {}) => {
+  if (!Number.isFinite(tokens) || !Number.isFinite(duration)) {
+    return options.cached ? t("monitor.detail.speedCached") : "";
+  }
+  const tokenText = formatTokenCount(tokens);
+  const durationText = formatDurationPrecise(duration);
+  const key = options.variant === "output" ? "monitor.detail.speedMeta.output" : "monitor.detail.speedMeta.context";
+  const parts = [t(key, { tokens: tokenText, duration: durationText })];
+  if (options.cached) {
+    parts.push(t("monitor.detail.speedCached"));
+  }
+  return parts.join(" · ");
+};
+
 // 按监视时间粒度对齐时间戳，保证刻度从整点开始
 const floorToIntervalBoundary = (timestamp, intervalMs) => {
   const date = new Date(timestamp);
@@ -2182,6 +2241,33 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       session.status
     )} · ${formatDuration(session.elapsed_s)}`;
     elements.monitorDetailQuestion.textContent = session.question || "";
+    const prefillSpeed = parseMetricNumber(session.prefill_speed_tps);
+    const prefillTokens = parseMetricNumber(session.prefill_tokens);
+    const prefillDuration = parseMetricNumber(session.prefill_duration_s);
+    const prefillLowerBound = Boolean(session.prefill_speed_lower_bound);
+    if (elements.monitorDetailPrefillSpeed) {
+      elements.monitorDetailPrefillSpeed.textContent = formatTokenRate(prefillSpeed, {
+        lowerBound: prefillLowerBound,
+      });
+    }
+    if (elements.monitorDetailPrefillMeta) {
+      elements.monitorDetailPrefillMeta.textContent = buildSpeedMeta(
+        prefillTokens,
+        prefillDuration,
+        { cached: prefillLowerBound }
+      );
+    }
+    const decodeSpeed = parseMetricNumber(session.decode_speed_tps);
+    const decodeTokens = parseMetricNumber(session.decode_tokens);
+    const decodeDuration = parseMetricNumber(session.decode_duration_s);
+    if (elements.monitorDetailDecodeSpeed) {
+      elements.monitorDetailDecodeSpeed.textContent = formatTokenRate(decodeSpeed);
+    }
+    if (elements.monitorDetailDecodeMeta) {
+      elements.monitorDetailDecodeMeta.textContent = buildSpeedMeta(decodeTokens, decodeDuration, {
+        variant: "output",
+      });
+    }
     const events = Array.isArray(result.events) ? result.events : [];
     const focusTool =
       typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
@@ -2314,5 +2400,3 @@ export const initMonitorPanel = () => {
     });
   }
 };
-
-

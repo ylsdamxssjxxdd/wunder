@@ -744,6 +744,28 @@ class MonitorSessionItem(BaseModel):
 class MonitorSessionDetail(MonitorSessionItem):
     """会话线程详情信息。"""
 
+    prefill_tokens: Optional[int] = Field(
+        default=None, description="预填充阶段上下文 token 数量"
+    )
+    prefill_duration_s: Optional[float] = Field(
+        default=None, description="预填充阶段耗时（秒）"
+    )
+    prefill_speed_tps: Optional[float] = Field(
+        default=None, description="预填充速度（token/s）"
+    )
+    prefill_speed_lower_bound: bool = Field(
+        default=False, description="预填充速度是否为缓存下限估计"
+    )
+    decode_tokens: Optional[int] = Field(
+        default=None, description="解码阶段输出 token 数量"
+    )
+    decode_duration_s: Optional[float] = Field(
+        default=None, description="解码阶段耗时（秒）"
+    )
+    decode_speed_tps: Optional[float] = Field(
+        default=None, description="解码速度（token/s）"
+    )
+
 
 class MonitorEventItem(BaseModel):
     """会话事件详情。"""

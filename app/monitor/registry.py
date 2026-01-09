@@ -51,6 +51,15 @@ _SUMMARY_LOOKUP = {
     )
 }
 
+_MIN_PREFILL_DURATION_S = 0.05
+
+
+def _as_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def _localize_summary(summary: str) -> str:
     """根据当前语言转换已知摘要文案。"""
@@ -610,16 +619,100 @@ class SessionMonitor:
                 result.append(record.to_summary())
         return result
 
+    @staticmethod
+    def _build_llm_speed_summary(
+        events: Deque[MonitorEvent],
+    ) -> Dict[str, Any]:
+        current: Optional[Dict[str, Any]] = None
+        latest: Optional[Dict[str, Any]] = None
+
+        for event in events:
+            event_type = event.event_type
+            if event_type == "llm_request":
+                current = {
+                    "start_ts": event.timestamp,
+                    "first_output_ts": None,
+                    "last_output_ts": None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                }
+                continue
+
+            if not current:
+                continue
+
+            if event_type == "llm_output_delta":
+                if current["first_output_ts"] is None:
+                    current["first_output_ts"] = event.timestamp
+                current["last_output_ts"] = event.timestamp
+                continue
+
+            if event_type == "llm_output":
+                if current["first_output_ts"] is None:
+                    current["first_output_ts"] = event.timestamp
+                current["last_output_ts"] = event.timestamp
+                continue
+
+            if event_type == "token_usage":
+                data = event.data if isinstance(event.data, dict) else {}
+                current["input_tokens"] = _as_int(data.get("input_tokens"))
+                current["output_tokens"] = _as_int(data.get("output_tokens"))
+                latest = current
+                current = None
+
+        if not latest:
+            return {}
+
+        start_ts = latest.get("start_ts")
+        first_output_ts = latest.get("first_output_ts")
+        last_output_ts = latest.get("last_output_ts")
+        input_tokens = latest.get("input_tokens")
+        output_tokens = latest.get("output_tokens")
+
+        prefill_duration_s = None
+        prefill_speed_tps = None
+        prefill_speed_lower_bound = False
+        if isinstance(start_ts, (int, float)) and isinstance(first_output_ts, (int, float)):
+            if isinstance(input_tokens, int) and input_tokens > 0:
+                actual_duration = max(0.0, float(first_output_ts) - float(start_ts))
+                effective_duration = max(actual_duration, _MIN_PREFILL_DURATION_S)
+                prefill_speed_lower_bound = effective_duration > actual_duration
+                prefill_duration_s = actual_duration
+                if effective_duration > 0:
+                    prefill_speed_tps = input_tokens / effective_duration
+
+        decode_duration_s = None
+        decode_speed_tps = None
+        if (
+            isinstance(first_output_ts, (int, float))
+            and isinstance(last_output_ts, (int, float))
+            and isinstance(output_tokens, int)
+            and output_tokens > 0
+        ):
+            actual_duration = max(0.0, float(last_output_ts) - float(first_output_ts))
+            decode_duration_s = actual_duration
+            if actual_duration > 0:
+                decode_speed_tps = output_tokens / actual_duration
+
+        return {
+            "prefill_tokens": input_tokens,
+            "prefill_duration_s": prefill_duration_s,
+            "prefill_speed_tps": prefill_speed_tps,
+            "prefill_speed_lower_bound": prefill_speed_lower_bound,
+            "decode_tokens": output_tokens,
+            "decode_duration_s": decode_duration_s,
+            "decode_speed_tps": decode_speed_tps,
+        }
+
     def get_detail(self, session_id: str) -> Optional[Dict[str, Any]]:
         """获取会话详情。"""
         with self._lock:
             record = self._sessions.get(session_id)
             if not record:
                 return None
-            return {
-                "session": record.to_detail(),
-                "events": [event.to_dict() for event in record.events],
-            }
+            session = record.to_detail()
+            session.update(self._build_llm_speed_summary(record.events))
+            return {"session": session, "events": [event.to_dict() for event in record.events]}
 
     def cancel(self, session_id: str) -> bool:
         """请求终止指定会话。"""

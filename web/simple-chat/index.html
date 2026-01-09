@@ -1,0 +1,1432 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wunder Simple Chat</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7fb;
+        --panel: #ffffff;
+        --border: #e2e6f0;
+        --text: #1f2a44;
+        --muted: #5f6c8a;
+        --primary: #2563eb;
+        --primary-weak: rgba(37, 99, 235, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      .app {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 20px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        gap: 12px;
+      }
+
+      header .brand {
+        font-weight: 600;
+        font-size: 18px;
+      }
+
+      header .status {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      header .actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        min-height: 0;
+      }
+
+      .chat-panel {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        min-height: 0;
+      }
+
+      .chat-list {
+        flex: 1;
+        padding: 20px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .message {
+        max-width: 80%;
+        padding: 12px 14px;
+        border-radius: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+      }
+
+      .message.user {
+        align-self: flex-end;
+        background: var(--primary);
+        color: #fff;
+        border-color: var(--primary);
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
+      }
+
+      .message.assistant {
+        align-self: flex-start;
+      }
+
+      .chat-input {
+        border-top: 1px solid var(--border);
+        padding: 14px 16px;
+        background: var(--panel);
+        display: grid;
+        gap: 10px;
+      }
+
+      .chat-input textarea {
+        width: 100%;
+        min-height: 60px;
+        max-height: 180px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 14px;
+        background: #fff;
+      }
+
+      .chat-input textarea:focus {
+        outline: 2px solid var(--primary-weak);
+        border-color: var(--primary);
+      }
+
+      .input-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .attachments {
+        display: grid;
+        gap: 6px;
+      }
+
+      .attachments-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .attachments-row input[type="file"] {
+        flex: 1;
+      }
+
+      .attachment-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .attachment-item {
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #f1f4ff;
+      }
+
+      .message-meta {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .message.user .message-meta {
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      details.reasoning {
+        margin-top: 8px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: #f7f8ff;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      details.reasoning summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      details.reasoning pre {
+        margin: 6px 0 0;
+        white-space: pre-wrap;
+        font-family: "Consolas", "Courier New", monospace;
+        color: var(--text);
+      }
+
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 14px;
+        cursor: pointer;
+        background: var(--primary);
+        color: #fff;
+      }
+
+      button.secondary {
+        background: #e9edf7;
+        color: var(--text);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .settings-panel {
+        background: var(--panel);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        overflow-y: auto;
+      }
+
+      .settings-panel h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .field label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .field input,
+      .field select {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+      }
+
+      .field input:focus,
+      .field select:focus {
+        outline: 2px solid var(--primary-weak);
+        border-color: var(--primary);
+      }
+
+      .field.checkbox {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .field.checkbox label {
+        text-transform: none;
+        letter-spacing: normal;
+        font-size: 14px;
+        color: var(--text);
+      }
+
+      .inline-input {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .inline-input button {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      details.advanced {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fafbff;
+      }
+
+      details.advanced summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      details.advanced .advanced-body {
+        margin-top: 12px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .settings-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .chat-panel {
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div>
+          <div class="brand">Wunder Simple Chat</div>
+          <div class="status" id="statusText">Ready.</div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="newChatBtn" type="button">New Chat</button>
+          <button class="secondary" id="clearChatBtn" type="button">Clear Messages</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <main class="chat-panel">
+          <div class="chat-list" id="chatList"></div>
+          <form class="chat-input" id="chatForm">
+            <textarea
+              id="questionInput"
+              placeholder="Type your message..."
+              rows="3"
+            ></textarea>
+            <div class="attachments">
+              <div class="attachments-row">
+                <input
+                  id="fileInput"
+                  type="file"
+                  multiple
+                  accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.log,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+                />
+                <button class="secondary" id="clearFilesBtn" type="button">Clear Files</button>
+              </div>
+              <div id="attachmentList" class="attachment-list"></div>
+            </div>
+            <div class="input-actions">
+              <button class="secondary" id="stopBtn" type="button" disabled>Stop</button>
+              <button id="sendBtn" type="submit">Send</button>
+            </div>
+          </form>
+        </main>
+
+        <aside class="settings-panel">
+          <h2>Model Settings</h2>
+          <div class="field">
+            <label for="baseUrl">Endpoint</label>
+            <input
+              id="baseUrl"
+              type="text"
+              placeholder="https://api.openai.com"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="apiKey">API Key</label>
+            <div class="inline-input">
+              <input id="apiKey" type="password" placeholder="sk-..." />
+              <button class="secondary" id="toggleApiKey" type="button">Show</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="modelName">Model</label>
+            <input id="modelName" type="text" placeholder="gpt-4o-mini" />
+          </div>
+          <div class="field">
+            <label for="temperature">Temperature</label>
+            <input id="temperature" type="number" min="0" max="2" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="maxOutput">Max Output Tokens</label>
+            <input id="maxOutput" type="number" min="1" step="1" placeholder="Optional" />
+          </div>
+          <div class="field">
+            <label for="timeoutS">Timeout (s)</label>
+            <input id="timeoutS" type="number" min="1" step="1" />
+          </div>
+          <div class="field">
+            <label for="retryCount">Retry</label>
+            <input id="retryCount" type="number" min="0" step="1" />
+          </div>
+          <div class="field checkbox">
+            <input id="streamToggle" type="checkbox" />
+            <label for="streamToggle">Stream response</label>
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="advanced-body">
+              <div class="field">
+                <label for="maxContext">Max Context Tokens</label>
+                <input id="maxContext" type="number" min="1" step="1" placeholder="Optional" />
+              </div>
+              <div class="field">
+                <label for="userId">User ID</label>
+                <input id="userId" type="text" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="sessionId">Session ID</label>
+                <input id="sessionId" type="text" autocomplete="off" />
+              </div>
+              <div class="field">
+                <label for="wunderEndpoint">Wunder Endpoint</label>
+                <input
+                  id="wunderEndpoint"
+                  type="text"
+                  placeholder="http://127.0.0.1:8000/wunder"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="field">
+                <label for="wunderApiKey">Wunder API Key (optional)</label>
+                <input id="wunderApiKey" type="password" placeholder="X-API-Key" />
+              </div>
+            </div>
+          </details>
+
+          <div class="settings-actions">
+            <button class="secondary" id="resetSettingsBtn" type="button">Reset Settings</button>
+          </div>
+          <div class="hint">Settings are stored in your browser.</div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = "wunder_simple_chat_settings";
+      const HISTORY_KEY = "wunder_simple_chat_history";
+      const MODEL_KEY = "web";
+      const MAX_HISTORY_MESSAGES = 200;
+      const MAX_HISTORY_SESSIONS = 20;
+
+      const elements = {
+        chatList: document.getElementById("chatList"),
+        chatForm: document.getElementById("chatForm"),
+        questionInput: document.getElementById("questionInput"),
+        fileInput: document.getElementById("fileInput"),
+        clearFilesBtn: document.getElementById("clearFilesBtn"),
+        attachmentList: document.getElementById("attachmentList"),
+        sendBtn: document.getElementById("sendBtn"),
+        stopBtn: document.getElementById("stopBtn"),
+        statusText: document.getElementById("statusText"),
+        newChatBtn: document.getElementById("newChatBtn"),
+        clearChatBtn: document.getElementById("clearChatBtn"),
+        baseUrl: document.getElementById("baseUrl"),
+        apiKey: document.getElementById("apiKey"),
+        modelName: document.getElementById("modelName"),
+        temperature: document.getElementById("temperature"),
+        maxOutput: document.getElementById("maxOutput"),
+        timeoutS: document.getElementById("timeoutS"),
+        retryCount: document.getElementById("retryCount"),
+        streamToggle: document.getElementById("streamToggle"),
+        maxContext: document.getElementById("maxContext"),
+        userId: document.getElementById("userId"),
+        sessionId: document.getElementById("sessionId"),
+        wunderEndpoint: document.getElementById("wunderEndpoint"),
+        wunderApiKey: document.getElementById("wunderApiKey"),
+        toggleApiKey: document.getElementById("toggleApiKey"),
+        resetSettingsBtn: document.getElementById("resetSettingsBtn"),
+      };
+
+      const defaultSettings = {
+        baseUrl: "",
+        apiKey: "",
+        modelName: "",
+        temperature: 0.7,
+        maxOutput: "",
+        timeoutS: 60,
+        retryCount: 1,
+        stream: true,
+        maxContext: "",
+        userId: "",
+        sessionId: "",
+        wunderEndpoint: "",
+        wunderApiKey: "",
+      };
+
+      const state = {
+        controller: null,
+        streaming: false,
+        activeMessage: null,
+        selectedFiles: [],
+        history: [],
+        activeSessionId: "",
+        activeUserId: "",
+        historySaveTimer: null,
+      };
+
+      const createId = (prefix) => {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return `${prefix}_${window.crypto.randomUUID().replace(/-/g, "")}`;
+        }
+        return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      };
+
+      const safeJsonParse = (text) => {
+        try {
+          return JSON.parse(text);
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const loadSettings = () => {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          return { ...defaultSettings };
+        }
+        const parsed = safeJsonParse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return { ...defaultSettings };
+        }
+        return { ...defaultSettings, ...parsed };
+      };
+
+      const saveSettings = (settings) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      };
+
+      const applySettings = (settings) => {
+        elements.baseUrl.value = settings.baseUrl || "";
+        elements.apiKey.value = settings.apiKey || "";
+        elements.modelName.value = settings.modelName || "";
+        elements.temperature.value =
+          settings.temperature === "" || settings.temperature === null
+            ? ""
+            : settings.temperature;
+        elements.maxOutput.value = settings.maxOutput || "";
+        elements.timeoutS.value =
+          settings.timeoutS === "" || settings.timeoutS === null ? "" : settings.timeoutS;
+        elements.retryCount.value =
+          settings.retryCount === "" || settings.retryCount === null ? "" : settings.retryCount;
+        elements.streamToggle.checked = Boolean(settings.stream);
+        elements.maxContext.value = settings.maxContext || "";
+        elements.userId.value = settings.userId || "";
+        elements.sessionId.value = settings.sessionId || "";
+        elements.wunderEndpoint.value = settings.wunderEndpoint || "";
+        elements.wunderApiKey.value = settings.wunderApiKey || "";
+      };
+
+      const readFloat = (value) => {
+        const cleaned = String(value || "").trim();
+        if (!cleaned) {
+          return "";
+        }
+        const parsed = Number(cleaned);
+        if (!Number.isFinite(parsed)) {
+          return "";
+        }
+        return parsed;
+      };
+
+      const readInt = (value) => {
+        const cleaned = String(value || "").trim();
+        if (!cleaned) {
+          return "";
+        }
+        const parsed = Number.parseInt(cleaned, 10);
+        if (!Number.isFinite(parsed)) {
+          return "";
+        }
+        return parsed;
+      };
+
+      const readSettings = () => ({
+        baseUrl: elements.baseUrl.value.trim(),
+        apiKey: elements.apiKey.value.trim(),
+        modelName: elements.modelName.value.trim(),
+        temperature: readFloat(elements.temperature.value),
+        maxOutput: readInt(elements.maxOutput.value),
+        timeoutS: readInt(elements.timeoutS.value),
+        retryCount: readInt(elements.retryCount.value),
+        stream: elements.streamToggle.checked,
+        maxContext: readInt(elements.maxContext.value),
+        userId: elements.userId.value.trim(),
+        sessionId: elements.sessionId.value.trim(),
+        wunderEndpoint: elements.wunderEndpoint.value.trim(),
+        wunderApiKey: elements.wunderApiKey.value.trim(),
+      });
+
+      const syncSettings = () => {
+        const settings = readSettings();
+        saveSettings(settings);
+        return settings;
+      };
+
+      const buildHistoryKey = (userId, sessionId) => `${userId}::${sessionId}`;
+
+      const readHistoryStore = () => {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        if (!raw) {
+          return {};
+        }
+        const parsed = safeJsonParse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return {};
+        }
+        return parsed;
+      };
+
+      const writeHistoryStore = (store) => {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(store));
+      };
+
+      const serializeHistoryMessages = (messages) =>
+        messages.slice(-MAX_HISTORY_MESSAGES).map((item) => ({
+          role: item.role,
+          text: item.text || "",
+          attachments: Array.isArray(item.attachments) ? item.attachments : [],
+          reasoning: item.reasoning || "",
+        }));
+
+      const pruneHistoryStore = (store) => {
+        const entries = Object.entries(store || {});
+        if (entries.length <= MAX_HISTORY_SESSIONS) {
+          return store;
+        }
+        const sorted = entries.sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0));
+        const trimmed = sorted.slice(0, MAX_HISTORY_SESSIONS);
+        const next = {};
+        trimmed.forEach(([key, value]) => {
+          next[key] = value;
+        });
+        return next;
+      };
+
+      const saveHistoryNow = () => {
+        const userId = state.activeUserId;
+        const sessionId = state.activeSessionId;
+        if (!userId || !sessionId) {
+          return;
+        }
+        const store = readHistoryStore();
+        const key = buildHistoryKey(userId, sessionId);
+        if (!state.history.length) {
+          delete store[key];
+        } else {
+          store[key] = {
+            userId,
+            updatedAt: Date.now(),
+            messages: serializeHistoryMessages(state.history),
+          };
+        }
+        const pruned = pruneHistoryStore(store);
+        try {
+          writeHistoryStore(pruned);
+        } catch (error) {
+          // fallback: drop reasoning if storage is full
+          if (pruned[key]) {
+            const fallback = {
+              ...pruned,
+              [key]: {
+                ...pruned[key],
+                messages: pruned[key].messages.map((item) => ({ ...item, reasoning: "" })),
+              },
+            };
+            try {
+              writeHistoryStore(fallback);
+            } catch (innerError) {
+              // ignore storage failures
+            }
+          }
+        }
+      };
+
+      const scheduleHistorySave = () => {
+        if (state.historySaveTimer) {
+          clearTimeout(state.historySaveTimer);
+        }
+        state.historySaveTimer = setTimeout(() => {
+          state.historySaveTimer = null;
+          saveHistoryNow();
+        }, 250);
+      };
+
+      const setActiveSession = (userId, sessionId) => {
+        const normalizedUser = String(userId || "").trim();
+        const normalizedSession = String(sessionId || "").trim();
+        if (!normalizedUser || !normalizedSession) {
+          return;
+        }
+        if (
+          state.activeSessionId === normalizedSession &&
+          state.activeUserId === normalizedUser
+        ) {
+          return;
+        }
+        saveHistoryNow();
+        state.activeUserId = normalizedUser;
+        state.activeSessionId = normalizedSession;
+        restoreHistory();
+      };
+
+      const restoreHistory = () => {
+        elements.chatList.innerHTML = "";
+        const store = readHistoryStore();
+        const key = buildHistoryKey(state.activeUserId, state.activeSessionId);
+        const entry = store[key] || store[state.activeSessionId];
+        const messages = Array.isArray(entry?.messages) ? entry.messages : [];
+        state.history = messages.map((item) => ({
+          role: item.role,
+          text: item.text || "",
+          attachments: Array.isArray(item.attachments) ? item.attachments : [],
+          reasoning: item.reasoning || "",
+        }));
+        state.history.forEach((message, index) => {
+          const bubble = appendMessage(
+            message.role,
+            message.text,
+            message.attachments,
+            { historyIndex: index }
+          );
+          if (message.role === "assistant" && message.reasoning) {
+            setReasoning(bubble, message.reasoning);
+          }
+        });
+      };
+
+      const clearHistoryForSession = () => {
+        state.history = [];
+        saveHistoryNow();
+        elements.chatList.innerHTML = "";
+      };
+
+      const ensureIds = (settings) => {
+        let updated = false;
+        if (!settings.userId) {
+          settings.userId = createId("user");
+          updated = true;
+        }
+        if (!settings.sessionId) {
+          settings.sessionId = createId("session");
+          updated = true;
+        }
+        if (updated) {
+          applySettings(settings);
+          saveSettings(settings);
+        }
+        return settings;
+      };
+
+      const setStatus = (text) => {
+        elements.statusText.textContent = text;
+      };
+
+      const getFileExtension = (name) => {
+        const parts = String(name || "").split(".");
+        if (parts.length < 2) {
+          return "";
+        }
+        return parts.pop().toLowerCase();
+      };
+
+      const normalizeWunderEndpoint = (raw) => {
+        const trimmed = String(raw || "").trim();
+        if (!trimmed) {
+          return "";
+        }
+        const withScheme =
+          trimmed.startsWith("/") || /^[a-zA-Z]+:\/\//.test(trimmed)
+            ? trimmed
+            : `http://${trimmed}`;
+        try {
+          const url = new URL(withScheme);
+          url.search = "";
+          url.hash = "";
+          const basePath = url.pathname.replace(/\/+$/, "");
+          const collapsed = basePath.replace(/(\/wunder)+$/, "/wunder");
+          url.pathname = collapsed.endsWith("/wunder") ? collapsed : `${collapsed}/wunder`;
+          return url.toString().replace(/\/$/, "");
+        } catch (error) {
+          const basePath = trimmed.replace(/\/+$/, "");
+          const collapsed = basePath.replace(/(\/wunder)+$/, "/wunder");
+          return collapsed.endsWith("/wunder") ? collapsed : `${collapsed}/wunder`;
+        }
+      };
+
+      const getWunderEndpoint = (settings) => {
+        const normalized = normalizeWunderEndpoint(settings.wunderEndpoint);
+        return normalized || "/wunder";
+      };
+
+      const getWunderAttachmentEndpoint = (settings) =>
+        `${getWunderEndpoint(settings)}/attachments/convert`;
+
+      const isImageFile = (file) => {
+        if (file.type && file.type.startsWith("image/")) {
+          return true;
+        }
+        const ext = getFileExtension(file.name);
+        return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext);
+      };
+
+      const isTextFile = (file) => {
+        if (file.type && file.type.startsWith("text/")) {
+          return true;
+        }
+        if (file.type === "application/json") {
+          return true;
+        }
+        const ext = getFileExtension(file.name);
+        return ["txt", "md", "markdown", "json", "yml", "yaml", "csv", "log"].includes(ext);
+      };
+
+      const formatFileSize = (bytes) => {
+        if (!Number.isFinite(bytes)) {
+          return "";
+        }
+        const units = ["B", "KB", "MB", "GB"];
+        let size = bytes;
+        let index = 0;
+        while (size >= 1024 && index < units.length - 1) {
+          size /= 1024;
+          index += 1;
+        }
+        return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[index]}`;
+      };
+
+      const updateAttachmentList = () => {
+        elements.attachmentList.innerHTML = "";
+        state.selectedFiles.forEach((file) => {
+          const item = document.createElement("div");
+          item.className = "attachment-item";
+          const size = formatFileSize(file.size);
+          item.textContent = size ? `${file.name} (${size})` : file.name;
+          elements.attachmentList.appendChild(item);
+        });
+      };
+
+      const clearAttachments = () => {
+        state.selectedFiles = [];
+        if (elements.fileInput) {
+          elements.fileInput.value = "";
+        }
+        updateAttachmentList();
+      };
+
+      const readFileAsDataUrl = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result || "");
+          reader.onerror = () => reject(new Error("Failed to read image."));
+          reader.readAsDataURL(file);
+        });
+
+      const readFileAsText = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result || "");
+          reader.onerror = () => reject(new Error("Failed to read file."));
+          reader.readAsText(file);
+        });
+
+      const convertFileToText = async (file, settings) => {
+        const formData = new FormData();
+        formData.append("file", file, file.name);
+        const headers = {};
+        if (settings.wunderApiKey) {
+          headers["X-API-Key"] = settings.wunderApiKey;
+        }
+        const response = await fetch(getWunderAttachmentEndpoint(settings), {
+          method: "POST",
+          headers,
+          body: formData,
+        });
+        if (!response.ok) {
+          throw new Error(`Convert failed (${response.status})`);
+        }
+        const result = await response.json();
+        if (!result?.ok || !result?.content) {
+          throw new Error("Convert failed.");
+        }
+        return result.content;
+      };
+
+      const buildAttachments = async (settings) => {
+        const attachments = [];
+        const names = [];
+        const errors = [];
+        if (!state.selectedFiles.length) {
+          return { attachments, names };
+        }
+        for (const file of state.selectedFiles) {
+          try {
+            if (isImageFile(file)) {
+              const dataUrl = await readFileAsDataUrl(file);
+              if (!dataUrl) {
+                continue;
+              }
+              attachments.push({
+                name: file.name,
+                content: dataUrl,
+                content_type: file.type || "image/*",
+              });
+              names.push(file.name);
+              continue;
+            }
+            if (isTextFile(file)) {
+              const content = await readFileAsText(file);
+              if (!content) {
+                continue;
+              }
+              attachments.push({
+                name: file.name,
+                content,
+                content_type: file.type || "text/plain",
+              });
+              names.push(file.name);
+              continue;
+            }
+            if (!settings.wunderApiKey) {
+              errors.push(`${file.name}: missing Wunder API key for conversion.`);
+              continue;
+            }
+            const content = await convertFileToText(file, settings);
+            if (!content) {
+              continue;
+            }
+            attachments.push({
+              name: file.name,
+              content,
+              content_type: "text/markdown",
+            });
+            names.push(file.name);
+          } catch (error) {
+            const message = error?.message || "convert failed";
+            errors.push(`${file.name}: ${message}`);
+          }
+        }
+        if (errors.length) {
+          const note = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
+          setStatus(`Attachment warning: ${errors[0]}${note}`);
+        }
+        return { attachments, names };
+      };
+
+      const addHistoryEntry = (role, text, attachments, reasoning = "") => {
+        const entry = {
+          role,
+          text: text || "",
+          attachments: Array.isArray(attachments) ? attachments : [],
+          reasoning: reasoning || "",
+        };
+        state.history.push(entry);
+        scheduleHistorySave();
+        return state.history.length - 1;
+      };
+
+      const getHistoryIndex = (bubble) => {
+        const raw = bubble?.dataset?.historyIndex;
+        if (!raw) {
+          return null;
+        }
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+          return null;
+        }
+        return parsed;
+      };
+
+      const updateHistoryText = (bubble, text) => {
+        const index = getHistoryIndex(bubble);
+        if (index === null || !state.history[index]) {
+          return;
+        }
+        state.history[index].text = text || "";
+        scheduleHistorySave();
+      };
+
+      const updateHistoryReasoning = (bubble, text, append) => {
+        const index = getHistoryIndex(bubble);
+        if (index === null || !state.history[index]) {
+          return;
+        }
+        const current = state.history[index].reasoning || "";
+        state.history[index].reasoning = append ? `${current}${text}` : text || "";
+        scheduleHistorySave();
+      };
+
+      const appendMessage = (role, text, meta, options = {}) => {
+        const bubble = document.createElement("div");
+        bubble.className = `message ${role}`;
+        const textNode = document.createElement("div");
+        textNode.className = "message-text";
+        textNode.textContent = text;
+        bubble.appendChild(textNode);
+        if (Array.isArray(meta) && meta.length) {
+          const metaNode = document.createElement("div");
+          metaNode.className = "message-meta";
+          metaNode.textContent = `Attachments: ${meta.join(", ")}`;
+          bubble.appendChild(metaNode);
+        }
+        if (role === "assistant") {
+          const details = document.createElement("details");
+          details.className = "reasoning";
+          details.hidden = true;
+          const summary = document.createElement("summary");
+          summary.textContent = "Reasoning";
+          const pre = document.createElement("pre");
+          pre.className = "reasoning-content";
+          details.append(summary, pre);
+          bubble.appendChild(details);
+        }
+        if (options.historyIndex !== undefined && options.historyIndex !== null) {
+          bubble.dataset.historyIndex = String(options.historyIndex);
+        }
+        elements.chatList.appendChild(bubble);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+        return bubble;
+      };
+
+      const updateMessage = (bubble, text) => {
+        const textNode = bubble.querySelector(".message-text");
+        if (textNode) {
+          textNode.textContent = text;
+        } else {
+          bubble.textContent = text;
+        }
+        updateHistoryText(bubble, text);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const getMessageText = (bubble) => {
+        const textNode = bubble.querySelector(".message-text");
+        if (textNode) {
+          return textNode.textContent || "";
+        }
+        return bubble.textContent || "";
+      };
+
+      const appendReasoning = (bubble, delta) => {
+        if (!delta) {
+          return;
+        }
+        const pre = bubble.querySelector(".reasoning-content");
+        if (!pre) {
+          return;
+        }
+        pre.textContent = `${pre.textContent || ""}${delta}`;
+        const details = bubble.querySelector("details.reasoning");
+        if (details) {
+          details.hidden = false;
+        }
+        updateHistoryReasoning(bubble, delta, true);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const setReasoning = (bubble, text) => {
+        if (!text) {
+          return;
+        }
+        const pre = bubble.querySelector(".reasoning-content");
+        if (!pre) {
+          return;
+        }
+        pre.textContent = text;
+        const details = bubble.querySelector("details.reasoning");
+        if (details) {
+          details.hidden = false;
+        }
+        updateHistoryReasoning(bubble, text, false);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const setStreaming = (active) => {
+        state.streaming = active;
+        elements.sendBtn.disabled = active;
+        elements.stopBtn.disabled = !active;
+        elements.questionInput.disabled = active;
+        if (elements.fileInput) {
+          elements.fileInput.disabled = active;
+        }
+        if (elements.clearFilesBtn) {
+          elements.clearFilesBtn.disabled = active;
+        }
+      };
+
+      const buildConfigOverrides = (settings) => {
+        const modelConfig = {
+          base_url: settings.baseUrl,
+          api_key: settings.apiKey,
+          model: settings.modelName,
+          stream: settings.stream,
+        };
+        if (settings.temperature !== "") {
+          modelConfig.temperature = settings.temperature;
+        }
+        if (settings.maxOutput !== "") {
+          modelConfig.max_output = settings.maxOutput;
+        }
+        if (settings.timeoutS !== "") {
+          modelConfig.timeout_s = settings.timeoutS;
+        }
+        if (settings.retryCount !== "") {
+          modelConfig.retry = settings.retryCount;
+        }
+        if (settings.maxContext !== "") {
+          modelConfig.max_context = settings.maxContext;
+        }
+        return {
+          llm: {
+            default: MODEL_KEY,
+            models: {
+              [MODEL_KEY]: modelConfig,
+            },
+          },
+        };
+      };
+
+      const buildPayload = (question, settings, attachments) => {
+        const payload = {
+          user_id: settings.userId,
+          question,
+          stream: settings.stream,
+          session_id: settings.sessionId || null,
+          model_name: MODEL_KEY,
+          config_overrides: buildConfigOverrides(settings),
+        };
+        if (Array.isArray(attachments) && attachments.length) {
+          payload.attachments = attachments;
+        }
+        return payload;
+      };
+
+      const parseSseBlock = (block) => {
+        const lines = block.split(/\r?\n/);
+        let eventType = "message";
+        const dataLines = [];
+        lines.forEach((line) => {
+          if (line.startsWith("event:")) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        });
+        return { eventType, dataText: dataLines.join("\n") };
+      };
+
+      const handleEvent = (eventType, dataText, assistantBubble) => {
+        const payload = safeJsonParse(dataText);
+        const data =
+          payload && typeof payload === "object" && payload.data !== undefined ? payload.data : payload;
+        if (eventType === "llm_output_delta") {
+          const delta = data?.delta || "";
+          const reasoningDelta = data?.reasoning_delta || "";
+          if (delta) {
+            const current = getMessageText(assistantBubble);
+            updateMessage(assistantBubble, current + delta);
+          }
+          if (reasoningDelta) {
+            appendReasoning(assistantBubble, reasoningDelta);
+          }
+          return;
+        }
+        if (eventType === "llm_output") {
+          const content = data?.content || "";
+          const reasoning = data?.reasoning || "";
+          if (content) {
+            updateMessage(assistantBubble, content);
+          }
+          if (reasoning) {
+            setReasoning(assistantBubble, reasoning);
+          }
+          return;
+        }
+        if (eventType === "final") {
+          const answer = data?.answer || data?.content || "";
+          if (answer) {
+            updateMessage(assistantBubble, answer);
+          }
+          return;
+        }
+        if (eventType === "error") {
+          const message =
+            data?.message || data?.detail?.message || dataText || "Request failed.";
+          setStatus(message);
+        }
+      };
+
+      const sendStream = async (payload, assistantBubble, settings, controller) => {
+        const headers = {
+          "Content-Type": "application/json",
+        };
+        if (settings.wunderApiKey) {
+          headers["X-API-Key"] = settings.wunderApiKey;
+        }
+        const response = await fetch(getWunderEndpoint(settings), {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          parts.forEach((part) => {
+            if (!part.trim()) {
+              return;
+            }
+            const { eventType, dataText } = parseSseBlock(part);
+            handleEvent(eventType, dataText, assistantBubble);
+          });
+        }
+      };
+
+      const sendNonStream = async (payload, assistantBubble, settings, controller) => {
+        const headers = {
+          "Content-Type": "application/json",
+        };
+        if (settings.wunderApiKey) {
+          headers["X-API-Key"] = settings.wunderApiKey;
+        }
+        const response = await fetch(getWunderEndpoint(settings), {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+        const result = await response.json();
+        const answer = result?.answer || "";
+        if (result?.session_id && result.session_id !== settings.sessionId) {
+          elements.sessionId.value = result.session_id;
+          syncSettings();
+        }
+        updateMessage(assistantBubble, answer || "No response.");
+      };
+
+      const validateSettings = (settings) => {
+        if (!settings.baseUrl) {
+          setStatus("Please fill model endpoint.");
+          return false;
+        }
+        if (!settings.apiKey) {
+          setStatus("Please fill API key.");
+          return false;
+        }
+        if (!settings.modelName) {
+          setStatus("Please fill model name.");
+          return false;
+        }
+        return true;
+      };
+
+      const sendMessage = async (question) => {
+        const settings = ensureIds(syncSettings());
+        setActiveSession(settings.userId, settings.sessionId);
+        if (!validateSettings(settings)) {
+          return;
+        }
+        setStreaming(true);
+        setStatus("Preparing attachments...");
+        state.controller = new AbortController();
+        let assistantBubble = null;
+        try {
+          const { attachments, names } = await buildAttachments(settings);
+          const userIndex = addHistoryEntry("user", question, names);
+          appendMessage("user", question, names, { historyIndex: userIndex });
+          const assistantIndex = addHistoryEntry("assistant", "...");
+          assistantBubble = appendMessage("assistant", "...", null, { historyIndex: assistantIndex });
+          setStatus("Sending...");
+          const payload = buildPayload(question, settings, attachments);
+          if (settings.stream) {
+            await sendStream(payload, assistantBubble, settings, state.controller);
+          } else {
+            await sendNonStream(payload, assistantBubble, settings, state.controller);
+          }
+          setStatus("Done.");
+        } catch (error) {
+          if (error && error.name === "AbortError") {
+            if (assistantBubble && getMessageText(assistantBubble) === "...") {
+              updateMessage(assistantBubble, "Stopped.");
+            }
+            setStatus("Stopped.");
+            return;
+          }
+          const message = error?.message || "Request failed.";
+          if (assistantBubble) {
+            updateMessage(assistantBubble, message);
+          } else {
+            const errorIndex = addHistoryEntry("assistant", message);
+            appendMessage("assistant", message, null, { historyIndex: errorIndex });
+          }
+          setStatus(message);
+        } finally {
+          setStreaming(false);
+          state.controller = null;
+          clearAttachments();
+        }
+      };
+
+      const initialize = () => {
+        const settings = ensureIds(loadSettings());
+        applySettings(settings);
+        syncSettings();
+        updateAttachmentList();
+        setActiveSession(settings.userId, settings.sessionId);
+
+        elements.toggleApiKey.addEventListener("click", () => {
+          const hidden = elements.apiKey.type === "password";
+          elements.apiKey.type = hidden ? "text" : "password";
+          elements.toggleApiKey.textContent = hidden ? "Hide" : "Show";
+        });
+
+        if (elements.fileInput) {
+          elements.fileInput.addEventListener("change", (event) => {
+            const files = Array.from(event.target.files || []);
+            state.selectedFiles = files;
+            updateAttachmentList();
+          });
+        }
+
+        if (elements.clearFilesBtn) {
+          elements.clearFilesBtn.addEventListener("click", clearAttachments);
+        }
+
+        elements.chatForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (state.streaming) {
+            return;
+          }
+          const text = elements.questionInput.value.trim();
+          if (!text) {
+            return;
+          }
+          elements.questionInput.value = "";
+          sendMessage(text);
+        });
+
+        elements.questionInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            elements.sendBtn.click();
+          }
+        });
+
+        elements.stopBtn.addEventListener("click", () => {
+          if (state.controller) {
+            state.controller.abort();
+            setStatus("Stopped.");
+          }
+        });
+
+        elements.newChatBtn.addEventListener("click", () => {
+          elements.sessionId.value = createId("session");
+          const next = syncSettings();
+          setActiveSession(next.userId, next.sessionId);
+          clearAttachments();
+          setStatus("New session ready.");
+        });
+
+        elements.clearChatBtn.addEventListener("click", () => {
+          clearHistoryForSession();
+          clearAttachments();
+          setStatus("Messages cleared.");
+        });
+
+        elements.resetSettingsBtn.addEventListener("click", () => {
+          const reset = { ...defaultSettings, userId: createId("user"), sessionId: createId("session") };
+          applySettings(reset);
+          saveSettings(reset);
+          setActiveSession(reset.userId, reset.sessionId);
+          clearAttachments();
+          setStatus("Settings reset.");
+        });
+
+        const sessionInputs = [elements.userId, elements.sessionId];
+        sessionInputs.forEach((input) => {
+          input.addEventListener("change", () => {
+            const next = syncSettings();
+            setActiveSession(next.userId, next.sessionId);
+          });
+        });
+        [
+          elements.baseUrl,
+          elements.apiKey,
+          elements.modelName,
+          elements.temperature,
+          elements.maxOutput,
+          elements.timeoutS,
+          elements.retryCount,
+          elements.streamToggle,
+          elements.maxContext,
+          elements.wunderEndpoint,
+          elements.wunderApiKey,
+        ].forEach((input) => {
+          input.addEventListener("change", syncSettings);
+        });
+      };
+
+      initialize();
+    </script>
+  </body>
+</html>

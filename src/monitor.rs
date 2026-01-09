@@ -79,6 +79,17 @@ impl MonitorEvent {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+struct LlmRoundMetrics {
+    start_ts: Option<f64>,
+    first_output_ts: Option<f64>,
+    last_output_ts: Option<f64>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    prefill_duration_s: Option<f64>,
+    decode_duration_s: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 struct SessionRecord {
     session_id: String,
@@ -664,8 +675,14 @@ impl MonitorState {
                     .iter()
                     .map(|event| event.to_dict())
                     .collect::<Vec<_>>();
+                let mut session = record.to_summary();
+                if let Value::Object(ref mut map) = session {
+                    for (key, value) in build_llm_speed_summary(&record.events) {
+                        map.insert(key, value);
+                    }
+                }
                 Some(json!({
-                    "session": record.to_summary(),
+                    "session": session,
                     "events": events,
                 }))
             },
@@ -1280,6 +1297,173 @@ impl MonitorState {
         let payload = record.to_storage();
         let _ = self.storage.upsert_monitor_record(&payload);
     }
+}
+
+fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<String, Value> {
+    let mut rounds: HashMap<i64, LlmRoundMetrics> = HashMap::new();
+    let mut first_round: Option<i64> = None;
+    let mut latest_round: Option<i64> = None;
+    let mut last_round_seen: Option<i64> = None;
+    let mut implicit_round: i64 = 0;
+
+    for event in events {
+        match event.event_type.as_str() {
+            "llm_request" => {
+                let round = parse_round(&event.data).unwrap_or_else(|| {
+                    implicit_round += 1;
+                    implicit_round
+                });
+                last_round_seen = Some(round);
+                if first_round.is_none() {
+                    first_round = Some(round);
+                }
+                let entry = rounds.entry(round).or_default();
+                if entry.start_ts.is_none() {
+                    entry.start_ts = Some(event.timestamp);
+                }
+            }
+            "llm_output_delta" | "llm_output" => {
+                let round = parse_round(&event.data).or(last_round_seen);
+                if let Some(round) = round {
+                    last_round_seen = Some(round);
+                    let entry = rounds.entry(round).or_default();
+                    if entry.first_output_ts.is_none() {
+                        entry.first_output_ts = Some(event.timestamp);
+                    }
+                    entry.last_output_ts = Some(event.timestamp);
+                    if event.event_type == "llm_output" {
+                        let (input_tokens, output_tokens) = parse_usage_tokens(&event.data);
+                        if entry.input_tokens.is_none() {
+                            entry.input_tokens = input_tokens;
+                        }
+                        if entry.output_tokens.is_none() {
+                            entry.output_tokens = output_tokens;
+                        }
+                        if entry.prefill_duration_s.is_none() {
+                            entry.prefill_duration_s =
+                                parse_f64_value(event.data.get("prefill_duration_s"));
+                        }
+                        if entry.decode_duration_s.is_none() {
+                            entry.decode_duration_s =
+                                parse_f64_value(event.data.get("decode_duration_s"));
+                        }
+                        if entry.output_tokens.is_some() {
+                            latest_round = Some(round);
+                        }
+                    }
+                }
+            }
+            "token_usage" => {
+                let round = parse_round(&event.data).or(last_round_seen);
+                if let Some(round) = round {
+                    last_round_seen = Some(round);
+                    let entry = rounds.entry(round).or_default();
+                    if entry.input_tokens.is_none() {
+                        entry.input_tokens = parse_i64_value(event.data.get("input_tokens"));
+                    }
+                    if entry.output_tokens.is_none() {
+                        entry.output_tokens = parse_i64_value(event.data.get("output_tokens"));
+                    }
+                    if entry.prefill_duration_s.is_none() {
+                        entry.prefill_duration_s =
+                            parse_f64_value(event.data.get("prefill_duration_s"));
+                    }
+                    if entry.decode_duration_s.is_none() {
+                        entry.decode_duration_s =
+                            parse_f64_value(event.data.get("decode_duration_s"));
+                    }
+                    if entry.output_tokens.is_some() {
+                        latest_round = Some(round);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let prefill_metrics = first_round.and_then(|round| rounds.get(&round));
+    let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
+    let prefill_duration_s = prefill_metrics
+        .and_then(|metrics| metrics.prefill_duration_s)
+        .map(|value| value.max(0.0))
+        .or_else(|| {
+            prefill_metrics.and_then(|metrics| {
+                let Some(start_ts) = metrics.start_ts else {
+                    return None;
+                };
+                let Some(first_output_ts) = metrics.first_output_ts else {
+                    return None;
+                };
+                Some((first_output_ts - start_ts).max(0.0))
+            })
+        });
+    let prefill_speed_tps = match (prefill_tokens, prefill_duration_s) {
+        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
+            Some(tokens as f64 / duration)
+        }
+        _ => None,
+    };
+
+    let decode_round = latest_round.or(first_round);
+    let decode_metrics = decode_round.and_then(|round| rounds.get(&round));
+    let decode_tokens = decode_metrics.and_then(|metrics| metrics.output_tokens);
+    let decode_duration_s = decode_metrics
+        .and_then(|metrics| metrics.decode_duration_s)
+        .map(|value| value.max(0.0))
+        .or_else(|| {
+            decode_metrics.and_then(|metrics| {
+                let Some(first_output_ts) = metrics.first_output_ts else {
+                    return None;
+                };
+                let Some(last_output_ts) = metrics.last_output_ts else {
+                    return None;
+                };
+                Some((last_output_ts - first_output_ts).max(0.0))
+            })
+        });
+    let decode_speed_tps = match (decode_tokens, decode_duration_s) {
+        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
+            Some(tokens as f64 / duration)
+        }
+        _ => None,
+    };
+
+    let mut result = serde_json::Map::new();
+    result.insert("prefill_tokens".to_string(), json!(prefill_tokens));
+    result.insert("prefill_duration_s".to_string(), json!(prefill_duration_s));
+    result.insert("prefill_speed_tps".to_string(), json!(prefill_speed_tps));
+    result.insert("prefill_speed_lower_bound".to_string(), json!(false));
+    result.insert("decode_tokens".to_string(), json!(decode_tokens));
+    result.insert("decode_duration_s".to_string(), json!(decode_duration_s));
+    result.insert("decode_speed_tps".to_string(), json!(decode_speed_tps));
+    result
+}
+
+fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
+    value
+        .and_then(Value::as_i64)
+        .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
+}
+
+fn parse_f64_value(value: Option<&Value>) -> Option<f64> {
+    value
+        .and_then(Value::as_f64)
+        .or_else(|| value.and_then(Value::as_i64).map(|value| value as f64))
+        .or_else(|| value.and_then(Value::as_u64).map(|value| value as f64))
+}
+
+fn parse_round(data: &Value) -> Option<i64> {
+    parse_i64_value(data.get("round"))
+}
+
+fn parse_usage_tokens(data: &Value) -> (Option<i64>, Option<i64>) {
+    let Some(usage) = data.get("usage").and_then(Value::as_object) else {
+        return (None, None);
+    };
+    (
+        parse_i64_value(usage.get("input_tokens")),
+        parse_i64_value(usage.get("output_tokens")),
+    )
 }
 
 fn format_panic_payload(payload: &(dyn Any + Send)) -> String {

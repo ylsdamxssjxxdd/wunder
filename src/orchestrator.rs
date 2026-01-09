@@ -38,7 +38,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
@@ -77,6 +77,39 @@ struct MemorySummaryTask {
     final_answer: String,
     summary_result: String,
     error: String,
+}
+
+#[derive(Debug, Default)]
+struct OutputTiming {
+    first_output_at: Option<Instant>,
+    last_output_at: Option<Instant>,
+}
+
+impl OutputTiming {
+    fn mark_output(&mut self, now: Instant) {
+        if self.first_output_at.is_none() {
+            self.first_output_at = Some(now);
+        }
+        self.last_output_at = Some(now);
+    }
+
+    fn durations(
+        &self,
+        request_start: Instant,
+        response_end: Instant,
+    ) -> (Option<f64>, Option<f64>) {
+        let Some(first_output_at) = self.first_output_at else {
+            return (None, None);
+        };
+        let last_output_at = self.last_output_at.unwrap_or(response_end);
+        let prefill = first_output_at
+            .saturating_duration_since(request_start)
+            .as_secs_f64();
+        let decode = last_output_at
+            .saturating_duration_since(first_output_at)
+            .as_secs_f64();
+        (Some(prefill), Some(decode))
+    }
 }
 
 #[derive(Debug)]
@@ -1934,7 +1967,17 @@ impl Orchestrator {
                             json!({ "content": content, "reasoning": "", "round": round_index, "usage": usage }),
                         )
                         .await;
-                    emitter.emit("token_usage", json!(usage)).await;
+                    emitter
+                        .emit(
+                            "token_usage",
+                            json!({
+                                "round": round_index,
+                                "input_tokens": usage.input,
+                                "output_tokens": usage.output,
+                                "total_tokens": usage.total,
+                            }),
+                        )
+                        .await;
                 }
                 return Ok((content, String::new(), usage));
             }
@@ -1970,11 +2013,18 @@ impl Orchestrator {
         let mut last_err: anyhow::Error;
         loop {
             attempt += 1;
+            let request_started_at = Instant::now();
+            let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
+                let timing_snapshot = Arc::clone(&output_timing);
                 let on_delta = move |delta: String, reasoning_delta: String| {
                     let emitter = emitter_snapshot.clone();
+                    let timing = Arc::clone(&timing_snapshot);
                     async move {
+                        if !delta.is_empty() || !reasoning_delta.is_empty() {
+                            timing.lock().mark_output(Instant::now());
+                        }
                         if emit_events {
                             let mut payload = serde_json::Map::new();
                             if !delta.is_empty() {
@@ -2003,6 +2053,7 @@ impl Orchestrator {
 
             match result {
                 Ok(response) => {
+                    let response_finished_at = Instant::now();
                     let content = response.content;
                     let reasoning = response.reasoning;
                     let mut usage = response.usage;
@@ -2017,14 +2068,40 @@ impl Orchestrator {
                     let usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
                         self.estimate_token_usage(messages, &content, &reasoning)
                     });
+                    let (prefill_duration_s, decode_duration_s) = if will_stream {
+                        output_timing
+                            .lock()
+                            .durations(request_started_at, response_finished_at)
+                    } else {
+                        (None, None)
+                    };
                     if emit_events {
                         emitter
                             .emit(
                                 "llm_output",
-                                json!({ "content": content, "reasoning": reasoning, "round": round_index, "usage": usage }),
+                                json!({
+                                    "content": content,
+                                    "reasoning": reasoning,
+                                    "round": round_index,
+                                    "usage": usage,
+                                    "prefill_duration_s": prefill_duration_s,
+                                    "decode_duration_s": decode_duration_s,
+                                }),
                             )
                             .await;
-                        emitter.emit("token_usage", json!(usage)).await;
+                        emitter
+                            .emit(
+                                "token_usage",
+                                json!({
+                                    "round": round_index,
+                                    "input_tokens": usage.input,
+                                    "output_tokens": usage.output,
+                                    "total_tokens": usage.total,
+                                    "prefill_duration_s": prefill_duration_s,
+                                    "decode_duration_s": decode_duration_s,
+                                }),
+                            )
+                            .await;
                     }
                     return Ok((content, reasoning, usage));
                 }

@@ -351,13 +351,16 @@
 
 - 方法：`GET`
 - 返回（JSON）：
-  - `session`：线程详情
+  - `session`：线程详情（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
   - `events`：事件详情列表
 - 说明：
 - 事件列表会按 `observability.monitor_event_limit` 保留最近 N 条，<= 0 表示不截断。
   - 字符串字段会按 `observability.monitor_payload_max_chars` 截断（<= 0 表示不截断）。
   - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
   - `observability.monitor_drop_event_types` 可过滤不持久化的事件类型。
+  - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
 
@@ -549,6 +552,11 @@
   - `message`：提示信息
   - `tree_version`：工作区树版本号
   - `files`：保存的文件路径
+
+### 4.1.24.0 `/`
+
+- 方法：`GET`
+- 说明：简易聊天测试页（`web/simple-chat/index.html`），可直接填写模型端点/API Key/模型名与 Wunder 端点/Key，支持附件上传与思考折叠显示，并在浏览器中保存设置与对话历史。
 
 ### 4.1.24 `/wunder/web`
 

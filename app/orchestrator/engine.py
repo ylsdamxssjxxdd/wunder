@@ -1959,6 +1959,7 @@ class WunderOrchestrator:
                     "provider": llm_config.provider,
                     "model": llm_config.model,
                     "base_url": llm_config.base_url,
+                    "round": round_index,
                     "payload": log_payload,
                 },
             )
@@ -2103,7 +2104,9 @@ class WunderOrchestrator:
                 "total_tokens": input_tokens + output_tokens,
             }
         if emit_events:
-            emitter.emit("token_usage", usage)
+            usage_with_round = dict(usage)
+            usage_with_round["round"] = round_index
+            emitter.emit("token_usage", usage_with_round)
         return LLMResponse(content=content, reasoning=reasoning, usage=usage), usage
 
     @staticmethod

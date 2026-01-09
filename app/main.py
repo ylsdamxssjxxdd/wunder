@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.deps import get_orchestrator
@@ -146,6 +147,13 @@ def create_app() -> FastAPI:
     web_root = Path(__file__).resolve().parents[1] / "web"
     if web_root.exists():
         app.mount("/wunder/web", StaticFiles(directory=str(web_root), html=True), name="wunder-web")
+        simple_chat_path = web_root / "simple-chat" / "index.html"
+
+        @app.get("/", include_in_schema=False)
+        async def simple_chat_root():
+            if simple_chat_path.exists():
+                return FileResponse(simple_chat_path)
+            raise HTTPException(status_code=404, detail={"message": "Not Found"})
     # 通过 /wunder/ppt 暴露系统介绍 PPT，便于前端嵌入。
     ppt_root = Path(__file__).resolve().parents[1] / "docs" / "ppt"
     if ppt_root.exists():

@@ -42,7 +42,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
+    let app = mount_static_file(app, "web/simple-chat/index.html", "/");
     let app = mount_static(app, "web", "/wunder/web");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");
@@ -113,6 +114,18 @@ where
         // 目录存在时才挂载，避免容器裁剪后启动报错。
         let service = ServeDir::new(path).append_index_html_on_directories(true);
         app.nest_service(route, service)
+    } else {
+        app
+    }
+}
+
+fn mount_static_file<S>(app: Router<S>, file: &str, route: &str) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let path = PathBuf::from(file);
+    if path.exists() {
+        app.route_service(route, ServeFile::new(path))
     } else {
         app
     }
