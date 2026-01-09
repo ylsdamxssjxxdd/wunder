@@ -10,6 +10,36 @@ let lastProbeKey = "";
 let lastAutoContext = null;
 let probeInFlight = false;
 let pendingProbe = false;
+const FLOAT_INPUT_PRECISION = 7;
+
+const roundFloat = (value) => {
+  const factor = 10 ** FLOAT_INPUT_PRECISION;
+  return Math.round(value * factor) / factor;
+};
+
+const trimTrailingZeros = (valueText) => {
+  if (!valueText.includes(".")) {
+    return valueText;
+  }
+  const trimmed = valueText.replace(/(?:\.0+|(\.\d*?[1-9])0+)$/, "$1").replace(/\.$/, "");
+  return trimmed === "-0" ? "0" : trimmed;
+};
+
+const formatFloatForInput = (value, fallback) => {
+  const num = Number.isFinite(value) ? value : fallback;
+  if (!Number.isFinite(num)) {
+    return "";
+  }
+  return trimTrailingZeros(roundFloat(num).toFixed(FLOAT_INPUT_PRECISION));
+};
+
+const parseFloatInput = (input, fallback) => {
+  const parsed = Number.parseFloat(input?.value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return roundFloat(parsed);
+};
 
 // 规范化 LLM 配置，避免空值影响展示。
 const normalizeLlmConfig = (raw) => ({
@@ -85,7 +115,7 @@ const clearLlmForm = () => {
   elements.llmModel.value = "";
   elements.llmBaseUrl.value = "";
   elements.llmApiKey.value = "";
-  elements.llmTemperature.value = 0.7;
+  elements.llmTemperature.value = formatFloatForInput(0.7, 0.7);
   elements.llmTimeout.value = 60;
   elements.llmRetry.value = 1;
   elements.llmMaxRounds.value = 10;
@@ -93,7 +123,7 @@ const clearLlmForm = () => {
   elements.llmMaxOutput.value = "";
   elements.llmVision.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
-  elements.llmHistoryCompactionRatio.value = 0.8;
+  elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
 };
 
@@ -111,7 +141,7 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmModel.value = llm.model;
   elements.llmBaseUrl.value = llm.base_url;
   elements.llmApiKey.value = llm.api_key;
-  elements.llmTemperature.value = llm.temperature;
+  elements.llmTemperature.value = formatFloatForInput(llm.temperature, 0.7);
   elements.llmTimeout.value = llm.timeout_s;
   elements.llmRetry.value = llm.retry;
   elements.llmMaxRounds.value = llm.max_rounds ?? 10;
@@ -119,7 +149,10 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmMaxOutput.value = llm.max_output ?? "";
   elements.llmVision.checked = llm.support_vision;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
-  elements.llmHistoryCompactionRatio.value = llm.history_compaction_ratio ?? 0.8;
+  elements.llmHistoryCompactionRatio.value = formatFloatForInput(
+    llm.history_compaction_ratio ?? 0.8,
+    0.8
+  );
   elements.llmHistoryCompactionReset.value = llm.history_compaction_reset || "zero";
 };
 
@@ -222,15 +255,13 @@ const renderLlmList = () => {
 // 从表单构建 LLM 配置。
 const buildLlmConfigFromForm = (baseConfig) => {
   const base = normalizeLlmConfig(baseConfig || {});
-  const temperature = Number.parseFloat(elements.llmTemperature.value);
+  const temperature = parseFloatInput(elements.llmTemperature, 0.7);
   const timeout = Number.parseInt(elements.llmTimeout.value, 10);
   const retry = Number.parseInt(elements.llmRetry.value, 10);
   const maxRounds = Number.parseInt(elements.llmMaxRounds.value, 10);
   const maxContext = Number.parseInt(elements.llmMaxContext.value, 10);
   const maxOutput = Number.parseInt(elements.llmMaxOutput.value, 10);
-  const historyCompactionRatio = Number.parseFloat(
-    elements.llmHistoryCompactionRatio.value
-  );
+  const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.8);
   const historyCompactionReset = String(
     elements.llmHistoryCompactionReset.value || ""
   ).trim();

@@ -288,7 +288,7 @@ fn build_engineer_system_info(workdir: &Path, workspace_tree: &str) -> String {
         &HashMap::from([
             ("OS".to_string(), os_name),
             ("DATE".to_string(), date_str),
-            ("DIR".to_string(), workdir.to_string_lossy().to_string()),
+            ("DIR".to_string(), absolute_path_str(workdir)),
             ("WORKSPACE_TREE".to_string(), workspace_tree.to_string()),
         ]),
     )
@@ -336,7 +336,10 @@ fn build_skill_prompt_block(workdir: &Path, skills: &[SkillSpec]) -> String {
     for spec in sorted {
         lines.push(String::new());
         lines.push(format!("- {}", spec.name));
-        lines.push(format!("  SKILL.md: {}", spec.path));
+        lines.push(format!(
+            "  SKILL.md: {}",
+            absolute_path_str_from_text(&spec.path)
+        ));
         if !spec.frontmatter.trim().is_empty() {
             lines.push("  Frontmatter:".to_string());
             for raw_line in spec.frontmatter.lines() {
@@ -397,6 +400,31 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
         }
     }
     path.to_path_buf()
+}
+
+fn absolute_path_str(path: &Path) -> String {
+    let resolved = if path.is_absolute() {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let joined = cwd.join(path);
+        joined.canonicalize().unwrap_or_else(|_| joined)
+    };
+    let mut text = resolved.to_string_lossy().to_string();
+    if cfg!(windows) {
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            text = stripped.to_string();
+        }
+    }
+    text
+}
+
+fn absolute_path_str_from_text(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        return String::new();
+    }
+    let path = PathBuf::from(raw);
+    absolute_path_str(&path)
 }
 
 fn prompt_file_cache() -> &'static Mutex<HashMap<String, (f64, String)>> {

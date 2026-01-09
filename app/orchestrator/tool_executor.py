@@ -190,9 +190,19 @@ class ToolExecutor:
             user_tool_bindings.alias_map.get(name) if user_tool_bindings else None
         )
 
+        tool_label = str(name or "").strip()
+
+        def _attach_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
+            if not tool_label or not isinstance(payload, dict):
+                return payload
+            if any(key in payload for key in ("tool", "tool_name", "toolName")):
+                return payload
+            return {**payload, "tool": tool_label}
+
         def _emit_debug_event(event_type: str, data: Dict[str, Any]) -> None:
             # 统一构建工具调试事件，优先实时抛给 SSE，否则暂存等待统一回放
-            event = StreamEvent(type=event_type, session_id=workspace.session_id, data=data)
+            payload = _attach_tool(data)
+            event = StreamEvent(type=event_type, session_id=workspace.session_id, data=payload)
             if emit_event:
                 emit_event(event)
                 return
@@ -597,6 +607,7 @@ class ToolExecutor:
                     continue
                 data = event.get("data")
                 payload = data if isinstance(data, dict) else {"detail": data}
+                payload = _attach_tool(payload)
                 debug_events.append(
                     StreamEvent(
                         type=event_type,

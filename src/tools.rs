@@ -4,6 +4,7 @@ use crate::config::{A2aServiceConfig, Config, KnowledgeBaseConfig};
 use crate::i18n;
 use crate::knowledge;
 use crate::mcp;
+use crate::path_utils::is_within_root;
 use crate::sandbox;
 use crate::schemas::ToolSpec;
 use crate::skills::{execute_skill, SkillRegistry};
@@ -17,6 +18,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
@@ -826,17 +828,79 @@ fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let files = args
         .get("files")
         .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("files 参数缺失"))?;
+        .ok_or_else(|| anyhow!("files ????"))?;
     let mut results = Vec::new();
     for file in files {
         if let Some(path) = file.get("path").and_then(Value::as_str) {
-            let content = context
+            let content = match context
                 .workspace
-                .read_file(context.user_id, path, 1024 * 1024)?;
+                .read_file(context.user_id, path, 1024 * 1024)
+            {
+                Ok(content) => content,
+                Err(err) => {
+                    if let Some(resolved) = resolve_skill_read_path(context, path) {
+                        std::fs::read_to_string(&resolved)?
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
             results.push(json!({"path": path, "content": content}));
         }
     }
     Ok(Value::Array(results))
+}
+
+fn resolve_skill_read_path(context: &ToolContext<'_>, raw_path: &str) -> Option<PathBuf> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = {
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            path
+        } else {
+            let relative = sanitize_relative_path(trimmed)?;
+            let cwd = std::env::current_dir().ok()?;
+            cwd.join(relative)
+        }
+    };
+    let mut roots: Vec<PathBuf> = context
+        .skills
+        .list_specs()
+        .into_iter()
+        .map(|spec| spec.root)
+        .collect();
+    if let Some(bindings) = context.user_tool_bindings {
+        for source in bindings.skill_sources.values() {
+            roots.push(source.root.clone());
+        }
+    }
+    for root in roots {
+        if is_within_root(&root, &candidate) {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
+fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
+    let normalized = raw_path.trim().replace('\\', "/");
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+    if stripped.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(stripped);
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return None;
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Some(path)
 }
 
 fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

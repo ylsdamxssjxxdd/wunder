@@ -196,7 +196,7 @@ impl LlmClient {
     }
 
     fn build_payload(&self, messages: &[ChatMessage], stream: bool, include_usage: bool) -> Value {
-        let temperature = self.config.temperature.unwrap_or(0.7);
+        let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
             "messages": messages,
@@ -271,6 +271,12 @@ fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
         output,
         total,
     })
+}
+
+fn round_f32(value: f32) -> f64 {
+    const DECIMALS: i32 = 6;
+    let factor = 10_f64.powi(DECIMALS);
+    ((value as f64) * factor).round() / factor
 }
 
 const PRIMARY_CONTEXT_KEYS: [&str; 10] = [

@@ -1675,6 +1675,9 @@ const handleEvent = (eventType, dataText, options = {}) => {
     let detailData = data;
     const stage = typeof data?.stage === "string" ? data.stage : "";
     let summary = typeof data?.summary === "string" ? data.summary : "";
+    if (stage === "received") {
+      summary = t("debug.sse.connected");
+    }
     const showStageBadge = stage && !["received", "llm_call", "compacting"].includes(stage);
     if (stage === "llm_call") {
       const roundNumber = advanceModelRound(eventTimestamp);
@@ -2248,8 +2251,6 @@ const sendStreamRequest = async (endpoint, payload) => {
     if (!response.ok || !response.body) {
       throw new Error(t("common.requestFailed", { status: response.status }));
     }
-
-    appendLog(t("debug.sse.connected"));
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");

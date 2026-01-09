@@ -619,6 +619,8 @@ button.danger {
 .answer {
   flex: 1 1 auto;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   background: #0f172a;
   color: #e2e8f0;
   padding: 12px;
@@ -631,6 +633,8 @@ button.danger {
 .monitor-event-line {
   padding: 2px 4px;
   border-radius: 4px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .monitor-event-line--tool {
@@ -812,6 +816,8 @@ button.danger {
   color: #e2e8f0;
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .log-detail {
@@ -823,6 +829,8 @@ button.danger {
   color: #cbd5f5;
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .stats-table {
