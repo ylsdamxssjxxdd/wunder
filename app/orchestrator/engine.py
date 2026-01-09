@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence, Set, Tup
 
 from app.core.config import LLMConfig, WunderConfig, load_config, resolve_llm_config
 from app.core.errors import ErrorCodes, WunderError
-from app.core.i18n import get_language, reset_language, set_language, t
+from app.core.i18n import get_known_prefixes, get_language, reset_language, set_language, t
 from app.core.token_utils import (
     approx_token_count,
     estimate_message_tokens,
@@ -32,7 +32,6 @@ from app.memory.workspace import WorkspaceContext, WorkspaceManager
 from app.memory.longterm import MemoryStore
 from app.monitor.registry import monitor
 from app.orchestrator.constants import (
-    COMPACTION_KEEP_RECENT_TOKENS,
     COMPACTION_HISTORY_RATIO,
     COMPACTION_META_TYPE,
     COMPACTION_MIN_OBSERVATION_TOKENS,
@@ -690,7 +689,7 @@ class WunderOrchestrator:
                 # 每轮调用前检查取消标记，避免继续进入模型推理
                 self._ensure_not_cancelled(session_id)
                 messages, _ = await self._maybe_compact_messages(
-                    ctx, user_id, session_id, messages, emitter
+                    ctx, user_id, session_id, messages, emitter, question
                 )
                 # 压缩流程可能触发耗时 LLM 调用，结束后再次确认取消标记
                 self._ensure_not_cancelled(session_id)
@@ -1402,6 +1401,46 @@ class WunderOrchestrator:
             and content.startswith(OBSERVATION_PREFIX)
         )
 
+    @staticmethod
+    def _locate_current_user_index(messages: List[Dict[str, Any]]) -> Optional[int]:
+        """定位当前用户问题消息索引，排除工具观察消息。"""
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "user":
+                continue
+            if WunderOrchestrator._is_observation_message(message):
+                continue
+            return index
+        return None
+
+    def _build_compaction_user_content(
+        self, messages: List[Dict[str, Any]]
+    ) -> str:
+        """将历史消息整理为单条压缩输入内容。"""
+        separator = t("memory.summary.role.separator")
+        user_label = t("memory.summary.role.user")
+        assistant_label = t("memory.summary.role.assistant")
+        lines: List[str] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "").strip()
+            if not role:
+                continue
+            content = self._extract_memory_summary_text(message.get("content"))
+            if not content:
+                continue
+            if role == "user":
+                label = user_label
+            elif role == "assistant":
+                label = assistant_label
+            else:
+                label = role
+            lines.append(f"{label}{separator}{content}")
+        return "\n".join(lines).strip()
+
     def _prepare_summary_messages(
         self, messages: List[Dict[str, Any]], max_message_tokens: int
     ) -> List[Dict[str, Any]]:
@@ -1502,6 +1541,7 @@ class WunderOrchestrator:
         session_id: str,
         messages: List[Dict[str, Any]],
         emitter: _EventEmitter,
+        current_question: str,
     ) -> Tuple[List[Dict[str, Any]], str]:
         """必要时压缩上下文，保留近期对话并写入摘要。"""
         limit = self._history_manager.get_auto_compact_limit(ctx.llm_config)
@@ -1582,12 +1622,44 @@ class WunderOrchestrator:
         system_message = (
             messages[0] if messages and messages[0].get("role") == "system" else None
         )
-        other_messages = messages[1:] if system_message else list(messages)
-        # 过滤掉系统消息，避免将摘要内容再次摘要
-        candidate_messages = [
-            message for message in other_messages if message.get("role") != "system"
-        ]
-        if not candidate_messages:
+        current_user_index = self._locate_current_user_index(messages)
+        current_user_message = (
+            messages[current_user_index]
+            if current_user_index is not None and current_user_index < len(messages)
+            else None
+        )
+        source_messages: List[Dict[str, Any]] = []
+        for index, message in enumerate(messages):
+            if system_message and index == 0:
+                continue
+            if current_user_index is not None and index == current_user_index:
+                continue
+            source_messages.append(message)
+
+        artifact_prefixes = get_known_prefixes("history.artifact_prefix")
+        if not artifact_prefixes:
+            artifact_prefixes = [t("history.artifact_prefix")]
+        has_artifact = False
+        for message in source_messages:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "system":
+                continue
+            content = message.get("content")
+            if not isinstance(content, str):
+                continue
+            if any(content.strip().startswith(prefix) for prefix in artifact_prefixes):
+                has_artifact = True
+                break
+        if not has_artifact:
+            artifact_content = await self._history_manager.load_artifact_index_message(
+                ctx, user_id, session_id
+            )
+            if artifact_content:
+                source_messages.append({"role": "system", "content": artifact_content})
+
+        user_content = self._build_compaction_user_content(source_messages)
+        if not user_content:
             reset_applied = await _apply_history_reset()
             compaction_payload.update(
                 {"status": "skipped", "skip_reason": "no_candidates"}
@@ -1595,73 +1667,45 @@ class WunderOrchestrator:
             emitter.emit("compaction", compaction_payload)
             return messages, reset_mode if reset_applied else ""
 
-        force_history_compaction = should_compact_by_history and len(candidate_messages) > 1
-        keep_recent_tokens = min(COMPACTION_KEEP_RECENT_TOKENS, max(1, limit // 2))
-        recent_messages = self._trim_messages_keep_tail(
-            candidate_messages, keep_recent_tokens
-        )
-        recent_messages_tokens = estimate_messages_tokens(recent_messages)
-        if (
-            len(recent_messages) >= len(candidate_messages)
-            and recent_messages_tokens <= keep_recent_tokens
-        ):
-            if not force_history_compaction:
-                reset_applied = await _apply_history_reset()
-                compaction_payload.update(
-                    {"status": "skipped", "skip_reason": "keep_recent"}
-                )
-                emitter.emit("compaction", compaction_payload)
-                return messages, reset_mode if reset_applied else ""
-            # 历史阈值触发时强制压缩，至少保留最后一条消息
-            recent_messages = candidate_messages[-1:]
-            keep_recent_tokens = max(1, estimate_messages_tokens(recent_messages))
-            compaction_payload.update(
-                {"forced": True, "force_reason": "keep_recent"}
-            )
-
-        older_count = len(candidate_messages) - len(recent_messages)
         compaction_prompt = self._history_manager.load_compaction_prompt()
-        summary_input = copy.deepcopy(messages)
-        last_user_index = None
-        for index in range(len(summary_input) - 1, -1, -1):
-            message = summary_input[index]
-            if isinstance(message, dict) and message.get("role") == "user":
-                last_user_index = index
-                break
-        if last_user_index is None:
-            summary_input.append({"role": "user", "content": compaction_prompt})
-        else:
-            replaced = dict(summary_input[last_user_index])
-            replaced["content"] = compaction_prompt
-            replaced.pop("reasoning_content", None)
-            replaced.pop("reasoning", None)
-            summary_input[last_user_index] = replaced
-
-        if summary_input and summary_input[0].get("role") == "system":
-            system_snapshot = summary_input[0]
-            rest_messages = summary_input[1:]
-            remaining = max(1, limit - estimate_messages_tokens([system_snapshot]))
-            rest_messages = self._trim_messages_keep_tail(rest_messages, remaining)
-            summary_input = [system_snapshot, *rest_messages]
-        else:
-            summary_input = self._trim_messages_keep_tail(summary_input, limit)
-
-        summary_max_message_tokens = min(
-            COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, max(1, limit)
-        )
+        summary_input = [
+            {"role": "system", "content": compaction_prompt},
+            {"role": "user", "content": user_content},
+        ]
         summary_input = self._prepare_summary_messages(
-            summary_input, summary_max_message_tokens
+            summary_input, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS
         )
+        if limit:
+            system_tokens = estimate_message_tokens(summary_input[0])
+            if estimate_messages_tokens(summary_input) > limit and len(summary_input) > 1:
+                remaining = max(1, limit - system_tokens)
+                trimmed_tail = trim_messages_to_budget(summary_input[1:], remaining)
+                summary_input = [summary_input[0]] + trimmed_tail
 
         compacted_until_ts: Optional[float] = None
         compacted_until: Optional[str] = None
+        current_question_ts: Optional[float] = None
+        skipped_question = False
+        question_text = str(current_question or "").strip()
         try:
             history = await ctx.workspace_manager.load_history(
                 user_id, session_id, ctx.config.workspace.max_history_items
             )
             history_items, _ = self._history_manager.build_compaction_candidates(history)
-            if 0 < older_count <= len(history_items):
-                boundary_item = history_items[older_count - 1]
+            boundary_item = None
+            for item in reversed(history_items):
+                if (
+                    not skipped_question
+                    and question_text
+                    and str(item.get("role") or "").strip() == "user"
+                    and str(item.get("content") or "").strip() == question_text
+                ):
+                    skipped_question = True
+                    current_question_ts = self._history_manager.get_item_timestamp(item)
+                    continue
+                boundary_item = item
+                break
+            if boundary_item:
                 compacted_until_ts = self._history_manager.get_item_timestamp(boundary_item)
                 if isinstance(boundary_item.get("timestamp"), str):
                     compacted_until = boundary_item.get("timestamp")
@@ -1731,16 +1775,23 @@ class WunderOrchestrator:
             meta=meta,
         )
 
+        if skipped_question and question_text:
+            should_reappend = (
+                compacted_until_ts is None
+                or current_question_ts is None
+                or current_question_ts <= compacted_until_ts
+            )
+            if should_reappend:
+                await self._append_chat(user_id, session_id, "user", question_text)
+
         rebuilt: List[Dict[str, Any]] = []
         if system_message:
             rebuilt.append(system_message)
-        rebuilt.append({"role": "system", "content": summary_text})
-        artifact_content = await self._history_manager.load_artifact_index_message(
-            ctx, user_id, session_id
-        )
-        if artifact_content:
-            rebuilt.append({"role": "system", "content": artifact_content})
-        rebuilt.extend(recent_messages)
+        rebuilt.append({"role": "user", "content": summary_text})
+        if isinstance(current_user_message, dict):
+            rebuilt.append(dict(current_user_message))
+        elif question_text:
+            rebuilt.append({"role": "user", "content": question_text})
         rebuilt = self._shrink_messages_to_limit(rebuilt, limit)
         rebuilt_tokens = estimate_messages_tokens(rebuilt)
         reset_applied = await _apply_history_reset(rebuilt_tokens)

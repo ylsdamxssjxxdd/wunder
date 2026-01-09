@@ -779,7 +779,7 @@
 - `event: a2a_artifact`：A2A 产物更新（artifact name）
 - `event: a2a_result`：A2A 任务结束摘要（status/elapsed_ms）
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
-- `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态）
+- `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态；压缩请求使用独立 system 提示词、历史消息合并为单条 user 内容，压缩后摘要以 user 注入）
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
   - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`max_rounds`（达到最大轮次兜底）、`unknown`（兜底）
 - `event: error`：错误信息（包含错误码与建议）

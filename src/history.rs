@@ -98,6 +98,7 @@ impl HistoryManager {
             .unwrap_or_default();
         let (filtered_items, summary_item, _, _) = filter_history_items(&history);
         let mut messages = Vec::new();
+        let mut has_summary = false;
         if let Some(summary_item) = summary_item {
             let summary_content = Self::format_compaction_summary(
                 summary_item
@@ -105,11 +106,14 @@ impl HistoryManager {
                     .and_then(Value::as_str)
                     .unwrap_or(""),
             );
-            messages.push(json!({ "role": "system", "content": summary_content }));
+            messages.push(json!({ "role": "user", "content": summary_content }));
+            has_summary = true;
         }
-        let artifact_content = self.load_artifact_index_message(workspace, user_id, session_id);
-        if !artifact_content.is_empty() {
-            messages.push(json!({ "role": "system", "content": artifact_content }));
+        if !has_summary {
+            let artifact_content = self.load_artifact_index_message(workspace, user_id, session_id);
+            if !artifact_content.is_empty() {
+                messages.push(json!({ "role": "system", "content": artifact_content }));
+            }
         }
         for item in filtered_items {
             if let Some(message) = build_message_from_item(&item, true) {

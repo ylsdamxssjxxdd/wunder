@@ -18,6 +18,7 @@ pub struct PostgresStorage {
     pool: Pool,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
+    fallback_runtime: tokio::runtime::Runtime,
 }
 
 struct PgConn<'a> {
@@ -110,10 +111,13 @@ impl PostgresStorage {
         };
         let manager = Manager::from_config(config, NoTls, manager_config);
         let pool = Pool::builder(manager).max_size(16).build()?;
+        let fallback_runtime = tokio::runtime::Runtime::new()
+            .map_err(|err| anyhow!("create tokio runtime for postgres: {err}"))?;
         Ok(Self {
             pool,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
+            fallback_runtime,
         })
     }
 
@@ -123,11 +127,7 @@ impl PostgresStorage {
     {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
-            Err(_) => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .map_err(|err| anyhow!("create tokio runtime for postgres: {err}"))?;
-                Ok(runtime.block_on(fut))
-            }
+            Err(_) => Ok(self.fallback_runtime.block_on(fut)),
         }
     }
 

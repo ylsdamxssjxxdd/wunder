@@ -319,13 +319,14 @@ class HistoryManager:
             summary_content = self.format_compaction_summary(
                 str(summary_item.get("content", ""))
             )
-            messages.append({"role": "system", "content": summary_content})
+            messages.append({"role": "user", "content": summary_content})
 
-        artifact_content = await self.load_artifact_index_message(
-            ctx, user_id, session_id
-        )
-        if artifact_content:
-            messages.append({"role": "system", "content": artifact_content})
+        if not summary_item:
+            artifact_content = await self.load_artifact_index_message(
+                ctx, user_id, session_id
+            )
+            if artifact_content:
+                messages.append({"role": "system", "content": artifact_content})
 
         for item in filtered_items:
             message = self._build_message_from_item(item, include_reasoning=True)

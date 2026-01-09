@@ -8,12 +8,11 @@ use crate::llm::{build_llm_client, is_llm_configured, ChatMessage};
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
-    COMPACTION_HISTORY_RATIO, COMPACTION_KEEP_RECENT_TOKENS, COMPACTION_META_TYPE,
-    COMPACTION_MIN_OBSERVATION_TOKENS, COMPACTION_SUMMARY_MAX_OUTPUT,
-    COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, OBSERVATION_PREFIX, SESSION_LOCK_HEARTBEAT_S,
-    SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S, STREAM_EVENT_CLEANUP_INTERVAL_S,
-    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S, STREAM_EVENT_QUEUE_SIZE,
-    STREAM_EVENT_TTL_S,
+    COMPACTION_HISTORY_RATIO, COMPACTION_META_TYPE, COMPACTION_MIN_OBSERVATION_TOKENS,
+    COMPACTION_SUMMARY_MAX_OUTPUT, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, OBSERVATION_PREFIX,
+    SESSION_LOCK_HEARTBEAT_S, SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S,
+    STREAM_EVENT_CLEANUP_INTERVAL_S, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S,
+    STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_TTL_S,
 };
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::{read_prompt_template, PromptComposer};
@@ -1033,6 +1032,7 @@ impl Orchestrator {
                         &session_id,
                         messages,
                         &emitter,
+                        &question,
                     )
                     .await?;
                 self.ensure_not_cancelled(&session_id)?;
@@ -2062,51 +2062,6 @@ impl Orchestrator {
         )))
     }
 
-    fn locate_tail_block_start(messages: &[Value]) -> usize {
-        if messages.is_empty() {
-            return 0;
-        }
-        let last_user_index = messages
-            .iter()
-            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
-        let Some(last_user_index) = last_user_index else {
-            return messages.len().saturating_sub(1);
-        };
-        let assistant_index = (0..last_user_index).rev().find(|&index| {
-            messages[index].get("role").and_then(Value::as_str) == Some("assistant")
-        });
-        let Some(assistant_index) = assistant_index else {
-            return last_user_index;
-        };
-        let previous_user_index = (0..assistant_index)
-            .rev()
-            .find(|&index| messages[index].get("role").and_then(Value::as_str) == Some("user"));
-        previous_user_index.unwrap_or(assistant_index)
-    }
-
-    fn trim_messages_keep_tail(&self, messages: &[Value], max_tokens: i64) -> Vec<Value> {
-        if messages.is_empty() {
-            return Vec::new();
-        }
-        if max_tokens <= 0 {
-            return vec![messages[messages.len() - 1].clone()];
-        }
-        let mut tail_start = Self::locate_tail_block_start(messages);
-        if tail_start >= messages.len() {
-            tail_start = messages.len().saturating_sub(1);
-        }
-        let tail_messages = messages[tail_start..].to_vec();
-        let tail_tokens = estimate_messages_tokens(&tail_messages);
-        if tail_tokens >= max_tokens {
-            return tail_messages;
-        }
-        let remaining = max_tokens - tail_tokens;
-        let head_messages = trim_messages_to_budget(&messages[..tail_start], remaining);
-        let mut output = head_messages;
-        output.extend(tail_messages);
-        output
-    }
-
     fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
         let total_tokens = estimate_messages_tokens(&messages);
         if total_tokens <= limit {
@@ -2183,6 +2138,17 @@ impl Orchestrator {
         trimmed
     }
 
+    fn locate_current_user_index(messages: &[Value]) -> Option<usize> {
+        messages.iter().rposition(|message| {
+            let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+            if role != "user" {
+                return false;
+            }
+            let content = message.get("content").unwrap_or(&Value::Null);
+            !Self::is_observation_message(role, content)
+        })
+    }
+
     async fn maybe_compact_messages(
         &self,
         config: &Config,
@@ -2191,6 +2157,7 @@ impl Orchestrator {
         session_id: &str,
         messages: Vec<Value>,
         emitter: &EventEmitter,
+        current_question: &str,
     ) -> Result<Vec<Value>, OrchestratorError> {
         let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
             return Ok(messages);
@@ -2251,17 +2218,48 @@ impl Orchestrator {
             .first()
             .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
             .cloned();
-        let other_messages = if system_message.is_some() {
-            messages.get(1..).unwrap_or(&[]).to_vec()
-        } else {
-            messages.clone()
-        };
-        let candidate_messages = other_messages
-            .iter()
-            .filter(|message| message.get("role").and_then(Value::as_str) != Some("system"))
-            .cloned()
-            .collect::<Vec<_>>();
-        if candidate_messages.is_empty() {
+        let current_user_index = Self::locate_current_user_index(&messages);
+        let current_user_message = current_user_index
+            .and_then(|index| messages.get(index))
+            .cloned();
+        let mut source_messages: Vec<Value> = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            if system_message.is_some() && index == 0 {
+                continue;
+            }
+            if current_user_index.is_some() && Some(index) == current_user_index {
+                continue;
+            }
+            source_messages.push(message.clone());
+        }
+
+        let mut artifact_prefixes = i18n::get_known_prefixes("history.artifact_prefix");
+        if artifact_prefixes.is_empty() {
+            artifact_prefixes.push(i18n::t("history.artifact_prefix"));
+        }
+        let has_artifact = source_messages.iter().any(|message| {
+            let Some(obj) = message.as_object() else {
+                return false;
+            };
+            if obj.get("role").and_then(Value::as_str) != Some("system") {
+                return false;
+            }
+            let content = obj.get("content").and_then(Value::as_str).unwrap_or("");
+            artifact_prefixes
+                .iter()
+                .any(|prefix| content.trim().starts_with(prefix))
+        });
+        if !has_artifact {
+            let history_manager = HistoryManager;
+            let artifact_content =
+                history_manager.load_artifact_index_message(&self.workspace, user_id, session_id);
+            if !artifact_content.is_empty() {
+                source_messages.push(json!({ "role": "system", "content": artifact_content }));
+            }
+        }
+
+        let user_content = self.build_compaction_user_content(&source_messages);
+        if user_content.trim().is_empty() {
             if should_compact_by_history && reset_mode != "keep" {
                 self.workspace
                     .save_session_token_usage(user_id, session_id, 0);
@@ -2283,96 +2281,51 @@ impl Orchestrator {
             return Ok(messages);
         }
 
-        let keep_recent_tokens = (limit / 2).max(1).min(COMPACTION_KEEP_RECENT_TOKENS);
-        let mut recent_messages =
-            self.trim_messages_keep_tail(&candidate_messages, keep_recent_tokens);
-        let recent_tokens = estimate_messages_tokens(&recent_messages);
-        let force_history_compaction = should_compact_by_history && candidate_messages.len() > 1;
-        if recent_messages.len() >= candidate_messages.len() && recent_tokens <= keep_recent_tokens
-        {
-            if !force_history_compaction {
-                if should_compact_by_history && reset_mode != "keep" {
-                    self.workspace
-                        .save_session_token_usage(user_id, session_id, 0);
-                }
-                emitter
-                    .emit(
-                        "compaction",
-                        json!({
-                            "reason": if should_compact_by_history { "history" } else { "overflow" },
-                            "status": "skipped",
-                            "skip_reason": "keep_recent",
-                            "history_usage": history_usage,
-                            "history_threshold": history_threshold,
-                            "limit": limit,
-                            "total_tokens": total_tokens,
-                        }),
-                    )
-                    .await;
-                return Ok(messages);
-            }
-            recent_messages = candidate_messages[candidate_messages.len() - 1..].to_vec();
-        }
-
-        let older_count = candidate_messages
-            .len()
-            .saturating_sub(recent_messages.len());
         let compaction_prompt = HistoryManager::load_compaction_prompt();
-        let mut summary_input = messages.clone();
-        let last_user_index = summary_input
-            .iter()
-            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
-        match last_user_index {
-            Some(index) => {
-                if let Some(obj) = summary_input[index].as_object() {
-                    let mut replaced = obj.clone();
-                    replaced.insert("content".to_string(), Value::String(compaction_prompt));
-                    replaced.remove("reasoning_content");
-                    replaced.remove("reasoning");
-                    summary_input[index] = Value::Object(replaced);
-                } else {
-                    summary_input.push(json!({ "role": "user", "content": compaction_prompt }));
-                }
-            }
-            None => summary_input.push(json!({ "role": "user", "content": compaction_prompt })),
+        let mut summary_input = vec![
+            json!({ "role": "system", "content": compaction_prompt }),
+            json!({ "role": "user", "content": user_content }),
+        ];
+        summary_input =
+            self.prepare_summary_messages(summary_input, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+        if estimate_messages_tokens(&summary_input) > limit && summary_input.len() > 1 {
+            let system_tokens = estimate_message_tokens(&summary_input[0]);
+            let remaining = (limit - system_tokens).max(1);
+            let tail = trim_messages_to_budget(summary_input.get(1..).unwrap_or(&[]), remaining);
+            summary_input = vec![summary_input[0].clone()];
+            summary_input.extend(tail);
         }
-
-        let summary_input = if summary_input
-            .first()
-            .and_then(|message| message.get("role").and_then(Value::as_str))
-            == Some("system")
-        {
-            let system_snapshot = summary_input[0].clone();
-            let rest = summary_input.get(1..).unwrap_or(&[]).to_vec();
-            let remaining = (limit - estimate_message_tokens(&system_snapshot)).max(1);
-            let rest = self.trim_messages_keep_tail(&rest, remaining);
-            let mut combined = Vec::with_capacity(1 + rest.len());
-            combined.push(system_snapshot);
-            combined.extend(rest);
-            combined
-        } else {
-            self.trim_messages_keep_tail(&summary_input, limit)
-        };
-        let summary_max_message_tokens = limit.min(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS).max(1);
-        let summary_input =
-            self.prepare_summary_messages(summary_input, summary_max_message_tokens);
 
         let mut compacted_until_ts: Option<f64> = None;
         let mut compacted_until: Option<String> = None;
-        if older_count > 0 {
-            let history = self
-                .workspace
-                .load_history(user_id, session_id, config.workspace.max_history_items)
-                .unwrap_or_default();
-            let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
-            if older_count <= history_items.len() {
-                let boundary_item = &history_items[older_count - 1];
-                compacted_until_ts = HistoryManager::get_item_timestamp(boundary_item);
-                compacted_until = boundary_item
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .map(|value| value.to_string());
+        let mut current_question_ts: Option<f64> = None;
+        let mut skipped_question = false;
+        let question_text = current_question.trim();
+        let history = self
+            .workspace
+            .load_history(user_id, session_id, config.workspace.max_history_items)
+            .unwrap_or_default();
+        let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
+        let mut boundary_item: Option<Value> = None;
+        for item in history_items.iter().rev() {
+            if !skipped_question && !question_text.is_empty() {
+                let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+                let content = item.get("content").and_then(Value::as_str).unwrap_or("");
+                if role == "user" && content.trim() == question_text {
+                    skipped_question = true;
+                    current_question_ts = HistoryManager::get_item_timestamp(item);
+                    continue;
+                }
             }
+            boundary_item = Some(item.clone());
+            break;
+        }
+        if let Some(boundary_item) = boundary_item {
+            compacted_until_ts = HistoryManager::get_item_timestamp(&boundary_item);
+            compacted_until = boundary_item
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string());
         }
 
         let mut summary_config = llm_config.clone();
@@ -2452,18 +2405,33 @@ impl Orchestrator {
             None,
         );
 
-        let history_manager = HistoryManager;
+        if skipped_question && !question_text.is_empty() {
+            let should_reappend = compacted_until_ts.is_none()
+                || current_question_ts.is_none()
+                || current_question_ts <= compacted_until_ts;
+            if should_reappend {
+                let question_value = Value::String(question_text.to_string());
+                self.append_chat(
+                    user_id,
+                    session_id,
+                    "user",
+                    Some(&question_value),
+                    None,
+                    None,
+                );
+            }
+        }
+
         let mut rebuilt = Vec::new();
         if let Some(system_message) = system_message {
             rebuilt.push(system_message);
         }
-        rebuilt.push(json!({ "role": "system", "content": summary_text }));
-        let artifact_content =
-            history_manager.load_artifact_index_message(&self.workspace, user_id, session_id);
-        if !artifact_content.is_empty() {
-            rebuilt.push(json!({ "role": "system", "content": artifact_content }));
+        rebuilt.push(json!({ "role": "user", "content": summary_text }));
+        if let Some(current_user_message) = current_user_message {
+            rebuilt.push(current_user_message);
+        } else if !question_text.is_empty() {
+            rebuilt.push(json!({ "role": "user", "content": question_text }));
         }
-        rebuilt.extend(recent_messages);
         let rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
         if should_compact_by_history && reset_mode != "keep" {
@@ -3011,6 +2979,36 @@ impl Orchestrator {
         let final_text = final_answer.trim();
         if !final_text.is_empty() && final_text != last_assistant {
             lines.push(format!("{assistant_label}{separator}{final_text}"));
+        }
+        lines.join("\n").trim().to_string()
+    }
+
+    fn build_compaction_user_content(&self, messages: &[Value]) -> String {
+        let separator = i18n::t("memory.summary.role.separator");
+        let user_label = i18n::t("memory.summary.role.user");
+        let assistant_label = i18n::t("memory.summary.role.assistant");
+        let mut lines: Vec<String> = Vec::new();
+        for message in messages {
+            let Some(obj) = message.as_object() else {
+                continue;
+            };
+            let role = obj.get("role").and_then(Value::as_str).unwrap_or("").trim();
+            if role.is_empty() {
+                continue;
+            }
+            let content =
+                self.extract_memory_summary_text(obj.get("content").unwrap_or(&Value::Null));
+            if content.is_empty() {
+                continue;
+            }
+            let label = if role == "user" {
+                user_label.as_str()
+            } else if role == "assistant" {
+                assistant_label.as_str()
+            } else {
+                role
+            };
+            lines.push(format!("{label}{separator}{content}"));
         }
         lines.join("\n").trim().to_string()
     }
