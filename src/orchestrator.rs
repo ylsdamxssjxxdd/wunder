@@ -1822,7 +1822,13 @@ impl Orchestrator {
                     .get("reasoning_content")
                     .or_else(|| message.get("reasoning"))
                     .and_then(Value::as_str)
-                    .map(|text| text.to_string());
+                    .and_then(|text| {
+                        if text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(text.to_string())
+                        }
+                    });
                 Some(ChatMessage {
                     role,
                     content,
