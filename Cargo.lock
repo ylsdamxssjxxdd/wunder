@@ -3154,6 +3154,7 @@ dependencies = [
  "encoding_rs",
  "futures",
  "mime",
+ "parking_lot",
  "regex",
  "reqwest",
  "rmcp",

@@ -3,16 +3,20 @@ use crate::config::{ObservabilityConfig, SandboxConfig};
 use crate::i18n;
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::thread;
 use sysinfo::{Disks, Networks, ProcessRefreshKind, System};
+use tracing::error;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
@@ -256,6 +260,31 @@ pub struct SystemSnapshot {
     pub uptime_s: u64,
 }
 
+impl Default for SystemSnapshot {
+    fn default() -> Self {
+        Self {
+            cpu_percent: 0.0,
+            memory_total: 0,
+            memory_used: 0,
+            memory_available: 0,
+            process_rss: 0,
+            process_cpu_percent: 0.0,
+            load_avg_1: 0.0,
+            load_avg_5: 0.0,
+            load_avg_15: 0.0,
+            disk_total: 0,
+            disk_used: 0,
+            disk_free: 0,
+            disk_percent: 0.0,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            net_sent_bytes: 0,
+            net_recv_bytes: 0,
+            uptime_s: 0,
+        }
+    }
+}
+
 pub struct MonitorState {
     sessions: Mutex<HashMap<String, SessionRecord>>,
     forced_cancelled: Mutex<HashSet<String>>,
@@ -329,90 +358,120 @@ impl MonitorState {
     }
 
     pub fn warm_history(self: &Arc<Self>, background: bool) -> bool {
-        if self.history_ready.load(Ordering::SeqCst) {
-            return true;
-        }
-        let _guard = self.history_lock.lock().unwrap();
-        if self.history_ready.load(Ordering::SeqCst) {
-            return true;
-        }
-        if self.history_loading.swap(true, Ordering::SeqCst) {
-            return false;
-        }
-        let this = Arc::clone(self);
-        if background {
-            thread::spawn(move || {
-                this.load_history();
+        self.run_guarded(
+            "monitor.warm_history",
+            || false,
+            || {
+                if self.history_ready.load(Ordering::SeqCst) {
+                    return true;
+                }
+                let _guard = self.history_lock.lock();
+                if self.history_ready.load(Ordering::SeqCst) {
+                    return true;
+                }
+                if self.history_loading.swap(true, Ordering::SeqCst) {
+                    return false;
+                }
+                let this = Arc::clone(self);
+                if background {
+                    thread::spawn(move || {
+                        this.run_guarded(
+                            "monitor.load_history_background",
+                            || (),
+                            || {
+                                this.load_history();
+                            },
+                        );
+                        this.history_loading.store(false, Ordering::SeqCst);
+                        this.history_ready.store(true, Ordering::SeqCst);
+                    });
+                    return false;
+                }
+                this.run_guarded(
+                    "monitor.load_history",
+                    || (),
+                    || {
+                        this.load_history();
+                    },
+                );
                 this.history_loading.store(false, Ordering::SeqCst);
                 this.history_ready.store(true, Ordering::SeqCst);
-            });
-            return false;
-        }
-        this.load_history();
-        this.history_loading.store(false, Ordering::SeqCst);
-        this.history_ready.store(true, Ordering::SeqCst);
-        true
+                true
+            },
+        )
     }
 
     pub fn register(&self, session_id: &str, user_id: &str, question: &str) {
-        let now = now_ts();
-        let mut sessions = self.sessions.lock().unwrap();
-        let to_persist =
-            self.register_locked(&mut sessions, session_id, user_id, question, now, false);
-        drop(sessions);
-        if let Some(record) = to_persist {
-            self.save_record(&record);
-        }
+        self.run_guarded(
+            "monitor.register",
+            || (),
+            || {
+                let now = now_ts();
+                let mut sessions = self.sessions.lock();
+                let to_persist =
+                    self.register_locked(&mut sessions, session_id, user_id, question, now, false);
+                drop(sessions);
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            },
+        );
     }
 
     pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
-        let now = now_ts();
-        let to_persist = {
-            let mut sessions = self.sessions.lock().unwrap();
-            let Some(record) = sessions.get_mut(session_id) else {
-                return;
-            };
-            record.updated_time = now;
-            if event_type == "token_usage" {
-                if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
-                    record.token_usage = total;
+        self.run_guarded(
+            "monitor.record_event",
+            || (),
+            || {
+                let now = now_ts();
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    record.updated_time = now;
+                    if event_type == "token_usage" {
+                        if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
+                            record.token_usage = total;
+                        }
+                    }
+                    if event_type == "progress" {
+                        if let Some(stage) = data.get("stage").and_then(Value::as_str) {
+                            record.stage = stage.to_string();
+                        }
+                        if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+                            record.summary = summary.to_string();
+                        }
+                    } else if event_type == "tool_call" {
+                        record.stage = "tool_call".to_string();
+                        let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
+                        record.summary = i18n::t_with_params(
+                            "monitor.summary.tool_call",
+                            &HashMap::from([("tool".to_string(), tool.to_string())]),
+                        );
+                    } else if event_type == "llm_request" {
+                        record.stage = "llm_request".to_string();
+                        record.summary = i18n::t("monitor.summary.model_call");
+                    } else if event_type == "final" {
+                        record.stage = "final".to_string();
+                        record.summary = i18n::t("monitor.summary.finished");
+                    } else if event_type == "error" {
+                        record.stage = "error".to_string();
+                        record.summary = data
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
+                    }
+                    self.append_event(record, event_type, data, now);
+                    record.dirty = true;
+                    self.maybe_persist_record(record, now, false)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
                 }
-            }
-            if event_type == "progress" {
-                if let Some(stage) = data.get("stage").and_then(Value::as_str) {
-                    record.stage = stage.to_string();
-                }
-                if let Some(summary) = data.get("summary").and_then(Value::as_str) {
-                    record.summary = summary.to_string();
-                }
-            } else if event_type == "tool_call" {
-                record.stage = "tool_call".to_string();
-                let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
-                record.summary = i18n::t_with_params(
-                    "monitor.summary.tool_call",
-                    &HashMap::from([("tool".to_string(), tool.to_string())]),
-                );
-            } else if event_type == "llm_request" {
-                record.stage = "llm_request".to_string();
-                record.summary = i18n::t("monitor.summary.model_call");
-            } else if event_type == "final" {
-                record.stage = "final".to_string();
-                record.summary = i18n::t("monitor.summary.finished");
-            } else if event_type == "error" {
-                record.stage = "error".to_string();
-                record.summary = data
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
-            }
-            self.append_event(record, event_type, data, now);
-            record.dirty = true;
-            self.maybe_persist_record(record, now, false)
-        };
-        if let Some(record) = to_persist {
-            self.save_record(&record);
-        }
+            },
+        );
     }
 
     pub fn mark_finished(&self, session_id: &str) {
@@ -431,189 +490,248 @@ impl MonitorState {
         );
     }
     pub fn cancel(&self, session_id: &str) -> bool {
-        let to_persist = {
-            let mut sessions = self.sessions.lock().unwrap();
-            let Some(record) = sessions.get_mut(session_id) else {
-                return false;
-            };
-            if record.status != Self::STATUS_RUNNING && record.status != Self::STATUS_CANCELLING {
-                return false;
-            }
-            record.cancel_requested = true;
-            record.status = Self::STATUS_CANCELLING.to_string();
-            record.updated_time = now_ts();
-            let updated_time = record.updated_time;
-            self.append_event(
-                record,
-                "cancel",
-                &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
-                updated_time,
-            );
-            record.dirty = true;
-            self.maybe_persist_record(record, updated_time, true)
-        };
-        if let Some(record) = to_persist {
-            self.save_record(&record);
-        }
-        true
+        self.run_guarded(
+            "monitor.cancel",
+            || false,
+            || {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return false;
+                    };
+                    if record.status != Self::STATUS_RUNNING
+                        && record.status != Self::STATUS_CANCELLING
+                    {
+                        return false;
+                    }
+                    record.cancel_requested = true;
+                    record.status = Self::STATUS_CANCELLING.to_string();
+                    record.updated_time = now_ts();
+                    let updated_time = record.updated_time;
+                    self.append_event(
+                        record,
+                        "cancel",
+                        &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
+                        updated_time,
+                    );
+                    record.dirty = true;
+                    self.maybe_persist_record(record, updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                true
+            },
+        )
     }
 
     pub fn delete_session(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(record) = sessions.get(session_id) {
-            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        sessions.remove(session_id);
-        let _ = self.storage.delete_monitor_record(session_id);
-        true
+        self.run_guarded(
+            "monitor.delete_session",
+            || false,
+            || {
+                let mut sessions = self.sessions.lock();
+                if let Some(record) = sessions.get(session_id) {
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                    {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+                sessions.remove(session_id);
+                let _ = self.storage.delete_monitor_record(session_id);
+                true
+            },
+        )
     }
 
     pub fn purge_user_sessions(&self, user_id: &str) -> HashMap<String, i64> {
-        let cleaned = user_id.trim();
-        if cleaned.is_empty() {
-            return HashMap::from([
-                ("cancelled".to_string(), 0),
-                ("deleted".to_string(), 0),
-                ("deleted_storage".to_string(), 0),
-            ]);
-        }
-        let mut cancelled = 0;
-        let mut session_ids = Vec::new();
-        let mut forced = Vec::new();
-        let mut sessions = self.sessions.lock().unwrap();
-        for (session_id, record) in sessions.iter_mut() {
-            if record.user_id != cleaned {
-                continue;
-            }
-            session_ids.push(session_id.clone());
-            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
-                record.cancel_requested = true;
-                record.status = Self::STATUS_CANCELLING.to_string();
-                record.updated_time = now_ts();
-                let updated_time = record.updated_time;
-                self.append_event(
-                    record,
-                    "cancel",
-                    &json!({ "summary": i18n::t("monitor.summary.user_deleted_cancel") }),
-                    updated_time,
-                );
-                cancelled += 1;
-                forced.push(session_id.clone());
-            }
-        }
-        for session_id in &session_ids {
-            sessions.remove(session_id);
-        }
-        drop(sessions);
-        if !forced.is_empty() {
-            let mut forced_guard = self.forced_cancelled.lock().unwrap();
-            for session_id in forced {
-                forced_guard.insert(session_id);
-            }
-        }
-        let deleted_storage = self
-            .storage
-            .delete_monitor_records_by_user(cleaned)
-            .unwrap_or(0);
-        HashMap::from([
-            ("cancelled".to_string(), cancelled),
-            ("deleted".to_string(), session_ids.len() as i64),
-            ("deleted_storage".to_string(), deleted_storage),
-        ])
+        self.run_guarded(
+            "monitor.purge_user_sessions",
+            || {
+                HashMap::from([
+                    ("cancelled".to_string(), 0),
+                    ("deleted".to_string(), 0),
+                    ("deleted_storage".to_string(), 0),
+                ])
+            },
+            || {
+                let cleaned = user_id.trim();
+                if cleaned.is_empty() {
+                    return HashMap::from([
+                        ("cancelled".to_string(), 0),
+                        ("deleted".to_string(), 0),
+                        ("deleted_storage".to_string(), 0),
+                    ]);
+                }
+                let mut cancelled = 0;
+                let mut session_ids = Vec::new();
+                let mut forced = Vec::new();
+                let mut sessions = self.sessions.lock();
+                for (session_id, record) in sessions.iter_mut() {
+                    if record.user_id != cleaned {
+                        continue;
+                    }
+                    session_ids.push(session_id.clone());
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                    {
+                        record.cancel_requested = true;
+                        record.status = Self::STATUS_CANCELLING.to_string();
+                        record.updated_time = now_ts();
+                        let updated_time = record.updated_time;
+                        self.append_event(
+                            record,
+                            "cancel",
+                            &json!({ "summary": i18n::t("monitor.summary.user_deleted_cancel") }),
+                            updated_time,
+                        );
+                        cancelled += 1;
+                        forced.push(session_id.clone());
+                    }
+                }
+                for session_id in &session_ids {
+                    sessions.remove(session_id);
+                }
+                drop(sessions);
+                if !forced.is_empty() {
+                    let mut forced_guard = self.forced_cancelled.lock();
+                    for session_id in forced {
+                        forced_guard.insert(session_id);
+                    }
+                }
+                let deleted_storage = self
+                    .storage
+                    .delete_monitor_records_by_user(cleaned)
+                    .unwrap_or(0);
+                HashMap::from([
+                    ("cancelled".to_string(), cancelled),
+                    ("deleted".to_string(), session_ids.len() as i64),
+                    ("deleted_storage".to_string(), deleted_storage),
+                ])
+            },
+        )
     }
 
     pub fn is_cancelled(&self, session_id: &str) -> bool {
-        {
-            let forced = self.forced_cancelled.lock().unwrap();
-            if forced.contains(session_id) {
-                return true;
-            }
-        }
-        let sessions = self.sessions.lock().unwrap();
-        sessions
-            .get(session_id)
-            .map(|record| record.cancel_requested)
-            .unwrap_or(false)
+        self.run_guarded(
+            "monitor.is_cancelled",
+            || false,
+            || {
+                {
+                    let forced = self.forced_cancelled.lock();
+                    if forced.contains(session_id) {
+                        return true;
+                    }
+                }
+                let sessions = self.sessions.lock();
+                sessions
+                    .get(session_id)
+                    .map(|record| record.cancel_requested)
+                    .unwrap_or(false)
+            },
+        )
     }
 
     pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
-        let sessions = self.sessions.lock().unwrap();
-        sessions
-            .values()
-            .filter(|record| {
-                if !active_only {
-                    return true;
-                }
-                record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING
-            })
-            .map(|record| record.to_summary())
-            .collect()
+        self.run_guarded("monitor.list_sessions", Vec::new, || {
+            let sessions = self.sessions.lock();
+            sessions
+                .values()
+                .filter(|record| {
+                    if !active_only {
+                        return true;
+                    }
+                    record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                })
+                .map(|record| record.to_summary())
+                .collect()
+        })
     }
 
     pub fn get_detail(&self, session_id: &str) -> Option<Value> {
-        let sessions = self.sessions.lock().unwrap();
-        let record = sessions.get(session_id)?;
-        let events = record
-            .events
-            .iter()
-            .map(|event| event.to_dict())
-            .collect::<Vec<_>>();
-        Some(json!({
-            "session": record.to_summary(),
-            "events": events,
-        }))
+        self.run_guarded(
+            "monitor.get_detail",
+            || None,
+            || {
+                let sessions = self.sessions.lock();
+                let record = sessions.get(session_id)?;
+                let events = record
+                    .events
+                    .iter()
+                    .map(|event| event.to_dict())
+                    .collect::<Vec<_>>();
+                Some(json!({
+                    "session": record.to_summary(),
+                    "events": events,
+                }))
+            },
+        )
     }
 
     pub fn get_record(&self, session_id: &str) -> Option<Value> {
-        let cleaned = session_id.trim();
-        if cleaned.is_empty() {
-            return None;
-        }
-        if let Some(record) = self.sessions.lock().unwrap().get(cleaned) {
-            return Some(record.to_storage());
-        }
-        self.storage.get_monitor_record(cleaned).ok().flatten()
+        self.run_guarded(
+            "monitor.get_record",
+            || None,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return None;
+                }
+                if let Some(record) = self.sessions.lock().get(cleaned) {
+                    return Some(record.to_storage());
+                }
+                self.storage.get_monitor_record(cleaned).ok().flatten()
+            },
+        )
     }
 
     pub fn list_records(&self) -> Vec<Value> {
-        let mut map = HashMap::new();
-        if let Ok(records) = self.storage.load_monitor_records() {
-            for record in records {
-                if let Some(session_id) = record.get("session_id").and_then(Value::as_str) {
-                    map.insert(session_id.to_string(), record);
+        self.run_guarded("monitor.list_records", Vec::new, || {
+            let mut map = HashMap::new();
+            if let Ok(records) = self.storage.load_monitor_records() {
+                for record in records {
+                    if let Some(session_id) = record.get("session_id").and_then(Value::as_str) {
+                        map.insert(session_id.to_string(), record);
+                    }
                 }
             }
-        }
-        let sessions = self.sessions.lock().unwrap();
-        for (session_id, record) in sessions.iter() {
-            map.insert(session_id.clone(), record.to_storage());
-        }
-        map.into_values().collect()
+            let sessions = self.sessions.lock();
+            for (session_id, record) in sessions.iter() {
+                map.insert(session_id.clone(), record.to_storage());
+            }
+            map.into_values().collect()
+        })
     }
 
     pub fn get_system_metrics(&self) -> SystemSnapshot {
-        let now = now_ts();
-        {
-            let cache = self.system_snapshot_cache.lock().unwrap();
-            if let Some((snapshot, ts)) = cache.as_ref() {
-                if now - *ts < self.system_snapshot_ttl_s {
-                    return snapshot.clone();
+        self.run_guarded(
+            "monitor.get_system_metrics",
+            || self.fallback_system_snapshot(),
+            || {
+                let now = now_ts();
+                {
+                    let cache = self.system_snapshot_cache.lock();
+                    if let Some((snapshot, ts)) = cache.as_ref() {
+                        if now - *ts < self.system_snapshot_ttl_s {
+                            return snapshot.clone();
+                        }
+                    }
                 }
-            }
-        }
 
-        let snapshot = self.collect_system_snapshot();
-        let mut cache = self.system_snapshot_cache.lock().unwrap();
-        *cache = Some((snapshot.clone(), now));
-        snapshot
+                let snapshot = self.collect_system_snapshot();
+                let mut cache = self.system_snapshot_cache.lock();
+                *cache = Some((snapshot.clone(), now));
+                snapshot
+            },
+        )
     }
 
     fn collect_system_snapshot(&self) -> SystemSnapshot {
-        let mut system = self.system.lock().unwrap();
+        let mut system = self.system.lock();
         system.refresh_cpu_usage();
         system.refresh_memory();
         let pid = sysinfo::get_current_pid().ok();
@@ -642,7 +760,7 @@ impl MonitorState {
         let mut disk_used: u64 = 0;
         let mut disk_free: u64 = 0;
         let mut disk_percent = 0.0;
-        let mut disks = self.disks.lock().unwrap();
+        let mut disks = self.disks.lock();
         if disks.list().is_empty() {
             disks.refresh_list();
         }
@@ -658,7 +776,7 @@ impl MonitorState {
 
         let mut net_sent: u64 = 0;
         let mut net_recv: u64 = 0;
-        let mut networks = self.networks.lock().unwrap();
+        let mut networks = self.networks.lock();
         if networks.list().is_empty() {
             networks.refresh_list();
         }
@@ -669,7 +787,7 @@ impl MonitorState {
         }
 
         let uptime_s = {
-            let start = *self.app_start_ts.lock().unwrap();
+            let start = *self.app_start_ts.lock();
             let now = now_ts();
             (now - start).max(0.0) as u64
         };
@@ -700,85 +818,153 @@ impl MonitorState {
         recent_window_s: Option<f64>,
         current_ts: Option<f64>,
     ) -> Value {
-        let now = current_ts.unwrap_or_else(now_ts);
-        let window = recent_window_s.unwrap_or(3600.0).max(1.0);
-        let sessions = self.sessions.lock().unwrap();
-        let mut active_sessions = 0;
-        let mut finished_sessions = 0;
-        let mut error_sessions = 0;
-        let mut cancelled_sessions = 0;
-        let mut recent_completed = 0;
-        let mut elapsed_total = 0.0;
-        let mut elapsed_count = 0.0;
-        for record in sessions.values() {
-            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
-                active_sessions += 1;
-                continue;
-            }
-            if record.status == Self::STATUS_FINISHED {
-                finished_sessions += 1;
-            } else if record.status == Self::STATUS_ERROR {
-                error_sessions += 1;
-            } else if record.status == Self::STATUS_CANCELLED {
-                cancelled_sessions += 1;
-            }
-            let end_ts = record.ended_time.unwrap_or(record.updated_time);
-            if now - end_ts <= window {
-                recent_completed += 1;
-            }
-            elapsed_total += (end_ts - record.start_time).max(0.0);
-            elapsed_count += 1.0;
-        }
-        let total_sessions = sessions.len() as i64;
-        let history_sessions = total_sessions - active_sessions;
-        let avg_elapsed = if elapsed_count > 0.0 {
-            round2(elapsed_total / elapsed_count)
-        } else {
-            0.0
-        };
-        json!({
-            "active_sessions": active_sessions,
-            "history_sessions": history_sessions,
-            "finished_sessions": finished_sessions,
-            "error_sessions": error_sessions,
-            "cancelled_sessions": cancelled_sessions,
-            "total_sessions": total_sessions,
-            "recent_completed": recent_completed,
-            "avg_elapsed_s": avg_elapsed,
-        })
+        self.run_guarded(
+            "monitor.get_service_metrics",
+            || self.fallback_service_metrics(),
+            || {
+                let now = current_ts.unwrap_or_else(now_ts);
+                let window = recent_window_s.unwrap_or(3600.0).max(1.0);
+                let sessions = self.sessions.lock();
+                let mut active_sessions = 0;
+                let mut finished_sessions = 0;
+                let mut error_sessions = 0;
+                let mut cancelled_sessions = 0;
+                let mut recent_completed = 0;
+                let mut elapsed_total = 0.0;
+                let mut elapsed_count = 0.0;
+                for record in sessions.values() {
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                    {
+                        active_sessions += 1;
+                        continue;
+                    }
+                    if record.status == Self::STATUS_FINISHED {
+                        finished_sessions += 1;
+                    } else if record.status == Self::STATUS_ERROR {
+                        error_sessions += 1;
+                    } else if record.status == Self::STATUS_CANCELLED {
+                        cancelled_sessions += 1;
+                    }
+                    let end_ts = record.ended_time.unwrap_or(record.updated_time);
+                    if now - end_ts <= window {
+                        recent_completed += 1;
+                    }
+                    elapsed_total += (end_ts - record.start_time).max(0.0);
+                    elapsed_count += 1.0;
+                }
+                let total_sessions = sessions.len() as i64;
+                let history_sessions = total_sessions - active_sessions;
+                let avg_elapsed = if elapsed_count > 0.0 {
+                    round2(elapsed_total / elapsed_count)
+                } else {
+                    0.0
+                };
+                json!({
+                    "active_sessions": active_sessions,
+                    "history_sessions": history_sessions,
+                    "finished_sessions": finished_sessions,
+                    "error_sessions": error_sessions,
+                    "cancelled_sessions": cancelled_sessions,
+                    "total_sessions": total_sessions,
+                    "recent_completed": recent_completed,
+                    "avg_elapsed_s": avg_elapsed,
+                })
+            },
+        )
     }
 
     pub fn get_sandbox_metrics(&self, since_time: Option<f64>, until_time: Option<f64>) -> Value {
-        let mut call_count = 0;
-        let mut session_ids = HashSet::new();
-        let sessions = self.sessions.lock().unwrap();
-        for record in sessions.values() {
-            for event in &record.events {
-                if event.event_type != "tool_result" {
-                    continue;
-                }
-                if !event
-                    .data
-                    .get("sandbox")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-                if let Some(since) = since_time {
-                    if event.timestamp < since {
-                        continue;
+        self.run_guarded(
+            "monitor.get_sandbox_metrics",
+            || self.fallback_sandbox_metrics(),
+            || {
+                let mut call_count = 0;
+                let mut session_ids = HashSet::new();
+                let sessions = self.sessions.lock();
+                for record in sessions.values() {
+                    for event in &record.events {
+                        if event.event_type != "tool_result" {
+                            continue;
+                        }
+                        if !event
+                            .data
+                            .get("sandbox")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                        if let Some(since) = since_time {
+                            if event.timestamp < since {
+                                continue;
+                            }
+                        }
+                        if let Some(until) = until_time {
+                            if event.timestamp > until {
+                                continue;
+                            }
+                        }
+                        call_count += 1;
+                        session_ids.insert(record.session_id.clone());
                     }
                 }
-                if let Some(until) = until_time {
-                    if event.timestamp > until {
-                        continue;
-                    }
-                }
-                call_count += 1;
-                session_ids.insert(record.session_id.clone());
+                json!({
+                    "mode": self.sandbox_config.mode,
+                    "network": self.sandbox_config.network,
+                    "readonly_rootfs": self.sandbox_config.readonly_rootfs,
+                    "idle_ttl_s": self.sandbox_config.idle_ttl_s,
+                    "timeout_s": self.sandbox_config.timeout_s,
+                    "endpoint": self.sandbox_config.endpoint,
+                    "image": self.sandbox_config.image,
+                    "resources": {
+                        "cpu": self.sandbox_config.resources.cpu,
+                        "memory_mb": self.sandbox_config.resources.memory_mb,
+                        "pids": self.sandbox_config.resources.pids,
+                    },
+                    "recent_calls": call_count,
+                    "recent_sessions": session_ids.len(),
+                })
+            },
+        )
+    }
+
+    fn run_guarded<T, F, G>(&self, label: &'static str, fallback: G, f: F) -> T
+    where
+        F: FnOnce() -> T,
+        G: FnOnce() -> T,
+    {
+        match panic::catch_unwind(AssertUnwindSafe(f)) {
+            Ok(value) => value,
+            Err(payload) => {
+                let message = format_panic_payload(payload.as_ref());
+                error!("monitor panic in {label}: {message}");
+                fallback()
             }
         }
+    }
+
+    fn fallback_system_snapshot(&self) -> SystemSnapshot {
+        if let Some((snapshot, _)) = self.system_snapshot_cache.lock().as_ref() {
+            return snapshot.clone();
+        }
+        SystemSnapshot::default()
+    }
+
+    fn fallback_service_metrics(&self) -> Value {
+        json!({
+            "active_sessions": 0,
+            "history_sessions": 0,
+            "finished_sessions": 0,
+            "error_sessions": 0,
+            "cancelled_sessions": 0,
+            "total_sessions": 0,
+            "recent_completed": 0,
+            "avg_elapsed_s": 0.0,
+        })
+    }
+
+    fn fallback_sandbox_metrics(&self) -> Value {
         json!({
             "mode": self.sandbox_config.mode,
             "network": self.sandbox_config.network,
@@ -792,8 +978,8 @@ impl MonitorState {
                 "memory_mb": self.sandbox_config.resources.memory_mb,
                 "pids": self.sandbox_config.resources.pids,
             },
-            "recent_calls": call_count,
-            "recent_sessions": session_ids.len(),
+            "recent_calls": 0,
+            "recent_sessions": 0,
         })
     }
 
@@ -838,7 +1024,7 @@ impl MonitorState {
         if rebuilt.is_empty() {
             return;
         }
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock();
         for (session_id, record) in rebuilt {
             if let Some(current) = sessions.get(&session_id) {
                 if current.status == Self::STATUS_RUNNING
@@ -904,7 +1090,7 @@ impl MonitorState {
             return None;
         }
         {
-            let mut forced = self.forced_cancelled.lock().unwrap();
+            let mut forced = self.forced_cancelled.lock();
             forced.remove(session_id);
         }
         if let Some(record) = sessions.get_mut(session_id) {
@@ -963,54 +1149,60 @@ impl MonitorState {
     }
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
-        let now = now_ts();
-        let to_persist = {
-            let mut sessions = self.sessions.lock().unwrap();
-            let Some(record) = sessions.get_mut(session_id) else {
-                return;
-            };
-            record.status = status.to_string();
-            record.updated_time = now;
-            record.ended_time = Some(now);
-            match status {
-                Self::STATUS_FINISHED => {
-                    record.stage = "final".to_string();
-                    record.summary = summary
-                        .map(str::to_string)
-                        .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
-                }
-                Self::STATUS_ERROR => {
-                    record.stage = "error".to_string();
-                    if let Some(summary) = summary {
-                        record.summary = summary.to_string();
+        self.run_guarded(
+            "monitor.mark_status",
+            || (),
+            || {
+                let now = now_ts();
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    record.status = status.to_string();
+                    record.updated_time = now;
+                    record.ended_time = Some(now);
+                    match status {
+                        Self::STATUS_FINISHED => {
+                            record.stage = "final".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+                        }
+                        Self::STATUS_ERROR => {
+                            record.stage = "error".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        Self::STATUS_CANCELLED => {
+                            record.stage = "cancelled".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        Self::STATUS_CANCELLING => {
+                            record.stage = "cancelling".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        _ => {
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
                     }
+                    let summary = record.summary.clone();
+                    self.append_event(record, status, &json!({ "summary": summary }), now);
+                    record.dirty = true;
+                    self.maybe_persist_record(record, now, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
                 }
-                Self::STATUS_CANCELLED => {
-                    record.stage = "cancelled".to_string();
-                    if let Some(summary) = summary {
-                        record.summary = summary.to_string();
-                    }
-                }
-                Self::STATUS_CANCELLING => {
-                    record.stage = "cancelling".to_string();
-                    if let Some(summary) = summary {
-                        record.summary = summary.to_string();
-                    }
-                }
-                _ => {
-                    if let Some(summary) = summary {
-                        record.summary = summary.to_string();
-                    }
-                }
-            }
-            let summary = record.summary.clone();
-            self.append_event(record, status, &json!({ "summary": summary }), now);
-            record.dirty = true;
-            self.maybe_persist_record(record, now, true)
-        };
-        if let Some(record) = to_persist {
-            self.save_record(&record);
-        }
+            },
+        );
     }
 
     fn append_event(
@@ -1088,6 +1280,16 @@ impl MonitorState {
         let payload = record.to_storage();
         let _ = self.storage.upsert_monitor_record(&payload);
     }
+}
+
+fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
 }
 
 fn resolve_event_limit(raw: i64) -> Option<usize> {

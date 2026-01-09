@@ -2069,32 +2069,40 @@ impl Orchestrator {
         }
         let mut overflow = total_tokens - limit;
         let mut trimmed = messages;
-        for message in &mut trimmed {
+        for index in 0..trimmed.len() {
             if overflow <= 0 {
                 break;
             }
-            let Some(obj) = message.as_object_mut() else {
-                continue;
+            let changed = if let Some(obj) = trimmed[index].as_object_mut() {
+                let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
+                let content = obj.get("content").unwrap_or(&Value::Null);
+                if !Self::is_observation_message(role, content) {
+                    false
+                } else if let Value::String(text) = content {
+                    let current_tokens = approx_token_count(text);
+                    if current_tokens <= COMPACTION_MIN_OBSERVATION_TOKENS {
+                        false
+                    } else {
+                        let target_tokens =
+                            (current_tokens - overflow).max(COMPACTION_MIN_OBSERVATION_TOKENS);
+                        let new_content =
+                            trim_text_to_tokens(text, target_tokens, "...(truncated)");
+                        if new_content == *text {
+                            false
+                        } else {
+                            obj.insert("content".to_string(), Value::String(new_content));
+                            true
+                        }
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
             };
-            let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
-            let content = obj.get("content").unwrap_or(&Value::Null);
-            if !Self::is_observation_message(role, content) {
-                continue;
+            if changed {
+                overflow = (estimate_messages_tokens(&trimmed) - limit).max(0);
             }
-            let Value::String(text) = content else {
-                continue;
-            };
-            let current_tokens = approx_token_count(text);
-            if current_tokens <= COMPACTION_MIN_OBSERVATION_TOKENS {
-                continue;
-            }
-            let target_tokens = (current_tokens - overflow).max(COMPACTION_MIN_OBSERVATION_TOKENS);
-            let new_content = trim_text_to_tokens(text, target_tokens, "...(truncated)");
-            if new_content == *text {
-                continue;
-            }
-            obj.insert("content".to_string(), Value::String(new_content));
-            overflow = (estimate_messages_tokens(&trimmed) - limit).max(0);
         }
         trimmed
     }
