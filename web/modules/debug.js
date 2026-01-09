@@ -192,6 +192,25 @@ const attachResponseToRequest = (response, options = {}) => {
   detailNode.appendChild(responseNode);
 };
 
+const finalizePendingRequestDurations = (timestamp) => {
+  if (!pendingRequestLogs.length) {
+    return;
+  }
+  const endTimestampMs = resolveTimestampMs(timestamp);
+  const endMs = Number.isFinite(endTimestampMs) ? endTimestampMs : Date.now();
+  pendingRequestLogs.forEach((entry) => {
+    if (!entry || !entry.item || entry.responseAttached) {
+      return;
+    }
+    entry.responseAttached = true;
+    if (Number.isFinite(entry.requestTimestampMs)) {
+      const durationText = formatDurationSeconds(entry.requestTimestampMs, endMs);
+      appendRequestDurationBadge(entry.item, durationText);
+    }
+  });
+  pendingRequestLogs.length = 0;
+};
+
 const flushPendingRequests = (message, options = {}) => {
   if (!pendingRequestLogs.length) {
     return;
@@ -1633,6 +1652,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
         ? JSON.stringify({ usage }, null, 2)
         : undefined;
     appendLog(summary, { detail, timestamp: eventTimestamp });
+    finalizePendingRequestDurations(eventTimestamp);
     resetPendingRequestLogs();
     loadWorkspace({ refreshTree: true });
     return;
@@ -2274,6 +2294,9 @@ const sendStreamRequest = async (endpoint, payload) => {
     }
 
     appendLog(t("debug.sse.closed"));
+    if (!state.runtime.debugSawFinal) {
+      finalizePendingRequestDurations(Date.now());
+    }
   } finally {
     state.runtime.debugStreaming = false;
     updateDebugLogWaiting();

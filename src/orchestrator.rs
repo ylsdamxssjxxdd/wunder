@@ -15,6 +15,7 @@ use crate::orchestrator_constants::{
     STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S, STREAM_EVENT_QUEUE_SIZE,
     STREAM_EVENT_TTL_S,
 };
+use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::{read_prompt_template, PromptComposer};
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::skills::{load_skills, SkillRegistry};
@@ -33,7 +34,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, Mutex, Notify, RwLock};
@@ -1218,7 +1219,13 @@ impl Orchestrator {
                         &tool_result,
                     );
                     if name == "读取文件" {
-                        self.append_skill_usage_logs(&user_id, &session_id, &args);
+                        self.append_skill_usage_logs(
+                            &user_id,
+                            &session_id,
+                            &args,
+                            &skills_snapshot,
+                            Some(&user_tool_bindings),
+                        );
                     }
 
                     emitter
@@ -1575,7 +1582,66 @@ impl Orchestrator {
         entries
     }
 
-    fn append_skill_usage_logs(&self, _user_id: &str, _session_id: &str, _args: &Value) {}
+    fn append_skill_usage_logs(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        args: &Value,
+        skills: &SkillRegistry,
+        user_tool_bindings: Option<&UserToolBindings>,
+    ) {
+        let paths = extract_file_paths(args);
+        if paths.is_empty() {
+            return;
+        }
+        let mut specs = skills.list_specs();
+        if let Some(bindings) = user_tool_bindings {
+            if !bindings.skill_specs.is_empty() {
+                specs.extend(bindings.skill_specs.iter().cloned());
+            }
+        }
+        if specs.is_empty() {
+            return;
+        }
+
+        let mut seen_names = HashSet::new();
+        let mut path_map: HashMap<PathBuf, String> = HashMap::new();
+        for spec in specs {
+            let name = spec.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if !seen_names.insert(name.to_string()) {
+                continue;
+            }
+            let Some(spec_path) = resolve_absolute_path(&spec.path) else {
+                continue;
+            };
+            let key = normalize_compare_path(&spec_path);
+            path_map.insert(key, name.to_string());
+        }
+        if path_map.is_empty() {
+            return;
+        }
+
+        let mut matched = HashSet::new();
+        for raw in paths {
+            let Some(candidate) = resolve_absolute_path(&raw) else {
+                continue;
+            };
+            let key = normalize_compare_path(&candidate);
+            if let Some(name) = path_map.get(&key) {
+                matched.insert(name.clone());
+            }
+        }
+        if matched.is_empty() {
+            return;
+        }
+        let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
+        for name in matched {
+            self.append_tool_log(user_id, session_id, &name, args, &result);
+        }
+    }
 
     fn resolve_final_answer(&self, content: &str) -> String {
         strip_tool_calls(content).trim().to_string()
@@ -1793,23 +1859,14 @@ impl Orchestrator {
             let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
             let payload_chat = self.build_chat_messages(&payload_messages);
             let payload = client.build_request_payload(&payload_chat, will_stream);
-            let payload_text = payload.to_string();
-            let mut request_payload = json!({
+            let request_payload = json!({
                 "provider": effective_config.provider,
                 "model": effective_config.model,
                 "base_url": effective_config.base_url,
                 "round": round_index,
                 "stream": will_stream,
+                "payload": payload,
             });
-            if payload_text.len() <= 20_000 {
-                request_payload["payload"] = payload;
-            } else {
-                request_payload["payload_summary"] = json!({
-                    "message_count": payload_chat.len(),
-                    "approx_input_tokens": estimate_messages_tokens(&payload_messages),
-                    "payload_size": payload_text.len(),
-                });
-            }
             emitter.emit("llm_request", request_payload).await;
         }
 
@@ -3333,6 +3390,25 @@ fn extract_file_paths(args: &Value) -> Vec<String> {
         ordered.push(path);
     }
     ordered
+}
+
+fn normalize_compare_path(path: &Path) -> PathBuf {
+    let normalized = normalize_target_path(path);
+    normalize_path_for_compare(&normalized)
+}
+
+fn resolve_absolute_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        Some(cwd.join(path))
+    }
 }
 
 fn extract_command_lines(args: &Value) -> Vec<String> {

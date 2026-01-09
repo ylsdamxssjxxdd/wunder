@@ -389,10 +389,18 @@ impl WorkspaceManager {
     }
 
     pub fn resolve_path(&self, user_id: &str, path: &str) -> Result<PathBuf> {
-        if self.path_guard.is_match(path) && !path.is_empty() {
+        let trimmed = path.trim();
+        let user_root = self.user_root(user_id);
+        let target_path = Path::new(trimmed);
+        if target_path.is_absolute() {
+            if is_within_root(&user_root, target_path) {
+                return Ok(target_path.to_path_buf());
+            }
+            return Err(anyhow!("路径越界"));
+        }
+        if self.path_guard.is_match(trimmed) && !trimmed.is_empty() {
             return Err(anyhow!("路径包含非法字符"));
         }
-        let target_path = Path::new(path);
         for component in target_path.components() {
             match component {
                 Component::Prefix(_) | Component::RootDir => {
@@ -405,11 +413,10 @@ impl WorkspaceManager {
                 Component::Normal(_) => {}
             }
         }
-        let user_root = self.user_root(user_id);
-        let target = if path.is_empty() || path == "." {
+        let target = if trimmed.is_empty() || trimmed == "." {
             user_root.clone()
         } else {
-            user_root.join(path)
+            user_root.join(trimmed)
         };
         if !is_within_root(&user_root, &target) {
             return Err(anyhow!("路径越界"));
