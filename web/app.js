@@ -1,4 +1,4 @@
-import { APP_CONFIG, applyDefaultConfig } from "./app.config.js";
+import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260110-04";
 
 import {
 
@@ -8,7 +8,7 @@ import {
 
   updateDefaultConfig,
 
-} from "./app.config.js";
+} from "./app.config.js?v=20260110-04";
 
 import { elements } from "./modules/elements.js?v=20260105-02";
 

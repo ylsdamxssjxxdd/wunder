@@ -1,4 +1,4 @@
-import { APP_CONFIG } from "../app.config.js";
+import { APP_CONFIG } from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
@@ -2308,7 +2308,6 @@ export const initMonitorPanel = () => {
     });
   }
 };
-
 
 
 

@@ -3,7 +3,7 @@ import {
   applyStoredConfig,
   resetStoredConfig,
   updateStoredConfig,
-} from "../app.config.js";
+} from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20260105-02";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260102-01";
