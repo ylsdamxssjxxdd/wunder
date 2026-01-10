@@ -1106,7 +1106,6 @@ async fn admin_monitor(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MonitorQuery>,
 ) -> Result<Json<Value>, Response> {
-    // ??????????????????
     state.monitor.warm_history(true);
     let active_only = query.active_only.unwrap_or(true);
     let system = state.monitor.get_system_metrics();

@@ -4,6 +4,7 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
+import { openMonitorDetail } from "./monitor.js?v=20260110-05";
 import { t } from "./i18n.js?v=20260110-03";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
@@ -14,7 +15,10 @@ const DEFAULT_CONFIG = {
   user_id_prefix: "throughput_user",
   request_timeout_s: 0,
 };
-const ACTIVE_STATUSES = new Set(["running", "stopping"]);
+const ACTIVE_RUN_STATUSES = new Set(["running", "stopping"]);
+const ACTIVE_SESSION_STATUSES = new Set(["running", "cancelling"]);
+const FAILED_SESSION_STATUSES = new Set(["error", "cancelled"]);
+const THREAD_FILTERS = ["all", "active", "finished", "failed"];
 const MAX_SAMPLES = 200;
 
 let initialized = false;
@@ -24,6 +28,14 @@ let currentRunId = "";
 let currentStatus = "";
 let samples = [];
 let lastSampleAt = 0;
+let throughputSessions = [];
+let throughputSessionMap = new Map();
+let throughputSessionRunId = "";
+let throughputSessionStartMs = null;
+let throughputSessionPrefix = "";
+let throughputThreadFilter = "all";
+let currentPrefillSpeed = null;
+let currentDecodeSpeed = null;
 
 const readStoredConfig = () => {
   try {
@@ -143,6 +155,34 @@ const formatDurationValue = (value) => {
   return formatDuration(value);
 };
 
+const formatTokenRate = (value, options = {}) => {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  const tokens = Math.max(0, Number(value));
+  const useMillion = tokens >= 1_000_000;
+  const useThousand = tokens >= 1_000 && tokens < 1_000_000;
+  const base = useMillion ? 1_000_000 : useThousand ? 1_000 : 1;
+  const unit = useMillion ? "m" : useThousand ? "k" : "";
+  const scaled = tokens / base;
+  let decimals = 2;
+  if (scaled >= 100) {
+    decimals = 0;
+  } else if (scaled >= 10) {
+    decimals = 1;
+  }
+  const prefix = options.lowerBound ? ">=" : "";
+  return `${prefix}${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
+};
+
+const parseTimestampMs = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const resolveStatusLabel = (status) => {
   if (!status) {
     return t("throughput.status.idle");
@@ -151,6 +191,32 @@ const resolveStatusLabel = (status) => {
   const text = t(key);
   return text || status;
 };
+
+const getSessionStatusLabel = (status) => {
+  const normalized = String(status || "");
+  const mapping = {
+    running: t("monitor.sessionStatus.running"),
+    cancelling: t("monitor.sessionStatus.cancelling"),
+    finished: t("monitor.sessionStatus.finished"),
+    error: t("monitor.sessionStatus.error"),
+    cancelled: t("monitor.sessionStatus.cancelled"),
+  };
+  return mapping[normalized] || normalized || "-";
+};
+
+const buildStatusBadge = (status) => {
+  const span = document.createElement("span");
+  span.className = `monitor-status ${status}`;
+  span.textContent = getSessionStatusLabel(status);
+  return span;
+};
+
+const sortSessionsByUpdate = (sessions) =>
+  [...sessions].sort((a, b) => {
+    const left = new Date(b.updated_time || b.start_time).getTime();
+    const right = new Date(a.updated_time || a.start_time).getTime();
+    return left - right;
+  });
 
 const applyStatusBadge = (status) => {
   if (!elements.throughputStatusBadge) {
@@ -189,7 +255,7 @@ const updateToggleButton = (status) => {
   if (!elements.throughputToggleBtn) {
     return;
   }
-  const running = ACTIVE_STATUSES.has(status);
+  const running = ACTIVE_RUN_STATUSES.has(status);
   const stopping = status === "stopping";
   const button = elements.throughputToggleBtn;
   const label = button.querySelector("[data-role='label']");
@@ -213,12 +279,14 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     currentStatus = "";
     updateToggleButton("");
     setStatusHint(t("throughput.status.emptyHint"));
+    setSpeedMetrics(null, null);
     fillMetric();
-    renderErrors([]);
+    resetThroughputSessions({ resetContext: true });
     resetCharts();
     return;
   }
   const run = snapshot.run || {};
+  syncThroughputSessionContext(run);
   const metrics = snapshot.metrics || {};
   const status = run.status || "";
   currentStatus = status;
@@ -226,6 +294,8 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   updateToggleButton(status);
   if (options.historyView) {
     setStatusHint(t("throughput.status.historyViewHint"));
+    setSpeedMetrics(null, null);
+    resetThroughputSessions();
   } else {
     setStatusHint(fromHistory ? t("throughput.status.historyHint") : "");
   }
@@ -243,11 +313,9 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   setText(elements.throughputP50, formatLatency(metrics.p50_latency_ms));
   setText(elements.throughputP90, formatLatency(metrics.p90_latency_ms));
   setText(elements.throughputP99, formatLatency(metrics.p99_latency_ms));
-  setText(elements.throughputInputTokens, formatTokenCount(metrics.input_tokens));
-  setText(elements.throughputOutputTokens, formatTokenCount(metrics.output_tokens));
   setText(elements.throughputTotalTokens, formatTokenCount(metrics.total_tokens));
   setText(elements.throughputAvgTokens, formatTokenCount(metrics.avg_total_tokens));
-  renderErrors(Array.isArray(snapshot.errors) ? snapshot.errors : []);
+  applySpeedMetrics();
   if (!options.skipCharts) {
     updateCharts(snapshot);
   }
@@ -275,8 +343,8 @@ const fillMetric = (...values) => {
     p50,
     p90,
     p99,
-    inputTokens,
-    outputTokens,
+    prefillSpeed,
+    decodeSpeed,
     totalTokens,
     avgTokens,
   ] = filled;
@@ -294,8 +362,8 @@ const fillMetric = (...values) => {
   setText(elements.throughputP50, p50);
   setText(elements.throughputP90, p90);
   setText(elements.throughputP99, p99);
-  setText(elements.throughputInputTokens, inputTokens);
-  setText(elements.throughputOutputTokens, outputTokens);
+  setText(elements.throughputPrefillSpeed, prefillSpeed);
+  setText(elements.throughputDecodeSpeed, decodeSpeed);
   setText(elements.throughputTotalTokens, totalTokens);
   setText(elements.throughputAvgTokens, avgTokens);
 };
@@ -314,9 +382,26 @@ const setStatusHint = (text) => {
   elements.throughputStatusHint.textContent = text || "";
 };
 
+const applySpeedMetrics = () => {
+  if (elements.throughputPrefillSpeed) {
+    elements.throughputPrefillSpeed.textContent = formatTokenRate(currentPrefillSpeed);
+  }
+  if (elements.throughputDecodeSpeed) {
+    elements.throughputDecodeSpeed.textContent = formatTokenRate(currentDecodeSpeed);
+  }
+};
+
+const setSpeedMetrics = (prefill, decode) => {
+  currentPrefillSpeed = Number.isFinite(prefill) ? prefill : null;
+  currentDecodeSpeed = Number.isFinite(decode) ? decode : null;
+  applySpeedMetrics();
+};
+
 const enterHistoryMode = (runId) => {
   state.runtime.throughputHistoryMode = true;
   state.runtime.throughputHistoryRunId = runId || "";
+  setSpeedMetrics(null, null);
+  resetThroughputSessions({ resetContext: true });
   stopPolling();
 };
 
@@ -325,27 +410,226 @@ const exitHistoryMode = () => {
   state.runtime.throughputHistoryRunId = "";
 };
 
-const renderErrors = (errors) => {
-  if (!elements.throughputErrorBody || !elements.throughputErrorEmpty) {
+const resolveThreadPrefix = (run) => {
+  const prefix = String(run?.user_id_prefix || "").trim();
+  if (prefix) {
+    return prefix;
+  }
+  const fallback = String(elements.throughputUserPrefix?.value || "").trim();
+  return fallback || DEFAULT_CONFIG.user_id_prefix;
+};
+
+const syncThreadFilterButtons = () => {
+  const mapping = {
+    all: elements.throughputThreadFilterAll,
+    active: elements.throughputThreadFilterActive,
+    finished: elements.throughputThreadFilterFinished,
+    failed: elements.throughputThreadFilterFailed,
+  };
+  Object.entries(mapping).forEach(([key, button]) => {
+    if (!button) {
+      return;
+    }
+    button.classList.toggle("active", throughputThreadFilter === key);
+  });
+};
+
+const setThreadFilter = (filter) => {
+  const next = THREAD_FILTERS.includes(filter) ? filter : "active";
+  if (throughputThreadFilter === next) {
     return;
   }
-  const body = elements.throughputErrorBody;
+  throughputThreadFilter = next;
+  syncThreadFilterButtons();
+  renderThroughputSessions();
+};
+
+const resetThroughputSessions = (options = {}) => {
+  throughputSessionMap = new Map();
+  throughputSessions = [];
+  if (options.resetContext) {
+    throughputSessionRunId = "";
+    throughputSessionStartMs = null;
+    throughputSessionPrefix = "";
+  }
+  renderThroughputSessions();
+};
+
+const syncThroughputSessionContext = (run) => {
+  const runId = run?.id || "";
+  const startedAtMs = parseTimestampMs(run?.started_at);
+  const prefix = resolveThreadPrefix(run);
+  const runChanged = runId !== throughputSessionRunId;
+  if (runChanged) {
+    throughputSessionMap = new Map();
+    throughputSessions = [];
+    setSpeedMetrics(null, null);
+  }
+  throughputSessionRunId = runId;
+  throughputSessionStartMs = startedAtMs;
+  throughputSessionPrefix = prefix;
+  if (runChanged) {
+    renderThroughputSessions();
+  }
+};
+
+const resolveThreadEmptyText = () => {
+  const key = state.runtime.throughputHistoryMode
+    ? "throughput.threads.emptyHistory"
+    : "throughput.threads.empty";
+  return { key, text: t(key) };
+};
+
+const matchThroughputSession = (session) => {
+  const prefix = throughputSessionPrefix;
+  if (prefix) {
+    const userId = String(session?.user_id || "");
+    if (!userId.startsWith(prefix)) {
+      return false;
+    }
+  }
+  if (throughputSessionStartMs) {
+    const startedAtMs = parseTimestampMs(session?.start_time);
+    if (Number.isFinite(startedAtMs) && startedAtMs + 1000 < throughputSessionStartMs) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const updateThroughputSessions = (sessions) => {
+  sessions.forEach((session) => {
+    const sessionId = session?.session_id;
+    if (!sessionId) {
+      return;
+    }
+    const existing = throughputSessionMap.get(sessionId);
+    throughputSessionMap.set(sessionId, existing ? { ...existing, ...session } : session);
+  });
+  throughputSessions = sortSessionsByUpdate(Array.from(throughputSessionMap.values()));
+};
+
+const renderThroughputSessions = () => {
+  if (!elements.throughputThreadBody || !elements.throughputThreadEmpty) {
+    return;
+  }
+  const body = elements.throughputThreadBody;
   body.textContent = "";
-  if (!errors || !errors.length) {
-    elements.throughputErrorEmpty.style.display = "block";
+  const list = Array.isArray(throughputSessions) ? throughputSessions : [];
+  const filtered = list.filter((session) => {
+    const status = session?.status;
+    if (throughputThreadFilter === "all") {
+      return true;
+    }
+    if (throughputThreadFilter === "active") {
+      return ACTIVE_SESSION_STATUSES.has(status);
+    }
+    if (throughputThreadFilter === "finished") {
+      return status === "finished";
+    }
+    if (throughputThreadFilter === "failed") {
+      return FAILED_SESSION_STATUSES.has(status);
+    }
+    return true;
+  });
+  if (!filtered.length) {
+    const empty = resolveThreadEmptyText();
+    elements.throughputThreadEmpty.setAttribute("data-i18n", empty.key);
+    elements.throughputThreadEmpty.textContent = empty.text;
+    elements.throughputThreadEmpty.style.display = "block";
     return;
   }
-  elements.throughputErrorEmpty.style.display = "none";
-  errors.forEach((item) => {
+  elements.throughputThreadEmpty.style.display = "none";
+  filtered.forEach((session) => {
     const row = document.createElement("tr");
-    const timeCell = document.createElement("td");
-    timeCell.textContent = formatTimestamp(item.timestamp || "");
-    const messageCell = document.createElement("td");
-    messageCell.textContent = String(item.message || "");
-    row.appendChild(timeCell);
-    row.appendChild(messageCell);
+    const startCell = document.createElement("td");
+    startCell.textContent = formatTimestamp(session.start_time);
+    const sessionCell = document.createElement("td");
+    const rawSessionId = session.session_id || "";
+    sessionCell.textContent = rawSessionId ? rawSessionId.slice(0, 4) : "-";
+    if (rawSessionId) {
+      sessionCell.title = rawSessionId;
+    }
+    const userCell = document.createElement("td");
+    userCell.textContent = session.user_id || "-";
+    const questionCell = document.createElement("td");
+    questionCell.textContent = session.question || "-";
+    if (session.question) {
+      questionCell.title = session.question;
+    }
+    const statusCell = document.createElement("td");
+    statusCell.appendChild(buildStatusBadge(session.status || ""));
+    const tokenCell = document.createElement("td");
+    tokenCell.textContent = formatTokenCount(session.token_usage);
+    const elapsedCell = document.createElement("td");
+    elapsedCell.textContent = formatDuration(session.elapsed_s);
+    const stageCell = document.createElement("td");
+    stageCell.textContent = session.stage || "-";
+    row.appendChild(startCell);
+    row.appendChild(sessionCell);
+    row.appendChild(userCell);
+    row.appendChild(questionCell);
+    row.appendChild(statusCell);
+    row.appendChild(tokenCell);
+    row.appendChild(elapsedCell);
+    row.appendChild(stageCell);
+    row.addEventListener("click", () => {
+      if (session.session_id) {
+        openMonitorDetail(session.session_id);
+      }
+    });
     body.appendChild(row);
   });
+};
+
+const fetchMonitorSessions = async () => {
+  const wunderBase = getWunderBase();
+  if (!wunderBase) {
+    throw new Error(t("throughput.error.apiBase"));
+  }
+  const url = new URL(`${wunderBase}/admin/monitor`);
+  url.searchParams.set("active_only", "false");
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return {
+    sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
+    service: payload.service || null,
+  };
+};
+
+const loadThroughputSessions = async (options = {}) => {
+  if (!elements.throughputThreadBody || !elements.throughputThreadEmpty) {
+    return;
+  }
+  if (state.runtime.throughputHistoryMode) {
+    resetThroughputSessions();
+    return;
+  }
+  const silent = options.silent === true;
+  if (!silent) {
+    elements.throughputThreadEmpty.textContent = t("common.loading");
+    elements.throughputThreadEmpty.style.display = "block";
+  }
+  try {
+    const payload = await fetchMonitorSessions();
+    const sessions = payload.sessions || [];
+    const scoped = sessions.filter((session) => matchThroughputSession(session));
+    updateThroughputSessions(scoped);
+    renderThroughputSessions();
+    const prefillSpeed = payload.service?.avg_prefill_speed_tps;
+    const decodeSpeed = payload.service?.avg_decode_speed_tps;
+    setSpeedMetrics(prefillSpeed, decodeSpeed);
+  } catch (error) {
+    if (!silent) {
+      elements.throughputThreadEmpty.textContent = t("common.loadFailedWithMessage", {
+        message: error.message,
+      });
+      elements.throughputThreadEmpty.style.display = "block";
+    }
+  }
 };
 
 const buildPayload = () => {
@@ -900,7 +1184,7 @@ const handleExport = async () => {
 };
 
 const handleToggle = async () => {
-  if (ACTIVE_STATUSES.has(currentStatus)) {
+  if (ACTIVE_RUN_STATUSES.has(currentStatus)) {
     await handleStop();
   } else {
     await handleStart();
@@ -917,6 +1201,9 @@ const handleStart = async () => {
     renderSnapshot(snapshot, false);
     setFormStatus(t("throughput.message.started"));
     notify(t("throughput.message.started"), "success");
+    if (state.runtime.activePanel === "throughput") {
+      loadThroughputSessions({ silent: true }).catch(() => {});
+    }
     if (state.runtime.activePanel === "throughput") {
       startPolling();
     }
@@ -935,7 +1222,10 @@ const handleStop = async () => {
     renderSnapshot(snapshot, false);
     setFormStatus(t("throughput.message.stopped"));
     notify(t("throughput.message.stopped"), "info");
-    if (!ACTIVE_STATUSES.has(snapshot?.run?.status)) {
+    if (state.runtime.activePanel === "throughput") {
+      loadThroughputSessions({ silent: true }).catch(() => {});
+    }
+    if (!ACTIVE_RUN_STATUSES.has(snapshot?.run?.status)) {
       stopPolling();
     }
   } catch (error) {
@@ -982,7 +1272,10 @@ const loadThroughputStatus = async (options = {}) => {
     const payload = await fetchThroughputStatus();
     const { snapshot, fromHistory } = resolvePrimarySnapshot(payload);
     renderSnapshot(snapshot, fromHistory);
-    if (snapshot && ACTIVE_STATUSES.has(snapshot.run?.status)) {
+    if (snapshot && state.runtime.activePanel === "throughput") {
+      loadThroughputSessions({ silent: true }).catch(() => {});
+    }
+    if (snapshot && ACTIVE_RUN_STATUSES.has(snapshot.run?.status)) {
       if (state.runtime.activePanel === "throughput") {
         startPolling();
       }
@@ -1047,6 +1340,17 @@ export const initThroughputPanel = async () => {
     });
   }
   [
+    { button: elements.throughputThreadFilterAll, filter: "all" },
+    { button: elements.throughputThreadFilterActive, filter: "active" },
+    { button: elements.throughputThreadFilterFinished, filter: "finished" },
+    { button: elements.throughputThreadFilterFailed, filter: "failed" },
+  ].forEach(({ button, filter }) => {
+    if (!button) {
+      return;
+    }
+    button.addEventListener("click", () => setThreadFilter(filter));
+  });
+  [
     elements.throughputUsers,
     elements.throughputDuration,
     elements.throughputQuestion,
@@ -1059,6 +1363,8 @@ export const initThroughputPanel = async () => {
     input.addEventListener("input", scheduleConfigSave);
     input.addEventListener("change", scheduleConfigSave);
   });
+  syncThreadFilterButtons();
+  renderThroughputSessions();
   resetCharts();
   await loadThroughputStatus({ silent: true });
 };

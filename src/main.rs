@@ -86,7 +86,6 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing(config: &Config) {
-    // ???? RUST_LOG ??????????? info?
     let default_level = config.observability.log_level.trim();
     let default_level = if default_level.is_empty() {
         "info".to_string()

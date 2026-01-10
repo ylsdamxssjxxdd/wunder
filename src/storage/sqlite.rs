@@ -1644,6 +1644,22 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
+    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let items_deleted =
+            tx.execute("DELETE FROM evaluation_items WHERE run_id = ?", params![cleaned])?;
+        let runs_deleted =
+            tx.execute("DELETE FROM evaluation_runs WHERE run_id = ?", params![cleaned])?;
+        tx.commit()?;
+        Ok((items_deleted + runs_deleted) as i64)
+    }
+
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {
         self.ensure_initialized()?;
         if retention_days <= 0 {

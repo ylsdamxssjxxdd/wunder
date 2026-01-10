@@ -838,7 +838,6 @@ const resolveToolIcon = (name, category) => {
   const toolName = String(name || "").trim();
   const lowerName = toolName.toLowerCase();
   const normalizedName = normalizeToolMatchKey(lowerName);
-  // wunder@run ??? MCP ???????????
   if (lowerName === "wunder@run" || lowerName.endsWith("@wunder@run")) {
     return "fa-dragon";
   }

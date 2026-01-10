@@ -388,21 +388,24 @@ h1 {
   grid-column: 1 / -1;
 }
 
-.throughput-errors {
-  min-height: 200px;
+.throughput-threads {
+  min-height: 320px;
+  max-height: 320px;
+  height: 320px;
+  flex: 0 0 320px;
 }
 
-.throughput-error-table th:last-child,
-.throughput-error-table td:last-child {
-  text-align: left;
+.throughput-thread-filters {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.throughput-error-table col.col-time {
-  width: 28%;
-}
-
-.throughput-error-table col.col-message {
-  width: 72%;
+.throughput-thread-filters .tab-btn {
+  font-size: 12px;
+  padding: 4px 10px;
 }
 
 .throughput-header-actions {
@@ -4161,9 +4164,17 @@ button.danger {
 /* 评估面板 */
 .evaluation-layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px;
   align-items: start;
+}
+
+.evaluation-side,
+.evaluation-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
 }
 
 .evaluation-form,
@@ -4172,6 +4183,16 @@ button.danger {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+}
+
+.evaluation-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.evaluation-form-grid .form-row {
+  margin-bottom: 0;
 }
 
 .evaluation-dimension-select {
@@ -4229,6 +4250,11 @@ button.danger {
   gap: 8px;
 }
 
+.evaluation-run-hint {
+  margin-top: 6px;
+  min-height: 18px;
+}
+
 .evaluation-progress-bar {
   flex: 1 1 auto;
   height: 8px;
@@ -4245,25 +4271,60 @@ button.danger {
   transition: width 0.2s ease;
 }
 
-.evaluation-history,
-.evaluation-compare {
-  margin-top: 16px;
+.evaluation-cases .monitor-table-scroll {
+  max-height: 360px;
+}
+
+.evaluation-history .monitor-table-scroll {
+  max-height: 280px;
+}
+
+.evaluation-history-table tbody tr {
+  cursor: pointer;
+}
+
+.evaluation-history-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.evaluation-history .list-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.evaluation-history-table th:last-child,
+.evaluation-history-table td:last-child {
+  text-align: right;
+}
+
+.evaluation-history-table .icon-btn {
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.evaluation-history-table .icon-btn:hover {
+  color: #ef4444;
+}
+
+.evaluation-case-table tbody tr {
+  cursor: pointer;
+}
+
+.evaluation-history {
+  margin-top: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.evaluation-compare-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-size: 12px;
-  color: #475569;
-}
+@media (max-width: 1200px) {
+  .evaluation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.evaluation-compare-summary .summary-item {
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  .evaluation-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -1,11 +1,12 @@
 ﻿use crate::evaluation::{default_cases_dir, load_case_files, EvaluationDimension};
 use crate::evaluation_runner::EvaluationStartRequest;
+use crate::i18n;
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{routing::delete, routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -22,12 +23,14 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/admin/evaluation/runs", get(eval_runs))
         .route("/wunder/admin/evaluation/cases", get(eval_cases))
-        .route("/wunder/admin/evaluation/compare", get(eval_compare))
         .route(
             "/wunder/admin/evaluation/stream/{run_id}",
             get(eval_stream),
         )
-        .route("/wunder/admin/evaluation/{run_id}", get(eval_detail))
+        .route(
+            "/wunder/admin/evaluation/{run_id}",
+            get(eval_detail).delete(eval_delete),
+        )
 }
 
 async fn eval_start(
@@ -106,96 +109,26 @@ async fn eval_detail(
     Ok(Json(json!({ "run": run, "items": items })))
 }
 
-#[derive(Debug, Deserialize)]
-struct EvaluationCompareQuery {
-    run_ids: String,
-}
-
-async fn eval_compare(
+async fn eval_delete(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<EvaluationCompareQuery>,
+    AxumPath(run_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let ids = query
-        .run_ids
-        .split(',')
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if ids.len() < 2 {
+    let deleted = state
+        .evaluation
+        .delete_run(&run_id)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(deleted) = deleted else {
         return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "at least two run_ids required".to_string(),
+            StatusCode::NOT_FOUND,
+            "run not found".to_string(),
         ));
-    }
-
-    let mut runs = Vec::new();
-    let mut items_by_run: HashMap<String, Vec<Value>> = HashMap::new();
-    for run_id in &ids {
-        let run = state
-            .evaluation
-            .load_run(run_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let Some(run) = run else {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                format!("run {run_id} not found"),
-            ));
-        };
-        let items = state
-            .evaluation
-            .load_items(run_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        runs.push(run);
-        items_by_run.insert(run_id.clone(), items);
-    }
-
-    let mut cases_map: HashMap<String, HashMap<String, Value>> = HashMap::new();
-    for (run_id, items) in &items_by_run {
-        for item in items {
-            let case_id = item
-                .get("case_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            if case_id.is_empty() {
-                continue;
-            }
-            cases_map
-                .entry(case_id.to_string())
-                .or_default()
-                .insert(run_id.clone(), item.clone());
-        }
-    }
-
-    let mut cases = Vec::new();
-    for (case_id, item_map) in cases_map {
-        let dimension = item_map
-            .values()
-            .next()
-            .and_then(|value| value.get("dimension"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        cases.push(json!({
-            "case_id": case_id,
-            "dimension": dimension,
-            "items": item_map,
-        }));
-    }
-    cases.sort_by(|a, b| {
-        let left = a
-            .get("case_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let right = b
-            .get("case_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        left.cmp(right)
-    });
-
+    };
     Ok(Json(json!({
-        "runs": runs,
-        "cases": cases,
+        "ok": true,
+        "run_id": run_id,
+        "deleted": deleted,
+        "message": i18n::t("message.deleted"),
     })))
 }
 

@@ -1684,6 +1684,22 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
+    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let items_deleted =
+            tx.execute("DELETE FROM evaluation_items WHERE run_id = $1", &[&cleaned])?;
+        let runs_deleted =
+            tx.execute("DELETE FROM evaluation_runs WHERE run_id = $1", &[&cleaned])?;
+        tx.commit()?;
+        Ok((items_deleted + runs_deleted) as i64)
+    }
+
     fn cleanup_retention(&self, _retention_days: i64) -> Result<HashMap<String, i64>> {
         self.ensure_initialized()?;
         if _retention_days <= 0 {

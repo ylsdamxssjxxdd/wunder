@@ -897,24 +897,17 @@
 
 ### 4.1.49 `/wunder/admin/evaluation/{run_id}`
 
-- 方法：`GET`
-- 返回（JSON）：
+- 方法：`GET/DELETE`
+- `GET` 返回（JSON）：
   - `run`：评估任务（`EvaluationRun`）
   - `items`：评估明细列表（`EvaluationItem`）
+- `DELETE` 返回（JSON）：
+  - `ok`：是否删除成功
+  - `run_id`：评估任务 ID
+  - `deleted`：删除条数（包含 run 与 items）
+  - `message`：提示信息
 
-### 4.1.50 `/wunder/admin/evaluation/compare`
-
-- 方法：`GET`
-- 入参（Query）：
-  - `run_ids`：评估任务 ID，逗号分隔，至少 2 个
-- 返回（JSON）：
-  - `runs`：评估任务列表（`EvaluationRun`）
-  - `cases`：对比列表
-    - `case_id`：用例 ID
-    - `dimension`：维度
-    - `items`：按 `run_id` 映射的 `EvaluationItem`
-
-### 4.1.51 `/wunder/admin/evaluation/cases`
+### 4.1.50 `/wunder/admin/evaluation/cases`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -925,7 +918,7 @@
     - `case_count`：用例数量
     - `dimensions`：维度分布统计（维度 -> 数量）
 
-### 4.1.52 `/wunder/admin/evaluation/stream/{run_id}`
+### 4.1.51 `/wunder/admin/evaluation/stream/{run_id}`
 
 - 方法：`GET`（SSE）
 - 事件：

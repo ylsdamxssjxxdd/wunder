@@ -1,16 +1,12 @@
 ﻿import { elements } from "./elements.js";
+import { openMonitorDetail } from "./monitor.js?v=20260110-05";
 import { normalizeApiBase, formatDuration } from "./utils.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260110-03";
 
-const DEFAULT_WEIGHTS = {
-  tool: 35,
-  logic: 25,
-  common: 20,
-  complex: 20,
-};
-
 const evaluationState = {
-  runId: "",
+  activeRunId: "",
+  activeStatus: "",
+  viewRunId: "",
   streaming: false,
   controller: null,
   cases: new Map(),
@@ -39,6 +35,57 @@ const setFormStatus = (message) => {
     return;
   }
   elements.evaluationFormStatus.textContent = message || "";
+};
+
+const setRunHint = (message) => {
+  if (!elements.evaluationRunHint) {
+    return;
+  }
+  elements.evaluationRunHint.textContent = message || "";
+};
+
+const isActiveRunning = () => {
+  if (!evaluationState.activeRunId) {
+    return false;
+  }
+  const status = String(evaluationState.activeStatus || "running");
+  return !["finished", "failed", "cancelled"].includes(status);
+};
+
+const isViewingActive = () =>
+  !evaluationState.viewRunId || evaluationState.viewRunId === evaluationState.activeRunId;
+
+const updateActionButton = () => {
+  if (!elements.evaluationActionBtn) {
+    return;
+  }
+  const icon = elements.evaluationActionBtn.querySelector("i");
+  const label = elements.evaluationActionBtn.querySelector("span");
+  if (isActiveRunning()) {
+    elements.evaluationActionBtn.classList.add("secondary");
+    if (icon) {
+      icon.className = "fa-solid fa-stop";
+    }
+    if (label) {
+      label.textContent = t("evaluation.action.cancel");
+    }
+  } else {
+    elements.evaluationActionBtn.classList.remove("secondary");
+    if (icon) {
+      icon.className = "fa-solid fa-play";
+    }
+    if (label) {
+      label.textContent = t("evaluation.action.start");
+    }
+  }
+};
+
+const updateRunHint = () => {
+  if (isActiveRunning() && isViewingActive()) {
+    setRunHint(t("evaluation.message.running"));
+  } else {
+    setRunHint("");
+  }
 };
 
 const resetRunSummary = () => {
@@ -107,6 +154,12 @@ const ensureCaseRow = (caseId) => {
   const cols = [document.createElement("td"), document.createElement("td"), document.createElement("td"), document.createElement("td")];
   cols.forEach((col) => row.appendChild(col));
   cols[0].textContent = caseId;
+  row.addEventListener("click", () => {
+    const sessionId = row.dataset.sessionId || "";
+    if (sessionId) {
+      openMonitorDetail(sessionId);
+    }
+  });
   elements.evaluationCaseBody.appendChild(row);
   evaluationState.cases.set(caseId, row);
   if (elements.evaluationCaseEmpty) {
@@ -123,6 +176,12 @@ const renderCaseItem = (item) => {
   const row = ensureCaseRow(caseId);
   if (!row) {
     return;
+  }
+  const sessionId = String(item?.session_id || "").trim();
+  if (sessionId) {
+    row.dataset.sessionId = sessionId;
+  } else {
+    row.dataset.sessionId = "";
   }
   const cells = row.querySelectorAll("td");
   const dimension = String(item?.dimension || "-");
@@ -256,14 +315,8 @@ const loadEvaluationHistory = async () => {
     elements.evaluationHistoryEmpty.style.display = "none";
     runs.forEach((run) => {
       const row = document.createElement("tr");
-      const selectCell = document.createElement("td");
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.value = run.run_id || "";
-      checkbox.className = "evaluation-compare-checkbox";
-      selectCell.appendChild(checkbox);
+      const runId = run.run_id || "";
       const cells = [
-        selectCell,
         document.createElement("td"),
         document.createElement("td"),
         document.createElement("td"),
@@ -271,13 +324,32 @@ const loadEvaluationHistory = async () => {
         document.createElement("td"),
         document.createElement("td"),
       ];
-      cells[1].textContent = run.run_id || "-";
-      cells[2].textContent = run.status || "-";
-      cells[3].textContent = formatScore(run.total_score);
-      cells[4].textContent = formatEpochSeconds(run.started_time);
-      cells[5].textContent = run.model_name || "-";
-      cells[6].textContent = run.language || "-";
+      cells[0].textContent = runId || "-";
+      cells[1].textContent = run.status || "-";
+      cells[2].textContent = formatScore(run.total_score);
+      cells[3].textContent = formatEpochSeconds(run.started_time);
+      cells[4].textContent = run.model_name || "-";
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "icon-btn";
+      deleteBtn.type = "button";
+      deleteBtn.title = t("evaluation.history.delete");
+      deleteBtn.setAttribute("aria-label", t("evaluation.history.delete"));
+      deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+      deleteBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (runId) {
+          deleteHistoryRun(runId);
+        }
+      });
+      cells[5].appendChild(deleteBtn);
       cells.forEach((cell) => row.appendChild(cell));
+      row.dataset.runId = runId;
+      row.addEventListener("click", () => {
+        const runId = row.dataset.runId;
+        if (runId) {
+          restoreHistoryRun(runId);
+        }
+      });
       elements.evaluationHistoryBody.appendChild(row);
     });
   } catch (error) {
@@ -285,6 +357,40 @@ const loadEvaluationHistory = async () => {
       message: error.message,
     });
     elements.evaluationHistoryEmpty.style.display = "block";
+  }
+};
+
+const deleteHistoryRun = async (runId) => {
+  const cleaned = String(runId || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  const confirmed = window.confirm(t("evaluation.history.deleteConfirm", { runId: cleaned }));
+  if (!confirmed) {
+    return;
+  }
+  const apiBase = buildApiBase();
+  if (!apiBase) {
+    setFormStatus(t("evaluation.message.apiBaseEmpty"));
+    return;
+  }
+  try {
+    const response = await fetch(`${apiBase}/admin/evaluation/${cleaned}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    if (evaluationState.viewRunId === cleaned) {
+      evaluationState.viewRunId = evaluationState.activeRunId;
+      clearCaseTable();
+      resetRunSummary();
+      updateRunHint();
+    }
+    setFormStatus(t("evaluation.message.historyDeleted", { runId: cleaned }));
+    await loadEvaluationHistory();
+  } catch (error) {
+    setFormStatus(t("evaluation.message.historyDeleteFailed", { message: error.message }));
   }
 };
 
@@ -319,11 +425,12 @@ const streamEvaluation = async (runId) => {
     return;
   }
   stopStream();
-  evaluationState.controller = new AbortController();
+  const controller = new AbortController();
+  evaluationState.controller = controller;
   evaluationState.streaming = true;
   try {
     const response = await fetch(`${apiBase}/admin/evaluation/stream/${runId}`, {
-      signal: evaluationState.controller.signal,
+      signal: controller.signal,
     });
     if (!response.ok || !response.body) {
       throw new Error(await response.text());
@@ -357,7 +464,7 @@ const streamEvaluation = async (runId) => {
       }
     }
   } catch (error) {
-    if (evaluationState.controller?.signal?.aborted) {
+    if (controller.signal.aborted || error?.name === "AbortError") {
       return;
     }
     setFormStatus(t("evaluation.message.streamFailed", { message: error.message }));
@@ -369,21 +476,40 @@ const streamEvaluation = async (runId) => {
 const handleStreamEvent = (eventType, payload) => {
   if (eventType === "eval_started") {
     const runId = payload?.run_id || payload?.runId || "";
-    evaluationState.runId = runId;
+    evaluationState.activeRunId = runId;
+    evaluationState.activeStatus = "running";
+    evaluationState.viewRunId = runId;
     resetRunSummary();
     clearCaseTable();
     if (elements.evaluationRunId) {
       elements.evaluationRunId.textContent = runId || "-";
     }
+    updateActionButton();
+    updateRunHint();
   } else if (eventType === "eval_item") {
-    renderCaseItem(payload);
+    if (isViewingActive()) {
+      renderCaseItem(payload);
+    }
   } else if (eventType === "eval_progress") {
-    updateProgress(payload);
+    if (isViewingActive()) {
+      updateProgress(payload);
+    }
   } else if (eventType === "eval_finished") {
-    applyRunPayload(payload);
+    const payloadRunId = payload?.run_id || payload?.runId || "";
+    if (payloadRunId && payloadRunId === evaluationState.activeRunId) {
+      evaluationState.activeStatus = payload?.status || "finished";
+      evaluationState.activeRunId = "";
+    }
+    updateActionButton();
+    updateRunHint();
+    if (isViewingActive()) {
+      applyRunPayload(payload);
+    }
     stopStream();
     loadEvaluationHistory();
-    setFormStatus(t("evaluation.message.finished"));
+    if (isViewingActive()) {
+      setFormStatus(t("evaluation.message.finished"));
+    }
   } else if (eventType === "eval_log") {
     if (payload?.message) {
       setFormStatus(payload.message);
@@ -416,13 +542,6 @@ const startEvaluation = async () => {
   const caseSet = String(elements.evaluationCaseSet?.value || "default").trim();
   const language = String(elements.evaluationLanguage?.value || getCurrentLanguage()).trim();
   const modelName = String(elements.evaluationModelName?.value || "").trim();
-  const weightInputs = {
-    tool: Number(elements.evaluationWeightTool?.value),
-    logic: Number(elements.evaluationWeightLogic?.value),
-    common: Number(elements.evaluationWeightCommon?.value),
-    complex: Number(elements.evaluationWeightComplex?.value),
-  };
-  const hasWeight = Object.values(weightInputs).some((value) => Number.isFinite(value));
   const payload = {
     user_id: userId,
     case_set: caseSet,
@@ -431,14 +550,6 @@ const startEvaluation = async () => {
   };
   if (modelName) {
     payload.model_name = modelName;
-  }
-  if (hasWeight) {
-    payload.weights = {
-      tool: Number.isFinite(weightInputs.tool) ? weightInputs.tool : 0,
-      logic: Number.isFinite(weightInputs.logic) ? weightInputs.logic : 0,
-      common: Number.isFinite(weightInputs.common) ? weightInputs.common : 0,
-      complex: Number.isFinite(weightInputs.complex) ? weightInputs.complex : 0,
-    };
   }
   setFormStatus(t("evaluation.message.starting"));
   try {
@@ -453,12 +564,16 @@ const startEvaluation = async () => {
       throw new Error(await response.text());
     }
     const data = await response.json();
-    evaluationState.runId = data.run_id || "";
+    evaluationState.activeRunId = data.run_id || "";
+    evaluationState.activeStatus = "running";
+    evaluationState.viewRunId = evaluationState.activeRunId;
     clearCaseTable();
     resetRunSummary();
+    updateActionButton();
+    updateRunHint();
     setFormStatus(t("evaluation.message.started"));
-    if (evaluationState.runId) {
-      streamEvaluation(evaluationState.runId);
+    if (evaluationState.activeRunId) {
+      streamEvaluation(evaluationState.activeRunId);
     }
   } catch (error) {
     setFormStatus(t("evaluation.message.startFailed", { message: error.message }));
@@ -471,13 +586,13 @@ const cancelEvaluation = async () => {
     setFormStatus(t("evaluation.message.apiBaseEmpty"));
     return;
   }
-  if (!evaluationState.runId) {
+  if (!evaluationState.activeRunId) {
     setFormStatus(t("evaluation.message.noActiveRun"));
     return;
   }
   try {
     const response = await fetch(
-      `${apiBase}/admin/evaluation/${evaluationState.runId}/cancel`,
+      `${apiBase}/admin/evaluation/${evaluationState.activeRunId}/cancel`,
       {
         method: "POST",
       }
@@ -491,75 +606,26 @@ const cancelEvaluation = async () => {
   }
 };
 
-const compareRuns = async () => {
-  if (!elements.evaluationCompareSummary || !elements.evaluationCompareBody || !elements.evaluationCompareHead) {
-    return;
-  }
-  const selected = Array.from(document.querySelectorAll(".evaluation-compare-checkbox:checked"))
-    .map((item) => item.value)
-    .filter(Boolean);
-  if (selected.length !== 2) {
-    elements.evaluationCompareEmpty.style.display = "block";
-    elements.evaluationCompareSummary.textContent = "";
-    elements.evaluationCompareBody.innerHTML = "";
-    elements.evaluationCompareHead.innerHTML = "";
-    setFormStatus(t("evaluation.message.compareSelectTwo"));
-    return;
-  }
+const restoreHistoryRun = async (runId) => {
   const apiBase = buildApiBase();
   if (!apiBase) {
     setFormStatus(t("evaluation.message.apiBaseEmpty"));
     return;
   }
   try {
-    const response = await fetch(`${apiBase}/admin/evaluation/compare?run_ids=${selected.join(",")}`);
+    const response = await fetch(`${apiBase}/admin/evaluation/${runId}`);
     if (!response.ok) {
       throw new Error(await response.text());
     }
     const payload = await response.json();
-    const runs = payload.runs || [];
-    const cases = payload.cases || [];
-    const runMap = new Map(runs.map((run) => [run.run_id, run]));
-    const summaryItems = selected
-      .map((runId) => runMap.get(runId))
-      .filter(Boolean)
-      .map((run) => {
-        const scores = run.dimension_scores || {};
-        return `<div class="summary-item"><strong>${run.run_id}</strong> · ${formatScore(
-          run.total_score
-        )} <span>${formatScore(scores.tool)}/${formatScore(scores.logic)}/${formatScore(
-          scores.common
-        )}/${formatScore(scores.complex)}</span></div>`;
-      });
-    elements.evaluationCompareSummary.innerHTML = summaryItems.join("");
-    elements.evaluationCompareHead.innerHTML = `
-      <tr>
-        <th>${t("evaluation.compare.table.case")}</th>
-        <th>${t("evaluation.compare.table.dimension")}</th>
-        <th>${selected[0]}</th>
-        <th>${selected[1]}</th>
-      </tr>
-    `;
-    elements.evaluationCompareBody.innerHTML = "";
-    cases.forEach((item) => {
-      const row = document.createElement("tr");
-      const caseId = item.case_id || "-";
-      const dimension = item.dimension || "-";
-      const left = item.items?.[selected[0]];
-      const right = item.items?.[selected[1]];
-      const leftText = left ? `${left.status || "-"} (${left.score ?? "-"})` : "-";
-      const rightText = right ? `${right.status || "-"} (${right.score ?? "-"})` : "-";
-      row.innerHTML = `
-        <td>${caseId}</td>
-        <td>${dimension}</td>
-        <td>${leftText}</td>
-        <td>${rightText}</td>
-      `;
-      elements.evaluationCompareBody.appendChild(row);
-    });
-    elements.evaluationCompareEmpty.style.display = cases.length ? "none" : "block";
+    evaluationState.viewRunId = runId;
+    clearCaseTable();
+    applyRunPayload(payload.run);
+    (payload.items || []).forEach((item) => renderCaseItem(item));
+    updateRunHint();
+    setFormStatus(t("evaluation.message.historyRestored", { runId }));
   } catch (error) {
-    setFormStatus(t("evaluation.message.compareFailed", { message: error.message }));
+    setFormStatus(t("evaluation.message.historyRestoreFailed", { message: error.message }));
   }
 };
 
@@ -567,18 +633,8 @@ const syncDefaults = () => {
   if (elements.evaluationUserId && elements.userId && !elements.evaluationUserId.value) {
     elements.evaluationUserId.value = elements.userId.value;
   }
-  if (elements.evaluationWeightTool && !elements.evaluationWeightTool.value) {
-    elements.evaluationWeightTool.value = DEFAULT_WEIGHTS.tool;
-  }
-  if (elements.evaluationWeightLogic && !elements.evaluationWeightLogic.value) {
-    elements.evaluationWeightLogic.value = DEFAULT_WEIGHTS.logic;
-  }
-  if (elements.evaluationWeightCommon && !elements.evaluationWeightCommon.value) {
-    elements.evaluationWeightCommon.value = DEFAULT_WEIGHTS.common;
-  }
-  if (elements.evaluationWeightComplex && !elements.evaluationWeightComplex.value) {
-    elements.evaluationWeightComplex.value = DEFAULT_WEIGHTS.complex;
-  }
+  updateActionButton();
+  updateRunHint();
 };
 
 const initEvaluationPanel = async () => {
@@ -586,18 +642,19 @@ const initEvaluationPanel = async () => {
     return;
   }
   syncDefaults();
-  if (elements.evaluationStartBtn) {
-    elements.evaluationStartBtn.addEventListener("click", startEvaluation);
+  if (elements.evaluationActionBtn) {
+    elements.evaluationActionBtn.addEventListener("click", () => {
+      if (isActiveRunning()) {
+        cancelEvaluation();
+      } else {
+        startEvaluation();
+      }
+    });
   }
-  if (elements.evaluationCancelBtn) {
-    elements.evaluationCancelBtn.addEventListener("click", cancelEvaluation);
-  }
-  if (elements.evaluationRefreshBtn) {
-    elements.evaluationRefreshBtn.addEventListener("click", loadEvaluationHistory);
-  }
-  if (elements.evaluationCompareBtn) {
-    elements.evaluationCompareBtn.addEventListener("click", compareRuns);
-  }
+  window.addEventListener("wunder:language-changed", () => {
+    updateActionButton();
+    updateRunHint();
+  });
   await loadCaseSets();
   await loadEvaluationHistory();
   resetRunSummary();

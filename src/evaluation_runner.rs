@@ -328,6 +328,25 @@ impl EvaluationManager {
     pub fn load_items(&self, run_id: &str) -> Result<Vec<Value>> {
         self.storage.load_evaluation_items(run_id)
     }
+
+    pub async fn delete_run(&self, run_id: &str) -> Result<Option<i64>> {
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Err(anyhow!("run_id required"));
+        }
+        {
+            let guard = self.state.lock().await;
+            if guard.runs.contains_key(cleaned) {
+                return Err(anyhow!("run is still running"));
+            }
+        }
+        let run = self.storage.load_evaluation_run(cleaned)?;
+        if run.is_none() {
+            return Ok(None);
+        }
+        let deleted = self.storage.delete_evaluation_run(cleaned)?;
+        Ok(Some(deleted))
+    }
 }
 struct EvaluationRunContext {
     run_id: String,

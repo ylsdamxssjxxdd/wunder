@@ -156,6 +156,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<Value>>;
     fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>>;
     fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>>;
+    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64>;
 
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
 }

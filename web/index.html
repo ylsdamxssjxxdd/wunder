@@ -3439,17 +3439,17 @@
 
                         <tr>
 
-                          <th data-i18n="throughput.metric.inputTokens">输入</th>
+                          <th data-i18n="throughput.metric.prefillSpeed">预填充速度</th>
 
-                          <td><strong id="throughputInputTokens">-</strong></td>
+                          <td><strong id="throughputPrefillSpeed">-</strong></td>
 
                         </tr>
 
                         <tr>
 
-                          <th data-i18n="throughput.metric.outputTokens">输出</th>
+                          <th data-i18n="throughput.metric.decodeSpeed">解码速度</th>
 
-                          <td><strong id="throughputOutputTokens">-</strong></td>
+                          <td><strong id="throughputDecodeSpeed">-</strong></td>
 
                         </tr>
 
@@ -3515,47 +3515,115 @@
 
               </div>
 
-              <div class="monitor-block throughput-errors">
+              <div class="monitor-block throughput-threads">
 
                 <div class="monitor-block-title">
 
-                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  <i class="fa-solid fa-list-ul"></i>
 
-                  <span data-i18n="throughput.errors.title">错误样本</span>
+                  <span data-i18n="throughput.threads.title">线程监视</span>
+
+                  <div class="throughput-thread-filters" role="group">
+
+                    <button
+                      id="throughputThreadFilterAll"
+                      class="tab-btn active"
+                      type="button"
+                      data-i18n="throughput.threads.filter.all"
+                    >
+                      全部
+                    </button>
+
+                    <button
+                      id="throughputThreadFilterActive"
+                      class="tab-btn"
+                      type="button"
+                      data-i18n="throughput.threads.filter.active"
+                    >
+                      活动中
+                    </button>
+
+                    <button
+                      id="throughputThreadFilterFinished"
+                      class="tab-btn"
+                      type="button"
+                      data-i18n="throughput.threads.filter.finished"
+                    >
+                      已完成
+                    </button>
+
+                    <button
+                      id="throughputThreadFilterFailed"
+                      class="tab-btn"
+                      type="button"
+                      data-i18n="throughput.threads.filter.failed"
+                    >
+                      已失败
+                    </button>
+
+                  </div>
 
                 </div>
 
                 <div class="monitor-table-wrap">
 
-                  <table class="monitor-table throughput-error-table">
+                  <div class="monitor-table-scroll">
 
-                    <colgroup>
+                    <table class="monitor-table throughput-thread-table">
 
-                      <col class="col-time" />
+                      <colgroup>
 
-                      <col class="col-message" />
+                        <col class="col-start" />
 
-                    </colgroup>
+                        <col class="col-session" />
 
-                    <thead>
+                        <col class="col-user" />
 
-                      <tr>
+                        <col class="col-question" />
 
-                        <th data-i18n="throughput.errors.time">时间</th>
+                        <col class="col-status" />
 
-                        <th data-i18n="throughput.errors.message">错误信息</th>
+                        <col class="col-token" />
 
-                      </tr>
+                        <col class="col-elapsed" />
 
-                    </thead>
+                        <col class="col-stage" />
 
-                    <tbody id="throughputErrorBody"></tbody>
+                      </colgroup>
 
-                  </table>
+                      <thead>
 
-                  <div id="throughputErrorEmpty" class="muted" data-i18n="throughput.errors.empty">
+                        <tr>
 
-                    暂无错误
+                          <th data-i18n="monitor.table.start">开始时间</th>
+
+                          <th data-i18n="monitor.table.session">会话</th>
+
+                          <th data-i18n="monitor.table.user">用户</th>
+
+                          <th data-i18n="monitor.table.question">问题</th>
+
+                          <th data-i18n="monitor.table.status">状态</th>
+
+                          <th data-i18n="monitor.table.token">Token</th>
+
+                          <th data-i18n="monitor.table.elapsed">耗时</th>
+
+                          <th data-i18n="monitor.table.stage">阶段</th>
+
+                        </tr>
+
+                      </thead>
+
+                      <tbody id="throughputThreadBody"></tbody>
+
+                    </table>
+
+                    <div id="throughputThreadEmpty" class="muted" data-i18n="throughput.threads.empty">
+
+                      暂无线程
+
+                    </div>
 
                   </div>
 
@@ -3576,13 +3644,9 @@
             <h1 data-i18n="panel.evaluation">能力评估</h1>
 
             <div class="header-actions evaluation-header-actions">
-              <button id="evaluationStartBtn" class="btn-with-icon" type="button">
+              <button id="evaluationActionBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-play"></i>
                 <span data-i18n="evaluation.action.start">开始评估</span>
-              </button>
-              <button id="evaluationCancelBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-stop"></i>
-                <span data-i18n="evaluation.action.cancel">取消</span>
               </button>
             </div>
 
@@ -3593,212 +3657,166 @@
           </div>
 
           <div class="evaluation-layout">
-            <div class="evaluation-form">
-              <div class="form-section">
-                <div class="form-row">
-                  <label for="evaluationUserId" data-i18n="evaluation.form.userId">user_id</label>
-                  <input
-                    id="evaluationUserId"
-                    type="text"
-                    placeholder="user_001"
-                    data-i18n-placeholder="common.placeholder.userId"
-                  />
-                </div>
-                <div class="form-row">
-                  <label for="evaluationModelName" data-i18n="evaluation.form.modelName">模型名称</label>
-                  <input
-                    id="evaluationModelName"
-                    type="text"
-                    placeholder="gpt-4"
-                    data-i18n-placeholder="evaluation.form.modelNamePlaceholder"
-                  />
-                </div>
-                <div class="form-row">
-                  <label for="evaluationLanguage" data-i18n="evaluation.form.language">语言</label>
-                  <select id="evaluationLanguage"></select>
-                </div>
-                <div class="form-row">
-                  <label for="evaluationCaseSet" data-i18n="evaluation.form.caseSet">用例集</label>
-                  <select id="evaluationCaseSet"></select>
-                </div>
-                <div class="form-row">
-                  <label data-i18n="evaluation.form.dimensions">评估维度</label>
-                  <div class="evaluation-dimension-select">
-                    <label class="checkbox-inline">
-                      <input id="evaluationDimTool" type="checkbox" checked />
-                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
-                    </label>
-                    <label class="checkbox-inline">
-                      <input id="evaluationDimLogic" type="checkbox" checked />
-                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
-                    </label>
-                    <label class="checkbox-inline">
-                      <input id="evaluationDimCommon" type="checkbox" checked />
-                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
-                    </label>
-                    <label class="checkbox-inline">
-                      <input id="evaluationDimComplex" type="checkbox" checked />
-                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
-                    </label>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label data-i18n="evaluation.form.weights">维度权重</label>
-                  <div class="evaluation-weight-grid">
-                    <div class="evaluation-weight-item">
-                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
-                      <input id="evaluationWeightTool" type="number" min="0" step="0.1" />
+            <div class="evaluation-side">
+              <div class="evaluation-form">
+                <div class="form-section">
+                  <div class="evaluation-form-grid">
+                    <div class="form-row">
+                      <label for="evaluationUserId" data-i18n="evaluation.form.userId">user_id</label>
+                      <input
+                        id="evaluationUserId"
+                        type="text"
+                        placeholder="user_001"
+                        data-i18n-placeholder="common.placeholder.userId"
+                      />
                     </div>
-                    <div class="evaluation-weight-item">
-                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
-                      <input id="evaluationWeightLogic" type="number" min="0" step="0.1" />
+                    <div class="form-row">
+                      <label for="evaluationModelName" data-i18n="evaluation.form.modelName">模型名称</label>
+                      <input
+                        id="evaluationModelName"
+                        type="text"
+                        placeholder="gpt-4"
+                        data-i18n-placeholder="evaluation.form.modelNamePlaceholder"
+                      />
                     </div>
-                    <div class="evaluation-weight-item">
-                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
-                      <input id="evaluationWeightCommon" type="number" min="0" step="0.1" />
+                    <div class="form-row">
+                      <label for="evaluationLanguage" data-i18n="evaluation.form.language">语言</label>
+                      <select id="evaluationLanguage"></select>
                     </div>
-                    <div class="evaluation-weight-item">
-                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
-                      <input id="evaluationWeightComplex" type="number" min="0" step="0.1" />
+                    <div class="form-row">
+                      <label for="evaluationCaseSet" data-i18n="evaluation.form.caseSet">用例集</label>
+                      <select id="evaluationCaseSet"></select>
                     </div>
                   </div>
-                  <div class="muted" data-i18n="evaluation.form.weightHint">
-                    权重会自动归一化，总分按可用维度计算。
+                  <div class="form-row">
+                    <label data-i18n="evaluation.form.dimensions">评估维度</label>
+                    <div class="evaluation-dimension-select">
+                      <label class="checkbox-inline">
+                        <input id="evaluationDimTool" type="checkbox" checked />
+                        <span data-i18n="evaluation.form.dim.tool">工具调用</span>
+                      </label>
+                      <label class="checkbox-inline">
+                        <input id="evaluationDimLogic" type="checkbox" checked />
+                        <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
+                      </label>
+                      <label class="checkbox-inline">
+                        <input id="evaluationDimCommon" type="checkbox" checked />
+                        <span data-i18n="evaluation.form.dim.common">常识问答</span>
+                      </label>
+                      <label class="checkbox-inline">
+                        <input id="evaluationDimComplex" type="checkbox" checked />
+                        <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
+                      </label>
+                    </div>
                   </div>
-                </div>
-                <div id="evaluationFormStatus" class="muted"></div>
-              </div>
-            </div>
-
-            <div class="evaluation-results">
-              <div class="monitor-block evaluation-summary-card">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-flag-checkered"></i>
-                  <span data-i18n="evaluation.summary.title">当前评估</span>
-                  <span id="evaluationRunStatus" class="monitor-status">-</span>
-                </div>
-                <table class="monitor-kv-table">
-                  <tbody>
-                    <tr>
-                      <th data-i18n="evaluation.summary.runId">Run ID</th>
-                      <td><strong id="evaluationRunId">-</strong></td>
-                    </tr>
-                    <tr>
-                      <th data-i18n="evaluation.summary.startedAt">开始时间</th>
-                      <td><strong id="evaluationRunStartedAt">-</strong></td>
-                    </tr>
-                    <tr>
-                      <th data-i18n="evaluation.summary.elapsed">耗时</th>
-                      <td><strong id="evaluationRunElapsed">-</strong></td>
-                    </tr>
-                    <tr>
-                      <th data-i18n="evaluation.summary.totalScore">总分</th>
-                      <td><strong id="evaluationTotalScore">-</strong></td>
-                    </tr>
-                  </tbody>
-                </table>
-                <div class="evaluation-dimension-grid">
-                  <div class="evaluation-dimension-item">
-                    <span data-i18n="evaluation.form.dim.tool">工具调用</span>
-                    <strong id="evaluationScoreTool">-</strong>
-                  </div>
-                  <div class="evaluation-dimension-item">
-                    <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
-                    <strong id="evaluationScoreLogic">-</strong>
-                  </div>
-                  <div class="evaluation-dimension-item">
-                    <span data-i18n="evaluation.form.dim.common">常识问答</span>
-                    <strong id="evaluationScoreCommon">-</strong>
-                  </div>
-                  <div class="evaluation-dimension-item">
-                    <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
-                    <strong id="evaluationScoreComplex">-</strong>
-                  </div>
-                </div>
-                <div class="evaluation-progress">
-                  <div class="evaluation-progress-bar">
-                    <span id="evaluationProgressFill"></span>
-                  </div>
-                  <div id="evaluationProgressText" class="muted">0/0</div>
+                  <div id="evaluationFormStatus" class="muted"></div>
                 </div>
               </div>
 
-              <div class="monitor-block evaluation-cases">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-list-check"></i>
-                  <span data-i18n="evaluation.cases.title">用例明细</span>
+              <div class="evaluation-history">
+                <div class="list-header">
+                  <h2 data-i18n="evaluation.history.title">历史记录</h2>
                 </div>
                 <div class="monitor-table-scroll">
-                  <table class="monitor-table evaluation-case-table">
+                  <table class="monitor-table evaluation-history-table">
                     <thead>
                       <tr>
-                        <th data-i18n="evaluation.cases.table.caseId">用例</th>
-                        <th data-i18n="evaluation.cases.table.dimension">维度</th>
-                        <th data-i18n="evaluation.cases.table.status">状态</th>
-                        <th data-i18n="evaluation.cases.table.score">得分</th>
+                        <th data-i18n="evaluation.history.table.runId">Run ID</th>
+                        <th data-i18n="evaluation.history.table.status">状态</th>
+                        <th data-i18n="evaluation.history.table.score">总分</th>
+                        <th data-i18n="evaluation.history.table.startedAt">开始时间</th>
+                        <th data-i18n="evaluation.history.table.model">模型</th>
+                        <th data-i18n="evaluation.history.table.action">操作</th>
                       </tr>
                     </thead>
-                    <tbody id="evaluationCaseBody"></tbody>
+                    <tbody id="evaluationHistoryBody"></tbody>
                   </table>
                 </div>
-                <div id="evaluationCaseEmpty" class="muted" data-i18n="evaluation.cases.empty">
-                  暂无用例
+                <div id="evaluationHistoryEmpty" class="muted" data-i18n="evaluation.history.empty">
+                  暂无历史记录
                 </div>
               </div>
             </div>
-          </div>
 
-          <div class="evaluation-history">
-            <div class="list-header">
-              <h2 data-i18n="evaluation.history.title">历史记录</h2>
-              <div class="header-actions">
-                <button id="evaluationCompareBtn" class="secondary btn-with-icon" type="button">
-                  <i class="fa-solid fa-code-compare"></i>
-                  <span data-i18n="evaluation.action.compare">对比</span>
-                </button>
-                <button id="evaluationRefreshBtn" class="secondary btn-with-icon" type="button">
-                  <i class="fa-solid fa-arrows-rotate"></i>
-                  <span data-i18n="evaluation.action.refresh">刷新历史</span>
-                </button>
-              </div>
-            </div>
-            <div class="monitor-table-scroll">
-              <table class="monitor-table evaluation-history-table">
-                <thead>
-                  <tr>
-                    <th data-i18n="evaluation.history.table.select">选择</th>
-                    <th data-i18n="evaluation.history.table.runId">Run ID</th>
-                    <th data-i18n="evaluation.history.table.status">状态</th>
-                    <th data-i18n="evaluation.history.table.score">总分</th>
-                    <th data-i18n="evaluation.history.table.startedAt">开始时间</th>
-                    <th data-i18n="evaluation.history.table.model">模型</th>
-                    <th data-i18n="evaluation.history.table.language">语言</th>
-                  </tr>
-                </thead>
-                <tbody id="evaluationHistoryBody"></tbody>
-              </table>
-            </div>
-            <div id="evaluationHistoryEmpty" class="muted" data-i18n="evaluation.history.empty">
-              暂无历史记录
-            </div>
-          </div>
+            <div class="evaluation-main">
+              <div class="evaluation-results">
+                <div class="monitor-block evaluation-summary-card">
+                  <div class="monitor-block-title">
+                    <i class="fa-solid fa-flag-checkered"></i>
+                    <span data-i18n="evaluation.summary.title">当前评估</span>
+                    <span id="evaluationRunStatus" class="monitor-status">-</span>
+                  </div>
+                  <table class="monitor-kv-table">
+                    <tbody>
+                      <tr>
+                        <th data-i18n="evaluation.summary.runId">Run ID</th>
+                        <td><strong id="evaluationRunId">-</strong></td>
+                      </tr>
+                      <tr>
+                        <th data-i18n="evaluation.summary.startedAt">开始时间</th>
+                        <td><strong id="evaluationRunStartedAt">-</strong></td>
+                      </tr>
+                      <tr>
+                        <th data-i18n="evaluation.summary.elapsed">耗时</th>
+                        <td><strong id="evaluationRunElapsed">-</strong></td>
+                      </tr>
+                      <tr>
+                        <th data-i18n="evaluation.summary.totalScore">总分</th>
+                        <td><strong id="evaluationTotalScore">-</strong></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div class="evaluation-dimension-grid">
+                    <div class="evaluation-dimension-item">
+                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
+                      <strong id="evaluationScoreTool">-</strong>
+                    </div>
+                    <div class="evaluation-dimension-item">
+                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
+                      <strong id="evaluationScoreLogic">-</strong>
+                    </div>
+                    <div class="evaluation-dimension-item">
+                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
+                      <strong id="evaluationScoreCommon">-</strong>
+                    </div>
+                    <div class="evaluation-dimension-item">
+                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
+                      <strong id="evaluationScoreComplex">-</strong>
+                    </div>
+                  </div>
+                  <div class="evaluation-progress">
+                    <div class="evaluation-progress-bar">
+                      <span id="evaluationProgressFill"></span>
+                    </div>
+                    <div id="evaluationProgressText" class="muted">0/0</div>
+                  </div>
+                  <div id="evaluationRunHint" class="muted evaluation-run-hint"></div>
+                </div>
 
-          <div class="evaluation-compare">
-            <div class="monitor-block">
-              <div class="monitor-block-title">
-                <i class="fa-solid fa-code-compare"></i>
-                <span data-i18n="evaluation.compare.title">对比结果</span>
+                <div class="monitor-block evaluation-cases">
+                  <div class="monitor-block-title">
+                    <i class="fa-solid fa-list-check"></i>
+                    <span data-i18n="evaluation.cases.title">用例明细</span>
+                  </div>
+                  <div class="monitor-table-scroll">
+                    <table class="monitor-table evaluation-case-table">
+                      <thead>
+                        <tr>
+                          <th data-i18n="evaluation.cases.table.caseId">用例</th>
+                          <th data-i18n="evaluation.cases.table.dimension">维度</th>
+                          <th data-i18n="evaluation.cases.table.status">状态</th>
+                          <th data-i18n="evaluation.cases.table.score">得分</th>
+                        </tr>
+                      </thead>
+                      <tbody id="evaluationCaseBody"></tbody>
+                    </table>
+                  </div>
+                  <div id="evaluationCaseEmpty" class="muted" data-i18n="evaluation.cases.empty">
+                    暂无用例
+                  </div>
+                </div>
               </div>
-              <div id="evaluationCompareSummary" class="evaluation-compare-summary"></div>
-              <div class="monitor-table-scroll">
-                <table class="monitor-table evaluation-compare-table">
-                  <thead id="evaluationCompareHead"></thead>
-                  <tbody id="evaluationCompareBody"></tbody>
-                </table>
-              </div>
-              <div id="evaluationCompareEmpty" class="muted" data-i18n="evaluation.compare.empty">
-                请选择两条记录进行对比
-              </div>
+
             </div>
           </div>
 
