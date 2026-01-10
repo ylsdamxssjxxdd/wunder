@@ -6,7 +6,7 @@ import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260110-06";
+import { t } from "./i18n.js?v=20260110-07";
 
 // 规范化 MCP 服务字段，兼容后端与导入结构
 const normalizeMcpServer = (server) => {

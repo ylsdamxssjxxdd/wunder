@@ -949,8 +949,8 @@
 - `case_set`：用例集
 - `dimensions`：评估维度列表
 - `weights`：维度权重
-- `total_score`：总分（0~1）
-- `dimension_scores`：维度评分映射（0~1）
+- `total_score`：总分（0~100）
+- `dimension_scores`：维度评分映射（0~100）
 - `case_count/passed_count/failed_count/skipped_count/error_count`：用例统计
 - `started_time/finished_time/elapsed_s`：时间信息（秒级时间戳/耗时）
 - `tool_names`：请求时传入的工具清单
@@ -965,7 +965,7 @@
 - `case_id`：用例 ID
 - `dimension`：维度（`tool/logic/common/complex`）
 - `status`：`active/passed/failed/skipped/error/cancelled`
-- `score/max_score/weight`：得分、满分、权重
+- `score/max_score/weight`：得分、满分（按维度权重分摊的分值）与权重
 - `prompt`：实际评估提示词
 - `checker`：判定器配置
 - `final_answer`：模型最终回复

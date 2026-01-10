@@ -14,7 +14,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260110-06";
+} from "./i18n.js?v=20260110-07";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 

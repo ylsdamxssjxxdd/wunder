@@ -191,6 +191,7 @@ impl EvaluationManager {
             .iter()
             .map(|case| case.id.clone())
             .collect::<Vec<_>>();
+        let case_score_map = build_case_score_map(&selected_cases, &weights);
 
         let started_time = now_ts();
         let run_payload = json!({
@@ -221,7 +222,9 @@ impl EvaluationManager {
         self.storage.create_evaluation_run(&run_payload)?;
 
         for case in &selected_cases {
-            let item_payload = build_active_item_payload(case, &run_id, user_id, started_time);
+            let max_score = case_score_map.get(&case.id).copied().unwrap_or(0.0);
+            let item_payload =
+                build_active_item_payload(case, &run_id, user_id, started_time, max_score);
             self.storage
                 .upsert_evaluation_item(&run_id, &item_payload)?;
         }
@@ -259,6 +262,7 @@ impl EvaluationManager {
             state: self.state.clone(),
             tool_snapshot: tool_snapshot.clone(),
             case_ids,
+            case_score_map,
         };
 
         tokio::spawn(async move {
@@ -358,6 +362,7 @@ struct EvaluationRunContext {
     allowed_tool_names: HashSet<String>,
     tool_snapshot: Vec<String>,
     case_ids: Vec<String>,
+    case_score_map: HashMap<String, f64>,
     sender: broadcast::Sender<EvaluationEvent>,
     cancel_flag: Arc<AtomicBool>,
     storage: Arc<dyn StorageBackend>,
@@ -389,7 +394,9 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
     });
 
     for case in ctx.cases.iter() {
-        let item_payload = build_active_item_payload(case, &run_id, &ctx.user_id, start_ts);
+        let max_score = ctx.case_score_map.get(&case.id).copied().unwrap_or(0.0);
+        let item_payload =
+            build_active_item_payload(case, &run_id, &ctx.user_id, start_ts, max_score);
         let _ = ctx.sender.send(EvaluationEvent {
             event: "eval_item".to_string(),
             data: item_payload,
@@ -501,13 +508,15 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
             }
         }
 
+        let max_score = ctx.case_score_map.get(&case.id).copied().unwrap_or(0.0);
+        let score = (max_score * result.score).max(0.0);
         let item_payload = json!({
             "run_id": run_id,
             "case_id": case.id.clone(),
             "dimension": dimension_label(case.dimension),
             "status": status.as_str(),
-            "score": result.score,
-            "max_score": 1.0,
+            "score": score,
+            "max_score": max_score,
             "weight": case.weight.max(0.0),
             "prompt": apply_placeholders(&case.prompt, &run_id, &ctx.user_id),
             "checker": serde_json::to_value(&case.checker).unwrap_or(Value::Null),
@@ -614,12 +623,11 @@ fn build_total_score(scores: &HashMap<String, f64>, weights: &DimensionWeights) 
         ("common".to_string(), weights.common),
         ("complex".to_string(), weights.complex),
     ]);
-    let mut total_weight = 0.0;
+    let total_weight = weights.tool + weights.logic + weights.common + weights.complex;
     let mut weighted_sum = 0.0;
     for (dimension, score) in scores {
         if let Some(weight) = weight_map.get(dimension) {
             if *weight > 0.0 {
-                total_weight += *weight;
                 weighted_sum += score * weight;
             }
         }
@@ -629,6 +637,30 @@ fn build_total_score(scores: &HashMap<String, f64>, weights: &DimensionWeights) 
     } else {
         (weighted_sum / total_weight).max(0.0)
     }
+}
+
+fn build_case_score_map(
+    cases: &[EvaluationCase],
+    weights: &DimensionWeights,
+) -> HashMap<String, f64> {
+    let mut totals: HashMap<EvaluationDimension, f64> = HashMap::new();
+    for case in cases {
+        let entry = totals.entry(case.dimension).or_insert(0.0);
+        *entry += case.weight.max(0.0);
+    }
+    let mut output = HashMap::new();
+    for case in cases {
+        let dimension_weight = dimension_weight(weights, case.dimension);
+        let total_weight = totals.get(&case.dimension).copied().unwrap_or(0.0);
+        let case_weight = case.weight.max(0.0);
+        let max_score = if dimension_weight > 0.0 && total_weight > 0.0 {
+            case_weight / total_weight * dimension_weight
+        } else {
+            0.0
+        };
+        output.insert(case.id.clone(), max_score);
+    }
+    output
 }
 fn select_cases(
     files: &[EvaluationCaseFile],
@@ -697,6 +729,7 @@ fn build_active_item_payload(
     run_id: &str,
     user_id: &str,
     started_time: f64,
+    max_score: f64,
 ) -> Value {
     json!({
         "run_id": run_id,
@@ -704,7 +737,7 @@ fn build_active_item_payload(
         "dimension": dimension_label(case.dimension),
         "status": "active",
         "score": 0.0,
-        "max_score": 1.0,
+        "max_score": max_score,
         "weight": case.weight.max(0.0),
         "prompt": apply_placeholders(&case.prompt, run_id, user_id),
         "checker": serde_json::to_value(&case.checker).unwrap_or(Value::Null),
@@ -1367,6 +1400,15 @@ fn dimension_label(dimension: EvaluationDimension) -> &'static str {
         EvaluationDimension::Logic => "logic",
         EvaluationDimension::Common => "common",
         EvaluationDimension::Complex => "complex",
+    }
+}
+
+fn dimension_weight(weights: &DimensionWeights, dimension: EvaluationDimension) -> f64 {
+    match dimension {
+        EvaluationDimension::Tool => weights.tool,
+        EvaluationDimension::Logic => weights.logic,
+        EvaluationDimension::Common => weights.common,
+        EvaluationDimension::Complex => weights.complex,
     }
 }
 

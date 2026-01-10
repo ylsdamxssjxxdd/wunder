@@ -5,7 +5,7 @@ import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { loadMonitorData, setMonitorUserFilter } from "./monitor.js";
 import { formatTokenCount } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260110-06";
+import { t } from "./i18n.js?v=20260110-07";
 
 const DEFAULT_USER_STATS_PAGE_SIZE = 100;
 

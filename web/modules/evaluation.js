@@ -1,7 +1,7 @@
 ﻿import { elements } from "./elements.js?v=20260110-06";
 import { openMonitorDetail } from "./monitor.js?v=20260110-08";
 import { normalizeApiBase, formatDuration } from "./utils.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-06";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-07";
 
 const evaluationState = {
   activeRunId: "",
@@ -145,11 +145,7 @@ const updateProgressAnimation = () => {
 };
 
 const updateRunHint = () => {
-  if (isActiveRunning() && isViewingActive()) {
-    setRunHint(t("evaluation.message.running"));
-  } else {
-    setRunHint("");
-  }
+  setRunHint("");
   updateRunSpinner();
   updateProgressAnimation();
   updateCurrentCaseDisplay();
@@ -297,7 +293,7 @@ const renderCaseItem = (item) => {
   cells[2].textContent = "";
   cells[2].appendChild(statusBadge);
   if (Number.isFinite(score) && Number.isFinite(maxScore)) {
-    cells[3].textContent = `${score}/${maxScore}`;
+    cells[3].textContent = `${formatScore(score)}/${formatScore(maxScore)}`;
   } else {
     cells[3].textContent = "-";
   }
