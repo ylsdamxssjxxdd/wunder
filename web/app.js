@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260110-06";
+import { elements } from "./modules/elements.js?v=20260110-07";
 
 import { state } from "./modules/state.js";
 
@@ -61,14 +61,14 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260110-06";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260110-01";
 
-import { initSettingsPanel } from "./modules/settings.js?v=20260110-05";
+import { initSettingsPanel } from "./modules/settings.js?v=20260110-06";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260110-07";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-07";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-08";
 
 
 

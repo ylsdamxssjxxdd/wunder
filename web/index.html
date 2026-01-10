@@ -1092,6 +1092,13 @@
                   <input id="settingsMaxActiveSessions" type="number" min="1" step="1" />
                 </div>
                 <div class="form-row">
+                  <label for="settingsSandboxEnabled" data-i18n="settings.label.sandbox">沙盒执行</label>
+                  <label class="checkbox-row">
+                    <input id="settingsSandboxEnabled" type="checkbox" checked />
+                    <span data-i18n="settings.option.sandboxEnabled">启用沙盒（执行命令/ptc）</span>
+                  </label>
+                </div>
+                <div class="form-row">
                   <label for="settingsPromptDelay" data-i18n="settings.label.promptDelay">提示词刷新延迟（毫秒）</label>
                   <input id="settingsPromptDelay" type="number" min="50" step="50" />
                 </div>
@@ -3228,6 +3235,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260110-29"></script>
+    <script type="module" src="./app.js?v=20260110-30"></script>
   </body>
 </html>

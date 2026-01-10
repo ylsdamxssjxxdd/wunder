@@ -313,10 +313,13 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `server.max_active_sessions`：全局最大并发会话数
+  - `server.sandbox_enabled`：是否启用沙盒执行（true=使用 sandbox，false=本机执行）
 - `POST` 入参：
-  - `max_active_sessions`：全局最大并发会话数（>0）
+  - `max_active_sessions`：全局最大并发会话数（可选，>0）
+  - `sandbox_enabled`：是否启用沙盒执行（可选）
 - `POST` 返回：
   - `server.max_active_sessions`：更新后的全局最大并发会话数
+  - `server.sandbox_enabled`：更新后的沙盒执行开关
 
 ### 4.1.7 `/wunder/admin/skills/upload`
 

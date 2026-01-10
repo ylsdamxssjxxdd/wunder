@@ -1,5 +1,5 @@
-﻿import { elements } from "./elements.js?v=20260110-06";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-07";
+﻿import { elements } from "./elements.js?v=20260110-07";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-08";
 
 // 控制日志数量上限，避免详情节点堆积导致页面卡顿
 const MAX_LOG_ITEMS = 300;

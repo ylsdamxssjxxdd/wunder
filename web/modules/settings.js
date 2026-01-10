@@ -4,7 +4,7 @@
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-06";
+import { elements } from "./elements.js?v=20260110-07";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260110-08";
 import { notify } from "./notify.js";
@@ -14,7 +14,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260110-07";
+} from "./i18n.js?v=20260110-08";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 
@@ -24,6 +24,7 @@ const MIN_MAX_ACTIVE_SESSIONS = 1;
 
 const serverSettings = {
   maxActiveSessions: null,
+  sandboxEnabled: null,
 };
 
 // 解析数字输入，确保落在合理区间内
@@ -126,7 +127,7 @@ const applySettingsForm = (config) => {
   }
 };
 
-const applyServerSettings = (maxActiveSessions) => {
+const applyMaxActiveSessions = (maxActiveSessions) => {
   if (!elements.settingsMaxActiveSessions) {
     return;
   }
@@ -135,6 +136,22 @@ const applyServerSettings = (maxActiveSessions) => {
     return;
   }
   elements.settingsMaxActiveSessions.value = "";
+};
+
+const applySandboxEnabled = (sandboxEnabled) => {
+  if (!elements.settingsSandboxEnabled) {
+    return;
+  }
+  if (typeof sandboxEnabled === "boolean") {
+    elements.settingsSandboxEnabled.checked = sandboxEnabled;
+    return;
+  }
+  elements.settingsSandboxEnabled.checked = true;
+};
+
+const applyServerSettings = (options = {}) => {
+  applyMaxActiveSessions(options.maxActiveSessions);
+  applySandboxEnabled(options.sandboxEnabled);
 };
 
 const resolveMaxActiveSessions = () => {
@@ -150,6 +167,13 @@ const resolveMaxActiveSessions = () => {
     fallback,
     MIN_MAX_ACTIVE_SESSIONS
   );
+};
+
+const resolveSandboxEnabled = () => {
+  if (!elements.settingsSandboxEnabled) {
+    return null;
+  }
+  return Boolean(elements.settingsSandboxEnabled.checked);
 };
 
 const getAuthHeaders = () => {
@@ -175,10 +199,20 @@ const fetchServerSettings = async () => {
   return payload?.server || {};
 };
 
-const updateServerSettings = async (maxActiveSessions) => {
+const updateServerSettings = async (options = {}) => {
   const wunderBase = getWunderBase();
   if (!wunderBase) {
     throw new Error(t("settings.error.apiBase"));
+  }
+  const requestBody = {};
+  if (Number.isFinite(options.maxActiveSessions)) {
+    requestBody.max_active_sessions = options.maxActiveSessions;
+  }
+  if (typeof options.sandboxEnabled === "boolean") {
+    requestBody.sandbox_enabled = options.sandboxEnabled;
+  }
+  if (!Object.keys(requestBody).length) {
+    return {};
   }
   const response = await fetch(`${wunderBase}/admin/server`, {
     method: "POST",
@@ -186,24 +220,29 @@ const updateServerSettings = async (maxActiveSessions) => {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
-    body: JSON.stringify({ max_active_sessions: maxActiveSessions }),
+    body: JSON.stringify(requestBody),
   });
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
-  const payload = await response.json();
-  return payload?.server || {};
+  const data = await response.json();
+  return data?.server || {};
 };
 
 const loadServerSettings = async (options = {}) => {
-  if (!elements.settingsMaxActiveSessions) {
+  if (!elements.settingsMaxActiveSessions && !elements.settingsSandboxEnabled) {
     return;
   }
   const silent = options.silent === true;
   try {
     const server = await fetchServerSettings();
     serverSettings.maxActiveSessions = server.max_active_sessions ?? null;
-    applyServerSettings(serverSettings.maxActiveSessions);
+    serverSettings.sandboxEnabled =
+      typeof server.sandbox_enabled === "boolean" ? server.sandbox_enabled : true;
+    applyServerSettings({
+      maxActiveSessions: serverSettings.maxActiveSessions,
+      sandboxEnabled: serverSettings.sandboxEnabled,
+    });
   } catch (error) {
     if (!silent) {
       notify(t("settings.toast.serverLoadFailed", { message: error.message }), "error");
@@ -262,26 +301,56 @@ const handleSaveSettings = async () => {
   }
   notify(t("settings.toast.saved"), "success");
 
-  if (elements.settingsMaxActiveSessions) {
+  if (elements.settingsMaxActiveSessions || elements.settingsSandboxEnabled) {
     const nextMaxActiveSessions = resolveMaxActiveSessions();
+    const nextSandboxEnabled = resolveSandboxEnabled();
+    const payload = {};
+    let shouldUpdate = false;
+
     if (nextMaxActiveSessions === null) {
-      applyServerSettings(serverSettings.maxActiveSessions);
+      applyMaxActiveSessions(serverSettings.maxActiveSessions);
+    } else if (nextMaxActiveSessions !== serverSettings.maxActiveSessions) {
+      payload.maxActiveSessions = nextMaxActiveSessions;
+      shouldUpdate = true;
+    }
+
+    if (nextSandboxEnabled === null) {
+      applySandboxEnabled(serverSettings.sandboxEnabled);
+    } else if (nextSandboxEnabled !== serverSettings.sandboxEnabled) {
+      payload.sandboxEnabled = nextSandboxEnabled;
+      shouldUpdate = true;
+    }
+
+    if (!shouldUpdate) {
+      applyServerSettings({
+        maxActiveSessions: serverSettings.maxActiveSessions,
+        sandboxEnabled: serverSettings.sandboxEnabled,
+      });
       return;
     }
-    if (nextMaxActiveSessions !== serverSettings.maxActiveSessions) {
-      try {
-        const server = await updateServerSettings(nextMaxActiveSessions);
-        serverSettings.maxActiveSessions = server.max_active_sessions ?? nextMaxActiveSessions;
-        applyServerSettings(serverSettings.maxActiveSessions);
-      } catch (error) {
-        notify(
-          t("settings.toast.serverUpdateFailed", { message: error.message }),
-          "error"
-        );
-        applyServerSettings(serverSettings.maxActiveSessions);
+
+    try {
+      const server = await updateServerSettings(payload);
+      serverSettings.maxActiveSessions =
+        server.max_active_sessions ?? payload.maxActiveSessions ?? serverSettings.maxActiveSessions;
+      if (typeof server.sandbox_enabled === "boolean") {
+        serverSettings.sandboxEnabled = server.sandbox_enabled;
+      } else if (typeof payload.sandboxEnabled === "boolean") {
+        serverSettings.sandboxEnabled = payload.sandboxEnabled;
       }
-    } else {
-      applyServerSettings(serverSettings.maxActiveSessions);
+      applyServerSettings({
+        maxActiveSessions: serverSettings.maxActiveSessions,
+        sandboxEnabled: serverSettings.sandboxEnabled,
+      });
+    } catch (error) {
+      notify(
+        t("settings.toast.serverUpdateFailed", { message: error.message }),
+        "error"
+      );
+      applyServerSettings({
+        maxActiveSessions: serverSettings.maxActiveSessions,
+        sandboxEnabled: serverSettings.sandboxEnabled,
+      });
     }
   }
 };

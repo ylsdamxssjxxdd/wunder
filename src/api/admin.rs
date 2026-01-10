@@ -1108,9 +1108,11 @@ async fn admin_llm_context_window(
 
 async fn admin_server_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
+    let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
     Ok(Json(json!({
         "server": {
-            "max_active_sessions": config.server.max_active_sessions
+            "max_active_sessions": config.server.max_active_sessions,
+            "sandbox_enabled": sandbox_enabled
         }
     })))
 }
@@ -1119,22 +1121,41 @@ async fn admin_server_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
-    if payload.max_active_sessions == 0 {
+    if let Some(max_active_sessions) = payload.max_active_sessions {
+        if max_active_sessions == 0 {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.max_active_sessions_invalid"),
+            ));
+        }
+    }
+    if payload.max_active_sessions.is_none() && payload.sandbox_enabled.is_none() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            i18n::t("error.max_active_sessions_invalid"),
+            i18n::t("error.param_required"),
         ));
     }
     let updated = state
         .config_store
         .update(|config| {
-            config.server.max_active_sessions = payload.max_active_sessions;
+            if let Some(max_active_sessions) = payload.max_active_sessions {
+                config.server.max_active_sessions = max_active_sessions;
+            }
+            if let Some(sandbox_enabled) = payload.sandbox_enabled {
+                config.sandbox.mode = if sandbox_enabled {
+                    "sandbox".to_string()
+                } else {
+                    "local".to_string()
+                };
+            }
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let sandbox_enabled = updated.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
     Ok(Json(json!({
         "server": {
-            "max_active_sessions": updated.server.max_active_sessions
+            "max_active_sessions": updated.server.max_active_sessions,
+            "sandbox_enabled": sandbox_enabled
         }
     })))
 }
@@ -2340,7 +2361,10 @@ struct LlmContextProbeRequest {
 
 #[derive(Debug, Deserialize)]
 struct ServerUpdateRequest {
-    max_active_sessions: usize,
+    #[serde(default)]
+    max_active_sessions: Option<usize>,
+    #[serde(default)]
+    sandbox_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

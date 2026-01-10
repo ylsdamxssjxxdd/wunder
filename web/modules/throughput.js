@@ -1,11 +1,11 @@
 ﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-06";
+import { elements } from "./elements.js?v=20260110-07";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { openMonitorDetail } from "./monitor.js?v=20260110-08";
-import { t } from "./i18n.js?v=20260110-07";
+import { t } from "./i18n.js?v=20260110-08";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {

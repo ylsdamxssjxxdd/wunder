@@ -1370,5 +1370,29 @@
   "workspace.tree.empty": {
     "en-US": "(empty)",
     "zh-CN": "（空）"
+  },
+  "settings.label.sandbox": {
+    "en-US": "Sandbox execution",
+    "zh-CN": "沙盒执行"
+  },
+  "settings.option.sandboxEnabled": {
+    "en-US": "Use sandbox for exec/ptc",
+    "zh-CN": "启用沙盒（执行命令/ptc）"
+  },
+  "settings.tip": {
+    "en-US": "Settings are mostly stored in this browser; max concurrency and sandbox execution are saved on the server and take effect immediately.",
+    "zh-CN": "设置主要保存在当前浏览器，最大并发与沙盒执行会写入服务端配置并立即生效。"
+  },
+  "settings.hint.general": {
+    "en-US": "Polling interval, max concurrency, and sandbox execution update immediately; default panel takes effect after refresh.",
+    "zh-CN": "保存后立即更新轮询间隔、最大并发与沙盒执行，默认面板需刷新页面生效。"
+  },
+  "settings.toast.serverLoadFailed": {
+    "en-US": "Failed to load server settings: {message}",
+    "zh-CN": "服务端设置读取失败：{message}"
+  },
+  "settings.toast.serverUpdateFailed": {
+    "en-US": "Failed to save server settings: {message}",
+    "zh-CN": "服务端设置保存失败：{message}"
   }
 }

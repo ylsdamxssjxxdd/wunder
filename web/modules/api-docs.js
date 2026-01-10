@@ -1,7 +1,7 @@
 ﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-06";
+import { elements } from "./elements.js?v=20260110-07";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20260110-07";
+import { t } from "./i18n.js?v=20260110-08";
 
 const ENDPOINT_GROUPS = [
   {

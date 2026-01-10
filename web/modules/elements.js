@@ -174,6 +174,7 @@ export const elements = {
   settingsDefaultPanel: document.getElementById("settingsDefaultPanel"),
   settingsMonitorInterval: document.getElementById("settingsMonitorInterval"),
   settingsMaxActiveSessions: document.getElementById("settingsMaxActiveSessions"),
+  settingsSandboxEnabled: document.getElementById("settingsSandboxEnabled"),
   settingsPromptDelay: document.getElementById("settingsPromptDelay"),
   settingsLanguage: document.getElementById("settingsLanguage"),
   settingsSaveBtn: document.getElementById("settingsSaveBtn"),
