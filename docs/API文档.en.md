@@ -225,6 +225,13 @@
 - Body: `provider`, `base_url`, `api_key`, `model`, `timeout_s`
 - Response: `max_context`, `message`
 
+### 4.1.6.2 `/wunder/admin/server`
+
+- Method: `GET/POST`
+- `GET` Response: `server.max_active_sessions`
+- `POST` Body: `max_active_sessions` (> 0)
+- `POST` Response: `server.max_active_sessions`
+
 ### 4.1.7 `/wunder/admin/skills/upload`
 
 - Method: `POST`

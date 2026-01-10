@@ -1,0 +1,81 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .panel {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+        stroke-width: 2;
+      }
+      .divider {
+        stroke: #e1e7f2;
+        stroke-width: 2;
+      }
+      .title {
+        font: 600 20px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #1f2a44;
+      }
+      .desc {
+        font: 500 14px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #5b6b8c;
+      }
+      .flow {
+        stroke: #c7d2e5;
+        stroke-width: 3;
+        stroke-linecap: round;
+      }
+      .node {
+        fill: #5b6b8c;
+      }
+      .icon {
+        fill: #eaf2ff;
+        stroke: #cfd8ee;
+        stroke-width: 2;
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#f5f8ff" />
+
+  <rect class="panel" x="80" y="160" width="1040" height="400" rx="28" filter="url(#shadow)" />
+  <line class="divider" x1="430" y1="190" x2="430" y2="530" />
+  <line class="divider" x1="770" y1="190" x2="770" y2="530" />
+
+  <circle class="icon" cx="250" cy="220" r="26" />
+  <text class="title" x="250" y="265" text-anchor="middle">生命周期</text>
+  <text class="desc" x="250" y="295" text-anchor="middle">running → finished</text>
+  <text class="desc" x="250" y="320" text-anchor="middle">error / cancelled</text>
+  <line class="flow" x1="180" y1="380" x2="320" y2="380" />
+  <circle class="node" cx="190" cy="380" r="8" />
+  <circle class="node" cx="250" cy="380" r="8" />
+  <circle class="node" cx="310" cy="380" r="8" />
+
+  <circle class="icon" cx="600" cy="220" r="26" />
+  <text class="title" x="600" y="265" text-anchor="middle">并发规则</text>
+  <text class="desc" x="600" y="295" text-anchor="middle">单用户单线程</text>
+  <text class="desc" x="600" y="320" text-anchor="middle">冲突即时返回</text>
+  <rect x="560" y="360" width="80" height="14" rx="7" fill="#cfd8ee" />
+  <rect x="545" y="380" width="110" height="14" rx="7" fill="#e1e7f2" />
+  <rect x="535" y="400" width="130" height="14" rx="7" fill="#eef3fb" />
+
+  <circle class="icon" cx="950" cy="220" r="26" />
+  <text class="title" x="950" y="265" text-anchor="middle">监控与取消</text>
+  <text class="desc" x="950" y="295" text-anchor="middle">事件可追踪</text>
+  <text class="desc" x="950" y="320" text-anchor="middle">异常可终止</text>
+  <ellipse cx="950" cy="385" rx="46" ry="22" fill="#eef4ff" stroke="#cfd8ee" stroke-width="2" />
+  <circle cx="950" cy="385" r="10" fill="#5b6b8c" />
+</svg>

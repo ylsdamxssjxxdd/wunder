@@ -1,11 +1,11 @@
-import { elements } from "./elements.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-05";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251231-01";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260110-03";
+import { t } from "./i18n.js?v=20260110-04";
 
 // 规范化 A2A 服务信息，兼容字段命名并补齐默认值。
 const normalizeA2aService = (service) => {

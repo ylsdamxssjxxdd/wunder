@@ -45,11 +45,11 @@ export default function buildSlide() {
               <a class="toc-item toc-link" href="#16">
                 <div class="toc-index">05</div>
                 <div>
-                  <div class="toc-title">Agent session management</div>
-                  <div class="toc-desc">Stable, observable, cancelable</div>
+                  <div class="toc-title">Agent management testing</div>
+                  <div class="toc-desc">Session management / Throughput testing / Capability evaluation</div>
                 </div>
               </a>
-              <a class="toc-item toc-link" href="#17">
+              <a class="toc-item toc-link" href="#20">
                 <div class="toc-index">06</div>
                 <div>
                   <div class="toc-title">Quick start</div>

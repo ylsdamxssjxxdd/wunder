@@ -1,0 +1,78 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .panel {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+        stroke-width: 2;
+      }
+      .axis {
+        stroke: #c7d2e5;
+        stroke-width: 2;
+      }
+      .bar {
+        fill: #8fb4ff;
+      }
+      .bar.light {
+        fill: #c6d7ff;
+      }
+      .line {
+        stroke: #ff8a4c;
+        stroke-width: 3;
+        fill: none;
+      }
+      .label {
+        font: 600 18px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #1f2a44;
+      }
+      .desc {
+        font: 500 14px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #5b6b8c;
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#f5f8ff" />
+  <rect class="panel" x="120" y="150" width="960" height="420" rx="28" filter="url(#shadow)" />
+
+  <text class="label" x="180" y="205">吞吐量与延迟概览</text>
+  <line class="axis" x1="200" y1="230" x2="200" y2="500" />
+  <line class="axis" x1="200" y1="500" x2="920" y2="500" />
+
+  <rect class="bar" x="260" y="360" width="70" height="140" rx="8" />
+  <rect class="bar light" x="380" y="320" width="70" height="180" rx="8" />
+  <rect class="bar" x="500" y="280" width="70" height="220" rx="8" />
+  <rect class="bar light" x="620" y="250" width="70" height="250" rx="8" />
+
+  <polyline class="line" points="295,420 415,380 535,340 655,300 775,330" />
+  <circle cx="295" cy="420" r="4" fill="#ff8a4c" />
+  <circle cx="415" cy="380" r="4" fill="#ff8a4c" />
+  <circle cx="535" cy="340" r="4" fill="#ff8a4c" />
+  <circle cx="655" cy="300" r="4" fill="#ff8a4c" />
+  <circle cx="775" cy="330" r="4" fill="#ff8a4c" />
+
+  <text class="desc" x="260" y="540">并发 50</text>
+  <text class="desc" x="380" y="540">并发 100</text>
+  <text class="desc" x="500" y="540">并发 200</text>
+  <text class="desc" x="620" y="540">并发 400</text>
+
+  <rect x="760" y="240" width="140" height="32" rx="16" fill="#eef4ff" stroke="#d7e2f3" stroke-width="2" />
+  <text class="desc" x="830" y="262" text-anchor="middle">QPS / 资源</text>
+  <rect x="760" y="280" width="140" height="32" rx="16" fill="#fff1e8" stroke="#ffd3ba" stroke-width="2" />
+  <text class="desc" x="830" y="302" text-anchor="middle">P95 延迟</text>
+</svg>

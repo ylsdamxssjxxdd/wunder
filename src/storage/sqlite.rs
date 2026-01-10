@@ -1487,7 +1487,7 @@ impl StorageBackend for SqliteStorage {
         self.create_evaluation_run(&merged)
     }
 
-    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -1521,12 +1521,10 @@ impl StorageBackend for SqliteStorage {
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
         let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        let updated = conn.execute(
+            "UPDATE evaluation_items SET dimension = ?, status = ?, score = ?, max_score = ?, weight = ?, \
+             started_time = ?, finished_time = ?, payload = ? WHERE run_id = ? AND case_id = ?",
             params![
-                cleaned,
-                case_id,
                 dimension,
                 status,
                 score,
@@ -1534,9 +1532,29 @@ impl StorageBackend for SqliteStorage {
                 weight,
                 started_time,
                 finished_time,
-                payload_text
+                payload_text,
+                cleaned,
+                case_id,
             ],
         )?;
+        if updated == 0 {
+            conn.execute(
+                "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    cleaned,
+                    case_id,
+                    dimension,
+                    status,
+                    score,
+                    max_score,
+                    weight,
+                    started_time,
+                    finished_time,
+                    payload_text
+                ],
+            )?;
+        }
         Ok(())
     }
 
@@ -1650,12 +1668,16 @@ impl StorageBackend for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
+        let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let items_deleted =
-            tx.execute("DELETE FROM evaluation_items WHERE run_id = ?", params![cleaned])?;
-        let runs_deleted =
-            tx.execute("DELETE FROM evaluation_runs WHERE run_id = ?", params![cleaned])?;
+        let items_deleted = tx.execute(
+            "DELETE FROM evaluation_items WHERE run_id = ?",
+            params![cleaned],
+        )?;
+        let runs_deleted = tx.execute(
+            "DELETE FROM evaluation_runs WHERE run_id = ?",
+            params![cleaned],
+        )?;
         tx.commit()?;
         Ok((items_deleted + runs_deleted) as i64)
     }

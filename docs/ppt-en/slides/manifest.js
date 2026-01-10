@@ -20,6 +20,9 @@ const slideManifest = [
   "./slide-15.js",
   "./slide-16.js",
   "./slide-17.js",
+  "./slide-18.js",
+  "./slide-19.js",
+  "./slide-20.js",
 ];
 
 export default slideManifest;

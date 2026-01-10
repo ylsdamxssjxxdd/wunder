@@ -20,4 +20,7 @@ window.WunderPpt.manifest = [
   "slides/slide-15.js",
   "slides/slide-16.js",
   "slides/slide-17.js",
+  "slides/slide-18.js",
+  "slides/slide-19.js",
+  "slides/slide-20.js",
 ];

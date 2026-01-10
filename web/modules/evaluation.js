@@ -1,7 +1,7 @@
 ﻿import { elements } from "./elements.js";
-import { openMonitorDetail } from "./monitor.js?v=20260110-05";
+import { openMonitorDetail } from "./monitor.js?v=20260110-06";
 import { normalizeApiBase, formatDuration } from "./utils.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-04";
 
 const evaluationState = {
   activeRunId: "",
@@ -11,6 +11,8 @@ const evaluationState = {
   controller: null,
   cases: new Map(),
 };
+
+const isFinishedStatus = (status) => ["finished", "failed", "cancelled"].includes(String(status || ""));
 
 const formatEpochSeconds = (value) => {
   if (!Number.isFinite(value)) {
@@ -80,12 +82,31 @@ const updateActionButton = () => {
   }
 };
 
+const updateRunSpinner = () => {
+  if (!elements.evaluationRunSpinner) {
+    return;
+  }
+  const active = isActiveRunning() && isViewingActive();
+  elements.evaluationRunSpinner.classList.toggle("active", active);
+  elements.evaluationRunSpinner.setAttribute("aria-hidden", active ? "false" : "true");
+};
+
+const updateProgressAnimation = () => {
+  if (!elements.evaluationProgressFill) {
+    return;
+  }
+  const active = isActiveRunning() && isViewingActive();
+  elements.evaluationProgressFill.classList.toggle("active", active);
+};
+
 const updateRunHint = () => {
   if (isActiveRunning() && isViewingActive()) {
     setRunHint(t("evaluation.message.running"));
   } else {
     setRunHint("");
   }
+  updateRunSpinner();
+  updateProgressAnimation();
 };
 
 const resetRunSummary = () => {
@@ -191,6 +212,9 @@ const renderCaseItem = (item) => {
   const statusBadge = document.createElement("span");
   statusBadge.textContent = status;
   statusBadge.className = `monitor-status ${status}`;
+  if (status === "active") {
+    statusBadge.className = "monitor-status running";
+  }
   if (status === "passed") {
     statusBadge.className = "monitor-status finished";
   }
@@ -248,7 +272,12 @@ const applyRunPayload = (run) => {
   if (elements.evaluationScoreComplex) {
     elements.evaluationScoreComplex.textContent = formatScore(scores.complex);
   }
-  updateProgress({ completed: run.passed_count + run.failed_count + run.skipped_count + run.error_count, total: run.case_count });
+  const passed = Number(run.passed_count ?? 0);
+  const failed = Number(run.failed_count ?? 0);
+  const skipped = Number(run.skipped_count ?? 0);
+  const errors = Number(run.error_count ?? 0);
+  const total = Number(run.case_count ?? 0);
+  updateProgress({ completed: passed + failed + skipped + errors, total });
 };
 
 const buildApiBase = () => normalizeApiBase(elements.apiBase?.value || "");
@@ -360,6 +389,46 @@ const loadEvaluationHistory = async () => {
   }
 };
 
+const refreshActiveRun = async (runId, options = {}) => {
+  const cleaned = String(runId || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  const apiBase = buildApiBase();
+  if (!apiBase) {
+    if (!options.silent) {
+      setFormStatus(t("evaluation.message.apiBaseEmpty"));
+    }
+    return;
+  }
+  try {
+    const response = await fetch(`${apiBase}/admin/evaluation/${cleaned}`);
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const payload = await response.json();
+    const run = payload.run || {};
+    const viewMatches = !evaluationState.viewRunId || evaluationState.viewRunId === cleaned;
+    if (viewMatches) {
+      applyRunPayload(run);
+      (payload.items || []).forEach((item) => renderCaseItem(item));
+    }
+    const status = String(run.status || "");
+    if (cleaned === evaluationState.activeRunId && status) {
+      evaluationState.activeStatus = status;
+      if (isFinishedStatus(status)) {
+        evaluationState.activeRunId = "";
+      }
+    }
+    updateActionButton();
+    updateRunHint();
+  } catch (error) {
+    if (!options.silent) {
+      setFormStatus(t("evaluation.message.historyRestoreFailed", { message: error.message }));
+    }
+  }
+};
+
 const deleteHistoryRun = async (runId) => {
   const cleaned = String(runId || "").trim();
   if (!cleaned) {
@@ -467,6 +536,7 @@ const streamEvaluation = async (runId) => {
     if (controller.signal.aborted || error?.name === "AbortError") {
       return;
     }
+    void refreshActiveRun(runId, { silent: true });
     setFormStatus(t("evaluation.message.streamFailed", { message: error.message }));
   } finally {
     evaluationState.streaming = false;
@@ -496,19 +566,21 @@ const handleStreamEvent = (eventType, payload) => {
     }
   } else if (eventType === "eval_finished") {
     const payloadRunId = payload?.run_id || payload?.runId || "";
+    const viewMatches = !evaluationState.viewRunId || evaluationState.viewRunId === payloadRunId;
     if (payloadRunId && payloadRunId === evaluationState.activeRunId) {
       evaluationState.activeStatus = payload?.status || "finished";
       evaluationState.activeRunId = "";
     }
     updateActionButton();
     updateRunHint();
-    if (isViewingActive()) {
+    if (viewMatches) {
       applyRunPayload(payload);
     }
     stopStream();
     loadEvaluationHistory();
-    if (isViewingActive()) {
+    if (viewMatches) {
       setFormStatus(t("evaluation.message.finished"));
+      void refreshActiveRun(payloadRunId, { silent: true });
     }
   } else if (eventType === "eval_log") {
     if (payload?.message) {
@@ -574,6 +646,7 @@ const startEvaluation = async () => {
     setFormStatus(t("evaluation.message.started"));
     if (evaluationState.activeRunId) {
       streamEvaluation(evaluationState.activeRunId);
+      void refreshActiveRun(evaluationState.activeRunId, { silent: true });
     }
   } catch (error) {
     setFormStatus(t("evaluation.message.startFailed", { message: error.message }));

@@ -1,0 +1,62 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .card {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+        stroke-width: 2;
+      }
+      .card.accent {
+        fill: #f4f8ff;
+        stroke: #d6e2f4;
+      }
+      .title {
+        font: 600 22px "Segoe UI", "Arial", sans-serif;
+        fill: #1f2a44;
+      }
+      .desc {
+        font: 500 14px "Segoe UI", "Arial", sans-serif;
+        fill: #5b6b8c;
+      }
+      .icon {
+        fill: #eaf2ff;
+        stroke: #cfd8ee;
+        stroke-width: 2;
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#f5f8ff" />
+
+  <rect class="card" x="80" y="190" width="300" height="340" rx="24" filter="url(#shadow)" />
+  <rect class="card accent" x="450" y="160" width="300" height="400" rx="28" filter="url(#shadow)" />
+  <rect class="card" x="820" y="190" width="300" height="340" rx="24" filter="url(#shadow)" />
+
+  <circle class="icon" cx="230" cy="250" r="34" />
+  <text class="title" x="230" y="320" text-anchor="middle">Session management</text>
+  <text class="desc" x="230" y="350" text-anchor="middle">Lifecycle / Concurrency / Monitoring</text>
+
+  <circle class="icon" cx="600" cy="230" r="36" />
+  <text class="title" x="600" y="300" text-anchor="middle">Throughput testing</text>
+  <text class="desc" x="600" y="330" text-anchor="middle">Load / QPS / Resources</text>
+  <text class="desc" x="600" y="356" text-anchor="middle">Baselines & bottlenecks</text>
+
+  <circle class="icon" cx="970" cy="250" r="34" />
+  <text class="title" x="970" y="320" text-anchor="middle">Capability evaluation</text>
+  <text class="desc" x="970" y="350" text-anchor="middle">Success / Scoring / Regression</text>
+</svg>

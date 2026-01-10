@@ -308,6 +308,16 @@
   - `max_context`：最大上下文长度（可能为 null）
   - `message`：探测结果说明
 
+### 4.1.6.2 `/wunder/admin/server`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `server.max_active_sessions`：全局最大并发会话数
+- `POST` 入参：
+  - `max_active_sessions`：全局最大并发会话数（>0）
+- `POST` 返回：
+  - `server.max_active_sessions`：更新后的全局最大并发会话数
+
 ### 4.1.7 `/wunder/admin/skills/upload`
 
 - 方法：`POST`
@@ -923,7 +933,7 @@
 - 方法：`GET`（SSE）
 - 事件：
   - `eval_started`：评估开始（`run_id`、`case_count`）
-  - `eval_item`：用例完成（`EvaluationItem`）
+  - `eval_item`：用例状态更新（`EvaluationItem`，含 `active` 与最终结果）
   - `eval_progress`：进度更新（`completed/total/passed/failed/skipped/errors`）
   - `eval_finished`：评估结束（`EvaluationRun`）
   - `eval_log`：日志提示（取消请求等）
@@ -953,7 +963,7 @@
 - `run_id`：评估任务 ID
 - `case_id`：用例 ID
 - `dimension`：维度（`tool/logic/common/complex`）
-- `status`：`passed/failed/skipped/error/cancelled`
+- `status`：`active/passed/failed/skipped/error/cancelled`
 - `score/max_score/weight`：得分、满分、权重
 - `prompt`：实际评估提示词
 - `checker`：判定器配置

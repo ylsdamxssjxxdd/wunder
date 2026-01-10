@@ -144,7 +144,7 @@ pub trait StorageBackend: Send + Sync {
 
     fn create_evaluation_run(&self, payload: &Value) -> Result<()>;
     fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()>;
-    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()>;
     fn load_evaluation_runs(
         &self,
         user_id: Option<&str>,

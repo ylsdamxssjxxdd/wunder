@@ -1,11 +1,11 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-05";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
-import { openMonitorDetail } from "./monitor.js?v=20260110-05";
-import { t } from "./i18n.js?v=20260110-03";
+import { openMonitorDetail } from "./monitor.js?v=20260110-06";
+import { t } from "./i18n.js?v=20260110-04";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {
@@ -23,7 +23,6 @@ const MAX_SAMPLES = 200;
 
 let initialized = false;
 let chartTrend = null;
-let chartLatency = null;
 let currentRunId = "";
 let currentStatus = "";
 let samples = [];
@@ -509,6 +508,19 @@ const updateThroughputSessions = (sessions) => {
   throughputSessions = sortSessionsByUpdate(Array.from(throughputSessionMap.values()));
 };
 
+const computeAverageSpeed = (sessions, key) => {
+  let total = 0;
+  let count = 0;
+  sessions.forEach((session) => {
+    const value = Number(session?.[key]);
+    if (Number.isFinite(value) && value > 0) {
+      total += value;
+      count += 1;
+    }
+  });
+  return count > 0 ? total / count : null;
+};
+
 const renderThroughputSessions = () => {
   if (!elements.throughputThreadBody || !elements.throughputThreadEmpty) {
     return;
@@ -619,8 +631,12 @@ const loadThroughputSessions = async (options = {}) => {
     const scoped = sessions.filter((session) => matchThroughputSession(session));
     updateThroughputSessions(scoped);
     renderThroughputSessions();
-    const prefillSpeed = payload.service?.avg_prefill_speed_tps;
-    const decodeSpeed = payload.service?.avg_decode_speed_tps;
+    const scopedPrefill = computeAverageSpeed(scoped, "prefill_speed_tps");
+    const scopedDecode = computeAverageSpeed(scoped, "decode_speed_tps");
+    const servicePrefill = payload.service?.avg_prefill_speed_tps;
+    const serviceDecode = payload.service?.avg_decode_speed_tps;
+    const prefillSpeed = Number.isFinite(scopedPrefill) ? scopedPrefill : servicePrefill;
+    const decodeSpeed = Number.isFinite(scopedDecode) ? scopedDecode : serviceDecode;
     setSpeedMetrics(prefillSpeed, decodeSpeed);
   } catch (error) {
     if (!silent) {
@@ -670,7 +686,6 @@ const resetCharts = () => {
   currentRunId = "";
   lastSampleAt = 0;
   renderTrendChart();
-  renderLatencyChart();
 };
 
 const ensureCharts = () => {
@@ -680,10 +695,7 @@ const ensureCharts = () => {
   if (elements.throughputTrendChart && !chartTrend) {
     chartTrend = window.echarts.init(elements.throughputTrendChart);
   }
-  if (elements.throughputLatencyChart && !chartLatency) {
-    chartLatency = window.echarts.init(elements.throughputLatencyChart);
-  }
-  return Boolean(chartTrend || chartLatency);
+  return Boolean(chartTrend);
 };
 
 const updateCharts = (snapshot) => {
@@ -709,15 +721,11 @@ const updateCharts = (snapshot) => {
     errorRate: metrics.total_requests
       ? (metrics.error_requests / metrics.total_requests) * 100
       : 0,
-    p50: Number(metrics.p50_latency_ms) || 0,
-    p90: Number(metrics.p90_latency_ms) || 0,
-    p99: Number(metrics.p99_latency_ms) || 0,
   });
   if (samples.length > MAX_SAMPLES) {
     samples.shift();
   }
   renderTrendChart();
-  renderLatencyChart();
 };
 
 const renderTrendChart = () => {
@@ -778,63 +786,6 @@ const renderTrendChart = () => {
   chartTrend.setOption(option, false);
   chartTrend.resize();
 };
-
-const renderLatencyChart = () => {
-  if (!ensureCharts() || !chartLatency) {
-    return;
-  }
-  const labels = samples.map((item) =>
-    Number.isFinite(item.elapsed) ? `${item.elapsed.toFixed(1)}s` : ""
-  );
-  const option = {
-    tooltip: { trigger: "axis" },
-    legend: {
-      data: [t("throughput.metric.p50"), t("throughput.metric.p90"), t("throughput.metric.p99")],
-      textStyle: { color: "#64748b" },
-    },
-    grid: { left: 50, right: 24, top: 30, bottom: 30 },
-    xAxis: {
-      type: "category",
-      data: labels,
-      axisLabel: { color: "#94a3b8" },
-      axisLine: { lineStyle: { color: "#e2e8f0" } },
-    },
-    yAxis: {
-      type: "value",
-      axisLabel: { color: "#94a3b8" },
-      splitLine: { lineStyle: { color: "#e2e8f0" } },
-    },
-    series: [
-      {
-        name: t("throughput.metric.p50"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p50),
-        lineStyle: { color: "#22c55e", width: 2 },
-      },
-      {
-        name: t("throughput.metric.p90"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p90),
-        lineStyle: { color: "#f59e0b", width: 2 },
-      },
-      {
-        name: t("throughput.metric.p99"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p99),
-        lineStyle: { color: "#ef4444", width: 2 },
-      },
-    ],
-  };
-  chartLatency.setOption(option, false);
-  chartLatency.resize();
-};
-
 
 const fetchThroughputStatus = async () => {
   const wunderBase = getWunderBase();
@@ -992,9 +943,6 @@ const applyReport = (report) => {
           elapsed: Number(sample.elapsed_s) || 0,
           rps: Number(sample.rps) || 0,
           errorRate: totalRequests ? (errorRequests / totalRequests) * 100 : 0,
-          p50: Number(sample.p50_latency_ms) || 0,
-          p90: Number(sample.p90_latency_ms) || 0,
-          p99: Number(sample.p99_latency_ms) || 0,
         };
       })
     : [];
@@ -1002,7 +950,6 @@ const applyReport = (report) => {
   lastSampleAt = 0;
   renderSnapshot(summary, true, { skipCharts: true, historyView: true });
   renderTrendChart();
-  renderLatencyChart();
 };
 
 const restoreHistoryReport = async (runId) => {

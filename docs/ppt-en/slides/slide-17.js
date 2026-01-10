@@ -2,34 +2,33 @@
 
 import { createSlide } from "./utils.js";
 
-// 第 17 页：快速开始，用于拆分维护本页内容。
+// 第 17 页：Session management，用于拆分维护本页内容。
 export default function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Quick start">
+<section class="slide" data-title="Session management">
         <div class="slide-meta">
-          <span class="section-tag">Section 6 Quick start</span>
+          <span class="section-tag">Section 5 Agent management testing</span>
           <div class="section-map">
-            <a class="section-chip active" href="#17">Quick start</a>
+            <a class="section-chip" href="#16">Overview</a>
+            <a class="section-chip active" href="#17">Session management</a>
+            <a class="section-chip" href="#18">Throughput testing</a>
+            <a class="section-chip" href="#19">Capability evaluation</a>
           </div>
         </div>
-        <h2>Quick start: three steps</h2>
-        <p class="section-lead">Start with a high-frequency scenario and see results fast</p>
-        <div class="grid three">
-          <div class="card">
-            <h3>1. Pick a scenario</h3>
-            <p>Choose a frequent, well-defined need</p>
+        <h2>Session management: controlled concurrency</h2>
+        <p class="section-lead">Unified lifecycle, concurrency rules, and monitoring events</p>
+        <div class="grid two">
+          <div class="card stack">
+            <span class="pill">Lifecycle</span>
+            <p>running → finished / error / cancelled</p>
+            <span class="pill">Concurrency rules</span>
+            <p>Single session per user, conflicts surfaced</p>
+            <span class="pill">Monitoring & cancel</span>
+            <p>Live events with safe termination</p>
           </div>
-          <div class="card">
-            <h3>2. Pick a tool mix</h3>
-            <p>Combine tools + knowledge + skills</p>
+          <div class="card media-panel is-image stack">
+            <img src="assets/agent-thread-management.svg" alt="Session management illustration" />
           </div>
-          <div class="card">
-            <h3>3. Solidify the workflow</h3>
-            <p>Turn success into a workflow template</p>
-          </div>
-        </div>
-        <div class="card media-panel is-image stack fill">
-          <img src="assets/quickstart-pilots.svg" alt="Pilot examples illustration" />
         </div>
       </section>
   `);

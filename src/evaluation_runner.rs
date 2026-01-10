@@ -1,4 +1,4 @@
-﻿use crate::config::Config;
+use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::evaluation::{
     default_cases_dir, load_case_files, normalize_dimension_weights, DimensionWeights,
@@ -163,13 +163,13 @@ impl EvaluationManager {
         let language = i18n::normalize_language(request.language.as_deref(), true);
         let requested_tool_names = request.tool_names.clone();
         let selected_dimensions = request.dimensions.clone();
-        let model_name = request.model_name.clone();
         let config_overrides = request.config_overrides.clone();
         let config = self.config_store.get().await;
+        let model_name = resolve_eval_model_name(request.model_name.as_deref(), &config);
         let skills_snapshot = self.skills.read().await.clone();
-        let user_tool_bindings = self
-            .user_tool_manager
-            .build_bindings(&config, &skills_snapshot, user_id);
+        let user_tool_bindings =
+            self.user_tool_manager
+                .build_bindings(&config, &skills_snapshot, user_id);
         let allowed_tool_names = resolve_allowed_tool_names(
             &config,
             &skills_snapshot,
@@ -178,22 +178,14 @@ impl EvaluationManager {
         );
 
         let case_files = load_case_files(&default_cases_dir())?;
-        let selected_cases = select_cases(
-            &case_files,
-            &case_set,
-            &language,
-            &selected_dimensions,
-        )?;
+        let selected_cases = select_cases(&case_files, &case_set, &language, &selected_dimensions)?;
         if selected_cases.is_empty() {
             return Err(anyhow!("no evaluation cases available"));
         }
 
         let run_id = Uuid::new_v4().simple().to_string();
         let weights = normalize_dimension_weights(request.weights.clone().unwrap_or_default());
-        let mut tool_snapshot = allowed_tool_names
-            .iter()
-            .cloned()
-            .collect::<Vec<String>>();
+        let mut tool_snapshot = allowed_tool_names.iter().cloned().collect::<Vec<String>>();
         tool_snapshot.sort();
         let case_ids = selected_cases
             .iter()
@@ -228,6 +220,12 @@ impl EvaluationManager {
         });
         self.storage.create_evaluation_run(&run_payload)?;
 
+        for case in &selected_cases {
+            let item_payload = build_active_item_payload(case, &run_id, user_id, started_time);
+            self.storage
+                .upsert_evaluation_item(&run_id, &item_payload)?;
+        }
+
         let (sender, _) = broadcast::channel(256);
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let handle = EvaluationRunHandle {
@@ -242,6 +240,7 @@ impl EvaluationManager {
 
         let ctx = EvaluationRunContext {
             run_id: run_id.clone(),
+            started_time,
             user_id: user_id.to_string(),
             model_name,
             language,
@@ -299,7 +298,10 @@ impl EvaluationManager {
             return None;
         }
         let guard = self.state.lock().await;
-        guard.runs.get(cleaned).map(|handle| handle.sender.subscribe())
+        guard
+            .runs
+            .get(cleaned)
+            .map(|handle| handle.sender.subscribe())
     }
 
     pub fn load_runs(
@@ -311,14 +313,8 @@ impl EvaluationManager {
         until_time: Option<f64>,
         limit: Option<i64>,
     ) -> Result<Vec<Value>> {
-        self.storage.load_evaluation_runs(
-            user_id,
-            status,
-            model_name,
-            since_time,
-            until_time,
-            limit,
-        )
+        self.storage
+            .load_evaluation_runs(user_id, status, model_name, since_time, until_time, limit)
     }
 
     pub fn load_run(&self, run_id: &str) -> Result<Option<Value>> {
@@ -350,6 +346,7 @@ impl EvaluationManager {
 }
 struct EvaluationRunContext {
     run_id: String,
+    started_time: f64,
     user_id: String,
     model_name: Option<String>,
     language: String,
@@ -372,7 +369,8 @@ struct EvaluationRunContext {
 
 async fn run_evaluation(ctx: EvaluationRunContext) {
     let run_id = ctx.run_id.clone();
-    let start_ts = now_ts();
+    let start_ts = ctx.started_time;
+    let _ = reset_eval_workspace(&ctx.workspace, &ctx.user_id);
     let _ = prepare_eval_workspace(&ctx.workspace, &ctx.user_id, &run_id);
     let total_expected = ctx.cases.len();
     let mut dimension_set = HashSet::new();
@@ -387,6 +385,26 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
         data: json!({
             "run_id": run_id,
             "case_count": total_expected,
+        }),
+    });
+
+    for case in ctx.cases.iter() {
+        let item_payload = build_active_item_payload(case, &run_id, &ctx.user_id, start_ts);
+        let _ = ctx.sender.send(EvaluationEvent {
+            event: "eval_item".to_string(),
+            data: item_payload,
+        });
+    }
+    let _ = ctx.sender.send(EvaluationEvent {
+        event: "eval_progress".to_string(),
+        data: json!({
+            "run_id": run_id,
+            "completed": 0,
+            "total": total_expected,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "errors": 0,
         }),
     });
 
@@ -433,12 +451,7 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
         }
         total_cases += 1;
         let case_start = now_ts();
-        let session_id = format!(
-            "eval_{}_{}_{}",
-            run_id,
-            case.id.as_str(),
-            Uuid::new_v4().simple()
-        );
+        let session_id = build_eval_session_id(&run_id, case.id.as_str());
         update_current_session(&ctx.state, &run_id, Some(session_id.clone())).await;
 
         let result = run_case(&ctx, case, &session_id).await;
@@ -508,7 +521,7 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
             "skip_reason": result.skip_reason,
             "session_id": session_id,
         });
-        let _ = ctx.storage.append_evaluation_item(&run_id, &item_payload);
+        let _ = ctx.storage.upsert_evaluation_item(&run_id, &item_payload);
         let _ = ctx.sender.send(EvaluationEvent {
             event: "eval_item".to_string(),
             data: item_payload.clone(),
@@ -545,7 +558,10 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
         map.insert("skipped_count".to_string(), json!(skipped_cases));
         map.insert("error_count".to_string(), json!(error_cases));
         map.insert("finished_time".to_string(), json!(finished_time));
-        map.insert("elapsed_s".to_string(), json!((finished_time - start_ts).max(0.0)));
+        map.insert(
+            "elapsed_s".to_string(),
+            json!((finished_time - start_ts).max(0.0)),
+        );
         if !run_error.is_empty() {
             map.insert("error".to_string(), json!(run_error));
         }
@@ -667,6 +683,43 @@ fn select_cases(
     Ok(cases)
 }
 
+fn reset_eval_workspace(workspace: &WorkspaceManager, user_id: &str) -> Result<()> {
+    let eval_root = workspace.resolve_path(user_id, "eval")?;
+    if eval_root.exists() {
+        std::fs::remove_dir_all(&eval_root)?;
+        workspace.bump_version(user_id);
+    }
+    Ok(())
+}
+
+fn build_active_item_payload(
+    case: &EvaluationCase,
+    run_id: &str,
+    user_id: &str,
+    started_time: f64,
+) -> Value {
+    json!({
+        "run_id": run_id,
+        "case_id": case.id.clone(),
+        "dimension": dimension_label(case.dimension),
+        "status": "active",
+        "score": 0.0,
+        "max_score": 1.0,
+        "weight": case.weight.max(0.0),
+        "prompt": apply_placeholders(&case.prompt, run_id, user_id),
+        "checker": serde_json::to_value(&case.checker).unwrap_or(Value::Null),
+        "final_answer": "",
+        "tool_calls": [],
+        "checker_detail": Value::Null,
+        "started_time": started_time,
+        "finished_time": 0.0,
+        "elapsed_s": 0.0,
+        "error": "",
+        "skip_reason": Value::Null,
+        "session_id": "",
+    })
+}
+
 fn prepare_eval_workspace(
     workspace: &WorkspaceManager,
     user_id: &str,
@@ -685,6 +738,8 @@ fn prepare_eval_workspace(
     std::fs::write(list_dir.join("b.txt"), "beta\n")?;
     std::fs::write(outputs.join("replace.txt"), "hello world\n")?;
     std::fs::write(outputs.join("edit.txt"), "line1\nline2\n")?;
+
+    workspace.bump_version(user_id);
 
     Ok(base)
 }
@@ -768,10 +823,7 @@ async fn run_case(
     };
 
     if output.error_code.is_some() || output.error_message.is_some() {
-        let code = output
-            .error_code
-            .as_deref()
-            .unwrap_or("UNKNOWN_ERROR");
+        let code = output.error_code.as_deref().unwrap_or("UNKNOWN_ERROR");
         let message = output.error_message.clone().unwrap_or_default();
         let status = if code == "CANCELLED" {
             CaseStatus::Cancelled
@@ -809,7 +861,11 @@ async fn run_case(
     );
 
     CaseExecution {
-        status: if passed { CaseStatus::Passed } else { CaseStatus::Failed },
+        status: if passed {
+            CaseStatus::Passed
+        } else {
+            CaseStatus::Failed
+        },
         score: if passed { 1.0 } else { 0.0 },
         detail,
         final_answer,
@@ -843,11 +899,7 @@ async fn collect_case_stream(
         if ctx.cancel_flag.load(Ordering::SeqCst) {
             ctx.monitor.cancel(session_id);
         }
-        let data = event
-            .data
-            .get("data")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let data = event.data.get("data").cloned().unwrap_or(Value::Null);
         match event.event.as_str() {
             "llm_output" => {
                 if let Some(content) = data.get("content").and_then(Value::as_str) {
@@ -1024,10 +1076,7 @@ fn evaluate_checker(
                     let exists = target.exists();
                     (exists, json!({ "path": resolved, "exists": exists }))
                 }
-                Err(err) => (
-                    false,
-                    json!({ "path": resolved, "error": err.to_string() }),
-                ),
+                Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
             }
         }
         EvaluationChecker::FileContains { path, text } => {
@@ -1042,15 +1091,9 @@ fn evaluate_checker(
                             json!({ "path": resolved, "expected": expected, "matched": passed }),
                         )
                     }
-                    Err(err) => (
-                        false,
-                        json!({ "path": resolved, "error": err.to_string() }),
-                    ),
+                    Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
                 },
-                Err(err) => (
-                    false,
-                    json!({ "path": resolved, "error": err.to_string() }),
-                ),
+                Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
             }
         }
         EvaluationChecker::JsonContains { path, required } => {
@@ -1070,20 +1113,11 @@ fn evaluate_checker(
                                 }),
                             )
                         }
-                        Err(err) => (
-                            false,
-                            json!({ "path": resolved, "error": err.to_string() }),
-                        ),
+                        Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
                     },
-                    Err(err) => (
-                        false,
-                        json!({ "path": resolved, "error": err.to_string() }),
-                    ),
+                    Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
                 },
-                Err(err) => (
-                    false,
-                    json!({ "path": resolved, "error": err.to_string() }),
-                ),
+                Err(err) => (false, json!({ "path": resolved, "error": err.to_string() })),
             }
         }
     }
@@ -1122,6 +1156,27 @@ fn resolve_allowed_tool_names(
         allowed.remove(&resolve_tool_name("final_response"));
     }
     allowed
+}
+
+fn resolve_eval_model_name(requested: Option<&str>, config: &Config) -> Option<String> {
+    let requested = requested
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    if let Some(name) = requested {
+        if config.llm.models.contains_key(name) {
+            return Some(name.to_string());
+        }
+    }
+    let default_name = config.llm.default.trim();
+    if !default_name.is_empty() && config.llm.models.contains_key(default_name) {
+        return Some(default_name.to_string());
+    }
+    config
+        .llm
+        .models
+        .iter()
+        .next()
+        .map(|(name, _)| name.clone())
 }
 
 fn expand_requested_tool_names(requested: &[String]) -> HashSet<String> {
@@ -1197,6 +1252,24 @@ fn apply_placeholders_to_value(value: &Value, run_id: &str, user_id: &str) -> Va
     }
 }
 
+fn shorten_id(value: &str, max_len: usize) -> String {
+    let trimmed = value.trim();
+    if max_len == 0 || trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed.chars().take(max_len).collect()
+}
+
+fn build_eval_session_id(run_id: &str, case_id: &str) -> String {
+    let run_short = shorten_id(run_id, 8);
+    let random = Uuid::new_v4().simple().to_string();
+    let random_short = shorten_id(&random, 6);
+    if run_short.is_empty() {
+        return format!("eval_{}_{}", case_id, random_short);
+    }
+    format!("eval_{run_short}_{case_id}_{random_short}")
+}
+
 fn json_contains(actual: &Value, required: &Value) -> bool {
     match required {
         Value::Null => actual.is_null(),
@@ -1246,16 +1319,14 @@ fn json_contains(actual: &Value, required: &Value) -> bool {
 
 fn tool_call_block_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?is)<tool_call\b[^>]*>(?P<payload>.*?)</tool_call\s*>").ok()
-    })
-    .as_ref()
+    RE.get_or_init(|| Regex::new(r"(?is)<tool_call\b[^>]*>(?P<payload>.*?)</tool_call\s*>").ok())
+        .as_ref()
 }
 
 fn tool_block_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?is)<tool\b[^>]*>(?P<payload>.*?)</tool\s*>").ok())
-    .as_ref()
+        .as_ref()
 }
 
 fn tool_open_tag_regex() -> Option<&'static Regex> {

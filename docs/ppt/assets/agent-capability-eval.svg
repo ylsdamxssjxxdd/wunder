@@ -1,0 +1,76 @@
+<svg
+  width="1200"
+  height="720"
+  viewBox="0 0 1200 720"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow
+        dx="0"
+        dy="6"
+        stdDeviation="8"
+        flood-color="#0B1A33"
+        flood-opacity="0.08"
+      />
+    </filter>
+    <style>
+      .panel {
+        fill: #ffffff;
+        stroke: #e1e7f2;
+        stroke-width: 2;
+      }
+      .title {
+        font: 600 18px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #1f2a44;
+      }
+      .desc {
+        font: 500 14px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+        fill: #5b6b8c;
+      }
+      .check {
+        fill: #6fa8ff;
+      }
+      .box {
+        fill: #eef4ff;
+        stroke: #d7e2f3;
+        stroke-width: 2;
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="720" fill="#f5f8ff" />
+  <rect class="panel" x="120" y="150" width="960" height="420" rx="28" filter="url(#shadow)" />
+
+  <text class="title" x="180" y="210">评估清单</text>
+  <rect class="box" x="180" y="240" width="28" height="28" rx="6" />
+  <path class="check" d="M188 255l8 8 14-16" stroke="#6fa8ff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <text class="desc" x="230" y="260">准确率</text>
+
+  <rect class="box" x="180" y="290" width="28" height="28" rx="6" />
+  <path class="check" d="M188 305l8 8 14-16" stroke="#6fa8ff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <text class="desc" x="230" y="310">完整性</text>
+
+  <rect class="box" x="180" y="340" width="28" height="28" rx="6" />
+  <path class="check" d="M188 355l8 8 14-16" stroke="#6fa8ff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <text class="desc" x="230" y="360">可用性</text>
+
+  <text class="title" x="660" y="210">评分与回归</text>
+  <circle cx="760" cy="360" r="90" stroke="#e1e7f2" stroke-width="16" fill="none" />
+  <circle
+    cx="760"
+    cy="360"
+    r="90"
+    stroke="#6fa8ff"
+    stroke-width="16"
+    fill="none"
+    stroke-dasharray="440 140"
+    transform="rotate(-90 760 360)"
+  />
+  <text class="title" x="760" y="370" text-anchor="middle">92</text>
+  <text class="desc" x="760" y="395" text-anchor="middle">综合评分</text>
+
+  <rect class="box" x="640" y="470" width="220" height="36" rx="18" />
+  <text class="desc" x="750" y="494" text-anchor="middle">对比上一版本 +6%</text>
+</svg>

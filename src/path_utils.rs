@@ -14,17 +14,19 @@ pub fn normalize_target_path(path: &Path) -> PathBuf {
     if path.exists() {
         return fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     }
-    let Some(parent) = path.parent() else {
-        return path.to_path_buf();
-    };
-    if !parent.exists() {
-        return path.to_path_buf();
+    for ancestor in path.ancestors() {
+        if !ancestor.exists() {
+            continue;
+        }
+        if let Ok(relative) = path.strip_prefix(ancestor) {
+            let base = fs::canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+            if relative.as_os_str().is_empty() {
+                return base;
+            }
+            return base.join(relative);
+        }
     }
-    let parent_canonical = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-    match path.file_name() {
-        Some(name) => parent_canonical.join(name),
-        None => parent_canonical,
-    }
+    path.to_path_buf()
 }
 
 pub fn normalize_path_for_compare(path: &Path) -> PathBuf {

@@ -1,4 +1,4 @@
-﻿use crate::evaluation::{default_cases_dir, load_case_files, EvaluationDimension};
+use crate::evaluation::{default_cases_dir, load_case_files, EvaluationDimension};
 use crate::evaluation_runner::EvaluationStartRequest;
 use crate::i18n;
 use crate::state::AppState;
@@ -6,7 +6,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::{routing::delete, routing::get, routing::post, Json, Router};
+use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -23,10 +23,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/admin/evaluation/runs", get(eval_runs))
         .route("/wunder/admin/evaluation/cases", get(eval_cases))
-        .route(
-            "/wunder/admin/evaluation/stream/{run_id}",
-            get(eval_stream),
-        )
+        .route("/wunder/admin/evaluation/stream/{run_id}", get(eval_stream))
         .route(
             "/wunder/admin/evaluation/{run_id}",
             get(eval_detail).delete(eval_delete),
@@ -100,7 +97,10 @@ async fn eval_detail(
         .load_run(&run_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let Some(run) = run else {
-        return Err(error_response(StatusCode::NOT_FOUND, "run not found".to_string()));
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "run not found".to_string(),
+        ));
     };
     let items = state
         .evaluation
@@ -178,9 +178,8 @@ async fn eval_stream(
         }
         Err(_) => None,
     });
-    let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(
-        std::time::Duration::from_secs(15),
-    ));
+    let sse =
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
     Ok(sse.into_response())
 }
 

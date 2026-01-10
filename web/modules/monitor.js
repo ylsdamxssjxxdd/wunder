@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-05";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-04";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -2269,11 +2269,23 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
   try {
     const response = await fetch(endpoint);
+    if (response.status === 404) {
+      const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
+      appendLog(deletedMessage);
+      notify(deletedMessage, "warning");
+      return;
+    }
     if (!response.ok) {
       throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
     const session = result.session || {};
+    if (!session.session_id) {
+      const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
+      appendLog(deletedMessage);
+      notify(deletedMessage, "warning");
+      return;
+    }
     state.monitor.selected = session.session_id;
     elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
       sessionId: session.session_id || "-",
@@ -2318,7 +2330,9 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       scrollMonitorDetailToLine(focusLine);
     }
   } catch (error) {
-    appendLog(t("monitor.detailLoadFailed", { message: error.message }));
+    const message = t("monitor.detailLoadFailed", { message: error.message });
+    appendLog(message);
+    notify(message, "error");
   }
 };
 

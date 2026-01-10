@@ -1529,7 +1529,7 @@ impl StorageBackend for PostgresStorage {
         self.create_evaluation_run(&merged)
     }
 
-    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -1563,12 +1563,10 @@ impl StorageBackend for PostgresStorage {
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
         let mut conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        let updated = conn.execute(
+            "UPDATE evaluation_items SET dimension = $1, status = $2, score = $3, max_score = $4, weight = $5, \
+             started_time = $6, finished_time = $7, payload = $8 WHERE run_id = $9 AND case_id = $10",
             &[
-                &cleaned,
-                &case_id,
                 &dimension,
                 &status,
                 &score,
@@ -1577,8 +1575,28 @@ impl StorageBackend for PostgresStorage {
                 &started_time,
                 &finished_time,
                 &payload_text,
+                &cleaned,
+                &case_id,
             ],
         )?;
+        if updated == 0 {
+            conn.execute(
+                "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                &[
+                    &cleaned,
+                    &case_id,
+                    &dimension,
+                    &status,
+                    &score,
+                    &max_score,
+                    &weight,
+                    &started_time,
+                    &finished_time,
+                    &payload_text,
+                ],
+            )?;
+        }
         Ok(())
     }
 
@@ -1692,8 +1710,10 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        let items_deleted =
-            tx.execute("DELETE FROM evaluation_items WHERE run_id = $1", &[&cleaned])?;
+        let items_deleted = tx.execute(
+            "DELETE FROM evaluation_items WHERE run_id = $1",
+            &[&cleaned],
+        )?;
         let runs_deleted =
             tx.execute("DELETE FROM evaluation_runs WHERE run_id = $1", &[&cleaned])?;
         tx.commit()?;

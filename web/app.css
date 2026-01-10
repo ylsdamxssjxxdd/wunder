@@ -359,8 +359,15 @@ h1 {
 }
 
 .throughput-summary-block {
-  overflow: auto;
+  overflow: hidden;
   max-height: 40vh;
+}
+
+.monitor-summary.throughput-summary {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 
@@ -375,7 +382,7 @@ h1 {
 
 .throughput-charts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
@@ -1544,7 +1551,7 @@ button.danger {
 
 .monitor-block-summary {
   grid-area: summary;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .monitor-block-tools {
@@ -1575,6 +1582,13 @@ button.danger {
   gap: 10px;
   min-height: 0;
   overflow: hidden;
+}
+
+.monitor-block-summary .monitor-summary {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .monitor-kv-table {
@@ -4250,6 +4264,21 @@ button.danger {
   gap: 8px;
 }
 
+.evaluation-run-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #dbeafe;
+  border-top-color: #3b82f6;
+  margin-left: 6px;
+  display: none;
+}
+
+.evaluation-run-spinner.active {
+  display: inline-block;
+  animation: eval-spin 0.8s linear infinite;
+}
+
 .evaluation-run-hint {
   margin-top: 6px;
   min-height: 18px;
@@ -4261,18 +4290,41 @@ button.danger {
   border-radius: 999px;
   background: #e2e8f0;
   overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 
 .evaluation-progress-bar span {
   display: block;
   height: 100%;
   width: 0;
-  background: #3b82f6;
+  background: linear-gradient(90deg, #38bdf8, #6366f1, #22d3ee);
+  background-size: 200% 100%;
   transition: width 0.2s ease;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.45);
+}
+
+.evaluation-progress-bar span.active {
+  animation: eval-progress-flow 1.6s linear infinite;
 }
 
 .evaluation-cases .monitor-table-scroll {
   max-height: 360px;
+}
+
+@keyframes eval-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes eval-progress-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
 }
 
 .evaluation-history .monitor-table-scroll {

@@ -1,0 +1,36 @@
+"use strict";
+
+import { createSlide } from "./utils.js";
+
+// 第 20 页：Quick start，用于拆分维护本页内容。
+export default function buildSlide() {
+  return createSlide(`
+<section class="slide" data-title="Quick start">
+        <div class="slide-meta">
+          <span class="section-tag">Section 6 Quick start</span>
+          <div class="section-map">
+            <a class="section-chip active" href="#20">Quick start</a>
+          </div>
+        </div>
+        <h2>Quick start: three steps</h2>
+        <p class="section-lead">Start with a high-frequency scenario and see results fast</p>
+        <div class="grid three">
+          <div class="card">
+            <h3>1. Pick a scenario</h3>
+            <p>Choose a frequent, well-defined need</p>
+          </div>
+          <div class="card">
+            <h3>2. Pick a tool mix</h3>
+            <p>Combine tools + knowledge + skills</p>
+          </div>
+          <div class="card">
+            <h3>3. Solidify the workflow</h3>
+            <p>Turn success into a workflow template</p>
+          </div>
+        </div>
+        <div class="card media-panel is-image stack fill">
+          <img src="assets/quickstart-pilots.svg" alt="Pilot examples illustration" />
+        </div>
+      </section>
+  `);
+}

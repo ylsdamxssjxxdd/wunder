@@ -42,7 +42,7 @@
 
     />
 
-    <link rel="stylesheet" href="./app.css?v=20260110-06" />
+    <link rel="stylesheet" href="./app.css?v=20260110-09" />
 
   </head>
 
@@ -685,7 +685,7 @@
 
               class="intro-frame"
 
-        src="/wunder/ppt/index.html?v=20260105-11"
+        src="/wunder/ppt/index.html?v=20260110-09"
               title="wunder 系统介绍"
 
               data-i18n-title="intro.frame.title"
@@ -2112,6 +2112,14 @@
 
                 <div class="form-row">
 
+                  <label for="settingsMaxActiveSessions" data-i18n="settings.label.maxActiveSessions">最大并发会话</label>
+
+                  <input id="settingsMaxActiveSessions" type="number" min="1" step="1" />
+
+                </div>
+
+                <div class="form-row">
+
                   <label for="settingsPromptDelay" data-i18n="settings.label.promptDelay">提示词刷新延迟（毫秒）</label>
 
                   <input id="settingsPromptDelay" type="number" min="50" step="50" />
@@ -3505,14 +3513,6 @@
 
                 </div>
 
-                <div class="monitor-block throughput-chart-card">
-
-                  <div class="monitor-block-title" data-i18n="throughput.chart.latency">延迟分位</div>
-
-                  <div id="throughputLatencyChart" class="monitor-chart"></div>
-
-                </div>
-
               </div>
 
               <div class="monitor-block throughput-threads">
@@ -3744,6 +3744,7 @@
                   <div class="monitor-block-title">
                     <i class="fa-solid fa-flag-checkered"></i>
                     <span data-i18n="evaluation.summary.title">当前评估</span>
+                    <span id="evaluationRunSpinner" class="evaluation-run-spinner" aria-hidden="true"></span>
                     <span id="evaluationRunStatus" class="monitor-status">-</span>
                   </div>
                   <table class="monitor-kv-table">
@@ -5914,7 +5915,7 @@
 
     <script src="./third/marked.min.js"></script>
 
-    <script type="module" src="./app.js?v=20260110-14"></script>
+    <script type="module" src="./app.js?v=20260110-21"></script>
   </body>
 
 </html>

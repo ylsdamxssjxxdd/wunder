@@ -4,9 +4,9 @@ import {
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-05";
 import { state } from "./state.js";
-import { toggleMonitorPolling } from "./monitor.js?v=20260102-01";
+import { toggleMonitorPolling } from "./monitor.js?v=20260110-06";
 import { notify } from "./notify.js";
 import {
   getLanguageLabel,
@@ -14,11 +14,17 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260110-03";
+} from "./i18n.js?v=20260110-04";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
+import { getWunderBase } from "./api.js";
 
 const MIN_MONITOR_INTERVAL_MS = 500;
 const MIN_PROMPT_DELAY_MS = 50;
+const MIN_MAX_ACTIVE_SESSIONS = 1;
+
+const serverSettings = {
+  maxActiveSessions: null,
+};
 
 // 解析数字输入，确保落在合理区间内
 const resolveNumberInput = (rawValue, fallback, minValue) => {
@@ -120,8 +126,93 @@ const applySettingsForm = (config) => {
   }
 };
 
+const applyServerSettings = (maxActiveSessions) => {
+  if (!elements.settingsMaxActiveSessions) {
+    return;
+  }
+  if (Number.isFinite(maxActiveSessions)) {
+    elements.settingsMaxActiveSessions.value = String(Math.max(MIN_MAX_ACTIVE_SESSIONS, maxActiveSessions));
+    return;
+  }
+  elements.settingsMaxActiveSessions.value = "";
+};
+
+const resolveMaxActiveSessions = () => {
+  const raw = String(elements.settingsMaxActiveSessions?.value || "").trim();
+  if (!raw && !Number.isFinite(serverSettings.maxActiveSessions)) {
+    return null;
+  }
+  const fallback = Number.isFinite(serverSettings.maxActiveSessions)
+    ? serverSettings.maxActiveSessions
+    : MIN_MAX_ACTIVE_SESSIONS;
+  return resolveNumberInput(
+    raw,
+    fallback,
+    MIN_MAX_ACTIVE_SESSIONS
+  );
+};
+
+const getAuthHeaders = () => {
+  const apiKey = String(elements.apiKey?.value || "").trim();
+  if (!apiKey) {
+    return undefined;
+  }
+  return { "X-API-Key": apiKey };
+};
+
+const fetchServerSettings = async () => {
+  const wunderBase = getWunderBase();
+  if (!wunderBase) {
+    throw new Error(t("settings.error.apiBase"));
+  }
+  const response = await fetch(`${wunderBase}/admin/server`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return payload?.server || {};
+};
+
+const updateServerSettings = async (maxActiveSessions) => {
+  const wunderBase = getWunderBase();
+  if (!wunderBase) {
+    throw new Error(t("settings.error.apiBase"));
+  }
+  const response = await fetch(`${wunderBase}/admin/server`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ max_active_sessions: maxActiveSessions }),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return payload?.server || {};
+};
+
+const loadServerSettings = async (options = {}) => {
+  if (!elements.settingsMaxActiveSessions) {
+    return;
+  }
+  const silent = options.silent === true;
+  try {
+    const server = await fetchServerSettings();
+    serverSettings.maxActiveSessions = server.max_active_sessions ?? null;
+    applyServerSettings(serverSettings.maxActiveSessions);
+  } catch (error) {
+    if (!silent) {
+      notify(t("settings.toast.serverLoadFailed", { message: error.message }), "error");
+    }
+  }
+};
+
 // 保存设置并应用到运行时
-const handleSaveSettings = () => {
+const handleSaveSettings = async () => {
   const previous = { ...APP_CONFIG };
   const nextApiBase = normalizeApiBase(elements.apiBase?.value || "");
   const nextApiKey = String(elements.apiKey?.value || "");
@@ -170,10 +261,33 @@ const handleSaveSettings = () => {
     notify(t("settings.toast.apiBaseEmpty"), "warn");
   }
   notify(t("settings.toast.saved"), "success");
+
+  if (elements.settingsMaxActiveSessions) {
+    const nextMaxActiveSessions = resolveMaxActiveSessions();
+    if (nextMaxActiveSessions === null) {
+      applyServerSettings(serverSettings.maxActiveSessions);
+      return;
+    }
+    if (nextMaxActiveSessions !== serverSettings.maxActiveSessions) {
+      try {
+        const server = await updateServerSettings(nextMaxActiveSessions);
+        serverSettings.maxActiveSessions = server.max_active_sessions ?? nextMaxActiveSessions;
+        applyServerSettings(serverSettings.maxActiveSessions);
+      } catch (error) {
+        notify(
+          t("settings.toast.serverUpdateFailed", { message: error.message }),
+          "error"
+        );
+        applyServerSettings(serverSettings.maxActiveSessions);
+      }
+    } else {
+      applyServerSettings(serverSettings.maxActiveSessions);
+    }
+  }
 };
 
 // 恢复默认设置并同步到界面
-const handleResetSettings = () => {
+const handleResetSettings = async () => {
   const previous = { ...APP_CONFIG };
   const defaults = resetStoredConfig();
   applySettingsForm(defaults);
@@ -182,6 +296,7 @@ const handleResetSettings = () => {
   refreshMonitorInterval(defaults.monitorPollIntervalMs);
   setLanguage(defaults.language, { force: true });
   state.runtime.promptNeedsRefresh = true;
+  await loadServerSettings({ silent: true });
   notify(t("settings.toast.reset"), "success");
 };
 
@@ -190,11 +305,16 @@ export const initSettingsPanel = () => {
   applyStoredConfig();
   renderLanguageOptions();
   applySettingsForm(APP_CONFIG);
+  loadServerSettings({ silent: true }).catch(() => {});
   if (elements.settingsSaveBtn) {
-    elements.settingsSaveBtn.addEventListener("click", handleSaveSettings);
+    elements.settingsSaveBtn.addEventListener("click", () => {
+      handleSaveSettings().catch(() => {});
+    });
   }
   if (elements.settingsResetBtn) {
-    elements.settingsResetBtn.addEventListener("click", handleResetSettings);
+    elements.settingsResetBtn.addEventListener("click", () => {
+      handleResetSettings().catch(() => {});
+    });
   }
   window.addEventListener("wunder:language-changed", renderLanguageOptions);
 };

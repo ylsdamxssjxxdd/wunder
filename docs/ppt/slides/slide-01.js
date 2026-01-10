@@ -48,11 +48,11 @@ function buildSlide() {
               <a class="toc-item toc-link" href="#16">
                 <div class="toc-index">05</div>
                 <div>
-                  <div class="toc-title">智能体线程管理</div>
-                  <div class="toc-desc">稳定、可监控、可取消</div>
+                  <div class="toc-title">智能体管理测试功能</div>
+                  <div class="toc-desc">线程管理 / 吞吐量测试 / 能力评估</div>
                 </div>
               </a>
-              <a class="toc-item toc-link" href="#17">
+              <a class="toc-item toc-link" href="#20">
                 <div class="toc-index">06</div>
                 <div>
                   <div class="toc-title">快速开始</div>

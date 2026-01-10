@@ -82,6 +82,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/llm/context_window",
             post(admin_llm_context_window),
         )
+        .route(
+            "/wunder/admin/server",
+            get(admin_server_get).post(admin_server_update),
+        )
         .route("/wunder/admin/monitor", get(admin_monitor))
         .route(
             "/wunder/admin/monitor/tool_usage",
@@ -1100,6 +1104,39 @@ async fn admin_llm_context_window(
         }
     };
     Ok(Json(payload))
+}
+
+async fn admin_server_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    Ok(Json(json!({
+        "server": {
+            "max_active_sessions": config.server.max_active_sessions
+        }
+    })))
+}
+
+async fn admin_server_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ServerUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    if payload.max_active_sessions == 0 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.max_active_sessions_invalid"),
+        ));
+    }
+    let updated = state
+        .config_store
+        .update(|config| {
+            config.server.max_active_sessions = payload.max_active_sessions;
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "server": {
+            "max_active_sessions": updated.server.max_active_sessions
+        }
+    })))
 }
 
 async fn admin_monitor(
@@ -2299,6 +2336,11 @@ struct LlmContextProbeRequest {
     model: String,
     #[serde(default)]
     timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ServerUpdateRequest {
+    max_active_sessions: usize,
 }
 
 #[derive(Debug, Deserialize)]
