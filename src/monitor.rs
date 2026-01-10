@@ -23,6 +23,7 @@ const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
+const MIN_PREFILL_DURATION_S: f64 = 0.05;
 
 #[derive(Debug, Clone)]
 struct MonitorEvent {
@@ -1430,7 +1431,6 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
     let prefill_duration_s = prefill_metrics
         .and_then(|metrics| metrics.prefill_duration_s)
-        .map(|value| value.max(0.0))
         .or_else(|| {
             prefill_metrics.and_then(|metrics| {
                 let Some(start_ts) = metrics.start_ts else {
@@ -1441,6 +1441,14 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                 };
                 Some((first_output_ts - start_ts).max(0.0))
             })
+        })
+        .map(|value| {
+            let duration = value.max(0.0);
+            if duration < MIN_PREFILL_DURATION_S {
+                MIN_PREFILL_DURATION_S
+            } else {
+                duration
+            }
         });
     let prefill_speed_tps = match (prefill_tokens, prefill_duration_s) {
         (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {

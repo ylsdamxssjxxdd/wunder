@@ -13,6 +13,7 @@ import { getCurrentLanguage, t } from "./i18n.js?v=20260110-02";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
+const MIN_PREFILL_DURATION_S = 0.05;
 const STOP_REASON_LABELS = {
   "zh-CN": {
     model_response: "正常结束",
@@ -306,6 +307,11 @@ const createDebugStats = () => ({
   prefillDuration: 0,
   decodeTokens: 0,
   decodeDuration: 0,
+  llmRounds: {},
+  firstRound: null,
+  latestRound: null,
+  lastRoundSeen: null,
+  implicitRound: 0,
   toolCalls: 0,
   toolOk: 0,
   toolFailed: 0,
@@ -321,10 +327,185 @@ const createDebugStats = () => ({
   requestEndMs: null,
 });
 
+const createRoundMetrics = () => ({
+  startMs: null,
+  firstOutputMs: null,
+  lastOutputMs: null,
+  inputTokens: null,
+  outputTokens: null,
+  prefillDuration: null,
+  decodeDuration: null,
+});
+
 const resetDebugStats = () => {
   debugStats = createDebugStats();
   resetStopReasonHint();
   renderDebugStats();
+};
+
+const parseOptionalNumber = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveRoundNumber = (value) => parseOptionalNumber(value);
+
+const parseUsageTokens = (usage) => {
+  if (!usage || typeof usage !== "object") {
+    return { inputTokens: null, outputTokens: null };
+  }
+  return {
+    inputTokens: parseOptionalNumber(usage.input_tokens ?? usage.input),
+    outputTokens: parseOptionalNumber(usage.output_tokens ?? usage.output),
+  };
+};
+
+const ensureRoundMetrics = (round) => {
+  if (!debugStats) {
+    return null;
+  }
+  const key = String(round);
+  if (!debugStats.llmRounds[key]) {
+    debugStats.llmRounds[key] = createRoundMetrics();
+  }
+  return debugStats.llmRounds[key];
+};
+
+const resolveRoundDuration = (startMs, endMs) => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return null;
+  }
+  return (endMs - startMs) / 1000;
+};
+
+const recomputeSpeedSummary = () => {
+  if (!debugStats) {
+    return;
+  }
+  const roundIds = Object.keys(debugStats.llmRounds || {})
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value));
+  if (roundIds.length === 0) {
+    debugStats.prefillTokens = 0;
+    debugStats.prefillDuration = 0;
+    debugStats.decodeTokens = 0;
+    debugStats.decodeDuration = 0;
+    return;
+  }
+  const firstRound = Number.isFinite(debugStats.firstRound)
+    ? debugStats.firstRound
+    : Math.min(...roundIds);
+  const latestRound = Number.isFinite(debugStats.latestRound)
+    ? debugStats.latestRound
+    : Number.isFinite(debugStats.lastRoundSeen)
+      ? debugStats.lastRoundSeen
+      : Math.max(...roundIds);
+  const prefillMetrics = debugStats.llmRounds[String(firstRound)];
+  const decodeMetrics = debugStats.llmRounds[String(latestRound)] || prefillMetrics;
+  const prefillTokens = parseOptionalNumber(prefillMetrics?.inputTokens);
+  let prefillDuration = parseOptionalNumber(prefillMetrics?.prefillDuration);
+  if (prefillDuration === null) {
+    prefillDuration = resolveRoundDuration(
+      prefillMetrics?.startMs,
+      prefillMetrics?.firstOutputMs
+    );
+  }
+  if (prefillDuration !== null && prefillDuration < MIN_PREFILL_DURATION_S) {
+    prefillDuration = MIN_PREFILL_DURATION_S;
+  }
+  const decodeTokens = parseOptionalNumber(decodeMetrics?.outputTokens);
+  let decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
+  if (decodeDuration === null) {
+    decodeDuration = resolveRoundDuration(
+      decodeMetrics?.firstOutputMs,
+      decodeMetrics?.lastOutputMs
+    );
+  }
+  debugStats.prefillTokens = Number.isFinite(prefillTokens) ? prefillTokens : 0;
+  debugStats.prefillDuration = Number.isFinite(prefillDuration) ? prefillDuration : 0;
+  debugStats.decodeTokens = Number.isFinite(decodeTokens) ? decodeTokens : 0;
+  debugStats.decodeDuration = Number.isFinite(decodeDuration) ? decodeDuration : 0;
+};
+
+const updateLlmRoundMetrics = (eventType, payload, timestamp) => {
+  if (!debugStats) {
+    return;
+  }
+  if (!["llm_request", "llm_output_delta", "llm_output", "token_usage"].includes(eventType)) {
+    return;
+  }
+  const data = payload?.data || payload;
+  let round = resolveRoundNumber(data?.round);
+  if (eventType === "llm_request" && round === null) {
+    debugStats.implicitRound += 1;
+    round = debugStats.implicitRound;
+  }
+  if (round === null) {
+    round = debugStats.lastRoundSeen;
+  }
+  if (round === null) {
+    return;
+  }
+  debugStats.lastRoundSeen = round;
+  if (!Number.isFinite(debugStats.firstRound)) {
+    debugStats.firstRound = round;
+  }
+  const metrics = ensureRoundMetrics(round);
+  if (!metrics) {
+    return;
+  }
+  const tsMs = resolveTimestampMs(timestamp) ?? Date.now();
+  if (eventType === "llm_request") {
+    if (!Number.isFinite(metrics.startMs)) {
+      metrics.startMs = tsMs;
+    }
+  } else if (eventType === "llm_output_delta" || eventType === "llm_output") {
+    if (!Number.isFinite(metrics.firstOutputMs)) {
+      metrics.firstOutputMs = tsMs;
+    }
+    metrics.lastOutputMs = tsMs;
+    if (eventType === "llm_output") {
+      const { inputTokens, outputTokens } = parseUsageTokens(data?.usage);
+      if (metrics.inputTokens === null && inputTokens !== null) {
+        metrics.inputTokens = inputTokens;
+      }
+      if (metrics.outputTokens === null && outputTokens !== null) {
+        metrics.outputTokens = outputTokens;
+      }
+      const prefillDuration = parseOptionalNumber(data?.prefill_duration_s);
+      if (metrics.prefillDuration === null && prefillDuration !== null) {
+        metrics.prefillDuration = prefillDuration;
+      }
+      const decodeDuration = parseOptionalNumber(data?.decode_duration_s);
+      if (metrics.decodeDuration === null && decodeDuration !== null) {
+        metrics.decodeDuration = decodeDuration;
+      }
+    }
+  } else if (eventType === "token_usage") {
+    const inputTokens = parseOptionalNumber(data?.input_tokens);
+    const outputTokens = parseOptionalNumber(data?.output_tokens);
+    if (metrics.inputTokens === null && inputTokens !== null) {
+      metrics.inputTokens = inputTokens;
+    }
+    if (metrics.outputTokens === null && outputTokens !== null) {
+      metrics.outputTokens = outputTokens;
+    }
+    const prefillDuration = parseOptionalNumber(data?.prefill_duration_s);
+    if (metrics.prefillDuration === null && prefillDuration !== null) {
+      metrics.prefillDuration = prefillDuration;
+    }
+    const decodeDuration = parseOptionalNumber(data?.decode_duration_s);
+    if (metrics.decodeDuration === null && decodeDuration !== null) {
+      metrics.decodeDuration = decodeDuration;
+    }
+  }
+  if (metrics.outputTokens !== null && metrics.outputTokens > 0) {
+    debugStats.latestRound = round;
+  }
+  recomputeSpeedSummary();
 };
 
 const formatStatNumber = (value, fallback = "-") => {
@@ -455,12 +636,18 @@ const renderDebugStats = () => {
         output: formatStatNumber(debugStats.tokenOutput, "0"),
       })
     : "-";
+  const prefillTokens = Number.isFinite(debugStats.prefillTokens) ? debugStats.prefillTokens : 0;
+  const prefillDuration = Number.isFinite(debugStats.prefillDuration)
+    ? debugStats.prefillDuration
+    : 0;
+  const decodeTokens = Number.isFinite(debugStats.decodeTokens) ? debugStats.decodeTokens : 0;
+  const decodeDuration = Number.isFinite(debugStats.decodeDuration)
+    ? debugStats.decodeDuration
+    : 0;
   const prefillSpeed =
-    debugStats.prefillDuration > 0
-      ? debugStats.prefillTokens / debugStats.prefillDuration
-      : null;
+    prefillTokens > 0 && prefillDuration > 0 ? prefillTokens / prefillDuration : null;
   const decodeSpeed =
-    debugStats.decodeDuration > 0 ? debugStats.decodeTokens / debugStats.decodeDuration : null;
+    decodeTokens > 0 && decodeDuration > 0 ? decodeTokens / decodeDuration : null;
   const prefillSpeedText = formatTokenRate(prefillSpeed);
   const decodeSpeedText = formatTokenRate(decodeSpeed);
   const toolText = t("debug.stats.toolCalls", {
@@ -524,45 +711,6 @@ const renderDebugStats = () => {
   elements.finalAnswer.appendChild(table);
 };
 
-const applySpeedUsage = (usage, options = {}) => {
-  if (!usage || typeof usage !== "object") {
-    return;
-  }
-  const inputTokens = Number(usage.input_tokens ?? 0);
-  const outputTokens = Number(usage.output_tokens ?? 0);
-  const prefillDuration = Number(usage.prefill_duration_s);
-  const decodeDuration = Number(usage.decode_duration_s);
-  const shouldOverride = options.override === true;
-  if (
-    Number.isFinite(inputTokens) &&
-    inputTokens > 0 &&
-    Number.isFinite(prefillDuration) &&
-    prefillDuration > 0
-  ) {
-    if (shouldOverride) {
-      debugStats.prefillTokens = inputTokens;
-      debugStats.prefillDuration = prefillDuration;
-    } else {
-      debugStats.prefillTokens += inputTokens;
-      debugStats.prefillDuration += prefillDuration;
-    }
-  }
-  if (
-    Number.isFinite(outputTokens) &&
-    outputTokens > 0 &&
-    Number.isFinite(decodeDuration) &&
-    decodeDuration > 0
-  ) {
-    if (shouldOverride) {
-      debugStats.decodeTokens = outputTokens;
-      debugStats.decodeDuration = decodeDuration;
-    } else {
-      debugStats.decodeTokens += outputTokens;
-      debugStats.decodeDuration += decodeDuration;
-    }
-  }
-};
-
 const applyTokenUsage = (usage) => {
   if (!usage || typeof usage !== "object") {
     return;
@@ -580,7 +728,6 @@ const applyTokenUsage = (usage) => {
     debugStats.tokenTotal += totalTokens;
   }
   debugStats.hasTokenUsage = true;
-  applySpeedUsage(usage);
 };
 
 const applyTokenUsageSnapshot = (usage, options = {}) => {
@@ -613,7 +760,6 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   if (Number.isFinite(totalTokens)) {
     debugStats.tokenTotal = Math.max(debugStats.tokenTotal, totalTokens);
   }
-  applySpeedUsage(usage, { override: options.override === true });
 };
 
 // 生成附件唯一标识，便于删除操作定位
@@ -1742,6 +1888,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   }
   debugStats.eventCount += 1;
   applyEventTimestamp(eventTimestamp || Date.now());
+  updateLlmRoundMetrics(eventType, payload, eventTimestamp || Date.now());
 
   if (eventType === "final") {
     state.runtime.debugSawFinal = true;
@@ -2038,9 +2185,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "token_usage") {
     const data = payload.data || payload;
     // 流式 token_usage 仅记录日志，统计信息等待 final usage 再对齐
-    if (state.runtime.debugStreaming) {
-      applySpeedUsage(data);
-    } else {
+    if (!state.runtime.debugStreaming) {
       applyTokenUsage(data);
     }
     renderDebugStats();

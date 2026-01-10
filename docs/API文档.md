@@ -347,7 +347,9 @@
 - 返回（JSON）：
   - `tool`：工具名称
   - `tool_name`：工具真实名称（用于事件定位）
-  - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time）
+  - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
 
 ### 4.1.9 `/wunder/admin/monitor/{session_id}`
 

@@ -1264,6 +1264,23 @@ async fn admin_monitor_tool_usage(
         let token_usage = session_info
             .and_then(|value| value.get("token_usage").and_then(Value::as_i64))
             .unwrap_or(0);
+        let prefill_tokens =
+            session_info.and_then(|value| value.get("prefill_tokens").and_then(Value::as_i64));
+        let prefill_duration_s =
+            session_info.and_then(|value| value.get("prefill_duration_s").and_then(Value::as_f64));
+        let prefill_speed_tps =
+            session_info.and_then(|value| value.get("prefill_speed_tps").and_then(Value::as_f64));
+        let prefill_speed_lower_bound = session_info.and_then(|value| {
+            value
+                .get("prefill_speed_lower_bound")
+                .and_then(Value::as_bool)
+        });
+        let decode_tokens =
+            session_info.and_then(|value| value.get("decode_tokens").and_then(Value::as_i64));
+        let decode_duration_s =
+            session_info.and_then(|value| value.get("decode_duration_s").and_then(Value::as_f64));
+        let decode_speed_tps =
+            session_info.and_then(|value| value.get("decode_speed_tps").and_then(Value::as_f64));
         sessions.push(json!({
             "session_id": session_id,
             "user_id": final_user,
@@ -1274,6 +1291,13 @@ async fn admin_monitor_tool_usage(
             "updated_time": updated_time,
             "elapsed_s": elapsed_s,
             "token_usage": token_usage,
+            "prefill_tokens": prefill_tokens,
+            "prefill_duration_s": prefill_duration_s,
+            "prefill_speed_tps": prefill_speed_tps,
+            "prefill_speed_lower_bound": prefill_speed_lower_bound,
+            "decode_tokens": decode_tokens,
+            "decode_duration_s": decode_duration_s,
+            "decode_speed_tps": decode_speed_tps,
             "tool_calls": tool_calls,
             "last_time": last_time_text
         }));
