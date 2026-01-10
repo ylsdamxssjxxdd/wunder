@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260110-03";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260110-01";
+import { t } from "./i18n.js?v=20260110-02";
 
 let contextProbeTimer = null;
 let lastProbeKey = "";

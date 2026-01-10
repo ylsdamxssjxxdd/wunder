@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260110-03";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-02";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -1080,6 +1080,12 @@ const renderServiceMetrics = (service) => {
     elements.metricServiceTotal.textContent = "-";
     elements.metricServiceRecent.textContent = "-";
     elements.metricServiceAvg.textContent = "-";
+    if (elements.metricServicePrefillSpeed) {
+      elements.metricServicePrefillSpeed.textContent = "-";
+    }
+    if (elements.metricServiceDecodeSpeed) {
+      elements.metricServiceDecodeSpeed.textContent = "-";
+    }
     return;
   }
   elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
@@ -1090,6 +1096,14 @@ const renderServiceMetrics = (service) => {
   elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   elements.metricServiceRecent.textContent = `${service.recent_completed ?? 0}`;
   elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
+  if (elements.metricServicePrefillSpeed) {
+    const prefillSpeed = parseMetricNumber(service.avg_prefill_speed_tps);
+    elements.metricServicePrefillSpeed.textContent = formatTokenRate(prefillSpeed);
+  }
+  if (elements.metricServiceDecodeSpeed) {
+    const decodeSpeed = parseMetricNumber(service.avg_decode_speed_tps);
+    elements.metricServiceDecodeSpeed.textContent = formatTokenRate(decodeSpeed);
+  }
 };
 
 // 渲染沙盒状态指标，兼顾配置与近期调用统计
@@ -1775,6 +1789,18 @@ const renderMonitorStatusList = (sessions) => {
     if (elapsedText && elapsedText !== "-") {
       detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
     }
+    const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+    if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {
+      detailParts.push(
+        t("monitor.session.prefillSpeed", { speed: formatTokenRate(prefillSpeed) })
+      );
+    }
+    const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+    if (Number.isFinite(decodeSpeed) && decodeSpeed > 0) {
+      detailParts.push(
+        t("monitor.session.decodeSpeed", { speed: formatTokenRate(decodeSpeed) })
+      );
+    }
     if (session?.stage) {
       detailParts.push(t("monitor.session.stage", { stage: session.stage }));
     }
@@ -1853,6 +1879,18 @@ const renderMonitorToolList = (sessions, toolName = "") => {
       const elapsedText = formatDuration(session?.elapsed_s);
       if (elapsedText && elapsedText !== "-") {
         detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
+      }
+      const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+      if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {
+        detailParts.push(
+          t("monitor.session.prefillSpeed", { speed: formatTokenRate(prefillSpeed) })
+        );
+      }
+      const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+      if (Number.isFinite(decodeSpeed) && decodeSpeed > 0) {
+        detailParts.push(
+          t("monitor.session.decodeSpeed", { speed: formatTokenRate(decodeSpeed) })
+        );
       }
       if (session?.stage) {
         detailParts.push(t("monitor.session.stage", { stage: session.stage }));

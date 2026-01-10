@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Wunder Simple Chat</title>
+    <title data-i18n="app.title">Wunder Simple Chat</title>
     <style>
       :root {
         color-scheme: light;
@@ -20,6 +20,12 @@
         box-sizing: border-box;
       }
 
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+
       body {
         margin: 0;
         font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
@@ -28,7 +34,7 @@
       }
 
       .app {
-        min-height: 100vh;
+        height: 100vh;
         display: flex;
         flex-direction: column;
       }
@@ -41,6 +47,7 @@
         background: var(--panel);
         border-bottom: 1px solid var(--border);
         gap: 12px;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
       }
 
       header .brand {
@@ -63,13 +70,19 @@
         display: grid;
         grid-template-columns: minmax(0, 1fr) 340px;
         min-height: 0;
+        gap: 12px;
+        padding: 12px;
       }
 
       .chat-panel {
         display: flex;
         flex-direction: column;
-        border-right: 1px solid var(--border);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--panel);
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
         min-height: 0;
+        overflow: hidden;
       }
 
       .chat-list {
@@ -108,7 +121,7 @@
       .chat-input {
         border-top: 1px solid var(--border);
         padding: 14px 16px;
-        background: var(--panel);
+        background: transparent;
         display: grid;
         gap: 10px;
       }
@@ -132,8 +145,10 @@
 
       .input-actions {
         display: flex;
+        align-items: center;
         justify-content: flex-end;
         gap: 8px;
+        flex-wrap: wrap;
       }
 
       .attachments {
@@ -141,14 +156,8 @@
         gap: 6px;
       }
 
-      .attachments-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .attachments-row input[type="file"] {
-        flex: 1;
+      .attachments.hidden {
+        display: none;
       }
 
       .attachment-list {
@@ -160,10 +169,34 @@
       }
 
       .attachment-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         padding: 4px 8px;
         border-radius: 6px;
         border: 1px solid var(--border);
         background: #f1f4ff;
+      }
+
+      .attachment-name {
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .attachment-remove {
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 14px;
+        padding: 0 4px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .attachment-remove:hover {
+        color: #ef4444;
       }
 
       .message-meta {
@@ -213,18 +246,123 @@
         color: var(--text);
       }
 
+      button.danger {
+        background: #ef4444;
+        color: #fff;
+      }
+
+      .file-input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+
       button:disabled {
         opacity: 0.6;
         cursor: not-allowed;
       }
 
-      .settings-panel {
+      .side-panel {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+        min-height: 0;
+      }
+
+      .settings-panel,
+      .history-panel {
         background: var(--panel);
         padding: 18px;
         display: flex;
         flex-direction: column;
         gap: 14px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .settings-panel {
         overflow-y: auto;
+      }
+
+      .history-panel {
+        gap: 12px;
+      }
+
+      .history-panel h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .history-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .history-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .history-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: #f8f9ff;
+        color: var(--text);
+      }
+
+      .history-item:hover {
+        border-color: var(--primary);
+      }
+
+      .history-item.active {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px var(--primary-weak);
+        background: #f4f7ff;
+      }
+
+      .history-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .history-meta {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .history-preview {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--text);
+        opacity: 0.85;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .history-empty {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 6px;
       }
 
       .settings-panel h2 {
@@ -316,10 +454,10 @@
       @media (max-width: 900px) {
         .layout {
           grid-template-columns: 1fr;
+          grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
         }
 
         .chat-panel {
-          border-right: none;
           border-bottom: 1px solid var(--border);
         }
       }
@@ -329,12 +467,13 @@
     <div class="app">
       <header>
         <div>
-          <div class="brand">Wunder Simple Chat</div>
-          <div class="status" id="statusText">Ready.</div>
+          <div class="brand" data-i18n="app.title">Wunder Simple Chat</div>
+          <div class="status" id="statusText" data-i18n="status.ready">Ready.</div>
         </div>
         <div class="actions">
-          <button class="secondary" id="newChatBtn" type="button">New Chat</button>
-          <button class="secondary" id="clearChatBtn" type="button">Clear Messages</button>
+          <button class="secondary" id="newChatBtn" type="button" data-i18n="button.newChat">
+            New Chat
+          </button>
         </div>
       </header>
 
@@ -342,108 +481,109 @@
         <main class="chat-panel">
           <div class="chat-list" id="chatList"></div>
           <form class="chat-input" id="chatForm">
+            <div class="attachments hidden" id="attachmentsWrap">
+              <div id="attachmentList" class="attachment-list"></div>
+            </div>
             <textarea
               id="questionInput"
               placeholder="Type your message..."
+              data-i18n-placeholder="placeholder.question"
               rows="3"
             ></textarea>
-            <div class="attachments">
-              <div class="attachments-row">
-                <input
-                  id="fileInput"
-                  type="file"
-                  multiple
-                  accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.log,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
-                />
-                <button class="secondary" id="clearFilesBtn" type="button">Clear Files</button>
-              </div>
-              <div id="attachmentList" class="attachment-list"></div>
-            </div>
             <div class="input-actions">
-              <button class="secondary" id="stopBtn" type="button" disabled>Stop</button>
-              <button id="sendBtn" type="submit">Send</button>
+              <input
+                id="fileInput"
+                class="file-input"
+                type="file"
+                multiple
+                accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.log"
+              />
+              <button class="secondary" id="fileSelectBtn" type="button" data-i18n="button.attach">
+                Attach Files
+              </button>
+              <button id="sendBtn" type="submit" data-i18n="button.send">Send</button>
             </div>
           </form>
         </main>
 
-        <aside class="settings-panel">
-          <h2>Model Settings</h2>
-          <div class="field">
-            <label for="baseUrl">Endpoint</label>
-            <input
-              id="baseUrl"
-              type="text"
-              placeholder="https://api.openai.com"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="apiKey">API Key</label>
-            <div class="inline-input">
-              <input id="apiKey" type="password" placeholder="sk-..." />
-              <button class="secondary" id="toggleApiKey" type="button">Show</button>
+        <aside class="side-panel">
+          <section class="settings-panel">
+            <h2 data-i18n="settings.title">Model Settings</h2>
+            <div class="field">
+              <label for="baseUrl" data-i18n="label.endpoint">Endpoint</label>
+              <input
+                id="baseUrl"
+                type="text"
+                placeholder="https://api.openai.com"
+                data-i18n-placeholder="placeholder.endpoint"
+                autocomplete="off"
+              />
             </div>
-          </div>
-          <div class="field">
-            <label for="modelName">Model</label>
-            <input id="modelName" type="text" placeholder="gpt-4o-mini" />
-          </div>
-          <div class="field">
-            <label for="temperature">Temperature</label>
-            <input id="temperature" type="number" min="0" max="2" step="0.1" />
-          </div>
-          <div class="field">
-            <label for="maxOutput">Max Output Tokens</label>
-            <input id="maxOutput" type="number" min="1" step="1" placeholder="Optional" />
-          </div>
-          <div class="field">
-            <label for="timeoutS">Timeout (s)</label>
-            <input id="timeoutS" type="number" min="1" step="1" />
-          </div>
-          <div class="field">
-            <label for="retryCount">Retry</label>
-            <input id="retryCount" type="number" min="0" step="1" />
-          </div>
-          <div class="field checkbox">
-            <input id="streamToggle" type="checkbox" />
-            <label for="streamToggle">Stream response</label>
-          </div>
-
-          <details class="advanced">
-            <summary>Advanced</summary>
-            <div class="advanced-body">
-              <div class="field">
-                <label for="maxContext">Max Context Tokens</label>
-                <input id="maxContext" type="number" min="1" step="1" placeholder="Optional" />
-              </div>
-              <div class="field">
-                <label for="userId">User ID</label>
-                <input id="userId" type="text" autocomplete="off" />
-              </div>
-              <div class="field">
-                <label for="sessionId">Session ID</label>
-                <input id="sessionId" type="text" autocomplete="off" />
-              </div>
-              <div class="field">
-                <label for="wunderEndpoint">Wunder Endpoint</label>
-                <input
-                  id="wunderEndpoint"
-                  type="text"
-                  placeholder="http://127.0.0.1:8000/wunder"
-                  autocomplete="off"
-                />
-              </div>
-              <div class="field">
-                <label for="wunderApiKey">Wunder API Key (optional)</label>
-                <input id="wunderApiKey" type="password" placeholder="X-API-Key" />
+            <div class="field">
+              <label for="apiKey" data-i18n="label.apiKey">API Key</label>
+              <div class="inline-input">
+                <input id="apiKey" type="password" placeholder="sk-..." data-i18n-placeholder="placeholder.apiKey" />
+                <button class="secondary" id="toggleApiKey" type="button" data-i18n="button.show">Show</button>
               </div>
             </div>
-          </details>
+            <div class="field">
+              <label for="modelName" data-i18n="label.model">Model</label>
+              <input id="modelName" type="text" placeholder="gpt-4o-mini" data-i18n-placeholder="placeholder.model" />
+            </div>
+            <div class="field">
+              <label for="temperature" data-i18n="label.temperature">Temperature</label>
+              <input id="temperature" type="number" min="0" max="2" step="0.1" />
+            </div>
 
-          <div class="settings-actions">
-            <button class="secondary" id="resetSettingsBtn" type="button">Reset Settings</button>
-          </div>
-          <div class="hint">Settings are stored in your browser.</div>
+            <details class="advanced">
+              <summary data-i18n="label.advanced">Advanced</summary>
+              <div class="advanced-body">
+                <div class="field">
+                  <label for="maxOutput" data-i18n="label.maxOutput">Max Output Tokens</label>
+                  <input id="maxOutput" type="number" min="1" step="1" placeholder="Optional" data-i18n-placeholder="placeholder.optional" />
+                </div>
+                <div class="field">
+                  <label for="timeoutS" data-i18n="label.timeout">Timeout (s)</label>
+                  <input id="timeoutS" type="number" min="1" step="1" />
+                </div>
+                <div class="field">
+                  <label for="retryCount" data-i18n="label.retry">Retry</label>
+                  <input id="retryCount" type="number" min="0" step="1" />
+                </div>
+                <div class="field checkbox">
+                  <input id="streamToggle" type="checkbox" />
+                  <label for="streamToggle" data-i18n="label.stream">Stream response</label>
+                </div>
+                <div class="field">
+                  <label for="maxContext" data-i18n="label.maxContext">Max Context Tokens</label>
+                  <input id="maxContext" type="number" min="1" step="1" placeholder="Optional" data-i18n-placeholder="placeholder.optional" />
+                </div>
+                <div class="field">
+                  <label for="userId" data-i18n="label.userId">User ID</label>
+                  <input id="userId" type="text" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="sessionId" data-i18n="label.sessionId">Session ID</label>
+                  <input id="sessionId" type="text" autocomplete="off" />
+                </div>
+                <div class="settings-actions">
+                  <button class="secondary" id="resetSettingsBtn" type="button" data-i18n="button.resetSettings">
+                    Reset Settings
+                  </button>
+                </div>
+              </div>
+            </details>
+
+            <div class="hint" data-i18n="hint.storage">Settings are stored in your browser.</div>
+          </section>
+
+          <section class="history-panel">
+            <h2 data-i18n="history.title">History</h2>
+            <div class="history-body">
+              <div class="history-list" id="historyList"></div>
+              <div class="history-empty" id="historyEmpty" data-i18n="history.empty">No history yet.</div>
+            </div>
+          </section>
         </aside>
       </div>
     </div>
@@ -451,22 +591,205 @@
     <script>
       const STORAGE_KEY = "wunder_simple_chat_settings";
       const HISTORY_KEY = "wunder_simple_chat_history";
-      const MODEL_KEY = "web";
       const MAX_HISTORY_MESSAGES = 200;
       const MAX_HISTORY_SESSIONS = 20;
+
+      const I18N = {
+        en: {
+          "app.title": "Wunder Simple Chat",
+          "status.ready": "Ready.",
+          "status.preparingAttachments": "Preparing attachments...",
+          "status.sending": "Sending...",
+          "status.done": "Done.",
+          "status.stopped": "Stopped.",
+          "status.newSessionReady": "New session ready.",
+          "status.settingsReset": "Settings reset.",
+          "status.attachmentWarning": "Attachment warning: {detail}{more}",
+          "status.attachmentWarningMore": " (+{count} more)",
+          "button.newChat": "New Chat",
+          "button.stop": "Stop",
+          "button.send": "Send",
+          "button.attach": "Attach Files",
+          "button.resetSettings": "Reset Settings",
+          "button.show": "Show",
+          "button.hide": "Hide",
+          "settings.title": "Model Settings",
+          "label.endpoint": "Endpoint",
+          "label.apiKey": "API Key",
+          "label.model": "Model",
+          "label.temperature": "Temperature",
+          "label.maxOutput": "Max Output Tokens",
+          "label.timeout": "Timeout (s)",
+          "label.retry": "Retry",
+          "label.stream": "Stream response",
+          "label.advanced": "Advanced",
+          "label.maxContext": "Max Context Tokens",
+          "label.userId": "User ID",
+          "label.sessionId": "Session ID",
+          "label.attachments": "Attachments",
+          "label.reasoning": "Reasoning",
+          "label.removeAttachment": "Remove attachment",
+          "history.title": "History",
+          "history.empty": "No history yet.",
+          "history.session": "Session",
+          "history.messages": "messages",
+          "history.previewEmpty": "No preview available.",
+          "placeholder.question": "Type your message...",
+          "placeholder.endpoint": "https://api.openai.com",
+          "placeholder.apiKey": "sk-...",
+          "placeholder.model": "gpt-4o-mini",
+          "placeholder.optional": "Optional",
+          "hint.storage": "Settings are stored in your browser.",
+          "error.readImage": "Failed to read image.",
+          "error.readFile": "Failed to read file.",
+          "error.requestFailed": "Request failed.",
+          "error.requestFailedStatus": "Request failed ({status}).",
+          "error.noResponse": "No response.",
+          "error.fillEndpoint": "Please fill model endpoint.",
+          "error.fillApiKey": "Please fill API key.",
+          "error.fillModel": "Please fill model name.",
+          "error.unsupportedFile": "Unsupported file type.",
+        },
+        zh: {
+          "app.title": "Wunder 简单聊天",
+          "status.ready": "就绪。",
+          "status.preparingAttachments": "正在准备附件...",
+          "status.sending": "发送中...",
+          "status.done": "完成。",
+          "status.stopped": "已停止。",
+          "status.newSessionReady": "新会话已就绪。",
+          "status.settingsReset": "设置已重置。",
+          "status.attachmentWarning": "附件警告：{detail}{more}",
+          "status.attachmentWarningMore": "（另有{count}个）",
+          "button.newChat": "新建会话",
+          "button.stop": "停止",
+          "button.send": "发送",
+          "button.attach": "选择文件",
+          "button.resetSettings": "重置设置",
+          "button.show": "显示",
+          "button.hide": "隐藏",
+          "settings.title": "模型设置",
+          "label.endpoint": "模型端点",
+          "label.apiKey": "API Key",
+          "label.model": "模型名称",
+          "label.temperature": "温度",
+          "label.maxOutput": "最大输出 Token",
+          "label.timeout": "超时（秒）",
+          "label.retry": "重试次数",
+          "label.stream": "流式响应",
+          "label.advanced": "高级",
+          "label.maxContext": "最大上下文 Token",
+          "label.userId": "用户 ID",
+          "label.sessionId": "会话 ID",
+          "label.attachments": "附件",
+          "label.reasoning": "思考过程",
+          "label.removeAttachment": "移除附件",
+          "history.title": "历史记录",
+          "history.empty": "暂无历史记录。",
+          "history.session": "会话",
+          "history.messages": "条消息",
+          "history.previewEmpty": "暂无内容。",
+          "placeholder.question": "输入你的问题...",
+          "placeholder.endpoint": "https://api.openai.com",
+          "placeholder.apiKey": "sk-...",
+          "placeholder.model": "gpt-4o-mini",
+          "placeholder.optional": "可选",
+          "hint.storage": "设置将保存在你的浏览器中。",
+          "error.readImage": "读取图片失败。",
+          "error.readFile": "读取文件失败。",
+          "error.requestFailed": "请求失败。",
+          "error.requestFailedStatus": "请求失败（{status}）。",
+          "error.noResponse": "没有返回结果。",
+          "error.fillEndpoint": "请填写模型端点。",
+          "error.fillApiKey": "请填写 API Key。",
+          "error.fillModel": "请填写模型名称。",
+          "error.unsupportedFile": "不支持该文件类型。",
+        },
+      };
+
+      const normalizeLanguage = (value) => {
+        const raw = String(value || "").toLowerCase();
+        if (!raw) {
+          return "";
+        }
+        if (raw.startsWith("zh")) {
+          return "zh";
+        }
+        if (raw.startsWith("en")) {
+          return "en";
+        }
+        return "";
+      };
+
+      const detectLanguage = () => {
+        const candidates = [];
+        if (Array.isArray(navigator.languages)) {
+          candidates.push(...navigator.languages);
+        }
+        if (navigator.language) {
+          candidates.push(navigator.language);
+        }
+        if (document.documentElement.lang) {
+          candidates.push(document.documentElement.lang);
+        }
+        for (const candidate of candidates) {
+          const normalized = normalizeLanguage(candidate);
+          if (normalized) {
+            return normalized;
+          }
+        }
+        return "en";
+      };
+
+      const languageState = {
+        value: detectLanguage(),
+      };
+
+      const t = (key, params) => {
+        const table = I18N[languageState.value] || I18N.en;
+        let value = table[key] || I18N.en[key] || "";
+        if (params && value) {
+          Object.entries(params).forEach(([paramKey, paramValue]) => {
+            value = value.replace(
+              new RegExp(`\\{${paramKey}\\}`, "g"),
+              String(paramValue)
+            );
+          });
+        }
+        return value || key;
+      };
+
+      const applyI18n = () => {
+        document.documentElement.lang = languageState.value === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (!key) {
+            return;
+          }
+          node.textContent = t(key);
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+          const key = node.getAttribute("data-i18n-placeholder");
+          if (!key) {
+            return;
+          }
+          node.setAttribute("placeholder", t(key));
+        });
+      };
 
       const elements = {
         chatList: document.getElementById("chatList"),
         chatForm: document.getElementById("chatForm"),
         questionInput: document.getElementById("questionInput"),
+        attachmentsWrap: document.getElementById("attachmentsWrap"),
         fileInput: document.getElementById("fileInput"),
-        clearFilesBtn: document.getElementById("clearFilesBtn"),
+        fileSelectBtn: document.getElementById("fileSelectBtn"),
         attachmentList: document.getElementById("attachmentList"),
         sendBtn: document.getElementById("sendBtn"),
-        stopBtn: document.getElementById("stopBtn"),
         statusText: document.getElementById("statusText"),
         newChatBtn: document.getElementById("newChatBtn"),
-        clearChatBtn: document.getElementById("clearChatBtn"),
+        historyList: document.getElementById("historyList"),
+        historyEmpty: document.getElementById("historyEmpty"),
         baseUrl: document.getElementById("baseUrl"),
         apiKey: document.getElementById("apiKey"),
         modelName: document.getElementById("modelName"),
@@ -478,8 +801,6 @@
         maxContext: document.getElementById("maxContext"),
         userId: document.getElementById("userId"),
         sessionId: document.getElementById("sessionId"),
-        wunderEndpoint: document.getElementById("wunderEndpoint"),
-        wunderApiKey: document.getElementById("wunderApiKey"),
         toggleApiKey: document.getElementById("toggleApiKey"),
         resetSettingsBtn: document.getElementById("resetSettingsBtn"),
       };
@@ -496,8 +817,6 @@
         maxContext: "",
         userId: "",
         sessionId: "",
-        wunderEndpoint: "",
-        wunderApiKey: "",
       };
 
       const state = {
@@ -559,8 +878,6 @@
         elements.maxContext.value = settings.maxContext || "";
         elements.userId.value = settings.userId || "";
         elements.sessionId.value = settings.sessionId || "";
-        elements.wunderEndpoint.value = settings.wunderEndpoint || "";
-        elements.wunderApiKey.value = settings.wunderApiKey || "";
       };
 
       const readFloat = (value) => {
@@ -599,8 +916,6 @@
         maxContext: readInt(elements.maxContext.value),
         userId: elements.userId.value.trim(),
         sessionId: elements.sessionId.value.trim(),
-        wunderEndpoint: elements.wunderEndpoint.value.trim(),
-        wunderApiKey: elements.wunderApiKey.value.trim(),
       });
 
       const syncSettings = () => {
@@ -625,6 +940,144 @@
 
       const writeHistoryStore = (store) => {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(store));
+      };
+
+      const formatHistoryTimestamp = (timestamp) => {
+        if (!timestamp) {
+          return "";
+        }
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) {
+          return "";
+        }
+        const locale = languageState.value === "zh" ? "zh-CN" : "en-US";
+        return new Intl.DateTimeFormat(locale, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(date);
+      };
+
+      const truncateText = (text, maxLength) => {
+        const trimmed = String(text || "").trim();
+        if (!trimmed) {
+          return "";
+        }
+        if (trimmed.length <= maxLength) {
+          return trimmed;
+        }
+        return `${trimmed.slice(0, maxLength)}…`;
+      };
+
+      const buildHistoryPreview = (messages) => {
+        if (!Array.isArray(messages)) {
+          return "";
+        }
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const entry = messages[index];
+          if (!entry) {
+            continue;
+          }
+          if (entry.text && String(entry.text).trim()) {
+            return String(entry.text).trim();
+          }
+          if (Array.isArray(entry.attachments) && entry.attachments.length) {
+            return `${t("label.attachments")}: ${entry.attachments.join(", ")}`;
+          }
+        }
+        return "";
+      };
+
+      const parseHistoryKey = (key, entry) => {
+        const raw = String(key || "");
+        if (raw.includes("::")) {
+          const parts = raw.split("::");
+          return {
+            userId: parts.shift() || "",
+            sessionId: parts.join("::"),
+          };
+        }
+        return {
+          userId: entry?.userId || "",
+          sessionId: raw,
+        };
+      };
+
+      const renderHistoryList = () => {
+        if (!elements.historyList || !elements.historyEmpty) {
+          return;
+        }
+        const store = readHistoryStore();
+        const items = Object.entries(store || {})
+          .map(([key, value]) => {
+            const parsed = parseHistoryKey(key, value);
+            const sessionId = parsed.sessionId || value?.sessionId || "";
+            const userId = parsed.userId || value?.userId || "";
+            return {
+              key,
+              sessionId,
+              userId,
+              updatedAt: value?.updatedAt || 0,
+              messages: Array.isArray(value?.messages) ? value.messages : [],
+            };
+          })
+          .filter((entry) => {
+            if (!entry.sessionId) {
+              return false;
+            }
+            if (state.activeUserId && entry.userId && entry.userId !== state.activeUserId) {
+              return false;
+            }
+            return true;
+          })
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+        elements.historyList.innerHTML = "";
+        if (!items.length) {
+          elements.historyEmpty.hidden = false;
+          return;
+        }
+        elements.historyEmpty.hidden = true;
+
+        items.forEach((entry) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "history-item";
+          if (entry.sessionId === state.activeSessionId) {
+            button.classList.add("active");
+          }
+          button.title = entry.sessionId;
+
+          const title = document.createElement("div");
+          title.className = "history-title";
+          const shortId =
+            entry.sessionId.length > 10
+              ? `${entry.sessionId.slice(0, 10)}…`
+              : entry.sessionId;
+          title.textContent = `${t("history.session")} ${shortId}`;
+
+          const meta = document.createElement("div");
+          meta.className = "history-meta";
+          const updatedText = formatHistoryTimestamp(entry.updatedAt);
+          const countText = entry.messages.length
+            ? `${entry.messages.length} ${t("history.messages")}`
+            : "";
+          meta.textContent = [updatedText, countText].filter(Boolean).join(" · ");
+
+          const preview = document.createElement("div");
+          preview.className = "history-preview";
+          preview.textContent =
+            truncateText(buildHistoryPreview(entry.messages), 80) ||
+            t("history.previewEmpty");
+
+          button.append(title, meta, preview);
+          button.addEventListener("click", () => {
+            elements.sessionId.value = entry.sessionId;
+            const next = syncSettings();
+            setActiveSession(next.userId, entry.sessionId);
+          });
+
+          elements.historyList.appendChild(button);
+        });
       };
 
       const serializeHistoryMessages = (messages) =>
@@ -686,6 +1139,7 @@
             }
           }
         }
+        renderHistoryList();
       };
 
       const scheduleHistorySave = () => {
@@ -739,12 +1193,14 @@
             setReasoning(bubble, message.reasoning);
           }
         });
+        renderHistoryList();
       };
 
       const clearHistoryForSession = () => {
         state.history = [];
         saveHistoryNow();
         elements.chatList.innerHTML = "";
+        renderHistoryList();
       };
 
       const ensureIds = (settings) => {
@@ -768,6 +1224,14 @@
         elements.statusText.textContent = text;
       };
 
+      const updateApiKeyToggleLabel = () => {
+        if (!elements.toggleApiKey) {
+          return;
+        }
+        const hidden = elements.apiKey.type === "password";
+        elements.toggleApiKey.textContent = hidden ? t("button.show") : t("button.hide");
+      };
+
       const getFileExtension = (name) => {
         const parts = String(name || "").split(".");
         if (parts.length < 2) {
@@ -776,37 +1240,16 @@
         return parts.pop().toLowerCase();
       };
 
-      const normalizeWunderEndpoint = (raw) => {
-        const trimmed = String(raw || "").trim();
+      const buildModelEndpoint = (baseUrl) => {
+        const trimmed = String(baseUrl || "").trim();
         if (!trimmed) {
           return "";
         }
-        const withScheme =
-          trimmed.startsWith("/") || /^[a-zA-Z]+:\/\//.test(trimmed)
-            ? trimmed
-            : `http://${trimmed}`;
-        try {
-          const url = new URL(withScheme);
-          url.search = "";
-          url.hash = "";
-          const basePath = url.pathname.replace(/\/+$/, "");
-          const collapsed = basePath.replace(/(\/wunder)+$/, "/wunder");
-          url.pathname = collapsed.endsWith("/wunder") ? collapsed : `${collapsed}/wunder`;
-          return url.toString().replace(/\/$/, "");
-        } catch (error) {
-          const basePath = trimmed.replace(/\/+$/, "");
-          const collapsed = basePath.replace(/(\/wunder)+$/, "/wunder");
-          return collapsed.endsWith("/wunder") ? collapsed : `${collapsed}/wunder`;
+        if (/\/chat\/completions\/?$/.test(trimmed) || /\/responses\/?$/.test(trimmed)) {
+          return trimmed.replace(/\/+$/, "");
         }
+        return `${trimmed.replace(/\/+$/, "")}/chat/completions`;
       };
-
-      const getWunderEndpoint = (settings) => {
-        const normalized = normalizeWunderEndpoint(settings.wunderEndpoint);
-        return normalized || "/wunder";
-      };
-
-      const getWunderAttachmentEndpoint = (settings) =>
-        `${getWunderEndpoint(settings)}/attachments/convert`;
 
       const isImageFile = (file) => {
         if (file.type && file.type.startsWith("image/")) {
@@ -843,13 +1286,46 @@
 
       const updateAttachmentList = () => {
         elements.attachmentList.innerHTML = "";
-        state.selectedFiles.forEach((file) => {
+        if (!state.selectedFiles.length) {
+          if (elements.attachmentsWrap) {
+            elements.attachmentsWrap.classList.add("hidden");
+          }
+          return;
+        }
+        if (elements.attachmentsWrap) {
+          elements.attachmentsWrap.classList.remove("hidden");
+        }
+        state.selectedFiles.forEach((file, index) => {
           const item = document.createElement("div");
           item.className = "attachment-item";
+          const nameNode = document.createElement("span");
+          nameNode.className = "attachment-name";
           const size = formatFileSize(file.size);
-          item.textContent = size ? `${file.name} (${size})` : file.name;
+          nameNode.textContent = size ? `${file.name} (${size})` : file.name;
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "attachment-remove";
+          removeBtn.textContent = "×";
+          removeBtn.setAttribute("aria-label", t("label.removeAttachment"));
+          removeBtn.setAttribute("title", t("label.removeAttachment"));
+          removeBtn.disabled = state.streaming;
+          removeBtn.addEventListener("click", () => {
+            removeAttachmentAt(index);
+          });
+          item.append(nameNode, removeBtn);
           elements.attachmentList.appendChild(item);
         });
+      };
+
+      const removeAttachmentAt = (index) => {
+        if (index < 0 || index >= state.selectedFiles.length) {
+          return;
+        }
+        state.selectedFiles.splice(index, 1);
+        if (elements.fileInput) {
+          elements.fileInput.value = "";
+        }
+        updateAttachmentList();
       };
 
       const clearAttachments = () => {
@@ -864,7 +1340,7 @@
         new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result || "");
-          reader.onerror = () => reject(new Error("Failed to read image."));
+          reader.onerror = () => reject(new Error(t("error.readImage")));
           reader.readAsDataURL(file);
         });
 
@@ -872,33 +1348,11 @@
         new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result || "");
-          reader.onerror = () => reject(new Error("Failed to read file."));
+          reader.onerror = () => reject(new Error(t("error.readFile")));
           reader.readAsText(file);
         });
 
-      const convertFileToText = async (file, settings) => {
-        const formData = new FormData();
-        formData.append("file", file, file.name);
-        const headers = {};
-        if (settings.wunderApiKey) {
-          headers["X-API-Key"] = settings.wunderApiKey;
-        }
-        const response = await fetch(getWunderAttachmentEndpoint(settings), {
-          method: "POST",
-          headers,
-          body: formData,
-        });
-        if (!response.ok) {
-          throw new Error(`Convert failed (${response.status})`);
-        }
-        const result = await response.json();
-        if (!result?.ok || !result?.content) {
-          throw new Error("Convert failed.");
-        }
-        return result.content;
-      };
-
-      const buildAttachments = async (settings) => {
+      const buildAttachments = async () => {
         const attachments = [];
         const names = [];
         const errors = [];
@@ -933,28 +1387,16 @@
               names.push(file.name);
               continue;
             }
-            if (!settings.wunderApiKey) {
-              errors.push(`${file.name}: missing Wunder API key for conversion.`);
-              continue;
-            }
-            const content = await convertFileToText(file, settings);
-            if (!content) {
-              continue;
-            }
-            attachments.push({
-              name: file.name,
-              content,
-              content_type: "text/markdown",
-            });
-            names.push(file.name);
+            errors.push(`${file.name}: ${t("error.unsupportedFile")}`);
           } catch (error) {
-            const message = error?.message || "convert failed";
+            const message = error?.message || t("error.readFile");
             errors.push(`${file.name}: ${message}`);
           }
         }
         if (errors.length) {
-          const note = errors.length > 1 ? ` (+${errors.length - 1} more)` : "";
-          setStatus(`Attachment warning: ${errors[0]}${note}`);
+          const note =
+            errors.length > 1 ? t("status.attachmentWarningMore", { count: errors.length - 1 }) : "";
+          setStatus(t("status.attachmentWarning", { detail: errors[0], more: note }));
         }
         return { attachments, names };
       };
@@ -1012,7 +1454,7 @@
         if (Array.isArray(meta) && meta.length) {
           const metaNode = document.createElement("div");
           metaNode.className = "message-meta";
-          metaNode.textContent = `Attachments: ${meta.join(", ")}`;
+          metaNode.textContent = `${t("label.attachments")}: ${meta.join(", ")}`;
           bubble.appendChild(metaNode);
         }
         if (role === "assistant") {
@@ -1020,7 +1462,7 @@
           details.className = "reasoning";
           details.hidden = true;
           const summary = document.createElement("summary");
-          summary.textContent = "Reasoning";
+          summary.textContent = t("label.reasoning");
           const pre = document.createElement("pre");
           pre.className = "reasoning-content";
           details.append(summary, pre);
@@ -1089,192 +1531,228 @@
 
       const setStreaming = (active) => {
         state.streaming = active;
-        elements.sendBtn.disabled = active;
-        elements.stopBtn.disabled = !active;
+        elements.sendBtn.textContent = active ? t("button.stop") : t("button.send");
+        elements.sendBtn.classList.toggle("danger", active);
         elements.questionInput.disabled = active;
         if (elements.fileInput) {
           elements.fileInput.disabled = active;
         }
-        if (elements.clearFilesBtn) {
-          elements.clearFilesBtn.disabled = active;
+        if (elements.fileSelectBtn) {
+          elements.fileSelectBtn.disabled = active;
         }
+        updateAttachmentList();
       };
 
-      const buildConfigOverrides = (settings) => {
-        const modelConfig = {
-          base_url: settings.baseUrl,
-          api_key: settings.apiKey,
+      const buildUserContent = (question, attachments) => {
+        let text = question;
+        const images = [];
+        const textAttachments = [];
+        (attachments || []).forEach((attachment) => {
+          if (!attachment || !attachment.content) {
+            return;
+          }
+          if (
+            attachment.content_type?.startsWith("image/") ||
+            String(attachment.content).startsWith("data:image")
+          ) {
+            images.push(attachment);
+          } else {
+            textAttachments.push(attachment);
+          }
+        });
+        if (textAttachments.length) {
+          const blocks = textAttachments.map(
+            (attachment) => `[${t("label.attachments")}: ${attachment.name}]\n${attachment.content}`
+          );
+          text = `${text}\n\n${blocks.join("\n\n")}`;
+        }
+        if (!images.length) {
+          return text;
+        }
+        const content = [{ type: "text", text }];
+        images.forEach((attachment) => {
+          content.push({
+            type: "image_url",
+            image_url: { url: attachment.content },
+          });
+        });
+        return content;
+      };
+
+      const buildMessagesForRequest = (question, attachments) => {
+        const messages = [];
+        const history = Array.isArray(state.history) ? state.history : [];
+        history.forEach((entry, index) => {
+          if (!entry || !entry.role) {
+            return;
+          }
+          const text = entry.text || "";
+          if (entry.role === "assistant") {
+            if (String(text).trim()) {
+              messages.push({ role: "assistant", content: text });
+            }
+            return;
+          }
+          if (entry.role === "user") {
+            const isLast = index === history.length - 1 && text === question;
+            if (isLast) {
+              const content = buildUserContent(question, attachments);
+              if (content) {
+                messages.push({ role: "user", content });
+              }
+              return;
+            }
+            if (text) {
+              messages.push({ role: "user", content: text });
+            }
+          }
+        });
+        if (!messages.length || messages[messages.length - 1]?.role !== "user") {
+          const content = buildUserContent(question, attachments);
+          if (content) {
+            messages.push({ role: "user", content });
+          }
+        }
+        return messages;
+      };
+
+      const buildPayload = (messages, settings) => {
+        const payload = {
           model: settings.modelName,
+          messages,
           stream: settings.stream,
         };
         if (settings.temperature !== "") {
-          modelConfig.temperature = settings.temperature;
+          payload.temperature = settings.temperature;
         }
         if (settings.maxOutput !== "") {
-          modelConfig.max_output = settings.maxOutput;
-        }
-        if (settings.timeoutS !== "") {
-          modelConfig.timeout_s = settings.timeoutS;
-        }
-        if (settings.retryCount !== "") {
-          modelConfig.retry = settings.retryCount;
-        }
-        if (settings.maxContext !== "") {
-          modelConfig.max_context = settings.maxContext;
-        }
-        return {
-          llm: {
-            default: MODEL_KEY,
-            models: {
-              [MODEL_KEY]: modelConfig,
-            },
-          },
-        };
-      };
-
-      const buildPayload = (question, settings, attachments) => {
-        const payload = {
-          user_id: settings.userId,
-          question,
-          stream: settings.stream,
-          session_id: settings.sessionId || null,
-          model_name: MODEL_KEY,
-          config_overrides: buildConfigOverrides(settings),
-        };
-        if (Array.isArray(attachments) && attachments.length) {
-          payload.attachments = attachments;
+          payload.max_tokens = settings.maxOutput;
         }
         return payload;
       };
 
-      const parseSseBlock = (block) => {
-        const lines = block.split(/\r?\n/);
-        let eventType = "message";
-        const dataLines = [];
-        lines.forEach((line) => {
-          if (line.startsWith("event:")) {
-            eventType = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            dataLines.push(line.slice(5).trim());
-          }
-        });
-        return { eventType, dataText: dataLines.join("\n") };
-      };
-
-      const handleEvent = (eventType, dataText, assistantBubble) => {
-        const payload = safeJsonParse(dataText);
-        const data =
-          payload && typeof payload === "object" && payload.data !== undefined ? payload.data : payload;
-        if (eventType === "llm_output_delta") {
-          const delta = data?.delta || "";
-          const reasoningDelta = data?.reasoning_delta || "";
-          if (delta) {
-            const current = getMessageText(assistantBubble);
-            updateMessage(assistantBubble, current + delta);
-          }
-          if (reasoningDelta) {
-            appendReasoning(assistantBubble, reasoningDelta);
-          }
-          return;
-        }
-        if (eventType === "llm_output") {
-          const content = data?.content || "";
-          const reasoning = data?.reasoning || "";
-          if (content) {
-            updateMessage(assistantBubble, content);
-          }
-          if (reasoning) {
-            setReasoning(assistantBubble, reasoning);
-          }
-          return;
-        }
-        if (eventType === "final") {
-          const answer = data?.answer || data?.content || "";
-          if (answer) {
-            updateMessage(assistantBubble, answer);
-          }
-          return;
-        }
-        if (eventType === "error") {
-          const message =
-            data?.message || data?.detail?.message || dataText || "Request failed.";
-          setStatus(message);
-        }
-      };
-
-      const sendStream = async (payload, assistantBubble, settings, controller) => {
+      const buildHeaders = (settings) => {
         const headers = {
           "Content-Type": "application/json",
         };
-        if (settings.wunderApiKey) {
-          headers["X-API-Key"] = settings.wunderApiKey;
+        if (settings.apiKey) {
+          headers.Authorization = `Bearer ${settings.apiKey}`;
         }
-        const response = await fetch(getWunderEndpoint(settings), {
+        return headers;
+      };
+
+      const scheduleTimeout = (controller, timeoutS) => {
+        if (!controller || !timeoutS || timeoutS <= 0) {
+          return null;
+        }
+        return setTimeout(() => {
+          controller.abort();
+        }, timeoutS * 1000);
+      };
+
+      const extractDelta = (payload) => {
+        const delta = payload?.choices?.[0]?.delta || {};
+        const content = delta?.content || "";
+        const reasoning =
+          delta?.reasoning || delta?.reasoning_content || delta?.thinking || "";
+        return { content, reasoning };
+      };
+
+      const extractMessage = (payload) => {
+        const choice = payload?.choices?.[0] || {};
+        const message = choice?.message || {};
+        const content = message?.content || choice?.text || "";
+        const reasoning =
+          message?.reasoning || message?.reasoning_content || message?.thinking || "";
+        return { content, reasoning };
+      };
+
+      const sendStream = async (endpoint, payload, assistantBubble, settings, controller) => {
+        const headers = buildHeaders(settings);
+        const response = await fetch(endpoint, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
-          throw new Error(`Request failed (${response.status})`);
+          throw new Error(t("error.requestFailedStatus", { status: response.status }));
         }
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
+        let done = false;
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          if (streamDone) {
             break;
           }
           buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() || "";
-          parts.forEach((part) => {
-            if (!part.trim()) {
-              return;
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) {
+              continue;
             }
-            const { eventType, dataText } = parseSseBlock(part);
-            handleEvent(eventType, dataText, assistantBubble);
-          });
+            const dataText = trimmed.slice(5).trim();
+            if (!dataText) {
+              continue;
+            }
+            if (dataText === "[DONE]") {
+              done = true;
+              break;
+            }
+            const payloadChunk = safeJsonParse(dataText);
+            if (!payloadChunk) {
+              continue;
+            }
+            const { content, reasoning } = extractDelta(payloadChunk);
+            if (content) {
+              const current = getMessageText(assistantBubble);
+              updateMessage(assistantBubble, current + content);
+            }
+            if (reasoning) {
+              appendReasoning(assistantBubble, reasoning);
+            }
+          }
         }
       };
 
-      const sendNonStream = async (payload, assistantBubble, settings, controller) => {
-        const headers = {
-          "Content-Type": "application/json",
-        };
-        if (settings.wunderApiKey) {
-          headers["X-API-Key"] = settings.wunderApiKey;
-        }
-        const response = await fetch(getWunderEndpoint(settings), {
+      const sendNonStream = async (endpoint, payload, assistantBubble, settings, controller) => {
+        const headers = buildHeaders(settings);
+        const response = await fetch(endpoint, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
         if (!response.ok) {
-          throw new Error(`Request failed (${response.status})`);
+          throw new Error(t("error.requestFailedStatus", { status: response.status }));
         }
         const result = await response.json();
-        const answer = result?.answer || "";
-        if (result?.session_id && result.session_id !== settings.sessionId) {
-          elements.sessionId.value = result.session_id;
-          syncSettings();
+        const { content, reasoning } = extractMessage(result);
+        if (content) {
+          updateMessage(assistantBubble, content);
+        } else {
+          updateMessage(assistantBubble, t("error.noResponse"));
         }
-        updateMessage(assistantBubble, answer || "No response.");
+        if (reasoning) {
+          setReasoning(assistantBubble, reasoning);
+        }
       };
 
       const validateSettings = (settings) => {
         if (!settings.baseUrl) {
-          setStatus("Please fill model endpoint.");
+          setStatus(t("error.fillEndpoint"));
           return false;
         }
         if (!settings.apiKey) {
-          setStatus("Please fill API key.");
+          setStatus(t("error.fillApiKey"));
           return false;
         }
         if (!settings.modelName) {
-          setStatus("Please fill model name.");
+          setStatus(t("error.fillModel"));
           return false;
         }
         return true;
@@ -1286,33 +1764,40 @@
         if (!validateSettings(settings)) {
           return;
         }
+        const endpoint = buildModelEndpoint(settings.baseUrl);
+        if (!endpoint) {
+          setStatus(t("error.fillEndpoint"));
+          return;
+        }
         setStreaming(true);
-        setStatus("Preparing attachments...");
+        setStatus(t("status.preparingAttachments"));
         state.controller = new AbortController();
+        const timeoutId = scheduleTimeout(state.controller, settings.timeoutS);
         let assistantBubble = null;
         try {
-          const { attachments, names } = await buildAttachments(settings);
+          const { attachments, names } = await buildAttachments();
           const userIndex = addHistoryEntry("user", question, names);
           appendMessage("user", question, names, { historyIndex: userIndex });
-          const assistantIndex = addHistoryEntry("assistant", "...");
-          assistantBubble = appendMessage("assistant", "...", null, { historyIndex: assistantIndex });
-          setStatus("Sending...");
-          const payload = buildPayload(question, settings, attachments);
+          const messages = buildMessagesForRequest(question, attachments);
+          const assistantIndex = addHistoryEntry("assistant", "");
+          assistantBubble = appendMessage("assistant", "", null, { historyIndex: assistantIndex });
+          setStatus(t("status.sending"));
+          const payload = buildPayload(messages, settings);
           if (settings.stream) {
-            await sendStream(payload, assistantBubble, settings, state.controller);
+            await sendStream(endpoint, payload, assistantBubble, settings, state.controller);
           } else {
-            await sendNonStream(payload, assistantBubble, settings, state.controller);
+            await sendNonStream(endpoint, payload, assistantBubble, settings, state.controller);
           }
-          setStatus("Done.");
+          setStatus(t("status.done"));
         } catch (error) {
           if (error && error.name === "AbortError") {
-            if (assistantBubble && getMessageText(assistantBubble) === "...") {
-              updateMessage(assistantBubble, "Stopped.");
+            if (assistantBubble && !getMessageText(assistantBubble)) {
+              updateMessage(assistantBubble, t("status.stopped"));
             }
-            setStatus("Stopped.");
+            setStatus(t("status.stopped"));
             return;
           }
-          const message = error?.message || "Request failed.";
+          const message = error?.message || t("error.requestFailed");
           if (assistantBubble) {
             updateMessage(assistantBubble, message);
           } else {
@@ -1321,6 +1806,9 @@
           }
           setStatus(message);
         } finally {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           setStreaming(false);
           state.controller = null;
           clearAttachments();
@@ -1328,33 +1816,49 @@
       };
 
       const initialize = () => {
+        applyI18n();
         const settings = ensureIds(loadSettings());
         applySettings(settings);
         syncSettings();
         updateAttachmentList();
         setActiveSession(settings.userId, settings.sessionId);
+        setStatus(t("status.ready"));
+        updateApiKeyToggleLabel();
 
         elements.toggleApiKey.addEventListener("click", () => {
           const hidden = elements.apiKey.type === "password";
           elements.apiKey.type = hidden ? "text" : "password";
-          elements.toggleApiKey.textContent = hidden ? "Hide" : "Show";
+          updateApiKeyToggleLabel();
         });
 
         if (elements.fileInput) {
           elements.fileInput.addEventListener("change", (event) => {
             const files = Array.from(event.target.files || []);
-            state.selectedFiles = files;
+            if (files.length) {
+              state.selectedFiles = state.selectedFiles.concat(files);
+            }
+            if (elements.fileInput) {
+              elements.fileInput.value = "";
+            }
             updateAttachmentList();
           });
         }
 
-        if (elements.clearFilesBtn) {
-          elements.clearFilesBtn.addEventListener("click", clearAttachments);
+        if (elements.fileSelectBtn) {
+          elements.fileSelectBtn.addEventListener("click", () => {
+            if (!state.streaming && elements.fileInput) {
+              elements.fileInput.click();
+            }
+          });
         }
 
         elements.chatForm.addEventListener("submit", (event) => {
           event.preventDefault();
           if (state.streaming) {
+            if (state.controller) {
+              state.controller.abort();
+              setStatus(t("status.stopped"));
+            }
             return;
           }
           const text = elements.questionInput.value.trim();
@@ -1372,25 +1876,12 @@
           }
         });
 
-        elements.stopBtn.addEventListener("click", () => {
-          if (state.controller) {
-            state.controller.abort();
-            setStatus("Stopped.");
-          }
-        });
-
         elements.newChatBtn.addEventListener("click", () => {
           elements.sessionId.value = createId("session");
           const next = syncSettings();
           setActiveSession(next.userId, next.sessionId);
           clearAttachments();
-          setStatus("New session ready.");
-        });
-
-        elements.clearChatBtn.addEventListener("click", () => {
-          clearHistoryForSession();
-          clearAttachments();
-          setStatus("Messages cleared.");
+          setStatus(t("status.newSessionReady"));
         });
 
         elements.resetSettingsBtn.addEventListener("click", () => {
@@ -1399,7 +1890,7 @@
           saveSettings(reset);
           setActiveSession(reset.userId, reset.sessionId);
           clearAttachments();
-          setStatus("Settings reset.");
+          setStatus(t("status.settingsReset"));
         });
 
         const sessionInputs = [elements.userId, elements.sessionId];
@@ -1419,8 +1910,6 @@
           elements.retryCount,
           elements.streamToggle,
           elements.maxContext,
-          elements.wunderEndpoint,
-          elements.wunderApiKey,
         ].forEach((input) => {
           input.addEventListener("change", syncSettings);
         });

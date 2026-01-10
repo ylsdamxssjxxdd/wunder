@@ -658,7 +658,15 @@ impl MonitorState {
                     record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                 })
-                .map(|record| record.to_summary())
+                .map(|record| {
+                    let mut summary = record.to_summary();
+                    if let Value::Object(ref mut map) = summary {
+                        for (key, value) in build_llm_speed_summary(&record.events) {
+                            map.insert(key, value);
+                        }
+                    }
+                    summary
+                })
                 .collect()
         })
     }
@@ -849,6 +857,10 @@ impl MonitorState {
                 let mut recent_completed = 0;
                 let mut elapsed_total = 0.0;
                 let mut elapsed_count = 0.0;
+                let mut prefill_tokens_total = 0.0;
+                let mut prefill_duration_total = 0.0;
+                let mut decode_tokens_total = 0.0;
+                let mut decode_duration_total = 0.0;
                 for record in sessions.values() {
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
@@ -864,8 +876,26 @@ impl MonitorState {
                         cancelled_sessions += 1;
                     }
                     let end_ts = record.ended_time.unwrap_or(record.updated_time);
-                    if now - end_ts <= window {
+                    let in_window = now - end_ts <= window;
+                    if in_window {
                         recent_completed += 1;
+                        let summary = build_llm_speed_summary(&record.events);
+                        let prefill_tokens = parse_i64_value(summary.get("prefill_tokens"));
+                        let prefill_duration = parse_f64_value(summary.get("prefill_duration_s"));
+                        if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
+                            if tokens > 0 && duration > 0.0 {
+                                prefill_tokens_total += tokens as f64;
+                                prefill_duration_total += duration;
+                            }
+                        }
+                        let decode_tokens = parse_i64_value(summary.get("decode_tokens"));
+                        let decode_duration = parse_f64_value(summary.get("decode_duration_s"));
+                        if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
+                            if tokens > 0 && duration > 0.0 {
+                                decode_tokens_total += tokens as f64;
+                                decode_duration_total += duration;
+                            }
+                        }
                     }
                     elapsed_total += (end_ts - record.start_time).max(0.0);
                     elapsed_count += 1.0;
@@ -877,6 +907,17 @@ impl MonitorState {
                 } else {
                     0.0
                 };
+                let avg_prefill_speed =
+                    if prefill_tokens_total > 0.0 && prefill_duration_total > 0.0 {
+                        Some(prefill_tokens_total / prefill_duration_total)
+                    } else {
+                        None
+                    };
+                let avg_decode_speed = if decode_tokens_total > 0.0 && decode_duration_total > 0.0 {
+                    Some(decode_tokens_total / decode_duration_total)
+                } else {
+                    None
+                };
                 json!({
                     "active_sessions": active_sessions,
                     "history_sessions": history_sessions,
@@ -886,6 +927,8 @@ impl MonitorState {
                     "total_sessions": total_sessions,
                     "recent_completed": recent_completed,
                     "avg_elapsed_s": avg_elapsed,
+                    "avg_prefill_speed_tps": avg_prefill_speed,
+                    "avg_decode_speed_tps": avg_decode_speed,
                 })
             },
         )
@@ -978,6 +1021,8 @@ impl MonitorState {
             "total_sessions": 0,
             "recent_completed": 0,
             "avg_elapsed_s": 0.0,
+            "avg_prefill_speed_tps": Value::Null,
+            "avg_decode_speed_tps": Value::Null,
         })
     }
 

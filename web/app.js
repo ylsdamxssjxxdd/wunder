@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260105-02";
+import { elements } from "./modules/elements.js?v=20260110-03";
 
 import { state } from "./modules/state.js";
 
@@ -36,8 +36,8 @@ import {
 
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-02";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-03";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-03";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-04";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
 
@@ -65,7 +65,7 @@ import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-02";
 
 
 

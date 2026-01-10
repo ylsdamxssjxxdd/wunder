@@ -328,9 +328,11 @@
 - 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`。
 - 返回（JSON）：
   - `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/disk_read_bytes/disk_write_bytes/net_sent_bytes/net_recv_bytes/uptime_s）
-  - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/recent_completed/avg_elapsed_s）
+  - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/recent_completed/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
-  - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary）
+  - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
   - `tool_stats`：工具调用统计列表（tool/calls）
 
 ### 4.1.8.1 `/wunder/admin/monitor/tool_usage`
@@ -556,7 +558,7 @@
 ### 4.1.24.0 `/`
 
 - 方法：`GET`
-- 说明：简易聊天测试页（`web/simple-chat/index.html`），可直接填写模型端点/API Key/模型名与 Wunder 端点/Key，支持附件上传与思考折叠显示，并在浏览器中保存设置与对话历史。
+- 说明：简易聊天测试页（`web/simple-chat/index.html`），直接调用模型端点（OpenAI 兼容 `chat/completions`），可填写模型端点/API Key/模型名，支持图片与文本附件、思考折叠显示，并在浏览器中保存设置与对话历史。
 
 ### 4.1.24 `/wunder/web`
 

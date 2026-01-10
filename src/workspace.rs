@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
@@ -443,47 +443,6 @@ impl WorkspaceManager {
         Ok(user_root)
     }
 
-    pub fn list_entries(&self, user_id: &str, path: &str) -> Result<Vec<WorkspaceEntry>> {
-        let target = self.resolve_path(user_id, path)?;
-        let mut entries = Vec::new();
-        if !target.exists() {
-            return Ok(entries);
-        }
-        for entry in fs::read_dir(&target)? {
-            let entry = entry?;
-            let meta = entry.metadata()?;
-            let entry_type = if meta.is_dir() { "dir" } else { "file" };
-            let updated = meta.modified().ok().and_then(|time| {
-                let dt: DateTime<Local> = time.into();
-                Some(dt.to_rfc3339())
-            });
-            let name = entry.file_name().to_string_lossy().to_string();
-            let rel_path = Path::new(path).join(&name);
-            entries.push(WorkspaceEntry {
-                name,
-                path: rel_path.to_string_lossy().to_string(),
-                entry_type: entry_type.to_string(),
-                size: if meta.is_dir() { 0 } else { meta.len() },
-                updated_time: updated.unwrap_or_default(),
-                children: None,
-            });
-        }
-        Ok(entries)
-    }
-
-    pub async fn list_entries_async(
-        self: &Arc<Self>,
-        user_id: &str,
-        path: &str,
-    ) -> Result<Vec<WorkspaceEntry>> {
-        let user_id = user_id.to_string();
-        let path = path.to_string();
-        let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || workspace.list_entries(&user_id, &path))
-            .await
-            .map_err(|err| anyhow!("workspace list cancelled: {err}"))?
-    }
-
     pub fn list_workspace_entries(
         &self,
         user_id: &str,
@@ -856,14 +815,6 @@ impl WorkspaceManager {
             workspace_deleted,
             legacy_history_deleted,
         }
-    }
-
-    pub fn read_file(&self, user_id: &str, path: &str, max_bytes: usize) -> Result<String> {
-        let target = self.resolve_path(user_id, path)?;
-        let file = fs::File::open(&target)?;
-        let mut buffer = Vec::new();
-        file.take(max_bytes as u64).read_to_end(&mut buffer)?;
-        Ok(String::from_utf8_lossy(&buffer).to_string())
     }
 
     pub fn write_file(

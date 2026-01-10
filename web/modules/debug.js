@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260110-03";
 import { state } from "./state.js";
 import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20260108-02";
 import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
@@ -9,7 +9,7 @@ import { loadWorkspace } from "./workspace.js?v=20260101-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-02";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
@@ -302,6 +302,10 @@ const createDebugStats = () => ({
   tokenInput: 0,
   tokenOutput: 0,
   tokenTotal: 0,
+  prefillTokens: 0,
+  prefillDuration: 0,
+  decodeTokens: 0,
+  decodeDuration: 0,
   toolCalls: 0,
   toolOk: 0,
   toolFailed: 0,
@@ -329,6 +333,25 @@ const formatStatNumber = (value, fallback = "-") => {
     return fallback;
   }
   return parsed.toLocaleString();
+};
+
+const formatTokenRate = (value) => {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  const tokens = Math.max(0, Number(value));
+  const useMillion = tokens >= 1_000_000;
+  const useThousand = tokens >= 1_000 && tokens < 1_000_000;
+  const base = useMillion ? 1_000_000 : useThousand ? 1_000 : 1;
+  const unit = useMillion ? "m" : useThousand ? "k" : "";
+  const scaled = tokens / base;
+  let decimals = 2;
+  if (scaled >= 100) {
+    decimals = 0;
+  } else if (scaled >= 10) {
+    decimals = 1;
+  }
+  return `${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
 };
 
 const normalizeTimestampText = (value) => {
@@ -424,13 +447,6 @@ const renderDebugStats = () => {
     elements.finalAnswer.textContent = t("debug.stats.empty");
     return;
   }
-  const outputState = getModelOutputState();
-  const outputChars = Array.isArray(outputState.rounds)
-    ? outputState.rounds.reduce(
-        (sum, entry) => sum + (Number.isFinite(entry?.contentChars) ? entry.contentChars : 0),
-        0
-      )
-    : 0;
   const sessionId = String(state.runtime.debugSessionId || "").trim();
   const tokenText = debugStats.hasTokenUsage
     ? t("debug.stats.tokenUsage", {
@@ -439,6 +455,14 @@ const renderDebugStats = () => {
         output: formatStatNumber(debugStats.tokenOutput, "0"),
       })
     : "-";
+  const prefillSpeed =
+    debugStats.prefillDuration > 0
+      ? debugStats.prefillTokens / debugStats.prefillDuration
+      : null;
+  const decodeSpeed =
+    debugStats.decodeDuration > 0 ? debugStats.decodeTokens / debugStats.decodeDuration : null;
+  const prefillSpeedText = formatTokenRate(prefillSpeed);
+  const decodeSpeedText = formatTokenRate(decodeSpeed);
   const toolText = t("debug.stats.toolCalls", {
     total: formatStatNumber(debugStats.toolCalls, "0"),
     ok: formatStatNumber(debugStats.toolOk, "0"),
@@ -459,13 +483,13 @@ const renderDebugStats = () => {
     { label: t("debug.stats.sessionId"), value: sessionId || "-" },
     { label: t("debug.stats.duration"), value: durationText },
     { label: t("debug.stats.tokenUsageLabel"), value: tokenText },
+    { label: t("debug.stats.prefillSpeed"), value: prefillSpeedText },
+    { label: t("debug.stats.decodeSpeed"), value: decodeSpeedText },
     { label: t("debug.stats.llmRequests"), value: formatStatNumber(debugStats.llmRequests, "0") },
     { label: t("debug.stats.knowledgeRequests"), value: formatStatNumber(debugStats.knowledgeRequests, "0") },
     { label: t("debug.stats.toolCallsLabel"), value: toolText },
     { label: t("debug.stats.sandboxCalls"), value: formatStatNumber(debugStats.sandboxCalls, "0") },
-    { label: t("debug.stats.outputChars"), value: formatStatNumber(outputChars, "0") },
     { label: t("debug.stats.errorCount"), value: formatStatNumber(debugStats.errorCount, "0") },
-    { label: t("debug.stats.eventCount"), value: formatStatNumber(debugStats.eventCount, "0") },
   ];
 
   const table = document.createElement("table");
@@ -500,6 +524,45 @@ const renderDebugStats = () => {
   elements.finalAnswer.appendChild(table);
 };
 
+const applySpeedUsage = (usage, options = {}) => {
+  if (!usage || typeof usage !== "object") {
+    return;
+  }
+  const inputTokens = Number(usage.input_tokens ?? 0);
+  const outputTokens = Number(usage.output_tokens ?? 0);
+  const prefillDuration = Number(usage.prefill_duration_s);
+  const decodeDuration = Number(usage.decode_duration_s);
+  const shouldOverride = options.override === true;
+  if (
+    Number.isFinite(inputTokens) &&
+    inputTokens > 0 &&
+    Number.isFinite(prefillDuration) &&
+    prefillDuration > 0
+  ) {
+    if (shouldOverride) {
+      debugStats.prefillTokens = inputTokens;
+      debugStats.prefillDuration = prefillDuration;
+    } else {
+      debugStats.prefillTokens += inputTokens;
+      debugStats.prefillDuration += prefillDuration;
+    }
+  }
+  if (
+    Number.isFinite(outputTokens) &&
+    outputTokens > 0 &&
+    Number.isFinite(decodeDuration) &&
+    decodeDuration > 0
+  ) {
+    if (shouldOverride) {
+      debugStats.decodeTokens = outputTokens;
+      debugStats.decodeDuration = decodeDuration;
+    } else {
+      debugStats.decodeTokens += outputTokens;
+      debugStats.decodeDuration += decodeDuration;
+    }
+  }
+};
+
 const applyTokenUsage = (usage) => {
   if (!usage || typeof usage !== "object") {
     return;
@@ -517,6 +580,7 @@ const applyTokenUsage = (usage) => {
     debugStats.tokenTotal += totalTokens;
   }
   debugStats.hasTokenUsage = true;
+  applySpeedUsage(usage);
 };
 
 const applyTokenUsageSnapshot = (usage, options = {}) => {
@@ -549,6 +613,7 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   if (Number.isFinite(totalTokens)) {
     debugStats.tokenTotal = Math.max(debugStats.tokenTotal, totalTokens);
   }
+  applySpeedUsage(usage, { override: options.override === true });
 };
 
 // 生成附件唯一标识，便于删除操作定位
@@ -1973,10 +2038,12 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "token_usage") {
     const data = payload.data || payload;
     // 流式 token_usage 仅记录日志，统计信息等待 final usage 再对齐
-    if (!state.runtime.debugStreaming) {
+    if (state.runtime.debugStreaming) {
+      applySpeedUsage(data);
+    } else {
       applyTokenUsage(data);
-      renderDebugStats();
     }
+    renderDebugStats();
     const summary = data?.total_tokens ? `token_usage: ${data.total_tokens}` : "token_usage";
     appendLog(summary, { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
     return;

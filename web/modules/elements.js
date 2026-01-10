@@ -186,6 +186,8 @@ export const elements = {
   metricServiceRecentLabel: document.getElementById("metricServiceRecentLabel"),
   metricServiceRecent: document.getElementById("metricServiceRecent"),
   metricServiceAvg: document.getElementById("metricServiceAvg"),
+  metricServicePrefillSpeed: document.getElementById("metricServicePrefillSpeed"),
+  metricServiceDecodeSpeed: document.getElementById("metricServiceDecodeSpeed"),
   metricServiceTokenTotal: document.getElementById("metricServiceTokenTotal"),
   metricSandboxMode: document.getElementById("metricSandboxMode"),
   metricSandboxNetwork: document.getElementById("metricSandboxNetwork"),

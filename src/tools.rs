@@ -14,17 +14,29 @@ use crate::user_tools::{
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, PathBuf};
+use std::fs::File;
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::sleep;
 use tracing::warn;
 use uuid::Uuid;
+use walkdir::WalkDir;
+
+const MAX_READ_BYTES: usize = 1024 * 1024;
+const MAX_READ_LINES: usize = 200;
+const MAX_READ_FILES: usize = 5;
+const MAX_RANGE_SPAN: usize = 400;
+const DEFAULT_LIST_DEPTH: usize = 2;
+const MAX_LIST_ITEMS: usize = 200;
+const MAX_SEARCH_MATCHES: usize = 200;
 
 #[derive(Clone)]
 pub struct ToolEventEmitter {
@@ -151,7 +163,8 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": i18n::t("tool.spec.list.args.path")}
+                    "path": {"type": "string", "description": i18n::t("tool.spec.list.args.path")},
+                    "max_depth": {"type": "integer", "minimum": 0}
                 }
             }),
         },
@@ -162,7 +175,8 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": i18n::t("tool.spec.search.args.query")},
-                    "path": {"type": "string", "description": i18n::t("tool.spec.search.args.path")}
+                    "path": {"type": "string", "description": i18n::t("tool.spec.search.args.path")},
+                    "file_pattern": {"type": "string", "description": i18n::t("tool.spec.search.args.file_pattern")}
                 },
                 "required": ["query"]
             }),
@@ -180,7 +194,8 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                             "properties": {
                                 "path": {"type": "string", "description": i18n::t("tool.spec.read.args.files.path")},
                                 "start_line": {"type": "integer", "description": i18n::t("tool.spec.read.args.files.start_line")},
-                                "end_line": {"type": "integer", "description": i18n::t("tool.spec.read.args.files.end_line")}
+                                "end_line": {"type": "integer", "description": i18n::t("tool.spec.read.args.files.end_line")},
+                                "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}}
                             },
                             "required": ["path"]
                         }
@@ -777,41 +792,88 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         return Ok(result);
     }
 
-    let command = args
+    let content = args
         .get("content")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("缺少命令内容"))?;
-    let allow_commands = &context.config.security.allow_commands;
-    if !allow_commands.contains(&"*".to_string())
-        && !allow_commands.iter().any(|item| command.starts_with(item))
-    {
-        return Err(anyhow!("命令未在白名单内"));
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.exec.command_required"),
+            "sandbox": false,
+        }));
     }
+
+    let allow_commands = &context.config.security.allow_commands;
+    let allow_all = allow_commands.iter().any(|item| item == "*");
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let cwd = if workdir.is_empty() {
         context.workspace.ensure_user_root(context.user_id)?
     } else {
         context.workspace.resolve_path(context.user_id, workdir)?
     };
-    let mut cmd = Command::new("bash");
-    cmd.arg("-lc").arg(command).current_dir(cwd);
-    let output = cmd.output().await?;
-    let exit_code = output.status.code().unwrap_or(-1);
-    let error = if exit_code == 0 {
-        String::new()
-    } else {
-        i18n::t("tool.exec.failed")
-    };
-    context.workspace.mark_tree_dirty(context.user_id);
-    Ok(json!({
-        "ok": exit_code == 0,
-        "data": {
-            "exit_code": exit_code,
+    if !cwd.exists() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.exec.workdir_not_found"),
+            "sandbox": false,
+        }));
+    }
+    if !cwd.is_dir() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.exec.workdir_not_dir"),
+            "sandbox": false,
+        }));
+    }
+
+    let mut results = Vec::new();
+    for raw_line in content.lines() {
+        let command = raw_line.trim();
+        if command.is_empty() {
+            continue;
+        }
+        if !allow_all && !allow_commands.iter().any(|item| command.starts_with(item)) {
+            return Ok(json!({
+                "ok": false,
+                "data": {},
+                "error": i18n::t("tool.exec.not_allowed"),
+                "sandbox": false,
+            }));
+        }
+        let output = Command::new("bash")
+            .arg("-lc")
+            .arg(command)
+            .current_dir(&cwd)
+            .output()
+            .await?;
+        let returncode = output.status.code().unwrap_or(-1);
+        results.push(json!({
+            "command": command,
+            "returncode": returncode,
             "stdout": String::from_utf8_lossy(&output.stdout),
             "stderr": String::from_utf8_lossy(&output.stderr),
-            "timestamp": Utc::now().to_rfc3339(),
-        },
-        "error": error,
+        }));
+        if returncode != 0 {
+            context.workspace.mark_tree_dirty(context.user_id);
+            return Ok(json!({
+                "ok": false,
+                "data": { "results": results },
+                "error": i18n::t("tool.exec.failed"),
+                "sandbox": false,
+            }));
+        }
+    }
+    context.workspace.mark_tree_dirty(context.user_id);
+    Ok(json!({
+        "ok": true,
+        "data": { "results": results },
+        "error": "",
         "sandbox": false,
     }))
 }
@@ -856,48 +918,299 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let path = args.get("path").and_then(Value::as_str).unwrap_or("");
-    let entries = context
-        .workspace
-        .list_entries_async(context.user_id, path)
-        .await?;
-    Ok(serde_json::to_value(entries)?)
+    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
+    let max_depth = args
+        .get("max_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_LIST_DEPTH as u64) as usize;
+    let root = context.workspace.resolve_path(context.user_id, path)?;
+    if !root.exists() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.list.path_not_found")
+        }));
+    }
+    let mut items = Vec::new();
+    for entry in WalkDir::new(&root)
+        .min_depth(1)
+        .max_depth(max_depth.saturating_add(1))
+        .into_iter()
+        .filter_map(|item| item.ok())
+    {
+        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+        let mut display = rel.to_string_lossy().replace('\\', "/");
+        if entry.file_type().is_dir() {
+            display.push('/');
+        }
+        items.push(display);
+        if items.len() >= MAX_LIST_ITEMS {
+            break;
+        }
+    }
+    Ok(json!({ "items": items }))
 }
 
 async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let query = args.get("query").and_then(Value::as_str).unwrap_or("");
-    let (entries, _total) = context
-        .workspace
-        .search_workspace_entries_async(context.user_id, query, 0, 0, true, true)
-        .await?;
-    Ok(serde_json::to_value(entries)?)
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.search.empty")
+        }));
+    }
+    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
+    let file_pattern = args
+        .get("file_pattern")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let root = context.workspace.resolve_path(context.user_id, path)?;
+    if !root.exists() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.search.path_not_found")
+        }));
+    }
+
+    let matcher = build_glob_matcher(&file_pattern);
+    let lower_query = query.to_lowercase();
+    let mut matches = Vec::new();
+    'scan: for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+        let rel_display = rel.to_string_lossy().replace('\\', "/");
+        if let Some(regex) = matcher.as_ref() {
+            if !regex.is_match(&rel_display) {
+                continue;
+            }
+        }
+        if entry.metadata().map(|meta| meta.len()).unwrap_or(0) > MAX_READ_BYTES as u64 {
+            continue;
+        }
+        let content = read_text_with_limit(entry.path(), MAX_READ_BYTES)?;
+        for (idx, line) in content.lines().enumerate() {
+            if line.to_lowercase().contains(&lower_query) {
+                matches.push(format!("{}:{}:{}", rel_display, idx + 1, line.trim()));
+                if matches.len() >= MAX_SEARCH_MATCHES {
+                    break 'scan;
+                }
+            }
+        }
+    }
+    Ok(json!({ "matches": matches }))
+}
+
+#[derive(Clone)]
+struct ReadFileSpec {
+    path: String,
+    ranges: Vec<(usize, usize)>,
+}
+
+fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>, String> {
+    let Some(files) = args.get("files").and_then(Value::as_array) else {
+        return Err(i18n::t("tool.read.no_path"));
+    };
+    let mut specs = Vec::new();
+    for file in files.iter().take(MAX_READ_FILES) {
+        let Some(obj) = file.as_object() else {
+            continue;
+        };
+        let path = obj
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if path.is_empty() {
+            continue;
+        }
+        let mut ranges = Vec::new();
+        if let Some(Value::Array(items)) = obj.get("line_ranges") {
+            for item in items {
+                let Some(pair) = item.as_array() else {
+                    continue;
+                };
+                if pair.len() < 2 {
+                    continue;
+                }
+                let Some(start) = pair.get(0).and_then(parse_line_number) else {
+                    continue;
+                };
+                let Some(end) = pair.get(1).and_then(parse_line_number) else {
+                    continue;
+                };
+                ranges.push(normalize_range(start, end));
+            }
+        }
+        if let Some(start) = obj.get("start_line").and_then(parse_line_number) {
+            let end = obj
+                .get("end_line")
+                .and_then(parse_line_number)
+                .unwrap_or(start);
+            ranges.push(normalize_range(start, end));
+        }
+        if ranges.is_empty() {
+            ranges.push((1, MAX_READ_LINES));
+        }
+        specs.push(ReadFileSpec { path, ranges });
+    }
+    if specs.is_empty() {
+        return Err(i18n::t("tool.read.no_path"));
+    }
+    Ok(specs)
+}
+
+fn parse_line_number(value: &Value) -> Option<usize> {
+    if let Some(num) = value.as_u64() {
+        return Some(num as usize);
+    }
+    if let Some(num) = value.as_i64() {
+        if num > 0 {
+            return Some(num as usize);
+        }
+    }
+    if let Some(num) = value.as_f64() {
+        if num > 0.0 {
+            return Some(num as usize);
+        }
+    }
+    if let Some(text) = value.as_str() {
+        if let Ok(num) = text.trim().parse::<usize>() {
+            if num > 0 {
+                return Some(num);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_range(start: usize, end: usize) -> (usize, usize) {
+    let start = start.max(1);
+    let end = end.max(start);
+    if end - start + 1 > MAX_RANGE_SPAN {
+        return (start, start + MAX_RANGE_SPAN - 1);
+    }
+    (start, end)
+}
+
+fn read_text_with_limit(path: &Path, max_bytes: usize) -> Result<String> {
+    let file = File::open(path)?;
+    let mut buffer = Vec::new();
+    file.take(max_bytes as u64).read_to_end(&mut buffer)?;
+    Ok(String::from_utf8_lossy(&buffer).to_string())
+}
+
+fn build_glob_matcher(pattern: &str) -> Option<Regex> {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut regex = String::from("^");
+    for ch in trimmed.chars() {
+        match ch {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            '.' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '|' | '^' | '$' | '\\' => {
+                regex.push('\\');
+                regex.push(ch);
+            }
+            _ => regex.push(ch),
+        }
+    }
+    regex.push('$');
+    Regex::new(&regex).ok()
 }
 
 fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let files = args
-        .get("files")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("files ????"))?;
-    let mut results = Vec::new();
-    for file in files {
-        if let Some(path) = file.get("path").and_then(Value::as_str) {
-            let content = match context
-                .workspace
-                .read_file(context.user_id, path, 1024 * 1024)
-            {
-                Ok(content) => content,
-                Err(err) => {
-                    if let Some(resolved) = resolve_skill_read_path(context, path) {
-                        std::fs::read_to_string(&resolved)?
-                    } else {
-                        return Err(err);
-                    }
-                }
-            };
-            results.push(json!({"path": path, "content": content}));
+    let specs = match parse_read_file_specs(args) {
+        Ok(specs) => specs,
+        Err(message) => {
+            return Ok(json!({
+                "ok": false,
+                "data": {},
+                "error": message
+            }))
         }
+    };
+
+    let mut outputs = Vec::new();
+    for spec in specs {
+        let raw_path = spec.path.as_str();
+        let target = match context.workspace.resolve_path(context.user_id, raw_path) {
+            Ok(path) => Some(path),
+            Err(err) => {
+                if let Some(resolved) = resolve_skill_read_path(context, raw_path) {
+                    Some(resolved)
+                } else {
+                    outputs.push(format!(">>> {}\n{}", raw_path, err));
+                    None
+                }
+            }
+        };
+        let Some(target) = target else {
+            continue;
+        };
+        if !target.exists() {
+            outputs.push(format!(
+                ">>> {}\n{}",
+                raw_path,
+                i18n::t("tool.read.not_found")
+            ));
+            continue;
+        }
+        let size = target.metadata().map(|meta| meta.len()).unwrap_or(0);
+        if size > MAX_READ_BYTES as u64 {
+            outputs.push(format!(
+                ">>> {}\n{}",
+                raw_path,
+                i18n::t("tool.read.too_large")
+            ));
+            continue;
+        }
+        let content = read_text_with_limit(&target, MAX_READ_BYTES)?;
+        let lines: Vec<&str> = content.lines().collect();
+        let mut file_output = Vec::new();
+        for (start, end) in spec.ranges {
+            if lines.is_empty() {
+                file_output.push(i18n::t("tool.read.empty_file"));
+                continue;
+            }
+            if start > lines.len() {
+                let params = HashMap::from([
+                    ("start".to_string(), start.to_string()),
+                    ("end".to_string(), end.to_string()),
+                    ("total".to_string(), lines.len().to_string()),
+                ]);
+                file_output.push(i18n::t_with_params("tool.read.range_out_of_file", &params));
+                continue;
+            }
+            let last = end.min(lines.len());
+            let mut slice_lines = Vec::new();
+            for idx in (start - 1)..last {
+                slice_lines.push(format!("{}: {}", idx + 1, lines[idx]));
+            }
+            file_output.push(slice_lines.join("\n"));
+        }
+        let joined = file_output.join("\n---\n");
+        outputs.push(format!(">>> {}\n{}", raw_path, joined));
     }
-    Ok(Value::Array(results))
+    let result = if outputs.is_empty() {
+        i18n::t("tool.read.empty_result")
+    } else {
+        outputs.join("\n\n")
+    };
+    Ok(json!({ "content": result }))
 }
 
 fn resolve_skill_read_path(context: &ToolContext<'_>, raw_path: &str) -> Option<PathBuf> {
@@ -961,7 +1274,11 @@ fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     context
         .workspace
         .write_file(context.user_id, path, content, true)?;
-    Ok(json!({"ok": true, "path": path}))
+    Ok(json!({
+        "ok": true,
+        "path": path,
+        "bytes": content.as_bytes().len()
+    }))
 }
 
 fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -986,7 +1303,11 @@ fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }
     std::fs::write(&target, replaced)?;
     context.workspace.bump_version(context.user_id);
-    Ok(json!({"ok": true, "replacements": count}))
+    Ok(json!({
+        "ok": true,
+        "path": path,
+        "replaced": count
+    }))
 }
 
 fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1051,7 +1372,11 @@ fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }
     std::fs::write(&target, output)?;
     context.workspace.bump_version(context.user_id);
-    Ok(json!({"ok": true}))
+    Ok(json!({
+        "ok": true,
+        "path": path,
+        "lines": lines.len()
+    }))
 }
 
 #[derive(Clone)]

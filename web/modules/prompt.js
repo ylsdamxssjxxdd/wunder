@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260105-02";
+import { elements } from "./elements.js?v=20260110-03";
 import { state } from "./state.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260110-01";
+import { t } from "./i18n.js?v=20260110-02";
 
 // 渲染系统提示词，并高亮 <tools> 区域内的工具名称与技能名
 const renderPromptSegmentWithSkills = (segment, segmentState) => {

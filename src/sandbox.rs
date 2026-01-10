@@ -241,12 +241,7 @@ pub async fn execute_tool(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let mut data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
-        if let Value::Object(ref mut map) = data {
-            if let Some(debug_events) = parsed.get("debug_events") {
-                map.insert("debug_events".to_string(), debug_events.clone());
-            }
-        }
+        let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
 
         return json!({
             "ok": ok,
