@@ -9,13 +9,15 @@ use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
     COMPACTION_HISTORY_RATIO, COMPACTION_META_TYPE, COMPACTION_MIN_OBSERVATION_TOKENS,
-    COMPACTION_SUMMARY_MAX_OUTPUT, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, OBSERVATION_PREFIX,
-    SESSION_LOCK_HEARTBEAT_S, SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S,
-    STREAM_EVENT_CLEANUP_INTERVAL_S, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S,
-    STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_TTL_S,
+    COMPACTION_SUMMARY_MAX_OUTPUT, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_S,
+    DEFAULT_TOOL_TIMEOUT_S, MIN_TOOL_TIMEOUT_S, OBSERVATION_PREFIX, SESSION_LOCK_HEARTBEAT_S,
+    SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S, STREAM_EVENT_CLEANUP_INTERVAL_S,
+    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S, STREAM_EVENT_QUEUE_SIZE,
+    STREAM_EVENT_TTL_S,
 };
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::{read_prompt_template, PromptComposer};
+use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend};
@@ -28,7 +30,7 @@ use crate::tools::{
 };
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use futures::{Stream, StreamExt};
 use regex::Regex;
@@ -45,6 +47,7 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 const MEMORY_SUMMARY_PROMPT_PATH: &str = "app/prompts/memory_summary.txt";
+const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
 
 #[derive(Debug, Clone)]
 struct PreparedRequest {
@@ -411,6 +414,10 @@ impl EventEmitter {
         self.closed.store(true, AtomicOrdering::SeqCst);
     }
 
+    fn request_cancel(&self) {
+        let _ = self.monitor.cancel(&self.session_id);
+    }
+
     async fn finish(&self) {
         let Some(queue) = &self.queue else {
             return;
@@ -465,20 +472,35 @@ impl EventEmitter {
             "data": event.data,
             "timestamp": event.timestamp.map(|ts| ts.to_rfc3339()),
         });
-        let _ = storage.append_stream_event(&self.session_id, &self.user_id, event_id, &payload);
-        self.maybe_cleanup_stream_events(storage.as_ref());
+        let session_id = self.session_id.clone();
+        let user_id = self.user_id.clone();
+        let storage = storage.clone();
+        let cleanup_cutoff = self.cleanup_cutoff();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || {
+                let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
+                if let Some(cutoff) = cleanup_cutoff {
+                    let _ = storage.delete_stream_events_before(cutoff);
+                }
+            });
+        } else {
+            let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
+            if let Some(cutoff) = cleanup_cutoff {
+                let _ = storage.delete_stream_events_before(cutoff);
+            }
+        }
     }
 
-    fn maybe_cleanup_stream_events(&self, storage: &dyn StorageBackend) {
+    fn cleanup_cutoff(&self) -> Option<f64> {
         let now = Utc::now().timestamp_millis() as u64;
         let last = self.last_cleanup_ts.load(AtomicOrdering::SeqCst);
         let interval_ms = (STREAM_EVENT_CLEANUP_INTERVAL_S * 1000.0) as u64;
         if last > 0 && now.saturating_sub(last) < interval_ms {
-            return;
+            return None;
         }
         self.last_cleanup_ts.store(now, AtomicOrdering::SeqCst);
         let cutoff = Utc::now().timestamp_millis() as f64 / 1000.0 - STREAM_EVENT_TTL_S;
-        let _ = storage.delete_stream_events_before(cutoff);
+        Some(cutoff)
     }
 }
 
@@ -505,12 +527,16 @@ impl RequestLimiter {
             return Ok(false);
         }
         loop {
-            let status = self.storage.try_acquire_session_lock(
-                session_id,
-                user_id,
-                self.lock_ttl_s,
-                self.max_active,
-            )?;
+            let storage = self.storage.clone();
+            let session_id = session_id.to_string();
+            let user_id = user_id.to_string();
+            let ttl = self.lock_ttl_s;
+            let max_active = self.max_active;
+            let status = tokio::task::spawn_blocking(move || {
+                storage.try_acquire_session_lock(&session_id, &user_id, ttl, max_active)
+            })
+            .await
+            .map_err(|err| anyhow!("session lock join error: {err}"))??;
             match status {
                 SessionLockStatus::Acquired => return Ok(true),
                 SessionLockStatus::UserBusy => return Ok(false),
@@ -523,11 +549,28 @@ impl RequestLimiter {
     }
 
     async fn touch(&self, session_id: &str) {
-        let _ = self.storage.touch_session_lock(session_id, self.lock_ttl_s);
+        let storage = self.storage.clone();
+        let session_id = session_id.to_string();
+        let ttl = self.lock_ttl_s;
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || {
+                let _ = storage.touch_session_lock(&session_id, ttl);
+            });
+        } else {
+            let _ = storage.touch_session_lock(&session_id, ttl);
+        }
     }
 
     async fn release(&self, session_id: &str) {
-        let _ = self.storage.release_session_lock(session_id);
+        let storage = self.storage.clone();
+        let session_id = session_id.to_string();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || {
+                let _ = storage.release_session_lock(&session_id);
+            });
+        } else {
+            let _ = storage.release_session_lock(&session_id);
+        }
     }
 }
 impl Orchestrator {
@@ -760,6 +803,11 @@ impl Orchestrator {
             let mut last_event_id: i64 = 0;
             let mut closed = false;
             let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+            let cancel_if_active = |emitter: &EventEmitter| {
+                if !runner.is_finished() {
+                    emitter.request_cancel();
+                }
+            };
 
             async fn drain_until(
                 storage: Arc<dyn StorageBackend>,
@@ -767,18 +815,21 @@ impl Orchestrator {
                 last_event_id: &mut i64,
                 target_event_id: i64,
                 event_tx: &mpsc::Sender<StreamEvent>,
+                emitter: &EventEmitter,
+                cancel_if_active: &dyn Fn(&EventEmitter),
             ) -> bool {
                 if target_event_id <= *last_event_id {
                     return true;
                 }
                 let mut current = *last_event_id;
                 while current < target_event_id {
-                    let events = load_overflow_events_inner(
-                        storage.as_ref(),
-                        session_id,
+                    let events = load_overflow_events(
+                        storage.clone(),
+                        session_id.to_string(),
                         current,
                         STREAM_EVENT_FETCH_LIMIT,
-                    );
+                    )
+                    .await;
                     if events.is_empty() {
                         break;
                     }
@@ -791,6 +842,8 @@ impl Orchestrator {
                             continue;
                         }
                         if event_tx.send(event).await.is_err() {
+                            emitter.close();
+                            cancel_if_active(emitter);
                             return false;
                         }
                         current = event_id;
@@ -831,10 +884,11 @@ impl Orchestrator {
                                     &mut last_event_id,
                                     event_id - 1,
                                     &event_tx,
+                                    &emitter,
+                                    &cancel_if_active,
                                 )
                                 .await
                                 {
-                                    emitter.close();
                                     return;
                                 }
                             }
@@ -844,6 +898,7 @@ impl Orchestrator {
                         }
                         if event_tx.send(event).await.is_err() {
                             emitter.close();
+                            cancel_if_active(&emitter);
                             return;
                         }
                         if let Some(event_id) = event_id {
@@ -852,17 +907,19 @@ impl Orchestrator {
                         continue;
                     }
                     None => {
-                        let overflow = load_overflow_events_inner(
-                            storage.as_ref(),
-                            &session_id,
+                        let overflow = load_overflow_events(
+                            storage.clone(),
+                            session_id.clone(),
                             last_event_id,
                             STREAM_EVENT_FETCH_LIMIT,
-                        );
+                        )
+                        .await;
                         if !overflow.is_empty() {
                             for event in overflow {
                                 let event_id = parse_stream_event_id(&event);
                                 if event_tx.send(event).await.is_err() {
                                     emitter.close();
+                                    cancel_if_active(&emitter);
                                     return;
                                 }
                                 if let Some(event_id) = event_id {
@@ -891,6 +948,19 @@ impl Orchestrator {
 
 fn parse_stream_event_id(event: &StreamEvent) -> Option<i64> {
     event.id.as_ref().and_then(|text| text.parse::<i64>().ok())
+}
+
+async fn load_overflow_events(
+    storage: Arc<dyn StorageBackend>,
+    session_id: String,
+    after_event_id: i64,
+    limit: i64,
+) -> Vec<StreamEvent> {
+    tokio::task::spawn_blocking(move || {
+        load_overflow_events_inner(storage.as_ref(), &session_id, after_event_id, limit)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 fn load_overflow_events_inner(
@@ -1035,12 +1105,14 @@ impl Orchestrator {
 
             let history_manager = HistoryManager;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
-            let history_messages = history_manager.load_history_messages(
-                &self.workspace,
-                &user_id,
-                &session_id,
-                config.workspace.max_history_items,
-            );
+            let history_messages = history_manager
+                .load_history_messages_async(
+                    self.workspace.clone(),
+                    user_id.clone(),
+                    session_id.clone(),
+                    config.workspace.max_history_items,
+                )
+                .await;
             messages.extend(history_messages);
             let user_message = self.build_user_message(&question, prepared.attachments.as_deref());
             messages.push(user_message.clone());
@@ -1232,6 +1304,7 @@ impl Orchestrator {
                         http: &self.http,
                     };
 
+                    let tool_timeout = self.resolve_tool_timeout(&config, &name, &args);
                     let tool_result = if !allowed_tool_names.contains(&name) {
                         let safe_args = if args.is_object() { args.clone() } else { json!({ "raw": args }) };
                         emitter
@@ -1246,14 +1319,27 @@ impl Orchestrator {
                             .emit("tool_call", json!({ "tool": name, "args": args }))
                             .await;
                         let result = tokio::select! {
-                            res = crate::tools::execute_tool(&tool_context, &name, &args) => res,
+                            res = self.execute_tool_with_timeout(&tool_context, &name, &args, tool_timeout) => res,
                             err = self.wait_for_cancelled(&session_id) => {
                                 return Err(err);
                             }
                         };
                         match result {
                             Ok(value) => ToolResultPayload::from_value(value),
-                            Err(err) => ToolResultPayload::error(err.to_string(), json!({ "tool": name })),
+                            Err(err) => {
+                                let message = if err.to_string() == TOOL_TIMEOUT_ERROR {
+                                    i18n::t_with_params(
+                                        "error.tool_execution_failed",
+                                        &HashMap::from([(
+                                            "name".to_string(),
+                                            format!("{name} timeout"),
+                                        )]),
+                                    )
+                                } else {
+                                    err.to_string()
+                                };
+                                ToolResultPayload::error(message, json!({ "tool": name }))
+                            }
                         }
                     };
 
@@ -1943,6 +2029,15 @@ impl Orchestrator {
         }
     }
 
+    fn resolve_llm_timeout_s(&self, config: &LlmModelConfig) -> u64 {
+        let timeout_s = config.timeout_s.unwrap_or(DEFAULT_LLM_TIMEOUT_S);
+        if timeout_s == 0 {
+            DEFAULT_LLM_TIMEOUT_S
+        } else {
+            timeout_s
+        }
+    }
+
     async fn call_llm(
         &self,
         llm_config: &LlmModelConfig,
@@ -2007,7 +2102,7 @@ impl Orchestrator {
             emitter.emit("llm_request", request_payload).await;
         }
 
-        let timeout_s = effective_config.timeout_s.unwrap_or(0);
+        let timeout_s = self.resolve_llm_timeout_s(&effective_config);
         let max_attempts = effective_config.retry.unwrap_or(0).saturating_add(1).max(1);
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
@@ -2137,6 +2232,77 @@ impl Orchestrator {
             "error.llm_call_failed",
             &HashMap::from([("detail".to_string(), detail)]),
         )))
+    }
+
+    async fn execute_tool_with_timeout(
+        &self,
+        tool_context: &ToolContext<'_>,
+        name: &str,
+        args: &Value,
+        timeout: Option<Duration>,
+    ) -> Result<Value, anyhow::Error> {
+        if let Some(timeout) = timeout {
+            match tokio::time::timeout(
+                timeout,
+                crate::tools::execute_tool(tool_context, name, args),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow!(TOOL_TIMEOUT_ERROR)),
+            }
+        } else {
+            crate::tools::execute_tool(tool_context, name, args).await
+        }
+    }
+
+    fn resolve_tool_timeout(
+        &self,
+        config: &Config,
+        tool_name: &str,
+        args: &Value,
+    ) -> Option<Duration> {
+        let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
+        if tool_name == "a2a等待" {
+            let wait_s = parse_timeout_secs(args.get("wait_s")).unwrap_or(0.0);
+            if wait_s > 0.0 {
+                timeout_s = timeout_s.max(wait_s);
+            }
+            if timeout_s <= 0.0 {
+                timeout_s = config.a2a.timeout_s as f64;
+            }
+        } else if tool_name == "a2a观察" || tool_name.starts_with("a2a@") {
+            if timeout_s <= 0.0 {
+                timeout_s = config.a2a.timeout_s as f64;
+            }
+        } else if tool_name.contains('@') {
+            if timeout_s <= 0.0 {
+                let fallback = DEFAULT_TOOL_TIMEOUT_S;
+                let configured = config.mcp.timeout_s as f64;
+                timeout_s = if configured > 0.0 {
+                    configured.max(fallback)
+                } else {
+                    fallback
+                };
+            }
+        } else if timeout_s <= 0.0 {
+            let fallback = DEFAULT_TOOL_TIMEOUT_S;
+            let sandbox_timeout = if sandbox::sandbox_enabled(config) {
+                config.sandbox.timeout_s as f64
+            } else {
+                0.0
+            };
+            timeout_s = if sandbox_timeout > 0.0 {
+                sandbox_timeout.max(fallback)
+            } else {
+                fallback
+            };
+        }
+        if timeout_s <= 0.0 {
+            None
+        } else {
+            Some(Duration::from_secs_f64(timeout_s.max(MIN_TOOL_TIMEOUT_S)))
+        }
     }
 
     fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
@@ -3695,6 +3861,15 @@ fn extract_command_lines(args: &Value) -> Vec<String> {
         }
     }
     commands
+}
+
+fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
+    match value {
+        Some(Value::Number(num)) => num.as_f64(),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
+        _ => None,
+    }
 }
 
 fn data_url_regex() -> Option<&'static Regex> {

@@ -11,6 +11,8 @@ use chrono::DateTime;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
+use tokio::task::spawn_blocking;
 
 pub struct HistoryManager;
 
@@ -121,6 +123,21 @@ impl HistoryManager {
             }
         }
         messages
+    }
+
+    pub async fn load_history_messages_async(
+        &self,
+        workspace: Arc<WorkspaceManager>,
+        user_id: String,
+        session_id: String,
+        max_items: i64,
+    ) -> Vec<Value> {
+        spawn_blocking(move || {
+            let manager = HistoryManager;
+            manager.load_history_messages(&workspace, &user_id, &session_id, max_items)
+        })
+        .await
+        .unwrap_or_default()
     }
 
     pub fn build_compaction_candidates(history: &[Value]) -> (Vec<Value>, Vec<Value>) {

@@ -529,10 +529,10 @@ pub async fn execute_builtin_tool(
         "ptc" => execute_ptc(context, args).await,
         "列出文件" => list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,
-        "读取文件" => read_files(context, args),
-        "写入文件" => write_file(context, args),
-        "替换文本" => replace_text(context, args),
-        "编辑文件" => edit_file(context, args),
+        "读取文件" => read_files(context, args).await,
+        "写入文件" => write_file(context, args).await,
+        "替换文本" => replace_text(context, args).await,
+        "编辑文件" => edit_file(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(
@@ -776,6 +776,15 @@ fn extract_limit(args: &Value) -> Option<usize> {
     None
 }
 
+fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
+    match value {
+        Some(Value::Number(num)) => num.as_f64(),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
@@ -809,6 +818,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
 
     let allow_commands = &context.config.security.allow_commands;
     let allow_all = allow_commands.iter().any(|item| item == "*");
+    let timeout_s = parse_timeout_secs(args.get("timeout_s"))
+        .unwrap_or(0.0)
+        .max(0.0);
+    let timeout = if timeout_s > 0.0 {
+        Some(Duration::from_secs_f64(timeout_s))
+    } else {
+        None
+    };
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let cwd = if workdir.is_empty() {
         context.workspace.ensure_user_root(context.user_id)?
@@ -846,12 +863,39 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "sandbox": false,
             }));
         }
-        let output = Command::new("bash")
-            .arg("-lc")
-            .arg(command)
-            .current_dir(&cwd)
-            .output()
-            .await?;
+        let mut cmd = Command::new("bash");
+        cmd.arg("-lc").arg(command).current_dir(&cwd);
+        cmd.kill_on_drop(true);
+        let output = if let Some(timeout) = timeout {
+            match tokio::time::timeout(timeout, cmd.output()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    let detail = if timeout_s > 0.0 {
+                        format!("timeout after {timeout_s}s")
+                    } else {
+                        "timeout".to_string()
+                    };
+                    results.push(json!({
+                        "command": command,
+                        "returncode": -1,
+                        "stdout": "",
+                        "stderr": detail.clone(),
+                    }));
+                    context.workspace.mark_tree_dirty(context.user_id);
+                    return Ok(json!({
+                        "ok": false,
+                        "data": { "results": results },
+                        "error": i18n::t_with_params(
+                            "tool.exec.command_failed",
+                            &HashMap::from([("detail".to_string(), detail)]),
+                        ),
+                        "sandbox": false,
+                    }));
+                }
+            }
+        } else {
+            cmd.output().await?
+        };
         let returncode = output.status.code().unwrap_or(-1);
         results.push(json!({
             "command": command,
@@ -918,12 +962,31 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or(".")
+        .to_string();
     let max_depth = args
         .get("max_depth")
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_LIST_DEPTH as u64) as usize;
-    let root = context.workspace.resolve_path(context.user_id, path)?;
+    let workspace = context.workspace.clone();
+    let user_id = context.user_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        list_files_inner(workspace.as_ref(), &user_id, &path, max_depth)
+    })
+    .await
+    .map_err(|err| anyhow!(err.to_string()))?
+}
+
+fn list_files_inner(
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    path: &str,
+    max_depth: usize,
+) -> Result<Value> {
+    let root = workspace.resolve_path(user_id, path)?;
     if !root.exists() {
         return Ok(json!({
             "ok": false,
@@ -965,14 +1028,34 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "error": i18n::t("tool.search.empty")
         }));
     }
-    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or(".")
+        .to_string();
     let file_pattern = args
         .get("file_pattern")
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim()
         .to_string();
-    let root = context.workspace.resolve_path(context.user_id, path)?;
+    let workspace = context.workspace.clone();
+    let user_id = context.user_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        search_content_inner(workspace.as_ref(), &user_id, &query, &path, &file_pattern)
+    })
+    .await
+    .map_err(|err| anyhow!(err.to_string()))?
+}
+
+fn search_content_inner(
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    query: &str,
+    path: &str,
+    file_pattern: &str,
+) -> Result<Value> {
+    let root = workspace.resolve_path(user_id, path)?;
     if !root.exists() {
         return Ok(json!({
             "ok": false,
@@ -981,7 +1064,7 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
         }));
     }
 
-    let matcher = build_glob_matcher(&file_pattern);
+    let matcher = build_glob_matcher(file_pattern);
     let lower_query = query.to_lowercase();
     let mut matches = Vec::new();
     'scan: for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
@@ -1132,7 +1215,22 @@ fn build_glob_matcher(pattern: &str) -> Option<Regex> {
     Regex::new(&regex).ok()
 }
 
-fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+fn collect_skill_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = context
+        .skills
+        .list_specs()
+        .into_iter()
+        .map(|spec| spec.root)
+        .collect();
+    if let Some(bindings) = context.user_tool_bindings {
+        for source in bindings.skill_sources.values() {
+            roots.push(source.root.clone());
+        }
+    }
+    roots
+}
+
+async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let specs = match parse_read_file_specs(args) {
         Ok(specs) => specs,
         Err(message) => {
@@ -1144,13 +1242,29 @@ fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         }
     };
 
+    let workspace = context.workspace.clone();
+    let user_id = context.user_id.to_string();
+    let skill_roots = collect_skill_roots(context);
+    tokio::task::spawn_blocking(move || {
+        read_files_inner(workspace.as_ref(), &user_id, &skill_roots, specs)
+    })
+    .await
+    .map_err(|err| anyhow!(err.to_string()))?
+}
+
+fn read_files_inner(
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    skill_roots: &[PathBuf],
+    specs: Vec<ReadFileSpec>,
+) -> Result<Value> {
     let mut outputs = Vec::new();
     for spec in specs {
         let raw_path = spec.path.as_str();
-        let target = match context.workspace.resolve_path(context.user_id, raw_path) {
+        let target = match workspace.resolve_path(user_id, raw_path) {
             Ok(path) => Some(path),
             Err(err) => {
-                if let Some(resolved) = resolve_skill_read_path(context, raw_path) {
+                if let Some(resolved) = resolve_skill_read_path(raw_path, skill_roots) {
                     Some(resolved)
                 } else {
                     outputs.push(format!(">>> {}\n{}", raw_path, err));
@@ -1213,7 +1327,7 @@ fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     Ok(json!({ "content": result }))
 }
 
-fn resolve_skill_read_path(context: &ToolContext<'_>, raw_path: &str) -> Option<PathBuf> {
+fn resolve_skill_read_path(raw_path: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return None;
@@ -1228,19 +1342,8 @@ fn resolve_skill_read_path(context: &ToolContext<'_>, raw_path: &str) -> Option<
             cwd.join(relative)
         }
     };
-    let mut roots: Vec<PathBuf> = context
-        .skills
-        .list_specs()
-        .into_iter()
-        .map(|spec| spec.root)
-        .collect();
-    if let Some(bindings) = context.user_tool_bindings {
-        for source in bindings.skill_sources.values() {
-            roots.push(source.root.clone());
-        }
-    }
     for root in roots {
-        if is_within_root(&root, &candidate) {
+        if is_within_root(root, &candidate) {
             return Some(candidate.clone());
         }
     }
@@ -1265,23 +1368,31 @@ fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("缺少 path"))?;
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
-    context
-        .workspace
-        .write_file(context.user_id, path, content, true)?;
+    let path = path.to_string();
+    let content = content.to_string();
+    let bytes = content.as_bytes().len();
+    let workspace = context.workspace.clone();
+    let user_id = context.user_id.to_string();
+    let path_for_write = path.clone();
+    tokio::task::spawn_blocking(move || {
+        workspace.write_file(&user_id, &path_for_write, &content, true)
+    })
+    .await
+    .map_err(|err| anyhow!(err.to_string()))??;
     Ok(json!({
         "ok": true,
         "path": path,
-        "bytes": content.as_bytes().len()
+        "bytes": bytes
     }))
 }
 
-fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -1292,16 +1403,25 @@ fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("缺少 old_string"))?;
     let new_str = args.get("new_string").and_then(Value::as_str).unwrap_or("");
     let expected = args.get("expected_replacements").and_then(Value::as_u64);
-    let target = context.workspace.resolve_path(context.user_id, path)?;
-    let content = std::fs::read_to_string(&target)?;
-    let replaced = content.replace(old, new_str);
-    let count = content.matches(old).count() as u64;
+    let path = path.to_string();
+    let old = old.to_string();
+    let new_str = new_str.to_string();
+    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    let target_for_read = target.clone();
+    let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??;
+    let replaced = content.replace(&old, &new_str);
+    let count = content.matches(&old).count() as u64;
     if let Some(expected) = expected {
         if count != expected {
             return Err(anyhow!("替换次数不匹配，期望 {expected}，实际 {count}"));
         }
     }
-    std::fs::write(&target, replaced)?;
+    let target_for_write = target.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, replaced))
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??;
     context.workspace.bump_version(context.user_id);
     Ok(json!({
         "ok": true,
@@ -1310,17 +1430,22 @@ fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }))
 }
 
-fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("缺少 path"))?;
+        .ok_or_else(|| anyhow!("缺少 path"))?
+        .to_string();
     let edits = args
         .get("edits")
         .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("缺少 edits"))?;
-    let target = context.workspace.resolve_path(context.user_id, path)?;
-    let content = std::fs::read_to_string(&target)?;
+        .ok_or_else(|| anyhow!("缺少 edits"))?
+        .to_vec();
+    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    let target_for_read = target.clone();
+    let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??;
     let mut lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
     for edit in edits {
         let action = edit
@@ -1370,7 +1495,10 @@ fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if ensure_newline && !output.ends_with('\n') {
         output.push('\n');
     }
-    std::fs::write(&target, output)?;
+    let target_for_write = target.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, output))
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??;
     context.workspace.bump_version(context.user_id);
     Ok(json!({
         "ok": true,
