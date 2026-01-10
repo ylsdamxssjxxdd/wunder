@@ -803,11 +803,6 @@ impl Orchestrator {
             let mut last_event_id: i64 = 0;
             let mut closed = false;
             let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
-            let cancel_if_active = |emitter: &EventEmitter| {
-                if !runner.is_finished() {
-                    emitter.request_cancel();
-                }
-            };
 
             async fn drain_until(
                 storage: Arc<dyn StorageBackend>,
@@ -816,7 +811,6 @@ impl Orchestrator {
                 target_event_id: i64,
                 event_tx: &mpsc::Sender<StreamEvent>,
                 emitter: &EventEmitter,
-                cancel_if_active: &dyn Fn(&EventEmitter),
             ) -> bool {
                 if target_event_id <= *last_event_id {
                     return true;
@@ -843,7 +837,6 @@ impl Orchestrator {
                         }
                         if event_tx.send(event).await.is_err() {
                             emitter.close();
-                            cancel_if_active(emitter);
                             return false;
                         }
                         current = event_id;
@@ -885,10 +878,12 @@ impl Orchestrator {
                                     event_id - 1,
                                     &event_tx,
                                     &emitter,
-                                    &cancel_if_active,
                                 )
                                 .await
                                 {
+                                    if !runner.is_finished() {
+                                        emitter.request_cancel();
+                                    }
                                     return;
                                 }
                             }
@@ -898,7 +893,9 @@ impl Orchestrator {
                         }
                         if event_tx.send(event).await.is_err() {
                             emitter.close();
-                            cancel_if_active(&emitter);
+                            if !runner.is_finished() {
+                                emitter.request_cancel();
+                            }
                             return;
                         }
                         if let Some(event_id) = event_id {
@@ -919,7 +916,9 @@ impl Orchestrator {
                                 let event_id = parse_stream_event_id(&event);
                                 if event_tx.send(event).await.is_err() {
                                     emitter.close();
-                                    cancel_if_active(&emitter);
+                                    if !runner.is_finished() {
+                                        emitter.request_cancel();
+                                    }
                                     return;
                                 }
                                 if let Some(event_id) = event_id {
