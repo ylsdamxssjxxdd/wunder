@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, warn};
 
 const DEFAULT_MAX_RECORDS: i64 = 30;
 
@@ -99,6 +99,24 @@ impl MemoryStore {
         format!("{}\n{}", i18n::t("memory.block_prefix"), chunks.join("\n"))
     }
 
+    pub async fn is_enabled_async(&self, user_id: &str) -> bool {
+        let user_id = user_id.to_string();
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.is_enabled(&user_id)
+        })
+        .await
+        .unwrap_or_else(|err| {
+            warn!("memory is_enabled async failed: {err}");
+            false
+        })
+    }
+
     pub fn is_enabled(&self, user_id: &str) -> bool {
         self.storage
             .get_memory_enabled(user_id)
@@ -188,12 +206,52 @@ impl MemoryStore {
             .collect()
     }
 
+    pub async fn list_records_async(
+        &self,
+        user_id: &str,
+        limit: Option<i64>,
+        order_desc: bool,
+    ) -> Vec<MemoryRecord> {
+        let user_id = user_id.to_string();
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.list_records(&user_id, limit, order_desc)
+        })
+        .await
+        .unwrap_or_else(|err| {
+            warn!("memory list_records async failed: {err}");
+            Vec::new()
+        })
+    }
+
     pub fn list_task_logs(&self, limit: Option<i64>) -> Vec<HashMap<String, Value>> {
         let rows = self
             .storage
             .load_memory_task_logs(limit)
             .unwrap_or_default();
         rows.into_iter().map(format_task_log).collect()
+    }
+
+    pub async fn list_task_logs_async(&self, limit: Option<i64>) -> Vec<HashMap<String, Value>> {
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.list_task_logs(limit)
+        })
+        .await
+        .unwrap_or_else(|err| {
+            warn!("memory list_task_logs async failed: {err}");
+            Vec::new()
+        })
     }
 
     pub fn get_task_log(&self, task_id: &str) -> Option<HashMap<String, Value>> {
@@ -232,6 +290,24 @@ impl MemoryStore {
         Some(payload)
     }
 
+    pub async fn get_task_log_async(&self, task_id: &str) -> Option<HashMap<String, Value>> {
+        let task_id = task_id.to_string();
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.get_task_log(&task_id)
+        })
+        .await
+        .unwrap_or_else(|err| {
+            warn!("memory get_task_log async failed: {err}");
+            None
+        })
+    }
+
     pub fn upsert_task_log(
         &self,
         user_id: &str,
@@ -263,6 +339,53 @@ impl MemoryStore {
         );
     }
 
+    pub async fn upsert_task_log_async(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        task_id: &str,
+        status: &str,
+        queued_time: f64,
+        started_time: f64,
+        finished_time: f64,
+        elapsed_s: f64,
+        request_payload: Option<&Value>,
+        result: &str,
+        error: &str,
+        now_ts: Option<f64>,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let task_id = task_id.to_string();
+        let status = status.to_string();
+        let result = result.to_string();
+        let error = error.to_string();
+        let request_payload = request_payload.cloned();
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        let _ = tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.upsert_task_log(
+                &user_id,
+                &session_id,
+                &task_id,
+                &status,
+                queued_time,
+                started_time,
+                finished_time,
+                elapsed_s,
+                request_payload.as_ref(),
+                &result,
+                &error,
+                now_ts,
+            );
+        })
+        .await;
+    }
+
     pub fn upsert_record(
         &self,
         user_id: &str,
@@ -283,6 +406,32 @@ impl MemoryStore {
             now,
         );
         true
+    }
+
+    pub async fn upsert_record_async(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        summary: &str,
+        now_ts: Option<f64>,
+    ) -> bool {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let summary = summary.to_string();
+        let storage = self.storage.clone();
+        let max_records = self.max_records;
+        tokio::task::spawn_blocking(move || {
+            let store = MemoryStore {
+                storage,
+                max_records,
+            };
+            store.upsert_record(&user_id, &session_id, &summary, now_ts)
+        })
+        .await
+        .unwrap_or_else(|err| {
+            warn!("memory upsert_record async failed: {err}");
+            false
+        })
     }
 
     pub fn update_record(

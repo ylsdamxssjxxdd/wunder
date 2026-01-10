@@ -11,12 +11,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    mpsc::{self, SyncSender, TrySendError},
     Arc,
 };
 use std::thread;
 use sysinfo::{Disks, Networks, ProcessRefreshKind, System};
-use tracing::error;
+use tracing::{error, warn};
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
@@ -24,6 +25,8 @@ const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
+const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
+const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Clone)]
 struct MonitorEvent {
@@ -77,6 +80,67 @@ impl MonitorEvent {
             "type": self.event_type,
             "data": data,
         })
+    }
+}
+
+enum MonitorWriteTask {
+    Upsert(Value),
+}
+
+struct MonitorWriteQueue {
+    sender: SyncSender<MonitorWriteTask>,
+    dropped: AtomicU64,
+}
+
+impl MonitorWriteQueue {
+    fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(MONITOR_WRITE_QUEUE_SIZE);
+        thread::Builder::new()
+            .name("wunder-monitor-writer".to_string())
+            .spawn(move || {
+                while let Ok(task) = receiver.recv() {
+                    let mut batch = Vec::with_capacity(MONITOR_WRITE_BATCH_SIZE);
+                    batch.push(task);
+                    while batch.len() < MONITOR_WRITE_BATCH_SIZE {
+                        match receiver.try_recv() {
+                            Ok(task) => batch.push(task),
+                            Err(mpsc::TryRecvError::Empty) => break,
+                            Err(mpsc::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    for task in batch {
+                        if let Err(err) = Self::apply_write(&storage, task) {
+                            error!("monitor storage write failed: {err}");
+                        }
+                    }
+                }
+            })
+            .ok();
+        Self {
+            sender,
+            dropped: AtomicU64::new(0),
+        }
+    }
+
+    fn enqueue(&self, task: MonitorWriteTask) {
+        match self.sender.try_send(task) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                if dropped == 1 || dropped % 1000 == 0 {
+                    warn!("monitor write queue full, dropped {dropped} records");
+                }
+            }
+        }
+    }
+
+    fn apply_write(
+        storage: &Arc<dyn StorageBackend>,
+        task: MonitorWriteTask,
+    ) -> anyhow::Result<()> {
+        match task {
+            MonitorWriteTask::Upsert(payload) => storage.upsert_monitor_record(&payload),
+        }
     }
 }
 
@@ -301,6 +365,7 @@ pub struct MonitorState {
     sessions: Mutex<HashMap<String, SessionRecord>>,
     forced_cancelled: Mutex<HashSet<String>>,
     storage: Arc<dyn StorageBackend>,
+    write_queue: MonitorWriteQueue,
     system: Mutex<System>,
     disks: Mutex<Disks>,
     networks: Mutex<Networks>,
@@ -347,10 +412,12 @@ impl MonitorState {
             .collect::<HashSet<_>>();
         let history_dir = PathBuf::from("data/historys/monitor");
         let _ = storage.ensure_initialized();
+        let write_queue = MonitorWriteQueue::new(storage.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
             forced_cancelled: Mutex::new(HashSet::new()),
             storage,
+            write_queue,
             system: Mutex::new(system),
             disks: Mutex::new(disks),
             networks: Mutex::new(networks),
@@ -1341,7 +1408,7 @@ impl MonitorState {
 
     fn save_record(&self, record: &SessionRecord) {
         let payload = record.to_storage();
-        let _ = self.storage.upsert_monitor_record(&payload);
+        self.write_queue.enqueue(MonitorWriteTask::Upsert(payload));
     }
 }
 

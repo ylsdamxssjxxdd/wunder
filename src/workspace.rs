@@ -616,6 +616,83 @@ impl WorkspaceManager {
         .map_err(|err| anyhow!("workspace list cancelled: {err}"))?
     }
 
+    pub async fn load_history_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || workspace.load_history(&user_id, &session_id, limit))
+            .await
+            .map_err(|err| anyhow!("workspace load history cancelled: {err}"))?
+    }
+
+    pub async fn load_artifact_logs_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_artifact_logs(&user_id, &session_id, limit)
+        })
+        .await
+        .map_err(|err| anyhow!("workspace load artifact logs cancelled: {err}"))?
+    }
+
+    pub async fn load_session_system_prompt_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        language: Option<&str>,
+    ) -> Result<Option<String>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let language = language.map(|value| value.to_string());
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_session_system_prompt(&user_id, &session_id, language.as_deref())
+        })
+        .await
+        .map_err(|err| anyhow!("workspace load session prompt cancelled: {err}"))?
+    }
+
+    pub async fn load_session_token_usage_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_session_token_usage(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(0)
+    }
+
+    pub async fn save_session_token_usage_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        total_tokens: i64,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = tokio::task::spawn_blocking(move || {
+            workspace.save_session_token_usage(&user_id, &session_id, total_tokens);
+        })
+        .await;
+    }
+
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.write_queue.enqueue(StorageWrite::Chat {
             user_id: user_id.to_string(),

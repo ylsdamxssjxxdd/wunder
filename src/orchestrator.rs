@@ -692,7 +692,8 @@ impl Orchestrator {
 
         let storage_history = self
             .memory_store
-            .list_task_logs(None)
+            .list_task_logs_async(None)
+            .await
             .into_iter()
             .map(|payload| Value::Object(payload.into_iter().collect::<Map<String, Value>>()))
             .collect::<Vec<_>>();
@@ -736,7 +737,8 @@ impl Orchestrator {
             return Some(detail);
         }
         self.memory_store
-            .get_task_log(cleaned)
+            .get_task_log_async(cleaned)
+            .await
             .map(|payload| Value::Object(payload.into_iter().collect::<Map<String, Value>>()))
     }
 }
@@ -1172,7 +1174,8 @@ impl Orchestrator {
                 last_response = Some((content.clone(), reasoning.clone()));
                 last_usage = Some(usage.clone());
                 self.workspace
-                    .save_session_token_usage(&user_id, &session_id, usage.total as i64);
+                    .save_session_token_usage_async(&user_id, &session_id, usage.total as i64)
+                    .await;
 
                 let tool_calls = parse_tool_calls_from_text(&content);
                 if tool_calls.is_empty() {
@@ -2405,7 +2408,10 @@ impl Orchestrator {
             return Ok(messages);
         };
 
-        let history_usage = self.workspace.load_session_token_usage(user_id, session_id);
+        let history_usage = self
+            .workspace
+            .load_session_token_usage_async(user_id, session_id)
+            .await;
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -2504,7 +2510,8 @@ impl Orchestrator {
         if user_content.trim().is_empty() {
             if should_compact_by_history && reset_mode != "keep" {
                 self.workspace
-                    .save_session_token_usage(user_id, session_id, 0);
+                    .save_session_token_usage_async(user_id, session_id, 0)
+                    .await;
             }
             emitter
                 .emit(
@@ -2545,7 +2552,8 @@ impl Orchestrator {
         let question_text = current_question.trim();
         let history = self
             .workspace
-            .load_history(user_id, session_id, config.workspace.max_history_items)
+            .load_history_async(user_id, session_id, config.workspace.max_history_items)
+            .await
             .unwrap_or_default();
         let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
         let mut boundary_item: Option<Value> = None;
@@ -2679,10 +2687,12 @@ impl Orchestrator {
         if should_compact_by_history && reset_mode != "keep" {
             if reset_mode == "current" {
                 self.workspace
-                    .save_session_token_usage(user_id, session_id, rebuilt_tokens);
+                    .save_session_token_usage_async(user_id, session_id, rebuilt_tokens)
+                    .await;
             } else {
                 self.workspace
-                    .save_session_token_usage(user_id, session_id, 0);
+                    .save_session_token_usage_async(user_id, session_id, 0)
+                    .await;
             }
         }
 
@@ -2781,7 +2791,8 @@ impl Orchestrator {
     ) -> String {
         let stored = self
             .workspace
-            .load_session_system_prompt(user_id, session_id, language)
+            .load_session_system_prompt_async(user_id, session_id, language)
+            .await
             .unwrap_or(None);
         if stored.is_some() && tool_names.is_none() && overrides.is_none() {
             return stored.unwrap_or(prompt);
@@ -2798,10 +2809,13 @@ impl Orchestrator {
         if prompt.trim().is_empty() {
             return prompt;
         }
-        if !self.memory_store.is_enabled(user_id) {
+        if !self.memory_store.is_enabled_async(user_id).await {
             return prompt;
         }
-        let records = self.memory_store.list_records(user_id, None, false);
+        let records = self
+            .memory_store
+            .list_records_async(user_id, None, false)
+            .await;
         let block = self.memory_store.build_prompt_block(&records);
         if block.is_empty() {
             return prompt;
@@ -2956,7 +2970,7 @@ impl Orchestrator {
         request_messages: Option<Vec<Value>>,
         final_answer: &str,
     ) {
-        if !self.memory_store.is_enabled(&prepared.user_id) {
+        if !self.memory_store.is_enabled_async(&prepared.user_id).await {
             return;
         }
         self.ensure_memory_worker().await;
@@ -3050,20 +3064,22 @@ impl Orchestrator {
                 } else {
                     0.0
                 };
-                self.memory_store.upsert_task_log(
-                    &task.user_id,
-                    &task.session_id,
-                    &task.task_id,
-                    &task.status,
-                    task.queued_time,
-                    task.start_time,
-                    task.end_time,
-                    elapsed_s,
-                    task.request_payload.as_ref(),
-                    &task.summary_result,
-                    &task.error,
-                    Some(task.end_time),
-                );
+                self.memory_store
+                    .upsert_task_log_async(
+                        &task.user_id,
+                        &task.session_id,
+                        &task.task_id,
+                        &task.status,
+                        task.queued_time,
+                        task.start_time,
+                        task.end_time,
+                        elapsed_s,
+                        task.request_payload.as_ref(),
+                        &task.summary_result,
+                        &task.error,
+                        Some(task.end_time),
+                    )
+                    .await;
             }
         }
     }
@@ -3072,7 +3088,7 @@ impl Orchestrator {
         &self,
         task: &mut MemorySummaryTask,
     ) -> Result<bool, OrchestratorError> {
-        if !self.memory_store.is_enabled(&task.user_id) {
+        if !self.memory_store.is_enabled_async(&task.user_id).await {
             return Ok(false);
         }
         let config = self.resolve_config(task.config_overrides.as_ref()).await;
@@ -3115,12 +3131,15 @@ impl Orchestrator {
         let summary_text = strip_tool_calls(&content);
         let normalized = MemoryStore::normalize_summary(&summary_text);
         task.summary_result = normalized.clone();
-        Ok(self.memory_store.upsert_record(
-            &task.user_id,
-            &task.session_id,
-            &normalized,
-            Some(task.queued_time),
-        ))
+        Ok(self
+            .memory_store
+            .upsert_record_async(
+                &task.user_id,
+                &task.session_id,
+                &normalized,
+                Some(task.queued_time),
+            )
+            .await)
     }
 
     async fn build_memory_summary_request_payload(

@@ -1074,15 +1074,11 @@ impl A2aService {
         session_id: &str,
         history: Option<&Vec<Value>>,
     ) -> Result<Vec<Value>, A2AError> {
-        let user_id = user_id.to_string();
-        let session_id = session_id.to_string();
         let workspace = self.state.workspace.clone();
-        let logs = tokio::task::spawn_blocking(move || {
-            workspace.load_artifact_logs(&user_id, &session_id, 50)
-        })
-        .await
-        .map_err(|err| A2AError::internal(&err.to_string()))?
-        .map_err(|err| A2AError::internal(&err.to_string()))?;
+        let logs = workspace
+            .load_artifact_logs_async(user_id, session_id, 50)
+            .await
+            .map_err(|err| A2AError::internal(&err.to_string()))?;
         let mut artifacts = Vec::new();
         for item in logs {
             let artifact_id = item
