@@ -1,4 +1,4 @@
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-04";
+﻿import { getCurrentLanguage, t } from "./i18n.js?v=20260110-06";
 
 // 工具函数：纯逻辑处理，便于多模块复用
 
@@ -174,3 +174,5 @@ export const normalizeApiBase = (raw) => {
     return collapsed.endsWith("/wunder") ? collapsed : `${collapsed}/wunder`;
   }
 };
+
+

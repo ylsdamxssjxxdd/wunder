@@ -1,12 +1,12 @@
-import {
+﻿import {
   APP_CONFIG,
   applyStoredConfig,
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-05";
+import { elements } from "./elements.js?v=20260110-06";
 import { state } from "./state.js";
-import { toggleMonitorPolling } from "./monitor.js?v=20260110-06";
+import { toggleMonitorPolling } from "./monitor.js?v=20260110-08";
 import { notify } from "./notify.js";
 import {
   getLanguageLabel,
@@ -14,7 +14,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260110-04";
+} from "./i18n.js?v=20260110-06";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 
@@ -318,3 +318,5 @@ export const initSettingsPanel = () => {
   }
   window.addEventListener("wunder:language-changed", renderLanguageOptions);
 };
+
+

@@ -1,11 +1,11 @@
-import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-05";
+﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-06";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
-import { openMonitorDetail } from "./monitor.js?v=20260110-06";
-import { t } from "./i18n.js?v=20260110-04";
+import { openMonitorDetail } from "./monitor.js?v=20260110-08";
+import { t } from "./i18n.js?v=20260110-06";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {
@@ -23,6 +23,7 @@ const MAX_SAMPLES = 200;
 
 let initialized = false;
 let chartTrend = null;
+let chartLatency = null;
 let currentRunId = "";
 let currentStatus = "";
 let samples = [];
@@ -128,6 +129,13 @@ const formatRate = (value) => {
     return "-";
   }
   return value.toFixed(2);
+};
+
+const formatPercent = (value) => {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  return `${value.toFixed(1)}%`;
 };
 
 const formatLatency = (value) => {
@@ -508,17 +516,18 @@ const updateThroughputSessions = (sessions) => {
   throughputSessions = sortSessionsByUpdate(Array.from(throughputSessionMap.values()));
 };
 
-const computeAverageSpeed = (sessions, key) => {
-  let total = 0;
-  let count = 0;
+const computeAverageSpeed = (sessions, tokenKey, durationKey) => {
+  let totalTokens = 0;
+  let totalDuration = 0;
   sessions.forEach((session) => {
-    const value = Number(session?.[key]);
-    if (Number.isFinite(value) && value > 0) {
-      total += value;
-      count += 1;
+    const tokens = Number(session?.[tokenKey]);
+    const duration = Number(session?.[durationKey]);
+    if (Number.isFinite(tokens) && Number.isFinite(duration) && tokens > 0 && duration > 0) {
+      totalTokens += tokens;
+      totalDuration += duration;
     }
   });
-  return count > 0 ? total / count : null;
+  return totalTokens > 0 && totalDuration > 0 ? totalTokens / totalDuration : null;
 };
 
 const renderThroughputSessions = () => {
@@ -631,12 +640,8 @@ const loadThroughputSessions = async (options = {}) => {
     const scoped = sessions.filter((session) => matchThroughputSession(session));
     updateThroughputSessions(scoped);
     renderThroughputSessions();
-    const scopedPrefill = computeAverageSpeed(scoped, "prefill_speed_tps");
-    const scopedDecode = computeAverageSpeed(scoped, "decode_speed_tps");
-    const servicePrefill = payload.service?.avg_prefill_speed_tps;
-    const serviceDecode = payload.service?.avg_decode_speed_tps;
-    const prefillSpeed = Number.isFinite(scopedPrefill) ? scopedPrefill : servicePrefill;
-    const decodeSpeed = Number.isFinite(scopedDecode) ? scopedDecode : serviceDecode;
+    const prefillSpeed = computeAverageSpeed(scoped, "prefill_tokens", "prefill_duration_s");
+    const decodeSpeed = computeAverageSpeed(scoped, "decode_tokens", "decode_duration_s");
     setSpeedMetrics(prefillSpeed, decodeSpeed);
   } catch (error) {
     if (!silent) {
@@ -686,6 +691,7 @@ const resetCharts = () => {
   currentRunId = "";
   lastSampleAt = 0;
   renderTrendChart();
+  renderLatencyChart();
 };
 
 const ensureCharts = () => {
@@ -695,7 +701,10 @@ const ensureCharts = () => {
   if (elements.throughputTrendChart && !chartTrend) {
     chartTrend = window.echarts.init(elements.throughputTrendChart);
   }
-  return Boolean(chartTrend);
+  if (elements.throughputLatencyChart && !chartLatency) {
+    chartLatency = window.echarts.init(elements.throughputLatencyChart);
+  }
+  return Boolean(chartTrend || chartLatency);
 };
 
 const updateCharts = (snapshot) => {
@@ -721,11 +730,15 @@ const updateCharts = (snapshot) => {
     errorRate: metrics.total_requests
       ? (metrics.error_requests / metrics.total_requests) * 100
       : 0,
+    p50: Number(metrics.p50_latency_ms) || 0,
+    p90: Number(metrics.p90_latency_ms) || 0,
+    p99: Number(metrics.p99_latency_ms) || 0,
   });
   if (samples.length > MAX_SAMPLES) {
     samples.shift();
   }
   renderTrendChart();
+  renderLatencyChart();
 };
 
 const renderTrendChart = () => {
@@ -785,6 +798,62 @@ const renderTrendChart = () => {
   };
   chartTrend.setOption(option, false);
   chartTrend.resize();
+};
+
+const renderLatencyChart = () => {
+  if (!ensureCharts() || !chartLatency) {
+    return;
+  }
+  const labels = samples.map((item) =>
+    Number.isFinite(item.elapsed) ? `${item.elapsed.toFixed(1)}s` : ""
+  );
+  const option = {
+    tooltip: { trigger: "axis" },
+    legend: {
+      data: [t("throughput.metric.p50"), t("throughput.metric.p90"), t("throughput.metric.p99")],
+      textStyle: { color: "#64748b" },
+    },
+    grid: { left: 50, right: 24, top: 30, bottom: 30 },
+    xAxis: {
+      type: "category",
+      data: labels,
+      axisLabel: { color: "#94a3b8" },
+      axisLine: { lineStyle: { color: "#e2e8f0" } },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: { color: "#94a3b8" },
+      splitLine: { lineStyle: { color: "#e2e8f0" } },
+    },
+    series: [
+      {
+        name: t("throughput.metric.p50"),
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        data: samples.map((item) => item.p50),
+        lineStyle: { color: "#22c55e", width: 2 },
+      },
+      {
+        name: t("throughput.metric.p90"),
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        data: samples.map((item) => item.p90),
+        lineStyle: { color: "#f59e0b", width: 2 },
+      },
+      {
+        name: t("throughput.metric.p99"),
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        data: samples.map((item) => item.p99),
+        lineStyle: { color: "#ef4444", width: 2 },
+      },
+    ],
+  };
+  chartLatency.setOption(option, false);
+  chartLatency.resize();
 };
 
 const fetchThroughputStatus = async () => {
@@ -877,6 +946,7 @@ const renderHistoryList = (history) => {
   renderHistoryMeta(list.length);
   list.forEach((snapshot) => {
     const run = snapshot.run || {};
+    const metrics = snapshot.metrics || {};
     const row = document.createElement("tr");
     const startedCell = document.createElement("td");
     startedCell.textContent = formatTimestamp(run.started_at);
@@ -886,6 +956,18 @@ const renderHistoryList = (history) => {
     usersCell.textContent = formatCount(run.users);
     const durationCell = document.createElement("td");
     durationCell.textContent = formatDurationValue(run.duration_s);
+    const totalCell = document.createElement("td");
+    totalCell.textContent = formatCount(metrics.total_requests);
+    const successRateCell = document.createElement("td");
+    const totalRequests = Number(metrics.total_requests);
+    const successRequests = Number(metrics.success_requests);
+    const successRate =
+      totalRequests > 0 ? formatPercent((successRequests / totalRequests) * 100) : "-";
+    successRateCell.textContent = successRate;
+    const avgLatencyCell = document.createElement("td");
+    avgLatencyCell.textContent = formatLatency(metrics.avg_latency_ms);
+    const rpsCell = document.createElement("td");
+    rpsCell.textContent = formatRate(metrics.rps);
     const questionsCell = document.createElement("td");
     questionsCell.textContent = formatQuestionsSummary(run);
     const actionCell = document.createElement("td");
@@ -907,6 +989,10 @@ const renderHistoryList = (history) => {
     row.appendChild(statusCell);
     row.appendChild(usersCell);
     row.appendChild(durationCell);
+    row.appendChild(totalCell);
+    row.appendChild(successRateCell);
+    row.appendChild(avgLatencyCell);
+    row.appendChild(rpsCell);
     row.appendChild(questionsCell);
     row.appendChild(actionCell);
     elements.throughputHistoryList.appendChild(row);
@@ -943,6 +1029,9 @@ const applyReport = (report) => {
           elapsed: Number(sample.elapsed_s) || 0,
           rps: Number(sample.rps) || 0,
           errorRate: totalRequests ? (errorRequests / totalRequests) * 100 : 0,
+          p50: Number(sample.p50_latency_ms) || 0,
+          p90: Number(sample.p90_latency_ms) || 0,
+          p99: Number(sample.p99_latency_ms) || 0,
         };
       })
     : [];
@@ -950,6 +1039,7 @@ const applyReport = (report) => {
   lastSampleAt = 0;
   renderSnapshot(summary, true, { skipCharts: true, historyView: true });
   renderTrendChart();
+  renderLatencyChart();
 };
 
 const restoreHistoryReport = async (runId) => {
@@ -1315,3 +1405,5 @@ export const initThroughputPanel = async () => {
   resetCharts();
   await loadThroughputStatus({ silent: true });
 };
+
+

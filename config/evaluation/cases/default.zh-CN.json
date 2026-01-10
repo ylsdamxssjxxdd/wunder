@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "case_set": "default",
+  "language": "zh-CN",
+  "cases": [
+    {
+      "id": "tool_list_files",
+      "dimension": "tool",
+      "prompt": "请列出 eval/{run_id}/fixtures/list 目录下的文件，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "列出文件"
+      },
+      "prerequisites": [
+        "列出文件"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_read_file",
+      "dimension": "tool",
+      "prompt": "请读取 eval/{run_id}/fixtures/alpha.txt 的内容，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "读取文件"
+      },
+      "prerequisites": [
+        "读取文件"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_search_content",
+      "dimension": "tool",
+      "prompt": "在 eval/{run_id}/fixtures/alpha.txt 中搜索 beta，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "搜索内容"
+      },
+      "prerequisites": [
+        "搜索内容"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_write_file",
+      "dimension": "tool",
+      "prompt": "在 eval/{run_id}/outputs/tool_write.txt 写入内容 \"wunder-eval\"，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "写入文件"
+      },
+      "prerequisites": [
+        "写入文件"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_replace_text",
+      "dimension": "tool",
+      "prompt": "将 eval/{run_id}/outputs/replace.txt 中的 hello 替换为 hi，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "替换文本"
+      },
+      "prerequisites": [
+        "替换文本"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_edit_file",
+      "dimension": "tool",
+      "prompt": "使用 编辑文件 工具把 eval/{run_id}/outputs/edit.txt 的第一行替换为 edited，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "编辑文件"
+      },
+      "prerequisites": [
+        "编辑文件"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_execute_command",
+      "dimension": "tool",
+      "prompt": "使用 执行命令 在 eval/{run_id} 目录下执行 `pwd`，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "执行命令"
+      },
+      "prerequisites": [
+        "执行命令"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "tool_ptc",
+      "dimension": "tool",
+      "prompt": "使用 ptc 在 eval/{run_id}/outputs/ptc.txt 写入 \"ptc-ok\"，仅输出工具调用。",
+      "checker": {
+        "type": "tool_called",
+        "tool": "ptc"
+      },
+      "prerequisites": [
+        "ptc"
+      ],
+      "tags": [
+        "builtin"
+      ]
+    },
+    {
+      "id": "common_1",
+      "dimension": "common",
+      "prompt": "常识问答1：法国的首都是哪一座城市？ A) 柏林 B) 巴黎 C) 马德里 D) 罗马。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "common_2",
+      "dimension": "common",
+      "prompt": "常识问答2：水的化学式是？ A) CO2 B) H2O C) O2 D) NaCl。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "common_3",
+      "dimension": "common",
+      "prompt": "常识问答3：地球绕太阳一周大约需要？ A) 24 小时 B) 7 天 C) 365 天 D) 12 小时。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "C"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "common_4",
+      "dimension": "common",
+      "prompt": "常识问答4：《傲慢与偏见》的作者是？ A) 奥斯汀 B) 雪莱 C) 狄更斯 D) 莎士比亚。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "A"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "common_5",
+      "dimension": "common",
+      "prompt": "常识问答5：太阳从哪个方向升起？ A) 南 B) 北 C) 西 D) 东。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "D"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "logic_1",
+      "dimension": "logic",
+      "prompt": "逻辑推理1：数列 2, 6, 12, 20, ? 的下一个数是？ A) 28 B) 30 C) 32 D) 34。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "logic_2",
+      "dimension": "logic",
+      "prompt": "逻辑推理2：一个正六边形的对角线条数为？ A) 6 B) 9 C) 12 D) 15。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "logic_3",
+      "dimension": "logic",
+      "prompt": "逻辑推理3：在 1 到 100 的整数中，数字 9 出现的次数是？ A) 18 B) 19 C) 20 D) 21。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "C"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "logic_4",
+      "dimension": "logic",
+      "prompt": "逻辑推理4：一个两位数，十位与个位之和为 9，且该数是 9 的倍数，该数是？ A) 18 B) 27 C) 45 D) 54。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "D"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "logic_5",
+      "dimension": "logic",
+      "prompt": "逻辑推理5：四个连续整数的乘积加一，一定是？ A) 合数 B) 质数 C) 完全平方数 D) 不能确定。仅输出 A/B/C/D。",
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
+    },
+    {
+      "id": "complex_summary",
+      "dimension": "complex",
+      "prompt": "读取 eval/{run_id}/fixtures/alpha.txt，提取其中的单词 beta 并写入 eval/{run_id}/outputs/complex_summary.txt，内容需包含 beta。",
+      "checker": {
+        "type": "file_contains",
+        "path": "eval/{run_id}/outputs/complex_summary.txt",
+        "text": "beta"
+      },
+      "tags": [
+        "file"
+      ]
+    },
+    {
+      "id": "complex_report_json",
+      "dimension": "complex",
+      "prompt": "创建 eval/{run_id}/outputs/report.json，内容是 JSON，包含 status=\"ok\" 且 count=3。",
+      "checker": {
+        "type": "json_contains",
+        "path": "eval/{run_id}/outputs/report.json",
+        "required": {
+          "status": "ok",
+          "count": 3
+        }
+      },
+      "tags": [
+        "file",
+        "json"
+      ]
+    }
+  ]
+}

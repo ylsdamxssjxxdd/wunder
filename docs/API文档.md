@@ -925,8 +925,9 @@
     - `case_set`：用例集名称
     - `language`：语言
     - `version`：版本号
-    - `case_count`：用例数量
-    - `dimensions`：维度分布统计（维度 -> 数量）
+      - `case_count`：用例数量
+      - `dimensions`：维度分布统计（维度 -> 数量）
+- 说明：评估用例文件默认读取 `config/evaluation/cases`。
 
 ### 4.1.51 `/wunder/admin/evaluation/stream/{run_id}`
 

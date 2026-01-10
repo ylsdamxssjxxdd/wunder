@@ -100,7 +100,7 @@ pub fn load_case_files(dir: &Path) -> Result<Vec<EvaluationCaseFile>> {
 }
 
 pub fn default_cases_dir() -> PathBuf {
-    PathBuf::from("./data/evaluation/cases")
+    PathBuf::from("./config/evaluation/cases")
 }
 
 fn default_case_weight() -> f64 {

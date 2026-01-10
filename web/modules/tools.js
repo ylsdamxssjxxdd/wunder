@@ -1,8 +1,8 @@
-import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-05";
+﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-06";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20260110-04";
+import { t } from "./i18n.js?v=20260110-06";
 
 // 工具勾选状态使用本地缓存，按 user_id 隔离
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
@@ -486,6 +486,8 @@ export const schedulePromptReload = () => {
     state.runtime.promptReloadTimer = null;
   }, APP_CONFIG.promptReloadDelayMs);
 };
+
+
 
 
 

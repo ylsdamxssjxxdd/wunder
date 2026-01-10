@@ -382,7 +382,7 @@ h1 {
 
 .throughput-charts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   min-height: 0;
 }
@@ -426,27 +426,43 @@ h1 {
 }
 
 .throughput-history-table col.col-time {
-  width: 22%;
+  width: 15%;
 }
 
 .throughput-history-table col.col-status {
-  width: 12%;
+  width: 8%;
 }
 
 .throughput-history-table col.col-users {
-  width: 10%;
+  width: 6%;
 }
 
 .throughput-history-table col.col-duration {
-  width: 12%;
+  width: 8%;
+}
+
+.throughput-history-table col.col-total {
+  width: 8%;
+}
+
+.throughput-history-table col.col-success-rate {
+  width: 8%;
+}
+
+.throughput-history-table col.col-avg-latency {
+  width: 8%;
+}
+
+.throughput-history-table col.col-rps {
+  width: 7%;
 }
 
 .throughput-history-table col.col-questions {
-  width: 32%;
+  width: 24%;
 }
 
 .throughput-history-table col.col-actions {
-  width: 12%;
+  width: 8%;
 }
 
 .throughput-export-input select {
@@ -881,7 +897,40 @@ button.danger {
   background: rgba(59, 130, 246, 0.12);
 }
 
+.monitor-event-item > summary {
+  height: 28px;
+  min-height: 28px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.monitor-event-item > summary .log-time,
+.monitor-event-item > summary .log-event {
+  flex: 0 0 auto;
+}
+
+.monitor-event-item > summary .log-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-event-item--tool > summary {
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.12);
+}
+
 .monitor-event-line--focus {
+  background: rgba(251, 191, 36, 0.22);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4);
+}
+
+.monitor-event-item--focus > summary {
+  padding: 4px 6px;
+  border-radius: 6px;
   background: rgba(251, 191, 36, 0.22);
   box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.4);
 }
@@ -4282,6 +4331,12 @@ button.danger {
 .evaluation-run-hint {
   margin-top: 6px;
   min-height: 18px;
+}
+
+.evaluation-current-case {
+  margin-top: 6px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .evaluation-progress-bar {

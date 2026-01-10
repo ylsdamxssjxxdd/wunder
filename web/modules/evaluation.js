@@ -1,7 +1,7 @@
-﻿import { elements } from "./elements.js";
-import { openMonitorDetail } from "./monitor.js?v=20260110-06";
+﻿import { elements } from "./elements.js?v=20260110-06";
+import { openMonitorDetail } from "./monitor.js?v=20260110-08";
 import { normalizeApiBase, formatDuration } from "./utils.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-04";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-06";
 
 const evaluationState = {
   activeRunId: "",
@@ -10,9 +10,23 @@ const evaluationState = {
   streaming: false,
   controller: null,
   cases: new Map(),
+  caseOrder: [],
+  caseInfo: new Map(),
 };
 
 const isFinishedStatus = (status) => ["finished", "failed", "cancelled"].includes(String(status || ""));
+const MAX_CASE_LABEL = 180;
+
+const truncateText = (value, maxLen) => {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.length <= maxLen) {
+    return text;
+  }
+  return `${text.slice(0, maxLen - 1)}…`;
+};
 
 const formatEpochSeconds = (value) => {
   if (!Number.isFinite(value)) {
@@ -91,6 +105,37 @@ const updateRunSpinner = () => {
   elements.evaluationRunSpinner.setAttribute("aria-hidden", active ? "false" : "true");
 };
 
+const updateCurrentCaseDisplay = () => {
+  if (!elements.evaluationCurrentCase) {
+    return;
+  }
+  if (!isActiveRunning() || !isViewingActive()) {
+    elements.evaluationCurrentCase.textContent = "";
+    return;
+  }
+  const order =
+    evaluationState.caseOrder.length > 0
+      ? evaluationState.caseOrder
+      : Array.from(evaluationState.cases.keys());
+  let currentCase = "";
+  for (const caseId of order) {
+    const info = evaluationState.caseInfo.get(caseId);
+    const status = String(info?.status || "").trim();
+    if (!status || status === "active") {
+      currentCase = caseId;
+      break;
+    }
+  }
+  if (!currentCase) {
+    elements.evaluationCurrentCase.textContent = "";
+    return;
+  }
+  const info = evaluationState.caseInfo.get(currentCase);
+  const prompt = truncateText(info?.prompt, MAX_CASE_LABEL);
+  const label = prompt ? `${currentCase} - ${prompt}` : currentCase;
+  elements.evaluationCurrentCase.textContent = t("evaluation.currentCase", { case: label });
+};
+
 const updateProgressAnimation = () => {
   if (!elements.evaluationProgressFill) {
     return;
@@ -107,6 +152,7 @@ const updateRunHint = () => {
   }
   updateRunSpinner();
   updateProgressAnimation();
+  updateCurrentCaseDisplay();
 };
 
 const resetRunSummary = () => {
@@ -139,6 +185,9 @@ const resetRunSummary = () => {
     elements.evaluationScoreComplex.textContent = "-";
   }
   updateProgress({ completed: 0, total: 0 });
+  if (elements.evaluationCurrentCase) {
+    elements.evaluationCurrentCase.textContent = "";
+  }
 };
 
 const updateProgress = (payload) => {
@@ -151,16 +200,22 @@ const updateProgress = (payload) => {
   if (elements.evaluationProgressText) {
     elements.evaluationProgressText.textContent = `${completed}/${total}`;
   }
+  updateCurrentCaseDisplay();
 };
 
 const clearCaseTable = () => {
   evaluationState.cases.clear();
+  evaluationState.caseOrder = [];
+  evaluationState.caseInfo.clear();
   if (elements.evaluationCaseBody) {
     elements.evaluationCaseBody.innerHTML = "";
   }
   if (elements.evaluationCaseEmpty) {
     elements.evaluationCaseEmpty.style.display = "block";
     elements.evaluationCaseEmpty.textContent = t("evaluation.cases.empty");
+  }
+  if (elements.evaluationCurrentCase) {
+    elements.evaluationCurrentCase.textContent = "";
   }
 };
 
@@ -183,6 +238,9 @@ const ensureCaseRow = (caseId) => {
   });
   elements.evaluationCaseBody.appendChild(row);
   evaluationState.cases.set(caseId, row);
+  if (!evaluationState.caseOrder.includes(caseId)) {
+    evaluationState.caseOrder.push(caseId);
+  }
   if (elements.evaluationCaseEmpty) {
     elements.evaluationCaseEmpty.style.display = "none";
   }
@@ -209,6 +267,14 @@ const renderCaseItem = (item) => {
   const status = String(item?.status || "-");
   const score = Number(item?.score ?? NaN);
   const maxScore = Number(item?.max_score ?? NaN);
+  const prompt = String(item?.prompt || "").trim();
+  const existing = evaluationState.caseInfo.get(caseId) || {};
+  evaluationState.caseInfo.set(caseId, {
+    ...existing,
+    status,
+    dimension,
+    prompt: prompt || existing.prompt || "",
+  });
   const statusBadge = document.createElement("span");
   statusBadge.textContent = status;
   statusBadge.className = `monitor-status ${status}`;
@@ -235,6 +301,7 @@ const renderCaseItem = (item) => {
   } else {
     cells[3].textContent = "-";
   }
+  updateCurrentCaseDisplay();
 };
 
 const applyRunPayload = (run) => {
@@ -242,6 +309,11 @@ const applyRunPayload = (run) => {
     return;
   }
   const runId = run.run_id || run.runId || "";
+  if (Array.isArray(run.case_ids) && run.case_ids.length) {
+    evaluationState.caseOrder = run.case_ids
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+  }
   if (elements.evaluationRunId) {
     elements.evaluationRunId.textContent = runId || "-";
   }
@@ -278,6 +350,7 @@ const applyRunPayload = (run) => {
   const errors = Number(run.error_count ?? 0);
   const total = Number(run.case_count ?? 0);
   updateProgress({ completed: passed + failed + skipped + errors, total });
+  updateCurrentCaseDisplay();
 };
 
 const buildApiBase = () => normalizeApiBase(elements.apiBase?.value || "");
@@ -735,3 +808,5 @@ const initEvaluationPanel = async () => {
 };
 
 export { initEvaluationPanel, loadEvaluationHistory };
+
+

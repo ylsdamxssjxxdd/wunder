@@ -1,5 +1,5 @@
-import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-05";
+﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260110-06";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-04";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-06";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -2160,6 +2160,62 @@ const stringifyMonitorEventData = (data) => {
   }
 };
 
+const MONITOR_EVENT_TITLE_MAX_LENGTH = 120;
+
+const truncateMonitorEventTitle = (value) => {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.length <= MONITOR_EVENT_TITLE_MAX_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, MONITOR_EVENT_TITLE_MAX_LENGTH)}…`;
+};
+
+const formatMonitorEventTimestamp = (value) => {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleTimeString(getCurrentLanguage());
+};
+
+const resolveMonitorEventTitle = (event) => {
+  const data = unwrapMonitorEventData(event?.data);
+  if (data && typeof data === "object") {
+    const summary =
+      data.summary ??
+      data.message ??
+      data.error ??
+      data.reason ??
+      data.tool ??
+      data.tool_name ??
+      data.toolName ??
+      data.name ??
+      data.model ??
+      data.model_name ??
+      data.stage ??
+      data.status;
+    const title = truncateMonitorEventTitle(summary);
+    if (title) {
+      return title;
+    }
+  }
+  if (typeof data === "string") {
+    const title = truncateMonitorEventTitle(data);
+    if (title) {
+      return title;
+    }
+  }
+  const raw = stringifyMonitorEventData(data);
+  const title = truncateMonitorEventTitle(raw);
+  return title || "-";
+};
+
 // 拼接单条事件文本，保持与历史展示一致
 const buildMonitorEventLine = (event) => {
   const timestamp = event?.timestamp || "";
@@ -2196,31 +2252,50 @@ const renderMonitorDetailEvents = (events, options = {}) => {
   events.forEach((event) => {
     const lineText = buildMonitorEventLine(event);
     const normalizedLineText = normalizeMonitorToolName(lineText);
-    const line = document.createElement("div");
-    line.className = "monitor-event-line";
-    line.innerHTML = highlightMonitorTimestamps(lineText);
+    const eventType = String(event?.type || "unknown");
+    const eventTypeLower = eventType.toLowerCase();
+    const item = document.createElement("details");
+    item.className = "log-item monitor-event-item";
+    const summary = document.createElement("summary");
+    summary.className = "log-summary";
+    const timeNode = document.createElement("span");
+    timeNode.className = "log-time";
+    timeNode.textContent = `[${formatMonitorEventTimestamp(event?.timestamp)}]`;
+    summary.appendChild(timeNode);
+    const eventNode = document.createElement("span");
+    eventNode.className = "log-event";
+    eventNode.textContent = eventType;
+    summary.appendChild(eventNode);
+    const titleNode = document.createElement("span");
+    titleNode.className = "log-title";
+    titleNode.textContent = resolveMonitorEventTitle(event);
+    summary.appendChild(titleNode);
+    item.appendChild(summary);
+    const detailNode = document.createElement("div");
+    detailNode.className = "log-detail";
+    detailNode.innerHTML = highlightMonitorTimestamps(lineText);
+    item.appendChild(detailNode);
     const eventTool = resolveMonitorEventToolName(event);
     const matchesToolName =
       focusToolName &&
       (normalizeMonitorToolName(eventTool) === focusToolName ||
         normalizedLineText.includes(focusToolName));
     if (matchesToolName) {
-      line.classList.add("monitor-event-line--tool");
-      const eventType = String(event?.type || "").toLowerCase();
-      if (!focusNode && eventType === "tool_call") {
-        focusNode = line;
-      } else if (!fallbackNode && eventType === "tool_result") {
-        fallbackNode = line;
+      item.classList.add("monitor-event-item--tool");
+      if (!focusNode && eventTypeLower === "tool_call") {
+        focusNode = item;
+      } else if (!fallbackNode && eventTypeLower === "tool_result") {
+        fallbackNode = item;
       }
     }
-    fragment.appendChild(line);
+    fragment.appendChild(item);
   });
   container.appendChild(fragment);
   if (!focusNode && fallbackNode) {
     focusNode = fallbackNode;
   }
   if (focusNode) {
-    focusNode.classList.add("monitor-event-line--focus");
+    focusNode.classList.add("monitor-event-item--focus");
   }
   return focusNode;
 };
@@ -2455,3 +2530,5 @@ export const initMonitorPanel = () => {
     });
   }
 };
+
+
