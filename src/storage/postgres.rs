@@ -163,6 +163,15 @@ impl PostgresStorage {
         }
     }
 
+    fn parse_f64(value: Option<&Value>) -> Option<f64> {
+        match value {
+            Some(Value::Number(num)) => num.as_f64(),
+            Some(Value::String(text)) => text.parse::<f64>().ok(),
+            Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
+            _ => None,
+        }
+    }
+
     fn conn(&self) -> Result<PgConn<'_>> {
         let client = self.block_on(self.pool.get())??;
         Ok(PgConn {
@@ -308,6 +317,38 @@ impl StorageBackend for PostgresStorage {
                   ON memory_task_logs (updated_time);
                 CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
                   ON memory_task_logs (task_id);
+                CREATE TABLE IF NOT EXISTS evaluation_runs (
+                  run_id TEXT PRIMARY KEY,
+                  user_id TEXT,
+                  model_name TEXT,
+                  language TEXT,
+                  status TEXT,
+                  total_score DOUBLE PRECISION,
+                  started_time DOUBLE PRECISION,
+                  finished_time DOUBLE PRECISION,
+                  payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_user
+                  ON evaluation_runs (user_id);
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_status
+                  ON evaluation_runs (status);
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_started
+                  ON evaluation_runs (started_time);
+                CREATE TABLE IF NOT EXISTS evaluation_items (
+                  id BIGSERIAL PRIMARY KEY,
+                  run_id TEXT NOT NULL,
+                  case_id TEXT NOT NULL,
+                  dimension TEXT,
+                  status TEXT,
+                  score DOUBLE PRECISION,
+                  max_score DOUBLE PRECISION,
+                  weight DOUBLE PRECISION,
+                  started_time DOUBLE PRECISION,
+                  finished_time DOUBLE PRECISION,
+                  payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
+                  ON evaluation_items (run_id, id);
                 "#,
             );
             match result {
@@ -1412,6 +1453,235 @@ impl StorageBackend for PostgresStorage {
             &[&cleaned],
         )?;
         Ok(affected as i64)
+    }
+
+    fn create_evaluation_run(&self, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let run_id = payload
+            .get("run_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if run_id.is_empty() {
+            return Ok(());
+        }
+        let user_id = payload
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let model_name = payload
+            .get("model_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let language = payload
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let total_score = Self::parse_f64(payload.get("total_score")).unwrap_or(0.0);
+        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
+        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO evaluation_runs (run_id, user_id, model_name, language, status, total_score, started_time, finished_time, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT(run_id) DO UPDATE SET user_id = EXCLUDED.user_id, model_name = EXCLUDED.model_name, \
+             language = EXCLUDED.language, status = EXCLUDED.status, total_score = EXCLUDED.total_score, \
+             started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, payload = EXCLUDED.payload",
+            &[
+                &run_id,
+                &user_id,
+                &model_name,
+                &language,
+                &status,
+                &total_score,
+                &started_time,
+                &finished_time,
+                &payload_text,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut merged = payload.clone();
+        if let Value::Object(ref mut map) = merged {
+            map.insert("run_id".to_string(), Value::String(cleaned.to_string()));
+        }
+        self.create_evaluation_run(&merged)
+    }
+
+    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let case_id = payload
+            .get("case_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if case_id.is_empty() {
+            return Ok(());
+        }
+        let dimension = payload
+            .get("dimension")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let score = Self::parse_f64(payload.get("score")).unwrap_or(0.0);
+        let max_score = Self::parse_f64(payload.get("max_score")).unwrap_or(0.0);
+        let weight = Self::parse_f64(payload.get("weight")).unwrap_or(0.0);
+        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
+        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            &[
+                &cleaned,
+                &case_id,
+                &dimension,
+                &status,
+                &score,
+                &max_score,
+                &weight,
+                &started_time,
+                &finished_time,
+                &payload_text,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn load_evaluation_runs(
+        &self,
+        user_id: Option<&str>,
+        status: Option<&str>,
+        model_name: Option<&str>,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        if let Some(user_id) = user_id {
+            let cleaned = user_id.trim();
+            if !cleaned.is_empty() {
+                conditions.push(format!("user_id = ${}", params.len() + 1));
+                params.push(Box::new(cleaned.to_string()));
+            }
+        }
+        if let Some(status) = status {
+            let cleaned = status.trim();
+            if !cleaned.is_empty() {
+                conditions.push(format!("status = ${}", params.len() + 1));
+                params.push(Box::new(cleaned.to_string()));
+            }
+        }
+        if let Some(model_name) = model_name {
+            let cleaned = model_name.trim();
+            if !cleaned.is_empty() {
+                conditions.push(format!("model_name = ${}", params.len() + 1));
+                params.push(Box::new(cleaned.to_string()));
+            }
+        }
+        if let Some(since) = since_time {
+            conditions.push(format!("started_time >= ${}", params.len() + 1));
+            params.push(Box::new(since));
+        }
+        if let Some(until) = until_time {
+            conditions.push(format!("started_time <= ${}", params.len() + 1));
+            params.push(Box::new(until));
+        }
+        let mut query = String::from("SELECT payload FROM evaluation_runs");
+        if !conditions.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&conditions.join(" AND "));
+        }
+        query.push_str(" ORDER BY started_time DESC");
+        if let Some(limit) = limit {
+            if limit > 0 {
+                query.push_str(&format!(" LIMIT ${}", params.len() + 1));
+                params.push(Box::new(limit));
+            }
+        }
+        let mut conn = self.conn()?;
+        let params_ref: Vec<&(dyn ToSql + Sync)> =
+            params.iter().map(|value| value.as_ref()).collect();
+        let rows = conn.query(&query, &params_ref)?;
+        let mut records = Vec::new();
+        for row in rows {
+            let payload: String = row.get(0);
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT payload FROM evaluation_runs WHERE run_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.and_then(|row| Self::json_from_str(&row.get::<_, String>(0))))
+    }
+
+    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT payload FROM evaluation_items WHERE run_id = $1 ORDER BY id",
+            &[&cleaned],
+        )?;
+        let mut records = Vec::new();
+        for row in rows {
+            let payload: String = row.get(0);
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
     }
 
     fn cleanup_retention(&self, _retention_days: i64) -> Result<HashMap<String, i64>> {

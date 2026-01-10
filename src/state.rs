@@ -3,6 +3,7 @@
 use crate::a2a_store::A2aStore;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
+use crate::evaluation_runner::EvaluationManager;
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
     pub throughput: ThroughputManager,
+    pub evaluation: EvaluationManager,
 }
 
 impl AppState {
@@ -60,6 +62,15 @@ impl AppState {
         ));
         let memory = Arc::new(MemoryStore::new(storage.clone()));
         let throughput = ThroughputManager::new();
+        let evaluation = EvaluationManager::new(
+            config_store.clone(),
+            storage.clone(),
+            workspace.clone(),
+            monitor.clone(),
+            orchestrator.clone(),
+            skills.clone(),
+            user_tool_manager.clone(),
+        );
         Ok(Self {
             config_store,
             workspace,
@@ -70,6 +81,7 @@ impl AppState {
             user_tool_store,
             user_tool_manager,
             throughput,
+            evaluation,
         })
     }
 

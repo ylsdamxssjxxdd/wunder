@@ -9,7 +9,9 @@ use crate::path_utils::{
 };
 use crate::skills::load_skills;
 use crate::state::AppState;
-use crate::throughput::{ThroughputConfig, ThroughputSnapshot, ThroughputStatusResponse};
+use crate::throughput::{
+    ThroughputConfig, ThroughputReport, ThroughputSnapshot, ThroughputStatusResponse,
+};
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -101,6 +103,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/throughput/status",
             get(admin_throughput_status),
+        )
+        .route(
+            "/wunder/admin/throughput/report",
+            get(admin_throughput_report),
         )
         .route("/wunder/admin/users", get(admin_users))
         .route(
@@ -1374,6 +1380,7 @@ async fn admin_throughput_start(
         payload.users,
         payload.duration_s,
         payload.question,
+        payload.questions,
         payload.user_id_prefix,
         payload.request_timeout_s,
     )
@@ -1401,6 +1408,18 @@ async fn admin_throughput_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ThroughputStatusResponse>, Response> {
     Ok(Json(state.throughput.status().await))
+}
+
+async fn admin_throughput_report(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ThroughputReportQuery>,
+) -> Result<Json<ThroughputReport>, Response> {
+    let report = state
+        .throughput
+        .report(query.run_id.as_deref())
+        .await
+        .map_err(|message| error_response(StatusCode::NOT_FOUND, message))?;
+    Ok(Json(report))
 }
 
 async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
@@ -2238,11 +2257,19 @@ struct MonitorQuery {
 struct ThroughputStartRequest {
     users: usize,
     duration_s: f64,
-    question: String,
+    #[serde(default)]
+    question: Option<String>,
+    #[serde(default)]
+    questions: Option<Vec<String>>,
     #[serde(default)]
     user_id_prefix: Option<String>,
     #[serde(default)]
     request_timeout_s: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ThroughputReportQuery {
+    run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

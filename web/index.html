@@ -3133,17 +3133,435 @@
 
             <h1 data-i18n="panel.throughput">吞吐量测试</h1>
 
+            <div class="header-actions throughput-header-actions">
+
+              <button id="throughputToggleBtn" class="btn-with-icon" type="button">
+
+                <i class="fa-solid fa-play" data-role="icon"></i>
+
+                <span data-role="label" data-i18n="throughput.action.start">开始压测</span>
+
+              </button>
+
+              <button id="throughputRefreshBtn" class="secondary btn-with-icon" type="button">
+
+                <i class="fa-solid fa-arrows-rotate"></i>
+
+                <span data-i18n="common.refresh">刷新</span>
+
+              </button>
+
+              <button id="throughputHistoryBtn" class="secondary btn-with-icon" type="button">
+
+                <i class="fa-solid fa-clock-rotate-left"></i>
+
+                <span data-i18n="throughput.action.history">压测历史</span>
+
+              </button>
+
+              <div class="header-input throughput-export-input">
+
+                <label data-i18n="throughput.export.format">导出格式</label>
+
+                <select id="throughputExportFormat">
+
+                  <option value="json" data-i18n="throughput.export.format.json">JSON</option>
+
+                  <option value="csv" data-i18n="throughput.export.format.csv">CSV</option>
+
+                </select>
+
+              </div>
+
+              <button id="throughputExportBtn" class="secondary btn-with-icon" type="button">
+
+                <i class="fa-solid fa-download"></i>
+
+                <span data-i18n="throughput.action.export">导出报告</span>
+
+              </button>
+
+            </div>
+
           </div>
 
-          <div class="panel-placeholder">
+          <div class="tips" data-i18n="throughput.tip">
 
-            <i class="fa-solid fa-gauge-high"></i>
+            服务端将模拟多用户并发请求，按配置在指定时间内持续发送请求，用于评估真实吞吐与稳定性。
 
-            <div>
+          </div>
 
-              <div class="placeholder-title" data-i18n="placeholder.title">功能建设中</div>
+          <div class="throughput-layout">
 
-              <div class="muted" data-i18n="placeholder.tip">该模块正在建设中，敬请期待。</div>
+            <div class="throughput-form">
+
+              <div class="form-section throughput-form-section">
+
+                <div class="form-row">
+
+                  <label for="throughputUsers" data-i18n="throughput.form.users">模拟用户数</label>
+
+                  <input id="throughputUsers" type="number" min="1" max="500" step="1" />
+
+                </div>
+
+                <div class="form-row">
+
+                  <label for="throughputDuration" data-i18n="throughput.form.duration">模拟时间（秒）</label>
+
+                  <input id="throughputDuration" type="number" min="0" step="0.1" />
+
+                  <div class="muted" data-i18n="throughput.form.durationHint">
+
+                    0 表示每个用户只发送一次请求。
+
+                  </div>
+
+                </div>
+
+                <div class="form-row">
+
+                  <label for="throughputQuestion" data-i18n="throughput.form.questions">问题列表</label>
+
+                  <textarea
+
+                    id="throughputQuestion"
+
+                    placeholder="每行一个问题"
+
+                    data-i18n-placeholder="throughput.form.questionsPlaceholder"
+
+                  ></textarea>
+
+                  <div class="muted" data-i18n="throughput.form.questionsHint">
+
+                    每行一个问题，压测时随机抽取。
+
+                  </div>
+
+                </div>
+
+                <div class="form-row">
+
+                  <label for="throughputUserPrefix" data-i18n="throughput.form.userPrefix">user_id 前缀</label>
+
+                  <input
+
+                    id="throughputUserPrefix"
+
+                    type="text"
+
+                    placeholder="throughput_user"
+
+                    data-i18n-placeholder="throughput.form.userPrefixPlaceholder"
+
+                  />
+
+                </div>
+
+                <div class="form-row">
+
+                  <label for="throughputTimeout" data-i18n="throughput.form.timeout">单次请求超时（秒）</label>
+
+                  <input id="throughputTimeout" type="number" min="0" step="0.1" />
+
+                  <div class="muted" data-i18n="throughput.form.timeoutHint">0 表示不启用超时。</div>
+
+                </div>
+
+                <div class="form-row">
+
+                  <label data-i18n="throughput.form.defaults">默认配置</label>
+
+                  <div class="muted" data-i18n="throughput.form.defaultsHint">
+
+                    使用默认模型与管理员启用工具，stream 固定为 true。
+
+                  </div>
+
+                </div>
+
+                <div id="throughputFormStatus" class="muted"></div>
+
+              </div>
+
+            </div>
+
+            <div class="throughput-results">
+
+              <div class="monitor-block throughput-summary-block">
+
+                <div class="monitor-block-title">
+
+                  <i class="fa-solid fa-gauge-high"></i>
+
+                  <span data-i18n="throughput.summary.title">压测概览</span>
+
+                  <span id="throughputStatusBadge" class="monitor-status throughput-status-badge">-</span>
+
+                  <span id="throughputStatusHint" class="muted throughput-status-hint"></span>
+
+                </div>
+
+                <div class="monitor-summary throughput-summary">
+
+                  <div>
+
+                    <div class="monitor-section-title" data-i18n="throughput.section.run">任务状态</div>
+
+                    <table class="monitor-kv-table">
+
+                      <tbody>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.status">状态</th>
+
+                          <td><strong id="throughputStatusText">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.startedAt">开始时间</th>
+
+                          <td><strong id="throughputStartedAt">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.elapsed">已运行</th>
+
+                          <td><strong id="throughputElapsed">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.users">用户数</th>
+
+                          <td><strong id="throughputUsersValue">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.duration">模拟时间</th>
+
+                          <td><strong id="throughputDurationValue">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.field.prefix">user_id 前缀</th>
+
+                          <td><strong id="throughputUserPrefixValue">-</strong></td>
+
+                        </tr>
+
+                      </tbody>
+
+                    </table>
+
+                  </div>
+
+                  <div>
+
+                    <div class="monitor-section-title" data-i18n="throughput.section.requests">请求指标</div>
+
+                    <table class="monitor-kv-table">
+
+                      <tbody>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.total">总请求</th>
+
+                          <td><strong id="throughputTotal">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.success">成功</th>
+
+                          <td><strong id="throughputSuccess">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.error">失败</th>
+
+                          <td><strong id="throughputError">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.rps">RPS</th>
+
+                          <td><strong id="throughputRps">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.avgLatency">平均耗时</th>
+
+                          <td><strong id="throughputAvgLatency">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.p90">P90</th>
+
+                          <td><strong id="throughputP90">-</strong></td>
+
+                        </tr>
+
+                      </tbody>
+
+                    </table>
+
+                  </div>
+
+                  <div>
+
+                    <div class="monitor-section-title" data-i18n="throughput.section.tokens">Token 统计</div>
+
+                    <table class="monitor-kv-table">
+
+                      <tbody>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.inputTokens">输入</th>
+
+                          <td><strong id="throughputInputTokens">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.outputTokens">输出</th>
+
+                          <td><strong id="throughputOutputTokens">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.totalTokens">总计</th>
+
+                          <td><strong id="throughputTotalTokens">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.avgTokens">平均</th>
+
+                          <td><strong id="throughputAvgTokens">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.p50">P50</th>
+
+                          <td><strong id="throughputP50">-</strong></td>
+
+                        </tr>
+
+                        <tr>
+
+                          <th data-i18n="throughput.metric.p99">P99</th>
+
+                          <td><strong id="throughputP99">-</strong></td>
+
+                        </tr>
+
+                      </tbody>
+
+                    </table>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+              <div class="throughput-charts">
+
+                <div class="monitor-block throughput-chart-card">
+
+                  <div class="monitor-block-title" data-i18n="throughput.chart.rps">吞吐趋势</div>
+
+                  <div id="throughputTrendChart" class="monitor-chart"></div>
+
+                </div>
+
+                <div class="monitor-block throughput-chart-card">
+
+                  <div class="monitor-block-title" data-i18n="throughput.chart.latency">延迟分位</div>
+
+                  <div id="throughputLatencyChart" class="monitor-chart"></div>
+
+                </div>
+
+              </div>
+
+              <div class="monitor-block throughput-errors">
+
+                <div class="monitor-block-title">
+
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+
+                  <span data-i18n="throughput.errors.title">错误样本</span>
+
+                </div>
+
+                <div class="monitor-table-wrap">
+
+                  <table class="monitor-table throughput-error-table">
+
+                    <colgroup>
+
+                      <col class="col-time" />
+
+                      <col class="col-message" />
+
+                    </colgroup>
+
+                    <thead>
+
+                      <tr>
+
+                        <th data-i18n="throughput.errors.time">时间</th>
+
+                        <th data-i18n="throughput.errors.message">错误信息</th>
+
+                      </tr>
+
+                    </thead>
+
+                    <tbody id="throughputErrorBody"></tbody>
+
+                  </table>
+
+                  <div id="throughputErrorEmpty" class="muted" data-i18n="throughput.errors.empty">
+
+                    暂无错误
+
+                  </div>
+
+                </div>
+
+              </div>
 
             </div>
 
@@ -3157,20 +3575,231 @@
 
             <h1 data-i18n="panel.evaluation">能力评估</h1>
 
-          </div>
-
-          <div class="panel-placeholder">
-
-            <i class="fa-solid fa-list-check"></i>
-
-            <div>
-
-              <div class="placeholder-title" data-i18n="placeholder.title">功能建设中</div>
-
-              <div class="muted" data-i18n="placeholder.tip">该模块正在建设中，敬请期待。</div>
-
+            <div class="header-actions evaluation-header-actions">
+              <button id="evaluationStartBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-play"></i>
+                <span data-i18n="evaluation.action.start">开始评估</span>
+              </button>
+              <button id="evaluationCancelBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-stop"></i>
+                <span data-i18n="evaluation.action.cancel">取消</span>
+              </button>
             </div>
 
+          </div>
+
+          <div class="tips" data-i18n="evaluation.tip">
+            用于评估智能体在工具调用、逻辑推理、常识问答与复杂任务上的表现。
+          </div>
+
+          <div class="evaluation-layout">
+            <div class="evaluation-form">
+              <div class="form-section">
+                <div class="form-row">
+                  <label for="evaluationUserId" data-i18n="evaluation.form.userId">user_id</label>
+                  <input
+                    id="evaluationUserId"
+                    type="text"
+                    placeholder="user_001"
+                    data-i18n-placeholder="common.placeholder.userId"
+                  />
+                </div>
+                <div class="form-row">
+                  <label for="evaluationModelName" data-i18n="evaluation.form.modelName">模型名称</label>
+                  <input
+                    id="evaluationModelName"
+                    type="text"
+                    placeholder="gpt-4"
+                    data-i18n-placeholder="evaluation.form.modelNamePlaceholder"
+                  />
+                </div>
+                <div class="form-row">
+                  <label for="evaluationLanguage" data-i18n="evaluation.form.language">语言</label>
+                  <select id="evaluationLanguage"></select>
+                </div>
+                <div class="form-row">
+                  <label for="evaluationCaseSet" data-i18n="evaluation.form.caseSet">用例集</label>
+                  <select id="evaluationCaseSet"></select>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="evaluation.form.dimensions">评估维度</label>
+                  <div class="evaluation-dimension-select">
+                    <label class="checkbox-inline">
+                      <input id="evaluationDimTool" type="checkbox" checked />
+                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
+                    </label>
+                    <label class="checkbox-inline">
+                      <input id="evaluationDimLogic" type="checkbox" checked />
+                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
+                    </label>
+                    <label class="checkbox-inline">
+                      <input id="evaluationDimCommon" type="checkbox" checked />
+                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
+                    </label>
+                    <label class="checkbox-inline">
+                      <input id="evaluationDimComplex" type="checkbox" checked />
+                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="evaluation.form.weights">维度权重</label>
+                  <div class="evaluation-weight-grid">
+                    <div class="evaluation-weight-item">
+                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
+                      <input id="evaluationWeightTool" type="number" min="0" step="0.1" />
+                    </div>
+                    <div class="evaluation-weight-item">
+                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
+                      <input id="evaluationWeightLogic" type="number" min="0" step="0.1" />
+                    </div>
+                    <div class="evaluation-weight-item">
+                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
+                      <input id="evaluationWeightCommon" type="number" min="0" step="0.1" />
+                    </div>
+                    <div class="evaluation-weight-item">
+                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
+                      <input id="evaluationWeightComplex" type="number" min="0" step="0.1" />
+                    </div>
+                  </div>
+                  <div class="muted" data-i18n="evaluation.form.weightHint">
+                    权重会自动归一化，总分按可用维度计算。
+                  </div>
+                </div>
+                <div id="evaluationFormStatus" class="muted"></div>
+              </div>
+            </div>
+
+            <div class="evaluation-results">
+              <div class="monitor-block evaluation-summary-card">
+                <div class="monitor-block-title">
+                  <i class="fa-solid fa-flag-checkered"></i>
+                  <span data-i18n="evaluation.summary.title">当前评估</span>
+                  <span id="evaluationRunStatus" class="monitor-status">-</span>
+                </div>
+                <table class="monitor-kv-table">
+                  <tbody>
+                    <tr>
+                      <th data-i18n="evaluation.summary.runId">Run ID</th>
+                      <td><strong id="evaluationRunId">-</strong></td>
+                    </tr>
+                    <tr>
+                      <th data-i18n="evaluation.summary.startedAt">开始时间</th>
+                      <td><strong id="evaluationRunStartedAt">-</strong></td>
+                    </tr>
+                    <tr>
+                      <th data-i18n="evaluation.summary.elapsed">耗时</th>
+                      <td><strong id="evaluationRunElapsed">-</strong></td>
+                    </tr>
+                    <tr>
+                      <th data-i18n="evaluation.summary.totalScore">总分</th>
+                      <td><strong id="evaluationTotalScore">-</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="evaluation-dimension-grid">
+                  <div class="evaluation-dimension-item">
+                    <span data-i18n="evaluation.form.dim.tool">工具调用</span>
+                    <strong id="evaluationScoreTool">-</strong>
+                  </div>
+                  <div class="evaluation-dimension-item">
+                    <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
+                    <strong id="evaluationScoreLogic">-</strong>
+                  </div>
+                  <div class="evaluation-dimension-item">
+                    <span data-i18n="evaluation.form.dim.common">常识问答</span>
+                    <strong id="evaluationScoreCommon">-</strong>
+                  </div>
+                  <div class="evaluation-dimension-item">
+                    <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
+                    <strong id="evaluationScoreComplex">-</strong>
+                  </div>
+                </div>
+                <div class="evaluation-progress">
+                  <div class="evaluation-progress-bar">
+                    <span id="evaluationProgressFill"></span>
+                  </div>
+                  <div id="evaluationProgressText" class="muted">0/0</div>
+                </div>
+              </div>
+
+              <div class="monitor-block evaluation-cases">
+                <div class="monitor-block-title">
+                  <i class="fa-solid fa-list-check"></i>
+                  <span data-i18n="evaluation.cases.title">用例明细</span>
+                </div>
+                <div class="monitor-table-scroll">
+                  <table class="monitor-table evaluation-case-table">
+                    <thead>
+                      <tr>
+                        <th data-i18n="evaluation.cases.table.caseId">用例</th>
+                        <th data-i18n="evaluation.cases.table.dimension">维度</th>
+                        <th data-i18n="evaluation.cases.table.status">状态</th>
+                        <th data-i18n="evaluation.cases.table.score">得分</th>
+                      </tr>
+                    </thead>
+                    <tbody id="evaluationCaseBody"></tbody>
+                  </table>
+                </div>
+                <div id="evaluationCaseEmpty" class="muted" data-i18n="evaluation.cases.empty">
+                  暂无用例
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="evaluation-history">
+            <div class="list-header">
+              <h2 data-i18n="evaluation.history.title">历史记录</h2>
+              <div class="header-actions">
+                <button id="evaluationCompareBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-code-compare"></i>
+                  <span data-i18n="evaluation.action.compare">对比</span>
+                </button>
+                <button id="evaluationRefreshBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="evaluation.action.refresh">刷新历史</span>
+                </button>
+              </div>
+            </div>
+            <div class="monitor-table-scroll">
+              <table class="monitor-table evaluation-history-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="evaluation.history.table.select">选择</th>
+                    <th data-i18n="evaluation.history.table.runId">Run ID</th>
+                    <th data-i18n="evaluation.history.table.status">状态</th>
+                    <th data-i18n="evaluation.history.table.score">总分</th>
+                    <th data-i18n="evaluation.history.table.startedAt">开始时间</th>
+                    <th data-i18n="evaluation.history.table.model">模型</th>
+                    <th data-i18n="evaluation.history.table.language">语言</th>
+                  </tr>
+                </thead>
+                <tbody id="evaluationHistoryBody"></tbody>
+              </table>
+            </div>
+            <div id="evaluationHistoryEmpty" class="muted" data-i18n="evaluation.history.empty">
+              暂无历史记录
+            </div>
+          </div>
+
+          <div class="evaluation-compare">
+            <div class="monitor-block">
+              <div class="monitor-block-title">
+                <i class="fa-solid fa-code-compare"></i>
+                <span data-i18n="evaluation.compare.title">对比结果</span>
+              </div>
+              <div id="evaluationCompareSummary" class="evaluation-compare-summary"></div>
+              <div class="monitor-table-scroll">
+                <table class="monitor-table evaluation-compare-table">
+                  <thead id="evaluationCompareHead"></thead>
+                  <tbody id="evaluationCompareBody"></tbody>
+                </table>
+              </div>
+              <div id="evaluationCompareEmpty" class="muted" data-i18n="evaluation.compare.empty">
+                请选择两条记录进行对比
+              </div>
+            </div>
           </div>
 
         </section>
@@ -4678,6 +5307,94 @@
         <div class="modal-actions">
 
           <button id="debugHistoryCloseBtn" class="secondary btn-with-icon">
+
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <div id="throughputHistoryModal" class="modal">
+
+      <div class="modal-card modal-card-lg">
+
+        <div class="modal-header">
+
+          <div>
+
+            <div class="detail-title" data-i18n="throughput.history.title">压测历史</div>
+
+            <div id="throughputHistoryMeta" class="muted"></div>
+
+          </div>
+
+          <button id="throughputHistoryClose" class="icon-btn" type="button">×</button>
+
+        </div>
+
+        <div class="modal-body">
+
+          <div class="monitor-table-wrap">
+
+            <table class="monitor-table throughput-history-table">
+
+              <colgroup>
+
+                <col class="col-time" />
+
+                <col class="col-status" />
+
+                <col class="col-users" />
+
+                <col class="col-duration" />
+
+                <col class="col-questions" />
+
+                <col class="col-actions" />
+
+              </colgroup>
+
+              <thead>
+
+                <tr>
+
+                  <th data-i18n="throughput.history.startedAt">开始时间</th>
+
+                  <th data-i18n="throughput.history.status">状态</th>
+
+                  <th data-i18n="throughput.history.users">用户数</th>
+
+                  <th data-i18n="throughput.history.duration">时长</th>
+
+                  <th data-i18n="throughput.history.questions">问题</th>
+
+                  <th data-i18n="throughput.history.action">操作</th>
+
+                </tr>
+
+              </thead>
+
+              <tbody id="throughputHistoryList"></tbody>
+
+            </table>
+
+            <div id="throughputHistoryEmpty" class="muted" data-i18n="throughput.history.empty">
+
+              暂无压测历史
+
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="modal-actions">
+
+          <button id="throughputHistoryCloseBtn" class="secondary btn-with-icon">
 
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
 

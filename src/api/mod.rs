@@ -2,6 +2,7 @@
 pub mod a2a;
 pub mod admin;
 pub mod core;
+pub mod evaluation;
 pub mod user_tools;
 pub mod workspace;
 
@@ -14,6 +15,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(core::router())
         .merge(workspace::router())
         .merge(admin::router())
+        .merge(evaluation::router())
         .merge(user_tools::router())
         .merge(a2a::router())
         .merge(crate::mcp::router(state.clone()))

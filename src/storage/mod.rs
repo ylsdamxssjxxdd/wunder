@@ -142,6 +142,21 @@ pub trait StorageBackend: Send + Sync {
     fn delete_memory_task_log(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_memory_task_logs_by_user(&self, user_id: &str) -> Result<i64>;
 
+    fn create_evaluation_run(&self, payload: &Value) -> Result<()>;
+    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn load_evaluation_runs(
+        &self,
+        user_id: Option<&str>,
+        status: Option<&str>,
+        model_name: Option<&str>,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>>;
+    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>>;
+    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>>;
+
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
 }
 

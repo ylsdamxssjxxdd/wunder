@@ -324,7 +324,8 @@ h1 {
 
 /* 调试/A2A 面板布局：左右分栏 */
 .debug-layout,
-.a2a-layout {
+.a2a-layout,
+.throughput-layout {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
@@ -335,7 +336,8 @@ h1 {
 }
 
 .debug-form,
-.a2a-form {
+.a2a-form,
+.throughput-form {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -346,6 +348,99 @@ h1 {
   border-radius: 12px;
   padding: 12px;
   gap: 12px;
+}
+
+.throughput-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.throughput-summary-block {
+  overflow: auto;
+  max-height: 40vh;
+}
+
+
+.throughput-status-badge {
+  margin-left: auto;
+}
+
+.throughput-status-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.throughput-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.throughput-chart-card {
+  min-height: 220px;
+}
+
+.throughput-chart-wide {
+  grid-column: 1 / -1;
+}
+
+.throughput-errors {
+  min-height: 200px;
+}
+
+.throughput-error-table th:last-child,
+.throughput-error-table td:last-child {
+  text-align: left;
+}
+
+.throughput-error-table col.col-time {
+  width: 28%;
+}
+
+.throughput-error-table col.col-message {
+  width: 72%;
+}
+
+.throughput-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.throughput-history-table th:last-child,
+.throughput-history-table td:last-child {
+  text-align: right;
+}
+
+.throughput-history-table col.col-time {
+  width: 22%;
+}
+
+.throughput-history-table col.col-status {
+  width: 12%;
+}
+
+.throughput-history-table col.col-users {
+  width: 10%;
+}
+
+.throughput-history-table col.col-duration {
+  width: 12%;
+}
+
+.throughput-history-table col.col-questions {
+  width: 32%;
+}
+
+.throughput-history-table col.col-actions {
+  width: 12%;
+}
+
+.throughput-export-input select {
+  min-width: 120px;
 }
 
 /* 提示说明区域：显示本页用途与注意事项 */
@@ -1446,6 +1541,7 @@ button.danger {
 
 .monitor-block-summary {
   grid-area: summary;
+  overflow: auto;
 }
 
 .monitor-block-tools {
@@ -1794,6 +1890,11 @@ button.danger {
   color: #b45309;
 }
 
+.monitor-status.stopping {
+  background: #fef3c7;
+  color: #b45309;
+}
+
 .monitor-status.error,
 .monitor-status.cancelled {
   background: #fee2e2;
@@ -1803,6 +1904,11 @@ button.danger {
 .monitor-status.finished {
   background: #dcfce7;
   color: #15803d;
+}
+
+.monitor-status.stopped {
+  background: #e2e8f0;
+  color: #475569;
 }
 
 .monitor-table button {
@@ -4050,4 +4156,114 @@ button.danger {
 .a2ui-empty {
   font-size: 12px;
   color: #f87171;
+}
+
+/* 评估面板 */
+.evaluation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.evaluation-form,
+.evaluation-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.evaluation-dimension-select {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.evaluation-weight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evaluation-weight-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.evaluation-weight-item span {
+  font-size: 12px;
+  color: #475569;
+}
+
+.evaluation-dimension-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evaluation-dimension-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  font-size: 12px;
+  color: #475569;
+}
+
+.evaluation-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.evaluation-progress-bar {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.evaluation-progress-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #3b82f6;
+  transition: width 0.2s ease;
+}
+
+.evaluation-history,
+.evaluation-compare {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.evaluation-compare-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.evaluation-compare-summary .summary-item {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
 }

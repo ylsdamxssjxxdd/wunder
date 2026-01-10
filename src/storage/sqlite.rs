@@ -5,7 +5,9 @@ use anyhow::Result;
 use chrono::Utc;
 use parking_lot::Mutex;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension, TransactionBehavior};
+use rusqlite::{
+    params, params_from_iter, Connection, ErrorCode, OptionalExtension, TransactionBehavior,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -74,6 +76,15 @@ impl SqliteStorage {
             Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
             Some(Value::Number(num)) => num.as_i64(),
             Some(Value::String(text)) => text.parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn parse_f64(value: Option<&Value>) -> Option<f64> {
+        match value {
+            Some(Value::Number(num)) => num.as_f64(),
+            Some(Value::String(text)) => text.parse::<f64>().ok(),
+            Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
             _ => None,
         }
     }
@@ -199,6 +210,38 @@ impl StorageBackend for SqliteStorage {
               ON memory_task_logs (updated_time);
             CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
               ON memory_task_logs (task_id);
+            CREATE TABLE IF NOT EXISTS evaluation_runs (
+              run_id TEXT PRIMARY KEY,
+              user_id TEXT,
+              model_name TEXT,
+              language TEXT,
+              status TEXT,
+              total_score REAL,
+              started_time REAL,
+              finished_time REAL,
+              payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_user
+              ON evaluation_runs (user_id);
+            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_status
+              ON evaluation_runs (status);
+            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_started
+              ON evaluation_runs (started_time);
+            CREATE TABLE IF NOT EXISTS evaluation_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id TEXT NOT NULL,
+              case_id TEXT NOT NULL,
+              dimension TEXT,
+              status TEXT,
+              score REAL,
+              max_score REAL,
+              weight REAL,
+              started_time REAL,
+              finished_time REAL,
+              payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
+              ON evaluation_items (run_id, id);
             "#,
         )?;
         self.initialized.store(true, Ordering::SeqCst);
@@ -1368,6 +1411,237 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user],
         )?;
         Ok(affected as i64)
+    }
+
+    fn create_evaluation_run(&self, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let run_id = payload
+            .get("run_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if run_id.is_empty() {
+            return Ok(());
+        }
+        let user_id = payload
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let model_name = payload
+            .get("model_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let language = payload
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let total_score = Self::parse_f64(payload.get("total_score")).unwrap_or(0.0);
+        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
+        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO evaluation_runs (run_id, user_id, model_name, language, status, total_score, started_time, finished_time, payload) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(run_id) DO UPDATE SET user_id = excluded.user_id, model_name = excluded.model_name, \
+             language = excluded.language, status = excluded.status, total_score = excluded.total_score, \
+             started_time = excluded.started_time, finished_time = excluded.finished_time, payload = excluded.payload",
+            params![
+                run_id,
+                user_id,
+                model_name,
+                language,
+                status,
+                total_score,
+                started_time,
+                finished_time,
+                payload_text
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut merged = payload.clone();
+        if let Value::Object(ref mut map) = merged {
+            map.insert("run_id".to_string(), Value::String(cleaned.to_string()));
+        }
+        self.create_evaluation_run(&merged)
+    }
+
+    fn append_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let case_id = payload
+            .get("case_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if case_id.is_empty() {
+            return Ok(());
+        }
+        let dimension = payload
+            .get("dimension")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let score = Self::parse_f64(payload.get("score")).unwrap_or(0.0);
+        let max_score = Self::parse_f64(payload.get("max_score")).unwrap_or(0.0);
+        let weight = Self::parse_f64(payload.get("weight")).unwrap_or(0.0);
+        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
+        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                cleaned,
+                case_id,
+                dimension,
+                status,
+                score,
+                max_score,
+                weight,
+                started_time,
+                finished_time,
+                payload_text
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn load_evaluation_runs(
+        &self,
+        user_id: Option<&str>,
+        status: Option<&str>,
+        model_name: Option<&str>,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut conditions = Vec::new();
+        let mut params: Vec<SqlValue> = Vec::new();
+        if let Some(user_id) = user_id {
+            let cleaned = user_id.trim();
+            if !cleaned.is_empty() {
+                conditions.push("user_id = ?".to_string());
+                params.push(SqlValue::from(cleaned.to_string()));
+            }
+        }
+        if let Some(status) = status {
+            let cleaned = status.trim();
+            if !cleaned.is_empty() {
+                conditions.push("status = ?".to_string());
+                params.push(SqlValue::from(cleaned.to_string()));
+            }
+        }
+        if let Some(model_name) = model_name {
+            let cleaned = model_name.trim();
+            if !cleaned.is_empty() {
+                conditions.push("model_name = ?".to_string());
+                params.push(SqlValue::from(cleaned.to_string()));
+            }
+        }
+        if let Some(since) = since_time {
+            conditions.push("started_time >= ?".to_string());
+            params.push(SqlValue::from(since));
+        }
+        if let Some(until) = until_time {
+            conditions.push("started_time <= ?".to_string());
+            params.push(SqlValue::from(until));
+        }
+        let mut sql = String::from("SELECT payload FROM evaluation_runs");
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(" ORDER BY started_time DESC");
+        if let Some(limit) = limit {
+            if limit > 0 {
+                sql.push_str(" LIMIT ?");
+                params.push(SqlValue::from(limit));
+            }
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params), |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT payload FROM evaluation_runs WHERE run_id = ?")?;
+        let mut rows = stmt.query([cleaned])?;
+        if let Some(row) = rows.next()? {
+            let payload: String = row.get(0)?;
+            return Ok(Self::json_from_str(&payload));
+        }
+        Ok(None)
+    }
+
+    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt =
+            conn.prepare("SELECT payload FROM evaluation_items WHERE run_id = ? ORDER BY id")?;
+        let rows = stmt
+            .query_map([cleaned], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
     }
 
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {

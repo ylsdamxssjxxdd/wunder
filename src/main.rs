@@ -5,6 +5,8 @@ mod attachment;
 mod auth;
 mod config;
 mod config_store;
+mod evaluation;
+mod evaluation_runner;
 mod history;
 mod i18n;
 mod knowledge;

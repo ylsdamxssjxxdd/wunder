@@ -2,17 +2,26 @@ use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex as ParkingMutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::fs as tokio_fs;
+use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
 const DEFAULT_USER_PREFIX: &str = "throughput_user";
 const MAX_USERS: usize = 500;
 const MAX_DURATION_S: f64 = 24.0 * 60.0 * 60.0;
 const MAX_ERROR_SAMPLES: usize = 20;
+const MAX_REPORT_HISTORY: usize = 50;
+const REPORT_DIR: &str = "data/throughput";
+const REPORT_INDEX_FILE: &str = "index.json";
+const SAMPLE_INTERVAL_MS: u64 = 1000;
 const LATENCY_BUCKETS_MS: [u64; 12] = [
     50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000, 10000,
 ];
@@ -66,7 +75,7 @@ impl RunStatus {
 pub struct ThroughputConfig {
     pub users: usize,
     pub duration_s: f64,
-    pub question: String,
+    pub questions: Vec<String>,
     pub user_id_prefix: String,
     pub request_timeout_s: f64,
 }
@@ -75,12 +84,23 @@ impl ThroughputConfig {
     pub fn new(
         users: usize,
         duration_s: f64,
-        question: String,
+        question: Option<String>,
+        questions: Option<Vec<String>>,
         user_id_prefix: Option<String>,
         request_timeout_s: Option<f64>,
     ) -> Result<Self, String> {
-        let question = question.trim().to_string();
-        if question.is_empty() {
+        let mut questions = questions.unwrap_or_default();
+        if questions.is_empty() {
+            if let Some(question) = question {
+                questions.push(question);
+            }
+        }
+        let questions = questions
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>();
+        if questions.is_empty() {
             return Err("问题不能为空".to_string());
         }
         if users == 0 {
@@ -114,7 +134,7 @@ impl ThroughputConfig {
         Ok(Self {
             users,
             duration_s,
-            question,
+            questions,
             user_id_prefix: prefix,
             request_timeout_s: timeout,
         })
@@ -133,6 +153,7 @@ struct ThroughputMetrics {
     total_tokens: AtomicU64,
     buckets: Vec<AtomicU64>,
     errors: ParkingMutex<Vec<ThroughputErrorSnapshot>>,
+    samples: ParkingMutex<Vec<ThroughputSample>>,
 }
 
 impl ThroughputMetrics {
@@ -153,6 +174,7 @@ impl ThroughputMetrics {
             total_tokens: AtomicU64::new(0),
             buckets,
             errors: ParkingMutex::new(Vec::new()),
+            samples: ParkingMutex::new(Vec::new()),
         }
     }
 
@@ -239,6 +261,16 @@ impl ThroughputMetrics {
         }
     }
 
+    fn push_sample(&self, elapsed_s: f64) {
+        let snapshot = self.snapshot(elapsed_s);
+        let sample = ThroughputSample::from_snapshot(snapshot, elapsed_s);
+        self.samples.lock().push(sample);
+    }
+
+    fn samples(&self) -> Vec<ThroughputSample> {
+        self.samples.lock().clone()
+    }
+
     fn snapshot(&self, elapsed_s: f64) -> ThroughputMetricsSnapshot {
         let total = self.total.load(Ordering::Relaxed);
         let success = self.success.load(Ordering::Relaxed);
@@ -302,20 +334,22 @@ impl ThroughputMetrics {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ThroughputSnapshot {
     pub run: ThroughputRunSnapshot,
     pub metrics: ThroughputMetricsSnapshot,
     pub errors: Vec<ThroughputErrorSnapshot>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ThroughputRunSnapshot {
     pub id: String,
     pub status: String,
     pub users: usize,
     pub duration_s: f64,
-    pub question: String,
+    pub question: Option<String>,
+    #[serde(default)]
+    pub questions: Vec<String>,
     pub user_id_prefix: String,
     pub stream: bool,
     pub model_name: Option<String>,
@@ -325,7 +359,7 @@ pub struct ThroughputRunSnapshot {
     pub elapsed_s: f64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ThroughputMetricsSnapshot {
     pub total_requests: u64,
     pub success_requests: u64,
@@ -344,19 +378,65 @@ pub struct ThroughputMetricsSnapshot {
     pub latency_buckets: Vec<LatencyBucketSnapshot>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LatencyBucketSnapshot {
     pub le_ms: Option<u64>,
     pub count: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ThroughputErrorSnapshot {
     pub timestamp: String,
     pub message: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThroughputSample {
+    pub timestamp: String,
+    pub elapsed_s: f64,
+    pub total_requests: u64,
+    pub success_requests: u64,
+    pub error_requests: u64,
+    pub rps: f64,
+    pub avg_latency_ms: Option<u64>,
+    pub p50_latency_ms: Option<u64>,
+    pub p90_latency_ms: Option<u64>,
+    pub p99_latency_ms: Option<u64>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub avg_total_tokens: Option<u64>,
+}
+
+impl ThroughputSample {
+    fn from_snapshot(metrics: ThroughputMetricsSnapshot, elapsed_s: f64) -> Self {
+        Self {
+            timestamp: Utc::now().to_rfc3339(),
+            elapsed_s,
+            total_requests: metrics.total_requests,
+            success_requests: metrics.success_requests,
+            error_requests: metrics.error_requests,
+            rps: metrics.rps,
+            avg_latency_ms: metrics.avg_latency_ms,
+            p50_latency_ms: metrics.p50_latency_ms,
+            p90_latency_ms: metrics.p90_latency_ms,
+            p99_latency_ms: metrics.p99_latency_ms,
+            input_tokens: metrics.input_tokens,
+            output_tokens: metrics.output_tokens,
+            total_tokens: metrics.total_tokens,
+            avg_total_tokens: metrics.avg_total_tokens,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThroughputReport {
+    pub summary: ThroughputSnapshot,
+    #[serde(default)]
+    pub samples: Vec<ThroughputSample>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ThroughputStatusResponse {
     pub active: Option<ThroughputSnapshot>,
     pub history: Vec<ThroughputSnapshot>,
@@ -364,11 +444,12 @@ pub struct ThroughputStatusResponse {
 
 impl ThroughputManager {
     pub fn new() -> Self {
+        let history = load_report_index();
         Self {
             inner: Arc::new(ThroughputManagerInner {
                 state: Mutex::new(ThroughputState {
                     active: None,
-                    history: Vec::new(),
+                    history,
                 }),
             }),
         }
@@ -387,8 +468,8 @@ impl ThroughputManager {
         }
         if let Some(active) = state.active.take() {
             state.history.push(active.snapshot());
-            if state.history.len() > 5 {
-                let overflow = state.history.len() - 5;
+            if state.history.len() > MAX_REPORT_HISTORY {
+                let overflow = state.history.len() - MAX_REPORT_HISTORY;
                 state.history.drain(0..overflow);
             }
         }
@@ -397,11 +478,12 @@ impl ThroughputManager {
         let metrics = Arc::new(ThroughputMetrics::new());
         let stop_flag = Arc::new(AtomicBool::new(false));
         let started_at = Utc::now();
+        let started_instant = Instant::now();
         let active = ActiveRun {
             id: run_id.clone(),
             config: config.clone(),
             started_at,
-            started_instant: Instant::now(),
+            started_instant,
             finished_at: None,
             finished_instant: None,
             status: RunStatus::Running,
@@ -411,7 +493,16 @@ impl ThroughputManager {
         state.active = Some(active);
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            run_supervisor(inner, orchestrator, run_id, config, metrics, stop_flag).await;
+            run_supervisor(
+                inner,
+                orchestrator,
+                run_id,
+                config,
+                metrics,
+                stop_flag,
+                started_instant,
+            )
+            .await;
         });
         Ok(state.active.as_ref().map(ActiveRun::snapshot).unwrap())
     }
@@ -436,6 +527,30 @@ impl ThroughputManager {
             history: state.history.clone(),
         }
     }
+
+    pub async fn report(&self, run_id: Option<&str>) -> Result<ThroughputReport, String> {
+        let target_id = {
+            let state = self.inner.state.lock().await;
+            if let Some(run_id) = run_id {
+                if let Some(active) = state.active.as_ref() {
+                    if active.id == run_id {
+                        return Ok(active.report());
+                    }
+                }
+                Some(run_id.to_string())
+            } else if let Some(active) = state.active.as_ref() {
+                return Ok(active.report());
+            } else if let Some(last) = state.history.last() {
+                Some(last.run.id.clone())
+            } else {
+                None
+            }
+        };
+        let Some(target_id) = target_id else {
+            return Err("暂无可导出的压测结果".to_string());
+        };
+        load_report(&target_id).await
+    }
 }
 
 impl ActiveRun {
@@ -455,7 +570,8 @@ impl ActiveRun {
                 status: self.status.as_str().to_string(),
                 users: self.config.users,
                 duration_s: self.config.duration_s,
-                question: self.config.question.clone(),
+                question: self.config.questions.first().cloned(),
+                questions: self.config.questions.clone(),
                 user_id_prefix: self.config.user_id_prefix.clone(),
                 stream: true,
                 model_name: None,
@@ -468,6 +584,12 @@ impl ActiveRun {
             errors,
         }
     }
+
+    fn report(&self) -> ThroughputReport {
+        let summary = self.snapshot();
+        let samples = self.metrics.samples();
+        ThroughputReport { summary, samples }
+    }
 }
 
 async fn run_supervisor(
@@ -477,19 +599,30 @@ async fn run_supervisor(
     config: ThroughputConfig,
     metrics: Arc<ThroughputMetrics>,
     stop_flag: Arc<AtomicBool>,
+    started_instant: Instant,
 ) {
     let end_at = if config.duration_s > 0.0 {
-        Some(Instant::now() + Duration::from_secs_f64(config.duration_s))
+        Some(started_instant + Duration::from_secs_f64(config.duration_s))
     } else {
         None
     };
+    let done_notify = Arc::new(Notify::new());
+    let sampler_handle = {
+        let metrics = Arc::clone(&metrics);
+        let stop_flag = Arc::clone(&stop_flag);
+        let done_notify = Arc::clone(&done_notify);
+        let duration_s = config.duration_s;
+        tokio::spawn(async move {
+            run_sampler(metrics, started_instant, duration_s, stop_flag, done_notify).await;
+        })
+    };
     let mut handles = Vec::with_capacity(config.users);
-    let question = Arc::new(config.question.clone());
+    let questions = Arc::new(config.questions.clone());
     for index in 0..config.users {
         let orchestrator = Arc::clone(&orchestrator);
         let metrics = Arc::clone(&metrics);
         let stop_flag = Arc::clone(&stop_flag);
-        let question = Arc::clone(&question);
+        let questions = Arc::clone(&questions);
         let user_index = index + 1;
         let user_id = format!("{prefix}-{user_index}", prefix = config.user_id_prefix);
         let request_timeout_s = config.request_timeout_s;
@@ -497,7 +630,7 @@ async fn run_supervisor(
             run_worker(
                 orchestrator,
                 user_id,
-                question,
+                questions,
                 end_at,
                 stop_flag,
                 metrics,
@@ -510,31 +643,53 @@ async fn run_supervisor(
     for handle in handles {
         let _ = handle.await;
     }
+    done_notify.notify_waiters();
+    let _ = sampler_handle.await;
 
-    let mut state = inner.state.lock().await;
-    if let Some(active) = state.active.as_mut() {
-        if active.id == run_id {
-            active.finished_at = Some(Utc::now());
-            active.finished_instant = Some(Instant::now());
-            active.status = if active.stop_flag.load(Ordering::Relaxed) {
-                RunStatus::Stopped
-            } else {
-                RunStatus::Finished
-            };
+    let mut report_to_persist = None;
+    let mut history_to_persist = None;
+    {
+        let mut state = inner.state.lock().await;
+        if let Some(active) = state.active.as_mut() {
+            if active.id == run_id {
+                active.finished_at = Some(Utc::now());
+                active.finished_instant = Some(Instant::now());
+                active.status = if active.stop_flag.load(Ordering::Relaxed) {
+                    RunStatus::Stopped
+                } else {
+                    RunStatus::Finished
+                };
+                let report = active.report();
+                state.history.push(report.summary.clone());
+                if state.history.len() > MAX_REPORT_HISTORY {
+                    let overflow = state.history.len() - MAX_REPORT_HISTORY;
+                    state.history.drain(0..overflow);
+                }
+                report_to_persist = Some(report);
+                history_to_persist = Some(state.history.clone());
+                state.active = None;
+            }
         }
+    }
+    if let Some(report) = report_to_persist {
+        let _ = persist_report(&report).await;
+    }
+    if let Some(history) = history_to_persist {
+        let _ = persist_report_index(&history).await;
     }
 }
 
 async fn run_worker(
     orchestrator: Arc<Orchestrator>,
     user_id: String,
-    question: Arc<String>,
+    questions: Arc<Vec<String>>,
     end_at: Option<Instant>,
     stop_flag: Arc<AtomicBool>,
     metrics: Arc<ThroughputMetrics>,
     request_timeout_s: f64,
 ) {
     let single_shot = end_at.is_none();
+    let mut seed = seed_for_user(&user_id);
     loop {
         if stop_flag.load(Ordering::Relaxed) {
             break;
@@ -545,9 +700,10 @@ async fn run_worker(
             }
         }
         let started = Instant::now();
+        let question = select_question(&questions, &mut seed).to_string();
         let request = WunderRequest {
             user_id: user_id.clone(),
-            question: question.as_str().to_string(),
+            question,
             tool_names: Vec::new(),
             stream: true,
             session_id: None,
@@ -585,6 +741,50 @@ async fn run_worker(
     }
 }
 
+async fn run_sampler(
+    metrics: Arc<ThroughputMetrics>,
+    started_instant: Instant,
+    duration_s: f64,
+    stop_flag: Arc<AtomicBool>,
+    done_notify: Arc<Notify>,
+) {
+    let interval = Duration::from_millis(SAMPLE_INTERVAL_MS);
+    loop {
+        if stop_flag.load(Ordering::Relaxed) {
+            break;
+        }
+        if duration_s > 0.0 && started_instant.elapsed().as_secs_f64() >= duration_s {
+            break;
+        }
+        let elapsed_s = started_instant.elapsed().as_secs_f64();
+        metrics.push_sample(elapsed_s);
+        tokio::select! {
+            _ = done_notify.notified() => break,
+            _ = tokio::time::sleep(interval) => {}
+        }
+    }
+    let elapsed_s = started_instant.elapsed().as_secs_f64();
+    metrics.push_sample(elapsed_s);
+}
+
+fn seed_for_user(user_id: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    user_id.hash(&mut hasher);
+    let time_seed = Utc::now().timestamp_millis() as u64;
+    hasher.finish() ^ time_seed
+}
+
+fn select_question<'a>(questions: &'a [String], seed: &mut u64) -> &'a str {
+    if questions.len() <= 1 {
+        return questions.first().map(String::as_str).unwrap_or("");
+    }
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let index = (*seed as usize) % questions.len();
+    questions[index].as_str()
+}
+
 fn estimate_percentile(counts: &[u64], percentile: f64) -> Option<u64> {
     let total: u64 = counts.iter().sum();
     if total == 0 {
@@ -618,4 +818,68 @@ fn build_bucket_snapshots(counts: &[u64]) -> Vec<LatencyBucketSnapshot> {
         });
     }
     snapshots
+}
+
+fn report_dir() -> PathBuf {
+    PathBuf::from(REPORT_DIR)
+}
+
+fn report_index_path() -> PathBuf {
+    report_dir().join(REPORT_INDEX_FILE)
+}
+
+fn report_file_path(run_id: &str) -> PathBuf {
+    report_dir().join(format!("{run_id}.json"))
+}
+
+fn load_report_index() -> Vec<ThroughputSnapshot> {
+    let path = report_index_path();
+    let data = match fs::read_to_string(&path) {
+        Ok(data) => data,
+        Err(_) => return Vec::new(),
+    };
+    match serde_json::from_str::<Vec<ThroughputSnapshot>>(&data) {
+        Ok(mut history) => {
+            if history.len() > MAX_REPORT_HISTORY {
+                let overflow = history.len() - MAX_REPORT_HISTORY;
+                history.drain(0..overflow);
+            }
+            history
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+async fn persist_report(report: &ThroughputReport) -> Result<(), String> {
+    let dir = report_dir();
+    tokio_fs::create_dir_all(&dir)
+        .await
+        .map_err(|err| err.to_string())?;
+    let payload = serde_json::to_vec_pretty(report).map_err(|err| err.to_string())?;
+    let path = report_file_path(&report.summary.run.id);
+    tokio_fs::write(path, payload)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+async fn persist_report_index(history: &[ThroughputSnapshot]) -> Result<(), String> {
+    let dir = report_dir();
+    tokio_fs::create_dir_all(&dir)
+        .await
+        .map_err(|err| err.to_string())?;
+    let payload = serde_json::to_vec_pretty(history).map_err(|err| err.to_string())?;
+    let path = report_index_path();
+    tokio_fs::write(path, payload)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+async fn load_report(run_id: &str) -> Result<ThroughputReport, String> {
+    let path = report_file_path(run_id);
+    let payload = tokio_fs::read(&path)
+        .await
+        .map_err(|_| "未找到对应压测报告".to_string())?;
+    serde_json::from_slice::<ThroughputReport>(&payload).map_err(|err| err.to_string())
 }

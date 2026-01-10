@@ -778,12 +778,14 @@
 - 入参（JSON）：
   - `users`：模拟用户数（>0，最大 500）
   - `duration_s`：模拟时间（秒，最大 86400），为 0 时每个用户只发送一次请求
-  - `question`：压测问题文本
+  - `question`：压测问题文本（可选，单条）
+  - `questions`：压测问题列表（可选，多条；提供后每次请求随机抽取）
   - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
   - 每个模拟用户串行发起请求（上一条完成后立刻发下一条），会话每次自动生成（不复用 session_id）。
   - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
+  - 未传 `questions` 时使用 `question` 作为唯一问题；两者都为空会返回 400。
   - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
 - 返回（JSON）：`ThroughputSnapshot`
 
@@ -798,7 +800,15 @@
 - 方法：`GET`
 - 返回（JSON）：
   - `active`：当前压测任务快照（`ThroughputSnapshot`，无则为 null）
-  - `history`：历史压测快照数组（最多保留 5 条）
+  - `history`：历史压测快照数组（最多保留 50 条）
+
+### 4.1.45 `/wunder/admin/throughput/report`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `run_id`：压测任务 ID（可选；不传则优先返回运行中任务，否则返回最近一次结果）
+- 返回（JSON）：`ThroughputReport`（包含汇总快照与采样序列）
+- 说明：报告会持久化到 `data/throughput`，便于导出与回溯。
 
 #### ThroughputSnapshot
 
@@ -807,7 +817,8 @@
   - `status`：`running/stopping/finished/stopped`
   - `users`：模拟用户数
   - `duration_s`：模拟时间（秒）
-  - `question`：压测问题文本
+  - `question`：压测问题文本（可选，第一条）
+  - `questions`：压测问题列表
   - `user_id_prefix`：用户前缀
   - `stream`：是否流式（固定 true）
   - `model_name`：模型配置（默认 null，表示使用默认模型）
@@ -830,6 +841,136 @@
   - `avg_total_tokens`：平均 token（按成功请求统计）
   - `latency_buckets`：延迟桶统计（`le_ms` 为上界，null 表示超过最大上界）
 - `errors`：最近错误列表（最多 20 条）
+
+#### ThroughputReport
+
+- `summary`：压测快照（`ThroughputSnapshot`）
+- `samples`：采样序列（`ThroughputSample`）
+
+#### ThroughputSample
+
+- `timestamp`：采样时间（RFC3339）
+- `elapsed_s`：已运行时长（秒）
+- `total_requests/success_requests/error_requests`：累计请求指标
+- `rps`：实时吞吐
+- `avg_latency_ms`：平均耗时（毫秒）
+- `p50_latency_ms/p90_latency_ms/p99_latency_ms`：延迟分位（毫秒）
+- `input_tokens/output_tokens/total_tokens`：累计 token 统计
+- `avg_total_tokens`：平均 token（按成功请求统计）
+
+### 4.1.46 `/wunder/admin/evaluation/start`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `model_name`：模型配置名称（可选）
+  - `language`：语言（可选，默认使用系统语言）
+  - `case_set`：用例集名称（可选，默认 `default`）
+  - `dimensions`：维度列表（可选，`tool/logic/common/complex`，为空表示全部）
+  - `weights`：维度权重对象（可选，`tool/logic/common/complex`，总和会归一到 100，默认 35/25/20/20）
+  - `tool_names`：启用的工具名称列表（可选，未传使用管理员默认启用工具）
+  - `config_overrides`：临时覆盖配置对象（可选）
+- 返回（JSON）：
+  - `run_id`：评估任务 ID
+  - `status`：任务状态（`running`）
+  - `case_count`：用例数量
+
+### 4.1.47 `/wunder/admin/evaluation/{run_id}/cancel`
+
+- 方法：`POST`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：失败原因（可选）
+
+### 4.1.48 `/wunder/admin/evaluation/runs`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选）
+  - `status`：状态筛选（可选）
+  - `model_name`：模型配置名称（可选）
+  - `since_time`：开始时间下限（秒级时间戳，可选）
+  - `until_time`：开始时间上限（秒级时间戳，可选）
+  - `limit`：返回条数上限（可选）
+- 返回（JSON）：
+  - `runs`：评估任务列表（`EvaluationRun`）
+
+### 4.1.49 `/wunder/admin/evaluation/{run_id}`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `run`：评估任务（`EvaluationRun`）
+  - `items`：评估明细列表（`EvaluationItem`）
+
+### 4.1.50 `/wunder/admin/evaluation/compare`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `run_ids`：评估任务 ID，逗号分隔，至少 2 个
+- 返回（JSON）：
+  - `runs`：评估任务列表（`EvaluationRun`）
+  - `cases`：对比列表
+    - `case_id`：用例 ID
+    - `dimension`：维度
+    - `items`：按 `run_id` 映射的 `EvaluationItem`
+
+### 4.1.51 `/wunder/admin/evaluation/cases`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `case_sets`：用例集摘要列表
+    - `case_set`：用例集名称
+    - `language`：语言
+    - `version`：版本号
+    - `case_count`：用例数量
+    - `dimensions`：维度分布统计（维度 -> 数量）
+
+### 4.1.52 `/wunder/admin/evaluation/stream/{run_id}`
+
+- 方法：`GET`（SSE）
+- 事件：
+  - `eval_started`：评估开始（`run_id`、`case_count`）
+  - `eval_item`：用例完成（`EvaluationItem`）
+  - `eval_progress`：进度更新（`completed/total/passed/failed/skipped/errors`）
+  - `eval_finished`：评估结束（`EvaluationRun`）
+  - `eval_log`：日志提示（取消请求等）
+
+#### EvaluationRun
+
+- `run_id`：评估任务 ID
+- `user_id`：用户标识
+- `status`：`running/finished/failed/cancelled`
+- `model_name`：模型配置名称
+- `language`：语言
+- `case_set`：用例集
+- `dimensions`：评估维度列表
+- `weights`：维度权重
+- `total_score`：总分（0~1）
+- `dimension_scores`：维度评分映射（0~1）
+- `case_count/passed_count/failed_count/skipped_count/error_count`：用例统计
+- `started_time/finished_time/elapsed_s`：时间信息（秒级时间戳/耗时）
+- `tool_names`：请求时传入的工具清单
+- `tool_snapshot`：评估时实际可用工具快照
+- `case_ids`：本次评估使用的用例 ID 列表
+- `error`：错误信息（可选）
+- `config_overrides`：评估时使用的配置覆盖（可选）
+
+#### EvaluationItem
+
+- `run_id`：评估任务 ID
+- `case_id`：用例 ID
+- `dimension`：维度（`tool/logic/common/complex`）
+- `status`：`passed/failed/skipped/error/cancelled`
+- `score/max_score/weight`：得分、满分、权重
+- `prompt`：实际评估提示词
+- `checker`：判定器配置
+- `final_answer`：模型最终回复
+- `tool_calls`：工具调用记录
+- `checker_detail`：判定详情
+- `skip_reason`：跳过原因（可选）
+- `started_time/finished_time/elapsed_s`：时间信息（秒级时间戳/耗时）
+- `error`：错误信息（可选）
+- `session_id`：评估用会话标识
 
 ### 4.2 流式响应（SSE）
 

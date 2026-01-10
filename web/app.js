@@ -65,6 +65,8 @@ import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
+import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260110-01";
+import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-03";
 
@@ -300,6 +302,8 @@ const switchPanel = (panel) => {
 
   toggleMemoryPolling(panel === "memory");
 
+  toggleThroughputPolling(panel === "throughput");
+
 };
 
 
@@ -430,7 +434,19 @@ const bindNavigation = () => {
   // 点击侧边栏标题进入系统介绍面板
 
   if (elements.navThroughput) {
-    elements.navThroughput.addEventListener("click", () => switchPanel("throughput"));
+    elements.navThroughput.addEventListener("click", async () => {
+      switchPanel("throughput");
+      if (!state.panelLoaded.throughput) {
+        try {
+          await initThroughputPanel();
+          state.panelLoaded.throughput = true;
+        } catch (error) {
+          appendLog(
+            t("app.panelLoadFailed", { panel: t("panel.throughput"), message: error.message })
+          );
+        }
+      }
+    });
   }
 
   elements.navDebug.addEventListener("click", () => switchPanel("debug"));
@@ -618,7 +634,19 @@ const bindNavigation = () => {
   });
 
   if (elements.navEvaluation) {
-    elements.navEvaluation.addEventListener("click", () => switchPanel("evaluation"));
+    elements.navEvaluation.addEventListener("click", async () => {
+      switchPanel("evaluation");
+      if (!state.panelLoaded.evaluation) {
+        try {
+          await initEvaluationPanel();
+          state.panelLoaded.evaluation = true;
+        } catch (error) {
+          appendLog(
+            t("app.panelLoadFailed", { panel: t("panel.evaluation"), message: error.message })
+          );
+        }
+      }
+    });
   }
 
   if (elements.navIntro) {
@@ -915,6 +943,8 @@ const bootstrap = async () => {
 
   initMonitorPanel();
 
+  initThroughputPanel();
+
   initUserManagementPanel();
 
   initMemoryPanel();
@@ -953,6 +983,18 @@ const bootstrap = async () => {
 
   switchPanel(initialPanel);
   expandActiveNavGroupOnly();
+
+  if (initialPanel === "evaluation" && !state.panelLoaded.evaluation) {
+    initEvaluationPanel()
+      .then(() => {
+        state.panelLoaded.evaluation = true;
+      })
+      .catch((error) => {
+        appendLog(
+          t("app.panelLoadFailed", { panel: t("panel.evaluation"), message: error.message })
+        );
+      });
+  }
 
   if (initialPanel === "users") {
 
