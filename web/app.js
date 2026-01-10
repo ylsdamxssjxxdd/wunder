@@ -64,6 +64,7 @@ import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20
 import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
+import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-03";
 
@@ -935,6 +936,7 @@ const bootstrap = async () => {
   initUserTools();
 
   initSettingsPanel();
+  initApiDocsPanel();
 
   bindNavigation();
   bindNavGroupToggles();

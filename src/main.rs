@@ -22,6 +22,7 @@ mod shutdown;
 mod skills;
 mod state;
 mod storage;
+mod throughput;
 mod token_utils;
 mod tools;
 mod user_tools;

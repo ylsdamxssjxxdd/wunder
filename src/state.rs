@@ -8,6 +8,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
+use crate::throughput::ThroughputManager;
 use crate::user_tools::{UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
@@ -25,6 +26,7 @@ pub struct AppState {
     pub skills: Arc<RwLock<SkillRegistry>>,
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
+    pub throughput: ThroughputManager,
 }
 
 impl AppState {
@@ -57,6 +59,7 @@ impl AppState {
             storage.clone(),
         ));
         let memory = Arc::new(MemoryStore::new(storage.clone()));
+        let throughput = ThroughputManager::new();
         Ok(Self {
             config_store,
             workspace,
@@ -66,6 +69,7 @@ impl AppState {
             skills,
             user_tool_store,
             user_tool_manager,
+            throughput,
         })
     }
 

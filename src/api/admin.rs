@@ -9,6 +9,7 @@ use crate::path_utils::{
 };
 use crate::skills::load_skills;
 use crate::state::AppState;
+use crate::throughput::{ThroughputConfig, ThroughputSnapshot, ThroughputStatusResponse};
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -91,6 +92,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/monitor/{session_id}/cancel",
             post(admin_monitor_cancel),
+        )
+        .route(
+            "/wunder/admin/throughput/start",
+            post(admin_throughput_start),
+        )
+        .route("/wunder/admin/throughput/stop", post(admin_throughput_stop))
+        .route(
+            "/wunder/admin/throughput/status",
+            get(admin_throughput_status),
         )
         .route("/wunder/admin/users", get(admin_users))
         .route(
@@ -1356,6 +1366,43 @@ async fn admin_monitor_delete(
     ))
 }
 
+async fn admin_throughput_start(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ThroughputStartRequest>,
+) -> Result<Json<ThroughputSnapshot>, Response> {
+    let config = ThroughputConfig::new(
+        payload.users,
+        payload.duration_s,
+        payload.question,
+        payload.user_id_prefix,
+        payload.request_timeout_s,
+    )
+    .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
+    let snapshot = state
+        .throughput
+        .start(state.orchestrator.clone(), config)
+        .await
+        .map_err(|message| error_response(StatusCode::CONFLICT, message))?;
+    Ok(Json(snapshot))
+}
+
+async fn admin_throughput_stop(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ThroughputSnapshot>, Response> {
+    let snapshot = state
+        .throughput
+        .stop()
+        .await
+        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
+    Ok(Json(snapshot))
+}
+
+async fn admin_throughput_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ThroughputStatusResponse>, Response> {
+    Ok(Json(state.throughput.status().await))
+}
+
 async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     #[derive(Default)]
     struct UserStats {
@@ -2185,6 +2232,17 @@ struct MonitorQuery {
     tool_hours: Option<f64>,
     start_time: Option<f64>,
     end_time: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThroughputStartRequest {
+    users: usize,
+    duration_s: f64,
+    question: String,
+    #[serde(default)]
+    user_id_prefix: Option<String>,
+    #[serde(default)]
+    request_timeout_s: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, Default)]

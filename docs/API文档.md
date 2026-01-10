@@ -772,6 +772,65 @@
   - `message`：提示信息
   - `deleted`：删除条数
 
+### 4.1.42 `/wunder/admin/throughput/start`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `users`：模拟用户数（>0，最大 500）
+  - `duration_s`：模拟时间（秒，最大 86400），为 0 时每个用户只发送一次请求
+  - `question`：压测问题文本
+  - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
+  - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
+- 说明：
+  - 每个模拟用户串行发起请求（上一条完成后立刻发下一条），会话每次自动生成（不复用 session_id）。
+  - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
+  - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
+- 返回（JSON）：`ThroughputSnapshot`
+
+### 4.1.43 `/wunder/admin/throughput/stop`
+
+- 方法：`POST`
+- 返回（JSON）：`ThroughputSnapshot`
+- 说明：仅停止新请求，已在执行中的请求会继续完成；状态会先变为 `stopping`，全部结束后变为 `stopped`。
+
+### 4.1.44 `/wunder/admin/throughput/status`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `active`：当前压测任务快照（`ThroughputSnapshot`，无则为 null）
+  - `history`：历史压测快照数组（最多保留 5 条）
+
+#### ThroughputSnapshot
+
+- `run`：任务信息
+  - `id`：任务 ID
+  - `status`：`running/stopping/finished/stopped`
+  - `users`：模拟用户数
+  - `duration_s`：模拟时间（秒）
+  - `question`：压测问题文本
+  - `user_id_prefix`：用户前缀
+  - `stream`：是否流式（固定 true）
+  - `model_name`：模型配置（默认 null，表示使用默认模型）
+  - `request_timeout_s`：单次请求超时（秒）
+  - `started_at`：开始时间（RFC3339）
+  - `finished_at`：结束时间（RFC3339，可选）
+  - `elapsed_s`：已运行时长（秒）
+- `metrics`：汇总指标
+  - `total_requests`：请求总数
+  - `success_requests`：成功数
+  - `error_requests`：失败数
+  - `rps`：每秒请求数（四舍五入到两位小数）
+  - `avg_latency_ms`：平均耗时（毫秒）
+  - `min_latency_ms`：最小耗时（毫秒）
+  - `max_latency_ms`：最大耗时（毫秒）
+  - `p50_latency_ms`：P50 耗时（毫秒，基于桶估算）
+  - `p90_latency_ms`：P90 耗时（毫秒，基于桶估算）
+  - `p99_latency_ms`：P99 耗时（毫秒，基于桶估算）
+  - `input_tokens/output_tokens/total_tokens`：累计 token 统计
+  - `avg_total_tokens`：平均 token（按成功请求统计）
+  - `latency_buckets`：延迟桶统计（`le_ms` 为上界，null 表示超过最大上界）
+- `errors`：最近错误列表（最多 20 条）
+
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
