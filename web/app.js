@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260110-03";
+import { elements } from "./modules/elements.js?v=20260110-04";
 
 import { state } from "./modules/state.js";
 
@@ -37,7 +37,7 @@ import {
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-04";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-04";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-05";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
 
@@ -65,7 +65,7 @@ import { initSettingsPanel } from "./modules/settings.js?v=20260101-01";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-02";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-03";
 
 
 
@@ -111,12 +111,17 @@ const patchApiFetch = () => {
 
 
 
-// 切换侧边栏面板，保持单页无整体滚动
+// Sidebar collapse handling; keep single-page layout stable.
 
 
-// ?????????????
 const SIDEBAR_COLLAPSE_WIDTH = 1200;
 let sidebarCollapsed = null;
+
+const clearNavGroupHover = () => {
+  document.querySelectorAll(".nav-group.is-hovered").forEach((group) => {
+    group.classList.remove("is-hovered");
+  });
+};
 
 const updateSidebarCollapse = () => {
   const width = window.innerWidth || document.documentElement.clientWidth;
@@ -126,6 +131,9 @@ const updateSidebarCollapse = () => {
   }
   sidebarCollapsed = shouldCollapse;
   document.body.classList.toggle("sidebar-collapsed", shouldCollapse);
+  if (!shouldCollapse) {
+    clearNavGroupHover();
+  }
 };
 
 const bindSidebarCollapse = () => {
@@ -137,13 +145,13 @@ const panelMap = {
 
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
 
-  intro: { panel: elements.introPanel, nav: elements.sidebarTitle },
-
   users: { panel: elements.usersPanel, nav: elements.navUsers },
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
+
+  settings: { panel: elements.settingsPanel, nav: elements.navSettings },
 
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
 
@@ -155,12 +163,110 @@ const panelMap = {
 
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
 
+  throughput: { panel: elements.throughputPanel, nav: elements.navThroughput },
+
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
+
+  evaluation: { panel: elements.evaluationPanel, nav: elements.navEvaluation },
 
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
 
-  settings: { panel: elements.settingsPanel, nav: elements.navSettings },
+  intro: { panel: elements.introPanel, nav: elements.navIntro },
 
+  apiDocs: { panel: elements.apiDocsPanel, nav: elements.navApiDocs },
+
+};
+
+const setNavGroupExpanded = (group, expanded) => {
+  group.classList.toggle("is-collapsed", !expanded);
+  const button = group.querySelector(".nav-group-btn");
+  if (button) {
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+  if (!expanded) {
+    group.classList.remove("is-hovered");
+  }
+};
+
+const updateNavGroupState = () => {
+  const groups = document.querySelectorAll(".nav-group");
+  groups.forEach((group) => {
+    const hasActive = group.querySelector(".nav-btn.active");
+    group.classList.toggle("active", Boolean(hasActive));
+    const expanded = !group.classList.contains("is-collapsed");
+    const button = group.querySelector(".nav-group-btn");
+    if (button) {
+      button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+  });
+};
+
+const bindNavGroupToggles = () => {
+  const groups = document.querySelectorAll(".nav-group");
+  groups.forEach((group) => {
+    const button = group.querySelector(".nav-group-btn");
+    if (!button) {
+      return;
+    }
+    setNavGroupExpanded(group, !group.classList.contains("is-collapsed"));
+    button.addEventListener("click", () => {
+      const shouldExpand = group.classList.contains("is-collapsed");
+      setNavGroupExpanded(group, shouldExpand);
+    });
+  });
+};
+
+const bindNavGroupHover = () => {
+  const groups = Array.from(document.querySelectorAll(".nav-group"));
+  if (!groups.length) {
+    return;
+  }
+  const activate = (group) => {
+    if (!document.body.classList.contains("sidebar-collapsed")) {
+      return;
+    }
+    if (group.classList.contains("is-collapsed")) {
+      return;
+    }
+    groups.forEach((item) => {
+      if (item !== group) {
+        item.classList.remove("is-hovered");
+      }
+    });
+    group.classList.add("is-hovered");
+  };
+  const deactivate = (group) => {
+    group.classList.remove("is-hovered");
+  };
+  groups.forEach((group) => {
+    group.addEventListener("mouseenter", () => activate(group));
+    group.addEventListener("mouseleave", () => deactivate(group));
+    group.addEventListener("focusin", () => activate(group));
+    group.addEventListener("focusout", (event) => {
+      if (!group.contains(event.relatedTarget)) {
+        deactivate(group);
+      }
+    });
+  });
+  document.body.addEventListener("mouseleave", () => {
+    if (document.body.classList.contains("sidebar-collapsed")) {
+      clearNavGroupHover();
+    }
+  });
+};
+
+const expandActiveNavGroupOnly = () => {
+  const groups = Array.from(document.querySelectorAll(".nav-group"));
+  if (!groups.length) {
+    return;
+  }
+  const activeGroup = groups.find((group) => group.querySelector(".nav-btn.active"));
+  if (!activeGroup) {
+    return;
+  }
+  groups.forEach((group) => {
+    setNavGroupExpanded(group, group === activeGroup);
+  });
 };
 
 
@@ -182,6 +288,8 @@ const switchPanel = (panel) => {
     }
 
   });
+
+  updateNavGroupState();
 
   state.runtime.activePanel = panel;
 
@@ -320,14 +428,8 @@ const bindNavigation = () => {
 
   // 点击侧边栏标题进入系统介绍面板
 
-  if (elements.sidebarTitle) {
-
-    elements.sidebarTitle.addEventListener("click", () => {
-
-      switchPanel("intro");
-
-    });
-
+  if (elements.navThroughput) {
+    elements.navThroughput.addEventListener("click", () => switchPanel("throughput"));
   }
 
   elements.navDebug.addEventListener("click", () => switchPanel("debug"));
@@ -513,6 +615,18 @@ const bindNavigation = () => {
     }
 
   });
+
+  if (elements.navEvaluation) {
+    elements.navEvaluation.addEventListener("click", () => switchPanel("evaluation"));
+  }
+
+  if (elements.navIntro) {
+    elements.navIntro.addEventListener("click", () => switchPanel("intro"));
+  }
+
+  if (elements.navApiDocs) {
+    elements.navApiDocs.addEventListener("click", () => switchPanel("apiDocs"));
+  }
 
 };
 
@@ -823,6 +937,8 @@ const bootstrap = async () => {
   initSettingsPanel();
 
   bindNavigation();
+  bindNavGroupToggles();
+  bindNavGroupHover();
 
   bindIntroPanel();
 
@@ -834,6 +950,7 @@ const bootstrap = async () => {
   const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
 
   switchPanel(initialPanel);
+  expandActiveNavGroupOnly();
 
   if (initialPanel === "users") {
 

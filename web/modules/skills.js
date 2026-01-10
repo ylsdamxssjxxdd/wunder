@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260110-03";
+import { elements } from "./elements.js?v=20260110-04";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260110-02";
+import { t } from "./i18n.js?v=20260110-03";
 
 // 拉取技能清单与启用状态
 export const loadSkills = async () => {

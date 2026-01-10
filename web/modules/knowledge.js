@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260110-03";
+import { elements } from "./elements.js?v=20260110-04";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { buildHeadingHighlightHtml } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260110-02";
+import { t } from "./i18n.js?v=20260110-03";
 
 const knowledgeModal = document.getElementById("knowledgeModal");
 const knowledgeModalTitle = document.getElementById("knowledgeModalTitle");

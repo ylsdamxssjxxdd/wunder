@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-03";
+import { elements } from "./elements.js?v=20260110-04";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260110-02";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260110-03";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -1601,7 +1601,11 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const startCell = document.createElement("td");
     startCell.textContent = formatTimestamp(session.start_time);
     const sessionCell = document.createElement("td");
-    sessionCell.textContent = session.session_id || "-";
+    const rawSessionId = session.session_id || "";
+    sessionCell.textContent = rawSessionId ? rawSessionId.slice(0, 4) : "-";
+    if (rawSessionId) {
+      sessionCell.title = rawSessionId;
+    }
     const userCell = document.createElement("td");
     userCell.textContent = session.user_id || "-";
     const questionCell = document.createElement("td");

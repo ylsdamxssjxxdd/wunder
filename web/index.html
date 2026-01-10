@@ -42,7 +42,7 @@
 
     />
 
-    <link rel="stylesheet" href="./app.css?v=20260110-03" />
+    <link rel="stylesheet" href="./app.css?v=20260110-06" />
 
   </head>
 
@@ -61,91 +61,106 @@
         </button>
 
         <div class="sidebar-nav">
-
-          <button id="navMonitor" class="nav-btn active">
-
-            <i class="fa-solid fa-heart"></i>
-
-            <span data-i18n="panel.monitor">内部状态</span>
-
-          </button>
-
-          <button id="navUsers" class="nav-btn">
-
-            <i class="fa-solid fa-users"></i>
-
-            <span data-i18n="panel.users">用户管理</span>
-
-          </button>
-
-          <button id="navMemory" class="nav-btn">
-
-            <i class="fa-solid fa-brain"></i>
-
-            <span data-i18n="panel.memory">记忆体</span>
-
-          </button>
-
-          <button id="navLlm" class="nav-btn">
-
-            <i class="fa-solid fa-sliders"></i>
-
-            <span data-i18n="panel.llm">模型配置</span>
-
-          </button>
-
-          <button id="navBuiltin" class="nav-btn">
-
-            <i class="fa-solid fa-tools"></i>
-
-            <span data-i18n="panel.builtin">内置工具链</span>
-
-          </button>
-
-          <button id="navMcp" class="nav-btn">
-            <i class="fa-solid fa-plug"></i>
-            <span data-i18n="panel.mcp">MCP 服务</span>
-          </button>
-          <button id="navA2aServices" class="nav-btn">
-            <i class="fa-solid fa-diagram-project"></i>
-            <span data-i18n="panel.a2aServices">A2A 服务</span>
-          </button>
-          <button id="navSkills" class="nav-btn">
-            <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span data-i18n="panel.skills">技能管理</span>
-          </button>
-          <button id="navKnowledge" class="nav-btn">
-
-            <i class="fa-solid fa-book"></i>
-
-            <span data-i18n="panel.knowledge">字面知识库</span>
-
-          </button>
-
-          <button id="navPrompt" class="nav-btn">
-
-            <i class="fa-solid fa-file-lines"></i>
-
-            <span data-i18n="panel.prompt">系统提示词</span>
-
-          </button>
-
-          <button id="navDebug" class="nav-btn">
-
-            <i class="fa-solid fa-bug"></i>
-
-            <span data-i18n="panel.debug">调试面板</span>
-
-          </button>
-
-          <button id="navSettings" class="nav-btn">
-
-            <i class="fa-solid fa-gear"></i>
-
-            <span data-i18n="panel.settings">系统设置</span>
-
-          </button>
-
+          <div class="nav-group" data-group="system">
+            <button class="nav-group-btn" type="button">
+              <i class="fa-solid fa-server"></i>
+              <span data-i18n="sidebar.group.system">系统</span>
+              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
+            </button>
+            <div class="nav-children">
+              <button id="navMonitor" class="nav-btn active">
+                <i class="fa-solid fa-heart"></i>
+                <span data-i18n="panel.monitor">内部状态</span>
+              </button>
+              <button id="navUsers" class="nav-btn">
+                <i class="fa-solid fa-users"></i>
+                <span data-i18n="panel.users">用户管理</span>
+              </button>
+              <button id="navMemory" class="nav-btn">
+                <i class="fa-solid fa-brain"></i>
+                <span data-i18n="panel.memory">记忆管理</span>
+              </button>
+              <button id="navLlm" class="nav-btn">
+                <i class="fa-solid fa-sliders"></i>
+                <span data-i18n="panel.llm">模型配置</span>
+              </button>
+              <button id="navSettings" class="nav-btn">
+                <i class="fa-solid fa-gear"></i>
+                <span data-i18n="panel.settings">系统设置</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="tools">
+            <button class="nav-group-btn" type="button">
+              <i class="fa-solid fa-toolbox"></i>
+              <span data-i18n="sidebar.group.tools">工具</span>
+              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
+            </button>
+            <div class="nav-children">
+              <button id="navBuiltin" class="nav-btn">
+                <i class="fa-solid fa-tools"></i>
+                <span data-i18n="panel.builtin">内置工具</span>
+              </button>
+              <button id="navMcp" class="nav-btn">
+                <i class="fa-solid fa-plug"></i>
+                <span data-i18n="panel.mcp">MCP 服务</span>
+              </button>
+              <button id="navKnowledge" class="nav-btn">
+                <i class="fa-solid fa-book"></i>
+                <span data-i18n="panel.knowledge">知识库</span>
+              </button>
+              <button id="navA2aServices" class="nav-btn">
+                <i class="fa-solid fa-diagram-project"></i>
+                <span data-i18n="panel.a2aServices">A2A 服务</span>
+              </button>
+              <button id="navSkills" class="nav-btn">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span data-i18n="panel.skills">技能管理</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="debug">
+            <button class="nav-group-btn" type="button">
+              <i class="fa-solid fa-bug"></i>
+              <span data-i18n="sidebar.group.debug">调试</span>
+              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
+            </button>
+            <div class="nav-children">
+              <button id="navThroughput" class="nav-btn">
+                <i class="fa-solid fa-gauge-high"></i>
+                <span data-i18n="panel.throughput">吞吐量测试</span>
+              </button>
+              <button id="navPrompt" class="nav-btn">
+                <i class="fa-solid fa-file-lines"></i>
+                <span data-i18n="panel.prompt">系统提示词</span>
+              </button>
+              <button id="navEvaluation" class="nav-btn">
+                <i class="fa-solid fa-list-check"></i>
+                <span data-i18n="panel.evaluation">能力评估</span>
+              </button>
+              <button id="navDebug" class="nav-btn">
+                <i class="fa-solid fa-bug"></i>
+                <span data-i18n="panel.debug">调试面板</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="docs">
+            <button class="nav-group-btn" type="button">
+              <i class="fa-solid fa-book-open"></i>
+              <span data-i18n="sidebar.group.docs">文档</span>
+              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
+            </button>
+            <div class="nav-children">
+              <button id="navIntro" class="nav-btn">
+                <i class="fa-solid fa-display"></i>
+                <span data-i18n="panel.intro">幻灯片</span>
+              </button>
+              <button id="navApiDocs" class="nav-btn">
+                <i class="fa-solid fa-file-code"></i>
+                <span data-i18n="panel.apiDocs">接口</span>
+              </button>
+            </div>
+          </div>
         </div>
 
       </aside>
@@ -642,7 +657,7 @@
 
           <div class="list-header">
 
-            <h1 data-i18n="intro.title">系统介绍</h1>
+            <h1 data-i18n="intro.title">幻灯片</h1>
 
             <div class="header-actions">
 
@@ -1071,7 +1086,7 @@
 
             <div class="list-header">
 
-              <h1 data-i18n="memory.title">记忆体</h1>
+              <h1 data-i18n="memory.title">记忆管理</h1>
 
               <div class="header-actions">
 
@@ -1107,7 +1122,7 @@
 
             <div class="tips" data-i18n="memory.tip">
 
-              记忆体用于管理用户长期记忆数据，开启后会将历史记忆追加到系统提示词末尾，并在每次最终回复后自动总结。
+              记忆管理用于管理用户长期记忆数据，开启后会将历史记忆追加到系统提示词末尾，并在每次最终回复后自动总结。
 
             </div>
 
@@ -1203,7 +1218,7 @@
 
                   <div>
 
-                    <div class="detail-title" data-i18n="memory.status.title">记忆体运行状态</div>
+                    <div class="detail-title" data-i18n="memory.status.title">记忆管理运行状态</div>
 
                     <div id="memoryStatusMeta" class="muted"></div>
 
@@ -2045,23 +2060,29 @@
 
                     <option value="users" data-i18n="panel.users">用户管理</option>
 
-                    <option value="memory" data-i18n="panel.memory">记忆体</option>
+                    <option value="memory" data-i18n="panel.memory">记忆管理</option>
 
                     <option value="llm" data-i18n="panel.llm">模型配置</option>
 
-                    <option value="builtin" data-i18n="panel.builtin">内置工具链</option>
+                    <option value="settings" data-i18n="panel.settings">系统设置</option>
+
+                    <option value="builtin" data-i18n="panel.builtin">内置工具</option>
                     <option value="mcp" data-i18n="panel.mcp">MCP 服务</option>
+                    <option value="knowledge" data-i18n="panel.knowledge">知识库</option>
                     <option value="a2aServices" data-i18n="panel.a2aServices">A2A 服务</option>
                     <option value="skills" data-i18n="panel.skills">技能管理</option>
-                    <option value="knowledge" data-i18n="panel.knowledge">字面知识库</option>
+
+                    <option value="throughput" data-i18n="panel.throughput">吞吐量测试</option>
 
                     <option value="prompt" data-i18n="panel.prompt">系统提示词</option>
 
+                    <option value="evaluation" data-i18n="panel.evaluation">能力评估</option>
+
                     <option value="debug" data-i18n="panel.debug">调试面板</option>
 
-                    <option value="settings" data-i18n="panel.settings">系统设置</option>
+                    <option value="intro" data-i18n="panel.intro">幻灯片</option>
 
-                    <option value="intro" data-i18n="panel.intro">系统介绍</option>
+                    <option value="apiDocs" data-i18n="panel.apiDocs">接口</option>
 
                   </select>
 
@@ -2304,7 +2325,7 @@
         <section id="builtinPanel" class="panel">
           <div class="list-header">
 
-            <h1 data-i18n="builtin.title">内置工具链</h1>
+            <h1 data-i18n="builtin.title">内置工具</h1>
 
             <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
 
@@ -2376,7 +2397,7 @@
 
           <div class="list-header">
 
-            <h1 data-i18n="knowledge.title">字面知识库</h1>
+            <h1 data-i18n="knowledge.title">知识库</h1>
 
             <div class="header-actions">
 
@@ -3099,6 +3120,78 @@
             <div class="prompt-view">
 
               <div id="systemPrompt" class="log"></div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <section id="throughputPanel" class="panel">
+
+          <div class="list-header">
+
+            <h1 data-i18n="panel.throughput">吞吐量测试</h1>
+
+          </div>
+
+          <div class="panel-placeholder">
+
+            <i class="fa-solid fa-gauge-high"></i>
+
+            <div>
+
+              <div class="placeholder-title" data-i18n="placeholder.title">功能建设中</div>
+
+              <div class="muted" data-i18n="placeholder.tip">该模块正在建设中，敬请期待。</div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <section id="evaluationPanel" class="panel">
+
+          <div class="list-header">
+
+            <h1 data-i18n="panel.evaluation">能力评估</h1>
+
+          </div>
+
+          <div class="panel-placeholder">
+
+            <i class="fa-solid fa-list-check"></i>
+
+            <div>
+
+              <div class="placeholder-title" data-i18n="placeholder.title">功能建设中</div>
+
+              <div class="muted" data-i18n="placeholder.tip">该模块正在建设中，敬请期待。</div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <section id="apiDocsPanel" class="panel">
+
+          <div class="list-header">
+
+            <h1 data-i18n="panel.apiDocs">接口</h1>
+
+          </div>
+
+          <div class="panel-placeholder">
+
+            <i class="fa-solid fa-file-code"></i>
+
+            <div>
+
+              <div class="placeholder-title" data-i18n="placeholder.title">功能建设中</div>
+
+              <div class="muted" data-i18n="placeholder.tip">该模块正在建设中，敬请期待。</div>
 
             </div>
 
@@ -4870,7 +4963,7 @@
 
     <script src="./third/marked.min.js"></script>
 
-    <script type="module" src="./app.js?v=20260110-10"></script>
+    <script type="module" src="./app.js?v=20260110-14"></script>
   </body>
 
 </html>
