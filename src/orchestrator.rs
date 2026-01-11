@@ -3355,7 +3355,7 @@ impl Orchestrator {
         let attachment_label = i18n::t("attachment.label");
         let attachment_separator = i18n::t("attachment.label.separator");
         let attachment_default_name = i18n::t("attachment.default_name");
-        let mut text_parts = vec![question.to_string()];
+        let mut attachment_parts: Vec<String> = Vec::new();
         let mut image_parts: Vec<Value> = Vec::new();
         for attachment in attachments {
             let content = attachment.content.as_deref().unwrap_or("");
@@ -3375,11 +3375,20 @@ impl Orchestrator {
                 }));
                 continue;
             }
-            text_parts.push(format!(
-                "\n\n[{attachment_label}{attachment_separator}{display_name}]\n{content}"
+            attachment_parts.push(format!(
+                "[{attachment_label}{attachment_separator}{display_name}]\n{content}"
             ));
         }
-        let text_content = text_parts.join("");
+        let mut text_content = String::new();
+        if !attachment_parts.is_empty() {
+            text_content.push_str(&attachment_parts.join("\n\n"));
+        }
+        if !question.is_empty() {
+            if !text_content.is_empty() {
+                text_content.push_str("\n\n");
+            }
+            text_content.push_str(question);
+        }
         if !image_parts.is_empty() {
             let text_payload = if text_content.trim().is_empty() {
                 i18n::t("attachment.image_prompt")

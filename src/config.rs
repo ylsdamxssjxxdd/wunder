@@ -1,8 +1,10 @@
 // 配置读取与覆盖合并，保持与现有 YAML 配置格式兼容。
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::collections::HashMap;
 use std::env;
+use std::fmt;
 use std::fs;
 use std::path::Path;
 use tracing::warn;
@@ -61,6 +63,7 @@ pub struct CorsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
+    #[serde(deserialize_with = "deserialize_u16_from_any")]
     pub port: u16,
     pub stream_chunk_size: usize,
     pub max_active_sessions: usize,
@@ -335,12 +338,80 @@ pub struct SandboxResources {
 impl Config {
     // 统一归一化 API Key，避免空白字符导致鉴权误判。
     pub fn api_key(&self) -> Option<String> {
-        self.security
+        let inline = self
+            .security
             .api_key
             .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let Some(value) = inline {
+            if value.starts_with("${") && value.ends_with('}') {
+                return env::var("WUNDER_API_KEY")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+            }
+            return Some(value.to_string());
+        }
+        env::var("WUNDER_API_KEY")
+            .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     }
+}
+
+fn deserialize_u16_from_any<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct U16Visitor;
+
+    impl<'de> Visitor<'de> for U16Visitor {
+        type Value = u16;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("u16 or numeric string")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u16::try_from(value).map_err(|_| E::custom("u16 out of range"))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(E::custom("u16 must be non-negative"));
+            }
+            self.visit_u64(value as u64)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(E::custom("u16 string is empty"));
+            }
+            trimmed
+                .parse::<u16>()
+                .map_err(|_| E::custom("invalid u16 string"))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+
+    deserializer.deserialize_any(U16Visitor)
 }
 
 pub fn load_config() -> Config {
@@ -363,6 +434,14 @@ pub fn load_config() -> Config {
         warn!("配置解析失败，使用默认配置: {err}");
         Config::default()
     })
+}
+
+pub fn load_base_config_value() -> Value {
+    let base_path =
+        env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
+    let mut base = read_yaml(&base_path);
+    expand_yaml_env(&mut base);
+    base
 }
 
 fn read_yaml(path: &str) -> Value {

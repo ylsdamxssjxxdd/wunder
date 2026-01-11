@@ -1,5 +1,5 @@
 // 配置存储：加载基础配置与覆盖配置，支持运行时更新并写回覆盖文件。
-use crate::config::{load_config, Config};
+use crate::config::{load_base_config_value, load_config, Config};
 use crate::i18n;
 use anyhow::Result;
 use serde_yaml::Value;
@@ -56,14 +56,23 @@ impl ConfigStore {
     }
 
     async fn persist(&self, config: &Config) -> Result<()> {
-        let value = serde_yaml::to_value(config).unwrap_or(Value::Null);
-        let text = serde_yaml::to_string(&value).unwrap_or_default();
+        let updated_value = serde_yaml::to_value(config).unwrap_or(Value::Null);
+        let base_value = load_base_config_value();
+        let diff_value = diff_yaml(&base_value, &updated_value);
         let target = self.override_path.clone();
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent).await.ok();
         }
-        if let Err(err) = tokio::fs::write(&target, text).await {
-            warn!("写入覆盖配置失败: {}: {err}", target.display());
+        match diff_value {
+            Some(value) => {
+                let text = serde_yaml::to_string(&value).unwrap_or_default();
+                if let Err(err) = tokio::fs::write(&target, text).await {
+                    warn!("写入覆盖配置失败: {}: {err}", target.display());
+                }
+            }
+            None => {
+                let _ = tokio::fs::remove_file(&target).await;
+            }
         }
         Ok(())
     }
@@ -76,5 +85,28 @@ impl ConfigStore {
 
     pub fn version(&self) -> u64 {
         self.version.load(Ordering::SeqCst)
+    }
+}
+
+fn diff_yaml(base: &Value, updated: &Value) -> Option<Value> {
+    if base == updated {
+        return None;
+    }
+    match (base, updated) {
+        (Value::Mapping(base_map), Value::Mapping(updated_map)) => {
+            let mut diff_map = serde_yaml::Mapping::new();
+            for (key, updated_value) in updated_map {
+                let base_value = base_map.get(key).unwrap_or(&Value::Null);
+                if let Some(value) = diff_yaml(base_value, updated_value) {
+                    diff_map.insert(key.clone(), value);
+                }
+            }
+            if diff_map.is_empty() {
+                None
+            } else {
+                Some(Value::Mapping(diff_map))
+            }
+        }
+        _ => Some(updated.clone()),
     }
 }

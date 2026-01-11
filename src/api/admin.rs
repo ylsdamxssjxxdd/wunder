@@ -1227,6 +1227,12 @@ async fn admin_monitor_tool_usage(
             i18n::t("error.tool_name_required"),
         ));
     }
+    if cleaned.eq_ignore_ascii_case("performance_log") {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.tool_not_found"),
+        ));
+    }
 
     let mut since_time = None;
     let mut until_time = None;
@@ -1876,6 +1882,9 @@ fn normalize_tool_stats(tool_stats: Vec<HashMap<String, Value>>) -> Vec<HashMap<
             .trim()
             .to_string();
         if raw_name.is_empty() {
+            continue;
+        }
+        if raw_name.eq_ignore_ascii_case("performance_log") {
             continue;
         }
         let calls = item
