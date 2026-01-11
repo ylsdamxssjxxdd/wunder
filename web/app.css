@@ -368,6 +368,26 @@ h1 {
   overflow: hidden;
 }
 
+.performance-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.performance-history .monitor-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.performance-history .list-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
 .performance-chart-card {
   flex: 0 0 360px;
   min-height: 360px;
@@ -483,6 +503,36 @@ h1 {
 
 .throughput-history-table col.col-actions {
   width: 8%;
+}
+
+.performance-history-table th:last-child,
+.performance-history-table td:last-child {
+  text-align: right;
+}
+
+.performance-history-table col.col-time {
+  width: 46%;
+}
+
+.performance-history-table col.col-max {
+  width: 18%;
+}
+
+.performance-history-table col.col-step {
+  width: 14%;
+}
+
+.performance-history-table col.col-samples {
+  width: 22%;
+}
+
+.performance-history-table tbody tr {
+  cursor: pointer;
+}
+
+.performance-history-table tbody tr.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .throughput-export-input select {

@@ -1,15 +1,15 @@
 {
   "attachment.default_name": {
-    "en-US": "Attachment",
-    "zh-CN": "附件"
+    "en-US": "File",
+    "zh-CN": "文件"
   },
   "attachment.image_prompt": {
     "en-US": "Please refer to the following image.",
     "zh-CN": "请参考以下图片。"
   },
   "attachment.label": {
-    "en-US": "Attachment",
-    "zh-CN": "附件"
+    "en-US": "User provided",
+    "zh-CN": "用户提供"
   },
   "attachment.label.separator": {
     "en-US": ": ",
@@ -1226,6 +1226,14 @@
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
     "zh-CN": "可选，用于过滤文件的 glob，例如 *.cpp 或 src/**.ts。"
+  },
+  "tool.spec.search.args.max_depth": {
+    "en-US": "Optional. Max directory depth to search (0 means unlimited).",
+    "zh-CN": "可选，搜索最大目录深度（0 表示不限制）。"
+  },
+  "tool.spec.search.args.max_files": {
+    "en-US": "Optional. Max number of files to scan (0 means unlimited).",
+    "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
   },
   "tool.spec.search.args.path": {
     "en-US": "Optional. Directory to limit the search, relative to the workspace.",

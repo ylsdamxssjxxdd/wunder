@@ -1916,6 +1916,34 @@
                 </div>
                 <div id="performanceFormStatus" class="muted"></div>
               </div>
+              <div class="performance-history">
+                <div class="list-header">
+                  <h2 data-i18n="performance.history.title">性能测试历史</h2>
+                  <div id="performanceHistoryMeta" class="muted"></div>
+                </div>
+                <div class="monitor-table-scroll">
+                  <table class="monitor-table performance-history-table">
+                    <colgroup>
+                      <col class="col-time" />
+                      <col class="col-max" />
+                      <col class="col-step" />
+                      <col class="col-samples" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th data-i18n="performance.history.startedAt">开始时间</th>
+                        <th data-i18n="performance.history.maxConcurrency">最大并发</th>
+                        <th data-i18n="performance.history.step">步增</th>
+                        <th data-i18n="performance.history.samples">采样数</th>
+                      </tr>
+                    </thead>
+                    <tbody id="performanceHistoryList"></tbody>
+                  </table>
+                  <div id="performanceHistoryEmpty" class="muted" data-i18n="performance.history.empty">
+                    暂无历史记录
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="performance-results">
               <div class="monitor-block performance-chart-card">

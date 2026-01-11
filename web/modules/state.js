@@ -44,6 +44,7 @@ export const state = {
   performance: {
     running: false,
     samples: [],
+    history: [],
   },
   mcp: {
     servers: [],

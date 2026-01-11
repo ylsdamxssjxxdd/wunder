@@ -99,19 +99,19 @@ pub async fn run_sample(
     let mut metrics = Vec::new();
     metrics.push(build_metric(
         "prompt_build",
-        measure_prompt_build(concurrency, &context).await,
+        measure_twice(|| measure_prompt_build(concurrency, &context)).await,
     ));
     metrics.push(build_metric(
         "file_ops",
-        measure_file_ops(concurrency, &context).await,
+        measure_twice(|| measure_file_ops(concurrency, &context)).await,
     ));
     metrics.push(build_metric(
         "command_exec",
-        measure_command_exec(concurrency, &context, &command).await,
+        measure_twice(|| measure_command_exec(concurrency, &context, &command)).await,
     ));
     metrics.push(build_metric(
         "log_write",
-        measure_log_write(concurrency, &context).await,
+        measure_twice(|| measure_log_write(concurrency, &context)).await,
     ));
 
     cleanup_perf_dir(&context).await;
@@ -129,6 +129,38 @@ fn build_metric(key: &str, summary: MetricSummary) -> PerformanceMetricSample {
         ok: summary.ok,
         error: summary.error,
     }
+}
+
+async fn measure_twice<F, Fut>(mut op: F) -> MetricSummary
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = MetricSummary>,
+{
+    let first = op().await;
+    let second = op().await;
+    merge_summaries(first, second)
+}
+
+fn merge_summaries(first: MetricSummary, second: MetricSummary) -> MetricSummary {
+    let mut values = Vec::new();
+    if let Some(value) = first.avg_ms {
+        values.push(value);
+    }
+    if let Some(value) = second.avg_ms {
+        values.push(value);
+    }
+    let avg_ms = if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<f64>() / values.len() as f64)
+    };
+    let ok = first.ok && second.ok;
+    let error = if ok {
+        None
+    } else {
+        first.error.or(second.error)
+    };
+    MetricSummary { avg_ms, ok, error }
 }
 
 async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
@@ -182,7 +214,13 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
         run_tool(
             &tool_context,
             "搜索内容",
-            json!({ "query": "needle", "path": dir, "file_pattern": "*.txt" }),
+            json!({
+                "query": "needle",
+                "path": dir,
+                "file_pattern": "*.txt",
+                "max_depth": 1,
+                "max_files": 10
+            }),
         )
         .await?;
         run_tool(

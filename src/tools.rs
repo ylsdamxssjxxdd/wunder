@@ -176,7 +176,9 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "query": {"type": "string", "description": i18n::t("tool.spec.search.args.query")},
                     "path": {"type": "string", "description": i18n::t("tool.spec.search.args.path")},
-                    "file_pattern": {"type": "string", "description": i18n::t("tool.spec.search.args.file_pattern")}
+                    "file_pattern": {"type": "string", "description": i18n::t("tool.spec.search.args.file_pattern")},
+                    "max_depth": {"type": "integer", "minimum": 0, "description": i18n::t("tool.spec.search.args.max_depth")},
+                    "max_files": {"type": "integer", "minimum": 0, "description": i18n::t("tool.spec.search.args.max_files")}
                 },
                 "required": ["query"]
             }),
@@ -1039,10 +1041,20 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
         .unwrap_or("")
         .trim()
         .to_string();
+    let max_depth = args.get("max_depth").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let max_files = args.get("max_files").and_then(Value::as_u64).unwrap_or(0) as usize;
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
     tokio::task::spawn_blocking(move || {
-        search_content_inner(workspace.as_ref(), &user_id, &query, &path, &file_pattern)
+        search_content_inner(
+            workspace.as_ref(),
+            &user_id,
+            &query,
+            &path,
+            &file_pattern,
+            max_depth,
+            max_files,
+        )
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))?
@@ -1054,6 +1066,8 @@ fn search_content_inner(
     query: &str,
     path: &str,
     file_pattern: &str,
+    max_depth: usize,
+    max_files: usize,
 ) -> Result<Value> {
     let root = workspace.resolve_path(user_id, path)?;
     if !root.exists() {
@@ -1067,10 +1081,19 @@ fn search_content_inner(
     let matcher = build_glob_matcher(file_pattern);
     let lower_query = query.to_lowercase();
     let mut matches = Vec::new();
-    'scan: for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
+    let mut scanned_files = 0usize;
+    let mut walker = WalkDir::new(&root);
+    if max_depth > 0 {
+        walker = walker.max_depth(max_depth);
+    }
+    'scan: for entry in walker.into_iter().filter_map(|item| item.ok()) {
         if entry.file_type().is_dir() {
             continue;
         }
+        if max_files > 0 && scanned_files >= max_files {
+            break;
+        }
+        scanned_files = scanned_files.saturating_add(1);
         let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
         let rel_display = rel.to_string_lossy().replace('\\', "/");
         if let Some(regex) = matcher.as_ref() {

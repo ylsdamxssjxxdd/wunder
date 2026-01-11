@@ -3,12 +3,14 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260110-08";
+import { formatTimestamp } from "./utils.js?v=20251229-02";
 
 const PERFORMANCE_STATE_KEY = "wunder_performance_state";
 const DEFAULT_CONFIG = {
-  maxConcurrency: 8,
+  maxConcurrency: 30,
   step: 1,
 };
+const HISTORY_LIMIT = 30;
 const METRICS = [
   {
     key: "prompt_build",
@@ -38,10 +40,13 @@ let activeController = null;
 
 const ensureState = () => {
   if (!state.performance) {
-    state.performance = { running: false, samples: [] };
+    state.performance = { running: false, samples: [], history: [] };
   }
   if (!Array.isArray(state.performance.samples)) {
     state.performance.samples = [];
+  }
+  if (!Array.isArray(state.performance.history)) {
+    state.performance.history = [];
   }
 };
 
@@ -111,6 +116,134 @@ const readPositiveInt = (element, fallback) => {
   return value > 0 ? value : fallback;
 };
 
+const buildHistoryId = () =>
+  `perf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const cloneMetricMap = (metrics) => {
+  if (!metrics || typeof metrics !== "object") {
+    return {};
+  }
+  const cloned = {};
+  Object.entries(metrics).forEach(([key, value]) => {
+    if (value && typeof value === "object") {
+      cloned[key] = { ...value };
+    } else {
+      cloned[key] = value;
+    }
+  });
+  return cloned;
+};
+
+const cloneSamples = (samples) =>
+  samples.map((sample) => ({
+    concurrency: Number(sample?.concurrency) || 0,
+    metrics: cloneMetricMap(sample?.metrics),
+  }));
+
+const normalizeHistorySample = (sample) => {
+  if (!sample || typeof sample !== "object") {
+    return null;
+  }
+  const concurrency = Number(sample.concurrency) || 0;
+  if (concurrency <= 0) {
+    return null;
+  }
+  if (Array.isArray(sample.metrics)) {
+    return normalizeSample(sample);
+  }
+  const metrics =
+    sample.metrics && typeof sample.metrics === "object" ? sample.metrics : {};
+  return { concurrency, metrics };
+};
+
+const inferMaxConcurrency = (samples) =>
+  samples.reduce((max, sample) => Math.max(max, sample.concurrency || 0), 0);
+
+const inferStep = (samples) => {
+  const concurrencies = samples
+    .map((sample) => Number(sample.concurrency))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  if (concurrencies.length < 2) {
+    return 1;
+  }
+  let step = null;
+  for (let i = 1; i < concurrencies.length; i += 1) {
+    const diff = concurrencies[i] - concurrencies[i - 1];
+    if (diff > 0) {
+      step = step === null ? diff : Math.min(step, diff);
+    }
+  }
+  return step || 1;
+};
+
+const normalizeHistoryEntry = (entry) => {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const samplesRaw = Array.isArray(entry.samples) ? entry.samples : [];
+  const samples = samplesRaw.map(normalizeHistorySample).filter(Boolean);
+  if (!samples.length) {
+    return null;
+  }
+  const maxConcurrency = Number(entry.max_concurrency ?? entry.maxConcurrency);
+  const step = Number(entry.step);
+  const createdAt =
+    entry.created_at || entry.createdAt || entry.started_at || entry.timestamp || "";
+  return {
+    id: entry.id || entry.run_id || buildHistoryId(),
+    created_at: createdAt || new Date().toISOString(),
+    max_concurrency: maxConcurrency > 0 ? maxConcurrency : inferMaxConcurrency(samples),
+    step: step > 0 ? step : inferStep(samples),
+    samples,
+  };
+};
+
+const readStoredHistory = () => {
+  const stored = readStoredConfig();
+  const history = Array.isArray(stored.history) ? stored.history : [];
+  return history.map(normalizeHistoryEntry).filter(Boolean);
+};
+
+const syncHistoryState = (history) => {
+  ensureState();
+  state.performance.history = history;
+  return history;
+};
+
+const saveHistory = (history) => {
+  const trimmed = Array.isArray(history) ? history.slice(-HISTORY_LIMIT) : [];
+  writeStoredConfig({ history: trimmed });
+  return syncHistoryState(trimmed);
+};
+
+const appendHistoryEntry = (entry) => {
+  if (!entry) {
+    return;
+  }
+  ensureState();
+  const history = Array.isArray(state.performance.history)
+    ? [...state.performance.history]
+    : [];
+  history.push(entry);
+  saveHistory(history);
+};
+
+const buildHistoryEntry = (samples, config, startedAt) => ({
+  id: buildHistoryId(),
+  created_at: startedAt || new Date().toISOString(),
+  max_concurrency: Number(config?.maxConcurrency) || inferMaxConcurrency(samples),
+  step: Number(config?.step) || inferStep(samples),
+  samples: cloneSamples(samples),
+});
+
+const loadHistory = () => {
+  const history = readStoredHistory();
+  syncHistoryState(history);
+  renderHistoryList();
+  return history;
+};
+
 const setFormStatus = (text) => {
   if (!elements.performanceFormStatus) {
     return;
@@ -145,6 +278,7 @@ const setRunning = (running) => {
   if (elements.performanceStep) {
     elements.performanceStep.disabled = running;
   }
+  renderHistoryList();
 };
 
 const resetResults = () => {
@@ -345,6 +479,91 @@ const renderTable = () => {
   }
 };
 
+const renderHistoryMeta = (count) => {
+  if (!elements.performanceHistoryMeta) {
+    return;
+  }
+  elements.performanceHistoryMeta.textContent = t("performance.history.meta", { count });
+};
+
+const applyHistoryEntry = (entry) => {
+  if (state.performance?.running) {
+    const message = t("performance.history.restoreBusy");
+    setFormStatus(message);
+    notify(message, "warn");
+    return false;
+  }
+  if (!entry) {
+    return false;
+  }
+  const samples = Array.isArray(entry.samples)
+    ? entry.samples.map(normalizeHistorySample).filter(Boolean)
+    : [];
+  if (!samples.length) {
+    return false;
+  }
+  state.performance.samples = samples;
+  const maxConcurrency =
+    Number(entry.max_concurrency) || inferMaxConcurrency(samples) || DEFAULT_CONFIG.maxConcurrency;
+  const step = Number(entry.step) || inferStep(samples) || DEFAULT_CONFIG.step;
+  if (elements.performanceMaxConcurrency) {
+    elements.performanceMaxConcurrency.value = String(maxConcurrency);
+  }
+  if (elements.performanceStep) {
+    elements.performanceStep.value = String(step);
+  }
+  persistConfig();
+  renderAll();
+  setFormStatus(t("performance.history.restored"));
+  notify(t("performance.history.restored"), "success");
+  return true;
+};
+
+const renderHistoryList = () => {
+  if (!elements.performanceHistoryList || !elements.performanceHistoryEmpty) {
+    return;
+  }
+  const history = Array.isArray(state.performance?.history) ? state.performance.history : [];
+  elements.performanceHistoryList.textContent = "";
+  if (!history.length) {
+    elements.performanceHistoryEmpty.style.display = "block";
+    renderHistoryMeta(0);
+    return;
+  }
+  elements.performanceHistoryEmpty.style.display = "none";
+  renderHistoryMeta(history.length);
+  const running = Boolean(state.performance?.running);
+  [...history].reverse().forEach((entry) => {
+    const row = document.createElement("tr");
+    if (running) {
+      row.classList.add("is-disabled");
+    }
+    const startedCell = document.createElement("td");
+    startedCell.textContent = formatTimestamp(entry.created_at);
+    const maxCell = document.createElement("td");
+    maxCell.textContent = entry.max_concurrency ? String(entry.max_concurrency) : "-";
+    const stepCell = document.createElement("td");
+    stepCell.textContent = entry.step ? String(entry.step) : "-";
+    const samplesCell = document.createElement("td");
+    samplesCell.textContent = entry.samples?.length ? String(entry.samples.length) : "-";
+    row.addEventListener("click", () => {
+      try {
+        const ok = applyHistoryEntry(entry);
+        return ok;
+      } catch (error) {
+        const message = error?.message || String(error);
+        setFormStatus(t("performance.history.restoreFailed", { message }));
+        notify(t("performance.history.restoreFailed", { message }), "error");
+      }
+    });
+    row.appendChild(startedCell);
+    row.appendChild(maxCell);
+    row.appendChild(stepCell);
+    row.appendChild(samplesCell);
+    elements.performanceHistoryList.appendChild(row);
+  });
+};
+
 const renderAll = () => {
   renderChart();
   renderTable();
@@ -392,6 +611,7 @@ const handleStart = async () => {
   if (!sequence.length) {
     return;
   }
+  const startedAt = new Date().toISOString();
   persistConfig();
   resetResults();
   setRunning(true);
@@ -414,6 +634,9 @@ const handleStart = async () => {
       );
     }
     if (state.performance.running) {
+      appendHistoryEntry(
+        buildHistoryEntry(state.performance.samples, { maxConcurrency, step }, startedAt)
+      );
       setFormStatus(t("performance.status.completed"));
       notify(t("performance.status.completed"), "success");
     }
@@ -440,6 +663,7 @@ export const initPerformancePanel = () => {
   initialized = true;
   ensureState();
   applyStoredConfig();
+  loadHistory();
   if (elements.performanceStartBtn) {
     elements.performanceStartBtn.addEventListener("click", handleStart);
   }
@@ -456,6 +680,7 @@ export const initPerformancePanel = () => {
   window.addEventListener("wunder:language-changed", () => {
     updateStartButton(state.performance?.running);
     renderAll();
+    renderHistoryList();
   });
   updateStartButton(false);
   renderAll();

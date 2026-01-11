@@ -2767,17 +2767,19 @@ impl Orchestrator {
             .ensure_user_root(user_id)
             .unwrap_or_else(|_| self.workspace.root().to_path_buf());
         let config_version = self.config_store.version();
-        self.prompt_composer.build_system_prompt_cached(
-            config,
-            config_version,
-            &self.workspace,
-            user_id,
-            &workdir,
-            config_overrides,
-            allowed_tool_names,
-            skills,
-            user_tool_bindings,
-        )
+        self.prompt_composer
+            .build_system_prompt_cached(
+                config,
+                config_version,
+                &self.workspace,
+                user_id,
+                &workdir,
+                config_overrides,
+                allowed_tool_names,
+                skills,
+                user_tool_bindings,
+            )
+            .await
     }
 
     async fn resolve_session_prompt(
@@ -3365,6 +3367,7 @@ impl Orchestrator {
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(&attachment_default_name);
+            let display_name = Self::display_attachment_name(name);
             if is_image_attachment(attachment, content) {
                 image_parts.push(json!({
                     "type": "image_url",
@@ -3373,7 +3376,7 @@ impl Orchestrator {
                 continue;
             }
             text_parts.push(format!(
-                "\n\n[{attachment_label}{attachment_separator}{name}]\n{content}"
+                "\n\n[{attachment_label}{attachment_separator}{display_name}]\n{content}"
             ));
         }
         let text_content = text_parts.join("");
@@ -3523,6 +3526,18 @@ impl Orchestrator {
             sanitized.push(message);
         }
         sanitized
+    }
+
+    fn display_attachment_name(name: &str) -> &str {
+        let stem = Path::new(name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name);
+        if stem.is_empty() {
+            name
+        } else {
+            stem
+        }
     }
 }
 

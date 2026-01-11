@@ -13,8 +13,9 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use sysinfo::System;
+use tokio::sync::{Mutex as TokioMutex, Notify};
 
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
 const DEFAULT_CACHE_MAX_ITEMS: usize = 128;
@@ -24,6 +25,7 @@ pub struct PromptComposer {
     tool_cache: Mutex<ToolSpecCache>,
     ttl_s: f64,
     max_items: usize,
+    inflight: TokioMutex<HashMap<String, InflightEntry>>,
 }
 
 struct PromptCacheEntry {
@@ -46,6 +48,11 @@ struct ToolSpecCacheEntry {
 struct ToolSpecCache {
     entries: HashMap<String, ToolSpecCacheEntry>,
     order: VecDeque<String>,
+}
+
+struct InflightEntry {
+    notify: Arc<Notify>,
+    waiters: usize,
 }
 
 pub fn read_prompt_template(path: &Path) -> String {
@@ -84,10 +91,11 @@ impl PromptComposer {
             } else {
                 max_items
             },
+            inflight: TokioMutex::new(HashMap::new()),
         }
     }
 
-    pub fn build_system_prompt_cached(
+    pub async fn build_system_prompt_cached(
         &self,
         config: &Config,
         config_version: u64,
@@ -101,8 +109,6 @@ impl PromptComposer {
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
         let language = i18n::get_language();
-        let tree_snapshot = workspace.get_workspace_tree_snapshot(user_id);
-        let workspace_version = tree_snapshot.version;
         let user_tool_version = user_tool_bindings
             .map(|item| item.user_version)
             .unwrap_or(0.0);
@@ -111,64 +117,126 @@ impl PromptComposer {
             .unwrap_or(0.0);
         let overrides_key = build_overrides_key(overrides);
         let workdir_key = workdir.to_string_lossy();
-        let cache_key = format!(
-            "{user_id}|{config_version}|{workspace_version}|{workdir_key}|{overrides_key}|{tool_key}|{user_tool_version}|{shared_tool_version}|{language}"
+        let base_key = format!(
+            "{user_id}|{config_version}|{workdir_key}|{overrides_key}|{tool_key}|{user_tool_version}|{shared_tool_version}|{language}"
         );
+        let workspace_version = workspace.get_tree_cache_version(user_id);
+        let cache_key = format!("{base_key}|{workspace_version}");
         let now = now_ts();
         if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
             return prompt;
         }
 
-        let workspace_tree = tree_snapshot.tree;
-        let include_tools_protocol = !allowed_tool_names.is_empty();
-        let base_skill_specs = skills.list_specs();
-        let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
-        if let Some(bindings) = user_tool_bindings {
-            if !bindings.skill_specs.is_empty() {
-                let user_skills = filter_skill_specs(&bindings.skill_specs, allowed_tool_names);
-                if !user_skills.is_empty() {
-                    skills_for_prompt = merge_skill_specs(skills_for_prompt, user_skills);
+        loop {
+            let (notify, is_leader) = {
+                let mut inflight = self.inflight.lock().await;
+                if let Some(entry) = inflight.get_mut(&base_key) {
+                    entry.waiters = entry.waiters.saturating_add(1);
+                    (entry.notify.clone(), false)
+                } else {
+                    let notify = Arc::new(Notify::new());
+                    inflight.insert(
+                        base_key.clone(),
+                        InflightEntry {
+                            notify: notify.clone(),
+                            waiters: 0,
+                        },
+                    );
+                    (notify, true)
+                }
+            };
+
+            if !is_leader {
+                notify.notified().await;
+                let workspace_version = workspace.get_tree_cache_version(user_id);
+                let cache_key = format!("{base_key}|{workspace_version}");
+                let now = now_ts();
+                if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
+                    return prompt;
+                }
+                continue;
+            }
+
+            let workspace_version = workspace.get_tree_cache_version(user_id);
+            let cache_key = format!("{base_key}|{workspace_version}");
+            let now = now_ts();
+            if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
+                self.notify_inflight(&base_key).await;
+                return prompt;
+            }
+
+            let tree_snapshot = workspace.get_workspace_tree_snapshot(user_id);
+            let workspace_version = tree_snapshot.version;
+            let cache_key = format!("{base_key}|{workspace_version}");
+            let workspace_tree = tree_snapshot.tree;
+            let include_tools_protocol = !allowed_tool_names.is_empty();
+            let base_skill_specs = skills.list_specs();
+            let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
+            if let Some(bindings) = user_tool_bindings {
+                if !bindings.skill_specs.is_empty() {
+                    let user_skills = filter_skill_specs(&bindings.skill_specs, allowed_tool_names);
+                    if !user_skills.is_empty() {
+                        skills_for_prompt = merge_skill_specs(skills_for_prompt, user_skills);
+                    }
                 }
             }
-        }
-        let tool_cache_key = format!(
-            "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
-        );
-        let tool_specs = if let Some(specs) = self.get_cached_tool_specs(&tool_cache_key, now) {
-            specs
-        } else {
-            let specs =
-                collect_prompt_tool_specs(config, skills, allowed_tool_names, user_tool_bindings);
-            self.insert_cached_tool_specs(tool_cache_key, specs.clone(), now);
-            specs
-        };
-        let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
-        let mut prompt = build_system_prompt(
-            &base_prompt,
-            &tool_specs,
-            workdir,
-            &workspace_tree,
-            include_tools_protocol,
-        );
-        let skill_block = build_skill_prompt_block(workdir, &skills_for_prompt);
-        if !skill_block.is_empty() {
-            prompt = format!("{}\n\n{}", prompt.trim_end(), skill_block.trim());
-        }
-        if let Some(bindings) = user_tool_bindings {
-            let extra = bindings.extra_prompt.trim();
-            if !extra.is_empty() {
-                prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
+            let tool_cache_key = format!(
+                "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
+            );
+            let now = now_ts();
+            let tool_specs = if let Some(specs) = self.get_cached_tool_specs(&tool_cache_key, now) {
+                specs
+            } else {
+                let specs = collect_prompt_tool_specs(
+                    config,
+                    skills,
+                    allowed_tool_names,
+                    user_tool_bindings,
+                );
+                self.insert_cached_tool_specs(tool_cache_key, specs.clone(), now);
+                specs
+            };
+            let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
+            let mut prompt = build_system_prompt(
+                &base_prompt,
+                &tool_specs,
+                workdir,
+                &workspace_tree,
+                include_tools_protocol,
+            );
+            let skill_block = build_skill_prompt_block(workdir, &skills_for_prompt);
+            if !skill_block.is_empty() {
+                prompt = format!("{}\n\n{}", prompt.trim_end(), skill_block.trim());
             }
-        }
-        if allowed_tool_names.contains("a2ui") {
-            let a2ui_prompt = build_a2ui_prompt();
-            if !a2ui_prompt.is_empty() {
-                prompt = format!("{}\n\n{}", prompt.trim_end(), a2ui_prompt.trim());
+            if let Some(bindings) = user_tool_bindings {
+                let extra = bindings.extra_prompt.trim();
+                if !extra.is_empty() {
+                    prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
+                }
             }
-        }
+            if allowed_tool_names.contains("a2ui") {
+                let a2ui_prompt = build_a2ui_prompt();
+                if !a2ui_prompt.is_empty() {
+                    prompt = format!("{}\n\n{}", prompt.trim_end(), a2ui_prompt.trim());
+                }
+            }
 
-        self.insert_cached_prompt(cache_key, prompt.clone(), now);
-        prompt
+            self.insert_cached_prompt(cache_key, prompt.clone(), now_ts());
+            self.notify_inflight(&base_key).await;
+            return prompt;
+        }
+    }
+
+    async fn notify_inflight(&self, key: &str) {
+        let entry = {
+            let mut inflight = self.inflight.lock().await;
+            inflight.remove(key)
+        };
+        if let Some(entry) = entry {
+            for _ in 0..entry.waiters {
+                entry.notify.notify_one();
+            }
+        }
     }
 
     pub fn resolve_allowed_tool_names(
