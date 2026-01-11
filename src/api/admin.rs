@@ -7,6 +7,9 @@ use crate::llm;
 use crate::path_utils::{
     normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
+use crate::performance::{
+    run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
+};
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::throughput::{
@@ -111,6 +114,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/throughput/report",
             get(admin_throughput_report),
+        )
+        .route(
+            "/wunder/admin/performance/sample",
+            post(admin_performance_sample),
         )
         .route("/wunder/admin/users", get(admin_users))
         .route(
@@ -1477,6 +1484,16 @@ async fn admin_throughput_report(
         .await
         .map_err(|message| error_response(StatusCode::NOT_FOUND, message))?;
     Ok(Json(report))
+}
+
+async fn admin_performance_sample(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PerformanceSampleRequest>,
+) -> Result<Json<PerformanceSampleResponse>, Response> {
+    let response = run_performance_sample(state, payload)
+        .await
+        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
+    Ok(Json(response))
 }
 
 async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {

@@ -325,7 +325,8 @@ h1 {
 /* 调试/A2A 面板布局：左右分栏 */
 .debug-layout,
 .a2a-layout,
-.throughput-layout {
+.throughput-layout,
+.performance-layout {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
@@ -337,7 +338,8 @@ h1 {
 
 .debug-form,
 .a2a-form,
-.throughput-form {
+.throughput-form,
+.performance-form {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -356,6 +358,24 @@ h1 {
   gap: 10px;
   min-height: 0;
   overflow: hidden;
+}
+
+.performance-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.performance-chart-card {
+  flex: 0 0 360px;
+  min-height: 360px;
+}
+
+.performance-table-block {
+  flex: 1 1 auto;
+  min-height: 200px;
 }
 
 .throughput-summary-block {
@@ -1660,7 +1680,7 @@ button.danger {
 }
 
 .monitor-kv-table th {
-  width: 52%;
+  width: 45%;
   font-weight: 500;
   text-align: left;
   color: #64748b;

@@ -99,6 +99,10 @@
                 <i class="fa-solid fa-gauge-high"></i>
                 <span data-i18n="panel.throughput">吞吐量测试</span>
               </button>
+              <button id="navPerformance" class="nav-btn">
+                <i class="fa-solid fa-chart-line"></i>
+                <span data-i18n="panel.performance">性能测试</span>
+              </button>
               <button id="navPrompt" class="nav-btn">
                 <i class="fa-solid fa-file-lines"></i>
                 <span data-i18n="panel.prompt">系统提示词</span>
@@ -211,26 +215,12 @@
                             </td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.diskIo">磁盘 IO</th>
-                            <td>
-                              <strong
-                                ><span id="metricDiskRead">-</span> / <span id="metricDiskWrite">-</span></strong
-                              >
-                              <div class="monitor-subtext" data-i18n="monitor.metric.diskIo.detail">
-                                读 / 写
-                              </div>
-                            </td>
+                            <th data-i18n="monitor.metric.logUsage">日志占用</th>
+                            <td><strong id="metricLogUsage">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.netIo">网络 IO</th>
-                            <td>
-                              <strong
-                                ><span id="metricNetSent">-</span> / <span id="metricNetRecv">-</span></strong
-                              >
-                              <div class="monitor-subtext" data-i18n="monitor.metric.netIo.detail">
-                                上行 / 下行
-                              </div>
-                            </td>
+                            <th data-i18n="monitor.metric.workspaceUsage">工作区占用</th>
+                            <td><strong id="metricWorkspaceUsage">-</strong></td>
                           </tr>
                           <tr>
                             <th data-i18n="monitor.metric.process">进程资源</th>
@@ -1069,6 +1059,7 @@
                     <option value="a2aServices" data-i18n="panel.a2aServices">A2A 服务</option>
                     <option value="skills" data-i18n="panel.skills">技能管理</option>
                     <option value="throughput" data-i18n="panel.throughput">吞吐量测试</option>
+                    <option value="performance" data-i18n="panel.performance">性能测试</option>
                     <option value="prompt" data-i18n="panel.prompt">系统提示词</option>
                     <option value="evaluation" data-i18n="panel.evaluation">能力评估</option>
                     <option value="debug" data-i18n="panel.debug">调试面板</option>
@@ -1886,6 +1877,68 @@
                     <div id="throughputThreadEmpty" class="muted" data-i18n="throughput.threads.empty">
                       暂无线程
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="performancePanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="panel.performance">性能测试</h1>
+            <div class="header-actions performance-header-actions">
+              <button id="performanceStartBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-play" data-role="icon"></i>
+                <span data-role="label" data-i18n="performance.action.start">开始测试</span>
+              </button>
+              <button id="performanceResetBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-eraser"></i>
+                <span data-i18n="performance.action.clear">清空结果</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="performance.tip">
+            测试不涉及模型调用，仅验证系统提示词构建、文件操作、命令执行与日志写入在不同并发下的耗时变化。
+          </div>
+          <div class="performance-layout">
+            <div class="performance-form">
+              <div class="form-section">
+                <div class="form-row">
+                  <label for="performanceMaxConcurrency" data-i18n="performance.form.maxConcurrency">最大并发</label>
+                  <input id="performanceMaxConcurrency" type="number" min="1" step="1" />
+                </div>
+                <div class="form-row">
+                  <label for="performanceStep" data-i18n="performance.form.step">并发步增</label>
+                  <input id="performanceStep" type="number" min="1" step="1" />
+                </div>
+                <div class="muted" data-i18n="performance.form.hint">
+                  从并发 1 开始，按步增测试到最大并发。
+                </div>
+                <div id="performanceFormStatus" class="muted"></div>
+              </div>
+            </div>
+            <div class="performance-results">
+              <div class="monitor-block performance-chart-card">
+                <div class="monitor-block-title" data-i18n="performance.chart.title">性能曲线</div>
+                <div id="performanceChart" class="monitor-chart"></div>
+              </div>
+              <div class="monitor-block performance-table-block">
+                <div class="monitor-block-title" data-i18n="performance.table.title">耗时明细</div>
+                <div id="performanceTableScroll" class="monitor-table-scroll">
+                  <table class="monitor-table performance-table">
+                    <thead>
+                      <tr>
+                        <th data-i18n="performance.table.concurrency">并发数</th>
+                        <th data-i18n="performance.metric.promptBuild">系统提示词构建</th>
+                        <th data-i18n="performance.metric.fileOps">文件操作</th>
+                        <th data-i18n="performance.metric.commandExec">命令执行</th>
+                        <th data-i18n="performance.metric.logWrite">日志写入</th>
+                      </tr>
+                    </thead>
+                    <tbody id="performanceTableBody"></tbody>
+                  </table>
+                  <div id="performanceTableEmpty" class="muted" data-i18n="performance.table.empty">
+                    暂无数据
                   </div>
                 </div>
               </div>

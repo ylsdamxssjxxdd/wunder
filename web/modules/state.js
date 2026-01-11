@@ -32,6 +32,7 @@ export const state = {
     users: false,
     memory: false,
     throughput: false,
+    performance: false,
     evaluation: false,
     mcp: false,
     a2aServices: false,
@@ -39,6 +40,10 @@ export const state = {
     skills: false,
     knowledge: false,
     llm: false,
+  },
+  performance: {
+    running: false,
+    samples: [],
   },
   mcp: {
     servers: [],

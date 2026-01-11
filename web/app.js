@@ -66,6 +66,7 @@ import { initSettingsPanel } from "./modules/settings.js?v=20260110-06";
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260110-07";
+import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260110-08";
@@ -167,6 +168,8 @@ const panelMap = {
   knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
 
   throughput: { panel: elements.throughputPanel, nav: elements.navThroughput },
+
+  performance: { panel: elements.performancePanel, nav: elements.navPerformance },
 
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
 
@@ -445,6 +448,20 @@ const bindNavigation = () => {
             t("app.panelLoadFailed", { panel: t("panel.throughput"), message: error.message })
           );
         }
+      }
+    });
+  }
+
+  if (elements.navPerformance) {
+    elements.navPerformance.addEventListener("click", () => {
+      switchPanel("performance");
+      try {
+        initPerformancePanel();
+        state.panelLoaded.performance = true;
+      } catch (error) {
+        appendLog(
+          t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
+        );
       }
     });
   }
@@ -983,6 +1000,17 @@ const bootstrap = async () => {
 
   switchPanel(initialPanel);
   expandActiveNavGroupOnly();
+
+  if (initialPanel === "performance" && !state.panelLoaded.performance) {
+    try {
+      initPerformancePanel();
+      state.panelLoaded.performance = true;
+    } catch (error) {
+      appendLog(
+        t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
+      );
+    }
+  }
 
   if (initialPanel === "evaluation" && !state.panelLoaded.evaluation) {
     initEvaluationPanel()

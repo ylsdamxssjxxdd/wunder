@@ -17,6 +17,7 @@ mod monitor;
 mod orchestrator;
 mod orchestrator_constants;
 mod path_utils;
+mod performance;
 mod prompting;
 mod sandbox;
 mod schemas;

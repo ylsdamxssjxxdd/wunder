@@ -340,7 +340,7 @@
   - `end_time`：筛选结束时间戳（秒，可选，与 `start_time` 搭配时按区间统计）
 - 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`。
 - 返回（JSON）：
-  - `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/disk_read_bytes/disk_write_bytes/net_sent_bytes/net_recv_bytes/uptime_s）
+- `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/workspace_used/uptime_s）
   - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/recent_completed/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
   - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
@@ -871,7 +871,27 @@
 - `input_tokens/output_tokens/total_tokens`：累计 token 统计
 - `avg_total_tokens`：平均 token（按成功请求统计）
 
-### 4.1.46 `/wunder/admin/evaluation/start`
+### 4.1.46 `/wunder/admin/performance/sample`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `concurrency`：并发数（>0 且 <= `server.max_active_sessions`）
+  - `command`：执行命令内容（可选，默认 `echo wunder_perf`）
+- 返回（JSON）：
+  - `concurrency`：并发数
+  - `metrics`：指标数组
+    - `key`：指标标识（`prompt_build`/`file_ops`/`command_exec`/`log_write`）
+    - `avg_ms`：平均耗时（毫秒，可能为 null）
+    - `ok`：是否全部成功
+    - `error`：错误信息（可选）
+- 说明：
+  - `prompt_build`：系统提示词构建耗时。
+  - `file_ops`：列出文件/写入/读取/搜索/替换文本组合耗时。
+  - `command_exec`：内置工具“执行命令”的耗时。
+  - `log_write`：写入工具日志耗时。
+  - 用于不同并发下的性能采样，不涉及模型调用。
+
+### 4.1.47 `/wunder/admin/evaluation/start`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -888,14 +908,14 @@
   - `status`：任务状态（`running`）
   - `case_count`：用例数量
 
-### 4.1.47 `/wunder/admin/evaluation/{run_id}/cancel`
+### 4.1.48 `/wunder/admin/evaluation/{run_id}/cancel`
 
 - 方法：`POST`
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：失败原因（可选）
 
-### 4.1.48 `/wunder/admin/evaluation/runs`
+### 4.1.49 `/wunder/admin/evaluation/runs`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -908,7 +928,7 @@
 - 返回（JSON）：
   - `runs`：评估任务列表（`EvaluationRun`）
 
-### 4.1.49 `/wunder/admin/evaluation/{run_id}`
+### 4.1.50 `/wunder/admin/evaluation/{run_id}`
 
 - 方法：`GET/DELETE`
 - `GET` 返回（JSON）：
@@ -920,7 +940,7 @@
   - `deleted`：删除条数（包含 run 与 items）
   - `message`：提示信息
 
-### 4.1.50 `/wunder/admin/evaluation/cases`
+### 4.1.51 `/wunder/admin/evaluation/cases`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -932,7 +952,7 @@
       - `dimensions`：维度分布统计（维度 -> 数量）
 - 说明：评估用例文件默认读取 `config/evaluation/cases`。
 
-### 4.1.51 `/wunder/admin/evaluation/stream/{run_id}`
+### 4.1.52 `/wunder/admin/evaluation/stream/{run_id}`
 
 - 方法：`GET`（SSE）
 - 事件：

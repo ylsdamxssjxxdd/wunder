@@ -43,6 +43,7 @@ impl AppState {
             storage.clone(),
             config.observability.clone(),
             config.sandbox.clone(),
+            config.workspace.root.clone(),
         ));
         let a2a_store = Arc::new(A2aStore::new());
         let skills_registry = load_skills(&config, true, true);

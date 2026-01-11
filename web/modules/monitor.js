@@ -1028,10 +1028,8 @@ const renderMonitorMetrics = (system) => {
     elements.metricUptime.textContent = "-";
     elements.metricDisk.textContent = "-";
     elements.metricDiskDetail.textContent = "";
-    elements.metricDiskRead.textContent = "-";
-    elements.metricDiskWrite.textContent = "-";
-    elements.metricNetSent.textContent = "-";
-    elements.metricNetRecv.textContent = "-";
+    elements.metricLogUsage.textContent = "-";
+    elements.metricWorkspaceUsage.textContent = "-";
     return;
   }
   elements.metricCpu.textContent = `${system.cpu_percent.toFixed(1)}%`;
@@ -1062,10 +1060,8 @@ const renderMonitorMetrics = (system) => {
         free: formatBytes(system.disk_free),
       })
     : "";
-  elements.metricDiskRead.textContent = formatBytes(system.disk_read_bytes);
-  elements.metricDiskWrite.textContent = formatBytes(system.disk_write_bytes);
-  elements.metricNetSent.textContent = formatBytes(system.net_sent_bytes);
-  elements.metricNetRecv.textContent = formatBytes(system.net_recv_bytes);
+  elements.metricLogUsage.textContent = formatBytes(system.log_used);
+  elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
 };
 
 // 渲染服务层线程指标，统一保持数值与展示文案分离

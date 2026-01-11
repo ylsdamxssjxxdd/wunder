@@ -8,22 +8,26 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     mpsc::{self, SyncSender, TrySendError},
     Arc,
 };
 use std::thread;
-use sysinfo::{Disks, Networks, ProcessRefreshKind, System};
+use sysinfo::{Disks, ProcessRefreshKind, System};
 use tracing::{error, warn};
+use walkdir::WalkDir;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
+const DEFAULT_LOG_USAGE_TTL_S: f64 = 15.0;
+const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
@@ -329,10 +333,8 @@ pub struct SystemSnapshot {
     pub disk_used: u64,
     pub disk_free: u64,
     pub disk_percent: f32,
-    pub disk_read_bytes: u64,
-    pub disk_write_bytes: u64,
-    pub net_sent_bytes: u64,
-    pub net_recv_bytes: u64,
+    pub log_used: u64,
+    pub workspace_used: u64,
     pub uptime_s: u64,
 }
 
@@ -352,13 +354,17 @@ impl Default for SystemSnapshot {
             disk_used: 0,
             disk_free: 0,
             disk_percent: 0.0,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
-            net_sent_bytes: 0,
-            net_recv_bytes: 0,
+            log_used: 0,
+            workspace_used: 0,
             uptime_s: 0,
         }
     }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct UsageCache {
+    value: u64,
+    updated_ts: f64,
 }
 
 pub struct MonitorState {
@@ -368,9 +374,14 @@ pub struct MonitorState {
     write_queue: MonitorWriteQueue,
     system: Mutex<System>,
     disks: Mutex<Disks>,
-    networks: Mutex<Networks>,
     system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
     system_snapshot_ttl_s: f64,
+    log_roots: Vec<PathBuf>,
+    workspace_root: PathBuf,
+    log_usage_cache: Mutex<UsageCache>,
+    workspace_usage_cache: Mutex<UsageCache>,
+    log_usage_ttl_s: f64,
+    workspace_usage_ttl_s: f64,
     event_limit: Option<usize>,
     payload_limit: Option<usize>,
     persist_interval_s: f64,
@@ -394,13 +405,12 @@ impl MonitorState {
         storage: Arc<dyn StorageBackend>,
         observability: ObservabilityConfig,
         sandbox: SandboxConfig,
+        workspace_root: String,
     ) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
         let mut disks = Disks::new_with_refreshed_list();
         disks.refresh();
-        let mut networks = Networks::new_with_refreshed_list();
-        networks.refresh();
         let event_limit = resolve_event_limit(observability.monitor_event_limit);
         let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
         let persist_interval_s = DEFAULT_PERSIST_INTERVAL_S;
@@ -411,6 +421,12 @@ impl MonitorState {
             .filter(|value| !value.is_empty())
             .collect::<HashSet<_>>();
         let history_dir = PathBuf::from("data/historys/monitor");
+        let log_roots = vec![
+            PathBuf::from("data/logs"),
+            PathBuf::from("data/tmp"),
+            PathBuf::from("data/historys"),
+        ];
+        let workspace_root = PathBuf::from(workspace_root);
         let _ = storage.ensure_initialized();
         let write_queue = MonitorWriteQueue::new(storage.clone());
         Self {
@@ -420,9 +436,14 @@ impl MonitorState {
             write_queue,
             system: Mutex::new(system),
             disks: Mutex::new(disks),
-            networks: Mutex::new(networks),
             system_snapshot_cache: Mutex::new(None),
             system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
+            log_roots,
+            workspace_root,
+            log_usage_cache: Mutex::new(UsageCache::default()),
+            workspace_usage_cache: Mutex::new(UsageCache::default()),
+            log_usage_ttl_s: DEFAULT_LOG_USAGE_TTL_S,
+            workspace_usage_ttl_s: DEFAULT_WORKSPACE_USAGE_TTL_S,
             event_limit,
             payload_limit,
             persist_interval_s,
@@ -823,6 +844,62 @@ impl MonitorState {
         )
     }
 
+    fn resolve_log_usage(&self, now: f64) -> u64 {
+        {
+            let cache = self.log_usage_cache.lock();
+            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.log_usage_ttl_s {
+                return cache.value;
+            }
+        }
+        let value = self.calc_log_usage();
+        let mut cache = self.log_usage_cache.lock();
+        cache.value = value;
+        cache.updated_ts = now;
+        value
+    }
+
+    fn resolve_workspace_usage(&self, now: f64) -> u64 {
+        {
+            let cache = self.workspace_usage_cache.lock();
+            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.workspace_usage_ttl_s {
+                return cache.value;
+            }
+        }
+        let value = self.calc_workspace_usage();
+        let mut cache = self.workspace_usage_cache.lock();
+        cache.value = value;
+        cache.updated_ts = now;
+        value
+    }
+
+    fn calc_log_usage(&self) -> u64 {
+        const LOG_EXTENSIONS: [&str; 3] = ["log", "json", "jsonl"];
+        let mut total: u64 = 0;
+        for root in &self.log_roots {
+            total = total.saturating_add(calc_dir_size(root, Some(&LOG_EXTENSIONS)));
+        }
+        total
+    }
+
+    fn calc_workspace_usage(&self) -> u64 {
+        let entries = match fs::read_dir(&self.workspace_root) {
+            Ok(entries) => entries,
+            Err(_) => return 0,
+        };
+        let mut total: u64 = 0;
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let files_root = entry.path().join("files");
+            total = total.saturating_add(calc_dir_size(&files_root, None));
+        }
+        total
+    }
+
     fn collect_system_snapshot(&self) -> SystemSnapshot {
         let mut system = self.system.lock();
         system.refresh_cpu_usage();
@@ -867,21 +944,11 @@ impl MonitorState {
             disk_percent = (disk_used as f64 / disk_total as f64 * 100.0) as f32;
         }
 
-        let mut net_sent: u64 = 0;
-        let mut net_recv: u64 = 0;
-        let mut networks = self.networks.lock();
-        if networks.list().is_empty() {
-            networks.refresh_list();
-        }
-        networks.refresh();
-        for (_, data) in networks.iter() {
-            net_sent = net_sent.saturating_add(data.total_transmitted());
-            net_recv = net_recv.saturating_add(data.total_received());
-        }
-
+        let now = now_ts();
+        let log_used = self.resolve_log_usage(now);
+        let workspace_used = self.resolve_workspace_usage(now);
         let uptime_s = {
             let start = *self.app_start_ts.lock();
-            let now = now_ts();
             (now - start).max(0.0) as u64
         };
         SystemSnapshot {
@@ -898,10 +965,8 @@ impl MonitorState {
             disk_used,
             disk_free,
             disk_percent,
-            disk_read_bytes: 0,
-            disk_write_bytes: 0,
-            net_sent_bytes: net_sent,
-            net_recv_bytes: net_recv,
+            log_used,
+            workspace_used,
             uptime_s,
         }
     }
@@ -1653,6 +1718,36 @@ fn trim_string_fields(data: &Value, limit: Option<usize>) -> Value {
         }
     }
     Value::Object(output)
+}
+
+fn calc_dir_size(path: &Path, extensions: Option<&[&str]>) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    let mut total: u64 = 0;
+    for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Some(extensions) = extensions {
+            let ext = entry
+                .path()
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if !extensions
+                .iter()
+                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+            {
+                continue;
+            }
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        total = total.saturating_add(metadata.len());
+    }
+    total
 }
 
 fn now_ts() -> f64 {

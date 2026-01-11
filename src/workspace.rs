@@ -630,22 +630,6 @@ impl WorkspaceManager {
             .map_err(|err| anyhow!("workspace load history cancelled: {err}"))?
     }
 
-    pub async fn load_artifact_logs_async(
-        self: &Arc<Self>,
-        user_id: &str,
-        session_id: &str,
-        limit: i64,
-    ) -> Result<Vec<Value>> {
-        let user_id = user_id.to_string();
-        let session_id = session_id.to_string();
-        let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_artifact_logs(&user_id, &session_id, limit)
-        })
-        .await
-        .map_err(|err| anyhow!("workspace load artifact logs cancelled: {err}"))?
-    }
-
     pub async fn load_session_system_prompt_async(
         self: &Arc<Self>,
         user_id: &str,
