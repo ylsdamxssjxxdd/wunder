@@ -290,10 +290,10 @@
     {
       "id": "complex_skill_compression_img",
       "dimension": "complex",
-      "prompt": "用技能创建一个压缩图片的技能，名称为 compression_img，放在 EVA_SKILLS/compression_img 目录下（包含 SKILL.md 与可执行脚本）。",
+      "prompt": "用技能创建一个压缩图片的技能，名称为 compression_img，并保存到 eval/{run_id}/outputs/compression_img",
       "checker": {
         "type": "file_exists",
-        "path": "EVA_SKILLS/compression_img"
+        "path": "eval/{run_id}/outputs/compression_img"
       },
       "tags": [
         "skill"

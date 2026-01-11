@@ -154,6 +154,20 @@
         "required": { "status": "ok", "count": 3 }
       },
       "tags": ["file", "json"]
+    },
+    {
+      "id": "complex_heart_png",
+      "dimension": "complex",
+      "prompt": "Use python to draw a heart and save it to eval/{run_id}/outputs/heart.png (file name must be heart.png).",
+      "checker": { "type": "file_exists", "path": "eval/{run_id}/outputs/heart.png" },
+      "tags": ["file", "image", "python"]
+    },
+    {
+      "id": "complex_skill_compression_img",
+      "dimension": "complex",
+      "prompt": "Create a skill for compressing an image named compression_img, and save it to eval/{run_id}/outputs/compression_img.",
+      "checker": { "type": "file_exists", "path": "eval/{run_id}/outputs/compression_img" },
+      "tags": ["skill"]
     }
   ]
 }
