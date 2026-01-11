@@ -297,8 +297,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "5) Only claim a skill is used after completing its steps.",
     },
     "prompt.skills.rule6": {
-        "zh-CN": "6) 使用 `执行命令` 运行相关技能脚本，并将输出写回工程师工作区（{workdir}）。",
-        "en-US": "6) Run skill scripts via `执行命令`, and write outputs back to the workspace ({workdir}).",
+        "zh-CN": "6) 使用 `执行命令` 运行相关技能脚本，并将输出写回工作目录。若需创建技能，也将技能保存到工作目录。工具调用只需传入相对路径，无需输入绝对路径；但技能的 SKILL.md 等文件路径需要使用绝对路径。",
+        "en-US": "6) Run skill scripts via `执行命令`, and write outputs back to the working directory. If you create a skill, save it in the working directory as well. Use relative paths for tool calls; absolute paths are unnecessary, except that SKILL.md paths must be absolute.",
     },
     "prompt.skills.list_header": {
         "zh-CN": "[已挂载技能]",
