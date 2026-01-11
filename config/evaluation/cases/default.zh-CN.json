@@ -127,10 +127,10 @@
       "id": "common_1",
       "dimension": "common",
       "prompt": "常识问答1：法国的首都是哪一座城市？ A) 柏林 B) 巴黎 C) 马德里 D) 罗马。仅输出 A/B/C/D。",
-      "checker": {
-        "type": "choice",
-        "answer": "B"
-      },
+        "checker": {
+          "type": "choice",
+          "answer": "B"
+        },
       "tags": [
         "mcq"
       ]
@@ -237,7 +237,7 @@
       "prompt": "逻辑推理5：四个连续整数的乘积加一，一定是？ A) 合数 B) 质数 C) 完全平方数 D) 不能确定。仅输出 A/B/C/D。",
       "checker": {
         "type": "choice",
-        "answer": "B"
+        "answer": "C"
       },
       "tags": [
         "mcq"
@@ -271,6 +271,32 @@
       "tags": [
         "file",
         "json"
+      ]
+    },
+    {
+      "id": "complex_heart_png",
+      "dimension": "complex",
+      "prompt": "使用 python 绘制一个爱心图案并保存到 eval/{run_id}/outputs/heart.png（文件名为 heart.png）。",
+      "checker": {
+        "type": "file_exists",
+        "path": "eval/{run_id}/outputs/heart.png"
+      },
+      "tags": [
+        "file",
+        "image",
+        "python"
+      ]
+    },
+    {
+      "id": "complex_skill_compression_img",
+      "dimension": "complex",
+      "prompt": "用技能创建一个压缩图片的技能，名称为 compression_img，放在 EVA_SKILLS/compression_img 目录下（包含 SKILL.md 与可执行脚本）。",
+      "checker": {
+        "type": "file_exists",
+        "path": "EVA_SKILLS/compression_img"
+      },
+      "tags": [
+        "skill"
       ]
     }
   ]

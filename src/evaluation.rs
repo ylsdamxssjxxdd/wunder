@@ -67,10 +67,10 @@ pub struct DimensionWeights {
 impl Default for DimensionWeights {
     fn default() -> Self {
         Self {
-            tool: 35.0,
+            tool: 30.0,
             logic: 25.0,
-            common: 20.0,
-            complex: 20.0,
+            common: 15.0,
+            complex: 30.0,
         }
     }
 }
