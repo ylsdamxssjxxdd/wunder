@@ -422,13 +422,15 @@ h1 {
 
 .throughput-charts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
+  flex: 1 1 auto;
 }
 
 .throughput-chart-card {
-  min-height: 220px;
+  min-height: 320px;
+  height: 100%;
 }
 
 .throughput-chart-wide {
@@ -436,10 +438,10 @@ h1 {
 }
 
 .throughput-threads {
-  min-height: 320px;
-  max-height: 320px;
-  height: 320px;
-  flex: 0 0 320px;
+  min-height: 220px;
+  max-height: 220px;
+  height: 220px;
+  flex: 0 0 220px;
 }
 
 .throughput-thread-filters {
@@ -473,11 +475,11 @@ h1 {
   width: 8%;
 }
 
-.throughput-history-table col.col-users {
+.throughput-history-table col.col-max-concurrency {
   width: 6%;
 }
 
-.throughput-history-table col.col-duration {
+.throughput-history-table col.col-step {
   width: 8%;
 }
 

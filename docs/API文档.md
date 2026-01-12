@@ -789,14 +789,15 @@
 
 - 方法：`POST`
 - 入参（JSON）：
-  - `users`：模拟用户数（>0，最大 500）
-  - `duration_s`：模拟时间（秒，最大 86400），为 0 时每个用户只发送一次请求
+  - `max_concurrency`：最大并发（>0，最大 500）
+  - `step`：并发步增（>0）
   - `question`：压测问题文本（可选，单条）
   - `questions`：压测问题列表（可选，多条；提供后每次请求随机抽取）
   - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
-  - 每个模拟用户串行发起请求（上一条完成后立刻发下一条），会话每次自动生成（不复用 session_id）。
+  - 服务端从并发 1 开始按 `step` 逐步提升到 `max_concurrency`，每个并发档位只发送一轮请求。
+  - 每个档位会并行发起 `concurrency` 个请求，结束后进入下一档位。
   - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
   - 未传 `questions` 时使用 `question` 作为唯一问题；两者都为空会返回 400。
   - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
@@ -828,8 +829,8 @@
 - `run`：任务信息
   - `id`：任务 ID
   - `status`：`running/stopping/finished/stopped`
-  - `users`：模拟用户数
-  - `duration_s`：模拟时间（秒）
+  - `max_concurrency`：最大并发
+  - `step`：并发步增
   - `question`：压测问题文本（可选，第一条）
   - `questions`：压测问题列表
   - `user_id_prefix`：用户前缀
@@ -845,6 +846,7 @@
   - `error_requests`：失败数
   - `rps`：每秒请求数（四舍五入到两位小数）
   - `avg_latency_ms`：平均耗时（毫秒）
+  - `first_token_latency_ms`：首包时延（毫秒）
   - `min_latency_ms`：最小耗时（毫秒）
   - `max_latency_ms`：最大耗时（毫秒）
   - `p50_latency_ms`：P50 耗时（毫秒，基于桶估算）
@@ -863,12 +865,16 @@
 #### ThroughputSample
 
 - `timestamp`：采样时间（RFC3339）
-- `elapsed_s`：已运行时长（秒）
-- `total_requests/success_requests/error_requests`：累计请求指标
-- `rps`：实时吞吐
+- `concurrency`：当前并发档位
+- `elapsed_s`：该档位耗时（秒）
+- `total_requests/success_requests/error_requests`：该档位请求指标
+- `rps`：该档位吞吐
 - `avg_latency_ms`：平均耗时（毫秒）
 - `p50_latency_ms/p90_latency_ms/p99_latency_ms`：延迟分位（毫秒）
-- `input_tokens/output_tokens/total_tokens`：累计 token 统计
+- `prefill_speed_tps`：预填充速度（token/s）
+- `decode_speed_tps`：解码速度（token/s）
+- `first_token_latency_ms`：首包时延（毫秒）
+- `input_tokens/output_tokens/total_tokens`：该档位 token 统计
 - `avg_total_tokens`：平均 token（按成功请求统计）
 
 ### 4.1.46 `/wunder/admin/performance/sample`

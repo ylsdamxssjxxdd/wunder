@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260110-14" />
+    <link rel="stylesheet" href="./app.css?v=20260112-06" />
   </head>
   <body>
     <div class="app">
@@ -1644,20 +1644,23 @@
             </div>
           </div>
           <div class="tips" data-i18n="throughput.tip">
-            服务端将模拟多用户并发请求，按配置在指定时间内持续发送请求，用于评估真实吞吐与稳定性。
+            服务端从 1 并发开始按步增逐级压测，直到最大并发，用于绘制性能曲线与稳定性表现。
           </div>
           <div class="throughput-layout">
             <div class="throughput-form">
               <div class="form-section throughput-form-section">
                 <div class="form-row">
-                  <label for="throughputUsers" data-i18n="throughput.form.users">模拟用户数</label>
-                  <input id="throughputUsers" type="number" min="1" max="500" step="1" />
+                  <label
+                    for="throughputMaxConcurrency"
+                    data-i18n="throughput.form.maxConcurrency"
+                  >最大并发</label>
+                  <input id="throughputMaxConcurrency" type="number" min="1" max="500" step="1" />
                 </div>
                 <div class="form-row">
-                  <label for="throughputDuration" data-i18n="throughput.form.duration">模拟时间（秒）</label>
-                  <input id="throughputDuration" type="number" min="0" step="0.1" />
-                  <div class="muted" data-i18n="throughput.form.durationHint">
-                    0 表示每个用户只发送一次请求。
+                  <label for="throughputStep" data-i18n="throughput.form.step">并发步增</label>
+                  <input id="throughputStep" type="number" min="1" step="1" />
+                  <div class="muted" data-i18n="throughput.form.hint">
+                    每次增加固定并发，直到达到最大并发。
                   </div>
                 </div>
                 <div class="form-row">
@@ -1704,10 +1707,10 @@
                 </div>
                 <div class="monitor-summary throughput-summary">
                   <div>
-                    <div class="monitor-section-title" data-i18n="throughput.section.run">任务状态</div>
-                    <table class="monitor-kv-table">
-                      <tbody>
-                        <tr>
+                      <div class="monitor-section-title" data-i18n="throughput.section.run">任务状态</div>
+                      <table class="monitor-kv-table">
+                        <tbody>
+                          <tr>
                           <th data-i18n="throughput.field.status">状态</th>
                           <td><strong id="throughputStatusText">-</strong></td>
                         </tr>
@@ -1718,18 +1721,18 @@
                         <tr>
                           <th data-i18n="throughput.field.elapsed">已运行</th>
                           <td><strong id="throughputElapsed">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.field.users">用户数</th>
-                          <td><strong id="throughputUsersValue">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.field.duration">模拟时间</th>
-                          <td><strong id="throughputDurationValue">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.field.prefix">user_id 前缀</th>
-                          <td><strong id="throughputUserPrefixValue">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th data-i18n="throughput.field.maxConcurrency">最大并发</th>
+                            <td><strong id="throughputMaxConcurrencyValue">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th data-i18n="throughput.field.step">并发步增</th>
+                            <td><strong id="throughputStepValue">-</strong></td>
+                          </tr>
+                          <tr>
+                            <th data-i18n="throughput.field.prefix">user_id 前缀</th>
+                            <td><strong id="throughputUserPrefixValue">-</strong></td>
                         </tr>
                       </tbody>
                     </table>
@@ -1759,8 +1762,8 @@
                           <td><strong id="throughputAvgLatency">-</strong></td>
                         </tr>
                         <tr>
-                          <th data-i18n="throughput.metric.p90">P90</th>
-                          <td><strong id="throughputP90">-</strong></td>
+                          <th data-i18n="throughput.metric.firstTokenLatency">首包时延</th>
+                          <td><strong id="throughputFirstTokenLatency">-</strong></td>
                         </tr>
                       </tbody>
                     </table>
@@ -1799,13 +1802,11 @@
                 </div>
               </div>
               <div class="throughput-charts">
-                <div class="monitor-block throughput-chart-card">
-                  <div class="monitor-block-title" data-i18n="throughput.chart.rps">吞吐趋势</div>
-                  <div id="throughputTrendChart" class="monitor-chart"></div>
-                </div>
-                <div class="monitor-block throughput-chart-card">
-                  <div class="monitor-block-title" data-i18n="throughput.chart.latency">延迟分位</div>
-                  <div id="throughputLatencyChart" class="monitor-chart"></div>
+                <div class="monitor-block throughput-chart-card throughput-chart-wide">
+                  <div class="monitor-block-title" data-i18n="throughput.chart.performance">
+                    性能曲线
+                  </div>
+                  <div id="throughputCurveChart" class="monitor-chart"></div>
                 </div>
               </div>
               <div class="monitor-block throughput-threads">
@@ -3044,8 +3045,8 @@
                 <colgroup>
                   <col class="col-time" />
                   <col class="col-status" />
-                  <col class="col-users" />
-                  <col class="col-duration" />
+                  <col class="col-max-concurrency" />
+                  <col class="col-step" />
                   <col class="col-total" />
                   <col class="col-success-rate" />
                   <col class="col-avg-latency" />
@@ -3057,8 +3058,8 @@
                   <tr>
                     <th data-i18n="throughput.history.startedAt">开始时间</th>
                     <th data-i18n="throughput.history.status">状态</th>
-                    <th data-i18n="throughput.history.users">用户数</th>
-                    <th data-i18n="throughput.history.duration">时长</th>
+                    <th data-i18n="throughput.history.maxConcurrency">最大并发</th>
+                    <th data-i18n="throughput.history.step">步增</th>
                     <th data-i18n="throughput.history.total">总请求</th>
                     <th data-i18n="throughput.history.successRate">成功率</th>
                     <th data-i18n="throughput.history.avgLatency">平均延迟</th>
@@ -3316,6 +3317,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260110-30"></script>
+    <script type="module" src="./app.js?v=20260112-05"></script>
   </body>
 </html>

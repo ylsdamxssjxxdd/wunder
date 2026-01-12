@@ -1447,8 +1447,8 @@ async fn admin_throughput_start(
     Json(payload): Json<ThroughputStartRequest>,
 ) -> Result<Json<ThroughputSnapshot>, Response> {
     let config = ThroughputConfig::new(
-        payload.users,
-        payload.duration_s,
+        payload.max_concurrency,
+        payload.step,
         payload.question,
         payload.questions,
         payload.user_id_prefix,
@@ -1457,7 +1457,7 @@ async fn admin_throughput_start(
     .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
     let snapshot = state
         .throughput
-        .start(state.orchestrator.clone(), config)
+        .start(state.orchestrator.clone(), state.monitor.clone(), config)
         .await
         .map_err(|message| error_response(StatusCode::CONFLICT, message))?;
     Ok(Json(snapshot))
@@ -2338,8 +2338,8 @@ struct MonitorQuery {
 
 #[derive(Debug, Deserialize)]
 struct ThroughputStartRequest {
-    users: usize,
-    duration_s: f64,
+    max_concurrency: usize,
+    step: usize,
     #[serde(default)]
     question: Option<String>,
     #[serde(default)]

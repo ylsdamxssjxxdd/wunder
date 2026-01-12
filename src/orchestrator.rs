@@ -759,6 +759,7 @@ impl Orchestrator {
                 "failed to prepare workspace: {err}"
             )));
         }
+        self.workspace.touch_user_session(&user_id);
         let question = request.question.trim().to_string();
         if question.is_empty() {
             return Err(OrchestratorError::invalid_request(i18n::t(
@@ -1182,7 +1183,7 @@ impl Orchestrator {
                     .save_session_token_usage_async(&user_id, &session_id, usage.total as i64)
                     .await;
 
-                let tool_calls = parse_tool_calls_from_text(&content);
+                let tool_calls = collect_tool_calls_from_output(&content, &reasoning);
                 if tool_calls.is_empty() {
                     answer = self.resolve_final_answer(&content);
                     stop_reason = Some("model_response".to_string());
@@ -3817,6 +3818,31 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
     parse_tool_calls_payload(content)
 }
 
+fn tool_call_signature(call: &ToolCall) -> String {
+    let args = serde_json::to_string(&call.arguments).unwrap_or_default();
+    format!("{}|{}", call.name.trim(), args)
+}
+
+fn collect_tool_calls_from_output(content: &str, reasoning: &str) -> Vec<ToolCall> {
+    let mut calls = parse_tool_calls_from_text(content);
+    let mut reasoning_calls = parse_tool_calls_from_text(reasoning);
+    if reasoning_calls.is_empty() {
+        return calls;
+    }
+    if calls.is_empty() {
+        return reasoning_calls;
+    }
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for call in calls.drain(..).chain(reasoning_calls.drain(..)) {
+        let signature = tool_call_signature(&call);
+        if seen.insert(signature) {
+            merged.push(call);
+        }
+    }
+    merged
+}
+
 fn strip_tool_calls(content: &str) -> String {
     if content.is_empty() {
         return String::new();
@@ -3992,5 +4018,23 @@ mod tests {
     fn test_strip_tool_calls_supports_tool_and_tool_call() {
         let content = "prefix <tool>{\"name\":\"x\",\"arguments\":{}}</tool> mid <tool_call>{\"name\":\"y\",\"arguments\":{}}</tool_call> suffix";
         assert_eq!(strip_tool_calls(content), "prefix  mid  suffix");
+    }
+
+    #[test]
+    fn test_collect_tool_calls_from_reasoning() {
+        let content = "no tools here";
+        let reasoning =
+            r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
+        let calls = collect_tool_calls_from_output(content, reasoning);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_collect_tool_calls_dedup() {
+        let payload = r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
+        let calls = collect_tool_calls_from_output(payload, payload);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
     }
 }

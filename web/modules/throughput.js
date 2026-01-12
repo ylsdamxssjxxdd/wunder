@@ -1,16 +1,16 @@
 ﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260110-07";
+import { elements } from "./elements.js?v=20260112-04";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { openMonitorDetail } from "./monitor.js?v=20260110-08";
-import { t } from "./i18n.js?v=20260110-08";
+import { t } from "./i18n.js?v=20260112-03";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {
-  users: 10,
-  duration_s: 30,
+  max_concurrency: 30,
+  step: 1,
   question: "",
   user_id_prefix: "throughput_user",
   request_timeout_s: 0,
@@ -19,15 +19,31 @@ const ACTIVE_RUN_STATUSES = new Set(["running", "stopping"]);
 const ACTIVE_SESSION_STATUSES = new Set(["running", "cancelling"]);
 const FAILED_SESSION_STATUSES = new Set(["error", "cancelled"]);
 const THREAD_FILTERS = ["all", "active", "finished", "failed"];
-const MAX_SAMPLES = 200;
+const MAX_SAMPLES = 500;
+const CURVE_METRICS = [
+  {
+    key: "prefill_speed_tps",
+    labelKey: "throughput.metric.prefillSpeed",
+    color: "#3b82f6",
+  },
+  {
+    key: "decode_speed_tps",
+    labelKey: "throughput.metric.decodeSpeed",
+    color: "#22c55e",
+  },
+  {
+    key: "first_token_latency_ms",
+    labelKey: "throughput.metric.firstTokenLatency",
+    color: "#f97316",
+  },
+];
 
 let initialized = false;
-let chartTrend = null;
-let chartLatency = null;
+let chartCurve = null;
 let currentRunId = "";
 let currentStatus = "";
 let samples = [];
-let lastSampleAt = 0;
+let lastReportFetchAt = 0;
 let throughputSessions = [];
 let throughputSessionMap = new Map();
 let throughputSessionRunId = "";
@@ -62,13 +78,14 @@ const writeStoredConfig = (patch) => {
 
 const applyStoredConfig = () => {
   const stored = { ...DEFAULT_CONFIG, ...readStoredConfig() };
-  if (elements.throughputUsers && !elements.throughputUsers.value) {
-    elements.throughputUsers.value = String(stored.users ?? DEFAULT_CONFIG.users);
+  const storedMax =
+    stored.max_concurrency ?? stored.maxConcurrency ?? stored.users ?? DEFAULT_CONFIG.max_concurrency;
+  const storedStep = stored.step ?? DEFAULT_CONFIG.step;
+  if (elements.throughputMaxConcurrency && !elements.throughputMaxConcurrency.value) {
+    elements.throughputMaxConcurrency.value = String(storedMax);
   }
-  if (elements.throughputDuration && !elements.throughputDuration.value) {
-    elements.throughputDuration.value = String(
-      stored.duration_s ?? DEFAULT_CONFIG.duration_s
-    );
+  if (elements.throughputStep && !elements.throughputStep.value) {
+    elements.throughputStep.value = String(storedStep);
   }
   if (elements.throughputQuestion && !elements.throughputQuestion.value) {
     elements.throughputQuestion.value = String(stored.question ?? "");
@@ -101,8 +118,11 @@ const scheduleConfigSave = () => {
 
 const persistConfig = () => {
   writeStoredConfig({
-    users: readNumber(elements.throughputUsers, DEFAULT_CONFIG.users),
-    duration_s: readNumber(elements.throughputDuration, DEFAULT_CONFIG.duration_s),
+    max_concurrency: readPositiveInt(
+      elements.throughputMaxConcurrency,
+      DEFAULT_CONFIG.max_concurrency
+    ),
+    step: readPositiveInt(elements.throughputStep, DEFAULT_CONFIG.step),
     question: String(elements.throughputQuestion?.value || "").trim(),
     user_id_prefix: String(elements.throughputUserPrefix?.value || "").trim(),
     request_timeout_s: readNumber(elements.throughputTimeout, DEFAULT_CONFIG.request_timeout_s),
@@ -115,6 +135,18 @@ const readNumber = (element, fallback) => {
   }
   const parsed = Number(element.value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const readPositiveInt = (element, fallback) => {
+  if (!element) {
+    return fallback;
+  }
+  const parsed = Number(element.value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  const value = Math.floor(parsed);
+  return value > 0 ? value : fallback;
 };
 
 const formatCount = (value) => {
@@ -148,16 +180,6 @@ const formatLatency = (value) => {
 const formatElapsed = (value) => {
   if (!Number.isFinite(value)) {
     return "-";
-  }
-  return formatDuration(value);
-};
-
-const formatDurationValue = (value) => {
-  if (!Number.isFinite(value)) {
-    return "-";
-  }
-  if (value === 0) {
-    return t("throughput.duration.once");
   }
   return formatDuration(value);
 };
@@ -294,6 +316,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   }
   const run = snapshot.run || {};
   syncThroughputSessionContext(run);
+  syncCurveRun(run.id);
   const metrics = snapshot.metrics || {};
   const status = run.status || "";
   currentStatus = status;
@@ -309,8 +332,16 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   setText(elements.throughputStatusText, resolveStatusLabel(status));
   setText(elements.throughputStartedAt, formatTimestamp(run.started_at));
   setText(elements.throughputElapsed, formatElapsed(run.elapsed_s));
-  setText(elements.throughputUsersValue, formatCount(run.users));
-  setText(elements.throughputDurationValue, formatDurationValue(run.duration_s));
+  const maxConcurrency = Number(run.max_concurrency ?? run.maxConcurrency ?? run.users);
+  const step = Number(run.step);
+  setText(
+    elements.throughputMaxConcurrencyValue,
+    formatCount(Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : null)
+  );
+  setText(
+    elements.throughputStepValue,
+    formatCount(Number.isFinite(step) && step > 0 ? step : null)
+  );
   setText(elements.throughputUserPrefixValue, run.user_id_prefix || "-");
   setText(elements.throughputTotal, formatCount(metrics.total_requests));
   setText(elements.throughputSuccess, formatCount(metrics.success_requests));
@@ -318,14 +349,14 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   setText(elements.throughputRps, formatRate(metrics.rps));
   setText(elements.throughputAvgLatency, formatLatency(metrics.avg_latency_ms));
   setText(elements.throughputP50, formatLatency(metrics.p50_latency_ms));
-  setText(elements.throughputP90, formatLatency(metrics.p90_latency_ms));
+  setText(
+    elements.throughputFirstTokenLatency,
+    formatLatency(metrics.first_token_latency_ms)
+  );
   setText(elements.throughputP99, formatLatency(metrics.p99_latency_ms));
   setText(elements.throughputTotalTokens, formatTokenCount(metrics.total_tokens));
   setText(elements.throughputAvgTokens, formatTokenCount(metrics.avg_total_tokens));
   applySpeedMetrics();
-  if (!options.skipCharts) {
-    updateCharts(snapshot);
-  }
 };
 
 const fillMetric = (...values) => {
@@ -339,16 +370,16 @@ const fillMetric = (...values) => {
     status,
     started,
     elapsed,
-    users,
-    duration,
+    maxConcurrency,
+    step,
     prefix,
     total,
     success,
     error,
     rps,
     avgLatency,
+    firstTokenLatency,
     p50,
-    p90,
     p99,
     prefillSpeed,
     decodeSpeed,
@@ -358,8 +389,8 @@ const fillMetric = (...values) => {
   setText(elements.throughputStatusText, status);
   setText(elements.throughputStartedAt, started);
   setText(elements.throughputElapsed, elapsed);
-  setText(elements.throughputUsersValue, users);
-  setText(elements.throughputDurationValue, duration);
+  setText(elements.throughputMaxConcurrencyValue, maxConcurrency);
+  setText(elements.throughputStepValue, step);
   setText(elements.throughputUserPrefixValue, prefix);
   setText(elements.throughputTotal, total);
   setText(elements.throughputSuccess, success);
@@ -367,7 +398,7 @@ const fillMetric = (...values) => {
   setText(elements.throughputRps, rps);
   setText(elements.throughputAvgLatency, avgLatency);
   setText(elements.throughputP50, p50);
-  setText(elements.throughputP90, p90);
+  setText(elements.throughputFirstTokenLatency, firstTokenLatency);
   setText(elements.throughputP99, p99);
   setText(elements.throughputPrefillSpeed, prefillSpeed);
   setText(elements.throughputDecodeSpeed, decodeSpeed);
@@ -478,6 +509,17 @@ const syncThroughputSessionContext = (run) => {
   if (runChanged) {
     renderThroughputSessions();
   }
+};
+
+const syncCurveRun = (runId) => {
+  const nextId = runId || "";
+  if (!nextId || nextId === currentRunId) {
+    return;
+  }
+  currentRunId = nextId;
+  samples = [];
+  lastReportFetchAt = 0;
+  renderCurveChart();
 };
 
 const resolveThreadEmptyText = () => {
@@ -654,13 +696,13 @@ const loadThroughputSessions = async (options = {}) => {
 };
 
 const buildPayload = () => {
-  const users = Number(elements.throughputUsers?.value);
-  if (!Number.isFinite(users) || users <= 0) {
-    throw new Error(t("throughput.error.users"));
+  const maxConcurrency = readPositiveInt(elements.throughputMaxConcurrency, 0);
+  if (maxConcurrency <= 0) {
+    throw new Error(t("throughput.error.maxConcurrency"));
   }
-  const duration_s = Number(elements.throughputDuration?.value);
-  if (!Number.isFinite(duration_s) || duration_s < 0) {
-    throw new Error(t("throughput.error.duration"));
+  const step = readPositiveInt(elements.throughputStep, 0);
+  if (step <= 0) {
+    throw new Error(t("throughput.error.step"));
   }
   const rawQuestions = String(elements.throughputQuestion?.value || "");
   const questions = rawQuestions
@@ -677,8 +719,8 @@ const buildPayload = () => {
     throw new Error(t("throughput.error.timeout"));
   }
   return {
-    users: Math.round(users),
-    duration_s,
+    max_concurrency: maxConcurrency,
+    step,
     question: questions[0],
     questions,
     user_id_prefix,
@@ -689,171 +731,135 @@ const buildPayload = () => {
 const resetCharts = () => {
   samples = [];
   currentRunId = "";
-  lastSampleAt = 0;
-  renderTrendChart();
-  renderLatencyChart();
+  lastReportFetchAt = 0;
+  renderCurveChart();
 };
 
-const ensureCharts = () => {
-  if (!window.echarts) {
-    return false;
+const ensureCurveChart = () => {
+  if (!window.echarts || !elements.throughputCurveChart) {
+    return null;
   }
-  if (elements.throughputTrendChart && !chartTrend) {
-    chartTrend = window.echarts.init(elements.throughputTrendChart);
+  if (!chartCurve) {
+    chartCurve = window.echarts.init(elements.throughputCurveChart);
   }
-  if (elements.throughputLatencyChart && !chartLatency) {
-    chartLatency = window.echarts.init(elements.throughputLatencyChart);
-  }
-  return Boolean(chartTrend || chartLatency);
+  return chartCurve;
 };
 
-const updateCharts = (snapshot) => {
-  if (!snapshot || !snapshot.run || !snapshot.metrics) {
-    return;
-  }
-  const runId = snapshot.run.id || "";
-  if (runId && runId !== currentRunId) {
-    currentRunId = runId;
-    samples = [];
-    lastSampleAt = 0;
-  }
-  const now = Date.now();
-  if (now - lastSampleAt < 500) {
-    return;
-  }
-  lastSampleAt = now;
-  const elapsed = Number(snapshot.run.elapsed_s);
-  const metrics = snapshot.metrics;
-  samples.push({
-    elapsed,
-    rps: Number(metrics.rps) || 0,
-    errorRate: metrics.total_requests
-      ? (metrics.error_requests / metrics.total_requests) * 100
-      : 0,
-    p50: Number(metrics.p50_latency_ms) || 0,
-    p90: Number(metrics.p90_latency_ms) || 0,
-    p99: Number(metrics.p99_latency_ms) || 0,
-  });
-  if (samples.length > MAX_SAMPLES) {
-    samples.shift();
-  }
-  renderTrendChart();
-  renderLatencyChart();
+const toMetricValue = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
-const renderTrendChart = () => {
-  if (!ensureCharts() || !chartTrend) {
-    return;
+const normalizeCurveSample = (sample) => {
+  if (!sample || typeof sample !== "object") {
+    return null;
   }
-  const labels = samples.map((item) =>
-    Number.isFinite(item.elapsed) ? `${item.elapsed.toFixed(1)}s` : ""
-  );
-  const option = {
-    tooltip: { trigger: "axis" },
-    legend: {
-      data: [t("throughput.chart.series.rps"), t("throughput.chart.series.errorRate")],
-      textStyle: { color: "#64748b" },
+  const concurrency = Number(sample.concurrency) || 0;
+  if (concurrency <= 0) {
+    return null;
+  }
+  return {
+    concurrency,
+    metrics: {
+      prefill_speed_tps: toMetricValue(sample.prefill_speed_tps),
+      decode_speed_tps: toMetricValue(sample.decode_speed_tps),
+      first_token_latency_ms: toMetricValue(sample.first_token_latency_ms),
     },
-    grid: { left: 50, right: 46, top: 30, bottom: 30 },
-    xAxis: {
-      type: "category",
-      data: labels,
-      axisLabel: { color: "#94a3b8" },
-      axisLine: { lineStyle: { color: "#e2e8f0" } },
-    },
-    yAxis: [
-      {
-        type: "value",
-        name: "RPS",
-        axisLabel: { color: "#94a3b8" },
-        splitLine: { lineStyle: { color: "#e2e8f0" } },
-      },
-      {
-        type: "value",
-        name: "%",
-        axisLabel: { color: "#94a3b8" },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: t("throughput.chart.series.rps"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.rps),
-        lineStyle: { color: "#3b82f6", width: 2 },
-        areaStyle: { color: "rgba(59, 130, 246, 0.12)" },
-      },
-      {
-        name: t("throughput.chart.series.errorRate"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        yAxisIndex: 1,
-        data: samples.map((item) => Number(item.errorRate.toFixed(2))),
-        lineStyle: { color: "#f97316", width: 2 },
-      },
-    ],
   };
-  chartTrend.setOption(option, false);
-  chartTrend.resize();
 };
 
-const renderLatencyChart = () => {
-  if (!ensureCharts() || !chartLatency) {
+const normalizeCurveSamples = (reportSamples) =>
+  reportSamples
+    .map(normalizeCurveSample)
+    .filter(Boolean)
+    .sort((left, right) => left.concurrency - right.concurrency);
+
+const getCurveBaseline = (curveSamples) => {
+  const baseline = {};
+  const first = curveSamples.find((sample) => sample.concurrency === 1);
+  if (!first) {
+    return baseline;
+  }
+  CURVE_METRICS.forEach((metric) => {
+    const value = Number(first.metrics?.[metric.key]);
+    baseline[metric.key] = Number.isFinite(value) && value > 0 ? value : null;
+  });
+  return baseline;
+};
+
+const renderCurveChart = () => {
+  const chart = ensureCurveChart();
+  if (!chart) {
     return;
   }
-  const labels = samples.map((item) =>
-    Number.isFinite(item.elapsed) ? `${item.elapsed.toFixed(1)}s` : ""
-  );
+  const curveSamples = Array.isArray(samples) ? samples : [];
+  const baseline = getCurveBaseline(curveSamples);
+  const xValues = curveSamples.map((sample) => sample.concurrency);
+  const series = CURVE_METRICS.map((metric) => {
+    const values = curveSamples.map((sample) => {
+      const value = Number(sample.metrics?.[metric.key]);
+      const base = baseline[metric.key];
+      if (!Number.isFinite(value) || !Number.isFinite(base) || base <= 0) {
+        return null;
+      }
+      const delta = ((value - base) / base) * 100;
+      return Number.isFinite(delta) ? Number(delta.toFixed(2)) : null;
+    });
+    return {
+      name: t(metric.labelKey),
+      type: "line",
+      smooth: true,
+      showSymbol: false,
+      data: values,
+      lineStyle: { color: metric.color, width: 2 },
+      itemStyle: { color: metric.color },
+    };
+  });
   const option = {
-    tooltip: { trigger: "axis" },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (value) =>
+        Number.isFinite(value) ? `${Number(value).toFixed(1)}%` : "-",
+    },
     legend: {
-      data: [t("throughput.metric.p50"), t("throughput.metric.p90"), t("throughput.metric.p99")],
+      data: CURVE_METRICS.map((metric) => t(metric.labelKey)),
       textStyle: { color: "#64748b" },
     },
     grid: { left: 50, right: 24, top: 30, bottom: 30 },
     xAxis: {
       type: "category",
-      data: labels,
+      name: t("throughput.chart.axis.concurrency"),
+      data: xValues,
       axisLabel: { color: "#94a3b8" },
       axisLine: { lineStyle: { color: "#e2e8f0" } },
     },
     yAxis: {
       type: "value",
-      axisLabel: { color: "#94a3b8" },
+      name: t("throughput.chart.axis.delta"),
+      axisLabel: {
+        color: "#94a3b8",
+        formatter: (value) => `${value}%`,
+      },
       splitLine: { lineStyle: { color: "#e2e8f0" } },
     },
-    series: [
-      {
-        name: t("throughput.metric.p50"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p50),
-        lineStyle: { color: "#22c55e", width: 2 },
-      },
-      {
-        name: t("throughput.metric.p90"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p90),
-        lineStyle: { color: "#f59e0b", width: 2 },
-      },
-      {
-        name: t("throughput.metric.p99"),
-        type: "line",
-        smooth: true,
-        showSymbol: false,
-        data: samples.map((item) => item.p99),
-        lineStyle: { color: "#ef4444", width: 2 },
-      },
-    ],
+    series,
   };
-  chartLatency.setOption(option, false);
-  chartLatency.resize();
+  chart.setOption(option, false);
+  chart.resize();
+};
+
+const applyCurveReport = (report) => {
+  if (!report) {
+    return;
+  }
+  const runId = report?.summary?.run?.id || "";
+  if (runId && runId !== currentRunId) {
+    currentRunId = runId;
+  }
+  const reportSamples = Array.isArray(report.samples) ? report.samples : [];
+  const normalized = normalizeCurveSamples(reportSamples);
+  samples = normalized.slice(-MAX_SAMPLES);
+  renderCurveChart();
 };
 
 const fetchThroughputStatus = async () => {
@@ -883,6 +889,23 @@ const fetchThroughputReport = async (runId) => {
     throw new Error(message || t("common.requestFailed", { status: response.status }));
   }
   return response.json();
+};
+
+const loadCurveReport = async (runId, options = {}) => {
+  const silent = options.silent === true;
+  const now = Date.now();
+  if (!options.force && now - lastReportFetchAt < 800) {
+    return;
+  }
+  lastReportFetchAt = now;
+  try {
+    const report = await fetchThroughputReport(runId);
+    applyCurveReport(report);
+  } catch (error) {
+    if (!silent) {
+      throw error;
+    }
+  }
 };
 
 const parseErrorMessage = async (response) => {
@@ -952,10 +975,16 @@ const renderHistoryList = (history) => {
     startedCell.textContent = formatTimestamp(run.started_at);
     const statusCell = document.createElement("td");
     statusCell.textContent = resolveStatusLabel(run.status || "");
-    const usersCell = document.createElement("td");
-    usersCell.textContent = formatCount(run.users);
-    const durationCell = document.createElement("td");
-    durationCell.textContent = formatDurationValue(run.duration_s);
+    const maxConcurrencyValue = Number(run.max_concurrency ?? run.maxConcurrency ?? run.users);
+    const stepValue = Number(run.step);
+    const maxCell = document.createElement("td");
+    maxCell.textContent = formatCount(
+      Number.isFinite(maxConcurrencyValue) && maxConcurrencyValue > 0 ? maxConcurrencyValue : null
+    );
+    const stepCell = document.createElement("td");
+    stepCell.textContent = formatCount(
+      Number.isFinite(stepValue) && stepValue > 0 ? stepValue : null
+    );
     const totalCell = document.createElement("td");
     totalCell.textContent = formatCount(metrics.total_requests);
     const successRateCell = document.createElement("td");
@@ -987,8 +1016,8 @@ const renderHistoryList = (history) => {
     actionCell.appendChild(restoreBtn);
     row.appendChild(startedCell);
     row.appendChild(statusCell);
-    row.appendChild(usersCell);
-    row.appendChild(durationCell);
+    row.appendChild(maxCell);
+    row.appendChild(stepCell);
     row.appendChild(totalCell);
     row.appendChild(successRateCell);
     row.appendChild(avgLatencyCell);
@@ -1020,26 +1049,8 @@ const applyReport = (report) => {
     return;
   }
   const summary = report.summary;
-  currentRunId = summary.run?.id || "";
-  const reportSamples = Array.isArray(report.samples)
-    ? report.samples.map((sample) => {
-        const totalRequests = Number(sample.total_requests) || 0;
-        const errorRequests = Number(sample.error_requests) || 0;
-        return {
-          elapsed: Number(sample.elapsed_s) || 0,
-          rps: Number(sample.rps) || 0,
-          errorRate: totalRequests ? (errorRequests / totalRequests) * 100 : 0,
-          p50: Number(sample.p50_latency_ms) || 0,
-          p90: Number(sample.p90_latency_ms) || 0,
-          p99: Number(sample.p99_latency_ms) || 0,
-        };
-      })
-    : [];
-  samples = reportSamples.slice(-MAX_SAMPLES);
-  lastSampleAt = 0;
-  renderSnapshot(summary, true, { skipCharts: true, historyView: true });
-  renderTrendChart();
-  renderLatencyChart();
+  renderSnapshot(summary, true, { historyView: true });
+  applyCurveReport(report);
 };
 
 const restoreHistoryReport = async (runId) => {
@@ -1119,17 +1130,20 @@ const buildCsv = (report) => {
     : [];
   const questionText = questions.join(" | ");
   const questionCount = questions.length;
+  const maxConcurrency = run.max_concurrency ?? run.maxConcurrency ?? run.users ?? "";
+  const step = run.step ?? "";
   const columns = [
     "section",
     "run_id",
     "status",
     "started_at",
     "finished_at",
-    "users",
-    "duration_s",
+    "max_concurrency",
+    "step",
     "user_id_prefix",
     "question_count",
     "questions",
+    "concurrency",
     "elapsed_s",
     "timestamp",
     "total_requests",
@@ -1140,6 +1154,9 @@ const buildCsv = (report) => {
     "p50_latency_ms",
     "p90_latency_ms",
     "p99_latency_ms",
+    "prefill_speed_tps",
+    "decode_speed_tps",
+    "first_token_latency_ms",
     "input_tokens",
     "output_tokens",
     "total_tokens",
@@ -1152,11 +1169,12 @@ const buildCsv = (report) => {
       run.status || "",
       run.started_at || "",
       run.finished_at || "",
-      run.users ?? "",
-      run.duration_s ?? "",
+      maxConcurrency,
+      step,
       run.user_id_prefix || "",
       questionCount,
       questionText,
+      row.concurrency ?? "",
       elapsed ?? "",
       timestamp || "",
       row.total_requests ?? "",
@@ -1167,6 +1185,9 @@ const buildCsv = (report) => {
       row.p50_latency_ms ?? "",
       row.p90_latency_ms ?? "",
       row.p99_latency_ms ?? "",
+      row.prefill_speed_tps ?? "",
+      row.decode_speed_tps ?? "",
+      row.first_token_latency_ms ?? "",
       row.input_tokens ?? "",
       row.output_tokens ?? "",
       row.total_tokens ?? "",
@@ -1309,6 +1330,9 @@ const loadThroughputStatus = async (options = {}) => {
     const payload = await fetchThroughputStatus();
     const { snapshot, fromHistory } = resolvePrimarySnapshot(payload);
     renderSnapshot(snapshot, fromHistory);
+    if (!state.runtime.throughputHistoryMode && snapshot?.run?.id) {
+      await loadCurveReport(snapshot.run.id, { silent: true });
+    }
     if (snapshot && state.runtime.activePanel === "throughput") {
       loadThroughputSessions({ silent: true }).catch(() => {});
     }
@@ -1388,8 +1412,8 @@ export const initThroughputPanel = async () => {
     button.addEventListener("click", () => setThreadFilter(filter));
   });
   [
-    elements.throughputUsers,
-    elements.throughputDuration,
+    elements.throughputMaxConcurrency,
+    elements.throughputStep,
     elements.throughputQuestion,
     elements.throughputUserPrefix,
     elements.throughputTimeout,

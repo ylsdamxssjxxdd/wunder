@@ -33,6 +33,9 @@ const SEARCH_INDEX_MAX_ITEMS: usize = 200_000;
 const SEARCH_CACHE_IDLE_TTL_S: f64 = 300.0;
 const SEARCH_CACHE_MAX_USERS: usize = 256;
 const STORAGE_WRITE_QUEUE_SIZE: usize = 2048;
+const TEMP_FILES_IDLE_TTL_S: f64 = 86_400.0;
+const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
+const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
@@ -159,6 +162,9 @@ pub struct WorkspaceManager {
     retention_days: i64,
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
+    temp_cleanup_interval_s: f64,
+    temp_cleanup_idle_ttl_s: f64,
+    temp_cleanup_state: Arc<Mutex<RetentionState>>,
     versions: DashMap<String, u64>,
     path_guard: Option<Regex>,
     tree_cache: Mutex<TreeCache>,
@@ -188,6 +194,9 @@ impl WorkspaceManager {
             retention_days,
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
+            temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
+            temp_cleanup_idle_ttl_s: TEMP_FILES_IDLE_TTL_S,
+            temp_cleanup_state: Arc::new(Mutex::new(RetentionState::default())),
             versions: DashMap::new(),
             path_guard: match Regex::new(r#"[\\:*?\"<>|]"#) {
                 Ok(regex) => Some(regex),
@@ -395,6 +404,39 @@ impl WorkspaceManager {
         }
     }
 
+    fn maybe_schedule_temp_cleanup(&self) {
+        if self.temp_cleanup_idle_ttl_s <= 0.0 {
+            return;
+        }
+        let now = now_ts();
+        {
+            let mut state = self.temp_cleanup_state.lock();
+            if state.running || now - state.last_cleanup < self.temp_cleanup_interval_s {
+                return;
+            }
+            state.running = true;
+            state.last_cleanup = now;
+        }
+        let root = self.root.clone();
+        let storage = self.storage.clone();
+        let idle_ttl_s = self.temp_cleanup_idle_ttl_s;
+        let state = self.temp_cleanup_state.clone();
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || {
+                    cleanup_idle_temp_files(&root, &storage, idle_ttl_s);
+                })
+                .await;
+                let mut guard = state.lock();
+                guard.running = false;
+            });
+        } else {
+            cleanup_idle_temp_files(&root, &storage, idle_ttl_s);
+            let mut guard = state.lock();
+            guard.running = false;
+        }
+    }
+
     pub fn resolve_path(&self, user_id: &str, path: &str) -> Result<PathBuf> {
         let trimmed = path.trim();
         let user_root = self.user_root(user_id);
@@ -441,6 +483,16 @@ impl WorkspaceManager {
         self.migrate_legacy_history(user_id, &workspace_root);
         self.migrate_legacy_files(user_id, &workspace_root, &user_root);
         Ok(user_root)
+    }
+
+    pub fn touch_user_session(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        let key = session_activity_key(&safe_id);
+        let now = now_ts();
+        if let Err(err) = self.storage.set_meta(&key, &now.to_string()) {
+            warn!("failed to record session activity for {safe_id}: {err}");
+        }
+        self.maybe_schedule_temp_cleanup();
     }
 
     pub fn list_workspace_entries(
@@ -1243,6 +1295,82 @@ fn normalize_relative_path(value: &str) -> String {
         return String::new();
     }
     trimmed.trim_start_matches('/').to_string()
+}
+
+fn session_activity_key(safe_id: &str) -> String {
+    format!("{SESSION_ACTIVITY_META_PREFIX}{safe_id}")
+}
+
+fn parse_session_activity_ts(value: Option<String>) -> Option<f64> {
+    value.and_then(|value| value.parse::<f64>().ok())
+}
+
+fn dir_modified_ts(path: &Path) -> Option<f64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs_f64())
+}
+
+fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_ttl_s: f64) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let now = now_ts();
+    for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let safe_id = entry.file_name().to_string_lossy().to_string();
+        if safe_id.is_empty() {
+            continue;
+        }
+        let files_root = entry.path().join("files");
+        if !files_root.exists() {
+            continue;
+        }
+        let last_seen = parse_session_activity_ts(
+            storage
+                .get_meta(&session_activity_key(&safe_id))
+                .ok()
+                .flatten(),
+        )
+        .or_else(|| dir_modified_ts(&files_root));
+        let Some(last_seen) = last_seen else {
+            continue;
+        };
+        if now - last_seen < idle_ttl_s {
+            continue;
+        }
+        clear_dir_contents(&files_root);
+    }
+}
+
+fn clear_dir_contents(path: &Path) {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warn!("failed to read temp dir {}: {err}", path.display());
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let target = entry.path();
+        let result = match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => fs::remove_dir_all(&target),
+            Ok(_) => fs::remove_file(&target),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = result {
+            warn!("failed to remove temp entry {}: {err}", target.display());
+        }
+    }
 }
 
 fn build_workspace_tree(root: &Path, max_depth: usize) -> String {
