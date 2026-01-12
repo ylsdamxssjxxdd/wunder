@@ -3680,25 +3680,41 @@ fn find_json_end(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn extract_json_value(payload: &str) -> Option<Value> {
+fn extract_json_values(payload: &str) -> Vec<Value> {
     let bytes = payload.as_bytes();
-    for index in 0..bytes.len() {
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
         if bytes[index] != b'{' && bytes[index] != b'[' {
+            index += 1;
             continue;
         }
         let Some(end) = find_json_end(payload, index) else {
+            index += 1;
             continue;
         };
-        let candidate = payload.get(index..end)?;
+        let Some(candidate) = payload.get(index..end) else {
+            index += 1;
+            continue;
+        };
         if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-            return Some(value);
+            values.push(value);
+            index = end;
+            continue;
         }
+        index += 1;
     }
-    None
+    values
 }
 
 fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall> {
-    let name_value = map.get("name").or_else(|| map.get("tool"))?;
+    let name_value = map
+        .get("name")
+        .or_else(|| map.get("tool"))
+        .or_else(|| map.get("tool_name"))
+        .or_else(|| map.get("toolName"))
+        .or_else(|| map.get("function_name"))
+        .or_else(|| map.get("functionName"))?;
     let name = match name_value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
@@ -3711,9 +3727,14 @@ fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall>
     let args_value = map
         .get("arguments")
         .or_else(|| map.get("args"))
+        .or_else(|| map.get("parameters"))
+        .or_else(|| map.get("params"))
+        .or_else(|| map.get("input"))
+        .or_else(|| map.get("payload"))
         .cloned()
         .unwrap_or_else(|| json!({}));
     let arguments = match args_value {
+        Value::Null => json!({}),
         Value::String(text) => {
             serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "raw": text }))
         }
@@ -3722,28 +3743,39 @@ fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall>
     Some(ToolCall { name, arguments })
 }
 
-fn normalize_tool_calls(value: Value) -> Vec<ToolCall> {
+fn collect_tool_calls_from_value(value: &Value, calls: &mut Vec<ToolCall>) {
     match value {
         Value::Object(map) => {
-            if let Some(call) = normalize_tool_call(&map) {
-                return vec![call];
+            if let Some(call) = normalize_tool_call(map) {
+                calls.push(call);
             }
-            if let Some(Value::Array(items)) = map.get("tool_calls") {
-                return items
-                    .iter()
-                    .filter_map(|item| item.as_object())
-                    .filter_map(normalize_tool_call)
-                    .collect();
+            for key in [
+                "tool_calls",
+                "toolCalls",
+                "tool_call",
+                "toolCall",
+                "function_call",
+                "functionCall",
+                "function",
+            ] {
+                if let Some(inner) = map.get(key) {
+                    collect_tool_calls_from_value(inner, calls);
+                }
             }
-            Vec::new()
         }
-        Value::Array(items) => items
-            .into_iter()
-            .filter_map(|item| item.as_object().cloned())
-            .filter_map(|map| normalize_tool_call(&map))
-            .collect(),
-        _ => Vec::new(),
+        Value::Array(items) => {
+            for item in items {
+                collect_tool_calls_from_value(item, calls);
+            }
+        }
+        _ => {}
     }
+}
+
+fn normalize_tool_calls(value: Value) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    collect_tool_calls_from_value(&value, &mut calls);
+    calls
 }
 
 fn parse_tool_calls_payload(payload: &str) -> Vec<ToolCall> {
@@ -3754,9 +3786,11 @@ fn parse_tool_calls_payload(payload: &str) -> Vec<ToolCall> {
     if let Ok(value) = serde_json::from_str::<Value>(payload) {
         return normalize_tool_calls(value);
     }
-    extract_json_value(payload)
-        .map(normalize_tool_calls)
-        .unwrap_or_default()
+    let mut calls = Vec::new();
+    for value in extract_json_values(payload) {
+        calls.extend(normalize_tool_calls(value));
+    }
+    calls
 }
 
 fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
@@ -3764,6 +3798,7 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
         return Vec::new();
     }
 
+    let mut calls = Vec::new();
     let mut blocks: Vec<(usize, String)> = Vec::new();
     if let Some(regex) = tool_call_block_regex() {
         for captures in regex.captures_iter(content) {
@@ -3784,12 +3819,8 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
     blocks.sort_by_key(|(start, _)| *start);
 
     if !blocks.is_empty() {
-        let mut calls = Vec::new();
         for (_, payload) in blocks {
             calls.extend(parse_tool_calls_payload(&payload));
-        }
-        if !calls.is_empty() {
-            return calls;
         }
     }
 
@@ -3797,7 +3828,6 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
         .map(|regex| regex.find_iter(content).collect::<Vec<_>>())
         .unwrap_or_default();
     if !open_matches.is_empty() {
-        let mut calls = Vec::new();
         for (index, mat) in open_matches.iter().enumerate() {
             let start = mat.end();
             let end = if index + 1 < open_matches.len() {
@@ -3810,12 +3840,10 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
             };
             calls.extend(parse_tool_calls_payload(payload));
         }
-        if !calls.is_empty() {
-            return calls;
-        }
     }
 
-    parse_tool_calls_payload(content)
+    calls.extend(parse_tool_calls_payload(content));
+    dedupe_tool_calls(calls)
 }
 
 fn tool_call_signature(call: &ToolCall) -> String {
@@ -3823,24 +3851,22 @@ fn tool_call_signature(call: &ToolCall) -> String {
     format!("{}|{}", call.name.trim(), args)
 }
 
-fn collect_tool_calls_from_output(content: &str, reasoning: &str) -> Vec<ToolCall> {
-    let mut calls = parse_tool_calls_from_text(content);
-    let mut reasoning_calls = parse_tool_calls_from_text(reasoning);
-    if reasoning_calls.is_empty() {
-        return calls;
-    }
-    if calls.is_empty() {
-        return reasoning_calls;
-    }
+fn dedupe_tool_calls(calls: Vec<ToolCall>) -> Vec<ToolCall> {
     let mut seen = HashSet::new();
     let mut merged = Vec::new();
-    for call in calls.drain(..).chain(reasoning_calls.drain(..)) {
+    for call in calls {
         let signature = tool_call_signature(&call);
         if seen.insert(signature) {
             merged.push(call);
         }
     }
     merged
+}
+
+fn collect_tool_calls_from_output(content: &str, reasoning: &str) -> Vec<ToolCall> {
+    let mut calls = parse_tool_calls_from_text(content);
+    calls.extend(parse_tool_calls_from_text(reasoning));
+    dedupe_tool_calls(calls)
 }
 
 fn strip_tool_calls(content: &str) -> String {
@@ -4036,5 +4062,29 @@ mod tests {
         let calls = collect_tool_calls_from_output(payload, payload);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_parse_tool_call_json_without_tags() {
+        let content = "call: {\"tool\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}";
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("a.txt")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_function_wrapper() {
+        let content = r#"{"tool_calls":[{"type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]}"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("a.txt")
+        );
     }
 }
