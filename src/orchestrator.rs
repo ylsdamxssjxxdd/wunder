@@ -754,6 +754,11 @@ impl Orchestrator {
                 "error.user_id_required",
             )));
         }
+        if let Err(err) = self.workspace.ensure_user_root(&user_id) {
+            return Err(OrchestratorError::internal(format!(
+                "failed to prepare workspace: {err}"
+            )));
+        }
         let question = request.question.trim().to_string();
         if question.is_empty() {
             return Err(OrchestratorError::invalid_request(i18n::t(

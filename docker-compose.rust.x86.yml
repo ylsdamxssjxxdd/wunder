@@ -7,6 +7,9 @@ x-rust-build: &rust-build
 services:
   WUNDER_RUST:
     build: *rust-build
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
     image: wunder-x86
     platform: linux/amd64
     ports:
@@ -34,6 +37,9 @@ services:
 
   sandbox:
     build: *rust-build
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
     image: wunder-x86
     platform: linux/amd64
     environment:
@@ -53,6 +59,9 @@ services:
 
   postgres:
     image: postgres:16
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
     platform: linux/amd64
     environment:
       - TZ=Asia/Shanghai

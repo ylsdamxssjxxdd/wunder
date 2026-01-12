@@ -32,9 +32,11 @@ mod user_tools;
 mod workspace;
 
 use axum::body::Body;
+use axum::extract::OriginalUri;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{from_fn, from_fn_with_state, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::get;
 use axum::Router;
 use config::Config;
 use config_store::ConfigStore;
@@ -61,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
     let app = mount_static_file(app, "web/simple-chat/index.html", "/");
+    let app = mount_trailing_slash_redirect(app, "/wunder/web", "/wunder/web/");
+    let app = mount_trailing_slash_redirect(app, "/wunder/ppt", "/wunder/ppt/");
+    let app = mount_trailing_slash_redirect(app, "/wunder/ppt-en", "/wunder/ppt-en/");
     let app = mount_static(app, "web", "/wunder/web");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");
@@ -116,7 +121,13 @@ where
     if path.exists() {
         // 目录存在时才挂载，避免容器裁剪后启动报错。
         let service = ServeDir::new(path).append_index_html_on_directories(true);
-        app.nest_service(route, service)
+        let trimmed = route.trim_end_matches('/');
+        if trimmed.is_empty() {
+            app.fallback_service(service)
+        } else {
+            let nested = Router::new().fallback_service(service);
+            app.nest(&format!("{trimmed}/"), nested)
+        }
     } else {
         app
     }
@@ -132,6 +143,23 @@ where
     } else {
         app
     }
+}
+
+fn mount_trailing_slash_redirect<S>(app: Router<S>, from: &str, to: &'static str) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    app.route(
+        from,
+        get(move |uri: OriginalUri| async move {
+            let query = uri
+                .0
+                .query()
+                .map(|value| format!("?{value}"))
+                .unwrap_or_default();
+            Redirect::permanent(&format!("{to}{query}"))
+        }),
+    )
 }
 
 fn build_cors(config: &Config) -> CorsLayer {

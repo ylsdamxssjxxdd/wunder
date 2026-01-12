@@ -238,11 +238,6 @@ pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
             .as_ref()
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
-        && config
-            .api_key
-            .as_ref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
 }
 
 fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
