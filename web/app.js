@@ -58,7 +58,7 @@ import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260
 import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260110-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20251231-01";
 
-import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260110-06";
+import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260112-06";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260110-01";
 
 import { initSettingsPanel } from "./modules/settings.js?v=20260110-06";

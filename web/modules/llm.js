@@ -11,6 +11,104 @@ let lastAutoContext = null;
 let probeInFlight = false;
 let pendingProbe = false;
 const FLOAT_INPUT_PRECISION = 7;
+const DEFAULT_PROVIDER_ID = "openai_compatible";
+const PROVIDER_PRESETS = [
+  { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+  { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+  { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+  { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+  { id: "deepseek", label: "deepseek", baseUrl: "https://api.deepseek.com" },
+  { id: "moonshot", label: "moonshot", baseUrl: "https://api.moonshot.ai/v1" },
+  { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+  { id: "groq", label: "groq", baseUrl: "https://api.groq.com/openai/v1" },
+  { id: "mistral", label: "mistral", baseUrl: "https://api.mistral.ai/v1" },
+  { id: "together", label: "together", baseUrl: "https://api.together.xyz/v1" },
+  { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
+  { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
+];
+const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, item]));
+const DEFAULT_BASE_URL_PLACEHOLDER =
+  elements.llmBaseUrl?.getAttribute("placeholder") || "https://api.example.com";
+let lastProviderSelection = DEFAULT_PROVIDER_ID;
+
+const normalizeProviderId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return DEFAULT_PROVIDER_ID;
+  }
+  const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  switch (normalized) {
+    case "openai_compat":
+      return "openai_compatible";
+    case "openai_native":
+      return "openai";
+    case "silicon_flow":
+      return "siliconflow";
+    case "kimi":
+      return "moonshot";
+    case "dashscope":
+      return "qwen";
+    case "lm_studio":
+      return "lmstudio";
+    default:
+      return normalized;
+  }
+};
+
+const getProviderPreset = (provider) =>
+  PROVIDER_PRESET_MAP.get(normalizeProviderId(provider)) || null;
+
+const resolveProviderBaseUrl = (provider) => getProviderPreset(provider)?.baseUrl || "";
+
+const renderProviderOptions = (activeProvider) => {
+  if (!elements.llmProvider) {
+    return;
+  }
+  const current = normalizeProviderId(activeProvider || elements.llmProvider.value);
+  elements.llmProvider.textContent = "";
+  if (current && !PROVIDER_PRESET_MAP.has(current)) {
+    const option = document.createElement("option");
+    option.value = current;
+    option.textContent = current;
+    elements.llmProvider.appendChild(option);
+  }
+  PROVIDER_PRESETS.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.label;
+    elements.llmProvider.appendChild(option);
+  });
+  if (current && elements.llmProvider.querySelector(`option[value="${current}"]`)) {
+    elements.llmProvider.value = current;
+  } else {
+    elements.llmProvider.value = DEFAULT_PROVIDER_ID;
+  }
+};
+
+const updateBaseUrlPlaceholder = (provider) => {
+  if (!elements.llmBaseUrl) {
+    return;
+  }
+  const preset = resolveProviderBaseUrl(provider);
+  elements.llmBaseUrl.placeholder = preset || DEFAULT_BASE_URL_PLACEHOLDER;
+};
+
+const applyProviderDefaults = (provider, options = {}) => {
+  const normalized = normalizeProviderId(provider);
+  const presetBaseUrl = resolveProviderBaseUrl(normalized);
+  const forceBaseUrl = options.forceBaseUrl === true;
+  updateBaseUrlPlaceholder(normalized);
+  if (!presetBaseUrl || !elements.llmBaseUrl) {
+    return;
+  }
+  const currentValue = elements.llmBaseUrl.value.trim();
+  const previousBaseUrl = resolveProviderBaseUrl(options.previousProvider || "");
+  const shouldReplace =
+    forceBaseUrl || !currentValue || (previousBaseUrl && currentValue === previousBaseUrl);
+  if (shouldReplace) {
+    elements.llmBaseUrl.value = presetBaseUrl;
+  }
+};
 
 const roundFloat = (value) => {
   const factor = 10 ** FLOAT_INPUT_PRECISION;
@@ -44,7 +142,7 @@ const parseFloatInput = (input, fallback) => {
 // 规范化 LLM 配置，避免空值影响展示。
 const normalizeLlmConfig = (raw) => ({
   enable: raw?.enable !== false,
-  provider: raw?.provider || "openai_compatible",
+  provider: normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID),
   base_url: raw?.base_url || "",
   api_key: raw?.api_key || "",
   model: raw?.model || "",
@@ -111,7 +209,8 @@ const clearLlmForm = () => {
   if (elements.llmConfigName) {
     elements.llmConfigName.value = "";
   }
-  elements.llmProvider.value = "openai_compatible";
+  renderProviderOptions(DEFAULT_PROVIDER_ID);
+  elements.llmProvider.value = DEFAULT_PROVIDER_ID;
   elements.llmModel.value = "";
   elements.llmBaseUrl.value = "";
   elements.llmApiKey.value = "";
@@ -125,6 +224,8 @@ const clearLlmForm = () => {
   elements.llmStreamIncludeUsage.checked = true;
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
+  applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
+  lastProviderSelection = DEFAULT_PROVIDER_ID;
 };
 
 // 将 LLM 配置渲染到表单。
@@ -137,6 +238,7 @@ const applyLlmConfigToForm = (name, config) => {
   if (elements.llmConfigName) {
     elements.llmConfigName.value = getDisplayName(name);
   }
+  renderProviderOptions(llm.provider);
   elements.llmProvider.value = llm.provider;
   elements.llmModel.value = llm.model;
   elements.llmBaseUrl.value = llm.base_url;
@@ -154,6 +256,11 @@ const applyLlmConfigToForm = (name, config) => {
     0.8
   );
   elements.llmHistoryCompactionReset.value = llm.history_compaction_reset || "zero";
+  applyProviderDefaults(llm.provider, {
+    forceBaseUrl: !llm.base_url,
+    previousProvider: lastProviderSelection,
+  });
+  lastProviderSelection = llm.provider;
 };
 
 const updateDetailHeader = () => {
@@ -267,7 +374,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
   ).trim();
   return {
     enable: base.enable,
-    provider: elements.llmProvider.value.trim() || "openai_compatible",
+    provider: normalizeProviderId(elements.llmProvider.value || base.provider),
     base_url: elements.llmBaseUrl.value.trim(),
     api_key: elements.llmApiKey.value.trim(),
     model: elements.llmModel.value.trim(),
@@ -314,8 +421,8 @@ const selectLlmConfig = (name) => {
 
 // 构建模型上下文探测请求体。
 const buildContextProbePayload = () => {
-  const provider = elements.llmProvider.value.trim() || "openai_compatible";
-  const baseUrl = elements.llmBaseUrl.value.trim();
+  const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
+  const baseUrl = elements.llmBaseUrl.value.trim() || resolveProviderBaseUrl(provider);
   const model = elements.llmModel.value.trim();
   const apiKey = elements.llmApiKey.value.trim();
   if (!baseUrl || !model) {
@@ -659,6 +766,9 @@ const handleNameEdit = () => {
 
 // 初始化模型配置面板交互。
 export const initLlmPanel = () => {
+  renderProviderOptions();
+  updateBaseUrlPlaceholder(DEFAULT_PROVIDER_ID);
+  lastProviderSelection = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
   elements.saveLlmBtn.addEventListener("click", async () => {
     try {
       await saveLlmConfig();
@@ -687,7 +797,13 @@ export const initLlmPanel = () => {
   elements.llmBaseUrl.addEventListener("input", handleProbeInput);
   elements.llmModel.addEventListener("input", handleProbeInput);
   elements.llmApiKey.addEventListener("input", handleProbeInput);
-  elements.llmProvider.addEventListener("change", handleProbeInput);
+  elements.llmProvider.addEventListener("change", () => {
+    const nextProvider = normalizeProviderId(elements.llmProvider.value);
+    elements.llmProvider.value = nextProvider;
+    applyProviderDefaults(nextProvider, { previousProvider: lastProviderSelection });
+    lastProviderSelection = nextProvider;
+    handleProbeInput();
+  });
   elements.llmBaseUrl.addEventListener("blur", () => requestContextWindow(true));
   elements.llmModel.addEventListener("blur", () => requestContextWindow(true));
 };

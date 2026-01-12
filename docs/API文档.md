@@ -291,6 +291,7 @@
   - `llm.default`：默认模型配置名称
 - `llm.models`：模型配置映射（provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
+  - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
 - `POST` 入参：
   - `llm.default`：默认模型配置名称
   - `llm.models`：模型配置映射，用于保存与下发
@@ -300,13 +301,14 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `provider`：模型提供方类型（默认 openai_compatible）
-  - `base_url`：模型服务地址
+  - `base_url`：模型服务地址（预置 provider 可省略）
   - `api_key`：访问密钥（可选）
   - `model`：模型名称
   - `timeout_s`：探测超时秒数（可选）
 - 返回（JSON）：
   - `max_context`：最大上下文长度（可能为 null）
   - `message`：探测结果说明
+  - 说明：仅支持 OpenAI 兼容 provider（见 `/wunder/admin/llm` 说明）。
 
 ### 4.1.6.2 `/wunder/admin/server`
 

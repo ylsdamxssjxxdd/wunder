@@ -1079,16 +1079,21 @@ async fn admin_llm_update(
 async fn admin_llm_context_window(
     Json(payload): Json<LlmContextProbeRequest>,
 ) -> Result<Json<Value>, Response> {
-    let base_url = payload.base_url.trim();
     let model = payload.model.trim();
+    let provider = llm::normalize_provider(payload.provider.as_deref());
+    let inline_base = payload.base_url.trim();
+    let base_url = if inline_base.is_empty() {
+        llm::provider_default_base_url(&provider).unwrap_or("")
+    } else {
+        inline_base
+    };
     if base_url.is_empty() || model.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.base_url_or_model_required"),
         ));
     }
-    let provider = payload.provider.as_deref().unwrap_or("openai_compatible");
-    if provider != "openai_compatible" {
+    if !llm::is_openai_compatible_provider(&provider) {
         return Ok(Json(json!({
             "max_context": Value::Null,
             "message": i18n::t("probe.provider_unsupported")

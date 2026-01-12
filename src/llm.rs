@@ -11,6 +11,18 @@ use std::future::Future;
 use std::time::Duration;
 use url::form_urlencoded::byte_serialize;
 
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_SILICONFLOW_BASE_URL: &str = "https://api.siliconflow.cn/v1";
+const DEFAULT_DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
+const DEFAULT_MOONSHOT_BASE_URL: &str = "https://api.moonshot.ai/v1";
+const DEFAULT_QWEN_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const DEFAULT_GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
+const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
+const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
+const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -165,11 +177,8 @@ impl LlmClient {
         }
     }
     fn endpoint(&self) -> String {
-        let base = self
-            .config
-            .base_url
-            .clone()
-            .unwrap_or_else(|| "https://api.openai.com".to_string());
+        let base =
+            resolve_base_url(&self.config).unwrap_or_else(|| "https://api.openai.com".to_string());
         if base.ends_with("/v1") {
             format!("{base}/chat/completions")
         } else {
@@ -228,9 +237,7 @@ pub fn build_llm_client(config: &LlmModelConfig, http: Client) -> LlmClient {
 }
 
 pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
-    config
-        .base_url
-        .as_ref()
+    resolve_base_url(config)
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false)
         && config
@@ -238,6 +245,77 @@ pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
             .as_ref()
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
+}
+
+pub fn normalize_provider(provider: Option<&str>) -> String {
+    let raw = provider.unwrap_or("openai_compatible").trim();
+    if raw.is_empty() {
+        return "openai_compatible".to_string();
+    }
+    let normalized = raw
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .replace(' ', "_");
+    match normalized.as_str() {
+        "openai_compat" => "openai_compatible".to_string(),
+        "openai_native" => "openai".to_string(),
+        "openai" => "openai".to_string(),
+        "openai_compatible" => "openai_compatible".to_string(),
+        "openrouter" => "openrouter".to_string(),
+        "silicon_flow" => "siliconflow".to_string(),
+        "siliconflow" => "siliconflow".to_string(),
+        "deepseek" => "deepseek".to_string(),
+        "moonshot" => "moonshot".to_string(),
+        "kimi" => "moonshot".to_string(),
+        "dashscope" => "qwen".to_string(),
+        "qwen" => "qwen".to_string(),
+        "groq" => "groq".to_string(),
+        "mistral" => "mistral".to_string(),
+        "together" => "together".to_string(),
+        "ollama" => "ollama".to_string(),
+        "lm_studio" => "lmstudio".to_string(),
+        "lmstudio" => "lmstudio".to_string(),
+        other => other.to_string(),
+    }
+}
+
+pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
+    match provider {
+        "openai" => Some(DEFAULT_OPENAI_BASE_URL),
+        "openrouter" => Some(DEFAULT_OPENROUTER_BASE_URL),
+        "siliconflow" => Some(DEFAULT_SILICONFLOW_BASE_URL),
+        "deepseek" => Some(DEFAULT_DEEPSEEK_BASE_URL),
+        "moonshot" => Some(DEFAULT_MOONSHOT_BASE_URL),
+        "qwen" => Some(DEFAULT_QWEN_BASE_URL),
+        "groq" => Some(DEFAULT_GROQ_BASE_URL),
+        "mistral" => Some(DEFAULT_MISTRAL_BASE_URL),
+        "together" => Some(DEFAULT_TOGETHER_BASE_URL),
+        "ollama" => Some(DEFAULT_OLLAMA_BASE_URL),
+        "lmstudio" => Some(DEFAULT_LMSTUDIO_BASE_URL),
+        _ => None,
+    }
+}
+
+pub fn is_openai_compatible_provider(provider: &str) -> bool {
+    let normalized = normalize_provider(Some(provider));
+    if normalized == "openai_compatible" {
+        return true;
+    }
+    provider_default_base_url(&normalized).is_some()
+}
+
+fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
+    let inline = config
+        .base_url
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    if let Some(value) = inline {
+        return Some(value.to_string());
+    }
+    let provider = normalize_provider(config.provider.as_deref());
+    provider_default_base_url(&provider).map(|value| value.to_string())
 }
 
 fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
