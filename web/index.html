@@ -1635,6 +1635,15 @@
                 <i class="fa-solid fa-download"></i>
                 <span data-i18n="throughput.action.export">导出报告</span>
               </button>
+              <div
+                id="throughputStatusIndicator"
+                class="status-indicator"
+                data-status="idle"
+                aria-live="polite"
+              >
+                <span class="status-dot"></span>
+                <span class="status-text" data-i18n="throughput.status.idle">暂无任务</span>
+              </div>
             </div>
           </div>
           <div class="tips" data-i18n="throughput.tip">
@@ -1890,6 +1899,15 @@
                 <i class="fa-solid fa-eraser"></i>
                 <span data-i18n="performance.action.clear">清空结果</span>
               </button>
+              <div
+                id="performanceStatusIndicator"
+                class="status-indicator"
+                data-status="idle"
+                aria-live="polite"
+              >
+                <span class="status-dot"></span>
+                <span class="status-text" data-i18n="performance.indicator.idle">空闲</span>
+              </div>
             </div>
           </div>
           <div class="tips" data-i18n="performance.tip">
@@ -1976,6 +1994,15 @@
                 <i class="fa-solid fa-play"></i>
                 <span data-i18n="evaluation.action.start">开始评估</span>
               </button>
+              <div
+                id="evaluationStatusIndicator"
+                class="status-indicator"
+                data-status="idle"
+                aria-live="polite"
+              >
+                <span class="status-dot"></span>
+                <span class="status-text" data-i18n="evaluation.indicator.idle">空闲</span>
+              </div>
             </div>
           </div>
           <div class="tips" data-i18n="evaluation.tip">

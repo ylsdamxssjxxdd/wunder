@@ -37,6 +37,7 @@ const METRICS = [
 let initialized = false;
 let chart = null;
 let activeController = null;
+let indicatorStatus = "idle";
 
 const ensureState = () => {
   if (!state.performance) {
@@ -249,6 +250,28 @@ const setFormStatus = (text) => {
     return;
   }
   elements.performanceFormStatus.textContent = text || "";
+};
+
+const updateStatusIndicator = (status) => {
+  if (!elements.performanceStatusIndicator) {
+    return;
+  }
+  const normalized = status || "idle";
+  const indicator = elements.performanceStatusIndicator;
+  const text = indicator.querySelector(".status-text");
+  indicator.dataset.status = normalized;
+  indicator.classList.toggle("is-active", normalized === "running");
+  if (text) {
+    const key = `performance.indicator.${normalized}`;
+    const label = t(key);
+    text.textContent = label === key ? normalized : label;
+    text.setAttribute("data-i18n", key);
+  }
+};
+
+const setIndicatorStatus = (status) => {
+  indicatorStatus = status || "idle";
+  updateStatusIndicator(indicatorStatus);
 };
 
 const updateStartButton = (running) => {
@@ -581,8 +604,10 @@ const handleReset = () => {
   if (state.performance?.running) {
     cancelRun();
     setFormStatus(t("performance.status.cancelled"));
+    setIndicatorStatus("cancelled");
   } else {
     setFormStatus("");
+    setIndicatorStatus("idle");
   }
   resetResults();
 };
@@ -615,6 +640,7 @@ const handleStart = async () => {
   persistConfig();
   resetResults();
   setRunning(true);
+  setIndicatorStatus("running");
   setFormStatus(t("performance.status.starting"));
   let completed = 0;
   try {
@@ -639,15 +665,18 @@ const handleStart = async () => {
       );
       setFormStatus(t("performance.status.completed"));
       notify(t("performance.status.completed"), "success");
+      setIndicatorStatus("completed");
     }
   } catch (error) {
     if (error?.name === "AbortError") {
       setFormStatus(t("performance.status.cancelled"));
       notify(t("performance.status.cancelled"), "info");
+      setIndicatorStatus("cancelled");
     } else {
       const message = error?.message || String(error);
       setFormStatus(t("performance.status.failed", { message }));
       notify(t("performance.status.failed", { message }), "error");
+      setIndicatorStatus("failed");
     }
   } finally {
     activeController = null;
@@ -683,5 +712,6 @@ export const initPerformancePanel = () => {
     renderHistoryList();
   });
   updateStartButton(false);
+  setIndicatorStatus(indicatorStatus);
   renderAll();
 };

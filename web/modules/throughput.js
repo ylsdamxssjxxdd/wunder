@@ -24,22 +24,22 @@ const CURVE_METRICS = [
   {
     key: "total_prefill_speed_tps",
     labelKey: "throughput.metric.totalPrefillSpeed",
-    color: "#3b82f6",
+    color: "#2563eb",
   },
   {
     key: "single_prefill_speed_tps",
     labelKey: "throughput.metric.singlePrefillSpeed",
-    color: "#38bdf8",
+    color: "#8b5cf6",
   },
   {
     key: "total_decode_speed_tps",
     labelKey: "throughput.metric.totalDecodeSpeed",
-    color: "#22c55e",
+    color: "#16a34a",
   },
   {
     key: "single_decode_speed_tps",
     labelKey: "throughput.metric.singleDecodeSpeed",
-    color: "#4ade80",
+    color: "#f59e0b",
   },
 ];
 
@@ -231,7 +231,12 @@ const parseTimestampMs = (value) => {
   if (!value) {
     return null;
   }
-  const parsed = Date.parse(value);
+  const raw = String(value);
+  let parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) {
+    const trimmed = raw.replace(/(\.\d{3})\d+(Z|[+-]\d{2}:\d{2})$/, "$1$2");
+    parsed = Date.parse(trimmed);
+  }
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -279,6 +284,22 @@ const applyStatusBadge = (status) => {
   badge.classList.remove("running", "stopping", "finished", "stopped");
   if (status) {
     badge.classList.add(status);
+  }
+};
+
+const updateStatusIndicator = (status) => {
+  if (!elements.throughputStatusIndicator) {
+    return;
+  }
+  const normalized = status || "idle";
+  const label = resolveStatusLabel(normalized);
+  const indicator = elements.throughputStatusIndicator;
+  const text = indicator.querySelector(".status-text");
+  indicator.dataset.status = normalized;
+  indicator.classList.toggle("is-active", ["running", "stopping"].includes(normalized));
+  if (text) {
+    text.textContent = label;
+    text.setAttribute("data-i18n", `throughput.status.${normalized}`);
   }
 };
 
@@ -331,6 +352,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     currentStatus = "";
     updateToggleButton("");
     setStatusHint(t("throughput.status.emptyHint"));
+    updateStatusIndicator("idle");
     setTotalSpeedMetrics(null, null);
     setSingleSpeedMetrics(null, null);
     fillMetric();
@@ -345,6 +367,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   const status = run.status || "";
   currentStatus = status;
   applyStatusBadge(status);
+  updateStatusIndicator(status || "idle");
   updateToggleButton(status);
   if (options.historyView) {
     setStatusHint(t("throughput.status.historyViewHint"));
@@ -499,13 +522,15 @@ const resolveSessionConcurrency = (session) => {
   const sessionId = String(session?.session_id || "");
   if (runId && sessionId) {
     const prefix = `throughput_${runId}_`;
-    if (sessionId.startsWith(prefix)) {
-      const remainder = sessionId.slice(prefix.length);
-      const value = Number(remainder.split("_")[0]);
-      if (Number.isFinite(value) && value > 0) {
-        return value;
-      }
+    if (!sessionId.startsWith(prefix)) {
+      return null;
     }
+    const remainder = sessionId.slice(prefix.length);
+    const value = Number(remainder.split("_")[0]);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    return null;
   }
   const userPrefix = throughputSessionPrefix;
   const userId = String(session?.user_id || "");
@@ -621,6 +646,14 @@ const resolveThreadEmptyText = () => {
 };
 
 const matchThroughputSession = (session) => {
+  const runId = throughputSessionRunId;
+  const sessionId = String(session?.session_id || "");
+  if (runId) {
+    const prefix = `throughput_${runId}_`;
+    if (!sessionId.startsWith(prefix)) {
+      return false;
+    }
+  }
   const prefix = throughputSessionPrefix;
   if (prefix) {
     const userId = String(session?.user_id || "");

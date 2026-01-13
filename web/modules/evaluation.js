@@ -7,6 +7,7 @@ const evaluationState = {
   activeRunId: "",
   activeStatus: "",
   viewRunId: "",
+  viewStatus: "",
   streaming: false,
   controller: null,
   cases: new Map(),
@@ -58,6 +59,24 @@ const setRunHint = (message) => {
     return;
   }
   elements.evaluationRunHint.textContent = message || "";
+};
+
+const updateStatusIndicator = () => {
+  if (!elements.evaluationStatusIndicator) {
+    return;
+  }
+  const status = evaluationState.viewStatus || evaluationState.activeStatus || "idle";
+  const normalized = String(status || "idle");
+  const indicator = elements.evaluationStatusIndicator;
+  const text = indicator.querySelector(".status-text");
+  indicator.dataset.status = normalized;
+  indicator.classList.toggle("is-active", normalized === "running" && isActiveRunning());
+  if (text) {
+    const key = `evaluation.indicator.${normalized}`;
+    const label = t(key);
+    text.textContent = label === key ? normalized : label;
+    text.setAttribute("data-i18n", key);
+  }
 };
 
 const isActiveRunning = () => {
@@ -149,9 +168,11 @@ const updateRunHint = () => {
   updateRunSpinner();
   updateProgressAnimation();
   updateCurrentCaseDisplay();
+  updateStatusIndicator();
 };
 
 const resetRunSummary = () => {
+  evaluationState.viewStatus = "";
   if (elements.evaluationRunId) {
     elements.evaluationRunId.textContent = "-";
   }
@@ -184,6 +205,7 @@ const resetRunSummary = () => {
   if (elements.evaluationCurrentCase) {
     elements.evaluationCurrentCase.textContent = "";
   }
+  updateStatusIndicator();
 };
 
 const updateProgress = (payload) => {
@@ -317,6 +339,8 @@ const applyRunPayload = (run) => {
     const status = String(run.status || "-");
     elements.evaluationRunStatus.textContent = status;
     elements.evaluationRunStatus.className = `monitor-status ${status}`;
+    evaluationState.viewStatus = status;
+    updateStatusIndicator();
   }
   if (elements.evaluationRunStartedAt) {
     elements.evaluationRunStartedAt.textContent = formatEpochSeconds(run.started_time);
