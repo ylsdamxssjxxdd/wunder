@@ -2168,9 +2168,22 @@ impl Orchestrator {
                             }
                         }
                     }
-                    let usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
+                    let mut usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
                         self.estimate_token_usage(messages, &content, &reasoning)
                     });
+                    if (usage.input == 0 || usage.output == 0) && usage.total > 0 {
+                        let estimated = self.estimate_token_usage(messages, &content, &reasoning);
+                        if estimated.total > 0 {
+                            let ratio = usage.total as f64 / estimated.total as f64;
+                            let mut input = (estimated.input as f64 * ratio).round() as u64;
+                            if input > usage.total {
+                                input = usage.total;
+                            }
+                            let output = usage.total.saturating_sub(input);
+                            usage.input = input;
+                            usage.output = output;
+                        }
+                    }
                     let (prefill_duration_s, decode_duration_s) = if will_stream {
                         output_timing
                             .lock()

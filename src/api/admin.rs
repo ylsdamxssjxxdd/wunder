@@ -1457,6 +1457,7 @@ async fn admin_throughput_start(
         payload.question,
         payload.questions,
         payload.user_id_prefix,
+        payload.model_name,
         payload.request_timeout_s,
     )
     .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
@@ -2351,6 +2352,8 @@ struct ThroughputStartRequest {
     questions: Option<Vec<String>>,
     #[serde(default)]
     user_id_prefix: Option<String>,
+    #[serde(default)]
+    model_name: Option<String>,
     #[serde(default)]
     request_timeout_s: Option<f64>,
 }

@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260113-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -49,6 +49,60 @@ const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 let previewObjectUrl = null;
 let editorEntry = null;
 let editorLoading = false;
+let workspaceUploadCount = 0;
+
+const setWorkspaceUploadProgress = (options = {}) => {
+  const wrap = elements.workspaceUploadProgress;
+  const bar = elements.workspaceUploadProgressBar;
+  const text = elements.workspaceUploadProgressText;
+  if (!wrap || !bar || !text) {
+    return;
+  }
+  const { percent = 0, loaded = 0, total = 0, indeterminate = false } = options;
+  wrap.classList.add("active");
+  wrap.classList.toggle("indeterminate", indeterminate);
+  if (indeterminate) {
+    bar.style.width = "30%";
+  } else {
+    const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+    bar.style.width = `${safePercent}%`;
+  }
+  const hasTotal = Number.isFinite(total) && total > 0;
+  const hasLoaded = Number.isFinite(loaded) && loaded > 0;
+  const baseLabel = t("common.upload");
+  if (hasTotal) {
+    const safePercent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    text.textContent = `${baseLabel} ${safePercent}% · ${formatBytes(loaded)} / ${formatBytes(total)}`;
+  } else if (hasLoaded) {
+    text.textContent = `${baseLabel} · ${formatBytes(loaded)}`;
+  } else {
+    text.textContent = `${baseLabel}...`;
+  }
+};
+
+const resetWorkspaceUploadProgress = () => {
+  const wrap = elements.workspaceUploadProgress;
+  const bar = elements.workspaceUploadProgressBar;
+  const text = elements.workspaceUploadProgressText;
+  if (!wrap || !bar || !text) {
+    return;
+  }
+  wrap.classList.remove("active", "indeterminate");
+  bar.style.width = "0%";
+  text.textContent = "";
+};
+
+const beginWorkspaceUploadProgress = () => {
+  workspaceUploadCount += 1;
+  setWorkspaceUploadProgress({ percent: 0, indeterminate: true });
+};
+
+const endWorkspaceUploadProgress = () => {
+  workspaceUploadCount = Math.max(0, workspaceUploadCount - 1);
+  if (workspaceUploadCount === 0) {
+    resetWorkspaceUploadProgress();
+  }
+};
 
 // 兜底修复工作区状态，避免切换面板时状态结构被破坏导致渲染异常
 const ensureWorkspaceState = () => {
@@ -1586,12 +1640,70 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
     const relativePath = relativePaths[index] ?? "";
     form.append("relative_paths", relativePath);
   });
-  const response = await fetch(endpoint, {
-    method: "POST",
-    body: form,
-  });
-  if (!response.ok) {
-    throw new Error(t("workspace.uploadFailed", { status: response.status }));
+  beginWorkspaceUploadProgress();
+  try {
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const resolveErrorMessage = () => {
+        if (xhr.response && typeof xhr.response === "object") {
+          const detail = xhr.response?.detail?.message;
+          if (detail) {
+            return detail;
+          }
+        }
+        if (xhr.responseText) {
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            const detail = parsed?.detail?.message;
+            if (detail) {
+              return detail;
+            }
+          } catch (error) {
+            // fall through
+          }
+        }
+        return t("workspace.uploadFailed", { status: xhr.status });
+      };
+      xhr.open("POST", endpoint, true);
+      xhr.responseType = "json";
+      const apiKey = String(elements.apiKey?.value || "").trim();
+      if (apiKey) {
+        xhr.setRequestHeader("X-API-Key", apiKey);
+      }
+      const language = getCurrentLanguage();
+      if (language) {
+        xhr.setRequestHeader("X-Wunder-Language", language);
+      }
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          const percent = (event.loaded / event.total) * 100;
+          setWorkspaceUploadProgress({
+            percent,
+            loaded: event.loaded,
+            total: event.total,
+            indeterminate: false,
+          });
+        } else {
+          setWorkspaceUploadProgress({ loaded: event.loaded, indeterminate: true });
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.response);
+        } else {
+          reject(new Error(resolveErrorMessage()));
+        }
+      };
+      xhr.onerror = () => {
+        reject(new Error(resolveErrorMessage()));
+      };
+      xhr.onabort = () => {
+        reject(new Error(t("workspace.uploadFailed", { status: xhr.status })));
+      };
+      xhr.send(form);
+    });
+  } finally {
+    endWorkspaceUploadProgress();
   }
   if (refreshTree) {
     await reloadWorkspaceView({ refreshTree: true });

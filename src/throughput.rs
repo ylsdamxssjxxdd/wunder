@@ -79,6 +79,7 @@ pub struct ThroughputConfig {
     pub step: usize,
     pub questions: Vec<String>,
     pub user_id_prefix: String,
+    pub model_name: Option<String>,
     pub request_timeout_s: f64,
 }
 
@@ -89,6 +90,7 @@ impl ThroughputConfig {
         question: Option<String>,
         questions: Option<Vec<String>>,
         user_id_prefix: Option<String>,
+        model_name: Option<String>,
         request_timeout_s: Option<f64>,
     ) -> Result<Self, String> {
         let mut questions = questions.unwrap_or_default();
@@ -126,11 +128,15 @@ impl ThroughputConfig {
         } else {
             0.0
         };
+        let model_name = model_name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
         Ok(Self {
             max_concurrency,
             step,
             questions,
             user_id_prefix: prefix,
+            model_name,
             request_timeout_s: timeout,
         })
     }
@@ -582,7 +588,7 @@ impl ActiveRun {
                 questions: self.config.questions.clone(),
                 user_id_prefix: self.config.user_id_prefix.clone(),
                 stream: true,
-                model_name: None,
+                model_name: self.config.model_name.clone(),
                 request_timeout_s: self.config.request_timeout_s,
                 started_at: self.started_at.to_rfc3339(),
                 finished_at: self.finished_at.map(|value| value.to_rfc3339()),
@@ -631,89 +637,105 @@ struct SessionSpeed {
 
 #[derive(Default)]
 struct SpeedAccumulator {
-    prefill_tokens_total: f64,
-    prefill_duration_total: f64,
-    prefill_speed_total: f64,
+    prefill_speed_sum: f64,
     prefill_speed_count: u64,
-    decode_tokens_total: f64,
-    decode_duration_total: f64,
-    decode_speed_total: f64,
+    decode_speed_sum: f64,
     decode_speed_count: u64,
+    prefill_tokens_total: u64,
+    decode_tokens_total: u64,
+}
+
+fn resolve_speed(tokens: Option<i64>, duration: Option<f64>, speed: Option<f64>) -> Option<f64> {
+    if let (Some(tokens), Some(duration)) = (tokens, duration) {
+        if tokens > 0 && duration > 0.0 {
+            return Some(tokens as f64 / duration);
+        }
+    }
+    if let Some(value) = speed {
+        if value > 0.0 {
+            return Some(value);
+        }
+    }
+    None
 }
 
 impl SpeedAccumulator {
     fn record(&mut self, speed: &SessionSpeed) {
-        if let (Some(tokens), Some(duration)) = (speed.prefill_tokens, speed.prefill_duration_s) {
-            if tokens > 0 && duration > 0.0 {
-                self.prefill_tokens_total += tokens as f64;
-                self.prefill_duration_total += duration;
-            }
-        } else if let Some(speed_value) = speed.prefill_speed_tps {
-            if speed_value > 0.0 {
-                self.prefill_speed_total += speed_value;
-                self.prefill_speed_count += 1;
+        if let Some(tokens) = speed.prefill_tokens {
+            if tokens > 0 {
+                self.prefill_tokens_total = self.prefill_tokens_total.saturating_add(tokens as u64);
             }
         }
-        if let (Some(tokens), Some(duration)) = (speed.decode_tokens, speed.decode_duration_s) {
-            if tokens > 0 && duration > 0.0 {
-                self.decode_tokens_total += tokens as f64;
-                self.decode_duration_total += duration;
+        if let Some(value) = resolve_speed(
+            speed.prefill_tokens,
+            speed.prefill_duration_s,
+            speed.prefill_speed_tps,
+        ) {
+            self.prefill_speed_sum += value;
+            self.prefill_speed_count += 1;
+        }
+        if let Some(tokens) = speed.decode_tokens {
+            if tokens > 0 {
+                self.decode_tokens_total = self.decode_tokens_total.saturating_add(tokens as u64);
             }
-        } else if let Some(speed_value) = speed.decode_speed_tps {
-            if speed_value > 0.0 {
-                self.decode_speed_total += speed_value;
-                self.decode_speed_count += 1;
-            }
+        }
+        if let Some(value) = resolve_speed(
+            speed.decode_tokens,
+            speed.decode_duration_s,
+            speed.decode_speed_tps,
+        ) {
+            self.decode_speed_sum += value;
+            self.decode_speed_count += 1;
         }
     }
 
     fn single_prefill_speed(&self) -> Option<f64> {
-        if self.prefill_tokens_total > 0.0 && self.prefill_duration_total > 0.0 {
-            return Some(self.prefill_tokens_total / self.prefill_duration_total);
-        }
         if self.prefill_speed_count > 0 {
-            return Some(self.prefill_speed_total / self.prefill_speed_count as f64);
+            return Some(self.prefill_speed_sum / self.prefill_speed_count as f64);
         }
         None
     }
 
     fn single_decode_speed(&self) -> Option<f64> {
-        if self.decode_tokens_total > 0.0 && self.decode_duration_total > 0.0 {
-            return Some(self.decode_tokens_total / self.decode_duration_total);
-        }
         if self.decode_speed_count > 0 {
-            return Some(self.decode_speed_total / self.decode_speed_count as f64);
+            return Some(self.decode_speed_sum / self.decode_speed_count as f64);
         }
         None
     }
 
-    fn total_prefill_speed(&self, total_tokens: u64, elapsed_s: f64) -> Option<f64> {
+    fn total_prefill_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
+        if self.prefill_speed_count > 0 {
+            return Some(self.prefill_speed_sum);
+        }
         if elapsed_s <= 0.0 {
             return None;
         }
-        let tokens = if total_tokens > 0 {
-            total_tokens as f64
-        } else {
+        let tokens = if self.prefill_tokens_total > 0 {
             self.prefill_tokens_total
+        } else {
+            fallback_tokens
         };
-        if tokens > 0.0 {
-            Some(tokens / elapsed_s)
+        if tokens > 0 {
+            Some(tokens as f64 / elapsed_s)
         } else {
             None
         }
     }
 
-    fn total_decode_speed(&self, total_tokens: u64, elapsed_s: f64) -> Option<f64> {
+    fn total_decode_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
+        if self.decode_speed_count > 0 {
+            return Some(self.decode_speed_sum);
+        }
         if elapsed_s <= 0.0 {
             return None;
         }
-        let tokens = if total_tokens > 0 {
-            total_tokens as f64
-        } else {
+        let tokens = if self.decode_tokens_total > 0 {
             self.decode_tokens_total
+        } else {
+            fallback_tokens
         };
-        if tokens > 0.0 {
-            Some(tokens / elapsed_s)
+        if tokens > 0 {
+            Some(tokens as f64 / elapsed_s)
         } else {
             None
         }
@@ -746,6 +768,7 @@ async fn run_supervisor(
         let step_started = Instant::now();
         let step_metrics = Arc::new(ThroughputMetrics::new());
         let request_timeout_s = config.request_timeout_s;
+        let model_name = config.model_name.clone();
         let run_id_ref = run_id.as_str();
         let user_prefix_ref = user_prefix.as_str();
         let tasks = (0..concurrency)
@@ -758,6 +781,7 @@ async fn run_supervisor(
                     concurrency,
                     index,
                     Arc::clone(&questions),
+                    model_name.clone(),
                     request_timeout_s,
                 )
             })
@@ -789,6 +813,41 @@ async fn run_supervisor(
         }
         let elapsed_s = step_started.elapsed().as_secs_f64();
         let snapshot = step_metrics.snapshot(elapsed_s);
+        let concurrency_f = concurrency as f64;
+        let mut total_prefill_speed =
+            speed_acc.total_prefill_speed(elapsed_s, snapshot.input_tokens);
+        let mut total_decode_speed =
+            speed_acc.total_decode_speed(elapsed_s, snapshot.output_tokens);
+        let mut single_prefill_speed = speed_acc.single_prefill_speed();
+        let mut single_decode_speed = speed_acc.single_decode_speed();
+        if single_prefill_speed.is_none() {
+            if let Some(total) = total_prefill_speed {
+                if concurrency_f > 0.0 {
+                    single_prefill_speed = Some(total / concurrency_f);
+                }
+            }
+        }
+        if single_decode_speed.is_none() {
+            if let Some(total) = total_decode_speed {
+                if concurrency_f > 0.0 {
+                    single_decode_speed = Some(total / concurrency_f);
+                }
+            }
+        }
+        if total_prefill_speed.is_none() {
+            if let Some(single) = single_prefill_speed {
+                if concurrency_f > 0.0 {
+                    total_prefill_speed = Some(single * concurrency_f);
+                }
+            }
+        }
+        if total_decode_speed.is_none() {
+            if let Some(single) = single_decode_speed {
+                if concurrency_f > 0.0 {
+                    total_decode_speed = Some(single * concurrency_f);
+                }
+            }
+        }
         let sample = ThroughputSample {
             timestamp: Utc::now().to_rfc3339(),
             concurrency,
@@ -801,11 +860,10 @@ async fn run_supervisor(
             p50_latency_ms: snapshot.p50_latency_ms,
             p90_latency_ms: snapshot.p90_latency_ms,
             p99_latency_ms: snapshot.p99_latency_ms,
-            total_prefill_speed_tps: speed_acc
-                .total_prefill_speed(snapshot.input_tokens, elapsed_s),
-            single_prefill_speed_tps: speed_acc.single_prefill_speed(),
-            total_decode_speed_tps: speed_acc.total_decode_speed(snapshot.output_tokens, elapsed_s),
-            single_decode_speed_tps: speed_acc.single_decode_speed(),
+            total_prefill_speed_tps: total_prefill_speed,
+            single_prefill_speed_tps: single_prefill_speed,
+            total_decode_speed_tps: total_decode_speed,
+            single_decode_speed_tps: single_decode_speed,
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
             total_tokens: snapshot.total_tokens,
@@ -855,6 +913,7 @@ async fn run_request(
     concurrency: usize,
     index: usize,
     questions: Arc<Vec<String>>,
+    model_name: Option<String>,
     request_timeout_s: f64,
 ) -> RequestOutcome {
     let user_index = index + 1;
@@ -868,7 +927,7 @@ async fn run_request(
         tool_names: Vec::new(),
         stream: true,
         session_id: Some(session_id.clone()),
-        model_name: None,
+        model_name,
         language: None,
         config_overrides: None,
         attachments: None,

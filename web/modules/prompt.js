@@ -1,4 +1,4 @@
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";

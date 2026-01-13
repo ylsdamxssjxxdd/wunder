@@ -4,7 +4,7 @@ import {
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260113-01";
 import { notify } from "./notify.js";

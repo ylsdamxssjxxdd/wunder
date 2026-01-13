@@ -1,10 +1,11 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
+import { ensureLlmConfigLoaded } from "./llm.js";
 import { t } from "./i18n.js?v=20260113-01";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
@@ -14,6 +15,7 @@ const DEFAULT_CONFIG = {
   question: "",
   user_id_prefix: "throughput_user",
   request_timeout_s: 0,
+  model_name: "",
 };
 const ACTIVE_RUN_STATUSES = new Set(["running", "stopping"]);
 const ACTIVE_SESSION_STATUSES = new Set(["running", "cancelling"]);
@@ -59,6 +61,8 @@ let currentTotalPrefillSpeed = null;
 let currentTotalDecodeSpeed = null;
 let currentSinglePrefillSpeed = null;
 let currentSingleDecodeSpeed = null;
+let pendingModelName = "";
+let currentRunSnapshot = null;
 
 const readStoredConfig = () => {
   try {
@@ -107,6 +111,103 @@ const applyStoredConfig = () => {
       stored.request_timeout_s ?? DEFAULT_CONFIG.request_timeout_s
     );
   }
+  pendingModelName = String(stored.model_name ?? stored.modelName ?? "").trim();
+};
+
+const getStoredModelName = () => {
+  const stored = readStoredConfig();
+  return String(stored.model_name ?? stored.modelName ?? "").trim();
+};
+
+const getSelectedModelName = () =>
+  String(elements.throughputModelSelect?.value || "").trim();
+
+const setModelSelectValue = (value) => {
+  if (!elements.throughputModelSelect) {
+    return;
+  }
+  const select = elements.throughputModelSelect;
+  const desired = String(value || "").trim();
+  if (!desired) {
+    select.value = "";
+    return;
+  }
+  const options = Array.from(select.options);
+  const exists = options.some((option) => option.value === desired);
+  select.value = exists ? desired : "";
+};
+
+const getDefaultModelLabel = () => {
+  const defaultName = String(state.llm.defaultName || "").trim();
+  if (defaultName) {
+    return t("llm.defaultWithName", { name: defaultName });
+  }
+  return t("llm.default");
+};
+
+const resolveModelName = (run, fallback) => {
+  const raw = run?.model_name ?? run?.modelName ?? "";
+  const text = String(raw || "").trim();
+  if (text) {
+    return text;
+  }
+  const fallbackText = String(fallback || "").trim();
+  if (fallbackText) {
+    return fallbackText;
+  }
+  return getDefaultModelLabel();
+};
+
+const updateModelValue = (run) => {
+  if (!elements.throughputModelValue) {
+    return;
+  }
+  const effectiveRun = run ?? currentRunSnapshot;
+  elements.throughputModelValue.textContent = resolveModelName(
+    effectiveRun,
+    getSelectedModelName()
+  );
+};
+
+const renderThroughputModelOptions = (options = {}) => {
+  if (!elements.throughputModelSelect) {
+    return;
+  }
+  const select = elements.throughputModelSelect;
+  const preferred =
+    String(options.value ?? pendingModelName ?? select.value ?? "").trim();
+  select.textContent = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = getDefaultModelLabel();
+  select.appendChild(defaultOption);
+  state.llm.order.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  });
+  setModelSelectValue(preferred);
+  pendingModelName = "";
+};
+
+const syncModelSelectState = (run, options = {}) => {
+  if (!elements.throughputModelSelect) {
+    return;
+  }
+  const status = String(run?.status || "");
+  const historyView = options.historyView === true || state.runtime.throughputHistoryMode;
+  const isActive = ACTIVE_RUN_STATUSES.has(status);
+  const shouldLock = historyView || isActive;
+  elements.throughputModelSelect.disabled = shouldLock;
+  if (shouldLock) {
+    setModelSelectValue(run?.model_name ?? run?.modelName);
+    return;
+  }
+  if (!getSelectedModelName()) {
+    const stored = getStoredModelName();
+    setModelSelectValue(stored || run?.model_name || run?.modelName);
+  }
 };
 
 const scheduleConfigSave = () => {
@@ -120,10 +221,14 @@ const scheduleConfigSave = () => {
   setTimeout(() => {
     elements.throughputFormStatus.dataset.syncing = "false";
     persistConfig();
+    if (!state.runtime.throughputHistoryMode && !ACTIVE_RUN_STATUSES.has(currentStatus)) {
+      updateModelValue(null);
+    }
   }, 200);
 };
 
 const persistConfig = () => {
+  const modelName = getSelectedModelName();
   writeStoredConfig({
     max_concurrency: readPositiveInt(
       elements.throughputMaxConcurrency,
@@ -133,6 +238,7 @@ const persistConfig = () => {
     question: String(elements.throughputQuestion?.value || "").trim(),
     user_id_prefix: String(elements.throughputUserPrefix?.value || "").trim(),
     request_timeout_s: readNumber(elements.throughputTimeout, DEFAULT_CONFIG.request_timeout_s),
+    model_name: modelName || undefined,
   });
 };
 
@@ -348,6 +454,7 @@ const updateToggleButton = (status) => {
 
 const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   if (!snapshot) {
+    currentRunSnapshot = null;
     applyStatusBadge("");
     currentStatus = "";
     updateToggleButton("");
@@ -361,6 +468,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     return;
   }
   const run = snapshot.run || {};
+  currentRunSnapshot = run;
   syncThroughputSessionContext(run);
   syncCurveRun(run.id);
   const metrics = snapshot.metrics || {};
@@ -391,7 +499,8 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     elements.throughputStepValue,
     formatCount(Number.isFinite(step) && step >= 0 ? step : null)
   );
-  setText(elements.throughputModelValue, resolveModelName(run));
+  syncModelSelectState(run, { historyView: options.historyView });
+  updateModelValue(run);
   setText(elements.throughputTotal, formatCount(metrics.total_requests));
   setText(elements.throughputSuccess, formatCount(metrics.success_requests));
   setText(elements.throughputError, formatCount(metrics.error_requests));
@@ -407,7 +516,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
 };
 
 const fillMetric = (...values) => {
-  const filled = new Array(18).fill("-");
+  const filled = new Array(17).fill("-");
   values.forEach((value, index) => {
     if (index < filled.length) {
       filled[index] = value;
@@ -419,7 +528,6 @@ const fillMetric = (...values) => {
     elapsed,
     maxConcurrency,
     step,
-    model,
     total,
     success,
     error,
@@ -438,7 +546,8 @@ const fillMetric = (...values) => {
   setText(elements.throughputElapsed, elapsed);
   setText(elements.throughputMaxConcurrencyValue, maxConcurrency);
   setText(elements.throughputStepValue, step);
-  setText(elements.throughputModelValue, model);
+  syncModelSelectState(null);
+  updateModelValue(null);
   setText(elements.throughputTotal, total);
   setText(elements.throughputSuccess, success);
   setText(elements.throughputError, error);
@@ -565,12 +674,6 @@ const filterSessionsByConcurrency = (sessions, concurrency) => {
     return sessions;
   }
   return sessions.filter((session) => resolveSessionConcurrency(session) === concurrency);
-};
-
-const resolveModelName = (run) => {
-  const raw = run?.model_name ?? run?.modelName ?? "";
-  const text = String(raw || "").trim();
-  return text || t("throughput.field.modelDefault");
 };
 
 const syncThreadFilterButtons = () => {
@@ -888,6 +991,7 @@ const buildPayload = () => {
     throw new Error(t("throughput.error.questions"));
   }
   const user_id_prefix = String(elements.throughputUserPrefix?.value || "").trim() || undefined;
+  const model_name = getSelectedModelName() || undefined;
   const request_timeout_s = Number(elements.throughputTimeout?.value);
   if (Number.isFinite(request_timeout_s) && request_timeout_s < 0) {
     throw new Error(t("throughput.error.timeout"));
@@ -898,6 +1002,7 @@ const buildPayload = () => {
     question: questions[0],
     questions,
     user_id_prefix,
+    model_name,
     request_timeout_s: Number.isFinite(request_timeout_s) ? request_timeout_s : undefined,
   };
 };
@@ -1273,14 +1378,26 @@ const applyHistorySpeedMetrics = (report) => {
   if (!Number.isFinite(singleDecode) || singleDecode <= 0) {
     singleDecode = Number.isFinite(legacyDecode) && legacyDecode > 0 ? legacyDecode : NaN;
   }
-  const totalPrefill =
-    Number.isFinite(singlePrefill) && Number.isFinite(concurrency) && concurrency > 0
-      ? singlePrefill * concurrency
-      : Number(sample.total_prefill_speed_tps);
-  const totalDecode =
-    Number.isFinite(singleDecode) && Number.isFinite(concurrency) && concurrency > 0
-      ? singleDecode * concurrency
-      : Number(sample.total_decode_speed_tps);
+  const totalPrefillRaw = Number(sample.total_prefill_speed_tps);
+  const totalDecodeRaw = Number(sample.total_decode_speed_tps);
+  let totalPrefill = Number.isFinite(totalPrefillRaw) && totalPrefillRaw > 0 ? totalPrefillRaw : NaN;
+  let totalDecode = Number.isFinite(totalDecodeRaw) && totalDecodeRaw > 0 ? totalDecodeRaw : NaN;
+  if (
+    (!Number.isFinite(totalPrefill) || totalPrefill <= 0) &&
+    Number.isFinite(singlePrefill) &&
+    Number.isFinite(concurrency) &&
+    concurrency > 0
+  ) {
+    totalPrefill = singlePrefill * concurrency;
+  }
+  if (
+    (!Number.isFinite(totalDecode) || totalDecode <= 0) &&
+    Number.isFinite(singleDecode) &&
+    Number.isFinite(concurrency) &&
+    concurrency > 0
+  ) {
+    totalDecode = singleDecode * concurrency;
+  }
   if ((!Number.isFinite(singlePrefill) || singlePrefill <= 0) && Number.isFinite(totalPrefill)) {
     if (Number.isFinite(concurrency) && concurrency > 0) {
       singlePrefill = totalPrefill / concurrency;
@@ -1619,6 +1736,15 @@ export const initThroughputPanel = async () => {
   }
   initialized = true;
   applyStoredConfig();
+  ensureLlmConfigLoaded()
+    .then(() => {
+      renderThroughputModelOptions();
+      syncModelSelectState(null);
+    })
+    .catch(() => {
+      renderThroughputModelOptions();
+      syncModelSelectState(null);
+    });
   if (elements.throughputToggleBtn) {
     elements.throughputToggleBtn.addEventListener("click", handleToggle);
   }
@@ -1661,12 +1787,21 @@ export const initThroughputPanel = async () => {
     elements.throughputQuestion,
     elements.throughputUserPrefix,
     elements.throughputTimeout,
+    elements.throughputModelSelect,
   ].forEach((input) => {
     if (!input) {
       return;
     }
     input.addEventListener("input", scheduleConfigSave);
     input.addEventListener("change", scheduleConfigSave);
+  });
+  window.addEventListener("wunder:llm-updated", () => {
+    renderThroughputModelOptions({ value: getSelectedModelName() });
+    updateModelValue(null);
+  });
+  window.addEventListener("wunder:language-changed", () => {
+    renderThroughputModelOptions({ value: getSelectedModelName() });
+    updateModelValue(null);
   });
   syncThreadFilterButtons();
   renderThroughputSessions();

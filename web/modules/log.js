@@ -1,4 +1,4 @@
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
 
 // 控制日志数量上限，避免详情节点堆积导致页面卡顿

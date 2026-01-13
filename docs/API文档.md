@@ -796,6 +796,7 @@
   - `question`：压测问题文本（可选，单条）
   - `questions`：压测问题列表（可选，多条；提供后每次请求随机抽取）
   - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
+  - `model_name`：模型配置名称（可选，不传使用默认模型）
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
   - `step` > 0 时服务端从并发 1 开始按步增逐步提升到 `max_concurrency`，每个并发档位只发送一轮请求。

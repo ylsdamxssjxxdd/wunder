@@ -1320,6 +1320,55 @@ button.danger {
   white-space: nowrap;
 }
 
+.workspace-upload-progress {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.workspace-upload-progress.active {
+  display: flex;
+}
+
+.workspace-upload-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.workspace-upload-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #38bdf8 0%, #3b82f6 100%);
+  transition: width 0.15s ease;
+  transform: translateX(0);
+}
+
+.workspace-upload-progress.indeterminate .workspace-upload-bar-fill {
+  width: 30%;
+  animation: workspace-upload-indeterminate 1s infinite ease-in-out;
+}
+
+.workspace-upload-text {
+  min-width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes workspace-upload-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(240%);
+  }
+}
+
 .workspace-list {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -1740,6 +1789,11 @@ button.danger {
 
 .monitor-kv-table td {
   text-align: right;
+}
+
+.throughput-model-select {
+  width: 100%;
+  text-align: left;
 }
 
 .monitor-kv-table td strong {

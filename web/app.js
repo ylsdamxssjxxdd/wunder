@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260113-01";
+import { elements } from "./modules/elements.js?v=20260113-02";
 
 import { state } from "./modules/state.js";
 
@@ -21,7 +21,7 @@ import { loadI18nConfig } from "./modules/i18n-config.js";
 
 import { initToolDetailModal } from "./modules/tool-detail.js";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260108-02";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260113-02";
 import {
 
   applyPromptToolError,

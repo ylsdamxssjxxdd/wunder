@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260112-06" />
+    <link rel="stylesheet" href="./app.css?v=20260113-02" />
   </head>
   <body>
     <div class="app">
@@ -877,6 +877,12 @@
                     </div>
                     <div id="workspaceSelectionMeta" class="workspace-selection-meta muted"></div>
                   </div>
+                  <div id="workspaceUploadProgress" class="workspace-upload-progress" aria-live="polite">
+                    <div class="workspace-upload-bar">
+                      <div id="workspaceUploadProgressBar" class="workspace-upload-bar-fill"></div>
+                    </div>
+                    <div id="workspaceUploadProgressText" class="workspace-upload-text"></div>
+                  </div>
                   <div id="workspaceList" class="workspace-list"></div>
                 </div>
               <div class="form-row debug-attachments">
@@ -1685,6 +1691,12 @@
                     placeholder="throughput_user"
                     data-i18n-placeholder="throughput.form.userPrefixPlaceholder"
                   />
+                </div>
+                <div class="form-row">
+                  <label for="throughputModelSelect" data-i18n="throughput.field.model">当前模型</label>
+                  <select id="throughputModelSelect" class="throughput-model-select">
+                    <option value="" data-i18n="llm.default">默认模型</option>
+                  </select>
                 </div>
                 <div class="form-row">
                   <label for="throughputTimeout" data-i18n="throughput.form.timeout">单次请求超时（秒）</label>
@@ -3338,6 +3350,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260113-01"></script>
+    <script type="module" src="./app.js?v=20260113-02"></script>
   </body>
 </html>

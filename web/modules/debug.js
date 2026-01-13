@@ -1,11 +1,11 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20260108-02";
 import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
-import { loadWorkspace } from "./workspace.js?v=20260101-02";
+import { loadWorkspace } from "./workspace.js?v=20260113-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";

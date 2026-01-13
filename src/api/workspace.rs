@@ -2,7 +2,7 @@ use crate::i18n;
 use crate::state::AppState;
 use crate::workspace::WorkspaceEntry;
 use axum::body::Body;
-use axum::extract::{Multipart, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -24,6 +24,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
+const MAX_WORKSPACE_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -32,7 +34,10 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/workspace/content", get(workspace_content))
         .route("/wunder/workspace/search", get(workspace_search))
-        .route("/wunder/workspace/upload", post(workspace_upload))
+        .route(
+            "/wunder/workspace/upload",
+            post(workspace_upload).layer(DefaultBodyLimit::max(MAX_WORKSPACE_UPLOAD_BYTES)),
+        )
         .route("/wunder/workspace/dir", post(workspace_dir))
         .route("/wunder/workspace/move", post(workspace_move))
         .route("/wunder/workspace/copy", post(workspace_copy))

@@ -1,4 +1,4 @@
-import { elements } from "./elements.js?v=20260113-01";
+import { elements } from "./elements.js?v=20260113-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
@@ -587,6 +587,16 @@ const applyLlmSet = (raw, options = {}) => {
   }
   if (options.syncDebug) {
     renderDebugModelOptions();
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("wunder:llm-updated", {
+        detail: {
+          defaultName: state.llm.defaultName,
+          order: [...state.llm.order],
+        },
+      })
+    );
   }
 };
 
