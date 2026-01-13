@@ -3,7 +3,7 @@ use crate::state::AppState;
 use crate::workspace::WorkspaceEntry;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -260,8 +260,22 @@ async fn workspace_search(
 }
 async fn workspace_upload(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
+    if let Some(length) = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        if length > MAX_WORKSPACE_UPLOAD_BYTES as u64 {
+            return Err(error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                i18n::t("workspace.error.upload_too_large"),
+            ));
+        }
+    }
+
     let mut user_id = String::new();
     let mut base_path = String::new();
     let mut relative_paths = Vec::new();

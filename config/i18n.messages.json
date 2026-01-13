@@ -1343,6 +1343,10 @@
     "en-US": "Target is not a file",
     "zh-CN": "目标不是文件"
   },
+  "workspace.error.upload_too_large": {
+    "en-US": "Upload size exceeds limit",
+    "zh-CN": "上传文件大小超过上限"
+  },
   "workspace.error.workspace_not_found": {
     "en-US": "Workspace not found",
     "zh-CN": "工作区不存在"
