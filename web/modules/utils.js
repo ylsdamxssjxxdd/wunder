@@ -1,4 +1,4 @@
-﻿import { getCurrentLanguage, t } from "./i18n.js?v=20260112-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
 
 // 工具函数：纯逻辑处理，便于多模块复用
 

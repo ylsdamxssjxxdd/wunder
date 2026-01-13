@@ -1,5 +1,5 @@
-﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260112-04";
+import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -11,7 +11,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260112-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -301,12 +301,6 @@ const updateMonitorChartTitles = () => {
       label: windowLabel,
     });
   }
-  if (elements.metricServiceRecentLabel) {
-    const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricServiceRecentLabel.textContent = t("monitor.metric.recentComplete", {
-      label: windowLabel,
-    });
-  }
   if (elements.toolHeatmapTitle) {
     const windowLabel = getMonitorTimeWindowLabel();
     const text = t("monitor.chart.toolHeatmap", { label: windowLabel });
@@ -316,18 +310,6 @@ const updateMonitorChartTitles = () => {
     } else {
       elements.toolHeatmapTitle.textContent = text;
     }
-  }
-  if (elements.metricSandboxCallsLabel) {
-    const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricSandboxCallsLabel.textContent = t("monitor.metric.recentCalls", {
-      label: windowLabel,
-    });
-  }
-  if (elements.metricSandboxSessionsLabel) {
-    const windowLabel = getMonitorTimeWindowLabel();
-    elements.metricSandboxSessionsLabel.textContent = t("monitor.metric.recentSessions", {
-      label: windowLabel,
-    });
   }
 };
 
@@ -1073,7 +1055,9 @@ const renderServiceMetrics = (service) => {
     elements.metricServiceError.textContent = "-";
     elements.metricServiceCancelled.textContent = "-";
     elements.metricServiceTotal.textContent = "-";
-    elements.metricServiceRecent.textContent = "-";
+    if (elements.metricServiceTokenAvg) {
+      elements.metricServiceTokenAvg.textContent = "-";
+    }
     elements.metricServiceAvg.textContent = "-";
     if (elements.metricServicePrefillSpeed) {
       elements.metricServicePrefillSpeed.textContent = "-";
@@ -1089,7 +1073,10 @@ const renderServiceMetrics = (service) => {
   elements.metricServiceError.textContent = `${service.error_sessions ?? 0}`;
   elements.metricServiceCancelled.textContent = `${service.cancelled_sessions ?? 0}`;
   elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
-  elements.metricServiceRecent.textContent = `${service.recent_completed ?? 0}`;
+  if (elements.metricServiceTokenAvg) {
+    const avgTokens = parseMetricNumber(service.avg_token_usage);
+    elements.metricServiceTokenAvg.textContent = formatTokenCount(avgTokens);
+  }
   elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
   if (elements.metricServicePrefillSpeed) {
     const prefillSpeed = parseMetricNumber(service.avg_prefill_speed_tps);
@@ -1427,7 +1414,8 @@ const renderServiceStatusChart = (service, sessions) => {
 // 汇总服务图表数据并刷新渲染
 const renderServiceCharts = (service, sessions) => {
   updateMonitorChartTitles();
-  const totalTokens = resolveTotalTokens(sessions);
+  const scopedSessions = filterSessionsByInterval(sessions);
+  const totalTokens = resolveTotalTokens(scopedSessions);
   if (elements.metricServiceTokenTotal) {
     elements.metricServiceTokenTotal.textContent = formatTokenCount(totalTokens);
   }
@@ -1435,7 +1423,6 @@ const renderServiceCharts = (service, sessions) => {
     return;
   }
   renderTokenTrendChart();
-  const scopedSessions = filterSessionsByInterval(sessions);
   renderServiceStatusChart(service, scopedSessions);
   resizeMonitorCharts();
 };

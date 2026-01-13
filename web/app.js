@@ -1,4 +1,4 @@
-﻿import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260110-04";
+import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260110-04";
 
 import {
 
@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260112-04";
+import { elements } from "./modules/elements.js?v=20260113-01";
 
 import { state } from "./modules/state.js";
 
@@ -37,7 +37,7 @@ import {
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-04";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260110-08";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import {
 
@@ -69,7 +69,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260112-03";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260113-01";
 
 
 

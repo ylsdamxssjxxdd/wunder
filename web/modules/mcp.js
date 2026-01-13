@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260112-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js?v=20251229-02";
@@ -6,7 +6,7 @@ import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260112-03";
+import { t } from "./i18n.js?v=20260113-01";
 
 // 规范化 MCP 服务字段，兼容后端与导入结构
 const normalizeMcpServer = (server) => {

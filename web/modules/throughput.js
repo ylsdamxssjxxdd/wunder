@@ -1,11 +1,11 @@
-﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260112-04";
+import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
-import { openMonitorDetail } from "./monitor.js?v=20260110-08";
-import { t } from "./i18n.js?v=20260112-03";
+import { openMonitorDetail } from "./monitor.js?v=20260113-01";
+import { t } from "./i18n.js?v=20260113-01";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {
@@ -22,19 +22,24 @@ const THREAD_FILTERS = ["all", "active", "finished", "failed"];
 const MAX_SAMPLES = 500;
 const CURVE_METRICS = [
   {
-    key: "prefill_speed_tps",
-    labelKey: "throughput.metric.prefillSpeed",
+    key: "total_prefill_speed_tps",
+    labelKey: "throughput.metric.totalPrefillSpeed",
     color: "#3b82f6",
   },
   {
-    key: "decode_speed_tps",
-    labelKey: "throughput.metric.decodeSpeed",
+    key: "single_prefill_speed_tps",
+    labelKey: "throughput.metric.singlePrefillSpeed",
+    color: "#38bdf8",
+  },
+  {
+    key: "total_decode_speed_tps",
+    labelKey: "throughput.metric.totalDecodeSpeed",
     color: "#22c55e",
   },
   {
-    key: "first_token_latency_ms",
-    labelKey: "throughput.metric.firstTokenLatency",
-    color: "#f97316",
+    key: "single_decode_speed_tps",
+    labelKey: "throughput.metric.singleDecodeSpeed",
+    color: "#4ade80",
   },
 ];
 
@@ -50,8 +55,10 @@ let throughputSessionRunId = "";
 let throughputSessionStartMs = null;
 let throughputSessionPrefix = "";
 let throughputThreadFilter = "all";
-let currentPrefillSpeed = null;
-let currentDecodeSpeed = null;
+let currentTotalPrefillSpeed = null;
+let currentTotalDecodeSpeed = null;
+let currentSinglePrefillSpeed = null;
+let currentSingleDecodeSpeed = null;
 
 const readStoredConfig = () => {
   try {
@@ -122,7 +129,7 @@ const persistConfig = () => {
       elements.throughputMaxConcurrency,
       DEFAULT_CONFIG.max_concurrency
     ),
-    step: readPositiveInt(elements.throughputStep, DEFAULT_CONFIG.step),
+    step: parseNonNegativeInt(elements.throughputStep) ?? DEFAULT_CONFIG.step,
     question: String(elements.throughputQuestion?.value || "").trim(),
     user_id_prefix: String(elements.throughputUserPrefix?.value || "").trim(),
     request_timeout_s: readNumber(elements.throughputTimeout, DEFAULT_CONFIG.request_timeout_s),
@@ -147,6 +154,22 @@ const readPositiveInt = (element, fallback) => {
   }
   const value = Math.floor(parsed);
   return value > 0 ? value : fallback;
+};
+
+const parseNonNegativeInt = (element) => {
+  if (!element) {
+    return null;
+  }
+  const raw = String(element.value ?? "");
+  if (!raw.trim()) {
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  const value = Math.floor(parsed);
+  return value >= 0 ? value : null;
 };
 
 const formatCount = (value) => {
@@ -308,7 +331,8 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     currentStatus = "";
     updateToggleButton("");
     setStatusHint(t("throughput.status.emptyHint"));
-    setSpeedMetrics(null, null);
+    setTotalSpeedMetrics(null, null);
+    setSingleSpeedMetrics(null, null);
     fillMetric();
     resetThroughputSessions({ resetContext: true });
     resetCharts();
@@ -324,10 +348,12 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   updateToggleButton(status);
   if (options.historyView) {
     setStatusHint(t("throughput.status.historyViewHint"));
-    setSpeedMetrics(null, null);
+    setSingleSpeedMetrics(null, null);
+    setTotalSpeedMetrics(null, null);
     resetThroughputSessions();
   } else {
     setStatusHint(fromHistory ? t("throughput.status.historyHint") : "");
+    setTotalSpeedMetrics(null, null);
   }
   setText(elements.throughputStatusText, resolveStatusLabel(status));
   setText(elements.throughputStartedAt, formatTimestamp(run.started_at));
@@ -340,20 +366,18 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   );
   setText(
     elements.throughputStepValue,
-    formatCount(Number.isFinite(step) && step > 0 ? step : null)
+    formatCount(Number.isFinite(step) && step >= 0 ? step : null)
   );
-  setText(elements.throughputUserPrefixValue, run.user_id_prefix || "-");
+  setText(elements.throughputModelValue, resolveModelName(run));
   setText(elements.throughputTotal, formatCount(metrics.total_requests));
   setText(elements.throughputSuccess, formatCount(metrics.success_requests));
   setText(elements.throughputError, formatCount(metrics.error_requests));
   setText(elements.throughputRps, formatRate(metrics.rps));
   setText(elements.throughputAvgLatency, formatLatency(metrics.avg_latency_ms));
-  setText(elements.throughputP50, formatLatency(metrics.p50_latency_ms));
   setText(
     elements.throughputFirstTokenLatency,
     formatLatency(metrics.first_token_latency_ms)
   );
-  setText(elements.throughputP99, formatLatency(metrics.p99_latency_ms));
   setText(elements.throughputTotalTokens, formatTokenCount(metrics.total_tokens));
   setText(elements.throughputAvgTokens, formatTokenCount(metrics.avg_total_tokens));
   applySpeedMetrics();
@@ -372,17 +396,17 @@ const fillMetric = (...values) => {
     elapsed,
     maxConcurrency,
     step,
-    prefix,
+    model,
     total,
     success,
     error,
     rps,
     avgLatency,
     firstTokenLatency,
-    p50,
-    p99,
-    prefillSpeed,
-    decodeSpeed,
+    totalPrefillSpeed,
+    totalDecodeSpeed,
+    singlePrefillSpeed,
+    singleDecodeSpeed,
     totalTokens,
     avgTokens,
   ] = filled;
@@ -391,17 +415,17 @@ const fillMetric = (...values) => {
   setText(elements.throughputElapsed, elapsed);
   setText(elements.throughputMaxConcurrencyValue, maxConcurrency);
   setText(elements.throughputStepValue, step);
-  setText(elements.throughputUserPrefixValue, prefix);
+  setText(elements.throughputModelValue, model);
   setText(elements.throughputTotal, total);
   setText(elements.throughputSuccess, success);
   setText(elements.throughputError, error);
   setText(elements.throughputRps, rps);
   setText(elements.throughputAvgLatency, avgLatency);
-  setText(elements.throughputP50, p50);
   setText(elements.throughputFirstTokenLatency, firstTokenLatency);
-  setText(elements.throughputP99, p99);
-  setText(elements.throughputPrefillSpeed, prefillSpeed);
-  setText(elements.throughputDecodeSpeed, decodeSpeed);
+  setText(elements.throughputTotalPrefillSpeed, totalPrefillSpeed);
+  setText(elements.throughputTotalDecodeSpeed, totalDecodeSpeed);
+  setText(elements.throughputSinglePrefillSpeed, singlePrefillSpeed);
+  setText(elements.throughputSingleDecodeSpeed, singleDecodeSpeed);
   setText(elements.throughputTotalTokens, totalTokens);
   setText(elements.throughputAvgTokens, avgTokens);
 };
@@ -421,24 +445,37 @@ const setStatusHint = (text) => {
 };
 
 const applySpeedMetrics = () => {
-  if (elements.throughputPrefillSpeed) {
-    elements.throughputPrefillSpeed.textContent = formatTokenRate(currentPrefillSpeed);
+  if (elements.throughputTotalPrefillSpeed) {
+    elements.throughputTotalPrefillSpeed.textContent = formatTokenRate(currentTotalPrefillSpeed);
   }
-  if (elements.throughputDecodeSpeed) {
-    elements.throughputDecodeSpeed.textContent = formatTokenRate(currentDecodeSpeed);
+  if (elements.throughputTotalDecodeSpeed) {
+    elements.throughputTotalDecodeSpeed.textContent = formatTokenRate(currentTotalDecodeSpeed);
+  }
+  if (elements.throughputSinglePrefillSpeed) {
+    elements.throughputSinglePrefillSpeed.textContent = formatTokenRate(currentSinglePrefillSpeed);
+  }
+  if (elements.throughputSingleDecodeSpeed) {
+    elements.throughputSingleDecodeSpeed.textContent = formatTokenRate(currentSingleDecodeSpeed);
   }
 };
 
-const setSpeedMetrics = (prefill, decode) => {
-  currentPrefillSpeed = Number.isFinite(prefill) ? prefill : null;
-  currentDecodeSpeed = Number.isFinite(decode) ? decode : null;
+const setTotalSpeedMetrics = (prefill, decode) => {
+  currentTotalPrefillSpeed = Number.isFinite(prefill) ? prefill : null;
+  currentTotalDecodeSpeed = Number.isFinite(decode) ? decode : null;
+  applySpeedMetrics();
+};
+
+const setSingleSpeedMetrics = (prefill, decode) => {
+  currentSinglePrefillSpeed = Number.isFinite(prefill) ? prefill : null;
+  currentSingleDecodeSpeed = Number.isFinite(decode) ? decode : null;
   applySpeedMetrics();
 };
 
 const enterHistoryMode = (runId) => {
   state.runtime.throughputHistoryMode = true;
   state.runtime.throughputHistoryRunId = runId || "";
-  setSpeedMetrics(null, null);
+  setTotalSpeedMetrics(null, null);
+  setSingleSpeedMetrics(null, null);
   resetThroughputSessions({ resetContext: true });
   stopPolling();
 };
@@ -455,6 +492,60 @@ const resolveThreadPrefix = (run) => {
   }
   const fallback = String(elements.throughputUserPrefix?.value || "").trim();
   return fallback || DEFAULT_CONFIG.user_id_prefix;
+};
+
+const resolveSessionConcurrency = (session) => {
+  const runId = throughputSessionRunId;
+  const sessionId = String(session?.session_id || "");
+  if (runId && sessionId) {
+    const prefix = `throughput_${runId}_`;
+    if (sessionId.startsWith(prefix)) {
+      const remainder = sessionId.slice(prefix.length);
+      const value = Number(remainder.split("_")[0]);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+  }
+  const userPrefix = throughputSessionPrefix;
+  const userId = String(session?.user_id || "");
+  if (userPrefix && userId.startsWith(`${userPrefix}-`)) {
+    const remainder = userId.slice(userPrefix.length + 1);
+    const value = Number(remainder.split("-")[0]);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const resolveMaxConcurrency = (sessions) => {
+  let max = 0;
+  sessions.forEach((session) => {
+    const value = resolveSessionConcurrency(session);
+    if (Number.isFinite(value) && value > max) {
+      max = value;
+    }
+  });
+  return max > 0 ? max : null;
+};
+
+const resolveTargetConcurrency = (sessions) => {
+  const active = sessions.filter((session) => ACTIVE_SESSION_STATUSES.has(session?.status));
+  return resolveMaxConcurrency(active) ?? resolveMaxConcurrency(sessions);
+};
+
+const filterSessionsByConcurrency = (sessions, concurrency) => {
+  if (!Number.isFinite(concurrency) || concurrency <= 0) {
+    return sessions;
+  }
+  return sessions.filter((session) => resolveSessionConcurrency(session) === concurrency);
+};
+
+const resolveModelName = (run) => {
+  const raw = run?.model_name ?? run?.modelName ?? "";
+  const text = String(raw || "").trim();
+  return text || t("throughput.field.modelDefault");
 };
 
 const syncThreadFilterButtons = () => {
@@ -501,7 +592,7 @@ const syncThroughputSessionContext = (run) => {
   if (runChanged) {
     throughputSessionMap = new Map();
     throughputSessions = [];
-    setSpeedMetrics(null, null);
+    setSingleSpeedMetrics(null, null);
   }
   throughputSessionRunId = runId;
   throughputSessionStartMs = startedAtMs;
@@ -558,18 +649,43 @@ const updateThroughputSessions = (sessions) => {
   throughputSessions = sortSessionsByUpdate(Array.from(throughputSessionMap.values()));
 };
 
-const computeAverageSpeed = (sessions, tokenKey, durationKey) => {
-  let totalTokens = 0;
-  let totalDuration = 0;
+const resolveSessionSpeed = (session, tokenKey, durationKey, speedKey) => {
+  const tokens = Number(session?.[tokenKey]);
+  const duration = Number(session?.[durationKey]);
+  if (Number.isFinite(tokens) && Number.isFinite(duration) && tokens > 0 && duration > 0) {
+    return tokens / duration;
+  }
+  const speed = Number(session?.[speedKey]);
+  if (Number.isFinite(speed) && speed > 0) {
+    return speed;
+  }
+  return null;
+};
+
+const computeAverageSpeed = (sessions, tokenKey, durationKey, speedKey) => {
+  let total = 0;
+  let count = 0;
   sessions.forEach((session) => {
-    const tokens = Number(session?.[tokenKey]);
-    const duration = Number(session?.[durationKey]);
-    if (Number.isFinite(tokens) && Number.isFinite(duration) && tokens > 0 && duration > 0) {
-      totalTokens += tokens;
-      totalDuration += duration;
+    const speed = resolveSessionSpeed(session, tokenKey, durationKey, speedKey);
+    if (Number.isFinite(speed) && speed > 0) {
+      total += speed;
+      count += 1;
     }
   });
-  return totalTokens > 0 && totalDuration > 0 ? totalTokens / totalDuration : null;
+  return count > 0 ? total / count : null;
+};
+
+const computeSumSpeed = (sessions, tokenKey, durationKey, speedKey) => {
+  let total = 0;
+  let count = 0;
+  sessions.forEach((session) => {
+    const speed = resolveSessionSpeed(session, tokenKey, durationKey, speedKey);
+    if (Number.isFinite(speed) && speed > 0) {
+      total += speed;
+      count += 1;
+    }
+  });
+  return count > 0 ? total : null;
 };
 
 const renderThroughputSessions = () => {
@@ -682,9 +798,34 @@ const loadThroughputSessions = async (options = {}) => {
     const scoped = sessions.filter((session) => matchThroughputSession(session));
     updateThroughputSessions(scoped);
     renderThroughputSessions();
-    const prefillSpeed = computeAverageSpeed(scoped, "prefill_tokens", "prefill_duration_s");
-    const decodeSpeed = computeAverageSpeed(scoped, "decode_tokens", "decode_duration_s");
-    setSpeedMetrics(prefillSpeed, decodeSpeed);
+    const targetConcurrency = resolveTargetConcurrency(scoped);
+    const concurrencySessions = filterSessionsByConcurrency(scoped, targetConcurrency);
+    const prefillSpeed = computeAverageSpeed(
+      concurrencySessions,
+      "prefill_tokens",
+      "prefill_duration_s",
+      "prefill_speed_tps"
+    );
+    const decodeSpeed = computeAverageSpeed(
+      concurrencySessions,
+      "decode_tokens",
+      "decode_duration_s",
+      "decode_speed_tps"
+    );
+    setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
+    const totalPrefillSpeed = computeSumSpeed(
+      concurrencySessions,
+      "prefill_tokens",
+      "prefill_duration_s",
+      "prefill_speed_tps"
+    );
+    const totalDecodeSpeed = computeSumSpeed(
+      concurrencySessions,
+      "decode_tokens",
+      "decode_duration_s",
+      "decode_speed_tps"
+    );
+    setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
   } catch (error) {
     if (!silent) {
       elements.throughputThreadEmpty.textContent = t("common.loadFailedWithMessage", {
@@ -700,8 +841,8 @@ const buildPayload = () => {
   if (maxConcurrency <= 0) {
     throw new Error(t("throughput.error.maxConcurrency"));
   }
-  const step = readPositiveInt(elements.throughputStep, 0);
-  if (step <= 0) {
+  const step = parseNonNegativeInt(elements.throughputStep);
+  if (step === null) {
     throw new Error(t("throughput.error.step"));
   }
   const rawQuestions = String(elements.throughputQuestion?.value || "");
@@ -761,9 +902,10 @@ const normalizeCurveSample = (sample) => {
   return {
     concurrency,
     metrics: {
-      prefill_speed_tps: toMetricValue(sample.prefill_speed_tps),
-      decode_speed_tps: toMetricValue(sample.decode_speed_tps),
-      first_token_latency_ms: toMetricValue(sample.first_token_latency_ms),
+      total_prefill_speed_tps: toMetricValue(sample.total_prefill_speed_tps),
+      single_prefill_speed_tps: toMetricValue(sample.single_prefill_speed_tps),
+      total_decode_speed_tps: toMetricValue(sample.total_decode_speed_tps),
+      single_decode_speed_tps: toMetricValue(sample.single_decode_speed_tps),
     },
   };
 };
@@ -776,7 +918,7 @@ const normalizeCurveSamples = (reportSamples) =>
 
 const getCurveBaseline = (curveSamples) => {
   const baseline = {};
-  const first = curveSamples.find((sample) => sample.concurrency === 1);
+  const first = curveSamples.find((sample) => sample.concurrency === 1) || curveSamples[0];
   if (!first) {
     return baseline;
   }
@@ -818,8 +960,26 @@ const renderCurveChart = () => {
   const option = {
     tooltip: {
       trigger: "axis",
-      valueFormatter: (value) =>
-        Number.isFinite(value) ? `${Number(value).toFixed(1)}%` : "-",
+      formatter: (params) => {
+        if (!Array.isArray(params) || !params.length) {
+          return "";
+        }
+        const dataIndex = params[0]?.dataIndex ?? -1;
+        const sample = curveSamples[dataIndex];
+        const concurrencyLabel = t("throughput.chart.axis.concurrency");
+        const header = `${concurrencyLabel}: ${sample?.concurrency ?? "-"}`;
+        const lines = params.map((item) => {
+          const metric = CURVE_METRICS[item.seriesIndex];
+          const actualValue = sample?.metrics?.[metric.key];
+          const actualText = Number.isFinite(actualValue) ? formatTokenRate(actualValue) : "-";
+          const deltaText = Number.isFinite(item.value)
+            ? `${Number(item.value).toFixed(2)}%`
+            : "-";
+          const suffix = actualText !== "-" ? ` (${actualText})` : "";
+          return `${item.marker}${t(metric.labelKey)}: ${deltaText}${suffix}`;
+        });
+        return [header, ...lines].join("<br/>");
+      },
     },
     legend: {
       data: CURVE_METRICS.map((metric) => t(metric.labelKey)),
@@ -983,7 +1143,7 @@ const renderHistoryList = (history) => {
     );
     const stepCell = document.createElement("td");
     stepCell.textContent = formatCount(
-      Number.isFinite(stepValue) && stepValue > 0 ? stepValue : null
+      Number.isFinite(stepValue) && stepValue >= 0 ? stepValue : null
     );
     const totalCell = document.createElement("td");
     totalCell.textContent = formatCount(metrics.total_requests);
@@ -1051,6 +1211,55 @@ const applyReport = (report) => {
   const summary = report.summary;
   renderSnapshot(summary, true, { historyView: true });
   applyCurveReport(report);
+  applyHistorySpeedMetrics(report);
+};
+
+const resolveHistorySample = (report) => {
+  const reportSamples = Array.isArray(report?.samples) ? report.samples : [];
+  if (!reportSamples.length) {
+    return null;
+  }
+  return reportSamples[reportSamples.length - 1];
+};
+
+const applyHistorySpeedMetrics = (report) => {
+  const sample = resolveHistorySample(report);
+  if (!sample) {
+    setTotalSpeedMetrics(null, null);
+    setSingleSpeedMetrics(null, null);
+    return;
+  }
+  const concurrency = Number(sample.concurrency);
+  const legacyPrefill = Number(sample.prefill_speed_tps);
+  const legacyDecode = Number(sample.decode_speed_tps);
+  let singlePrefill = Number(sample.single_prefill_speed_tps);
+  if (!Number.isFinite(singlePrefill) || singlePrefill <= 0) {
+    singlePrefill = Number.isFinite(legacyPrefill) && legacyPrefill > 0 ? legacyPrefill : NaN;
+  }
+  let singleDecode = Number(sample.single_decode_speed_tps);
+  if (!Number.isFinite(singleDecode) || singleDecode <= 0) {
+    singleDecode = Number.isFinite(legacyDecode) && legacyDecode > 0 ? legacyDecode : NaN;
+  }
+  const totalPrefill =
+    Number.isFinite(singlePrefill) && Number.isFinite(concurrency) && concurrency > 0
+      ? singlePrefill * concurrency
+      : Number(sample.total_prefill_speed_tps);
+  const totalDecode =
+    Number.isFinite(singleDecode) && Number.isFinite(concurrency) && concurrency > 0
+      ? singleDecode * concurrency
+      : Number(sample.total_decode_speed_tps);
+  if ((!Number.isFinite(singlePrefill) || singlePrefill <= 0) && Number.isFinite(totalPrefill)) {
+    if (Number.isFinite(concurrency) && concurrency > 0) {
+      singlePrefill = totalPrefill / concurrency;
+    }
+  }
+  if ((!Number.isFinite(singleDecode) || singleDecode <= 0) && Number.isFinite(totalDecode)) {
+    if (Number.isFinite(concurrency) && concurrency > 0) {
+      singleDecode = totalDecode / concurrency;
+    }
+  }
+  setSingleSpeedMetrics(singlePrefill, singleDecode);
+  setTotalSpeedMetrics(totalPrefill, totalDecode);
 };
 
 const restoreHistoryReport = async (runId) => {
@@ -1154,9 +1363,10 @@ const buildCsv = (report) => {
     "p50_latency_ms",
     "p90_latency_ms",
     "p99_latency_ms",
-    "prefill_speed_tps",
-    "decode_speed_tps",
-    "first_token_latency_ms",
+    "total_prefill_speed_tps",
+    "single_prefill_speed_tps",
+    "total_decode_speed_tps",
+    "single_decode_speed_tps",
     "input_tokens",
     "output_tokens",
     "total_tokens",
@@ -1185,9 +1395,10 @@ const buildCsv = (report) => {
       row.p50_latency_ms ?? "",
       row.p90_latency_ms ?? "",
       row.p99_latency_ms ?? "",
-      row.prefill_speed_tps ?? "",
-      row.decode_speed_tps ?? "",
-      row.first_token_latency_ms ?? "",
+      row.total_prefill_speed_tps ?? "",
+      row.single_prefill_speed_tps ?? "",
+      row.total_decode_speed_tps ?? "",
+      row.single_decode_speed_tps ?? "",
       row.input_tokens ?? "",
       row.output_tokens ?? "",
       row.total_tokens ?? "",

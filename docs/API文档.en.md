@@ -242,7 +242,10 @@
 
 - Method: `GET`
 - Query: `active_only`, `tool_hours`, `start_time`, `end_time`
+- Notes: `start_time`/`end_time` overrides `tool_hours`; service/sandbox/tool_stats are window-scoped.
 - Response: `system`, `service`, `sandbox`, `sessions`, `tool_stats`
+  - `service`: active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_token_usage/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps
+  - `sandbox`: mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions
 
 ### 4.1.8.1 `/wunder/admin/monitor/tool_usage`
 

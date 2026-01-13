@@ -337,13 +337,13 @@
 - 方法：`GET`
 - 入参（Query）：
   - `active_only`：是否仅返回活动线程（默认 true）
-  - `tool_hours`：统计窗口（小时，可选，用于工具热力图与近完成统计）
+  - `tool_hours`：统计窗口（小时，可选，用于服务状态、Sandbox 状态与工具热力图统计）
   - `start_time`：筛选开始时间戳（秒，可选，与 `end_time` 搭配时按区间统计）
   - `end_time`：筛选结束时间戳（秒，可选，与 `start_time` 搭配时按区间统计）
-- 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`。
+- 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`；服务状态与 Sandbox 状态指标均基于统计区间。
 - 返回（JSON）：
 - `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/workspace_used/uptime_s）
-  - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/recent_completed/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
+  - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_token_usage/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
   - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
@@ -792,13 +792,14 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `max_concurrency`：最大并发（>0，最大 500）
-  - `step`：并发步增（>0）
+  - `step`：并发步增（>=0，0 表示仅压测最大并发）
   - `question`：压测问题文本（可选，单条）
   - `questions`：压测问题列表（可选，多条；提供后每次请求随机抽取）
   - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
-  - 服务端从并发 1 开始按 `step` 逐步提升到 `max_concurrency`，每个并发档位只发送一轮请求。
+  - `step` > 0 时服务端从并发 1 开始按步增逐步提升到 `max_concurrency`，每个并发档位只发送一轮请求。
+  - `step` = 0 时仅对 `max_concurrency` 进行一次并发压测。
   - 每个档位会并行发起 `concurrency` 个请求，结束后进入下一档位。
   - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
   - 未传 `questions` 时使用 `question` 作为唯一问题；两者都为空会返回 400。
@@ -832,7 +833,7 @@
   - `id`：任务 ID
   - `status`：`running/stopping/finished/stopped`
   - `max_concurrency`：最大并发
-  - `step`：并发步增
+  - `step`：并发步增（>=0，0 表示仅压测最大并发）
   - `question`：压测问题文本（可选，第一条）
   - `questions`：压测问题列表
   - `user_id_prefix`：用户前缀
@@ -848,7 +849,7 @@
   - `error_requests`：失败数
   - `rps`：每秒请求数（四舍五入到两位小数）
   - `avg_latency_ms`：平均耗时（毫秒）
-  - `first_token_latency_ms`：首包时延（毫秒）
+  - `first_token_latency_ms`：首包延迟（毫秒）
   - `min_latency_ms`：最小耗时（毫秒）
   - `max_latency_ms`：最大耗时（毫秒）
   - `p50_latency_ms`：P50 耗时（毫秒，基于桶估算）
@@ -873,9 +874,10 @@
 - `rps`：该档位吞吐
 - `avg_latency_ms`：平均耗时（毫秒）
 - `p50_latency_ms/p90_latency_ms/p99_latency_ms`：延迟分位（毫秒）
-- `prefill_speed_tps`：预填充速度（token/s）
-- `decode_speed_tps`：解码速度（token/s）
-- `first_token_latency_ms`：首包时延（毫秒）
+- `total_prefill_speed_tps`：总预填充速度（token/s）
+- `single_prefill_speed_tps`：单预填充速度（token/s）
+- `total_decode_speed_tps`：总解码速度（token/s）
+- `single_decode_speed_tps`：单解码速度（token/s）
 - `input_tokens/output_tokens/total_tokens`：该档位 token 统计
 - `avg_total_tokens`：平均 token（按成功请求统计）
 

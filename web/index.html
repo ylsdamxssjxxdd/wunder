@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -268,10 +268,8 @@
                             <td><strong id="metricServiceTotal">-</strong></td>
                           </tr>
                           <tr>
-                            <th id="metricServiceRecentLabel" data-i18n="monitor.metric.recentComplete.default">
-                              近 1 小时完成
-                            </th>
-                            <td><strong id="metricServiceRecent">-</strong></td>
+                            <th data-i18n="monitor.metric.sessions.avgTokens">平均 Token 占用</th>
+                            <td><strong id="metricServiceTokenAvg">-</strong></td>
                           </tr>
                           <tr>
                             <th data-i18n="monitor.metric.sessions.avg">平均耗时</th>
@@ -318,15 +316,11 @@
                             </td>
                           </tr>
                           <tr>
-                            <th id="metricSandboxCallsLabel" data-i18n="monitor.metric.recentCalls.default">
-                              近 3 小时调用
-                            </th>
+                            <th data-i18n="monitor.metric.sandbox.calls">调用次数</th>
                             <td><strong id="metricSandboxCalls">-</strong></td>
                           </tr>
                           <tr>
-                            <th id="metricSandboxSessionsLabel" data-i18n="monitor.metric.recentSessions.default">
-                              近 3 小时会话
-                            </th>
+                            <th data-i18n="monitor.metric.sandbox.sessions">会话数</th>
                             <td><strong id="metricSandboxSessions">-</strong></td>
                           </tr>
                         </tbody>
@@ -1644,7 +1638,7 @@
             </div>
           </div>
           <div class="tips" data-i18n="throughput.tip">
-            服务端从 1 并发开始按步增逐级压测，直到最大并发，用于绘制性能曲线与稳定性表现。
+            服务端从 1 并发开始按步增逐级压测，直到最大并发；步增为 0 时仅压测最大并发，用于绘制性能曲线与稳定性表现。
           </div>
           <div class="throughput-layout">
             <div class="throughput-form">
@@ -1658,9 +1652,9 @@
                 </div>
                 <div class="form-row">
                   <label for="throughputStep" data-i18n="throughput.form.step">并发步增</label>
-                  <input id="throughputStep" type="number" min="1" step="1" />
+                  <input id="throughputStep" type="number" min="0" step="1" />
                   <div class="muted" data-i18n="throughput.form.hint">
-                    每次增加固定并发，直到达到最大并发。
+                    每次增加固定并发，直到达到最大并发；步增为 0 时只压测最大并发。
                   </div>
                 </div>
                 <div class="form-row">
@@ -1731,8 +1725,8 @@
                             <td><strong id="throughputStepValue">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="throughput.field.prefix">user_id 前缀</th>
-                            <td><strong id="throughputUserPrefixValue">-</strong></td>
+                          <th data-i18n="throughput.field.model">当前模型</th>
+                          <td><strong id="throughputModelValue">-</strong></td>
                         </tr>
                       </tbody>
                     </table>
@@ -1762,7 +1756,7 @@
                           <td><strong id="throughputAvgLatency">-</strong></td>
                         </tr>
                         <tr>
-                          <th data-i18n="throughput.metric.firstTokenLatency">首包时延</th>
+                          <th data-i18n="throughput.metric.firstTokenLatency">首包延迟</th>
                           <td><strong id="throughputFirstTokenLatency">-</strong></td>
                         </tr>
                       </tbody>
@@ -1773,12 +1767,20 @@
                     <table class="monitor-kv-table">
                       <tbody>
                         <tr>
-                          <th data-i18n="throughput.metric.prefillSpeed">预填充速度</th>
-                          <td><strong id="throughputPrefillSpeed">-</strong></td>
+                          <th data-i18n="throughput.metric.totalPrefillSpeed">总预填充速度</th>
+                          <td><strong id="throughputTotalPrefillSpeed">-</strong></td>
                         </tr>
                         <tr>
-                          <th data-i18n="throughput.metric.decodeSpeed">解码速度</th>
-                          <td><strong id="throughputDecodeSpeed">-</strong></td>
+                          <th data-i18n="throughput.metric.totalDecodeSpeed">总解码速度</th>
+                          <td><strong id="throughputTotalDecodeSpeed">-</strong></td>
+                        </tr>
+                        <tr>
+                          <th data-i18n="throughput.metric.singlePrefillSpeed">单预填充速度</th>
+                          <td><strong id="throughputSinglePrefillSpeed">-</strong></td>
+                        </tr>
+                        <tr>
+                          <th data-i18n="throughput.metric.singleDecodeSpeed">单解码速度</th>
+                          <td><strong id="throughputSingleDecodeSpeed">-</strong></td>
                         </tr>
                         <tr>
                           <th data-i18n="throughput.metric.totalTokens">总计</th>
@@ -1787,14 +1789,6 @@
                         <tr>
                           <th data-i18n="throughput.metric.avgTokens">平均</th>
                           <td><strong id="throughputAvgTokens">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.p50">P50</th>
-                          <td><strong id="throughputP50">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.p99">P99</th>
-                          <td><strong id="throughputP99">-</strong></td>
                         </tr>
                       </tbody>
                     </table>
@@ -3317,6 +3311,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260112-06"></script>
+    <script type="module" src="./app.js?v=20260113-01"></script>
   </body>
 </html>

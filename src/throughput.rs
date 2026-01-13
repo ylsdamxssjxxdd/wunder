@@ -111,9 +111,6 @@ impl ThroughputConfig {
         if max_concurrency > MAX_CONCURRENCY {
             return Err(format!("最大并发不能超过 {MAX_CONCURRENCY}"));
         }
-        if step == 0 {
-            return Err("并发步增必须大于 0".to_string());
-        }
         let prefix = user_id_prefix
             .unwrap_or_else(|| DEFAULT_USER_PREFIX.to_string())
             .trim()
@@ -429,9 +426,10 @@ pub struct ThroughputSample {
     pub p50_latency_ms: Option<u64>,
     pub p90_latency_ms: Option<u64>,
     pub p99_latency_ms: Option<u64>,
-    pub prefill_speed_tps: Option<f64>,
-    pub decode_speed_tps: Option<f64>,
-    pub first_token_latency_ms: Option<u64>,
+    pub total_prefill_speed_tps: Option<f64>,
+    pub single_prefill_speed_tps: Option<f64>,
+    pub total_decode_speed_tps: Option<f64>,
+    pub single_decode_speed_tps: Option<f64>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
@@ -603,8 +601,11 @@ impl ActiveRun {
 }
 
 fn build_sequence(max_concurrency: usize, step: usize) -> Vec<usize> {
-    if max_concurrency == 0 || step == 0 {
+    if max_concurrency == 0 {
         return Vec::new();
+    }
+    if step == 0 {
+        return vec![max_concurrency];
     }
     let mut sequence = Vec::new();
     let mut current = 1usize;
@@ -638,8 +639,6 @@ struct SpeedAccumulator {
     decode_duration_total: f64,
     decode_speed_total: f64,
     decode_speed_count: u64,
-    first_token_latency_total: f64,
-    first_token_latency_count: u64,
 }
 
 impl SpeedAccumulator {
@@ -666,15 +665,9 @@ impl SpeedAccumulator {
                 self.decode_speed_count += 1;
             }
         }
-        if let Some(duration) = speed.prefill_duration_s {
-            if duration > 0.0 {
-                self.first_token_latency_total += duration;
-                self.first_token_latency_count += 1;
-            }
-        }
     }
 
-    fn prefill_speed(&self) -> Option<f64> {
+    fn single_prefill_speed(&self) -> Option<f64> {
         if self.prefill_tokens_total > 0.0 && self.prefill_duration_total > 0.0 {
             return Some(self.prefill_tokens_total / self.prefill_duration_total);
         }
@@ -684,7 +677,7 @@ impl SpeedAccumulator {
         None
     }
 
-    fn decode_speed(&self) -> Option<f64> {
+    fn single_decode_speed(&self) -> Option<f64> {
         if self.decode_tokens_total > 0.0 && self.decode_duration_total > 0.0 {
             return Some(self.decode_tokens_total / self.decode_duration_total);
         }
@@ -694,12 +687,36 @@ impl SpeedAccumulator {
         None
     }
 
-    fn first_token_latency_ms(&self) -> Option<u64> {
-        if self.first_token_latency_count == 0 {
+    fn total_prefill_speed(&self, total_tokens: u64, elapsed_s: f64) -> Option<f64> {
+        if elapsed_s <= 0.0 {
             return None;
         }
-        let avg_s = self.first_token_latency_total / self.first_token_latency_count as f64;
-        Some((avg_s * 1000.0).round() as u64)
+        let tokens = if total_tokens > 0 {
+            total_tokens as f64
+        } else {
+            self.prefill_tokens_total
+        };
+        if tokens > 0.0 {
+            Some(tokens / elapsed_s)
+        } else {
+            None
+        }
+    }
+
+    fn total_decode_speed(&self, total_tokens: u64, elapsed_s: f64) -> Option<f64> {
+        if elapsed_s <= 0.0 {
+            return None;
+        }
+        let tokens = if total_tokens > 0 {
+            total_tokens as f64
+        } else {
+            self.decode_tokens_total
+        };
+        if tokens > 0.0 {
+            Some(tokens / elapsed_s)
+        } else {
+            None
+        }
     }
 }
 
@@ -784,9 +801,11 @@ async fn run_supervisor(
             p50_latency_ms: snapshot.p50_latency_ms,
             p90_latency_ms: snapshot.p90_latency_ms,
             p99_latency_ms: snapshot.p99_latency_ms,
-            prefill_speed_tps: speed_acc.prefill_speed(),
-            decode_speed_tps: speed_acc.decode_speed(),
-            first_token_latency_ms: speed_acc.first_token_latency_ms(),
+            total_prefill_speed_tps: speed_acc
+                .total_prefill_speed(snapshot.input_tokens, elapsed_s),
+            single_prefill_speed_tps: speed_acc.single_prefill_speed(),
+            total_decode_speed_tps: speed_acc.total_decode_speed(snapshot.output_tokens, elapsed_s),
+            single_decode_speed_tps: speed_acc.single_decode_speed(),
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
             total_tokens: snapshot.total_tokens,

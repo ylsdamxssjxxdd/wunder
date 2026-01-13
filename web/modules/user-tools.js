@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260112-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import {
@@ -16,7 +16,7 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260112-03";
+import { t } from "./i18n.js?v=20260113-01";
 
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;

@@ -1,11 +1,11 @@
-﻿import { elements } from "./elements.js?v=20260112-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { loadMonitorData, setMonitorUserFilter } from "./monitor.js";
 import { formatTokenCount } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260112-03";
+import { t } from "./i18n.js?v=20260113-01";
 
 const DEFAULT_USER_STATS_PAGE_SIZE = 100;
 

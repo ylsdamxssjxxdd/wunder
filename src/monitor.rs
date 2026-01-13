@@ -982,12 +982,14 @@ impl MonitorState {
             || {
                 let now = current_ts.unwrap_or_else(now_ts);
                 let window = recent_window_s.unwrap_or(3600.0).max(1.0);
+                let window_start = now - window;
                 let sessions = self.sessions.lock();
+                let mut total_sessions = 0;
                 let mut active_sessions = 0;
                 let mut finished_sessions = 0;
                 let mut error_sessions = 0;
                 let mut cancelled_sessions = 0;
-                let mut recent_completed = 0;
+                let mut token_usage_total: i64 = 0;
                 let mut elapsed_total = 0.0;
                 let mut elapsed_count = 0.0;
                 let mut prefill_tokens_total = 0.0;
@@ -995,6 +997,15 @@ impl MonitorState {
                 let mut decode_tokens_total = 0.0;
                 let mut decode_duration_total = 0.0;
                 for record in sessions.values() {
+                    let mut record_ts = record.updated_time;
+                    if record_ts <= 0.0 {
+                        record_ts = record.start_time;
+                    }
+                    if record_ts < window_start || record_ts > now {
+                        continue;
+                    }
+                    total_sessions += 1;
+                    token_usage_total += record.token_usage;
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                     {
@@ -1009,31 +1020,26 @@ impl MonitorState {
                         cancelled_sessions += 1;
                     }
                     let end_ts = record.ended_time.unwrap_or(record.updated_time);
-                    let in_window = now - end_ts <= window;
-                    if in_window {
-                        recent_completed += 1;
-                        let summary = build_llm_speed_summary(&record.events);
-                        let prefill_tokens = parse_i64_value(summary.get("prefill_tokens"));
-                        let prefill_duration = parse_f64_value(summary.get("prefill_duration_s"));
-                        if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
-                            if tokens > 0 && duration > 0.0 {
-                                prefill_tokens_total += tokens as f64;
-                                prefill_duration_total += duration;
-                            }
+                    let summary = build_llm_speed_summary(&record.events);
+                    let prefill_tokens = parse_i64_value(summary.get("prefill_tokens"));
+                    let prefill_duration = parse_f64_value(summary.get("prefill_duration_s"));
+                    if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
+                        if tokens > 0 && duration > 0.0 {
+                            prefill_tokens_total += tokens as f64;
+                            prefill_duration_total += duration;
                         }
-                        let decode_tokens = parse_i64_value(summary.get("decode_tokens"));
-                        let decode_duration = parse_f64_value(summary.get("decode_duration_s"));
-                        if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
-                            if tokens > 0 && duration > 0.0 {
-                                decode_tokens_total += tokens as f64;
-                                decode_duration_total += duration;
-                            }
+                    }
+                    let decode_tokens = parse_i64_value(summary.get("decode_tokens"));
+                    let decode_duration = parse_f64_value(summary.get("decode_duration_s"));
+                    if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
+                        if tokens > 0 && duration > 0.0 {
+                            decode_tokens_total += tokens as f64;
+                            decode_duration_total += duration;
                         }
                     }
                     elapsed_total += (end_ts - record.start_time).max(0.0);
                     elapsed_count += 1.0;
                 }
-                let total_sessions = sessions.len() as i64;
                 let history_sessions = total_sessions - active_sessions;
                 let avg_elapsed = if elapsed_count > 0.0 {
                     round2(elapsed_total / elapsed_count)
@@ -1051,6 +1057,11 @@ impl MonitorState {
                 } else {
                     None
                 };
+                let avg_token_usage = if history_sessions > 0 {
+                    Some(round2(token_usage_total as f64 / history_sessions as f64))
+                } else {
+                    None
+                };
                 json!({
                     "active_sessions": active_sessions,
                     "history_sessions": history_sessions,
@@ -1058,7 +1069,7 @@ impl MonitorState {
                     "error_sessions": error_sessions,
                     "cancelled_sessions": cancelled_sessions,
                     "total_sessions": total_sessions,
-                    "recent_completed": recent_completed,
+                    "avg_token_usage": avg_token_usage,
                     "avg_elapsed_s": avg_elapsed,
                     "avg_prefill_speed_tps": avg_prefill_speed,
                     "avg_decode_speed_tps": avg_decode_speed,
@@ -1152,7 +1163,7 @@ impl MonitorState {
             "error_sessions": 0,
             "cancelled_sessions": 0,
             "total_sessions": 0,
-            "recent_completed": 0,
+            "avg_token_usage": Value::Null,
             "avg_elapsed_s": 0.0,
             "avg_prefill_speed_tps": Value::Null,
             "avg_decode_speed_tps": Value::Null,

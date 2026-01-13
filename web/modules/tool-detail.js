@@ -1,6 +1,6 @@
-﻿import { elements } from "./elements.js?v=20260112-04";
+import { elements } from "./elements.js?v=20260113-01";
 import { formatToolSchema } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260112-03";
+import { t } from "./i18n.js?v=20260113-01";
 
 // 打开工具详情弹窗：内置工具与 MCP 工具共用展示逻辑
 export const openToolDetailModal = (payload) => {
