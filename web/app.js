@@ -21,7 +21,7 @@ import { loadI18nConfig } from "./modules/i18n-config.js";
 
 import { initToolDetailModal } from "./modules/tool-detail.js";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260113-02";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260113-03";
 import {
 
   applyPromptToolError,
@@ -69,7 +69,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260113-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260113-02";
 
 
 

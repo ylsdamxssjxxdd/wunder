@@ -6,7 +6,7 @@ import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260113-01";
+import { t } from "./i18n.js?v=20260113-02";
 
 // 拉取内置工具清单与启用状态
 export const loadBuiltinTools = async () => {

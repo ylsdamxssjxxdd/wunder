@@ -4,7 +4,7 @@ import { appendLog } from "./log.js?v=20260108-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260113-02";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -40,6 +40,7 @@ const ARCHIVE_EXTENSIONS = new Set(["zip", "rar", "7z", "tar", "gz", "bz2"]);
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm"]);
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
+const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = "application/x-wunder-workspace-entry";
 const WORKSPACE_SORT_ICONS = {
   asc: "fa-arrow-up-short-wide",
@@ -1635,6 +1636,12 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
   form.append("user_id", userId);
   form.append("path", normalizeWorkspacePath(targetPath));
   const fileList = Array.from(files);
+  const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
+  if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
+    throw new Error(
+      t("workspace.upload.tooLarge", { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) })
+    );
+  }
   fileList.forEach((file, index) => {
     form.append("files", file);
     const relativePath = relativePaths[index] ?? "";

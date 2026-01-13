@@ -6,7 +6,7 @@ import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { t } from "./i18n.js?v=20260113-01";
+import { t } from "./i18n.js?v=20260113-02";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const DEFAULT_CONFIG = {

@@ -1,7 +1,7 @@
 import { elements } from "./elements.js?v=20260113-02";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { normalizeApiBase, formatDuration } from "./utils.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260113-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260113-02";
 
 const evaluationState = {
   activeRunId: "",
