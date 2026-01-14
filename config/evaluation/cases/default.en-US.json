@@ -126,8 +126,8 @@
     {
       "id": "logic_4",
       "dimension": "logic",
-      "prompt": "Logic 4: A two-digit number has digits summing to 9 and is a multiple of 9. Which is it? A) 18 B) 27 C) 45 D) 54. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "D" },
+      "prompt": "Logic 4: Legal rule: A contract with an illegal subject matter is void. Scenario: A and B agree to trade illegal goods. Which is correct? A) The contract is valid B) The contract is void C) The contract is voidable D) The contract is pending validity. Only output A/B/C/D.",
+      "checker": { "type": "choice", "answer": "B" },
       "tags": ["mcq"]
     },
     {
