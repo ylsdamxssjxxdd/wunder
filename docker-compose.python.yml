@@ -34,7 +34,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - wunder_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
       interval: 5s
@@ -67,3 +67,4 @@ services:
 
 volumes:
   wunder_workspaces:
+  wunder_postgres:
