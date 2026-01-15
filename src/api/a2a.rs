@@ -118,10 +118,7 @@ async fn build_agent_card(state: &AppState, headers: &HeaderMap, extended: bool)
 
     if extended {
         if let Some(obj) = card.as_object_mut() {
-            obj.insert(
-                "documentationUrl".to_string(),
-                json!(format!("{base}/wunder/web")),
-            );
+            obj.insert("documentationUrl".to_string(), json!(format!("{base}/")));
         }
     }
 

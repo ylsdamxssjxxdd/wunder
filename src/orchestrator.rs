@@ -414,10 +414,6 @@ impl EventEmitter {
         self.closed.store(true, AtomicOrdering::SeqCst);
     }
 
-    fn request_cancel(&self) {
-        let _ = self.monitor.cancel(&self.session_id);
-    }
-
     async fn finish(&self) {
         let Some(queue) = &self.queue else {
             return;
@@ -889,9 +885,6 @@ impl Orchestrator {
                                 )
                                 .await
                                 {
-                                    if !runner.is_finished() {
-                                        emitter.request_cancel();
-                                    }
                                     return;
                                 }
                             }
@@ -901,9 +894,6 @@ impl Orchestrator {
                         }
                         if event_tx.send(event).await.is_err() {
                             emitter.close();
-                            if !runner.is_finished() {
-                                emitter.request_cancel();
-                            }
                             return;
                         }
                         if let Some(event_id) = event_id {
@@ -924,9 +914,6 @@ impl Orchestrator {
                                 let event_id = parse_stream_event_id(&event);
                                 if event_tx.send(event).await.is_err() {
                                     emitter.close();
-                                    if !runner.is_finished() {
-                                        emitter.request_cancel();
-                                    }
                                     return;
                                 }
                                 if let Some(event_id) = event_id {

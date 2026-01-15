@@ -341,10 +341,15 @@
 - Body: `user_id`, `path`, `content`, `create_if_missing`
 - Response: `ok`, `message`, `tree_version`, `files`
 
+### 4.1.24.0 `/`
+
+- Method: `GET`
+- Description: admin debug UI entry (`web/index.html`); `web/simple-chat` is temporarily disabled.
+
 ### 4.1.24 `/wunder/web`
 
 - Method: `GET`
-- Description: static debug UI (`web/`).
+- Description: admin debug UI static assets (`web/`), default entry mapped to `/` and kept for compatibility.
 
 ### 4.1.24.1 `/wunder/ppt`
 

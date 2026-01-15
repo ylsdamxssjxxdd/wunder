@@ -50,7 +50,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, Any, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -64,10 +64,11 @@ async fn main() -> anyhow::Result<()> {
 
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
-    let app = mount_static_file(app, "web/simple-chat/index.html", "/");
+    let app = mount_simple_chat_disabled(app);
     let app = mount_trailing_slash_redirect(app, "/wunder/web", "/wunder/web/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt", "/wunder/ppt/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt-en", "/wunder/ppt-en/");
+    let app = mount_static(app, "web", "/");
     let app = mount_static(app, "web", "/wunder/web");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");
@@ -135,16 +136,16 @@ where
     }
 }
 
-fn mount_static_file<S>(app: Router<S>, file: &str, route: &str) -> Router<S>
+fn mount_simple_chat_disabled<S>(app: Router<S>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let path = PathBuf::from(file);
-    if path.exists() {
-        app.route_service(route, ServeFile::new(path))
-    } else {
-        app
-    }
+    app.route("/simple-chat", get(simple_chat_disabled))
+        .route("/simple-chat/", get(simple_chat_disabled))
+        .route("/simple-chat/*path", get(simple_chat_disabled))
+        .route("/wunder/web/simple-chat", get(simple_chat_disabled))
+        .route("/wunder/web/simple-chat/", get(simple_chat_disabled))
+        .route("/wunder/web/simple-chat/*path", get(simple_chat_disabled))
 }
 
 fn mount_trailing_slash_redirect<S>(app: Router<S>, from: &str, to: &'static str) -> Router<S>
@@ -162,6 +163,10 @@ where
             Redirect::permanent(&format!("{to}{query}"))
         }),
     )
+}
+
+async fn simple_chat_disabled() -> impl IntoResponse {
+    (StatusCode::GONE, "simple-chat is temporarily disabled")
 }
 
 fn build_cors(config: &Config) -> CorsLayer {

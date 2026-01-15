@@ -188,13 +188,10 @@ async fn get_session(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
 
     let limit = query.limit.unwrap_or(DEFAULT_MESSAGE_LIMIT);
-    let mut history = state
+    let history = state
         .workspace
         .load_history(&resolved.user.user_id, &session_id, limit)
         .unwrap_or_default();
-    if limit > 0 {
-        history.reverse();
-    }
     let mut messages = history
         .into_iter()
         .filter_map(map_history_message)
@@ -793,21 +790,34 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
     let mut order = Vec::new();
     let mut grouped: HashMap<i64, Vec<Value>> = HashMap::new();
     let mut current_round: Option<i64> = None;
+    let register_round = |round: i64,
+                          order: &mut Vec<i64>,
+                          grouped: &mut HashMap<i64, Vec<Value>>,
+                          current_round: &mut Option<i64>| {
+        if round <= 0 {
+            return;
+        }
+        if !grouped.contains_key(&round) {
+            order.push(round);
+            grouped.insert(round, Vec::new());
+        }
+        *current_round = Some(round);
+    };
     for event in events {
         let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
         let data = event.get("data").cloned().unwrap_or(Value::Null);
+        let data_round = data.get("round").and_then(Value::as_i64);
         if event_type == "round_start" {
-            let round = data
-                .get("round")
-                .and_then(Value::as_i64)
+            let round = data_round
                 .or_else(|| current_round.map(|value| value + 1))
                 .unwrap_or(1);
-            current_round = Some(round);
-            if !grouped.contains_key(&round) {
-                order.push(round);
-                grouped.insert(round, Vec::new());
-            }
+            register_round(round, &mut order, &mut grouped, &mut current_round);
             continue;
+        }
+        if let Some(round) = data_round {
+            register_round(round, &mut order, &mut grouped, &mut current_round);
+        } else if current_round.is_none() && is_workflow_event(event_type) {
+            register_round(1, &mut order, &mut grouped, &mut current_round);
         }
         let Some(round) = current_round else {
             continue;
@@ -815,7 +825,10 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
         if !is_workflow_event(event_type) {
             continue;
         }
-        let timestamp = event.get("timestamp").and_then(Value::as_f64).unwrap_or(0.0);
+        let timestamp = event
+            .get("timestamp")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
         let timestamp = if timestamp > 0.0 {
             format_ts(timestamp)
         } else {
