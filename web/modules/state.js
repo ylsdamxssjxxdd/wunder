@@ -173,6 +173,9 @@ export const state = {
     list: [],
     selectedId: "",
     loaded: false,
+    updatedAt: 0,
+    summary: null,
+    summaryUpdatedAt: 0,
     search: "",
     pagination: {
       pageSize: 100,

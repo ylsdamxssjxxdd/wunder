@@ -142,10 +142,10 @@ where
 {
     app.route("/simple-chat", get(simple_chat_disabled))
         .route("/simple-chat/", get(simple_chat_disabled))
-        .route("/simple-chat/*path", get(simple_chat_disabled))
+        .route("/simple-chat/{*path}", get(simple_chat_disabled))
         .route("/wunder/web/simple-chat", get(simple_chat_disabled))
         .route("/wunder/web/simple-chat/", get(simple_chat_disabled))
-        .route("/wunder/web/simple-chat/*path", get(simple_chat_disabled))
+        .route("/wunder/web/simple-chat/{*path}", get(simple_chat_disabled))
 }
 
 fn mount_trailing_slash_redirect<S>(app: Router<S>, from: &str, to: &'static str) -> Router<S>

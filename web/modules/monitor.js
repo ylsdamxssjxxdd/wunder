@@ -26,6 +26,7 @@ let statusChart = null;
 let statusChartClickBound = false;
 let tokenTrendZoomBound = false;
 let mcpToolNameSet = new Set();
+let userDashboardLoading = false;
 // 监控轮询配置：full 为完整监控面板，sessions 为用户管理页轻量轮询
 let monitorPollMode = "full";
 let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
@@ -45,6 +46,7 @@ const TOOL_HEATMAP_HUE_ANCHORS = [
 const TOOL_HEATMAP_TILE_SIZE = 68;
 const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
+const USER_DASHBOARD_TTL_MS = 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "a2a\u89c2\u5bdf", icon: "fa-glasses" },
@@ -1088,52 +1090,141 @@ const renderServiceMetrics = (service) => {
   }
 };
 
-// 渲染沙盒状态指标，兼顾配置与近期调用统计
-const renderSandboxMetrics = (sandbox) => {
-  if (!elements.metricSandboxMode) {
-    return;
+// 渲染用户看板指标，复用用户管理页统计并加 TTL 避免频繁请求
+const ensureUserDashboardState = () => {
+  if (!state.users || typeof state.users !== "object") {
+    state.users = { list: [], loaded: false, updatedAt: 0 };
   }
-  if (!sandbox) {
-    elements.metricSandboxMode.textContent = "-";
-    elements.metricSandboxNetwork.textContent = "-";
-    elements.metricSandboxReadonly.textContent = "-";
-    elements.metricSandboxResources.textContent = "-";
-    elements.metricSandboxResourcesDetail.textContent = "";
-    elements.metricSandboxCalls.textContent = "-";
-    elements.metricSandboxSessions.textContent = "-";
-    return;
+  if (!Array.isArray(state.users.list)) {
+    state.users.list = [];
   }
-  const mode = String(sandbox.mode || "").toLowerCase();
-  elements.metricSandboxMode.textContent =
-    mode === "sandbox"
-      ? t("monitor.sandbox.mode.sandbox")
-      : mode
-        ? t("monitor.sandbox.mode.local")
-        : "-";
-  elements.metricSandboxNetwork.textContent = sandbox.network || "-";
-  elements.metricSandboxReadonly.textContent = sandbox.readonly_rootfs
-    ? t("common.yes")
-    : t("common.no");
-  const cpuValue = Number(sandbox.resources?.cpu);
-  const cpuText =
-    Number.isFinite(cpuValue) && cpuValue > 0
-      ? Number.isInteger(cpuValue)
-        ? cpuValue.toFixed(0)
-        : cpuValue.toFixed(cpuValue >= 10 ? 0 : 1)
-      : "-";
-  const memoryMb = Number(sandbox.resources?.memory_mb);
-  const memoryBytes = Number.isFinite(memoryMb) ? memoryMb * 1024 * 1024 : NaN;
-  const memoryText =
-    Number.isFinite(memoryMb) && memoryMb > 0 ? formatBytes(memoryBytes) : "-";
-  elements.metricSandboxResources.textContent = t("monitor.metric.sandbox.resources.detail", {
-    cpu: cpuText,
-    memory: memoryText,
+  if (typeof state.users.loaded !== "boolean") {
+    state.users.loaded = false;
+  }
+  if (!Number.isFinite(state.users.updatedAt)) {
+    state.users.updatedAt = 0;
+  }
+  if (!("summary" in state.users)) {
+    state.users.summary = null;
+  }
+  if (!Number.isFinite(state.users.summaryUpdatedAt)) {
+    state.users.summaryUpdatedAt = 0;
+  }
+};
+
+const normalizeUserDashboardStats = (item) => ({
+  user_id: String(item?.user_id || ""),
+  active_sessions: Number(item?.active_sessions) || 0,
+  history_sessions: Number(item?.history_sessions) || 0,
+  total_sessions: Number(item?.total_sessions) || 0,
+  chat_records: Number(item?.chat_records) || 0,
+  tool_calls: Number(item?.tool_calls) || 0,
+  token_usage: Number(item?.token_usage) || 0,
+});
+
+const resolveUserDashboardSummary = () => {
+  ensureUserDashboardState();
+  if (
+    state.users.summary &&
+    Number.isFinite(state.users.summaryUpdatedAt) &&
+    state.users.summaryUpdatedAt === state.users.updatedAt
+  ) {
+    const cachedSummary = state.users.summary;
+    const hasData = Boolean(state.users.loaded || cachedSummary.user_count > 0);
+    return { summary: cachedSummary, hasData };
+  }
+  const summary = {
+    user_count: 0,
+    active_sessions: 0,
+    history_sessions: 0,
+    total_sessions: 0,
+    chat_records: 0,
+    tool_calls: 0,
+    token_usage: 0,
+  };
+  if (!Array.isArray(state.users.list)) {
+    return { summary, hasData: false };
+  }
+  summary.user_count = state.users.list.length;
+  state.users.list.forEach((item) => {
+    summary.active_sessions += Number(item?.active_sessions) || 0;
+    summary.history_sessions += Number(item?.history_sessions) || 0;
+    summary.total_sessions += Number(item?.total_sessions) || 0;
+    summary.chat_records += Number(item?.chat_records) || 0;
+    summary.tool_calls += Number(item?.tool_calls) || 0;
+    summary.token_usage += Number(item?.token_usage) || 0;
   });
-  const pids = Number(sandbox.resources?.pids);
-  elements.metricSandboxResourcesDetail.textContent =
-    Number.isFinite(pids) && pids > 0 ? `PID ${pids}` : "";
-  elements.metricSandboxCalls.textContent = `${sandbox.recent_calls ?? 0}`;
-  elements.metricSandboxSessions.textContent = `${sandbox.recent_sessions ?? 0}`;
+  state.users.summary = summary;
+  state.users.summaryUpdatedAt = state.users.updatedAt;
+  const hasData = Boolean(state.users.loaded || summary.user_count > 0);
+  return { summary, hasData };
+};
+
+const renderUserDashboardMetrics = (summary, hasData) => {
+  if (!elements.metricUserCount) {
+    return;
+  }
+  if (!hasData || !summary) {
+    elements.metricUserCount.textContent = "-";
+    elements.metricUserSessions.textContent = "-";
+    elements.metricUserRecords.textContent = "-";
+    elements.metricUserTools.textContent = "-";
+    elements.metricUserActive.textContent = "-";
+    elements.metricUserTokens.textContent = "-";
+    return;
+  }
+  elements.metricUserCount.textContent = `${summary.user_count}`;
+  elements.metricUserSessions.textContent = `${summary.total_sessions}`;
+  elements.metricUserRecords.textContent = `${summary.chat_records}`;
+  elements.metricUserTools.textContent = `${summary.tool_calls}`;
+  elements.metricUserActive.textContent = `${summary.active_sessions}`;
+  elements.metricUserTokens.textContent = formatTokenCount(summary.token_usage);
+};
+
+const shouldRefreshUserDashboard = (options = {}) => {
+  const { force = false } = options;
+  if (force) {
+    return true;
+  }
+  const updatedAt = Number(state.users.updatedAt) || 0;
+  if (!updatedAt) {
+    return true;
+  }
+  return Date.now() - updatedAt > USER_DASHBOARD_TTL_MS;
+};
+
+const refreshUserDashboardSummary = async (options = {}) => {
+  ensureUserDashboardState();
+  if (!shouldRefreshUserDashboard(options)) {
+    const { summary, hasData } = resolveUserDashboardSummary();
+    renderUserDashboardMetrics(summary, hasData);
+    return summary;
+  }
+  if (userDashboardLoading) {
+    return null;
+  }
+  userDashboardLoading = true;
+  try {
+    const wunderBase = getWunderBase();
+    const endpoint = `${wunderBase}/admin/users`;
+    const response = await fetch(endpoint);
+    if (response.ok) {
+      const result = await response.json();
+      state.users.list = Array.isArray(result.users)
+        ? result.users.map(normalizeUserDashboardStats)
+        : [];
+      state.users.loaded = true;
+      state.users.updatedAt = Date.now();
+    }
+  } catch (error) {
+    // 用户看板失败时保留既有数据，避免干扰主监控流程。
+    state.users.updatedAt = Date.now();
+  } finally {
+    userDashboardLoading = false;
+    const { summary, hasData } = resolveUserDashboardSummary();
+    renderUserDashboardMetrics(summary, hasData);
+  }
+  return null;
 };
 
 // 计算所有会话累计 token 数量
@@ -2030,7 +2121,7 @@ export const loadMonitorData = async (options = {}) => {
   if (mode === "full") {
     renderMonitorMetrics(result.system);
     renderServiceMetrics(result.service);
-    renderSandboxMetrics(result.sandbox);
+    refreshUserDashboardSummary({ silent: true });
     state.monitor.serviceSnapshot = result.service || null;
     state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
     recordTokenDeltas(sessions);

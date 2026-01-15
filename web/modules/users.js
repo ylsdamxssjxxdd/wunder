@@ -38,6 +38,15 @@ const ensureUsersState = () => {
   if (!Number.isFinite(state.users.pagination.page) || state.users.pagination.page < 1) {
     state.users.pagination.page = 1;
   }
+  if (!Number.isFinite(state.users.updatedAt)) {
+    state.users.updatedAt = 0;
+  }
+  if (!("summary" in state.users)) {
+    state.users.summary = null;
+  }
+  if (!Number.isFinite(state.users.summaryUpdatedAt)) {
+    state.users.summaryUpdatedAt = 0;
+  }
   if (!state.panelLoaded) {
     state.panelLoaded = {};
   }
@@ -367,6 +376,9 @@ export const loadUserStats = async () => {
     const result = await response.json();
     state.users.list = Array.isArray(result.users) ? result.users.map(normalizeUserStats) : [];
     state.users.loaded = true;
+    state.users.updatedAt = Date.now();
+    state.users.summary = null;
+    state.users.summaryUpdatedAt = 0;
     state.panelLoaded.users = true;
     if (state.users.selectedId) {
       const exists = state.users.list.some((item) => item.user_id === state.users.selectedId);

@@ -6,6 +6,7 @@ use crate::user_store::UserStore;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct ResolvedUser {
     pub user: UserAccountRecord,
@@ -43,10 +44,8 @@ pub async fn resolve_user(
             let user = state
                 .user_store
                 .get_user_by_id(requested)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-                .ok_or_else(|| {
-                    error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found"))
-                })?;
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let user = user.unwrap_or_else(|| build_virtual_user(requested));
             return Ok(ResolvedUser { user });
         }
         return Err(error_response(
@@ -71,4 +70,28 @@ fn error_response(status: StatusCode, message: String) -> Response {
         axum::Json(json!({ "detail": { "message": message } })),
     )
         .into_response()
+}
+
+fn build_virtual_user(user_id: &str) -> UserAccountRecord {
+    let now = now_ts();
+    UserAccountRecord {
+        user_id: user_id.to_string(),
+        username: user_id.to_string(),
+        email: None,
+        password_hash: String::new(),
+        roles: vec!["user".to_string()],
+        status: "active".to_string(),
+        access_level: "A".to_string(),
+        is_demo: false,
+        created_at: now,
+        updated_at: now,
+        last_login_at: None,
+    }
+}
+
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
