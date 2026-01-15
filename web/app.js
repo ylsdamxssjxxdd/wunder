@@ -68,7 +68,7 @@ import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
-import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
+import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260115-03";
 

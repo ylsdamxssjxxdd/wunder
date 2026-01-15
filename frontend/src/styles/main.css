@@ -3607,6 +3607,12 @@ body {
   color: var(--chat-text);
 }
 
+:root[data-user-theme='light'] .chat-shell .new-chat-btn {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(124, 108, 255, 0.2));
+  color: var(--chat-text);
+  box-shadow: 0 10px 20px rgba(59, 130, 246, 0.18);
+}
+
 :root[data-user-theme='light'] .chat-shell .theme-toggle {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.12);

@@ -160,8 +160,21 @@
                       <span>复制</span>
                     </button>
                   </div>
-                  <div v-else class="message-meta">
+                  <div v-else class="message-actions">
                     <div class="message-time">{{ formatTime(message.created_at) }}</div>
+                    <button
+                      class="message-copy-btn"
+                      type="button"
+                      title="复制消息"
+                      aria-label="复制消息"
+                      @click="handleCopyMessage(message)"
+                    >
+                      <svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="9" y="9" width="10" height="10" rx="2" />
+                        <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      <span>复制</span>
+                    </button>
                   </div>
                 </div>
                 <MessageWorkflow
@@ -484,7 +497,7 @@ const handleCopyMessage = async (message) => {
   }
   const ok = await copyText(content);
   if (ok) {
-    ElMessage.success('回复已复制');
+    ElMessage.success('内容已复制');
   } else {
     ElMessage.error('复制失败');
   }
@@ -608,13 +621,21 @@ const closePromptPreview = () => {
 
 const formatTime = (value) => {
   if (!value) return '';
+  let text = '';
   if (typeof value === 'string') {
-    return value.replace('T', ' ').replace('Z', '');
+    text = value.trim();
+  } else if (value instanceof Date) {
+    text = value.toISOString();
+  } else {
+    text = String(value);
   }
-  if (value instanceof Date) {
-    return value.toISOString().replace('T', ' ').replace('Z', '');
-  }
-  return String(value);
+  if (!text) return '';
+  const normalized = text.replace('T', ' ');
+  const fullMatch = normalized.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  if (fullMatch) return fullMatch[0];
+  const shortMatch = normalized.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+  if (shortMatch) return `${shortMatch[0]}:00`;
+  return normalized;
 };
 
 const formatTitle = (title) => {

@@ -1,6 +1,8 @@
 import { elements } from "./elements.js?v=20260115-02";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { normalizeApiBase, formatDuration } from "./utils.js";
+import { ensureLlmConfigLoaded } from "./llm.js";
+import { state } from "./state.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260115-03";
 
 const evaluationState = {
@@ -17,6 +19,52 @@ const evaluationState = {
 
 const isFinishedStatus = (status) => ["finished", "failed", "cancelled"].includes(String(status || ""));
 const MAX_CASE_LABEL = 180;
+
+const getDefaultModelLabel = () => {
+  const defaultName = String(state.llm.defaultName || "").trim();
+  if (defaultName) {
+    return t("llm.defaultWithName", { name: defaultName });
+  }
+  return t("llm.default");
+};
+
+const getSelectedModelName = () =>
+  String(elements.evaluationModelSelect?.value || "").trim();
+
+const setModelSelectValue = (value) => {
+  if (!elements.evaluationModelSelect) {
+    return;
+  }
+  const select = elements.evaluationModelSelect;
+  const desired = String(value || "").trim();
+  if (!desired) {
+    select.value = "";
+    return;
+  }
+  const options = Array.from(select.options);
+  const exists = options.some((option) => option.value === desired);
+  select.value = exists ? desired : "";
+};
+
+const renderEvaluationModelOptions = (options = {}) => {
+  if (!elements.evaluationModelSelect) {
+    return;
+  }
+  const select = elements.evaluationModelSelect;
+  const preferred = String(options.value ?? select.value ?? "").trim();
+  select.textContent = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = getDefaultModelLabel();
+  select.appendChild(defaultOption);
+  state.llm.order.forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  });
+  setModelSelectValue(preferred);
+};
 
 const truncateText = (value, maxLen) => {
   const text = String(value || "").trim();
@@ -706,7 +754,7 @@ const startEvaluation = async () => {
   }
   const caseSet = String(elements.evaluationCaseSet?.value || "default").trim();
   const language = String(elements.evaluationLanguage?.value || getCurrentLanguage()).trim();
-  const modelName = String(elements.evaluationModelName?.value || "").trim();
+  const modelName = getSelectedModelName();
   const payload = {
     user_id: userId,
     case_set: caseSet,
@@ -808,6 +856,13 @@ const initEvaluationPanel = async () => {
     return;
   }
   syncDefaults();
+  ensureLlmConfigLoaded()
+    .then(() => {
+      renderEvaluationModelOptions();
+    })
+    .catch(() => {
+      renderEvaluationModelOptions();
+    });
   if (elements.evaluationActionBtn) {
     elements.evaluationActionBtn.addEventListener("click", () => {
       if (isActiveRunning()) {
@@ -817,6 +872,12 @@ const initEvaluationPanel = async () => {
       }
     });
   }
+  window.addEventListener("wunder:llm-updated", () => {
+    renderEvaluationModelOptions({ value: getSelectedModelName() });
+  });
+  window.addEventListener("wunder:language-changed", () => {
+    renderEvaluationModelOptions({ value: getSelectedModelName() });
+  });
   window.addEventListener("wunder:language-changed", () => {
     updateActionButton();
     updateRunHint();

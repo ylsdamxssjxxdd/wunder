@@ -134,12 +134,8 @@ pub struct UserToolStore {
 }
 
 impl UserToolStore {
-    pub fn new(config: &Config) -> Result<Self> {
-        let workspace_root = PathBuf::from(&config.workspace.root);
-        let base = workspace_root
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("user_tools");
+    pub fn new(_config: &Config) -> Result<Self> {
+        let base = PathBuf::from("data").join("user_tools");
         std::fs::create_dir_all(&base)?;
         Ok(Self {
             root: base,

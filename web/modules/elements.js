@@ -146,7 +146,7 @@ export const elements = {
   evaluationActionBtn: document.getElementById("evaluationActionBtn"),
   evaluationStatusIndicator: document.getElementById("evaluationStatusIndicator"),
   evaluationUserId: document.getElementById("evaluationUserId"),
-  evaluationModelName: document.getElementById("evaluationModelName"),
+  evaluationModelSelect: document.getElementById("evaluationModelSelect"),
   evaluationLanguage: document.getElementById("evaluationLanguage"),
   evaluationCaseSet: document.getElementById("evaluationCaseSet"),
   evaluationDimTool: document.getElementById("evaluationDimTool"),

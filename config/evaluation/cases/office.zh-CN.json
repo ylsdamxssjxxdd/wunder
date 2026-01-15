@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "case_set": "office",
+  "language": "zh-CN",
+  "cases": [
+    {
+      "id": "office_law_1",
+      "dimension": "common",
+      "prompt": "法理知识1：限制民事行为能力人实施纯获利益的民事法律行为，效力如何？ A) 无效 B) 可撤销 C) 效力待定 D) 有效。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "D" },
+      "tags": ["law", "mcq"]
+    },
+    {
+      "id": "office_law_2",
+      "dimension": "common",
+      "prompt": "法理知识2：行政复议申请期限一般为知道具体行政行为之日起多少日内？ A) 15 B) 30 C) 60 D) 90。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "C" },
+      "tags": ["law", "mcq"]
+    },
+    {
+      "id": "office_policy_1",
+      "dimension": "common",
+      "prompt": "政策知识1：行政机关收到政府信息公开申请后，法定答复期限为多少个工作日？ A) 10 B) 15 C) 20 D) 30。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "C" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_policy_2",
+      "dimension": "common",
+      "prompt": "政策知识2：三公经费包括哪些内容？ A) 公务用房购置费、公务接待费、会议费 B) 因公出国（境）费、公务用车购置及运行费、公务接待费 C) 差旅费、培训费、办公费 D) 会议费、公务接待费、公务用车购置费。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "B" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_policy_3",
+      "dimension": "common",
+      "prompt": "政策知识3：公文密级分为哪三类？ A) 绝密/机密/秘密 B) 一级/二级/三级 C) 特密/密/保密 D) 甲/乙/丙。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "A" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_policy_4",
+      "dimension": "common",
+      "prompt": "政策知识4：请示属于哪类行文方向？ A) 平行文 B) 上行文 C) 下行文 D) 无方向。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "B" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_policy_5",
+      "dimension": "common",
+      "prompt": "政策知识5：公文成文日期应当使用？ A) 汉字大写数字 B) 阿拉伯数字 C) 罗马数字 D) 可省略。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "B" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_policy_6",
+      "dimension": "common",
+      "prompt": "政策知识6：政府采购应当遵循的基本原则是？ A) 公开透明、公平竞争、公正和诚实信用 B) 行政优先、效率优先、成本最小 C) 先批后采、先采后付、集中采购 D) 先预算后采购、先审计后执行。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "A" },
+      "tags": ["policy", "mcq"]
+    },
+    {
+      "id": "office_logic_1",
+      "dimension": "logic",
+      "prompt": "流程逻辑1：发文办理一般流程为“拟稿—审核—签发—印发”。下列顺序正确的是？ A) 拟稿—审核—签发—印发 B) 审核—拟稿—签发—印发 C) 拟稿—签发—审核—印发 D) 签发—拟稿—审核—印发。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "A" },
+      "tags": ["process", "mcq"]
+    },
+    {
+      "id": "office_logic_2",
+      "dimension": "logic",
+      "prompt": "流程逻辑2：会议安排在周五，要求提前3个工作日发布通知。最晚应在以下哪一天发布？ A) 周一 B) 周二 C) 周三 D) 周四。仅输出 A/B/C/D。",
+      "checker": { "type": "choice", "answer": "B" },
+      "tags": ["process", "mcq"]
+    },
+    {
+      "id": "office_write_notice",
+      "dimension": "complex",
+      "prompt": "行政写作1：请按以下格式输出一份会议通知，只输出这5行，不要多余内容：\\n标题：关于召开季度安全生产会议的通知\\n主送机关：各科室、下属单位\\n正文：需包含“2026年3月10日14:30”“三楼会议室”“请准时参会”\\n落款：办公室\\n日期：2026年3月8日",
+      "checker": {
+        "type": "regex",
+        "pattern": "(?s)^标题：关于召开季度安全生产会议的通知\\n主送机关：.+\\n正文：.*2026年3月10日14:30.*三楼会议室.*请准时参会.*\\n落款：办公室\\n日期：2026年3月8日$"
+      },
+      "tags": ["writing", "format"]
+    },
+    {
+      "id": "office_write_request",
+      "dimension": "complex",
+      "prompt": "行政写作2：请按以下格式输出一份请示，只输出这4行，不要多余内容：\\n标题：关于申请更新会议系统的请示\\n请示事项：需包含“更新会议系统”“预算5万元”\\n请示理由：说明现有系统故障频繁影响会议保障\\n结尾：以上请示，妥否，请批示",
+      "checker": {
+        "type": "regex",
+        "pattern": "(?s)^标题：关于申请更新会议系统的请示\\n请示事项：.*更新会议系统.*预算5万元.*\\n请示理由：.+\\n结尾：以上请示，妥否，请批示。?$"
+      },
+      "tags": ["writing", "format"]
+    },
+    {
+      "id": "office_write_minutes",
+      "dimension": "complex",
+      "prompt": "行政写作3：请按以下格式输出会议纪要，只输出这6行，不要多余内容：\\n主题：\\n时间：\\n地点：\\n参会：\\n主要事项：\\n决议：需包含“同意”",
+      "checker": {
+        "type": "regex",
+        "pattern": "^主题：.+\\n时间：.+\\n地点：.+\\n参会：.+\\n主要事项：.+\\n决议：.*同意.*$"
+      },
+      "tags": ["writing", "format"]
+    },
+    {
+      "id": "office_write_briefing",
+      "dimension": "complex",
+      "prompt": "行政写作4：请写一段工作简报摘要，仅输出摘要正文，且必须按顺序包含关键词“推进”“完成”“下一步”。",
+      "checker": {
+        "type": "regex",
+        "pattern": "(?s)^.*推进.*完成.*下一步.*$"
+      },
+      "tags": ["writing", "summary"]
+    }
+  ]
+}

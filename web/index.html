@@ -2110,13 +2110,8 @@
                       />
                     </div>
                     <div class="form-row">
-                      <label for="evaluationModelName" data-i18n="evaluation.form.modelName">模型名称</label>
-                      <input
-                        id="evaluationModelName"
-                        type="text"
-                        placeholder="gpt-4"
-                        data-i18n-placeholder="evaluation.form.modelNamePlaceholder"
-                      />
+                      <label for="evaluationModelSelect" data-i18n="evaluation.form.modelName">模型名称</label>
+                      <select id="evaluationModelSelect" class="evaluation-model-select"></select>
                     </div>
                     <div class="form-row">
                       <label for="evaluationLanguage" data-i18n="evaluation.form.language">语言</label>
@@ -3584,6 +3579,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260115-05"></script>
+    <script type="module" src="./app.js?v=20260115-06"></script>
   </body>
 </html>

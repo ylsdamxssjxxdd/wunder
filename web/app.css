@@ -1796,6 +1796,11 @@ button.danger {
   text-align: left;
 }
 
+.evaluation-model-select {
+  width: 100%;
+  text-align: left;
+}
+
 .monitor-kv-table td strong {
   color: #0f172a;
   font-weight: 600;
