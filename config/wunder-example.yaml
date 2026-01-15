@@ -104,7 +104,7 @@ knowledge: # 字面知识库配置
       enabled: true # 是否启用该知识库
 
 workspace: # 工作区配置
-  root: ./data/workspaces # 工作区根目录（按 user_id 划分子目录）
+  root: ./workspaces # 工作区根目录（按 user_id 划分子目录）
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 

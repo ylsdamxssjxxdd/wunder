@@ -1,0 +1,922 @@
+use crate::api::user_context::resolve_user;
+use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
+use crate::i18n;
+use crate::orchestrator::OrchestratorError;
+use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
+use crate::state::AppState;
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use anyhow::Error;
+use axum::extract::{Multipart, Path as AxumPath, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::{routing::get, routing::post, Json, Router};
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
+use uuid::Uuid;
+
+const DEFAULT_SESSION_TITLE: &str = "新会话";
+const DEFAULT_MESSAGE_LIMIT: i64 = 500;
+const STREAM_RESUME_LIMIT: i64 = 2000;
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/wunder/chat/sessions",
+            post(create_session).get(list_sessions),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}",
+            get(get_session).delete(delete_session),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/events",
+            get(get_session_events),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/messages",
+            post(send_message),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/resume",
+            get(resume_session),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/cancel",
+            post(cancel_session),
+        )
+        .route("/wunder/chat/system-prompt", post(system_prompt))
+        .route(
+            "/wunder/chat/sessions/{session_id}/system-prompt",
+            post(session_system_prompt),
+        )
+        .route(
+            "/wunder/chat/attachments/convert",
+            post(chat_attachment_convert),
+        )
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionListQuery {
+    #[serde(default)]
+    page: Option<i64>,
+    #[serde(default)]
+    page_size: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSessionRequest {
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendMessageRequest {
+    content: String,
+    #[serde(default)]
+    stream: Option<bool>,
+    #[serde(default)]
+    selected_shared_tools: Option<Vec<String>>,
+    #[serde(default)]
+    attachments: Option<Vec<ChatAttachment>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatAttachment {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    mime_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemPromptRequest {
+    #[serde(default)]
+    selected_shared_tools: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionDetailQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResumeQuery {
+    #[serde(default)]
+    after_event_id: Option<i64>,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateSessionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let now = now_ts();
+    let session_id = format!("sess_{}", Uuid::new_v4().simple());
+    let title = payload
+        .title
+        .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string())
+        .trim()
+        .to_string();
+    let record = crate::storage::ChatSessionRecord {
+        session_id: session_id.clone(),
+        user_id: resolved.user.user_id.clone(),
+        title: if title.is_empty() {
+            DEFAULT_SESSION_TITLE.to_string()
+        } else {
+            title
+        },
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+    };
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": session_payload(&record) })))
+}
+
+async fn list_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<SessionListQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let (offset, limit) = resolve_pagination(&query);
+    let (sessions, total) = state
+        .user_store
+        .list_chat_sessions(&resolved.user.user_id, offset, limit)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let items = sessions.iter().map(session_payload).collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "total": total, "items": items } })))
+}
+
+async fn get_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<SessionDetailQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+
+    let limit = query.limit.unwrap_or(DEFAULT_MESSAGE_LIMIT);
+    let mut history = state
+        .workspace
+        .load_history(&resolved.user.user_id, &session_id, limit)
+        .unwrap_or_default();
+    if limit > 0 {
+        history.reverse();
+    }
+    let mut messages = history
+        .into_iter()
+        .filter_map(map_history_message)
+        .collect::<Vec<_>>();
+
+    if let Some(record) = state.monitor.get_record(&session_id) {
+        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+        if status == crate::monitor::MonitorState::STATUS_RUNNING
+            || status == crate::monitor::MonitorState::STATUS_CANCELLING
+        {
+            if let Some(target) = messages.iter_mut().rev().find(|item| {
+                item.get("role")
+                    .and_then(Value::as_str)
+                    .map(|value| value == "assistant")
+                    .unwrap_or(false)
+            }) {
+                if let Value::Object(ref mut map) = target {
+                    map.insert("stream_incomplete".to_string(), json!(true));
+                }
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "data": {
+            "id": record.session_id,
+            "title": record.title,
+            "created_at": format_ts(record.created_at),
+            "updated_at": format_ts(record.updated_at),
+            "last_message_at": format_ts(record.last_message_at),
+            "messages": messages
+        }
+    })))
+}
+
+async fn get_session_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if record.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+    let rounds = state
+        .monitor
+        .get_record(&session_id)
+        .map(|record| collect_session_event_rounds(&record))
+        .unwrap_or_default();
+    Ok(Json(json!({
+        "data": {
+            "id": session_id,
+            "rounds": rounds
+        }
+    })))
+}
+
+async fn delete_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if record.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+    state
+        .workspace
+        .purge_session_data(&resolved.user.user_id, &session_id);
+    let _ = state
+        .memory
+        .delete_record(&resolved.user.user_id, &session_id);
+    let _ = state.monitor.delete_session(&session_id);
+    let _ = state
+        .user_store
+        .delete_chat_session(&resolved.user.user_id, &session_id);
+    Ok(Json(json!({ "data": { "id": session_id } })))
+}
+
+async fn send_message(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SendMessageRequest>,
+) -> Result<Response, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let content = payload.content.trim().to_string();
+    if content.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let now = now_ts();
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let record = record.unwrap_or_else(|| crate::storage::ChatSessionRecord {
+        session_id: session_id.clone(),
+        user_id: resolved.user.user_id.clone(),
+        title: DEFAULT_SESSION_TITLE.to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+    });
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    let allowed = compute_allowed_tool_names(
+        &resolved.user,
+        &user_context,
+        payload.selected_shared_tools.as_deref(),
+    );
+    let tool_names = finalize_tool_names(allowed);
+
+    if should_auto_title(&record.title) {
+        if let Some(title) = build_session_title(&content) {
+            let _ = state.user_store.update_chat_session_title(
+                &resolved.user.user_id,
+                &session_id,
+                &title,
+                now,
+            );
+        }
+    }
+    let _ = state
+        .user_store
+        .touch_chat_session(&resolved.user.user_id, &session_id, now, now);
+
+    let attachments = payload
+        .attachments
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| {
+            item.content
+                .as_ref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .map(|item| AttachmentPayload {
+            name: item.name,
+            content: item.content,
+            content_type: item.mime_type,
+        })
+        .collect::<Vec<_>>();
+    let attachments = if attachments.is_empty() {
+        None
+    } else {
+        Some(attachments)
+    };
+
+    let request = WunderRequest {
+        user_id: resolved.user.user_id.clone(),
+        question: content,
+        tool_names,
+        stream: payload.stream.unwrap_or(true),
+        session_id: Some(session_id.clone()),
+        model_name: None,
+        language: Some(i18n::get_language()),
+        config_overrides: None,
+        attachments,
+    };
+
+    if request.stream {
+        let stream = state
+            .orchestrator
+            .stream(request)
+            .await
+            .map_err(map_orchestrator_error)?;
+        let mapped = stream.map(|event| match event {
+            Ok(event) => {
+                let mut builder = Event::default()
+                    .event(event.event)
+                    .data(event.data.to_string());
+                if let Some(id) = event.id {
+                    builder = builder.id(id);
+                }
+                Ok::<Event, std::convert::Infallible>(builder)
+            }
+            Err(err) => {
+                let payload = json!({ "event": "error", "message": err.to_string() });
+                Ok::<Event, std::convert::Infallible>(
+                    Event::default().event("error").data(payload.to_string()),
+                )
+            }
+        });
+        let sse = Sse::new(mapped)
+            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+        Ok(sse.into_response())
+    } else {
+        let response = state
+            .orchestrator
+            .run(request)
+            .await
+            .map_err(map_orchestrator_error)?;
+        Ok(Json(json!({ "data": response })).into_response())
+    }
+}
+
+async fn resume_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<ResumeQuery>,
+) -> Result<Response, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if record.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+
+    let after_event_id = query.after_event_id.unwrap_or(0);
+    let records =
+        state
+            .workspace
+            .load_stream_events(&session_id, after_event_id, STREAM_RESUME_LIMIT);
+    let stream =
+        tokio_stream::iter(records.into_iter().filter_map(map_stream_event)).map(|event| {
+            let mut builder = Event::default()
+                .event(event.event)
+                .data(event.data.to_string());
+            if let Some(id) = event.id {
+                builder = builder.id(id);
+            }
+            Ok::<Event, std::convert::Infallible>(builder)
+        });
+    let sse =
+        Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+    Ok(sse.into_response())
+}
+
+async fn cancel_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if record.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+    let cancelled = state.monitor.cancel(&session_id);
+    Ok(Json(json!({ "data": { "cancelled": cancelled } })))
+}
+
+async fn system_prompt(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SystemPromptRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    let allowed = compute_allowed_tool_names(
+        &resolved.user,
+        &user_context,
+        payload.selected_shared_tools.as_deref(),
+    );
+    let tool_names = finalize_tool_names(allowed);
+    let prompt = state
+        .orchestrator
+        .build_system_prompt(
+            &user_context.config,
+            &tool_names,
+            &user_context.skills,
+            Some(&user_context.bindings),
+            &resolved.user.user_id,
+            None,
+        )
+        .await;
+    Ok(Json(json!({ "data": { "prompt": prompt } })))
+}
+
+async fn session_system_prompt(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SystemPromptRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if record.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    }
+    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    let allowed = compute_allowed_tool_names(
+        &resolved.user,
+        &user_context,
+        payload.selected_shared_tools.as_deref(),
+    );
+    let tool_names = finalize_tool_names(allowed);
+    let prompt = state
+        .orchestrator
+        .build_system_prompt(
+            &user_context.config,
+            &tool_names,
+            &user_context.skills,
+            Some(&user_context.bindings),
+            &resolved.user.user_id,
+            None,
+        )
+        .await;
+    Ok(Json(json!({ "data": { "prompt": prompt } })))
+}
+
+async fn chat_attachment_convert(mut multipart: Multipart) -> Result<Json<Value>, Response> {
+    let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.file_not_found"),
+        ));
+    };
+
+    let filename = field.file_name().unwrap_or("upload").to_string();
+    let extension = Path::new(&filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if extension.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.file_extension_missing"),
+        ));
+    }
+    let extension = format!(".{extension}");
+    let supported = get_supported_extensions();
+    if !supported
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&extension))
+    {
+        let message = i18n::t_with_params(
+            "error.unsupported_file_type",
+            &std::collections::HashMap::from([("extension".to_string(), extension.clone())]),
+        );
+        return Err(error_response(StatusCode::BAD_REQUEST, message));
+    }
+    let stem = Path::new(&filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document");
+    let stem = sanitize_filename_stem(stem);
+    let stem = if stem.trim().is_empty() {
+        "document".to_string()
+    } else {
+        stem
+    };
+
+    let temp_dir = create_temp_dir()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let input_path = temp_dir.join(format!("{stem}{extension}"));
+    let output_path = temp_dir.join(format!("{stem}.md"));
+    let result = async {
+        save_multipart_field(field, &input_path).await?;
+        let conversion = convert_to_markdown(&input_path, &output_path, &extension)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let content = tokio::fs::read_to_string(&output_path)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if content.trim().is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.empty_parse_result"),
+            ));
+        }
+        Ok(Json(json!({
+            "data": {
+                "name": filename,
+                "content": content,
+                "converter": conversion.converter,
+                "warnings": conversion.warnings,
+            }
+        })))
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    result
+}
+
+fn map_history_message(item: Value) -> Option<Value> {
+    let role = item.get("role").and_then(Value::as_str)?;
+    if role == "system" {
+        return None;
+    }
+    let raw_content = item.get("content").cloned().unwrap_or(Value::Null);
+    let content = normalize_message_content(&raw_content);
+    let created_at = item
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut message = json!({
+        "role": role,
+        "content": content,
+        "created_at": created_at,
+    });
+    if role == "assistant" {
+        let reasoning = item
+            .get("reasoning_content")
+            .or_else(|| item.get("reasoning"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !reasoning.is_empty() {
+            if let Value::Object(ref mut map) = message {
+                map.insert("reasoning".to_string(), json!(reasoning));
+            }
+        }
+    }
+    Some(message)
+}
+
+fn normalize_message_content(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        parts.push(text.trim().to_string());
+                    }
+                }
+            }
+            if parts.is_empty() {
+                String::new()
+            } else {
+                parts.join("\n")
+            }
+        }
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn map_stream_event(record: Value) -> Option<StreamEvent> {
+    let event_id = record.get("event_id").and_then(Value::as_i64);
+    let event_type = record.get("event").and_then(Value::as_str)?;
+    let data = record.get("data").cloned().unwrap_or(Value::Null);
+    let timestamp = record
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    Some(StreamEvent {
+        event: event_type.to_string(),
+        data,
+        id: event_id.map(|value| value.to_string()),
+        timestamp,
+    })
+}
+
+fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
+    json!({
+        "id": record.session_id,
+        "title": record.title,
+        "created_at": format_ts(record.created_at),
+        "updated_at": format_ts(record.updated_at),
+        "last_message_at": format_ts(record.last_message_at),
+    })
+}
+
+fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
+    if let (Some(page), Some(size)) = (query.page, query.page_size) {
+        let safe_page = page.max(1);
+        let safe_size = size.max(1).min(200);
+        return ((safe_page - 1) * safe_size, safe_size);
+    }
+    let offset = query.offset.unwrap_or(0).max(0);
+    let limit = query.limit.unwrap_or(50).max(1).min(200);
+    (offset, limit)
+}
+
+fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
+    if allowed.is_empty() {
+        return vec!["__no_tools__".to_string()];
+    }
+    let mut list = allowed.drain().collect::<Vec<_>>();
+    list.sort();
+    list
+}
+
+fn should_auto_title(title: &str) -> bool {
+    let cleaned = title.trim();
+    cleaned.is_empty() || cleaned == "新会话" || cleaned == "未命名会话"
+}
+
+fn build_session_title(content: &str) -> Option<String> {
+    let cleaned = content.trim().replace('\n', " ");
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut output = cleaned;
+    if output.chars().count() > 20 {
+        output = output.chars().take(20).collect::<String>();
+        output.push_str("...");
+    }
+    Some(output)
+}
+
+fn format_ts(ts: f64) -> String {
+    let millis = (ts * 1000.0) as i64;
+    DateTime::<Utc>::from_timestamp_millis(millis)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default()
+}
+
+fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
+    let Some(events) = record.get("events").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut order = Vec::new();
+    let mut grouped: HashMap<i64, Vec<Value>> = HashMap::new();
+    let mut current_round: Option<i64> = None;
+    for event in events {
+        let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+        let data = event.get("data").cloned().unwrap_or(Value::Null);
+        if event_type == "round_start" {
+            let round = data
+                .get("round")
+                .and_then(Value::as_i64)
+                .or_else(|| current_round.map(|value| value + 1))
+                .unwrap_or(1);
+            current_round = Some(round);
+            if !grouped.contains_key(&round) {
+                order.push(round);
+                grouped.insert(round, Vec::new());
+            }
+            continue;
+        }
+        let Some(round) = current_round else {
+            continue;
+        };
+        if !is_workflow_event(event_type) {
+            continue;
+        }
+        let timestamp = event.get("timestamp").and_then(Value::as_f64).unwrap_or(0.0);
+        let timestamp = if timestamp > 0.0 {
+            format_ts(timestamp)
+        } else {
+            String::new()
+        };
+        let entry = json!({
+            "event": event_type,
+            "data": data,
+            "timestamp": timestamp,
+        });
+        grouped.entry(round).or_default().push(entry);
+    }
+    order
+        .into_iter()
+        .filter_map(|round| {
+            let events = grouped.remove(&round).unwrap_or_default();
+            if events.is_empty() {
+                None
+            } else {
+                Some(json!({ "round": round, "events": events }))
+            }
+        })
+        .collect()
+}
+
+fn is_workflow_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "progress"
+            | "llm_request"
+            | "knowledge_request"
+            | "tool_call"
+            | "tool_result"
+            | "llm_output_delta"
+            | "llm_output"
+            | "final"
+            | "error"
+    )
+}
+
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn map_orchestrator_error(err: Error) -> Response {
+    if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
+        let status = if orchestrator_err.code() == "USER_BUSY" {
+            StatusCode::TOO_MANY_REQUESTS
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return orchestrator_error_response(status, orchestrator_err.to_payload());
+    }
+    orchestrator_error_response(
+        StatusCode::BAD_REQUEST,
+        json!({
+            "code": "INTERNAL_ERROR",
+            "message": err.to_string(),
+        }),
+    )
+}
+
+fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
+    (status, Json(json!({ "detail": payload }))).into_response()
+}
+
+fn error_response(status: StatusCode, message: String) -> Response {
+    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+}
+
+async fn create_temp_dir() -> Result<std::path::PathBuf, std::io::Error> {
+    let mut root = std::env::temp_dir();
+    root.push("wunder_uploads");
+    root.push(Uuid::new_v4().simple().to_string());
+    tokio::fs::create_dir_all(&root).await?;
+    Ok(root)
+}
+
+async fn save_multipart_field(
+    mut field: axum::extract::multipart::Field<'_>,
+    target: &Path,
+) -> Result<(), Response> {
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    let mut file = tokio::fs::File::create(target)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    while let Some(chunk) = field
+        .chunk()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        file.write_all(&chunk)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    Ok(())
+}

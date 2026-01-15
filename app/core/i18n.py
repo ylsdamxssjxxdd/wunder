@@ -709,8 +709,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "Working directory is not a directory.",
     },
     "tool.exec.shell_not_allowed": {
-        "zh-CN": "启用 shell 执行需要 allow_commands 包含 \"*\"。",
-        "en-US": "Shell execution requires allow_commands to include \"*\".",
+        "zh-CN": "不允许使用 shell 执行。",
+        "en-US": "Shell execution is not allowed.",
     },
     "tool.exec.command_failed": {
         "zh-CN": "命令执行异常: {detail}",
@@ -1017,8 +1017,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "Refresh remote task status while waiting (default true).",
     },
     "tool.spec.exec.description": {
-        "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。",
-        "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. When allow_commands is *, shell is enabled by default; pass shell=false to disable. For cd/&& or other shell syntax, ensure shell is true.",
+        "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。需要 cd/&& 等 shell 语法时设置 shell=true，可显式传 shell=false 关闭。",
+        "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. Use shell=true when you need cd/&& or other shell syntax, or pass shell=false to disable.",
     },
     "tool.spec.exec.args.content": {
         "zh-CN": "CLI 命令。",
@@ -1033,8 +1033,8 @@ _MESSAGES: Dict[str, Dict[str, str]] = {
         "en-US": "Optional. Command timeout in seconds (default 30).",
     },
     "tool.spec.exec.args.shell": {
-        "zh-CN": "可选，使用 shell 执行，仅在 allow_commands 为 * 时允许。",
-        "en-US": "Optional. Execute via shell, only allowed when allow_commands is *.",
+        "zh-CN": "可选，使用 shell 执行。",
+        "en-US": "Optional. Execute via shell.",
     },
     "tool.spec.ptc.description": {
         "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。",

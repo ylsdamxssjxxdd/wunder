@@ -12,6 +12,40 @@ use std::sync::Arc;
 pub use postgres::PostgresStorage;
 pub use sqlite::SqliteStorage;
 
+#[derive(Debug, Clone)]
+pub struct UserAccountRecord {
+    pub user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub password_hash: String,
+    pub roles: Vec<String>,
+    pub status: String,
+    pub access_level: String,
+    pub is_demo: bool,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub last_login_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserTokenRecord {
+    pub token: String,
+    pub user_id: String,
+    pub expires_at: f64,
+    pub created_at: f64,
+    pub last_used_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatSessionRecord {
+    pub session_id: String,
+    pub user_id: String,
+    pub title: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionLockStatus {
     Acquired,
@@ -61,8 +95,11 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<HashMap<String, Value>>>;
 
     fn delete_chat_history(&self, user_id: &str) -> Result<i64>;
+    fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64>;
+    fn delete_tool_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs(&self, user_id: &str) -> Result<i64>;
+    fn delete_artifact_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
@@ -96,6 +133,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<Value>>;
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
+    fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;
 
     fn get_memory_enabled(&self, user_id: &str) -> Result<Option<bool>>;
     fn set_memory_enabled(&self, user_id: &str, enabled: bool) -> Result<()>;
@@ -159,6 +197,58 @@ pub trait StorageBackend: Send + Sync {
     fn delete_evaluation_run(&self, run_id: &str) -> Result<i64>;
 
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
+
+    fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()>;
+    fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
+    fn get_user_account_by_username(&self, username: &str) -> Result<Option<UserAccountRecord>>;
+    fn get_user_account_by_email(&self, email: &str) -> Result<Option<UserAccountRecord>>;
+    fn list_user_accounts(
+        &self,
+        keyword: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserAccountRecord>, i64)>;
+    fn delete_user_account(&self, user_id: &str) -> Result<i64>;
+
+    fn create_user_token(&self, record: &UserTokenRecord) -> Result<()>;
+    fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;
+    fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()>;
+    fn delete_user_token(&self, token: &str) -> Result<i64>;
+
+    fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
+    fn get_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>>;
+    fn list_chat_sessions(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn update_chat_session_title(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+        updated_at: f64,
+    ) -> Result<()>;
+    fn touch_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> Result<()>;
+    fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>>;
+    fn set_user_tool_access(
+        &self,
+        user_id: &str,
+        allowed_tools: Option<&Vec<String>>,
+    ) -> Result<()>;
 }
 
 /// 构建存储后端，根据 backend 配置选择 SQLite/Postgres。

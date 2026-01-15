@@ -16,7 +16,7 @@ services:
       - "${WUNDER_PORT:-8000}:${WUNDER_PORT:-8000}"
     volumes:
       - ./:/workspaces
-      - wunder_workspaces:/workspaces/data/workspaces
+      - wunder_workspaces:/workspaces/workspaces
     environment:
       - TZ=Asia/Shanghai
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
@@ -47,7 +47,7 @@ services:
     volumes:
       - ./app:/workspaces/app:ro
       - ./data/user_tools:/workspaces/data/user_tools:ro
-      - wunder_workspaces:/workspaces/data/workspaces
+      - wunder_workspaces:/workspaces/workspaces
       - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
     command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log --workers 2
     healthcheck:
@@ -69,7 +69,7 @@ services:
       - POSTGRES_USER=wunder
       - POSTGRES_PASSWORD=wunder
     ports:
-      - "5432:5432"
+      - "${WUNDER_POSTGRES_PORT:-5432}:5432"
     volumes:
       - wunder_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -78,6 +78,21 @@ services:
       timeout: 3s
       retries: 10
     restart: always
+
+  wunder_frontend:
+    image: node:22.14
+    container_name: wunder-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
+    environment:
+      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
+      - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
+      - FRONTEND_PORT=${FRONTEND_PORT:-18001}
+      - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
+    command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
 
 volumes:
   wunder_workspaces:

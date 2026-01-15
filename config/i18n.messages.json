@@ -307,6 +307,10 @@
     "en-US": "user_id is required",
     "zh-CN": "user_id 不能为空"
   },
+  "error.user_not_found": {
+    "en-US": "User not found",
+    "zh-CN": "用户不存在"
+  },
   "error.user_session_busy": {
     "en-US": "This user already has an active session running",
     "zh-CN": "该用户已有会话正在执行"
@@ -744,8 +748,8 @@
     "zh-CN": "命令解析失败。"
   },
   "tool.exec.shell_not_allowed": {
-    "en-US": "Shell execution requires allow_commands to include \"*\".",
-    "zh-CN": "启用 shell 执行需要 allow_commands 包含 \"*\"。"
+    "en-US": "Shell execution is not allowed.",
+    "zh-CN": "不允许使用 shell 执行。"
   },
   "tool.exec.workdir_not_dir": {
     "en-US": "Working directory is not a directory.",
@@ -1132,8 +1136,8 @@
     "zh-CN": "CLI 命令。"
   },
   "tool.spec.exec.args.shell": {
-    "en-US": "Optional. Execute via shell, only allowed when allow_commands is *.",
-    "zh-CN": "可选，使用 shell 执行，仅在 allow_commands 为 * 时允许。"
+    "en-US": "Optional. Execute via shell.",
+    "zh-CN": "可选，使用 shell 执行。"
   },
   "tool.spec.exec.args.timeout": {
     "en-US": "Optional. Command timeout in seconds (default 30).",
@@ -1144,8 +1148,8 @@
     "zh-CN": "可选，工作目录，相对工作区或白名单目录的绝对路径。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. When allow_commands is *, shell is enabled by default; pass shell=false to disable. For cd/&& or other shell syntax, ensure shell is true.",
-    "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。当 allow_commands 为 * 时，shell 默认开启，可显式传 shell=false 关闭。若需 cd/&& 等 shell 语法，请确保 shell 为 true。"
+    "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. Use shell=true when you need cd/&& or other shell syntax, or pass shell=false to disable.",
+    "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。需要 cd/&& 等 shell 语法时设置 shell=true，可显式传 shell=false 关闭。"
   },
   "tool.spec.final.args.content": {
     "en-US": "Final response content.",

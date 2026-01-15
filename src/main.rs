@@ -28,6 +28,8 @@ mod storage;
 mod throughput;
 mod token_utils;
 mod tools;
+mod user_access;
+mod user_store;
 mod user_tools;
 mod workspace;
 
@@ -252,27 +254,35 @@ async fn api_key_guard(
     }
 
     let path = request.uri().path();
-    if !auth::is_protected_path(path) {
+    if !auth::is_admin_path(path) {
         return Ok(next.run(request).await);
     }
 
-    // 按配置校验 API Key，避免误放行敏感接口。
+    let headers = request.headers();
     let config = state.config_store.get().await;
-    let expected = match config.api_key() {
-        Some(value) => value,
-        None => {
-            let message = i18n::t("error.api_key_missing");
-            return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
+    let expected = config.api_key();
+    if let Some(expected) = expected.as_ref() {
+        let provided = auth::extract_api_key(headers).unwrap_or_default();
+        if provided == *expected {
+            return Ok(next.run(request).await);
         }
-    };
-
-    let provided = auth::extract_api_key(request.headers()).unwrap_or_default();
-    if provided != expected {
-        let message = i18n::t("error.api_key_invalid");
-        return Ok(auth_error(StatusCode::UNAUTHORIZED, &message));
     }
 
-    Ok(next.run(request).await)
+    if let Some(token) = auth::extract_bearer_token(headers) {
+        if let Ok(Some(user)) = state.user_store.authenticate_token(&token) {
+            if crate::user_store::UserStore::is_admin(&user) {
+                return Ok(next.run(request).await);
+            }
+        }
+    }
+
+    if expected.is_none() {
+        let message = i18n::t("error.api_key_missing");
+        return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
+    }
+
+    let message = i18n::t("error.api_key_invalid");
+    return Ok(auth_error(StatusCode::UNAUTHORIZED, &message));
 }
 
 async fn language_guard(

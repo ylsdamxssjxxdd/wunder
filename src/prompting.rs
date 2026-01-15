@@ -197,14 +197,15 @@ impl PromptComposer {
                 specs
             };
             let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
+            let workdir_display = workspace.display_path(user_id, workdir);
             let mut prompt = build_system_prompt(
                 &base_prompt,
                 &tool_specs,
-                workdir,
+                &workdir_display,
                 &workspace_tree,
                 include_tools_protocol,
             );
-            let skill_block = build_skill_prompt_block(workdir, &skills_for_prompt);
+            let skill_block = build_skill_prompt_block(&workdir_display, &skills_for_prompt);
             if !skill_block.is_empty() {
                 prompt = format!("{}\n\n{}", prompt.trim_end(), skill_block.trim());
             }
@@ -313,12 +314,12 @@ impl PromptComposer {
 fn build_system_prompt(
     base_prompt: &str,
     tools: &[ToolSpec],
-    workdir: &Path,
+    workdir_display: &str,
     workspace_tree: &str,
     include_tools_protocol: bool,
 ) -> String {
     if !include_tools_protocol {
-        let engineer_info = build_engineer_info(workdir, workspace_tree, false);
+        let engineer_info = build_engineer_info(workdir_display, workspace_tree, false);
         return format!("{}\n\n{}", base_prompt.trim(), engineer_info.trim());
     }
     let tools_text = tools
@@ -337,14 +338,14 @@ fn build_system_prompt(
             ("available_tools_describe".to_string(), tools_text),
             (
                 "engineer_info".to_string(),
-                build_engineer_info(workdir, workspace_tree, include_ptc),
+                build_engineer_info(workdir_display, workspace_tree, include_ptc),
             ),
         ]),
     );
     format!("{}\n\n{}", base_prompt.trim(), extra_prompt.trim())
 }
 
-fn build_engineer_system_info(workdir: &Path, workspace_tree: &str) -> String {
+fn build_engineer_system_info(workdir_display: &str, workspace_tree: &str) -> String {
     let template_path = Path::new("app/prompts/engineer_system_info.txt");
     let template = read_prompt_template(template_path);
     let os_name = system_name();
@@ -354,13 +355,13 @@ fn build_engineer_system_info(workdir: &Path, workspace_tree: &str) -> String {
         &HashMap::from([
             ("OS".to_string(), os_name),
             ("DATE".to_string(), date_str),
-            ("DIR".to_string(), absolute_path_str(workdir)),
+            ("DIR".to_string(), workdir_display.to_string()),
             ("WORKSPACE_TREE".to_string(), workspace_tree.to_string()),
         ]),
     )
 }
 
-fn build_engineer_info(workdir: &Path, workspace_tree: &str, include_ptc: bool) -> String {
+fn build_engineer_info(workdir_display: &str, workspace_tree: &str, include_ptc: bool) -> String {
     let template_path = Path::new("app/prompts/engineer_info.txt");
     let template = read_prompt_template(template_path);
     let ptc_guidance = if include_ptc {
@@ -373,14 +374,14 @@ fn build_engineer_info(workdir: &Path, workspace_tree: &str, include_ptc: bool) 
         &HashMap::from([
             (
                 "engineer_system_info".to_string(),
-                build_engineer_system_info(workdir, workspace_tree),
+                build_engineer_system_info(workdir_display, workspace_tree),
             ),
             ("PTC_GUIDANCE".to_string(), ptc_guidance),
         ]),
     )
 }
 
-fn build_skill_prompt_block(workdir: &Path, skills: &[SkillSpec]) -> String {
+fn build_skill_prompt_block(workdir_display: &str, skills: &[SkillSpec]) -> String {
     if skills.is_empty() {
         return String::new();
     }
@@ -393,7 +394,7 @@ fn build_skill_prompt_block(workdir: &Path, skills: &[SkillSpec]) -> String {
     lines.push(i18n::t("prompt.skills.rule5"));
     lines.push(i18n::t_with_params(
         "prompt.skills.rule6",
-        &HashMap::from([("workdir".to_string(), workdir.to_string_lossy().to_string())]),
+        &HashMap::from([("workdir".to_string(), workdir_display.to_string())]),
     ));
     lines.push(String::new());
     lines.push(i18n::t("prompt.skills.list_header"));

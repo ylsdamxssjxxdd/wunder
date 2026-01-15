@@ -1,3 +1,4 @@
+use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::state::AppState;
 use crate::workspace::WorkspaceEntry;
@@ -49,9 +50,11 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn workspace_list(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceListQuery>,
 ) -> Result<Json<WorkspaceListResponse>, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let _root = state
         .workspace
         .ensure_user_root(&user_id)
@@ -99,9 +102,11 @@ async fn workspace_list(
 
 async fn workspace_content(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceContentQuery>,
 ) -> Result<Json<WorkspaceContentResponse>, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let _root = state
         .workspace
         .ensure_user_root(&user_id)
@@ -228,9 +233,11 @@ async fn workspace_content(
 
 async fn workspace_search(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceSearchQuery>,
 ) -> Result<Json<WorkspaceSearchResponse>, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     state
         .workspace
         .ensure_user_root(&user_id)
@@ -276,7 +283,7 @@ async fn workspace_upload(
         }
     }
 
-    let mut user_id = String::new();
+    let mut raw_user_id = String::new();
     let mut base_path = String::new();
     let mut relative_paths = Vec::new();
     let mut pending_files = Vec::new();
@@ -295,7 +302,7 @@ async fn workspace_upload(
                     .await
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
                 if !value.trim().is_empty() {
-                    user_id = value.trim().to_string();
+                    raw_user_id = value.trim().to_string();
                 }
             }
             "path" => {
@@ -338,11 +345,17 @@ async fn workspace_upload(
         }
     }
 
-    let user_id = if user_id.trim().is_empty() {
-        "anonymous".to_string()
-    } else {
-        user_id
-    };
+    let resolved = resolve_user(
+        &state,
+        &headers,
+        if raw_user_id.trim().is_empty() {
+            None
+        } else {
+            Some(raw_user_id.as_str())
+        },
+    )
+    .await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .workspace
         .ensure_user_root(&user_id)
@@ -444,6 +457,7 @@ async fn workspace_upload(
 }
 async fn workspace_dir(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceDirRequest>,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
     let normalized = normalize_relative_path(&request.path);
@@ -453,7 +467,8 @@ async fn workspace_dir(
             i18n::t("workspace.error.dir_path_required"),
         ));
     }
-    let user_id = request.user_id;
+    let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     state
         .workspace
         .ensure_user_root(&user_id)
@@ -483,6 +498,7 @@ async fn workspace_dir(
 
 async fn workspace_move(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceMoveRequest>,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
     let source = normalize_relative_path(&request.source);
@@ -499,7 +515,8 @@ async fn workspace_move(
             i18n::t("workspace.error.destination_path_required"),
         ));
     }
-    let user_id = request.user_id;
+    let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     state
         .workspace
         .ensure_user_root(&user_id)
@@ -563,6 +580,7 @@ async fn workspace_move(
 }
 async fn workspace_copy(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceCopyRequest>,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
     let source = normalize_relative_path(&request.source);
@@ -585,7 +603,8 @@ async fn workspace_copy(
             i18n::t("workspace.error.source_destination_same"),
         ));
     }
-    let user_id = request.user_id;
+    let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     state
         .workspace
         .ensure_user_root(&user_id)
@@ -648,6 +667,7 @@ async fn workspace_copy(
 
 async fn workspace_batch(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceBatchRequest>,
 ) -> Result<Json<WorkspaceBatchResponse>, Response> {
     if request.paths.is_empty() {
@@ -656,7 +676,8 @@ async fn workspace_batch(
             i18n::t("workspace.error.batch_paths_missing"),
         ));
     }
-    let user_id = request.user_id;
+    let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .workspace
         .ensure_user_root(&user_id)
@@ -816,6 +837,7 @@ async fn workspace_batch(
 }
 async fn workspace_file_update(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceFileUpdateRequest>,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
     let normalized = normalize_relative_path(&request.path);
@@ -825,7 +847,8 @@ async fn workspace_file_update(
             i18n::t("workspace.error.file_path_required"),
         ));
     }
-    let user_id = request.user_id;
+    let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     state
         .workspace
         .ensure_user_root(&user_id)
@@ -869,9 +892,11 @@ async fn workspace_file_update(
 
 async fn workspace_archive(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceArchiveQuery>,
 ) -> Result<Response, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .workspace
         .ensure_user_root(&user_id)
@@ -937,9 +962,11 @@ async fn workspace_archive(
 
 async fn workspace_download(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceDownloadQuery>,
 ) -> Result<Response, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -978,9 +1005,11 @@ async fn workspace_download(
 
 async fn workspace_delete(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<WorkspaceDeleteQuery>,
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
-    let user_id = params.user_id;
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1257,7 +1286,8 @@ fn error_response(status: StatusCode, message: String) -> Response {
 }
 #[derive(Debug, Deserialize)]
 struct WorkspaceListQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     path: String,
     #[serde(default)]
@@ -1276,7 +1306,8 @@ struct WorkspaceListQuery {
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceContentQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     path: String,
     #[serde(default = "default_true")]
@@ -1299,7 +1330,8 @@ struct WorkspaceContentQuery {
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceSearchQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     keyword: String,
     #[serde(default)]
     offset: i64,
@@ -1313,46 +1345,53 @@ struct WorkspaceSearchQuery {
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceDownloadQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     path: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceArchiveQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceDeleteQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     path: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceDirRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     path: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceMoveRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     source: String,
     destination: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceCopyRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     source: String,
     destination: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceBatchRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     action: String,
     #[serde(default)]
     paths: Vec<String>,
@@ -1362,7 +1401,8 @@ struct WorkspaceBatchRequest {
 
 #[derive(Debug, Deserialize)]
 struct WorkspaceFileUpdateRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     path: String,
     #[serde(default)]
     content: String,

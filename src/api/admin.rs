@@ -16,10 +16,13 @@ use crate::throughput::{
     ThroughputConfig, ThroughputReport, ThroughputSnapshot, ThroughputStatusResponse,
 };
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
+use crate::user_store::UserStore;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::{routing::delete, routing::get, routing::post, routing::put, Json, Router};
+use axum::{
+    routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
+};
 use chrono::{TimeZone, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
@@ -118,6 +121,22 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/performance/sample",
             post(admin_performance_sample),
+        )
+        .route(
+            "/wunder/admin/user_accounts",
+            get(admin_user_accounts_list).post(admin_user_accounts_create),
+        )
+        .route(
+            "/wunder/admin/user_accounts/{user_id}",
+            patch(admin_user_accounts_update).delete(admin_user_accounts_delete),
+        )
+        .route(
+            "/wunder/admin/user_accounts/{user_id}/password",
+            post(admin_user_accounts_reset_password),
+        )
+        .route(
+            "/wunder/admin/user_accounts/{user_id}/tool_access",
+            get(admin_user_accounts_tool_access_get).put(admin_user_accounts_tool_access_update),
         )
         .route("/wunder/admin/users", get(admin_users))
         .route(
@@ -1508,6 +1527,251 @@ async fn admin_performance_sample(
     Ok(Json(response))
 }
 
+async fn admin_user_accounts_list(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserAccountListQuery>,
+) -> Result<Json<Value>, Response> {
+    let keyword = query
+        .keyword
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let offset = query.offset.unwrap_or(0).max(0);
+    let limit = query.limit.unwrap_or(50).max(1).min(200);
+    let (users, total) = state
+        .user_store
+        .list_users(keyword, offset, limit)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let active_sessions = state.monitor.list_sessions(true);
+    let mut active_map: HashMap<String, i64> = HashMap::new();
+    for session in active_sessions {
+        let user_id = session
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if user_id.is_empty() {
+            continue;
+        }
+        let entry = active_map.entry(user_id.to_string()).or_insert(0);
+        *entry += 1;
+    }
+    let items = users
+        .into_iter()
+        .map(|user| {
+            let profile = UserStore::to_profile(&user);
+            let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
+            let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
+            if let Value::Object(ref mut map) = value {
+                map.insert("active_sessions".to_string(), json!(active_count));
+                map.insert("online".to_string(), json!(active_count > 0));
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "total": total, "items": items } })))
+}
+
+async fn admin_user_accounts_create(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserAccountCreateRequest>,
+) -> Result<Json<Value>, Response> {
+    let username = payload.username.trim();
+    let password = payload.password.trim();
+    if username.is_empty() || password.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let status = normalize_user_status(payload.status.as_deref());
+    let roles = normalize_user_roles(payload.roles);
+    let email = normalize_user_email(payload.email);
+    let record = state
+        .user_store
+        .create_user(
+            username,
+            email,
+            password,
+            payload.access_level.as_deref(),
+            roles,
+            &status,
+            payload.is_demo,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": UserStore::to_profile(&record) })))
+}
+
+async fn admin_user_accounts_update(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+    Json(payload): Json<UserAccountUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let mut record = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    if let Some(email) = payload.email {
+        record.email = normalize_user_email(Some(email));
+    }
+    if let Some(status) = payload.status {
+        record.status = normalize_user_status(Some(&status));
+    }
+    if let Some(access_level) = payload.access_level {
+        record.access_level = UserStore::normalize_access_level(Some(&access_level));
+    }
+    if let Some(roles) = payload.roles {
+        record.roles = normalize_user_roles(roles);
+    }
+    record.updated_at = now_ts();
+    state
+        .user_store
+        .update_user(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": UserStore::to_profile(&record) })))
+}
+
+async fn admin_user_accounts_reset_password(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+    Json(payload): Json<UserAccountPasswordResetRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let password = payload.password.trim();
+    if password.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    state
+        .user_store
+        .set_password(cleaned, password)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({ "ok": true, "message": i18n::t("message.updated") }),
+    ))
+}
+
+async fn admin_user_accounts_tool_access_get(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let user_exists = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    if !user_exists {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.user_not_found"),
+        ));
+    }
+    let allowed = state
+        .user_store
+        .get_user_tool_access(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "allowed_tools": allowed } })))
+}
+
+async fn admin_user_accounts_tool_access_update(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+    Json(payload): Json<UserAccountToolAccessRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let user_exists = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    if !user_exists {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.user_not_found"),
+        ));
+    }
+    let allowed = payload.allowed_tools.map(normalize_tool_access_list);
+    state
+        .user_store
+        .set_user_tool_access(cleaned, allowed.as_ref())
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "allowed_tools": allowed } })))
+}
+
+async fn admin_user_accounts_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let exists = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    if !exists {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.user_not_found"),
+        ));
+    }
+    let deleted_user = state
+        .user_store
+        .delete_user(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let _ = state.user_store.set_user_tool_access(cleaned, None);
+    let monitor_result = state.monitor.purge_user_sessions(cleaned);
+    let purge_result = state.workspace.purge_user_data(cleaned);
+    let tool_root = state.user_tool_store.get_user_dir(cleaned);
+    let tool_dir_deleted = std::fs::remove_dir_all(&tool_root).is_ok();
+    Ok(Json(json!({
+        "ok": true,
+        "message": i18n::t("message.user_deleted"),
+        "deleted_user": deleted_user,
+        "cancelled_sessions": monitor_result.get("cancelled").copied().unwrap_or(0),
+        "deleted_sessions": monitor_result.get("deleted").copied().unwrap_or(0),
+        "deleted_chat_records": purge_result.chat_records,
+        "deleted_tool_records": purge_result.tool_records,
+        "workspace_deleted": purge_result.workspace_deleted,
+        "legacy_history_deleted": purge_result.legacy_history_deleted,
+        "user_tools_deleted": tool_dir_deleted
+    })))
+}
+
 async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     #[derive(Default)]
     struct UserStats {
@@ -1834,6 +2098,60 @@ fn format_ts(ts: f64) -> String {
         Some(dt) => dt.to_rfc3339(),
         None => String::new(),
     }
+}
+
+fn normalize_user_status(value: Option<&str>) -> String {
+    let cleaned = value.unwrap_or("active").trim();
+    if cleaned.is_empty() {
+        "active".to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn normalize_user_roles(raw: Vec<String>) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for role in raw {
+        let name = role.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            output.push(name.to_string());
+        }
+    }
+    if output.is_empty() {
+        output.push("user".to_string());
+    }
+    output
+}
+
+fn normalize_user_email(value: Option<String>) -> Option<String> {
+    value.and_then(|email| {
+        let cleaned = email.trim();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned.to_string())
+        }
+    })
+}
+
+fn normalize_tool_access_list(raw: Vec<String>) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for name in raw {
+        let cleaned = name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let normalized = cleaned.to_string();
+        if seen.insert(normalized.clone()) {
+            output.push(normalized);
+        }
+    }
+    output
 }
 
 fn builtin_tool_names() -> HashSet<String> {
@@ -2369,6 +2687,55 @@ struct MonitorToolUsageQuery {
     tool_hours: Option<f64>,
     start_time: Option<f64>,
     end_time: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct UserAccountListQuery {
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountCreateRequest {
+    username: String,
+    #[serde(default)]
+    email: Option<String>,
+    password: String,
+    #[serde(default)]
+    access_level: Option<String>,
+    #[serde(default)]
+    roles: Vec<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    is_demo: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountUpdateRequest {
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    access_level: Option<String>,
+    #[serde(default)]
+    roles: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountPasswordResetRequest {
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountToolAccessRequest {
+    #[serde(default)]
+    allowed_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]

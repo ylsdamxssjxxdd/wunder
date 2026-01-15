@@ -166,7 +166,7 @@ pub struct WorkspaceConfig {
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
-            root: "./data/workspaces".to_string(),
+            root: "./workspaces".to_string(),
             max_history_items: 0,
             retention_days: 0,
         }

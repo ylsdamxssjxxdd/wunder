@@ -3042,6 +3042,23 @@ button.danger {
   background: #f8fafc;
 }
 
+.tool-list.is-disabled {
+  opacity: 0.6;
+}
+
+.user-account-tool-group-title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-top: 6px;
+}
+
+.user-account-tool-group-title:first-child {
+  margin-top: 0;
+}
+
 .tool-item,
 .skill-item {
   display: flex;

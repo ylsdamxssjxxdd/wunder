@@ -1,15 +1,19 @@
 // 用户自建工具 API：MCP、技能、知识库与额外提示词管理。
+use crate::api::user_context::resolve_user;
 use crate::config::{KnowledgeBaseConfig, McpServerConfig};
 use crate::i18n;
 use crate::knowledge;
 use crate::path_utils::{
     normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
+use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::skills::load_skills;
 use crate::state::AppState;
+use crate::tools::{a2a_service_schema, builtin_tool_specs};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, UserToolContext};
 use crate::user_tools::{UserKnowledgeBase, UserMcpServer};
 use axum::extract::{Multipart, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -57,40 +61,33 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/user_tools/knowledge/upload",
             post(user_knowledge_upload),
         )
+        .route("/wunder/user_tools/tools", get(user_tools_summary))
         .route("/wunder/user_tools/extra_prompt", post(user_extra_prompt))
 }
 
 async fn user_mcp_get(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserIdQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let payload = state.user_tool_store.load_user_tools(user_id);
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
     let servers = payload
         .mcp_servers
         .iter()
         .map(UserMcpServerPayload::from)
         .collect::<Vec<_>>();
-    Ok(Json(json!({ "servers": servers })))
+    Ok(Json(json!({ "data": { "servers": servers } })))
 }
 
 async fn user_mcp_update(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserMcpUpdate>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = payload.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let servers = payload
         .servers
         .into_iter()
@@ -98,20 +95,22 @@ async fn user_mcp_update(
         .collect();
     let updated = state
         .user_tool_store
-        .update_mcp_servers(user_id, servers)
+        .update_mcp_servers(&user_id, servers)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let servers = updated
         .mcp_servers
         .iter()
         .map(UserMcpServerPayload::from)
         .collect::<Vec<_>>();
-    Ok(Json(json!({ "servers": servers })))
+    Ok(Json(json!({ "data": { "servers": servers } })))
 }
 
 async fn user_mcp_tools(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserMcpToolsRequest>,
 ) -> Result<Json<Value>, Response> {
+    let _resolved = resolve_user(&state, &headers, None).await?;
     let config = state.config_store.get().await;
     let headers = parse_header_map(payload.headers);
     let server = McpServerConfig {
@@ -133,30 +132,26 @@ async fn user_mcp_tools(
         Err(err) => {
             let transport = crate::mcp::normalize_transport(server.transport.as_deref());
             if transport != "streamable-http" {
-                return Ok(Json(
-                    json!({ "tools": Vec::<Value>::new(), "warning": err.to_string() }),
-                ));
+                return Ok(Json(json!({
+                    "data": { "tools": Vec::<Value>::new(), "warning": err.to_string() }
+                })));
             }
             return Err(error_response(StatusCode::BAD_REQUEST, err.to_string()));
         }
     };
-    Ok(Json(json!({ "tools": tools })))
+    Ok(Json(json!({ "data": { "tools": tools } })))
 }
 
 async fn user_skills_get(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserIdQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let payload = state.user_tool_store.load_user_tools(user_id);
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
     let config = state.config_store.get().await;
-    let skill_root = state.user_tool_store.get_skill_root(user_id);
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -180,27 +175,25 @@ async fn user_skills_get(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({
-        "enabled": payload.skills.enabled,
-        "shared": payload.skills.shared,
-        "skills": skills
+        "data": {
+            "enabled": payload.skills.enabled,
+            "shared": payload.skills.shared,
+            "skills": skills
+        }
     })))
 }
 
 async fn user_skills_update(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserSkillsUpdate>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = payload.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let previous = state.user_tool_store.load_user_tools(user_id);
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let previous = state.user_tool_store.load_user_tools(&user_id);
     let updated = state
         .user_tool_store
-        .update_skills(user_id, payload.enabled.clone(), payload.shared.clone())
+        .update_skills(&user_id, payload.enabled.clone(), payload.shared.clone())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let before_enabled: HashSet<String> = previous.skills.enabled.iter().cloned().collect();
     let after_enabled: HashSet<String> = updated.skills.enabled.iter().cloned().collect();
@@ -242,9 +235,9 @@ async fn user_skills_update(
             info!("用户 {user_id} 取消共享技能: {}", shared_removed.join(", "));
         }
     }
-    state.user_tool_manager.clear_skill_cache(Some(user_id));
+    state.user_tool_manager.clear_skill_cache(Some(&user_id));
     let config = state.config_store.get().await;
-    let skill_root = state.user_tool_store.get_skill_root(user_id);
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -268,24 +261,22 @@ async fn user_skills_update(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({
-        "enabled": updated.skills.enabled,
-        "shared": updated.skills.shared,
-        "skills": skills
+        "data": {
+            "enabled": updated.skills.enabled,
+            "shared": updated.skills.shared,
+            "skills": skills
+        }
     })))
 }
 
 async fn user_skills_content(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserSkillContentQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let name = query.name.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
     if name.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -293,7 +284,7 @@ async fn user_skills_content(
         ));
     }
     let config = state.config_store.get().await;
-    let skill_root = state.user_tool_store.get_skill_root(user_id);
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -319,16 +310,21 @@ async fn user_skills_content(
                 ),
             )
         })?;
-    Ok(Json(
-        json!({ "name": name, "path": skill_path.to_string_lossy(), "content": content }),
-    ))
+    Ok(Json(json!({
+        "data": {
+            "name": name,
+            "path": skill_path.to_string_lossy(),
+            "content": content
+        }
+    })))
 }
 
 async fn user_skills_upload(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, Response> {
-    let mut user_id = String::new();
+    let mut raw_user_id = String::new();
     let mut filename = String::new();
     let mut data = Vec::new();
     while let Some(field) = multipart
@@ -338,7 +334,7 @@ async fn user_skills_upload(
     {
         let field_name = field.name().unwrap_or("");
         if field_name == "user_id" {
-            user_id = field.text().await.unwrap_or_default();
+            raw_user_id = field.text().await.unwrap_or_default();
             continue;
         }
         filename = field.file_name().unwrap_or("skills.zip").to_string();
@@ -348,12 +344,17 @@ async fn user_skills_upload(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
             .to_vec();
     }
-    if user_id.trim().is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(
+        &state,
+        &headers,
+        if raw_user_id.trim().is_empty() {
+            None
+        } else {
+            Some(raw_user_id.trim())
+        },
+    )
+    .await?;
+    let user_id = resolved.user.user_id;
     if !filename.to_lowercase().ends_with(".zip") {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -411,38 +412,34 @@ async fn user_skills_upload(
         extracted += 1;
     }
     state.user_tool_manager.clear_skill_cache(Some(&user_id));
-    Ok(Json(
-        json!({ "ok": true, "extracted": extracted, "message": i18n::t("message.upload_success") }),
-    ))
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "extracted": extracted,
+            "message": i18n::t("message.upload_success")
+        }
+    })))
 }
 
 async fn user_knowledge_get(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserIdQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let payload = state.user_tool_store.load_user_tools(user_id);
-    let bases = build_user_knowledge_payload(&state, user_id, &payload.knowledge_bases, false);
-    Ok(Json(json!({ "knowledge": { "bases": bases } })))
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let bases = build_user_knowledge_payload(&state, &user_id, &payload.knowledge_bases, false);
+    Ok(Json(json!({ "data": { "knowledge": { "bases": bases } } })))
 }
 
 async fn user_knowledge_update(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserKnowledgeUpdate>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = payload.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let bases = payload
         .knowledge
         .bases
@@ -451,45 +448,39 @@ async fn user_knowledge_update(
         .collect::<Vec<_>>();
     let updated = state
         .user_tool_store
-        .update_knowledge_bases(user_id, bases)
+        .update_knowledge_bases(&user_id, bases)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let bases = build_user_knowledge_payload(&state, user_id, &updated.knowledge_bases, true);
-    Ok(Json(json!({ "knowledge": { "bases": bases } })))
+    let bases = build_user_knowledge_payload(&state, &user_id, &updated.knowledge_bases, true);
+    Ok(Json(json!({ "data": { "knowledge": { "bases": bases } } })))
 }
 
 async fn user_knowledge_files(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserKnowledgeFilesQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(user_id, &query.base, false)
+        .resolve_knowledge_base_root(&user_id, &query.base, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let files = list_markdown_files(&root);
-    Ok(Json(json!({ "base": query.base, "files": files })))
+    Ok(Json(
+        json!({ "data": { "base": query.base, "files": files } }),
+    ))
 }
 
 async fn user_knowledge_file(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserKnowledgeFileQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(user_id, &query.base, false)
+        .resolve_knowledge_base_root(&user_id, &query.base, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -513,25 +504,21 @@ async fn user_knowledge_file(
     let content = tokio::fs::read_to_string(&target)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({ "base": query.base, "path": query.path, "content": content }),
-    ))
+    Ok(Json(json!({
+        "data": { "base": query.base, "path": query.path, "content": content }
+    })))
 }
 
 async fn user_knowledge_file_update(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserKnowledgeFileUpdate>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = payload.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(user_id, &payload.base, true)
+        .resolve_knowledge_base_root(&user_id, &payload.base, true)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &payload.path)?;
     if target
@@ -553,25 +540,21 @@ async fn user_knowledge_file_update(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     refresh_user_knowledge_cache(&payload.base, &root).await;
-    Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.saved_and_reindexed") }),
-    ))
+    Ok(Json(json!({
+        "data": { "ok": true, "message": i18n::t("message.saved_and_reindexed") }
+    })))
 }
 
 async fn user_knowledge_file_delete(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<UserKnowledgeFileQuery>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = query.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(user_id, &query.base, false)
+        .resolve_knowledge_base_root(&user_id, &query.base, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -592,16 +575,17 @@ async fn user_knowledge_file_delete(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         refresh_user_knowledge_cache(&query.base, &root).await;
     }
-    Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.deleted") }),
-    ))
+    Ok(Json(json!({
+        "data": { "ok": true, "message": i18n::t("message.deleted") }
+    })))
 }
 
 async fn user_knowledge_upload(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, Response> {
-    let mut user_id = String::new();
+    let mut raw_user_id = String::new();
     let mut base = String::new();
     let mut filename = String::new();
     let mut data = Vec::new();
@@ -612,7 +596,7 @@ async fn user_knowledge_upload(
     {
         let field_name = field.name().unwrap_or("");
         if field_name == "user_id" {
-            user_id = field.text().await.unwrap_or_default();
+            raw_user_id = field.text().await.unwrap_or_default();
             continue;
         }
         if field_name == "base" {
@@ -622,12 +606,17 @@ async fn user_knowledge_upload(
         filename = field.file_name().unwrap_or("upload.md").to_string();
         data = field.bytes().await.unwrap_or_default().to_vec();
     }
-    if user_id.trim().is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(
+        &state,
+        &headers,
+        if raw_user_id.trim().is_empty() {
+            None
+        } else {
+            Some(raw_user_id.trim())
+        },
+    )
+    .await?;
+    let user_id = resolved.user.user_id;
     if base.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -647,32 +636,264 @@ async fn user_knowledge_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     refresh_user_knowledge_cache(&base, &root).await;
     Ok(Json(json!({
-        "ok": true,
-        "message": i18n::t("message.upload_converted"),
-        "path": filename,
-        "converter": "raw",
-        "warnings": []
+        "data": {
+            "ok": true,
+            "message": i18n::t("message.upload_converted"),
+            "path": filename,
+            "converter": "raw",
+            "warnings": []
+        }
     })))
+}
+
+async fn user_tools_summary(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let context = build_user_tool_context(&state, &user_id).await;
+    let allowed = compute_allowed_tool_names(&resolved.user, &context, None);
+    let summary = build_user_tools_summary(&user_id, &allowed, &context);
+    Ok(Json(json!({ "data": summary })))
 }
 
 async fn user_extra_prompt(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UserExtraPromptRequest>,
 ) -> Result<Json<Value>, Response> {
-    let user_id = payload.user_id.trim();
-    if user_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
     let updated = state
         .user_tool_store
-        .update_extra_prompt(user_id, payload.extra_prompt.clone())
+        .update_extra_prompt(&user_id, payload.extra_prompt.clone())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({ "user_id": user_id, "extra_prompt": updated.extra_prompt }),
-    ))
+    Ok(Json(json!({
+        "data": {
+            "user_id": user_id,
+            "extra_prompt": updated.extra_prompt
+        }
+    })))
+}
+
+fn build_user_tools_summary(
+    user_id: &str,
+    allowed: &HashSet<String>,
+    context: &UserToolContext,
+) -> AvailableToolsResponse {
+    let config = &context.config;
+    let language = i18n::get_language().to_lowercase();
+    let alias_map = crate::tools::builtin_aliases();
+    let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
+    for (alias, canonical) in alias_map {
+        canonical_aliases.entry(canonical).or_default().push(alias);
+    }
+
+    let mut builtin_tools = Vec::new();
+    let mut seen_builtin = HashSet::new();
+    for spec in builtin_tool_specs() {
+        let aliases = canonical_aliases
+            .get(&spec.name)
+            .map(|value| value.as_slice())
+            .unwrap_or(&[]);
+        let enabled =
+            allowed.contains(&spec.name) || aliases.iter().any(|alias| allowed.contains(alias));
+        if !enabled {
+            continue;
+        }
+        let name = if language.starts_with("en") {
+            aliases
+                .iter()
+                .find(|alias| allowed.contains(alias.as_str()))
+                .cloned()
+                .or_else(|| aliases.first().cloned())
+                .unwrap_or_else(|| spec.name.clone())
+        } else {
+            spec.name.clone()
+        };
+        if !seen_builtin.insert(name.clone()) {
+            continue;
+        }
+        builtin_tools.push(ToolSpec {
+            name,
+            description: spec.description.clone(),
+            input_schema: spec.input_schema.clone(),
+        });
+    }
+
+    let mut mcp_tools = Vec::new();
+    for server in &config.mcp.servers {
+        if !server.enabled {
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            if tool.name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            let full_name = format!("{}@{}", server.name, tool.name);
+            if !allowed.contains(&full_name) {
+                continue;
+            }
+            let input_schema =
+                serde_json::to_value(&tool.input_schema).unwrap_or_else(|_| json!({}));
+            let description = if tool.description.trim().is_empty() {
+                server
+                    .description
+                    .clone()
+                    .or_else(|| server.display_name.clone())
+                    .unwrap_or_default()
+            } else {
+                tool.description.clone()
+            };
+            mcp_tools.push(ToolSpec {
+                name: full_name,
+                description,
+                input_schema,
+            });
+        }
+    }
+
+    let a2a_tools = config
+        .a2a
+        .services
+        .iter()
+        .filter(|service| service.enabled)
+        .filter_map(|service| {
+            let full_name = format!("a2a@{}", service.name);
+            if !allowed.contains(&full_name) {
+                return None;
+            }
+            Some(ToolSpec {
+                name: full_name,
+                description: service.description.clone().unwrap_or_default(),
+                input_schema: a2a_service_schema(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let skills = context
+        .skills
+        .list_specs()
+        .into_iter()
+        .filter(|spec| allowed.contains(&spec.name))
+        .map(|spec| ToolSpec {
+            name: spec.name,
+            description: spec.description,
+            input_schema: spec.input_schema,
+        })
+        .collect::<Vec<_>>();
+
+    let mut blocked_names: HashSet<String> = builtin_tools
+        .iter()
+        .map(|item| item.name.clone())
+        .chain(mcp_tools.iter().map(|item| item.name.clone()))
+        .chain(a2a_tools.iter().map(|item| item.name.clone()))
+        .chain(skills.iter().map(|item| item.name.clone()))
+        .collect();
+
+    let knowledge_schema = json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string", "description": i18n::t("knowledge.tool.query.description") },
+            "limit": { "type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description") }
+        },
+        "required": ["query"]
+    });
+    let mut knowledge_tools = Vec::new();
+    for base in &config.knowledge.bases {
+        if !base.enabled {
+            continue;
+        }
+        let name = base.name.trim();
+        if name.is_empty() || blocked_names.contains(name) {
+            continue;
+        }
+        if !allowed.contains(name) {
+            continue;
+        }
+        let description = if base.description.trim().is_empty() {
+            i18n::t_with_params(
+                "knowledge.tool.description",
+                &HashMap::from([("name".to_string(), name.to_string())]),
+            )
+        } else {
+            base.description.clone()
+        };
+        knowledge_tools.push(ToolSpec {
+            name: name.to_string(),
+            description,
+            input_schema: knowledge_schema.clone(),
+        });
+        blocked_names.insert(name.to_string());
+    }
+
+    let mut alias_specs: HashMap<String, ToolSpec> = context
+        .bindings
+        .alias_specs
+        .iter()
+        .map(|(name, spec)| (name.clone(), spec.clone()))
+        .collect();
+    for spec in &context.bindings.skill_specs {
+        alias_specs
+            .entry(spec.name.clone())
+            .or_insert_with(|| ToolSpec {
+                name: spec.name.clone(),
+                description: spec.description.clone(),
+                input_schema: spec.input_schema.clone(),
+            });
+    }
+
+    let mut user_tools = Vec::new();
+    let mut shared_tools = Vec::new();
+    let mut alias_names: Vec<String> = context.bindings.alias_map.keys().cloned().collect();
+    alias_names.sort();
+    for alias in alias_names {
+        if !allowed.contains(&alias) {
+            continue;
+        }
+        let Some(spec) = alias_specs.get(&alias) else {
+            continue;
+        };
+        let Some(alias_info) = context.bindings.alias_map.get(&alias) else {
+            continue;
+        };
+        if alias_info.owner_id == user_id {
+            user_tools.push(ToolSpec {
+                name: alias.clone(),
+                description: spec.description.clone(),
+                input_schema: spec.input_schema.clone(),
+            });
+        } else {
+            shared_tools.push(SharedToolSpec {
+                name: alias.clone(),
+                description: spec.description.clone(),
+                input_schema: spec.input_schema.clone(),
+                owner_id: alias_info.owner_id.clone(),
+            });
+        }
+    }
+
+    let extra_prompt = if context.bindings.extra_prompt.trim().is_empty() {
+        None
+    } else {
+        Some(context.bindings.extra_prompt.clone())
+    };
+
+    AvailableToolsResponse {
+        builtin_tools,
+        mcp_tools,
+        a2a_tools,
+        skills,
+        knowledge_tools,
+        user_tools,
+        shared_tools,
+        extra_prompt,
+    }
 }
 
 fn build_user_knowledge_payload(
@@ -780,12 +1001,14 @@ fn parse_header_map(value: Option<Value>) -> HashMap<String, String> {
 
 #[derive(Debug, Deserialize)]
 struct UserIdQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserMcpUpdate {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     servers: Vec<UserMcpServerPayload>,
 }
@@ -804,7 +1027,8 @@ struct UserMcpToolsRequest {
 
 #[derive(Debug, Deserialize)]
 struct UserSkillsUpdate {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     enabled: Vec<String>,
     #[serde(default)]
@@ -813,13 +1037,15 @@ struct UserSkillsUpdate {
 
 #[derive(Debug, Deserialize)]
 struct UserSkillContentQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserKnowledgeUpdate {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     knowledge: UserKnowledgePayload,
 }
 
@@ -831,20 +1057,23 @@ struct UserKnowledgePayload {
 
 #[derive(Debug, Deserialize)]
 struct UserKnowledgeFilesQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     base: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserKnowledgeFileQuery {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     base: String,
     path: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserKnowledgeFileUpdate {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     base: String,
     path: String,
     content: String,
@@ -852,7 +1081,8 @@ struct UserKnowledgeFileUpdate {
 
 #[derive(Debug, Deserialize)]
 struct UserExtraPromptRequest {
-    user_id: String,
+    #[serde(default)]
+    user_id: Option<String>,
     extra_prompt: String,
 }
 

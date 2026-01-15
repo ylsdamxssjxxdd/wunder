@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260113-02";
+import { elements } from "./elements.js?v=20260115-02";
 import { state } from "./state.js";
 import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20260108-02";
 import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
@@ -9,7 +9,7 @@ import { loadWorkspace } from "./workspace.js?v=20260113-03";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260113-02";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260115-03";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);

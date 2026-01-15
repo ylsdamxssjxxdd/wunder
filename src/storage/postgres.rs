@@ -1,5 +1,7 @@
 use crate::i18n;
-use crate::storage::{SessionLockStatus, StorageBackend};
+use crate::storage::{
+    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserTokenRecord,
+};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
@@ -44,6 +46,16 @@ impl PgConn<'_> {
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<tokio_postgres::Row>> {
         Ok(self.storage.block_on(self.client.query(query, params))??)
+    }
+
+    fn query_one(
+        &mut self,
+        query: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<tokio_postgres::Row> {
+        Ok(self
+            .storage
+            .block_on(self.client.query_one(query, params))??)
     }
 
     fn query_opt(
@@ -170,6 +182,32 @@ impl PostgresStorage {
             Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
             _ => None,
         }
+    }
+
+    fn parse_string_list(value: Option<String>) -> Vec<String> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<String>>(trimmed) {
+            return items
+                .into_iter()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+        trimmed
+            .split(',')
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    }
+
+    fn string_list_to_json(list: &[String]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 
     fn conn(&self) -> Result<PgConn<'_>> {
@@ -349,6 +387,52 @@ impl StorageBackend for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
                   ON evaluation_items (run_id, id);
+                CREATE TABLE IF NOT EXISTS user_accounts (
+                  user_id TEXT PRIMARY KEY,
+                  username TEXT NOT NULL UNIQUE,
+                  email TEXT,
+                  password_hash TEXT NOT NULL,
+                  roles TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  access_level TEXT NOT NULL,
+                  is_demo INTEGER NOT NULL DEFAULT 0,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  last_login_at DOUBLE PRECISION
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_username
+                  ON user_accounts (username);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_email
+                  ON user_accounts (email);
+                CREATE TABLE IF NOT EXISTS user_tokens (
+                  token TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  expires_at DOUBLE PRECISION NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  last_used_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_tokens_user
+                  ON user_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS idx_user_tokens_expires
+                  ON user_tokens (expires_at);
+                CREATE TABLE IF NOT EXISTS user_tool_access (
+                  user_id TEXT PRIMARY KEY,
+                  allowed_tools TEXT,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                  session_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  title TEXT,
+                  status TEXT,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  last_message_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_sessions_user
+                  ON chat_sessions (user_id);
+                CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
+                  ON chat_sessions (user_id, updated_at);
                 "#,
             );
             match result {
@@ -790,6 +874,21 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
+    fn delete_chat_history_by_session(&self, _user_id: &str, _session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = _user_id.trim();
+        let cleaned_session = _session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM chat_history WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn delete_tool_logs(&self, _user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = _user_id.trim();
@@ -801,6 +900,21 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
+    fn delete_tool_logs_by_session(&self, _user_id: &str, _session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = _user_id.trim();
+        let cleaned_session = _session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM tool_logs WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn delete_artifact_logs(&self, _user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = _user_id.trim();
@@ -809,6 +923,21 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM artifact_logs WHERE user_id = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn delete_artifact_logs_by_session(&self, _user_id: &str, _session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = _user_id.trim();
+        let cleaned_session = _session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM artifact_logs WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
         Ok(affected as i64)
     }
 
@@ -1093,6 +1222,20 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM stream_events WHERE user_id = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn delete_stream_events_by_session(&self, _session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = _session_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM stream_events WHERE session_id = $1",
+            &[&cleaned],
+        )?;
         Ok(affected as i64)
     }
 
@@ -1754,5 +1897,452 @@ impl StorageBackend for PostgresStorage {
         )?;
         results.insert("stream_events".to_string(), stream as i64);
         Ok(results)
+    }
+
+    fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let roles = Self::string_list_to_json(&record.roles);
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
+             roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, is_demo = EXCLUDED.is_demo, \
+             created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
+            &[
+                &record.user_id,
+                &record.username,
+                &record.email,
+                &record.password_hash,
+                &roles,
+                &record.status,
+                &record.access_level,
+                &(record.is_demo as i32),
+                &record.created_at,
+                &record.updated_at,
+                &record.last_login_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+             FROM user_accounts WHERE user_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| UserAccountRecord {
+            user_id: row.get(0),
+            username: row.get(1),
+            email: row.get(2),
+            password_hash: row.get(3),
+            roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
+            status: row.get(5),
+            access_level: row.get(6),
+            is_demo: row.get::<_, i32>(7) != 0,
+            created_at: row.get(8),
+            updated_at: row.get(9),
+            last_login_at: row.get(10),
+        }))
+    }
+
+    fn get_user_account_by_username(&self, username: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = username.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+             FROM user_accounts WHERE username = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| UserAccountRecord {
+            user_id: row.get(0),
+            username: row.get(1),
+            email: row.get(2),
+            password_hash: row.get(3),
+            roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
+            status: row.get(5),
+            access_level: row.get(6),
+            is_demo: row.get::<_, i32>(7) != 0,
+            created_at: row.get(8),
+            updated_at: row.get(9),
+            last_login_at: row.get(10),
+        }))
+    }
+
+    fn get_user_account_by_email(&self, email: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = email.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+             FROM user_accounts WHERE email = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| UserAccountRecord {
+            user_id: row.get(0),
+            username: row.get(1),
+            email: row.get(2),
+            password_hash: row.get(3),
+            roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
+            status: row.get(5),
+            access_level: row.get(6),
+            is_demo: row.get::<_, i32>(7) != 0,
+            created_at: row.get(8),
+            updated_at: row.get(9),
+            last_login_at: row.get(10),
+        }))
+    }
+
+    fn list_user_accounts(
+        &self,
+        keyword: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserAccountRecord>, i64)> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let cleaned_keyword = keyword
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let total: i64 = if let Some(keyword) = cleaned_keyword {
+            let pattern = format!("%{keyword}%");
+            conn.query_one(
+                "SELECT COUNT(*) FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1",
+                &[&pattern],
+            )?
+            .get(0)
+        } else {
+            conn.query_one("SELECT COUNT(*) FROM user_accounts", &[])?
+                .get(0)
+        };
+
+        let rows = if let Some(keyword) = cleaned_keyword {
+            let pattern = format!("%{keyword}%");
+            if limit > 0 {
+                conn.query(
+                    "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                     FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                    &[&pattern, &limit, &offset.max(0)],
+                )?
+            } else {
+                conn.query(
+                    "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                     FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 ORDER BY created_at DESC",
+                    &[&pattern],
+                )?
+            }
+        } else if limit > 0 {
+            conn.query(
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                 FROM user_accounts ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                &[&limit, &offset.max(0)],
+            )?
+        } else {
+            conn.query(
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                 FROM user_accounts ORDER BY created_at DESC",
+                &[],
+            )?
+        };
+
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(UserAccountRecord {
+                user_id: row.get(0),
+                username: row.get(1),
+                email: row.get(2),
+                password_hash: row.get(3),
+                roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
+                status: row.get(5),
+                access_level: row.get(6),
+                is_demo: row.get::<_, i32>(7) != 0,
+                created_at: row.get(8),
+                updated_at: row.get(9),
+                last_login_at: row.get(10),
+            });
+        }
+        Ok((output, total))
+    }
+
+    fn delete_user_account(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute("DELETE FROM user_accounts WHERE user_id = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn create_user_token(&self, record: &UserTokenRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO user_tokens (token, user_id, expires_at, created_at, last_used_at) VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &record.token,
+                &record.user_id,
+                &record.expires_at,
+                &record.created_at,
+                &record.last_used_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT token, user_id, expires_at, created_at, last_used_at FROM user_tokens WHERE token = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| UserTokenRecord {
+            token: row.get(0),
+            user_id: row.get(1),
+            expires_at: row.get(2),
+            created_at: row.get(3),
+            last_used_at: row.get(4),
+        }))
+    }
+
+    fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "UPDATE user_tokens SET last_used_at = $1 WHERE token = $2",
+            &[&last_used_at, &cleaned],
+        )?;
+        Ok(())
+    }
+
+    fn delete_user_token(&self, token: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute("DELETE FROM user_tokens WHERE token = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT(session_id) DO UPDATE SET user_id = EXCLUDED.user_id, title = EXCLUDED.title, status = EXCLUDED.status, \
+             created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_message_at = EXCLUDED.last_message_at",
+            &[
+                &record.session_id,
+                &record.user_id,
+                &record.title,
+                &"active",
+                &record.created_at,
+                &record.updated_at,
+                &record.last_message_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+             FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        Ok(row.map(|row| ChatSessionRecord {
+            session_id: row.get(0),
+            user_id: row.get(1),
+            title: row.get(2),
+            created_at: row.get(3),
+            updated_at: row.get(4),
+            last_message_at: row.get(5),
+        }))
+    }
+
+    fn list_chat_sessions(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let mut conn = self.conn()?;
+        let total: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1",
+                &[&cleaned_user],
+            )?
+            .get(0);
+        let rows = if limit > 0 {
+            conn.query(
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                 FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
+                &[&cleaned_user, &limit, &offset.max(0)],
+            )?
+        } else {
+            conn.query(
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                 FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC",
+                &[&cleaned_user],
+            )?
+        };
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(ChatSessionRecord {
+                session_id: row.get(0),
+                user_id: row.get(1),
+                title: row.get(2),
+                created_at: row.get(3),
+                updated_at: row.get(4),
+                last_message_at: row.get(5),
+            });
+        }
+        Ok((output, total))
+    }
+
+    fn update_chat_session_title(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "UPDATE chat_sessions SET title = $1, updated_at = $2 WHERE user_id = $3 AND session_id = $4",
+            &[&title, &updated_at, &cleaned_user, &cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn touch_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at = $1, last_message_at = $2 WHERE user_id = $3 AND session_id = $4",
+            &[&updated_at, &last_message_at, &cleaned_user, &cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT allowed_tools FROM user_tool_access WHERE user_id = $1",
+            &[&cleaned],
+        )?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let raw: Option<String> = row.get(0);
+        Ok(Some(Self::parse_string_list(raw)))
+    }
+
+    fn set_user_tool_access(
+        &self,
+        user_id: &str,
+        allowed_tools: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        if let Some(list) = allowed_tools {
+            let payload = Self::string_list_to_json(list);
+            let now = Self::now_ts();
+            conn.execute(
+                "INSERT INTO user_tool_access (user_id, allowed_tools, updated_at) VALUES ($1, $2, $3) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = EXCLUDED.allowed_tools, updated_at = EXCLUDED.updated_at",
+                &[&cleaned, &payload, &now],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM user_tool_access WHERE user_id = $1",
+                &[&cleaned],
+            )?;
+        }
+        Ok(())
     }
 }

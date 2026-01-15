@@ -578,7 +578,6 @@ li {
   font-size: clamp(11px, 1.6vmin, 14px);
   background: rgba(246, 248, 252, 0.85);
   border-top: 1px solid var(--border);
-  backdrop-filter: blur(6px);
 }
 
 #progress {

@@ -30,6 +30,7 @@ export const state = {
   panelLoaded: {
     monitor: false,
     users: false,
+    userAccounts: false,
     memory: false,
     throughput: false,
     performance: false,
@@ -177,6 +178,18 @@ export const state = {
       pageSize: 100,
       page: 1,
     },
+  },
+  userAccounts: {
+    list: [],
+    selectedId: "",
+    loaded: false,
+    search: "",
+    pagination: {
+      pageSize: 50,
+      page: 1,
+      total: 0,
+    },
+    toolAccess: {},
   },
   memory: {
     users: [],

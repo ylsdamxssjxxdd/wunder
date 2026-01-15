@@ -31,9 +31,9 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
-const MAX_READ_LINES: usize = 200;
+const MAX_READ_LINES: usize = 1000;
 const MAX_READ_FILES: usize = 5;
-const MAX_RANGE_SPAN: usize = 400;
+const MAX_RANGE_SPAN: usize = 1000;
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_ITEMS: usize = 200;
 const MAX_SEARCH_MATCHES: usize = 200;
@@ -817,6 +817,9 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             "sandbox": false,
         }));
     }
+    let content = context
+        .workspace
+        .replace_public_root_in_text(context.user_id, &content);
 
     let allow_commands = &context.config.security.allow_commands;
     let allow_all = allow_commands.iter().any(|item| item == "*");
@@ -946,18 +949,22 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .unwrap_or("ptc.tmp");
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+    let content = context
+        .workspace
+        .replace_public_root_in_text(context.user_id, content);
     let dir = if workdir.is_empty() {
         context.workspace.ensure_user_root(context.user_id)?
     } else {
         context.workspace.resolve_path(context.user_id, workdir)?
     };
     let file_path = dir.join(filename);
+    let display_path = context.workspace.display_path(context.user_id, &file_path);
     tokio::fs::create_dir_all(&dir).await.ok();
     tokio::fs::write(&file_path, content).await?;
     context.workspace.mark_tree_dirty(context.user_id);
     Ok(json!({
         "ok": true,
-        "data": { "path": file_path.to_string_lossy() },
+        "data": { "path": display_path },
         "error": "",
         "sandbox": false,
     }))
@@ -1210,6 +1217,41 @@ fn normalize_range(start: usize, end: usize) -> (usize, usize) {
     (start, end)
 }
 
+fn summarize_read_ranges(ranges: &[(usize, usize)], total_lines: usize) -> (usize, bool) {
+    if total_lines == 0 {
+        return (0, true);
+    }
+    if ranges.is_empty() {
+        return (0, false);
+    }
+    let mut intervals = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        let start = (*start).max(1);
+        if start > total_lines {
+            continue;
+        }
+        let end = (*end).min(total_lines).max(start);
+        intervals.push((start, end));
+    }
+    if intervals.is_empty() {
+        return (0, false);
+    }
+    intervals.sort_by_key(|(start, _)| *start);
+    let mut read_lines = 0usize;
+    let mut current = intervals[0];
+    for (start, end) in intervals.into_iter().skip(1) {
+        if start <= current.1 + 1 {
+            current.1 = current.1.max(end);
+        } else {
+            read_lines += current.1 - current.0 + 1;
+            current = (start, end);
+        }
+    }
+    read_lines += current.1 - current.0 + 1;
+    let complete = read_lines == total_lines;
+    (read_lines, complete)
+}
+
 fn read_text_with_limit(path: &Path, max_bytes: usize) -> Result<String> {
     let file = File::open(path)?;
     let mut buffer = Vec::new();
@@ -1282,8 +1324,15 @@ fn read_files_inner(
     specs: Vec<ReadFileSpec>,
 ) -> Result<Value> {
     let mut outputs = Vec::new();
+    let mut summaries = Vec::new();
     for spec in specs {
         let raw_path = spec.path.as_str();
+        let mut summary = json!({
+            "path": raw_path,
+            "read_lines": 0,
+            "total_lines": 0,
+            "complete": false
+        });
         let target = match workspace.resolve_path(user_id, raw_path) {
             Ok(path) => Some(path),
             Err(err) => {
@@ -1296,6 +1345,7 @@ fn read_files_inner(
             }
         };
         let Some(target) = target else {
+            summaries.push(summary);
             continue;
         };
         if !target.exists() {
@@ -1304,6 +1354,7 @@ fn read_files_inner(
                 raw_path,
                 i18n::t("tool.read.not_found")
             ));
+            summaries.push(summary);
             continue;
         }
         let size = target.metadata().map(|meta| meta.len()).unwrap_or(0);
@@ -1313,10 +1364,18 @@ fn read_files_inner(
                 raw_path,
                 i18n::t("tool.read.too_large")
             ));
+            summaries.push(summary);
             continue;
         }
         let content = read_text_with_limit(&target, MAX_READ_BYTES)?;
         let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+        let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);
+        if let Value::Object(ref mut map) = summary {
+            map.insert("read_lines".to_string(), Value::from(read_lines as u64));
+            map.insert("total_lines".to_string(), Value::from(total_lines as u64));
+            map.insert("complete".to_string(), Value::Bool(complete));
+        }
         let mut file_output = Vec::new();
         for (start, end) in spec.ranges {
             if lines.is_empty() {
@@ -1341,13 +1400,17 @@ fn read_files_inner(
         }
         let joined = file_output.join("\n---\n");
         outputs.push(format!(">>> {}\n{}", raw_path, joined));
+        summaries.push(summary);
     }
     let result = if outputs.is_empty() {
         i18n::t("tool.read.empty_result")
     } else {
         outputs.join("\n\n")
     };
-    Ok(json!({ "content": result }))
+    Ok(json!({
+        "content": result,
+        "meta": { "files": summaries }
+    }))
 }
 
 fn resolve_skill_read_path(raw_path: &str, roots: &[PathBuf]) -> Option<PathBuf> {

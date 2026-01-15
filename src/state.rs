@@ -10,6 +10,7 @@ use crate::orchestrator::Orchestrator;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
 use crate::throughput::ThroughputManager;
+use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
@@ -27,6 +28,7 @@ pub struct AppState {
     pub skills: Arc<RwLock<SkillRegistry>>,
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
+    pub user_store: Arc<UserStore>,
     pub throughput: ThroughputManager,
     pub evaluation: EvaluationManager,
 }
@@ -51,6 +53,7 @@ impl AppState {
         let user_tool_store =
             Arc::new(UserToolStore::new(&config).context("用户工具目录初始化失败")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
+        let user_store = Arc::new(UserStore::new(storage.clone()));
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
             config.clone(),
@@ -81,6 +84,7 @@ impl AppState {
             skills,
             user_tool_store,
             user_tool_manager,
+            user_store,
             throughput,
             evaluation,
         })

@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_workspace_root(repo_root: Path) -> Path:
-    """读取配置文件中的 workspace.root，若读取失败则回退到 data/workspaces。"""
+    """读取配置文件中的 workspace.root，若读取失败则回退到 workspaces。"""
     candidates: List[Path] = []
     config_env_value = os.environ.get("WUNDER_CONFIG_PATH", "").strip()
     if config_env_value:
@@ -74,7 +74,7 @@ def _load_workspace_root(repo_root: Path) -> Path:
             root_path = (path.parent / root_path).resolve()
         return root_path
 
-    return (repo_root / "data" / "workspaces").resolve()
+    return (repo_root / "workspaces").resolve()
 
 
 def _match_prefix(text: str, prefixes: Iterable[str]) -> bool:

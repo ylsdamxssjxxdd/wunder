@@ -5,6 +5,7 @@ use crate::workspace::WorkspaceManager;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::warn;
@@ -179,12 +180,38 @@ pub async fn execute_tool(
     let workspace_root =
         normalize_container_path(&workspace_root).unwrap_or_else(|| "./".to_string());
 
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({ "raw": args })
+    };
+    if matches!(tool, "执行命令" | "ptc") {
+        if let Value::Object(ref mut map) = mapped_args {
+            if let Some(Value::String(workdir)) = map.get("workdir").cloned() {
+                let trimmed = workdir.trim();
+                let path = Path::new(trimmed);
+                if path.is_absolute() {
+                    if let Some(mapped) = workspace.map_public_path(user_id, path) {
+                        let mapped_text = mapped.to_string_lossy().replace('\\', "/");
+                        map.insert("workdir".to_string(), Value::String(mapped_text));
+                    }
+                }
+            }
+            if let Some(Value::String(content)) = map.get("content").cloned() {
+                let rewritten = workspace.replace_public_root_in_text(user_id, &content);
+                if rewritten != content {
+                    map.insert("content".to_string(), Value::String(rewritten));
+                }
+            }
+        }
+    }
+
     let payload = json!({
         "user_id": user_id,
         "session_id": session_id,
         "language": i18n::get_language(),
         "tool": tool,
-        "args": if args.is_object() { args.clone() } else { json!({ "raw": args }) },
+        "args": mapped_args,
         "workspace_root": workspace_root,
         "allow_paths": allow_paths,
         "deny_globs": deny_globs,
@@ -242,6 +269,7 @@ pub async fn execute_tool(
             .unwrap_or("")
             .to_string();
         let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+        let data = rewrite_sandbox_paths(workspace, user_id, tool, data);
 
         return json!({
             "ok": ok,
@@ -257,6 +285,27 @@ pub async fn execute_tool(
         "error": "sandbox request failed",
         "sandbox": true,
     })
+}
+
+fn rewrite_sandbox_paths(
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    tool: &str,
+    mut data: Value,
+) -> Value {
+    if tool != "ptc" {
+        return data;
+    }
+    let Value::Object(ref mut map) = data else {
+        return data;
+    };
+    for key in ["path", "workdir"] {
+        if let Some(Value::String(value)) = map.get(key).cloned() {
+            let display = workspace.display_path(user_id, Path::new(&value));
+            map.insert(key.to_string(), Value::String(display));
+        }
+    }
+    data
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ services:
       - "${WUNDER_PORT:-8000}:${WUNDER_PORT:-8000}"
     volumes:
       - ./:/workspaces
-      - wunder_workspaces:/workspaces/data/workspaces
+      - wunder_workspaces:/workspaces/workspaces
     environment:
       - TZ=Asia/Shanghai
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
@@ -47,7 +47,7 @@ services:
     volumes:
       - ./app:/workspaces/app:ro
       - ./data/user_tools:/workspaces/data/user_tools:ro
-      - wunder_workspaces:/workspaces/data/workspaces
+      - wunder_workspaces:/workspaces/workspaces
       - ./EVA_SKILLS:/workspaces/EVA_SKILLS:ro
     command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log --workers 2
     healthcheck:

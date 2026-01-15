@@ -1,6 +1,8 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use crate::i18n;
-use crate::storage::{SessionLockStatus, StorageBackend};
+use crate::storage::{
+    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserTokenRecord,
+};
 use anyhow::Result;
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -87,6 +89,32 @@ impl SqliteStorage {
             Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
             _ => None,
         }
+    }
+
+    fn parse_string_list(value: Option<String>) -> Vec<String> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<String>>(trimmed) {
+            return items
+                .into_iter()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+        trimmed
+            .split(',')
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    }
+
+    fn string_list_to_json(list: &[String]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 }
 
@@ -242,6 +270,52 @@ impl StorageBackend for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
               ON evaluation_items (run_id, id);
+            CREATE TABLE IF NOT EXISTS user_accounts (
+              user_id TEXT PRIMARY KEY,
+              username TEXT NOT NULL UNIQUE,
+              email TEXT,
+              password_hash TEXT NOT NULL,
+              roles TEXT NOT NULL,
+              status TEXT NOT NULL,
+              access_level TEXT NOT NULL,
+              is_demo INTEGER NOT NULL DEFAULT 0,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_login_at REAL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_username
+              ON user_accounts (username);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_email
+              ON user_accounts (email);
+            CREATE TABLE IF NOT EXISTS user_tokens (
+              token TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              expires_at REAL NOT NULL,
+              created_at REAL NOT NULL,
+              last_used_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_tokens_user
+              ON user_tokens (user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_tokens_expires
+              ON user_tokens (expires_at);
+            CREATE TABLE IF NOT EXISTS user_tool_access (
+              user_id TEXT PRIMARY KEY,
+              allowed_tools TEXT,
+              updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+              session_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              title TEXT,
+              status TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_message_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_user
+              ON chat_sessions (user_id);
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
+              ON chat_sessions (user_id, updated_at);
             "#,
         )?;
         self.initialized.store(true, Ordering::SeqCst);
@@ -686,10 +760,40 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
+    fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM chat_history WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let affected = conn.execute("DELETE FROM tool_logs WHERE user_id = ?", params![user_id])?;
+        Ok(affected as i64)
+    }
+
+    fn delete_tool_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM tool_logs WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
         Ok(affected as i64)
     }
 
@@ -699,6 +803,21 @@ impl StorageBackend for SqliteStorage {
         let affected = conn.execute(
             "DELETE FROM artifact_logs WHERE user_id = ?",
             params![user_id],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_artifact_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM artifact_logs WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
         )?;
         Ok(affected as i64)
     }
@@ -999,6 +1118,20 @@ impl StorageBackend for SqliteStorage {
         let affected = conn.execute(
             "DELETE FROM stream_events WHERE user_id = ?",
             params![cleaned_user],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM stream_events WHERE session_id = ?",
+            params![cleaned_session],
         )?;
         Ok(affected as i64)
     }
@@ -1719,5 +1852,474 @@ impl StorageBackend for SqliteStorage {
         )?;
         results.insert("stream_events".to_string(), stream as i64);
         Ok(results)
+    }
+
+    fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let roles = Self::string_list_to_json(&record.roles);
+        conn.execute(
+            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
+             roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, is_demo = excluded.is_demo, \
+             created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
+            params![
+                record.user_id,
+                record.username,
+                record.email,
+                record.password_hash,
+                roles,
+                record.status,
+                record.access_level,
+                if record.is_demo { 1 } else { 0 },
+                record.created_at,
+                record.updated_at,
+                record.last_login_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                 FROM user_accounts WHERE user_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(UserAccountRecord {
+                        user_id: row.get(0)?,
+                        username: row.get(1)?,
+                        email: row.get(2)?,
+                        password_hash: row.get(3)?,
+                        roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
+                        status: row.get(5)?,
+                        access_level: row.get(6)?,
+                        is_demo: row.get::<_, i64>(7)? != 0,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        last_login_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn get_user_account_by_username(&self, username: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = username.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                 FROM user_accounts WHERE username = ?",
+                params![cleaned],
+                |row| {
+                    Ok(UserAccountRecord {
+                        user_id: row.get(0)?,
+                        username: row.get(1)?,
+                        email: row.get(2)?,
+                        password_hash: row.get(3)?,
+                        roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
+                        status: row.get(5)?,
+                        access_level: row.get(6)?,
+                        is_demo: row.get::<_, i64>(7)? != 0,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        last_login_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn get_user_account_by_email(&self, email: &str) -> Result<Option<UserAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = email.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+                 FROM user_accounts WHERE email = ?",
+                params![cleaned],
+                |row| {
+                    Ok(UserAccountRecord {
+                        user_id: row.get(0)?,
+                        username: row.get(1)?,
+                        email: row.get(2)?,
+                        password_hash: row.get(3)?,
+                        roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
+                        status: row.get(5)?,
+                        access_level: row.get(6)?,
+                        is_demo: row.get::<_, i64>(7)? != 0,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        last_login_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_user_accounts(
+        &self,
+        keyword: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserAccountRecord>, i64)> {
+        self.ensure_initialized()?;
+        let mut conditions = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(keyword) = keyword {
+            let cleaned = keyword.trim();
+            if !cleaned.is_empty() {
+                let pattern = format!("%{cleaned}%");
+                conditions.push("(username LIKE ? OR email LIKE ?)".to_string());
+                params_list.push(SqlValue::from(pattern.clone()));
+                params_list.push(SqlValue::from(pattern));
+            }
+        }
+        let mut count_sql = String::from("SELECT COUNT(*) FROM user_accounts");
+        if !conditions.is_empty() {
+            count_sql.push_str(" WHERE ");
+            count_sql.push_str(&conditions.join(" AND "));
+        }
+        let conn = self.open()?;
+        let total: i64 =
+            conn.query_row(&count_sql, params_from_iter(params_list.iter()), |row| {
+                row.get(0)
+            })?;
+
+        let mut sql = String::from(
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
+             FROM user_accounts",
+        );
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(" ORDER BY created_at DESC");
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok(UserAccountRecord {
+                    user_id: row.get(0)?,
+                    username: row.get(1)?,
+                    email: row.get(2)?,
+                    password_hash: row.get(3)?,
+                    roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
+                    status: row.get(5)?,
+                    access_level: row.get(6)?,
+                    is_demo: row.get::<_, i64>(7)? != 0,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    last_login_at: row.get(10)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<UserAccountRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn delete_user_account(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM user_accounts WHERE user_id = ?",
+            params![cleaned],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn create_user_token(&self, record: &UserTokenRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO user_tokens (token, user_id, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+            params![
+                record.token,
+                record.user_id,
+                record.expires_at,
+                record.created_at,
+                record.last_used_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT token, user_id, expires_at, created_at, last_used_at FROM user_tokens WHERE token = ?",
+                params![cleaned],
+                |row| {
+                    Ok(UserTokenRecord {
+                        token: row.get(0)?,
+                        user_id: row.get(1)?,
+                        expires_at: row.get(2)?,
+                        created_at: row.get(3)?,
+                        last_used_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE user_tokens SET last_used_at = ? WHERE token = ?",
+            params![last_used_at, cleaned],
+        )?;
+        Ok(())
+    }
+
+    fn delete_user_token(&self, token: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute("DELETE FROM user_tokens WHERE token = ?", params![cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, title = excluded.title, \
+             status = excluded.status, created_at = excluded.created_at, updated_at = excluded.updated_at, \
+             last_message_at = excluded.last_message_at",
+            params![
+                record.session_id,
+                record.user_id,
+                record.title,
+                "active",
+                record.created_at,
+                record.updated_at,
+                record.last_message_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                 FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+                params![cleaned_user, cleaned_session],
+                |row| {
+                    Ok(ChatSessionRecord {
+                        session_id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        title: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                        last_message_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_chat_sessions(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let conn = self.open()?;
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?",
+            params![cleaned_user],
+            |row| row.get(0),
+        )?;
+        let mut sql = String::from(
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+             FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC",
+        );
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok(ChatSessionRecord {
+                    session_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    title: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                    last_message_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn update_chat_session_title(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE user_id = ? AND session_id = ?",
+            params![title, updated_at, cleaned_user, cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn touch_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at = ?, last_message_at = ? WHERE user_id = ? AND session_id = ?",
+            params![updated_at, last_message_at, cleaned_user, cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row: Option<String> = conn
+            .query_row(
+                "SELECT allowed_tools FROM user_tool_access WHERE user_id = ?",
+                params![cleaned],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(raw) = row else {
+            return Ok(None);
+        };
+        Ok(Some(Self::parse_string_list(Some(raw))))
+    }
+
+    fn set_user_tool_access(
+        &self,
+        user_id: &str,
+        allowed_tools: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        if let Some(list) = allowed_tools {
+            let payload = Self::string_list_to_json(list);
+            let now = Self::now_ts();
+            conn.execute(
+                "INSERT INTO user_tool_access (user_id, allowed_tools, updated_at) VALUES (?, ?, ?) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = excluded.allowed_tools, updated_at = excluded.updated_at",
+                params![cleaned, payload, now],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM user_tool_access WHERE user_id = ?",
+                params![cleaned],
+            )?;
+        }
+        Ok(())
     }
 }

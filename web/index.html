@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260113-02" />
+    <link rel="stylesheet" href="./app.css?v=20260115-01" />
   </head>
   <body>
     <div class="app">
@@ -42,8 +42,12 @@
                 <span data-i18n="panel.monitor">内部状态</span>
               </button>
               <button id="navUsers" class="nav-btn">
-                <i class="fa-solid fa-users"></i>
-                <span data-i18n="panel.users">用户管理</span>
+                <i class="fa-solid fa-robot"></i>
+                <span data-i18n="panel.users">线程管理</span>
+              </button>
+              <button id="navUserAccounts" class="nav-btn">
+                <i class="fa-solid fa-user-gear"></i>
+                <span data-i18n="panel.userAccounts">用户管理</span>
               </button>
               <button id="navMemory" class="nav-btn">
                 <i class="fa-solid fa-brain"></i>
@@ -568,7 +572,81 @@
             </div>
           </div>
         </section>
-        <section id="memoryPanel" class="panel">
+                <section id="userAccountsPanel" class="panel">
+          <div class="user-management user-account-management">
+            <div class="list-header">
+              <h1 data-i18n="userAccounts.title">用户管理</h1>
+              <div class="header-actions">
+                <div class="header-input">
+                  <label for="userAccountSearchInput" data-i18n="userAccounts.search.label">搜索用户</label>
+                  <input
+                    id="userAccountSearchInput"
+                    type="text"
+                    placeholder="用户ID或邮箱"
+                    data-i18n-placeholder="userAccounts.search.placeholder"
+                  />
+                </div>
+                <button id="userAccountRefreshBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="common.refresh">刷新</span>
+                </button>
+                <button id="userAccountCreateBtn" class="btn-with-icon">
+                  <i class="fa-solid fa-user-plus"></i>
+                  <span data-i18n="userAccounts.action.create">新增用户</span>
+                </button>
+              </div>
+            </div>
+            <div class="tips" data-i18n="userAccounts.tip">
+              管理账号状态、访问级别、角色、重置密码与工具权限。
+            </div>
+            <div class="monitor-section-body monitor-paged">
+              <div class="monitor-table-scroll">
+                <table class="monitor-table user-account-table">
+                  <colgroup>
+                    <col class="col-user-id" />
+                    <col class="col-user-email" />
+                    <col class="col-user-access" />
+                    <col class="col-user-status" />
+                    <col class="col-user-online" />
+                    <col class="col-user-roles" />
+                    <col class="col-user-login" />
+                    <col class="col-user-password" />
+                    <col class="col-user-action" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th data-i18n="userAccounts.table.user">用户</th>
+                      <th data-i18n="userAccounts.table.email">邮箱</th>
+                      <th data-i18n="userAccounts.table.access">访问级别</th>
+                      <th data-i18n="userAccounts.table.status">状态</th>
+                      <th data-i18n="userAccounts.table.online">在线</th>
+                      <th data-i18n="userAccounts.table.roles">角色</th>
+                      <th data-i18n="userAccounts.table.lastLogin">最近登录</th>
+                      <th data-i18n="userAccounts.table.password">重置密码</th>
+                      <th data-i18n="userAccounts.table.actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="userAccountTableBody"></tbody>
+                </table>
+                <div id="userAccountEmpty" class="muted" data-i18n="userAccounts.empty">
+                  暂无用户
+                </div>
+              </div>
+              <div id="userAccountPagination" class="monitor-pagination">
+                <div id="userAccountPageInfo" class="monitor-pagination-info"></div>
+                <div class="monitor-pagination-controls">
+                  <button id="userAccountPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
+                    上一页
+                  </button>
+                  <button id="userAccountNextBtn" class="secondary" type="button" data-i18n="pagination.next">
+                    下一页
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+<section id="memoryPanel" class="panel">
           <div class="user-management">
             <div class="list-header">
               <h1 data-i18n="memory.title">记忆管理</h1>
@@ -1049,7 +1127,7 @@
                   <label for="settingsDefaultPanel" data-i18n="settings.label.defaultPanel">默认进入面板</label>
                   <select id="settingsDefaultPanel">
                     <option value="monitor" data-i18n="panel.monitor">内部状态</option>
-                    <option value="users" data-i18n="panel.users">用户管理</option>
+                    <option value="users" data-i18n="panel.users">线程管理</option>
                     <option value="memory" data-i18n="panel.memory">记忆管理</option>
                     <option value="llm" data-i18n="panel.llm">模型配置</option>
                     <option value="settings" data-i18n="panel.settings">系统设置</option>
@@ -2965,7 +3043,130 @@
         </div>
       </div>
     </div>
-    <div id="toolDetailModal" class="modal">
+    <div id="userAccountModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="userAccountModalTitle" class="detail-title" data-i18n="userAccounts.modal.create.title">
+            新增用户
+          </div>
+          <button id="userAccountModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userAccountFormUsername" data-i18n="userAccounts.modal.create.username">用户名</label>
+            <input id="userAccountFormUsername" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="userAccountFormEmail" data-i18n="userAccounts.modal.create.email">邮箱</label>
+            <input id="userAccountFormEmail" type="email" />
+          </div>
+          <div class="form-row">
+            <label for="userAccountFormPassword" data-i18n="userAccounts.modal.create.password">密码</label>
+            <input id="userAccountFormPassword" type="password" />
+          </div>
+          <div class="form-row">
+            <label for="userAccountFormAccess" data-i18n="userAccounts.modal.create.access">访问级别</label>
+            <select id="userAccountFormAccess">
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="userAccountFormStatus" data-i18n="userAccounts.modal.create.status">状态</label>
+            <select id="userAccountFormStatus">
+              <option value="active">active</option>
+              <option value="disabled">disabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="userAccountFormRoles" data-i18n="userAccounts.modal.create.roles">角色</label>
+            <input
+              id="userAccountFormRoles"
+              type="text"
+              placeholder="user,admin"
+              data-i18n-placeholder="userAccounts.modal.create.roles.placeholder"
+            />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountModalSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="userAccountPasswordModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="userAccountPasswordTitle" class="detail-title" data-i18n="userAccounts.modal.password.title">
+            重置密码
+          </div>
+          <button id="userAccountPasswordClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userAccountPasswordInput" data-i18n="userAccounts.modal.password.label">新密码</label>
+            <input id="userAccountPasswordInput" type="password" />
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userAccountPasswordCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountPasswordSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="userAccountToolModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div id="userAccountToolTitle" class="detail-title" data-i18n="userAccounts.modal.tool.title">
+            工具权限
+          </div>
+          <button id="userAccountToolClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label data-i18n="userAccounts.modal.tool.user">用户</label>
+            <div id="userAccountToolUser" class="muted">-</div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountToolDefault" data-i18n="userAccounts.modal.tool.default">
+              使用默认权限
+            </label>
+            <label class="checkbox-row">
+              <input id="userAccountToolDefault" type="checkbox" />
+              <span data-i18n="userAccounts.modal.tool.defaultHint">按访问级别默认策略生效</span>
+            </label>
+          </div>
+          <div class="form-row">
+            <label for="userAccountToolList" data-i18n="userAccounts.modal.tool.allowed">可用工具</label>
+            <div id="userAccountToolList" class="tool-list"></div>
+            <div id="userAccountToolEmpty" class="muted" data-i18n="userAccounts.modal.tool.empty">
+              暂无工具
+            </div>
+            <div class="muted" data-i18n="userAccounts.modal.tool.tip">
+              访问级别 A 默认全量工具，B 隐藏技能，C 隐藏技能和知识库。
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userAccountToolCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountToolSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+<div id="toolDetailModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
           <div id="toolDetailTitle" class="detail-title" data-i18n="tool.detail.title">工具详情</div>
@@ -3350,6 +3551,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260113-03"></script>
+    <script type="module" src="./app.js?v=20260115-04"></script>
   </body>
 </html>

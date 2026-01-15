@@ -36,6 +36,7 @@ const STORAGE_WRITE_QUEUE_SIZE: usize = 2048;
 const TEMP_FILES_IDLE_TTL_S: f64 = 86_400.0;
 const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
 const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
+const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
@@ -252,6 +253,58 @@ impl WorkspaceManager {
         self.workspace_root(user_id).join("files")
     }
 
+    pub fn public_root(&self, user_id: &str) -> PathBuf {
+        let safe_id = self.safe_user_id(user_id);
+        PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(safe_id)
+    }
+
+    pub fn display_path(&self, user_id: &str, target: &Path) -> String {
+        let user_root = self.user_root(user_id);
+        if let Ok(rel) = target.strip_prefix(&user_root) {
+            let public_root = self.public_root(user_id);
+            let display = if rel.as_os_str().is_empty() {
+                public_root
+            } else {
+                public_root.join(rel)
+            };
+            let mut text = display.to_string_lossy().replace('\\', "/");
+            if rel.as_os_str().is_empty() && !text.ends_with('/') {
+                text.push('/');
+            }
+            return text;
+        }
+        target.to_string_lossy().to_string()
+    }
+
+    pub fn map_public_path(&self, user_id: &str, target: &Path) -> Option<PathBuf> {
+        let public_root = self.public_root(user_id);
+        if !target.starts_with(&public_root) {
+            return None;
+        }
+        let rel = target.strip_prefix(&public_root).ok()?;
+        let user_root = self.user_root(user_id);
+        if rel.as_os_str().is_empty() {
+            Some(user_root)
+        } else {
+            Some(user_root.join(rel))
+        }
+    }
+
+    pub fn replace_public_root_in_text(&self, user_id: &str, text: &str) -> String {
+        let public_root = self
+            .public_root(user_id)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if public_root.is_empty() {
+            return text.to_string();
+        }
+        let user_root = self.user_root(user_id).to_string_lossy().replace('\\', "/");
+        if public_root == user_root || !text.contains(&public_root) {
+            return text.to_string();
+        }
+        text.replace(&public_root, &user_root)
+    }
+
     fn history_root(&self, user_id: &str) -> PathBuf {
         let safe_id = self.safe_user_id(user_id);
         self.history_root.join(safe_id)
@@ -444,6 +497,11 @@ impl WorkspaceManager {
         if target_path.is_absolute() {
             if is_within_root(&user_root, target_path) {
                 return Ok(target_path.to_path_buf());
+            }
+            if let Some(mapped) = self.map_public_path(user_id, target_path) {
+                if is_within_root(&user_root, &mapped) {
+                    return Ok(mapped);
+                }
             }
             return Err(anyhow!("路径越界"));
         }
@@ -770,6 +828,17 @@ impl WorkspaceManager {
         self.storage.load_artifact_logs(user_id, session_id, limit)
     }
 
+    pub fn load_stream_events(
+        &self,
+        session_id: &str,
+        after_event_id: i64,
+        limit: i64,
+    ) -> Vec<Value> {
+        self.storage
+            .load_stream_events(session_id, after_event_id, limit)
+            .unwrap_or_default()
+    }
+
     pub fn load_session_system_prompt(
         &self,
         user_id: &str,
@@ -794,6 +863,11 @@ impl WorkspaceManager {
         let key = self.session_token_usage_key(user_id, session_id);
         let value = total_tokens.max(0).to_string();
         let _ = self.storage.set_meta(&key, &value);
+    }
+
+    pub fn delete_session_token_usage(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_token_usage_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
     pub fn save_session_system_prompt(
@@ -885,6 +959,28 @@ impl WorkspaceManager {
         self.storage
             .get_tool_session_usage(tool, since_time, until_time)
             .unwrap_or_default()
+    }
+
+    pub fn purge_session_data(&self, user_id: &str, session_id: &str) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return;
+        }
+        let _ = self
+            .storage
+            .delete_chat_history_by_session(cleaned_user, cleaned_session);
+        let _ = self
+            .storage
+            .delete_tool_logs_by_session(cleaned_user, cleaned_session);
+        let _ = self
+            .storage
+            .delete_artifact_logs_by_session(cleaned_user, cleaned_session);
+        let _ = self
+            .storage
+            .delete_stream_events_by_session(cleaned_session);
+        let _ = self.storage.release_session_lock(cleaned_session);
+        let _ = self.delete_session_token_usage(cleaned_user, cleaned_session);
     }
 
     pub fn purge_user_data(&self, user_id: &str) -> PurgeResult {

@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260113-02";
+import { elements } from "./elements.js?v=20260115-02";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260113-02";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260115-03";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",

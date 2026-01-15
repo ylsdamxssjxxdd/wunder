@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260113-02";
+import { elements } from "./modules/elements.js?v=20260115-02";
 
 import { state } from "./modules/state.js";
 
@@ -39,6 +39,7 @@ import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=2025123
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-04";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
+import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260115-03";
 import {
 
   initMemoryPanel,
@@ -69,7 +70,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260110-08";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260113-02";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260115-03";
 
 
 
@@ -150,6 +151,7 @@ const panelMap = {
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
 
   users: { panel: elements.usersPanel, nav: elements.navUsers },
+  userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
 
@@ -408,6 +410,18 @@ const bindNavigation = () => {
 
     }
 
+  });
+
+  elements.navUserAccounts.addEventListener("click", async () => {
+    switchPanel("userAccounts");
+    if (!state.panelLoaded.userAccounts) {
+      try {
+        await loadUserAccounts();
+        state.panelLoaded.userAccounts = true;
+      } catch (error) {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
+      }
+    }
   });
 
   elements.navMemory.addEventListener("click", async () => {
@@ -963,6 +977,7 @@ const bootstrap = async () => {
   initThroughputPanel();
 
   initUserManagementPanel();
+  initUserAccountsPanel();
 
   initMemoryPanel();
 
@@ -1029,6 +1044,16 @@ const bootstrap = async () => {
     loadUserStats().catch((error) => {
 
       appendLog(t("app.panelLoadFailed", { panel: t("panel.users"), message: error.message }));
+
+    });
+
+  }
+
+  if (initialPanel === "userAccounts") {
+
+    loadUserAccounts().catch((error) => {
+
+      appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
 
     });
 

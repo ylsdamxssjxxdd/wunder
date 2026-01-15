@@ -10,7 +10,8 @@
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
-- 鉴权：所有 `/wunder`、`/a2a` 请求需在请求头携带 `X-API-Key` 或 `Authorization: Bearer <key>`，配置项为 `config/wunder.yaml` 的 `security.api_key`。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
+- 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译，缺失时回退 `app/core/i18n.py`；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -1012,6 +1013,85 @@
 - `error`：错误信息（可选）
 - `session_id`：评估用会话标识
 
+### 4.1.53 `/wunder/auth/*`
+
+- `POST /wunder/auth/register`
+  - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）
+  - 返回（JSON）：`data.access_token`、`data.user`（UserProfile）
+- `POST /wunder/auth/login`
+  - 入参（JSON）：`username`、`password`
+  - 返回：同注册
+- `POST /wunder/auth/demo`
+  - 入参（JSON）：`demo_id`（可选）
+  - 返回：同注册
+- `GET /wunder/auth/me`
+  - 鉴权：Bearer Token
+  - 返回（JSON）：`data`（UserProfile）
+- 错误返回：`detail.message`
+
+#### UserProfile
+
+- `id`：用户 ID
+- `username`：用户名
+- `email`：邮箱（可选）
+- `roles`：角色列表
+- `status`：账号状态（active/disabled）
+- `access_level`：访问级别（A/B/C）
+- `is_demo`：是否演示账号
+- `created_at`/`updated_at`：时间戳（秒）
+- `last_login_at`：最近登录时间（秒，可选）
+
+### 4.1.54 `/wunder/chat/*`
+
+- `POST /wunder/chat/sessions`：创建会话
+  - 入参（JSON）：`title`（可选）
+  - 返回：`data`（id/title/created_at/updated_at/last_message_at）
+- `GET /wunder/chat/sessions`：会话列表
+  - Query：`page`/`page_size` 或 `offset`/`limit`
+  - 返回：`data.total`、`data.items`
+- `GET /wunder/chat/sessions/{session_id}`：会话详情
+  - Query：`limit`（消息条数，可选）
+  - 返回：`data`（会话信息 + messages）
+- `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
+  - 返回：`data.id`、`data.rounds`（round/events）
+- `DELETE /wunder/chat/sessions/{session_id}`：删除会话
+  - 返回：`data.id`
+- `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
+  - 入参（JSON）：`content`、`stream`（默认 true）、`selected_shared_tools`（可选）、`attachments`（可选）
+  - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
+- `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
+  - Query：`after_event_id`（可选）
+- `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
+  - 返回：`data.cancelled`
+- `POST /wunder/chat/system-prompt`：系统提示词预览
+  - 入参（JSON）：`selected_shared_tools`（可选）
+  - 返回：`data.prompt`
+- `POST /wunder/chat/attachments/convert`：附件转换
+  - 入参：`multipart/form-data`，`file`
+  - 返回：`data`（转换结果/消息/告警）
+
+### 4.1.55 `/wunder/admin/user_accounts/*`
+
+- `GET /wunder/admin/user_accounts`
+  - Query：`keyword`、`offset`、`limit`
+  - 返回：`data.total`、`data.items`（UserProfile）
+- `POST /wunder/admin/user_accounts`
+  - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
+  - 返回：`data`（UserProfile）
+- `PATCH /wunder/admin/user_accounts/{user_id}`
+  - 入参（JSON）：`email`（可选）、`status`（可选）、`access_level`（可选）、`roles`（可选）
+  - 返回：`data`（UserProfile）
+- `DELETE /wunder/admin/user_accounts/{user_id}`
+  - 返回：`data.ok`、`data.id`
+- `POST /wunder/admin/user_accounts/{user_id}/password`
+  - 入参（JSON）：`password`
+  - 返回：`data.ok`
+- `GET /wunder/admin/user_accounts/{user_id}/tool_access`
+  - 返回：`data.allowed_tools`（null 表示使用默认策略）
+- `PUT /wunder/admin/user_accounts/{user_id}/tool_access`
+  - 入参（JSON）：`allowed_tools`（null 或字符串数组）
+  - 返回：`data.allowed_tools`
+
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
@@ -1070,6 +1150,7 @@
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
+- 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，内部实际工作区根为 `workspace.root/<user_id>/files`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
 - MCP 工具调用形式为 `server@tool`，技能工具按管理员启用的名称暴露。
 

@@ -110,7 +110,7 @@ curl -X GET http://127.0.0.1:18000/wunder/tools ^
 - `DELETE /wunder/workspace`
 
 ## 5. 工作区与历史记录
-- 工作区目录：`data/workspaces/{user_id}/files`
+- 工作区目录：`workspaces/{user_id}/files`（提示词中使用 `/workspaces/{user_id}/` 作为工作目录）
 - 历史记录：`data/historys/{user_id}/chat_history.jsonl`
 - 工具日志：`data/historys/{user_id}/tool_log.jsonl`
 
