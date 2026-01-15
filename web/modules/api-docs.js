@@ -57,6 +57,11 @@ const ENDPOINT_GROUPS = [
     titleKey: "apiDocs.group.admin",
     endpoints: [
       { method: "GET/POST", path: "/wunder/admin/mcp", descKey: "apiDocs.endpoint.adminMcp" },
+      {
+        method: "POST",
+        path: "/wunder/admin/mcp/tools/call",
+        descKey: "apiDocs.endpoint.adminMcpToolCall",
+      },
       { method: "GET/POST", path: "/wunder/admin/a2a", descKey: "apiDocs.endpoint.adminA2a" },
       { method: "GET/POST", path: "/wunder/admin/llm", descKey: "apiDocs.endpoint.adminLlm" },
       { method: "GET", path: "/wunder/admin/monitor", descKey: "apiDocs.endpoint.adminMonitor" },

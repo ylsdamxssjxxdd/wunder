@@ -9,7 +9,7 @@ import {
 } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { openToolDetailModal } from "./tool-detail.js?v=20251227-13";
+import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
 import {
   buildHeadingHighlightHtml,
   getToolInputSchema,

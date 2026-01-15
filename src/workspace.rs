@@ -22,9 +22,6 @@ use tokio::runtime::Handle;
 use tracing::warn;
 use walkdir::WalkDir;
 
-const MIGRATION_MARKER: &str = ".wunder_workspace_v2";
-const LEGACY_CHAT_FILE: &str = "chat_history.jsonl";
-const LEGACY_TOOL_FILE: &str = "tool_log.jsonl";
 const TREE_CACHE_TTL_S: f64 = 5.0;
 const TREE_CACHE_IDLE_TTL_S: f64 = 300.0;
 const TREE_CACHE_MAX_USERS: usize = 512;
@@ -157,7 +154,6 @@ pub struct PurgeResult {
 
 pub struct WorkspaceManager {
     root: PathBuf,
-    history_root: PathBuf,
     storage: Arc<dyn StorageBackend>,
     write_queue: StorageWriteQueue,
     retention_days: i64,
@@ -184,12 +180,10 @@ pub struct WorkspaceManager {
 impl WorkspaceManager {
     pub fn new(root: &str, storage: Arc<dyn StorageBackend>, retention_days: i64) -> Self {
         let retention_days = normalize_retention_days(retention_days);
-        let history_root = PathBuf::from("data/historys");
         let _ = storage.ensure_initialized();
         let write_queue = StorageWriteQueue::new(storage.clone());
         Self {
             root: PathBuf::from(root),
-            history_root,
             storage,
             write_queue,
             retention_days,
@@ -250,7 +244,7 @@ impl WorkspaceManager {
     }
 
     fn user_root(&self, user_id: &str) -> PathBuf {
-        self.workspace_root(user_id).join("files")
+        self.workspace_root(user_id)
     }
 
     pub fn public_root(&self, user_id: &str) -> PathBuf {
@@ -305,15 +299,6 @@ impl WorkspaceManager {
         text.replace(&public_root, &user_root)
     }
 
-    fn history_root(&self, user_id: &str) -> PathBuf {
-        let safe_id = self.safe_user_id(user_id);
-        self.history_root.join(safe_id)
-    }
-
-    fn history_migration_key(&self, user_id: &str) -> String {
-        format!("history_migrated:{}", self.safe_user_id(user_id))
-    }
-
     fn session_token_usage_key(&self, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
@@ -333,97 +318,6 @@ impl WorkspaceManager {
             safe_session
         };
         format!("session_token_usage:{safe_user}:{safe_session}")
-    }
-
-    fn ensure_history_storage(&self, _user_id: &str) {
-        let _ = self.storage.ensure_initialized();
-    }
-
-    fn migrate_legacy_history(&self, user_id: &str, workspace_root: &Path) {
-        let migration_key = self.history_migration_key(user_id);
-        if self
-            .storage
-            .get_meta(&migration_key)
-            .ok()
-            .flatten()
-            .as_deref()
-            == Some("1")
-        {
-            return;
-        }
-        let mut migrated = false;
-        let history_root = self.history_root(user_id);
-        let mut legacy_roots = vec![workspace_root.to_path_buf()];
-        if history_root.exists() {
-            legacy_roots.push(history_root.clone());
-        }
-        let mut seen_paths = HashSet::new();
-        for (filename, kind) in [(LEGACY_CHAT_FILE, "chat"), (LEGACY_TOOL_FILE, "tool")] {
-            for legacy_root in &legacy_roots {
-                let legacy_path = legacy_root.join(filename);
-                if !seen_paths.insert(legacy_path.clone()) {
-                    continue;
-                }
-                if !legacy_path.exists() {
-                    continue;
-                }
-                for payload in read_jsonl(&legacy_path) {
-                    let _ = match kind {
-                        "chat" => self.storage.append_chat(user_id, &payload),
-                        "tool" => self.storage.append_tool_log(user_id, &payload),
-                        _ => Ok(()),
-                    };
-                    migrated = true;
-                }
-                if legacy_root == workspace_root {
-                    let target_root = self.history_root(user_id);
-                    let _ = fs::create_dir_all(&target_root);
-                    let mut target = target_root.join(filename);
-                    if target.exists() {
-                        target = resolve_collision(&target);
-                    }
-                    if fs::rename(&legacy_path, &target).is_err() {
-                        if fs::copy(&legacy_path, &target).is_ok() {
-                            let _ = fs::remove_file(&legacy_path);
-                        }
-                    }
-                }
-            }
-        }
-        if migrated {
-            let _ = self.storage.set_meta(&migration_key, "1");
-        }
-    }
-
-    fn migrate_legacy_files(&self, _user_id: &str, workspace_root: &Path, files_root: &Path) {
-        let marker = workspace_root.join(MIGRATION_MARKER);
-        if marker.exists() {
-            return;
-        }
-        let reserved: HashSet<&str> = HashSet::from([
-            "files",
-            LEGACY_CHAT_FILE,
-            LEGACY_TOOL_FILE,
-            MIGRATION_MARKER,
-        ]);
-        let entries = match fs::read_dir(workspace_root) {
-            Ok(entries) => entries,
-            Err(_) => return,
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if reserved.contains(name.as_str()) {
-                continue;
-            }
-            let target = files_root.join(&name);
-            let target = if target.exists() {
-                resolve_collision(&target)
-            } else {
-                target
-            };
-            let _ = fs::rename(entry.path(), target);
-        }
-        let _ = fs::write(marker, "");
     }
 
     fn maybe_schedule_retention_cleanup(&self) {
@@ -534,12 +428,8 @@ impl WorkspaceManager {
     }
 
     pub fn ensure_user_root(&self, user_id: &str) -> Result<PathBuf> {
-        let workspace_root = self.workspace_root(user_id);
         let user_root = self.user_root(user_id);
         fs::create_dir_all(&user_root)?;
-        self.ensure_history_storage(user_id);
-        self.migrate_legacy_history(user_id, &workspace_root);
-        self.migrate_legacy_files(user_id, &workspace_root, &user_root);
         Ok(user_root)
     }
 
@@ -1000,8 +890,7 @@ impl WorkspaceManager {
         let _ = self.storage.delete_artifact_logs(cleaned);
         let workspace_root = self.workspace_root(cleaned);
         let workspace_deleted = fs::remove_dir_all(&workspace_root).is_ok();
-        let legacy_root = self.history_root(cleaned);
-        let legacy_history_deleted = fs::remove_dir_all(&legacy_root).is_ok();
+        let legacy_history_deleted = false;
         let safe_id = self.safe_user_id(cleaned);
         {
             let mut cache = self.tree_cache.lock();
@@ -1427,8 +1316,8 @@ fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_
         if safe_id.is_empty() {
             continue;
         }
-        let files_root = entry.path().join("files");
-        if !files_root.exists() {
+        let workspace_root = entry.path();
+        if !workspace_root.exists() {
             continue;
         }
         let last_seen = parse_session_activity_ts(
@@ -1437,14 +1326,14 @@ fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_
                 .ok()
                 .flatten(),
         )
-        .or_else(|| dir_modified_ts(&files_root));
+        .or_else(|| dir_modified_ts(&workspace_root));
         let Some(last_seen) = last_seen else {
             continue;
         };
         if now - last_seen < idle_ttl_s {
             continue;
         }
-        clear_dir_contents(&files_root);
+        clear_dir_contents(&workspace_root);
     }
 }
 
@@ -1610,38 +1499,6 @@ fn search_by_walkdir(
         }
     }
     (results, matched)
-}
-
-fn resolve_collision(path: &Path) -> PathBuf {
-    let mut suffix = 1;
-    let mut candidate = path.to_path_buf();
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    while candidate.exists() {
-        candidate = path.with_file_name(format!("{file_name}.migrated_{suffix}"));
-        suffix += 1;
-    }
-    candidate
-}
-
-fn read_jsonl(path: &Path) -> Vec<Value> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(_) => return Vec::new(),
-    };
-    let mut records = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(payload) = serde_json::from_str::<Value>(trimmed) {
-            records.push(payload);
-        }
-    }
-    records
 }
 
 fn normalize_history_limit(limit: i64) -> Option<i64> {

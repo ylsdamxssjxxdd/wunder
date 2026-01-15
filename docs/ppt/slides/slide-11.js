@@ -23,7 +23,7 @@ function buildSlide() {
             <span class="pill">定位</span>
             <p>每个用户一块持久化空间</p>
             <span class="pill">路径示例</span>
-            <p>data/workspaces/&lt;user_id&gt;/files</p>
+            <p>data/workspaces/&lt;user_id&gt;</p>
             <span class="pill">沉淀内容</span>
             <ul>
               <li>文档、脚本、分析结果</li>

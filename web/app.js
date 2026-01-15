@@ -19,7 +19,7 @@ import { normalizeApiBase } from "./modules/utils.js";
 import { appendLog } from "./modules/log.js?v=20260108-02";
 import { loadI18nConfig } from "./modules/i18n-config.js";
 
-import { initToolDetailModal } from "./modules/tool-detail.js";
+import { initToolDetailModal } from "./modules/tool-detail.js?v=20260115-05";
 
 import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260113-03";
 import {
@@ -52,15 +52,15 @@ import {
 
 } from "./modules/memory.js?v=20251231-05";
 
-import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260110-01";
+import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260115-05";
 
-import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260110-01";
+import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260115-05";
 
 import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260110-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20251231-01";
 
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260112-06";
-import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260110-01";
+import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260115-05";
 
 import { initSettingsPanel } from "./modules/settings.js?v=20260110-06";
 

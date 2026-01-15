@@ -251,6 +251,17 @@
 - 返回（JSON）：
   - `tools`：服务端工具清单
 
+#### `/wunder/admin/mcp/tools/call`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `server`：服务名称
+  - `tool`：工具名称
+  - `args`：参数对象（可选）
+- 返回（JSON）：
+  - `result`：工具调用结果
+  - `warning`：提示信息（可选）
+
 ### 4.1.4.1 `/wunder/admin/a2a`
 
 - 方法：`GET/POST`
@@ -1152,7 +1163,7 @@
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
-- 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，内部实际工作区根为 `workspace.root/<user_id>/files`。
+- 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
 - MCP 工具调用形式为 `server@tool`，技能工具按管理员启用的名称暴露。
 
@@ -1169,7 +1180,7 @@
 - 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入数据库（优先 PostgreSQL，可选 SQLite）。
 - 存储后端由 `storage.backend` 控制：`auto`（默认，优先 PostgreSQL，不可用则自动降级 SQLite）、`postgres`、`sqlite`。
 - SQLite 使用 `storage.db_path`，PostgreSQL 使用 `storage.postgres.dsn`（支持 `${VAR:-default}` 环境变量占位符）。
-- 旧版 `data/historys/` 仅用于迁移与兼容，不再作为主存储。
+- 旧版 `data/historys/` 已停用，不再作为主存储。
 
 ### 4.6 沙盒服务 API
 

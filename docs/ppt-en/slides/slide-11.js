@@ -20,7 +20,7 @@ export default function buildSlide() {
             <span class="pill">Purpose</span>
             <p>One persistent space per user</p>
             <span class="pill">Path example</span>
-            <p>data/workspaces/&lt;user_id&gt;/files</p>
+            <p>data/workspaces/&lt;user_id&gt;</p>
             <span class="pill">Stored content</span>
             <ul>
               <li>Docs, scripts, analysis results</li>

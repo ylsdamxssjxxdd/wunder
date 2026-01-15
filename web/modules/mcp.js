@@ -3,10 +3,13 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
-import { openToolDetailModal } from "./tool-detail.js";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260115-03";
+import { openToolDetailModal, setToolDetailTestMode } from "./tool-detail.js?v=20260115-05";
+
+let mcpTestFields = [];
+let mcpTestActiveKey = "";
 
 // 规范化 MCP 服务字段，兼容后端与导入结构
 const normalizeMcpServer = (server) => {
@@ -115,6 +118,448 @@ const isMcpServerConnected = (index) => {
   return Array.isArray(tools) && tools.length > 0;
 };
 
+const setMcpTestStatus = (message, status) => {
+  if (!elements.mcpTestStatus) {
+    return;
+  }
+  elements.mcpTestStatus.textContent = message || "";
+  elements.mcpTestStatus.classList.remove("is-success", "is-error", "is-warning");
+  if (status === "success") {
+    elements.mcpTestStatus.classList.add("is-success");
+  } else if (status === "error") {
+    elements.mcpTestStatus.classList.add("is-error");
+  } else if (status === "warning") {
+    elements.mcpTestStatus.classList.add("is-warning");
+  }
+};
+
+const setMcpTestResult = (value) => {
+  if (!elements.mcpTestResult) {
+    return;
+  }
+  if (value === null || value === undefined || value === "") {
+    elements.mcpTestResult.textContent = "";
+    return;
+  }
+  if (typeof value === "string") {
+    elements.mcpTestResult.textContent = value;
+    return;
+  }
+  try {
+    elements.mcpTestResult.textContent = JSON.stringify(value, null, 2);
+  } catch (error) {
+    elements.mcpTestResult.textContent = String(value);
+  }
+};
+
+const resetMcpTestPanel = (options = {}) => {
+  const { clearSelection = false, keepTool = false } = options;
+  if (clearSelection) {
+    state.mcp.selectedTool = null;
+  }
+  mcpTestActiveKey = "";
+  mcpTestFields = [];
+  setToolDetailTestMode(false);
+  if (!keepTool) {
+    if (elements.mcpTestToolTitle) {
+      elements.mcpTestToolTitle.textContent = t("mcp.test.empty");
+    }
+    if (elements.mcpTestToolMeta) {
+      elements.mcpTestToolMeta.textContent = "";
+    }
+    if (elements.mcpTestToolDesc) {
+      elements.mcpTestToolDesc.textContent = "";
+    }
+  }
+  if (elements.mcpTestForm) {
+    elements.mcpTestForm.textContent = "";
+  }
+  if (elements.mcpTestRunBtn) {
+    elements.mcpTestRunBtn.disabled = true;
+  }
+  setMcpTestStatus("");
+  setMcpTestResult("");
+};
+
+const clearMcpTestInputs = () => {
+  mcpTestFields.forEach((field) => {
+    const { input, defaultValue, type, mode } = field;
+    if (!input) {
+      return;
+    }
+    if (input.tagName === "SELECT") {
+      if (defaultValue !== undefined) {
+        input.value = JSON.stringify(defaultValue);
+      } else if (input.options.length) {
+        input.selectedIndex = 0;
+      }
+      return;
+    }
+    if (type === "boolean") {
+      input.value = JSON.stringify(Boolean(defaultValue));
+      return;
+    }
+    if (defaultValue === undefined) {
+      input.value = "";
+      return;
+    }
+    if (mode === "json") {
+      try {
+        input.value = JSON.stringify(defaultValue, null, 2);
+      } catch (error) {
+        input.value = String(defaultValue);
+      }
+    } else {
+      input.value = String(defaultValue);
+    }
+  });
+};
+
+const normalizeTestSchema = (schema) => {
+  if (typeof schema === "string") {
+    try {
+      const parsed = JSON.parse(schema);
+      schema = parsed;
+    } catch (error) {
+      return null;
+    }
+  }
+  if (!isPlainObject(schema)) {
+    return null;
+  }
+  if (isPlainObject(schema.properties)) {
+    return schema;
+  }
+  return null;
+};
+
+const normalizePropertySchema = (property) => {
+  if (!isPlainObject(property)) {
+    return {};
+  }
+  if (Array.isArray(property.anyOf) && property.anyOf.length) {
+    const enumItem = property.anyOf.find((item) => Array.isArray(item?.enum));
+    if (enumItem) {
+      return { ...property, ...enumItem };
+    }
+    const typed = property.anyOf.find((item) => item && item.type);
+    if (typed) {
+      return { ...property, ...typed };
+    }
+  }
+  if (Array.isArray(property.oneOf) && property.oneOf.length) {
+    const enumItem = property.oneOf.find((item) => Array.isArray(item?.enum));
+    if (enumItem) {
+      return { ...property, ...enumItem };
+    }
+    const typed = property.oneOf.find((item) => item && item.type);
+    if (typed) {
+      return { ...property, ...typed };
+    }
+  }
+  return property;
+};
+
+const resolveSchemaType = (property) => {
+  const rawType = property?.type;
+  if (Array.isArray(rawType)) {
+    return rawType.find((item) => item && item !== "null") || rawType[0];
+  }
+  if (rawType) {
+    return rawType;
+  }
+  return "string";
+};
+
+const buildMcpTestField = (name, property, required, index) => {
+  const schema = normalizePropertySchema(property);
+  const type = resolveSchemaType(schema);
+  const row = document.createElement("div");
+  row.className = "form-row mcp-test-field";
+  const label = document.createElement("label");
+  const fieldId = `mcpTestParam_${index}`;
+  label.htmlFor = fieldId;
+  label.textContent = name;
+  if (required) {
+    const mark = document.createElement("span");
+    mark.className = "mcp-test-required";
+    mark.textContent = "*";
+    label.appendChild(mark);
+  }
+  row.appendChild(label);
+  if (schema.description) {
+    const desc = document.createElement("div");
+    desc.className = "mcp-test-hint";
+    desc.textContent = schema.description;
+    row.appendChild(desc);
+  }
+
+  const isEnum = Array.isArray(schema.enum);
+  const input = isEnum || type === "boolean" ? document.createElement("select") : null;
+  let control = input;
+  let mode = "text";
+  if (input) {
+    const values = isEnum ? schema.enum : [true, false];
+    if (!required) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = t("settings.placeholder.optional");
+      input.appendChild(placeholder);
+    }
+    values.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = JSON.stringify(value);
+      option.textContent = String(value);
+      input.appendChild(option);
+    });
+    control = input;
+    mode = "enum";
+  } else if (type === "number" || type === "integer") {
+    control = document.createElement("input");
+    control.type = "number";
+    control.step = type === "integer" ? "1" : "any";
+  } else if (type === "object" || type === "array") {
+    control = document.createElement("textarea");
+    control.placeholder = t("mcp.test.placeholder.json");
+    mode = "json";
+  } else {
+    control = document.createElement("input");
+    control.type = "text";
+  }
+
+  control.id = fieldId;
+  row.appendChild(control);
+
+  let defaultValue = schema.default;
+  if (defaultValue === undefined && type === "boolean" && required) {
+    defaultValue = false;
+  }
+  if (control.tagName === "SELECT") {
+    if (defaultValue !== undefined) {
+      control.value = JSON.stringify(defaultValue);
+    }
+  } else if (defaultValue !== undefined) {
+    if (mode === "json") {
+      try {
+        control.value = JSON.stringify(defaultValue, null, 2);
+      } catch (error) {
+        control.value = String(defaultValue);
+      }
+    } else {
+      control.value = String(defaultValue);
+    }
+  }
+
+  return {
+    row,
+    field: {
+      name,
+      type,
+      mode,
+      input: control,
+      required,
+      defaultValue,
+    },
+  };
+};
+
+const renderMcpTestForm = (schema) => {
+  if (!elements.mcpTestForm) {
+    return;
+  }
+  elements.mcpTestForm.textContent = "";
+  mcpTestFields = [];
+  const normalized = normalizeTestSchema(schema);
+  if (!normalized || !isPlainObject(normalized.properties) || !Object.keys(normalized.properties).length) {
+    const hint = document.createElement("div");
+    hint.className = "mcp-test-hint";
+    hint.textContent = t("mcp.test.noParams");
+    elements.mcpTestForm.appendChild(hint);
+    return;
+  }
+  const requiredSet = new Set(Array.isArray(normalized.required) ? normalized.required : []);
+  const fragment = document.createDocumentFragment();
+  Object.entries(normalized.properties).forEach(([name, property], index) => {
+    const { row, field } = buildMcpTestField(name, property, requiredSet.has(name), index);
+    fragment.appendChild(row);
+    mcpTestFields.push(field);
+  });
+  elements.mcpTestForm.appendChild(fragment);
+};
+
+const renderMcpTestPanel = (tool, server, options = {}) => {
+  if (!tool || !server) {
+    resetMcpTestPanel({ clearSelection: true });
+    return;
+  }
+  const key = `${server.name}::${tool.name}`;
+  if (!options.force && key === mcpTestActiveKey) {
+    return;
+  }
+  mcpTestActiveKey = key;
+  if (elements.mcpTestToolTitle) {
+    elements.mcpTestToolTitle.textContent = tool.name || t("mcp.test.empty");
+  }
+  if (elements.mcpTestToolMeta) {
+    const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
+    elements.mcpTestToolMeta.textContent = t("mcp.tool.server", { name: serverTitle });
+  }
+  if (elements.mcpTestToolDesc) {
+    elements.mcpTestToolDesc.textContent = tool.description || "";
+  }
+  renderMcpTestForm(getToolInputSchema(tool));
+  setMcpTestStatus("");
+  setMcpTestResult("");
+  if (elements.mcpTestRunBtn) {
+    elements.mcpTestRunBtn.disabled = false;
+  }
+};
+
+const syncMcpTestPanel = () => {
+  const selected = state.mcp.selectedTool;
+  if (!selected || selected.serverIndex !== state.mcp.selectedIndex) {
+    resetMcpTestPanel({ clearSelection: true });
+    return;
+  }
+  const tools = state.mcp.toolsByIndex[state.mcp.selectedIndex] || [];
+  const tool = tools.find((item) => item.name === selected.name);
+  if (!tool) {
+    resetMcpTestPanel({ clearSelection: true });
+    return;
+  }
+  const server = state.mcp.servers[state.mcp.selectedIndex];
+  renderMcpTestPanel(tool, server);
+};
+
+const collectMcpTestArgs = () => {
+  const args = {};
+  for (const field of mcpTestFields) {
+    const { name, type, mode, input, required } = field;
+    if (!input) {
+      continue;
+    }
+    let value;
+    if (input.tagName === "SELECT") {
+      const raw = input.value;
+      if (!raw) {
+        if (required) {
+          return { error: t("mcp.test.error.missing", { name }) };
+        }
+        continue;
+      }
+      try {
+        value = JSON.parse(raw);
+      } catch (error) {
+        value = raw;
+      }
+    } else if (type === "number" || type === "integer") {
+      const raw = input.value;
+      if (raw.trim() === "") {
+        if (required) {
+          return { error: t("mcp.test.error.missing", { name }) };
+        }
+        continue;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        return { error: t("mcp.test.error.invalidNumber", { name }) };
+      }
+      if (type === "integer" && !Number.isInteger(parsed)) {
+        return { error: t("mcp.test.error.invalidNumber", { name }) };
+      }
+      value = parsed;
+    } else if (mode === "json") {
+      const raw = input.value;
+      if (raw.trim() === "") {
+        if (required) {
+          return { error: t("mcp.test.error.missing", { name }) };
+        }
+        continue;
+      }
+      try {
+        value = JSON.parse(raw);
+      } catch (error) {
+        return { error: t("mcp.test.error.invalidJson", { name }) };
+      }
+    } else {
+      const raw = input.value.trim();
+      if (!raw) {
+        if (required) {
+          return { error: t("mcp.test.error.missing", { name }) };
+        }
+        continue;
+      }
+      value = raw;
+    }
+    args[name] = value;
+  }
+  return { args };
+};
+
+const runMcpToolTest = async () => {
+  const server = state.mcp.servers[state.mcp.selectedIndex];
+  const selected = state.mcp.selectedTool;
+  if (!server || !selected) {
+    return;
+  }
+  const tools = state.mcp.toolsByIndex[state.mcp.selectedIndex] || [];
+  const tool = tools.find((item) => item.name === selected.name);
+  if (!tool) {
+    return;
+  }
+  const collected = collectMcpTestArgs();
+  if (collected.error) {
+    setMcpTestStatus(collected.error, "error");
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/mcp/tools/call`;
+  setMcpTestStatus(t("mcp.test.running"));
+  if (elements.mcpTestRunBtn) {
+    elements.mcpTestRunBtn.disabled = true;
+  }
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        server: server.name,
+        tool: tool.name,
+        args: collected.args || {},
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message =
+        payload?.detail?.message ||
+        payload?.detail?.code ||
+        payload?.detail ||
+        response.statusText;
+      throw new Error(message || t("common.requestFailed", { status: response.status }));
+    }
+    setMcpTestResult(payload.result ?? payload);
+    if (payload.warning) {
+      setMcpTestStatus(
+        `${t("mcp.test.success")} ${t("mcp.test.warning", { message: payload.warning })}`,
+        "warning"
+      );
+    } else {
+      setMcpTestStatus(t("mcp.test.success"), "success");
+    }
+  } catch (error) {
+    setMcpTestStatus(
+      t("mcp.test.failed", { message: error?.message || String(error) }),
+      "error"
+    );
+  } finally {
+    if (elements.mcpTestRunBtn) {
+      elements.mcpTestRunBtn.disabled = false;
+    }
+  }
+};
+
 // 根据当前选中服务更新连接按钮文案与图标
 const updateMcpConnectButton = () => {
   const server = state.mcp.servers[state.mcp.selectedIndex];
@@ -221,17 +666,25 @@ const renderMcpTools = () => {
   if (!server) {
     elements.mcpToolList.textContent = t("mcp.tools.select");
     renderMcpHeader();
+    resetMcpTestPanel({ clearSelection: true });
     return;
   }
   const tools = state.mcp.toolsByIndex[state.mcp.selectedIndex];
   if (!tools || !tools.length) {
     elements.mcpToolList.textContent = t("mcp.tools.notLoaded");
     renderMcpHeader();
+    resetMcpTestPanel({ clearSelection: true });
     return;
   }
   tools.forEach((tool) => {
     const item = document.createElement("div");
     item.className = "tool-item";
+    if (
+      state.mcp.selectedTool?.serverIndex === state.mcp.selectedIndex &&
+      state.mcp.selectedTool?.name === tool.name
+    ) {
+      item.classList.add("is-active");
+    }
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
@@ -283,11 +736,15 @@ const renderMcpTools = () => {
     });
     const label = document.createElement("label");
     label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
-    // 点击工具条目查看详情，避免与勾选动作冲突
+    // 点击工具条目弹出详情 + 测试面板，避免与勾选动作冲突
     item.addEventListener("click", (event) => {
       if (event.target === checkbox) {
         return;
       }
+      state.mcp.selectedTool = {
+        serverIndex: state.mcp.selectedIndex,
+        name: tool.name,
+      };
       const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
       const metaParts = [
         t("mcp.tool.label"),
@@ -305,12 +762,19 @@ const renderMcpTools = () => {
         description: tool.description || "",
         schema: getToolInputSchema(tool),
       });
+      setToolDetailTestMode(true);
+      renderMcpTestPanel(tool, server, { force: true });
+      elements.mcpToolList
+        .querySelectorAll(".tool-item.is-active")
+        .forEach((node) => node.classList.remove("is-active"));
+      item.classList.add("is-active");
     });
     item.appendChild(checkbox);
     item.appendChild(label);
     elements.mcpToolList.appendChild(item);
   });
   renderMcpHeader();
+  syncMcpTestPanel();
 };
 
 // 渲染 MCP 服务详情与工具列表
@@ -319,6 +783,7 @@ const renderMcpDetail = () => {
   if (!server) {
     elements.mcpToolList.textContent = t("mcp.tools.select");
     renderMcpHeader();
+    resetMcpTestPanel({ clearSelection: true });
     return;
   }
   renderMcpTools();
@@ -754,6 +1219,20 @@ export const initMcpPanel = () => {
       notify(t("mcp.saveFailed", { message: error.message }), "error");
     }
   });
+  if (elements.mcpTestRunBtn) {
+    elements.mcpTestRunBtn.addEventListener("click", runMcpToolTest);
+  }
+  if (elements.mcpTestClearBtn) {
+    elements.mcpTestClearBtn.addEventListener("click", () => {
+      if (!state.mcp.selectedTool) {
+        resetMcpTestPanel({ clearSelection: true });
+        return;
+      }
+      clearMcpTestInputs();
+      setMcpTestStatus("");
+      setMcpTestResult("");
+    });
+  }
   elements.mcpModalSave.addEventListener("click", async () => {
     const ok = applyMcpModal();
     if (!ok) {

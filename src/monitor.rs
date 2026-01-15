@@ -894,8 +894,7 @@ impl MonitorState {
             if !file_type.is_dir() {
                 continue;
             }
-            let files_root = entry.path().join("files");
-            total = total.saturating_add(calc_dir_size(&files_root, None));
+            total = total.saturating_add(calc_dir_size(entry.path().as_path(), None));
         }
         total
     }

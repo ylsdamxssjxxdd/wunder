@@ -2,6 +2,7 @@ use crate::api::user_context::resolve_user;
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
+use crate::orchestrator_constants::OBSERVATION_PREFIX;
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
@@ -192,25 +193,34 @@ async fn get_session(
         .workspace
         .load_history(&resolved.user.user_id, &session_id, limit)
         .unwrap_or_default();
-    let mut messages = history
+    let session_status = state.monitor.get_record(&session_id).and_then(|record| {
+        record
+            .get("status")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string())
+    });
+    let session_running = session_status
+        .as_deref()
+        .map(|status| {
+            status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+        })
+        .unwrap_or(false);
+    let filtered_history = filter_history_messages(history, session_running);
+    let mut messages = filtered_history
         .into_iter()
         .filter_map(map_history_message)
         .collect::<Vec<_>>();
 
-    if let Some(record) = state.monitor.get_record(&session_id) {
-        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-        if status == crate::monitor::MonitorState::STATUS_RUNNING
-            || status == crate::monitor::MonitorState::STATUS_CANCELLING
-        {
-            if let Some(target) = messages.iter_mut().rev().find(|item| {
-                item.get("role")
-                    .and_then(Value::as_str)
-                    .map(|value| value == "assistant")
-                    .unwrap_or(false)
-            }) {
-                if let Value::Object(ref mut map) = target {
-                    map.insert("stream_incomplete".to_string(), json!(true));
-                }
+    if session_running {
+        if let Some(target) = messages.iter_mut().rev().find(|item| {
+            item.get("role")
+                .and_then(Value::as_str)
+                .map(|value| value == "assistant")
+                .unwrap_or(false)
+        }) {
+            if let Value::Object(ref mut map) = target {
+                map.insert("stream_incomplete".to_string(), json!(true));
             }
         }
     }
@@ -657,11 +667,35 @@ async fn chat_attachment_convert(mut multipart: Multipart) -> Result<Json<Value>
 
 fn map_history_message(item: Value) -> Option<Value> {
     let role = item.get("role").and_then(Value::as_str)?;
-    if role == "system" {
+    if role == "system" || role == "tool" {
         return None;
     }
     let raw_content = item.get("content").cloned().unwrap_or(Value::Null);
     let content = normalize_message_content(&raw_content);
+    let reasoning = if role == "assistant" {
+        item.get("reasoning_content")
+            .or_else(|| item.get("reasoning"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+    } else {
+        ""
+    };
+    if role == "assistant" {
+        let content_trimmed = content.trim();
+        let keep_tool_message = item
+            .get("_keep_tool_message")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !keep_tool_message
+            && (is_tool_call_meta(&item)
+                || is_tool_payload_value(&raw_content)
+                || is_tool_payload_text(content_trimmed)
+                || (content_trimmed.is_empty() && is_tool_payload_text(reasoning)))
+        {
+            return None;
+        }
+    }
     let created_at = item
         .get("timestamp")
         .and_then(Value::as_str)
@@ -672,20 +706,192 @@ fn map_history_message(item: Value) -> Option<Value> {
         "content": content,
         "created_at": created_at,
     });
-    if role == "assistant" {
-        let reasoning = item
-            .get("reasoning_content")
-            .or_else(|| item.get("reasoning"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        if !reasoning.is_empty() {
-            if let Value::Object(ref mut map) = message {
-                map.insert("reasoning".to_string(), json!(reasoning));
-            }
+    if role == "assistant" && !reasoning.is_empty() {
+        if let Value::Object(ref mut map) = message {
+            map.insert("reasoning".to_string(), json!(reasoning));
         }
     }
     Some(message)
+}
+
+fn filter_history_messages(mut history: Vec<Value>, preserve_last_assistant: bool) -> Vec<Value> {
+    let mut drop_assistant = vec![false; history.len()];
+    let mut last_assistant_idx: Option<usize> = None;
+    for (index, item) in history.iter().enumerate() {
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+        match role {
+            "assistant" => {
+                last_assistant_idx = Some(index);
+            }
+            "tool" => {
+                if let Some(target) = last_assistant_idx {
+                    drop_assistant[target] = true;
+                }
+            }
+            "user" => {
+                last_assistant_idx = None;
+            }
+            _ => {}
+        }
+    }
+    let preserved_idx = if preserve_last_assistant {
+        history
+            .iter()
+            .rposition(|item| item.get("role").and_then(Value::as_str) == Some("assistant"))
+    } else {
+        None
+    };
+    if let Some(index) = preserved_idx {
+        if let Some(Value::Object(ref mut map)) = history.get_mut(index) {
+            map.insert("_keep_tool_message".to_string(), Value::Bool(true));
+        }
+    }
+    history
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            if drop_assistant[*index] {
+                Some(*index) == preserved_idx
+            } else {
+                true
+            }
+        })
+        .map(|(_, item)| item)
+        .collect()
+}
+
+fn is_tool_call_meta(item: &Value) -> bool {
+    item.get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("type"))
+        .and_then(Value::as_str)
+        .map(|value| value == "tool_call")
+        .unwrap_or(false)
+}
+
+fn is_tool_payload_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with(OBSERVATION_PREFIX) {
+        return true;
+    }
+    if trimmed.contains("<tool_call")
+        || trimmed.contains("</tool_call")
+        || trimmed.contains("<tool>")
+        || trimmed.contains("</tool>")
+    {
+        return true;
+    }
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return is_tool_payload(&value) && !has_visible_answer_fields(&value);
+        }
+    }
+    trimmed.contains("\"tool_calls\"")
+        || trimmed.contains("\"tool_call\"")
+        || trimmed.contains("\"function_call\"")
+        || trimmed.contains("\"tool_result\"")
+}
+
+fn has_visible_answer_fields(value: &Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    if has_non_empty_field(map.get("answer"))
+        || has_non_empty_field(map.get("content"))
+        || has_non_empty_field(map.get("message"))
+    {
+        return true;
+    }
+    let Some(data) = map.get("data").and_then(Value::as_object) else {
+        return false;
+    };
+    has_non_empty_field(data.get("answer"))
+        || has_non_empty_field(data.get("content"))
+        || has_non_empty_field(data.get("message"))
+}
+
+fn has_non_empty_field(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Object(map)) => !map.is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
+fn is_tool_payload_value(value: &Value) -> bool {
+    match value {
+        Value::String(text) => is_tool_payload_text(text),
+        Value::Array(items) => items.iter().any(is_tool_payload_value),
+        Value::Object(_) => is_tool_payload(value) && !has_visible_answer_fields(value),
+        _ => false,
+    }
+}
+
+fn is_tool_payload(value: &Value) -> bool {
+    is_tool_call_payload(value) || is_tool_result_payload(value)
+}
+
+fn is_tool_call_payload(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map.contains_key("tool_calls")
+                || map.contains_key("tool_call")
+                || map.contains_key("function_call")
+            {
+                return true;
+            }
+            if let Some(Value::String(kind)) = map.get("type") {
+                let lowered = kind.to_lowercase();
+                if lowered.contains("tool") || lowered.contains("function") {
+                    return true;
+                }
+            }
+            let has_tool = map.contains_key("tool") || map.contains_key("tool_name");
+            let has_name = map.contains_key("name");
+            let has_args = map.contains_key("arguments")
+                || map.contains_key("args")
+                || map.contains_key("parameters");
+            if (has_tool || has_name) && has_args {
+                return true;
+            }
+            let Some(Value::Object(function)) = map.get("function") else {
+                return false;
+            };
+            let function_has_name = function.contains_key("name") || function.contains_key("tool");
+            let function_has_args =
+                function.contains_key("arguments") || function.contains_key("args");
+            function_has_name && function_has_args
+        }
+        Value::Array(items) => items.iter().any(is_tool_call_payload),
+        _ => false,
+    }
+}
+
+fn is_tool_result_payload(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            let tool = map.get("tool").and_then(Value::as_str).unwrap_or("").trim();
+            if tool.is_empty() {
+                return false;
+            }
+            let has_ok = map.get("ok").and_then(Value::as_bool).is_some();
+            let has_data = map.contains_key("data") || map.contains_key("result");
+            let has_error = map.contains_key("error");
+            let has_timestamp = map
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false);
+            (has_ok && (has_data || has_error)) || (has_timestamp && has_data)
+        }
+        Value::Array(items) => items.iter().any(is_tool_result_payload),
+        _ => false,
+    }
 }
 
 fn normalize_message_content(value: &Value) -> String {

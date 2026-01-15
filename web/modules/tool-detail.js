@@ -2,6 +2,13 @@ import { elements } from "./elements.js?v=20260115-02";
 import { formatToolSchema } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260115-03";
 
+export const setToolDetailTestMode = (enabled) => {
+  if (!elements.toolDetailModal) {
+    return;
+  }
+  elements.toolDetailModal.classList.toggle("with-test", Boolean(enabled));
+};
+
 // 打开工具详情弹窗：内置工具与 MCP 工具共用展示逻辑
 export const openToolDetailModal = (payload) => {
   const title = String(payload?.title || payload?.name || "").trim();
@@ -10,11 +17,13 @@ export const openToolDetailModal = (payload) => {
   const description = String(payload?.description || "").trim();
   elements.toolDetailDesc.textContent = description || t("tool.detail.noDescription");
   elements.toolDetailSchema.textContent = formatToolSchema(payload?.schema);
+  setToolDetailTestMode(false);
   elements.toolDetailModal.classList.add("active");
 };
 
 // 关闭工具详情弹窗，保留内容便于快速切换查看
 export const closeToolDetailModal = () => {
+  setToolDetailTestMode(false);
   elements.toolDetailModal.classList.remove("active");
 };
 

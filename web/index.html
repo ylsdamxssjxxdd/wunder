@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260115-01" />
+    <link rel="stylesheet" href="./app.css?v=20260115-02" />
   </head>
   <body>
     <div class="app">
@@ -3163,21 +3163,57 @@
         </div>
       </div>
     </div>
-<div id="toolDetailModal" class="modal">
-      <div class="modal-card">
+<div id="toolDetailModal" class="modal tool-detail-modal">
+      <div class="modal-card tool-detail-card">
         <div class="modal-header">
           <div id="toolDetailTitle" class="detail-title" data-i18n="tool.detail.title">工具详情</div>
           <button id="toolDetailClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
-          <div id="toolDetailMeta" class="muted"></div>
-          <div class="form-row">
-            <label data-i18n="tool.detail.label.description">描述</label>
-            <div id="toolDetailDesc" class="tool-desc"></div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="tool.detail.label.schema">输入结构</label>
-            <pre id="toolDetailSchema" class="tool-schema"></pre>
+          <div class="tool-detail-layout">
+            <div class="tool-detail-left">
+              <div id="toolDetailMeta" class="muted"></div>
+              <div class="form-row">
+                <label data-i18n="tool.detail.label.description">描述</label>
+                <div id="toolDetailDesc" class="tool-desc"></div>
+              </div>
+              <div class="form-row">
+                <label data-i18n="tool.detail.label.schema">输入结构</label>
+                <pre id="toolDetailSchema" class="tool-schema"></pre>
+              </div>
+            </div>
+            <div class="tool-detail-right mcp-test-panel">
+              <div class="list-header">
+                <label data-i18n="mcp.test.title">工具测试</label>
+                <button id="mcpTestClearBtn" class="secondary btn-with-icon btn-compact" type="button">
+                  <i class="fa-solid fa-broom"></i>
+                  <span data-i18n="mcp.test.clear">清空</span>
+                </button>
+              </div>
+              <div class="detail-header">
+                <div>
+                  <div id="mcpTestToolTitle" class="detail-title" data-i18n="mcp.test.empty">
+                    请选择工具
+                  </div>
+                  <div id="mcpTestToolMeta" class="muted"></div>
+                  <div id="mcpTestToolDesc" class="muted"></div>
+                </div>
+              </div>
+              <div id="mcpTestForm" class="mcp-test-form"></div>
+              <div class="detail-actions mcp-test-actions">
+                <div class="actions">
+                  <button id="mcpTestRunBtn" class="btn-with-icon" type="button" disabled>
+                    <i class="fa-solid fa-play"></i>
+                    <span data-i18n="mcp.test.run">测试</span>
+                  </button>
+                </div>
+              </div>
+              <div id="mcpTestStatus" class="muted mcp-test-status"></div>
+              <div class="form-row">
+                <label data-i18n="mcp.test.result">返回结果</label>
+                <pre id="mcpTestResult" class="tool-schema"></pre>
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-actions">
@@ -3548,6 +3584,6 @@
     <!-- 引入调试脚本：负责请求与 SSE 解析 -->
     <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
     <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260115-04"></script>
+    <script type="module" src="./app.js?v=20260115-05"></script>
   </body>
 </html>

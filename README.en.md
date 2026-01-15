@@ -117,7 +117,7 @@ Workspace management:
 - `DELETE /wunder/workspace`
 
 ## 5. Workspace & History
-- Workspace path: `workspaces/{user_id}/files` (prompt uses `/workspaces/{user_id}/` as the working directory)
+- Workspace path: `workspaces/{user_id}` (prompt uses `/workspaces/{user_id}/` as the working directory)
 - History: `data/historys/{user_id}/chat_history.jsonl`
 - Tool logs: `data/historys/{user_id}/tool_log.jsonl`
 

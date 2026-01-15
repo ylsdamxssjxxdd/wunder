@@ -53,6 +53,7 @@ export const state = {
     selectedIndex: -1,
     saveVersion: 0,
     lastAction: null,
+    selectedTool: null,
   },
   a2aServices: {
     services: [],

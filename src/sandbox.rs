@@ -89,23 +89,148 @@ fn sandbox_endpoint_candidates(config: &Config) -> Vec<String> {
     candidates
 }
 
+fn looks_like_windows_drive(value: &str) -> bool {
+    value.len() >= 2
+        && value.as_bytes()[1] == b':'
+        && value
+            .chars()
+            .next()
+            .map(|ch| ch.is_ascii_alphabetic())
+            .unwrap_or(false)
+}
+
 fn normalize_container_path(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
     }
     let replaced = trimmed.replace('\\', "/");
-    let looks_like_windows_drive = replaced.len() >= 2
-        && replaced.as_bytes()[1] == b':'
-        && replaced
-            .chars()
-            .next()
-            .map(|ch| ch.is_ascii_alphabetic())
-            .unwrap_or(false);
-    if looks_like_windows_drive {
+    if looks_like_windows_drive(&replaced) {
         return None;
     }
     Some(replaced)
+}
+
+fn clean_posix_relative(value: &str) -> String {
+    let mut segments = Vec::new();
+    for part in value.split('/') {
+        let part = part.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            segments.pop();
+            continue;
+        }
+        segments.push(part);
+    }
+    segments.join("/")
+}
+
+fn join_posix(base: &str, child: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let child = child.trim_start_matches('/');
+    if base.is_empty() || base == "/" {
+        if child.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{child}")
+        }
+    } else if child.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}/{child}")
+    }
+}
+
+fn strip_root_prefix<'a>(value: &'a str, root: &str) -> Option<&'a str> {
+    if value == root {
+        return Some("");
+    }
+    if value.starts_with(root) {
+        let remainder = &value[root.len()..];
+        if remainder.starts_with('/') || remainder.starts_with('\\') {
+            return Some(remainder);
+        }
+    }
+    None
+}
+
+fn replace_root_in_text(text: &str, from_root: &str, to_root: &str) -> String {
+    if from_root.is_empty() || from_root == to_root || !text.contains(from_root) {
+        return text.to_string();
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(from_root) {
+        let (before, after) = rest.split_at(index);
+        output.push_str(before);
+        let remainder = &after[from_root.len()..];
+        let boundary = remainder.is_empty()
+            || matches!(
+                remainder.chars().next().unwrap(),
+                '/' | '\\' | '"' | '\'' | ' ' | '\n' | '\r' | '\t' | ')' | ']' | '}' | ';' | ','
+            );
+        if boundary {
+            output.push_str(to_root);
+        } else {
+            output.push_str(from_root);
+        }
+        rest = remainder;
+    }
+    output.push_str(rest);
+    output
+}
+
+fn resolve_container_workspace_root(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+) -> String {
+    let container_root = normalize_container_path(&config.sandbox.container_root)
+        .unwrap_or_else(|| "/workspaces".to_string());
+    let container_root = container_root.trim_end_matches('/');
+    let container_root = if container_root.is_empty() {
+        "/".to_string()
+    } else {
+        container_root.to_string()
+    };
+
+    let public_root = workspace
+        .public_root(user_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let safe_id = public_root
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("anonymous");
+
+    let workspace_root_raw = config.workspace.root.trim();
+    let workspace_root_norm = normalize_container_path(workspace_root_raw);
+    let base_root = match workspace_root_norm {
+        Some(root) if root.starts_with('/') => {
+            let trimmed = root.trim_end_matches('/');
+            if trimmed.is_empty() {
+                container_root.to_string()
+            } else if container_root == "/" || trimmed.starts_with(&container_root) {
+                trimmed.to_string()
+            } else {
+                join_posix(&container_root, "workspaces")
+            }
+        }
+        Some(root) => {
+            let rel = clean_posix_relative(&root);
+            if rel.is_empty() {
+                container_root.to_string()
+            } else {
+                join_posix(&container_root, &rel)
+            }
+        }
+        None => join_posix(&container_root, "workspaces"),
+    };
+
+    join_posix(&base_root, safe_id)
 }
 
 fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> Vec<String> {
@@ -160,25 +285,24 @@ pub async fn execute_tool(
         });
     }
 
-    let workspace_root = match workspace.ensure_user_root(user_id) {
-        Ok(path) => path,
-        Err(err) => {
-            return json!({
-                "ok": false,
-                "data": { "detail": err.to_string() },
-                "error": "failed to prepare workspace",
-                "sandbox": true,
-            });
-        }
-    };
+    if let Err(err) = workspace.ensure_user_root(user_id) {
+        return json!({
+            "ok": false,
+            "data": { "detail": err.to_string() },
+            "error": "failed to prepare workspace",
+            "sandbox": true,
+        });
+    }
+
+    let public_root = workspace
+        .public_root(user_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root = resolve_container_workspace_root(config, workspace, user_id);
 
     let allow_paths = collect_allow_paths(config, user_tool_bindings);
     let deny_globs = config.security.deny_globs.clone();
     let allow_commands = config.security.allow_commands.clone();
-
-    let workspace_root = workspace_root.to_string_lossy().replace('\\', "/");
-    let workspace_root =
-        normalize_container_path(&workspace_root).unwrap_or_else(|| "./".to_string());
 
     let mut mapped_args = if args.is_object() {
         args.clone()
@@ -191,14 +315,15 @@ pub async fn execute_tool(
                 let trimmed = workdir.trim();
                 let path = Path::new(trimmed);
                 if path.is_absolute() {
-                    if let Some(mapped) = workspace.map_public_path(user_id, path) {
-                        let mapped_text = mapped.to_string_lossy().replace('\\', "/");
-                        map.insert("workdir".to_string(), Value::String(mapped_text));
+                    if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
+                        let mapped = format!("{container_workspace_root}{rest}");
+                        map.insert("workdir".to_string(), Value::String(mapped));
                     }
                 }
             }
             if let Some(Value::String(content)) = map.get("content").cloned() {
-                let rewritten = workspace.replace_public_root_in_text(user_id, &content);
+                let rewritten =
+                    replace_root_in_text(&content, &public_root, &container_workspace_root);
                 if rewritten != content {
                     map.insert("content".to_string(), Value::String(rewritten));
                 }
@@ -212,7 +337,7 @@ pub async fn execute_tool(
         "language": i18n::get_language(),
         "tool": tool,
         "args": mapped_args,
-        "workspace_root": workspace_root,
+        "workspace_root": container_workspace_root,
         "allow_paths": allow_paths,
         "deny_globs": deny_globs,
         "allow_commands": allow_commands,
@@ -269,7 +394,7 @@ pub async fn execute_tool(
             .unwrap_or("")
             .to_string();
         let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
-        let data = rewrite_sandbox_paths(workspace, user_id, tool, data);
+        let data = rewrite_sandbox_paths(&public_root, &container_workspace_root, tool, data);
 
         return json!({
             "ok": ok,
@@ -288,24 +413,38 @@ pub async fn execute_tool(
 }
 
 fn rewrite_sandbox_paths(
-    workspace: &WorkspaceManager,
-    user_id: &str,
+    public_root: &str,
+    container_root: &str,
     tool: &str,
     mut data: Value,
 ) -> Value {
-    if tool != "ptc" {
+    if !matches!(tool, "ptc" | "执行命令") {
         return data;
     }
-    let Value::Object(ref mut map) = data else {
-        return data;
-    };
-    for key in ["path", "workdir"] {
-        if let Some(Value::String(value)) = map.get(key).cloned() {
-            let display = workspace.display_path(user_id, Path::new(&value));
-            map.insert(key.to_string(), Value::String(display));
-        }
-    }
+    replace_paths_in_value(&mut data, container_root, public_root);
     data
+}
+
+fn replace_paths_in_value(value: &mut Value, from_root: &str, to_root: &str) {
+    match value {
+        Value::String(text) => {
+            let replaced = replace_root_in_text(text, from_root, to_root);
+            if replaced != *text {
+                *text = replaced;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_paths_in_value(item, from_root, to_root);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                replace_paths_in_value(item, from_root, to_root);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

@@ -44,6 +44,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_mcp_list).post(admin_mcp_update),
         )
         .route("/wunder/admin/mcp/tools", post(admin_mcp_tools))
+        .route("/wunder/admin/mcp/tools/call", post(admin_mcp_tool_call))
         .route(
             "/wunder/admin/a2a",
             get(admin_a2a_list).post(admin_a2a_update),
@@ -312,6 +313,53 @@ async fn admin_mcp_tools(
         }
     };
     Ok(Json(json!({ "tools": tools })))
+}
+
+async fn admin_mcp_tool_call(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<McpToolCallRequest>,
+) -> Result<Json<Value>, Response> {
+    let server_name = payload.server.trim();
+    let tool_name = payload.tool.trim();
+    if server_name.is_empty() || tool_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "MCP server and tool are required".to_string(),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let mut server = config
+        .mcp
+        .servers
+        .iter()
+        .find(|item| item.name == server_name)
+        .cloned()
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                format!("MCP server not found: {server_name}"),
+            )
+        })?;
+    let mut warnings = Vec::new();
+    if !server.enabled {
+        warnings.push(format!("server disabled: {server_name}"));
+    }
+    if !server.allow_tools.is_empty() && !server.allow_tools.contains(&tool_name.to_string()) {
+        warnings.push(format!("tool not in allow_tools: {tool_name}"));
+    }
+    server.enabled = true;
+    server.allow_tools = Vec::new();
+    let args = payload.args.unwrap_or(Value::Null);
+    let result = crate::mcp::call_tool_with_server(&config, &server, tool_name, &args)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if warnings.is_empty() {
+        Ok(Json(json!({ "result": result })))
+    } else {
+        Ok(Json(
+            json!({ "result": result, "warning": warnings.join("; ") }),
+        ))
+    }
 }
 
 async fn admin_a2a_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
@@ -2581,6 +2629,14 @@ struct McpToolsRequest {
     headers: Option<HashMap<String, String>>,
     #[serde(default)]
     auth: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct McpToolCallRequest {
+    server: String,
+    tool: String,
+    #[serde(default)]
+    args: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]

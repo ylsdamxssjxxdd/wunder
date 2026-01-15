@@ -1202,12 +1202,13 @@ impl Orchestrator {
                         assistant_message["reasoning_content"] = json!(assistant_reasoning.clone());
                     }
                     messages.push(assistant_message);
+                    let meta = json!({ "type": "tool_call" });
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
-                        None,
+                        Some(&meta),
                         Some(&assistant_reasoning),
                     );
                 }

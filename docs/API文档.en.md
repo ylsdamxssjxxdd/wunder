@@ -205,6 +205,12 @@
 - Body: `name`, `endpoint`
 - Response: `tools` list
 
+#### `/wunder/admin/mcp/tools/call`
+
+- Method: `POST`
+- Body: `server`, `tool`, `args` (optional)
+- Response: `result`, `warning` (optional)
+
 ### 4.1.5 `/wunder/admin/skills`
 
 - Method: `GET/POST/DELETE`
