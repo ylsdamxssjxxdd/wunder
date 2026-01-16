@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::hash_map::DefaultHasher;
+use serde_json::{json, Value};
+use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -26,6 +26,59 @@ const REPORT_INDEX_FILE: &str = "index.json";
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const LATENCY_BUCKETS_MS: [u64; 12] = [
     50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000, 10000,
+];
+const BUILTIN_QUESTION_SET_NAME: &str = "builtin";
+const BUILTIN_QUESTIONS: [&str; 50] = [
+    "用一句话解释什么是大型语言模型。",
+    "列出三种常见的数据库索引类型及用途。",
+    "用 100 字以内说明 HTTP 与 HTTPS 的区别。",
+    "将下面中文翻译成英文：人工智能正在改变世界。",
+    "写出 Rust 中所有权的核心规则。",
+    "给出一个用于计算阶乘的伪代码。",
+    "解释什么是幂等接口，并举一个例子。",
+    "比较 TCP 与 UDP 的主要差异。",
+    "简要说明缓存击穿、穿透、雪崩的区别。",
+    "给出 5 个提升 API 吞吐量的优化点。",
+    "简述 LRU 缓存的工作原理。",
+    "给出一个判断质数的算法思路。",
+    "用要点说明日志采样的优缺点。",
+    "写一个 SQL 查询示例：按城市统计用户数。",
+    "解释什么是向量数据库及常见场景。",
+    "举例说明并发与并行的区别。",
+    "将英文翻译成中文：Latency is more important than throughput in interactive systems.",
+    "给出一次 HTTP 请求的关键阶段。",
+    "写出 JSON 与 YAML 的主要差别。",
+    "简要描述 OAuth2 的授权码流程。",
+    "用 3 点说明怎样设计可观测性指标。",
+    "解释什么是 RPS 与 TPS。",
+    "给出一次压测需要收集的核心指标列表。",
+    "写出一个二分查找的步骤。",
+    "简要说明 CAP 定理的含义。",
+    "解释什么是消息队列以及常见用途。",
+    "用 50 字以内说明什么是背压。",
+    "给出一个字符串反转的示例代码（任意语言）。",
+    "解释什么是服务降级，并给出一个场景。",
+    "列出 4 种常见的监控告警策略。",
+    "简要说明什么是微服务架构。",
+    "写出 Kubernetes 的两项核心能力。",
+    "给出一次接口超时排查的思路。",
+    "解释什么是冷启动以及可能影响。",
+    "列出 3 种常见的负载均衡算法。",
+    "用一句话描述 B 树与 B+ 树的区别。",
+    "解释什么是上下文窗口（Context Window）。",
+    "给出一个文本摘要任务的评估指标。",
+    "说明为什么需要限流，并举例。",
+    "用 3 点描述 API 版本管理的建议。",
+    "写出一次日志追踪链路的关键字段。",
+    "解释幂等重试可能带来的问题。",
+    "简要描述分布式锁的实现方式。",
+    "列出 3 种常见的序列化格式。",
+    "解释什么是热分区以及影响。",
+    "给出一个简单的正则表达式，用于匹配邮箱。",
+    "用两句话描述什么是向量相似度检索。",
+    "说明如何估算文本的 token 数量。",
+    "给出一个性能测试的基线建立方法。",
+    "简要说明如何设置最大输出 token 的意义。",
 ];
 
 #[derive(Clone)]
@@ -75,44 +128,26 @@ impl RunStatus {
 
 #[derive(Clone)]
 pub struct ThroughputConfig {
+    pub concurrency_list: Vec<usize>,
     pub max_concurrency: usize,
-    pub step: usize,
     pub questions: Vec<String>,
+    pub question_set: String,
     pub user_id_prefix: String,
     pub model_name: Option<String>,
     pub request_timeout_s: f64,
+    pub max_tokens: Option<u32>,
 }
 
 impl ThroughputConfig {
     pub fn new(
-        max_concurrency: usize,
-        step: usize,
-        question: Option<String>,
-        questions: Option<Vec<String>>,
+        concurrency_list: Vec<usize>,
         user_id_prefix: Option<String>,
         model_name: Option<String>,
         request_timeout_s: Option<f64>,
+        max_tokens: Option<u32>,
     ) -> Result<Self, String> {
-        let mut questions = questions.unwrap_or_default();
-        if questions.is_empty() {
-            if let Some(question) = question {
-                questions.push(question);
-            }
-        }
-        let questions = questions
-            .into_iter()
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>();
-        if questions.is_empty() {
-            return Err("问题不能为空".to_string());
-        }
-        if max_concurrency == 0 {
-            return Err("最大并发必须大于 0".to_string());
-        }
-        if max_concurrency > MAX_CONCURRENCY {
-            return Err(format!("最大并发不能超过 {MAX_CONCURRENCY}"));
-        }
+        let concurrency_list = normalize_concurrency_list(concurrency_list)?;
+        let max_concurrency = concurrency_list.iter().copied().max().unwrap_or_default();
         let prefix = user_id_prefix
             .unwrap_or_else(|| DEFAULT_USER_PREFIX.to_string())
             .trim()
@@ -131,15 +166,48 @@ impl ThroughputConfig {
         let model_name = model_name
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty());
+        let max_tokens = max_tokens.filter(|value| *value > 0);
+        let questions = builtin_questions();
+        let question_set = BUILTIN_QUESTION_SET_NAME.to_string();
         Ok(Self {
+            concurrency_list,
             max_concurrency,
-            step,
             questions,
+            question_set,
             user_id_prefix: prefix,
             model_name,
             request_timeout_s: timeout,
+            max_tokens,
         })
     }
+}
+
+fn builtin_questions() -> Vec<String> {
+    BUILTIN_QUESTIONS
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn normalize_concurrency_list(list: Vec<usize>) -> Result<Vec<usize>, String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for value in list {
+        if value == 0 {
+            return Err("并发数必须大于 0".to_string());
+        }
+        if value > MAX_CONCURRENCY {
+            return Err(format!("并发数不能超过 {MAX_CONCURRENCY}"));
+        }
+        if seen.insert(value) {
+            normalized.push(value);
+        }
+    }
+    if normalized.is_empty() {
+        return Err("并发列表不能为空".to_string());
+    }
+    Ok(normalized)
 }
 
 struct ThroughputMetrics {
@@ -372,14 +440,17 @@ pub struct ThroughputRunSnapshot {
     #[serde(default)]
     pub max_concurrency: usize,
     #[serde(default)]
-    pub step: usize,
-    pub question: Option<String>,
+    pub concurrency_list: Vec<usize>,
     #[serde(default)]
-    pub questions: Vec<String>,
+    pub question_set: Option<String>,
+    #[serde(default)]
+    pub question_count: usize,
     pub user_id_prefix: String,
     pub stream: bool,
     pub model_name: Option<String>,
     pub request_timeout_s: f64,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub elapsed_s: f64,
@@ -583,13 +654,14 @@ impl ActiveRun {
                 id: self.id.clone(),
                 status: self.status.as_str().to_string(),
                 max_concurrency: self.config.max_concurrency,
-                step: self.config.step,
-                question: self.config.questions.first().cloned(),
-                questions: self.config.questions.clone(),
+                concurrency_list: self.config.concurrency_list.clone(),
+                question_set: Some(self.config.question_set.clone()),
+                question_count: self.config.questions.len(),
                 user_id_prefix: self.config.user_id_prefix.clone(),
                 stream: true,
                 model_name: self.config.model_name.clone(),
                 request_timeout_s: self.config.request_timeout_s,
+                max_tokens: self.config.max_tokens,
                 started_at: self.started_at.to_rfc3339(),
                 finished_at: self.finished_at.map(|value| value.to_rfc3339()),
                 elapsed_s,
@@ -604,25 +676,6 @@ impl ActiveRun {
         let samples = self.metrics.samples();
         ThroughputReport { summary, samples }
     }
-}
-
-fn build_sequence(max_concurrency: usize, step: usize) -> Vec<usize> {
-    if max_concurrency == 0 {
-        return Vec::new();
-    }
-    if step == 0 {
-        return vec![max_concurrency];
-    }
-    let mut sequence = Vec::new();
-    let mut current = 1usize;
-    while current < max_concurrency {
-        sequence.push(current);
-        current = current.saturating_add(step);
-    }
-    if sequence.last().copied() != Some(max_concurrency) {
-        sequence.push(max_concurrency);
-    }
-    sequence
 }
 
 #[derive(Default)]
@@ -642,54 +695,70 @@ struct SpeedAccumulator {
     decode_speed_sum: f64,
     decode_speed_count: u64,
     prefill_tokens_total: u64,
+    prefill_duration_total_s: f64,
     decode_tokens_total: u64,
+    decode_duration_total_s: f64,
 }
 
-fn resolve_speed(tokens: Option<i64>, duration: Option<f64>, speed: Option<f64>) -> Option<f64> {
+fn record_speed_sample(
+    tokens: Option<i64>,
+    duration: Option<f64>,
+    speed: Option<f64>,
+    tokens_total: &mut u64,
+    duration_total_s: &mut f64,
+    speed_sum: &mut f64,
+    speed_count: &mut u64,
+) {
+    let tokens = tokens.filter(|value| *value > 0).map(|value| value as u64);
+    let duration = duration.filter(|value| *value > 0.0);
+    let speed = speed.filter(|value| *value > 0.0);
+    let mut resolved_speed = None;
     if let (Some(tokens), Some(duration)) = (tokens, duration) {
-        if tokens > 0 && duration > 0.0 {
-            return Some(tokens as f64 / duration);
+        *tokens_total = tokens_total.saturating_add(tokens);
+        *duration_total_s += duration;
+        resolved_speed = Some(tokens as f64 / duration);
+    } else if let (Some(tokens), Some(speed)) = (tokens, speed) {
+        let derived_duration = tokens as f64 / speed;
+        if derived_duration.is_finite() && derived_duration > 0.0 {
+            *tokens_total = tokens_total.saturating_add(tokens);
+            *duration_total_s += derived_duration;
+            resolved_speed = Some(speed);
         }
+    } else if let Some(speed) = speed {
+        resolved_speed = Some(speed);
     }
-    if let Some(value) = speed {
-        if value > 0.0 {
-            return Some(value);
-        }
+    if let Some(value) = resolved_speed {
+        *speed_sum += value;
+        *speed_count += 1;
     }
-    None
 }
 
 impl SpeedAccumulator {
     fn record(&mut self, speed: &SessionSpeed) {
-        if let Some(tokens) = speed.prefill_tokens {
-            if tokens > 0 {
-                self.prefill_tokens_total = self.prefill_tokens_total.saturating_add(tokens as u64);
-            }
-        }
-        if let Some(value) = resolve_speed(
+        record_speed_sample(
             speed.prefill_tokens,
             speed.prefill_duration_s,
             speed.prefill_speed_tps,
-        ) {
-            self.prefill_speed_sum += value;
-            self.prefill_speed_count += 1;
-        }
-        if let Some(tokens) = speed.decode_tokens {
-            if tokens > 0 {
-                self.decode_tokens_total = self.decode_tokens_total.saturating_add(tokens as u64);
-            }
-        }
-        if let Some(value) = resolve_speed(
+            &mut self.prefill_tokens_total,
+            &mut self.prefill_duration_total_s,
+            &mut self.prefill_speed_sum,
+            &mut self.prefill_speed_count,
+        );
+        record_speed_sample(
             speed.decode_tokens,
             speed.decode_duration_s,
             speed.decode_speed_tps,
-        ) {
-            self.decode_speed_sum += value;
-            self.decode_speed_count += 1;
-        }
+            &mut self.decode_tokens_total,
+            &mut self.decode_duration_total_s,
+            &mut self.decode_speed_sum,
+            &mut self.decode_speed_count,
+        );
     }
 
     fn single_prefill_speed(&self) -> Option<f64> {
+        if self.prefill_tokens_total > 0 && self.prefill_duration_total_s > 0.0 {
+            return Some(self.prefill_tokens_total as f64 / self.prefill_duration_total_s);
+        }
         if self.prefill_speed_count > 0 {
             return Some(self.prefill_speed_sum / self.prefill_speed_count as f64);
         }
@@ -697,6 +766,9 @@ impl SpeedAccumulator {
     }
 
     fn single_decode_speed(&self) -> Option<f64> {
+        if self.decode_tokens_total > 0 && self.decode_duration_total_s > 0.0 {
+            return Some(self.decode_tokens_total as f64 / self.decode_duration_total_s);
+        }
         if self.decode_speed_count > 0 {
             return Some(self.decode_speed_sum / self.decode_speed_count as f64);
         }
@@ -704,38 +776,36 @@ impl SpeedAccumulator {
     }
 
     fn total_prefill_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        if self.prefill_speed_count > 0 {
-            return Some(self.prefill_speed_sum);
-        }
         if elapsed_s <= 0.0 {
             return None;
         }
-        let tokens = if self.prefill_tokens_total > 0 {
-            self.prefill_tokens_total
-        } else {
+        let tokens = if fallback_tokens > 0 {
             fallback_tokens
+        } else {
+            self.prefill_tokens_total
         };
         if tokens > 0 {
             Some(tokens as f64 / elapsed_s)
+        } else if self.prefill_speed_count > 0 {
+            Some(self.prefill_speed_sum)
         } else {
             None
         }
     }
 
     fn total_decode_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        if self.decode_speed_count > 0 {
-            return Some(self.decode_speed_sum);
-        }
         if elapsed_s <= 0.0 {
             return None;
         }
-        let tokens = if self.decode_tokens_total > 0 {
-            self.decode_tokens_total
-        } else {
+        let tokens = if fallback_tokens > 0 {
             fallback_tokens
+        } else {
+            self.decode_tokens_total
         };
         if tokens > 0 {
             Some(tokens as f64 / elapsed_s)
+        } else if self.decode_speed_count > 0 {
+            Some(self.decode_speed_sum)
         } else {
             None
         }
@@ -758,9 +828,10 @@ async fn run_supervisor(
     metrics: Arc<ThroughputMetrics>,
     stop_flag: Arc<AtomicBool>,
 ) {
-    let sequence = build_sequence(config.max_concurrency, config.step);
+    let sequence = config.concurrency_list.clone();
     let questions = Arc::new(config.questions.clone());
     let user_prefix = config.user_id_prefix.clone();
+    let max_tokens = config.max_tokens;
     for concurrency in sequence {
         if stop_flag.load(Ordering::Relaxed) {
             break;
@@ -783,6 +854,7 @@ async fn run_supervisor(
                     Arc::clone(&questions),
                     model_name.clone(),
                     request_timeout_s,
+                    max_tokens,
                 )
             })
             .collect::<Vec<_>>();
@@ -915,12 +987,14 @@ async fn run_request(
     questions: Arc<Vec<String>>,
     model_name: Option<String>,
     request_timeout_s: f64,
+    max_tokens: Option<u32>,
 ) -> RequestOutcome {
     let user_index = index + 1;
     let user_id = format!("{user_prefix}-{concurrency}-{user_index}");
     let session_id = format!("throughput_{run_id}_{concurrency}_{user_index}");
     let mut seed = seed_for_user(&user_id);
     let question = select_question(&questions, &mut seed).to_string();
+    let config_overrides = build_max_tokens_override(model_name.as_deref(), max_tokens);
     let request = WunderRequest {
         user_id: user_id.clone(),
         question,
@@ -929,7 +1003,7 @@ async fn run_request(
         session_id: Some(session_id.clone()),
         model_name,
         language: None,
-        config_overrides: None,
+        config_overrides,
         attachments: None,
     };
     let started = Instant::now();
@@ -983,6 +1057,23 @@ fn extract_session_speed(detail: Option<Value>) -> SessionSpeed {
         decode_duration_s: normalize_duration(parse_f64_value(session.get("decode_duration_s"))),
         decode_speed_tps: parse_f64_value(session.get("decode_speed_tps")),
     }
+}
+
+fn build_max_tokens_override(model_name: Option<&str>, max_tokens: Option<u32>) -> Option<Value> {
+    let max_tokens = max_tokens.filter(|value| *value > 0)?;
+    let model_name = model_name?.trim();
+    if model_name.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "llm": {
+            "models": {
+                model_name: {
+                    "max_output": max_tokens
+                }
+            }
+        }
+    }))
 }
 
 fn parse_i64_value(value: Option<&Value>) -> Option<i64> {

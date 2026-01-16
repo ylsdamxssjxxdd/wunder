@@ -1734,28 +1734,21 @@
             <div class="throughput-form">
               <div class="form-section throughput-form-section">
                 <div class="form-row">
-                  <label
-                    for="throughputMaxConcurrency"
-                    data-i18n="throughput.form.maxConcurrency"
-                  >最大并发</label>
-                  <input id="throughputMaxConcurrency" type="number" min="1" max="500" step="1" />
-                </div>
-                <div class="form-row">
-                  <label for="throughputStep" data-i18n="throughput.form.step">并发步增</label>
-                  <input id="throughputStep" type="number" min="0" step="1" />
-                  <div class="muted" data-i18n="throughput.form.hint">
-                    每次增加固定并发，直到达到最大并发；步增为 0 时只压测最大并发。
+                  <label for="throughputConcurrencyList" data-i18n="throughput.form.concurrencyList">并发列表</label>
+                  <input
+                    id="throughputConcurrencyList"
+                    type="text"
+                    placeholder="1,2,4,8,16"
+                    data-i18n-placeholder="throughput.form.concurrencyListPlaceholder"
+                  />
+                  <div class="muted" data-i18n="throughput.form.concurrencyListHint">
+                    用逗号分隔，并发数需大于 0 且不超过 500。
                   </div>
                 </div>
                 <div class="form-row">
-                  <label for="throughputQuestion" data-i18n="throughput.form.questions">问题列表</label>
-                  <textarea
-                    id="throughputQuestion"
-                    placeholder="每行一个问题"
-                    data-i18n-placeholder="throughput.form.questionsPlaceholder"
-                  ></textarea>
-                  <div class="muted" data-i18n="throughput.form.questionsHint">
-                    每行一个问题，压测时随机抽取。
+                  <label data-i18n="throughput.form.dataset">测试题库</label>
+                  <div class="muted" data-i18n="throughput.form.datasetHint">
+                    使用内置 50 条问题，压测时随机抽取。
                   </div>
                 </div>
                 <div class="form-row">
@@ -1772,6 +1765,13 @@
                   <select id="throughputModelSelect" class="throughput-model-select">
                     <option value="" data-i18n="llm.default">默认模型</option>
                   </select>
+                </div>
+                <div class="form-row">
+                  <label for="throughputMaxTokens" data-i18n="throughput.form.maxTokens">最大输出 Token</label>
+                  <input id="throughputMaxTokens" type="number" min="1" step="1" />
+                  <div class="muted" data-i18n="throughput.form.maxTokensHint">
+                    限制单次请求的最大输出 Token 数，默认 256。
+                  </div>
                 </div>
                 <div class="form-row">
                   <label for="throughputTimeout" data-i18n="throughput.form.timeout">单次请求超时（秒）</label>
@@ -1817,8 +1817,8 @@
                             <td><strong id="throughputMaxConcurrencyValue">-</strong></td>
                           </tr>
                           <tr>
-                            <th data-i18n="throughput.field.step">并发步增</th>
-                            <td><strong id="throughputStepValue">-</strong></td>
+                            <th data-i18n="throughput.field.concurrencyList">并发列表</th>
+                            <td><strong id="throughputConcurrencyListValue">-</strong></td>
                           </tr>
                           <tr>
                           <th data-i18n="throughput.field.model">当前模型</th>
@@ -3308,12 +3308,12 @@
                   <col class="col-time" />
                   <col class="col-status" />
                   <col class="col-max-concurrency" />
-                  <col class="col-step" />
+                  <col class="col-concurrency-list" />
                   <col class="col-total" />
                   <col class="col-success-rate" />
                   <col class="col-avg-latency" />
                   <col class="col-rps" />
-                  <col class="col-questions" />
+                  <col class="col-dataset" />
                   <col class="col-actions" />
                 </colgroup>
                 <thead>
@@ -3321,12 +3321,12 @@
                     <th data-i18n="throughput.history.startedAt">开始时间</th>
                     <th data-i18n="throughput.history.status">状态</th>
                     <th data-i18n="throughput.history.maxConcurrency">最大并发</th>
-                    <th data-i18n="throughput.history.step">步增</th>
+                    <th data-i18n="throughput.history.concurrencyList">并发列表</th>
                     <th data-i18n="throughput.history.total">总请求</th>
                     <th data-i18n="throughput.history.successRate">成功率</th>
                     <th data-i18n="throughput.history.avgLatency">平均延迟</th>
                     <th data-i18n="throughput.history.rps">RPS</th>
-                    <th data-i18n="throughput.history.questions">问题</th>
+                    <th data-i18n="throughput.history.dataset">题库</th>
                     <th data-i18n="throughput.history.action">操作</th>
                   </tr>
               </thead>

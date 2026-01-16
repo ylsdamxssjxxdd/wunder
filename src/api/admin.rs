@@ -1519,13 +1519,11 @@ async fn admin_throughput_start(
     Json(payload): Json<ThroughputStartRequest>,
 ) -> Result<Json<ThroughputSnapshot>, Response> {
     let config = ThroughputConfig::new(
-        payload.max_concurrency,
-        payload.step,
-        payload.question,
-        payload.questions,
+        payload.concurrency_list,
         payload.user_id_prefix,
         payload.model_name,
         payload.request_timeout_s,
+        payload.max_tokens,
     )
     .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
     let snapshot = state
@@ -2718,18 +2716,16 @@ struct MonitorQuery {
 
 #[derive(Debug, Deserialize)]
 struct ThroughputStartRequest {
-    max_concurrency: usize,
-    step: usize,
     #[serde(default)]
-    question: Option<String>,
-    #[serde(default)]
-    questions: Option<Vec<String>>,
+    concurrency_list: Vec<usize>,
     #[serde(default)]
     user_id_prefix: Option<String>,
     #[serde(default)]
     model_name: Option<String>,
     #[serde(default)]
     request_timeout_s: Option<f64>,
+    #[serde(default)]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]

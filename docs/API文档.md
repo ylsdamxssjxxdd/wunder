@@ -867,19 +867,15 @@
 
 - 方法：`POST`
 - 入参（JSON）：
-  - `max_concurrency`：最大并发（>0，最大 500）
-  - `step`：并发步增（>=0，0 表示仅压测最大并发）
-  - `question`：压测问题文本（可选，单条）
-  - `questions`：压测问题列表（可选，多条；提供后每次请求随机抽取）
+  - `concurrency_list`：并发列表（必填，数组；每个值 >0 且 <=500）
   - `user_id_prefix`：用户前缀（可选，默认 `throughput_user`）
   - `model_name`：模型配置名称（可选，不传使用默认模型）
+  - `max_tokens`：单次最大输出 Token（可选，<=0 或不传表示使用模型默认）
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
-  - `step` > 0 时服务端从并发 1 开始按步增逐步提升到 `max_concurrency`，每个并发档位只发送一轮请求。
-  - `step` = 0 时仅对 `max_concurrency` 进行一次并发压测。
-  - 每个档位会并行发起 `concurrency` 个请求，结束后进入下一档位。
+  - 服务端按 `concurrency_list` 顺序逐档压测，每个档位只发送一轮并发请求。
   - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
-  - 未传 `questions` 时使用 `question` 作为唯一问题；两者都为空会返回 400。
+  - 压测问题使用内置题库（50 条），每次请求随机抽取。
   - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
 - 返回（JSON）：`ThroughputSnapshot`
 
@@ -909,14 +905,15 @@
 - `run`：任务信息
   - `id`：任务 ID
   - `status`：`running/stopping/finished/stopped`
-  - `max_concurrency`：最大并发
-  - `step`：并发步增（>=0，0 表示仅压测最大并发）
-  - `question`：压测问题文本（可选，第一条）
-  - `questions`：压测问题列表
+  - `max_concurrency`：最大并发（为 `concurrency_list` 的最大值）
+  - `concurrency_list`：并发列表
+  - `question_set`：题库标识（内置为 `builtin`）
+  - `question_count`：题库问题数量
   - `user_id_prefix`：用户前缀
   - `stream`：是否流式（固定 true）
   - `model_name`：模型配置（默认 null，表示使用默认模型）
   - `request_timeout_s`：单次请求超时（秒）
+  - `max_tokens`：单次最大输出 Token（可选）
   - `started_at`：开始时间（RFC3339）
   - `finished_at`：结束时间（RFC3339，可选）
   - `elapsed_s`：已运行时长（秒）

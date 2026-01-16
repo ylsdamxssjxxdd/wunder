@@ -9,12 +9,12 @@ import { ensureLlmConfigLoaded } from "./llm.js";
 import { t } from "./i18n.js?v=20260115-03";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
+const MAX_CONCURRENCY = 500;
 const DEFAULT_CONFIG = {
-  max_concurrency: 30,
-  step: 1,
-  question: "",
+  concurrency_list: "1,2,4,8,16,30",
   user_id_prefix: "throughput_user",
   request_timeout_s: 0,
+  max_tokens: 256,
   model_name: "",
 };
 const ACTIVE_RUN_STATUSES = new Set(["running", "stopping"]);
@@ -89,21 +89,20 @@ const writeStoredConfig = (patch) => {
 
 const applyStoredConfig = () => {
   const stored = { ...DEFAULT_CONFIG, ...readStoredConfig() };
-  const storedMax =
-    stored.max_concurrency ?? stored.maxConcurrency ?? stored.users ?? DEFAULT_CONFIG.max_concurrency;
-  const storedStep = stored.step ?? DEFAULT_CONFIG.step;
-  if (elements.throughputMaxConcurrency && !elements.throughputMaxConcurrency.value) {
-    elements.throughputMaxConcurrency.value = String(storedMax);
-  }
-  if (elements.throughputStep && !elements.throughputStep.value) {
-    elements.throughputStep.value = String(storedStep);
-  }
-  if (elements.throughputQuestion && !elements.throughputQuestion.value) {
-    elements.throughputQuestion.value = String(stored.question ?? "");
+  const storedConcurrencyList = String(
+    stored.concurrency_list ?? stored.concurrencyList ?? DEFAULT_CONFIG.concurrency_list
+  ).trim();
+  if (elements.throughputConcurrencyList && !elements.throughputConcurrencyList.value) {
+    elements.throughputConcurrencyList.value = storedConcurrencyList;
   }
   if (elements.throughputUserPrefix && !elements.throughputUserPrefix.value) {
     elements.throughputUserPrefix.value = String(
       stored.user_id_prefix ?? DEFAULT_CONFIG.user_id_prefix
+    );
+  }
+  if (elements.throughputMaxTokens && !elements.throughputMaxTokens.value) {
+    elements.throughputMaxTokens.value = String(
+      stored.max_tokens ?? stored.maxTokens ?? DEFAULT_CONFIG.max_tokens
     );
   }
   if (elements.throughputTimeout && !elements.throughputTimeout.value) {
@@ -229,14 +228,11 @@ const scheduleConfigSave = () => {
 
 const persistConfig = () => {
   const modelName = getSelectedModelName();
+  const concurrencyListText = String(elements.throughputConcurrencyList?.value || "").trim();
   writeStoredConfig({
-    max_concurrency: readPositiveInt(
-      elements.throughputMaxConcurrency,
-      DEFAULT_CONFIG.max_concurrency
-    ),
-    step: parseNonNegativeInt(elements.throughputStep) ?? DEFAULT_CONFIG.step,
-    question: String(elements.throughputQuestion?.value || "").trim(),
+    concurrency_list: concurrencyListText || DEFAULT_CONFIG.concurrency_list,
     user_id_prefix: String(elements.throughputUserPrefix?.value || "").trim(),
+    max_tokens: readPositiveInt(elements.throughputMaxTokens, DEFAULT_CONFIG.max_tokens),
     request_timeout_s: readNumber(elements.throughputTimeout, DEFAULT_CONFIG.request_timeout_s),
     model_name: modelName || undefined,
   });
@@ -276,6 +272,98 @@ const parseNonNegativeInt = (element) => {
   }
   const value = Math.floor(parsed);
   return value >= 0 ? value : null;
+};
+
+const parseConcurrencyList = (raw) => {
+  const text = String(raw ?? "").trim();
+  if (!text) {
+    return null;
+  }
+  const parts = text.split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean);
+  if (!parts.length) {
+    return null;
+  }
+  const list = [];
+  const seen = new Set();
+  for (const part of parts) {
+    const value = Number(part);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const intValue = Math.floor(value);
+    if (intValue <= 0 || intValue > MAX_CONCURRENCY) {
+      return null;
+    }
+    if (!seen.has(intValue)) {
+      seen.add(intValue);
+      list.push(intValue);
+    }
+  }
+  return list.length ? list : null;
+};
+
+const deriveConcurrencyList = (maxConcurrency, step) => {
+  if (!Number.isFinite(maxConcurrency) || maxConcurrency <= 0) {
+    return [];
+  }
+  const normalizedStep = Number.isFinite(step) && step > 0 ? Math.floor(step) : 0;
+  if (!normalizedStep) {
+    return [Math.floor(maxConcurrency)];
+  }
+  const list = [];
+  let current = 1;
+  while (current < maxConcurrency) {
+    list.push(current);
+    current += normalizedStep;
+  }
+  if (list[list.length - 1] !== maxConcurrency) {
+    list.push(Math.floor(maxConcurrency));
+  }
+  return list;
+};
+
+const resolveRunConcurrencyList = (run) => {
+  const list = Array.isArray(run?.concurrency_list)
+    ? run.concurrency_list
+    : Array.isArray(run?.concurrencyList)
+    ? run.concurrencyList
+    : [];
+  const normalized = list
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (normalized.length) {
+    return normalized;
+  }
+  const maxConcurrency = Number(run?.max_concurrency ?? run?.maxConcurrency ?? run?.users);
+  const step = Number(run?.step);
+  return deriveConcurrencyList(maxConcurrency, step);
+};
+
+const resolveRunMaxConcurrency = (run, list) => {
+  const value = Number(run?.max_concurrency ?? run?.maxConcurrency ?? run?.users);
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (Array.isArray(list) && list.length) {
+    return Math.max(...list);
+  }
+  return null;
+};
+
+const formatConcurrencyList = (list, options = {}) => {
+  const values = Array.isArray(list)
+    ? list.filter((value) => Number.isFinite(value) && value > 0)
+    : [];
+  if (!values.length) {
+    return { text: "-", full: "" };
+  }
+  const full = values.join(", ");
+  const maxItems = options.maxItems ?? 6;
+  if (values.length <= maxItems) {
+    return { text: full, full };
+  }
+  const text = `${values.slice(0, maxItems).join(", ")} ... (+${values.length - maxItems})`;
+  return { text, full };
 };
 
 const formatCount = (value) => {
@@ -484,21 +572,21 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
     resetThroughputSessions();
   } else {
     setStatusHint(fromHistory ? t("throughput.status.historyHint") : "");
-    setTotalSpeedMetrics(null, null);
   }
   setText(elements.throughputStatusText, resolveStatusLabel(status));
   setText(elements.throughputStartedAt, formatTimestamp(run.started_at));
   setText(elements.throughputElapsed, formatElapsed(run.elapsed_s));
-  const maxConcurrency = Number(run.max_concurrency ?? run.maxConcurrency ?? run.users);
-  const step = Number(run.step);
+  const concurrencyList = resolveRunConcurrencyList(run);
+  const maxConcurrency = resolveRunMaxConcurrency(run, concurrencyList);
   setText(
     elements.throughputMaxConcurrencyValue,
     formatCount(Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : null)
   );
-  setText(
-    elements.throughputStepValue,
-    formatCount(Number.isFinite(step) && step >= 0 ? step : null)
-  );
+  const concurrencySummary = formatConcurrencyList(concurrencyList);
+  setText(elements.throughputConcurrencyListValue, concurrencySummary.text);
+  if (elements.throughputConcurrencyListValue) {
+    elements.throughputConcurrencyListValue.title = concurrencySummary.full || "";
+  }
   syncModelSelectState(run, { historyView: options.historyView });
   updateModelValue(run);
   setText(elements.throughputTotal, formatCount(metrics.total_requests));
@@ -527,7 +615,7 @@ const fillMetric = (...values) => {
     started,
     elapsed,
     maxConcurrency,
-    step,
+    concurrencyList,
     total,
     success,
     error,
@@ -545,7 +633,10 @@ const fillMetric = (...values) => {
   setText(elements.throughputStartedAt, started);
   setText(elements.throughputElapsed, elapsed);
   setText(elements.throughputMaxConcurrencyValue, maxConcurrency);
-  setText(elements.throughputStepValue, step);
+  setText(elements.throughputConcurrencyListValue, concurrencyList);
+  if (elements.throughputConcurrencyListValue) {
+    elements.throughputConcurrencyListValue.title = "";
+  }
   syncModelSelectState(null);
   updateModelValue(null);
   setText(elements.throughputTotal, total);
@@ -721,6 +812,7 @@ const syncThroughputSessionContext = (run) => {
     throughputSessionMap = new Map();
     throughputSessions = [];
     setSingleSpeedMetrics(null, null);
+    setTotalSpeedMetrics(null, null);
   }
   throughputSessionRunId = runId;
   throughputSessionStartMs = startedAtMs;
@@ -785,43 +877,63 @@ const updateThroughputSessions = (sessions) => {
   throughputSessions = sortSessionsByUpdate(Array.from(throughputSessionMap.values()));
 };
 
-const resolveSessionSpeed = (session, tokenKey, durationKey, speedKey) => {
-  const tokens = Number(session?.[tokenKey]);
-  const duration = Number(session?.[durationKey]);
-  if (Number.isFinite(tokens) && Number.isFinite(duration) && tokens > 0 && duration > 0) {
-    return tokens / duration;
+const resolvePositiveNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const collectSessionSpeedStats = (sessions, tokenKey, durationKey, speedKey) => {
+  let tokensTotal = 0;
+  let durationTotal = 0;
+  let speedSum = 0;
+  let speedCount = 0;
+  sessions.forEach((session) => {
+    const tokens = resolvePositiveNumber(session?.[tokenKey]);
+    const duration = resolvePositiveNumber(session?.[durationKey]);
+    const speed = resolvePositiveNumber(session?.[speedKey]);
+    let resolvedSpeed = null;
+    if (tokens && duration) {
+      tokensTotal += tokens;
+      durationTotal += duration;
+      resolvedSpeed = tokens / duration;
+    } else if (tokens && speed) {
+      const derivedDuration = tokens / speed;
+      if (Number.isFinite(derivedDuration) && derivedDuration > 0) {
+        tokensTotal += tokens;
+        durationTotal += derivedDuration;
+        resolvedSpeed = speed;
+      }
+    } else if (speed) {
+      resolvedSpeed = speed;
+    }
+    if (resolvedSpeed) {
+      speedSum += resolvedSpeed;
+      speedCount += 1;
+    }
+  });
+  return { tokensTotal, durationTotal, speedSum, speedCount };
+};
+
+const computeAverageSpeed = (sessions, tokenKey, durationKey, speedKey) => {
+  const stats = collectSessionSpeedStats(sessions, tokenKey, durationKey, speedKey);
+  if (stats.tokensTotal > 0 && stats.durationTotal > 0) {
+    return stats.tokensTotal / stats.durationTotal;
   }
-  const speed = Number(session?.[speedKey]);
-  if (Number.isFinite(speed) && speed > 0) {
-    return speed;
+  if (stats.speedCount > 0) {
+    return stats.speedSum / stats.speedCount;
   }
   return null;
 };
 
-const computeAverageSpeed = (sessions, tokenKey, durationKey, speedKey) => {
-  let total = 0;
-  let count = 0;
-  sessions.forEach((session) => {
-    const speed = resolveSessionSpeed(session, tokenKey, durationKey, speedKey);
-    if (Number.isFinite(speed) && speed > 0) {
-      total += speed;
-      count += 1;
-    }
-  });
-  return count > 0 ? total / count : null;
-};
-
 const computeSumSpeed = (sessions, tokenKey, durationKey, speedKey) => {
-  let total = 0;
-  let count = 0;
-  sessions.forEach((session) => {
-    const speed = resolveSessionSpeed(session, tokenKey, durationKey, speedKey);
-    if (Number.isFinite(speed) && speed > 0) {
-      total += speed;
-      count += 1;
-    }
-  });
-  return count > 0 ? total : null;
+  const stats = collectSessionSpeedStats(sessions, tokenKey, durationKey, speedKey);
+  if (stats.speedCount > 0) {
+    return stats.speedSum;
+  }
+  if (stats.tokensTotal > 0 && stats.durationTotal > 0) {
+    return stats.tokensTotal / stats.durationTotal;
+  }
+  return null;
 };
 
 const renderThroughputSessions = () => {
@@ -948,7 +1060,9 @@ const loadThroughputSessions = async (options = {}) => {
       "decode_duration_s",
       "decode_speed_tps"
     );
-    setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
+    if (Number.isFinite(prefillSpeed) || Number.isFinite(decodeSpeed)) {
+      setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
+    }
     const totalPrefillSpeed = computeSumSpeed(
       concurrencySessions,
       "prefill_tokens",
@@ -961,7 +1075,9 @@ const loadThroughputSessions = async (options = {}) => {
       "decode_duration_s",
       "decode_speed_tps"
     );
-    setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
+    if (Number.isFinite(totalPrefillSpeed) || Number.isFinite(totalDecodeSpeed)) {
+      setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
+    }
   } catch (error) {
     if (!silent) {
       elements.throughputThreadEmpty.textContent = t("common.loadFailedWithMessage", {
@@ -973,36 +1089,27 @@ const loadThroughputSessions = async (options = {}) => {
 };
 
 const buildPayload = () => {
-  const maxConcurrency = readPositiveInt(elements.throughputMaxConcurrency, 0);
-  if (maxConcurrency <= 0) {
-    throw new Error(t("throughput.error.maxConcurrency"));
-  }
-  const step = parseNonNegativeInt(elements.throughputStep);
-  if (step === null) {
-    throw new Error(t("throughput.error.step"));
-  }
-  const rawQuestions = String(elements.throughputQuestion?.value || "");
-  const questions = rawQuestions
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!questions.length) {
-    throw new Error(t("throughput.error.questions"));
+  const concurrencyList = parseConcurrencyList(elements.throughputConcurrencyList?.value);
+  if (!concurrencyList) {
+    throw new Error(t("throughput.error.concurrencyList"));
   }
   const user_id_prefix = String(elements.throughputUserPrefix?.value || "").trim() || undefined;
-  const model_name = getSelectedModelName() || undefined;
+  const rawModelName = getSelectedModelName();
+  const defaultModelName = String(state.llm.defaultName || "").trim();
+  const model_name = rawModelName || defaultModelName || undefined;
+  const max_tokens = parseNonNegativeInt(elements.throughputMaxTokens);
+  if (!Number.isFinite(max_tokens) || max_tokens <= 0) {
+    throw new Error(t("throughput.error.maxTokens"));
+  }
   const request_timeout_s = Number(elements.throughputTimeout?.value);
   if (Number.isFinite(request_timeout_s) && request_timeout_s < 0) {
     throw new Error(t("throughput.error.timeout"));
   }
   return {
-    max_concurrency: maxConcurrency,
-    step,
-    question: questions[0],
-    questions,
+    concurrency_list: concurrencyList,
     user_id_prefix,
     model_name,
+    max_tokens,
     request_timeout_s: Number.isFinite(request_timeout_s) ? request_timeout_s : undefined,
   };
 };
@@ -1158,6 +1265,7 @@ const applyCurveReport = (report) => {
   const normalized = normalizeCurveSamples(reportSamples);
   samples = normalized.slice(-MAX_SAMPLES);
   renderCurveChart();
+  applyLiveSpeedMetrics(report);
 };
 
 const fetchThroughputStatus = async () => {
@@ -1238,7 +1346,19 @@ const renderHistoryMeta = (count) => {
   elements.throughputHistoryMeta.textContent = t("throughput.history.meta", { count });
 };
 
-const formatQuestionsSummary = (run) => {
+const formatQuestionSetSummary = (run) => {
+  const questionSet = String(run?.question_set ?? run?.questionSet ?? "").trim();
+  const questionCount = Number(run?.question_count ?? run?.questionCount);
+  if (questionSet) {
+    if (questionSet === "builtin") {
+      const count = Number.isFinite(questionCount) && questionCount > 0 ? questionCount : 50;
+      return t("throughput.dataset.builtin", { count });
+    }
+    if (Number.isFinite(questionCount) && questionCount > 0) {
+      return `${questionSet} (${questionCount})`;
+    }
+    return questionSet;
+  }
   const questions = Array.isArray(run?.questions) ? [...run.questions] : [];
   if (!questions.length && run?.question) {
     questions.push(run.question);
@@ -1273,16 +1393,18 @@ const renderHistoryList = (history) => {
     startedCell.textContent = formatTimestamp(run.started_at);
     const statusCell = document.createElement("td");
     statusCell.textContent = resolveStatusLabel(run.status || "");
-    const maxConcurrencyValue = Number(run.max_concurrency ?? run.maxConcurrency ?? run.users);
-    const stepValue = Number(run.step);
+    const concurrencyList = resolveRunConcurrencyList(run);
+    const maxConcurrencyValue = resolveRunMaxConcurrency(run, concurrencyList);
     const maxCell = document.createElement("td");
     maxCell.textContent = formatCount(
       Number.isFinite(maxConcurrencyValue) && maxConcurrencyValue > 0 ? maxConcurrencyValue : null
     );
-    const stepCell = document.createElement("td");
-    stepCell.textContent = formatCount(
-      Number.isFinite(stepValue) && stepValue >= 0 ? stepValue : null
-    );
+    const concurrencyCell = document.createElement("td");
+    const concurrencySummary = formatConcurrencyList(concurrencyList, { maxItems: 4 });
+    concurrencyCell.textContent = concurrencySummary.text;
+    if (concurrencySummary.full) {
+      concurrencyCell.title = concurrencySummary.full;
+    }
     const totalCell = document.createElement("td");
     totalCell.textContent = formatCount(metrics.total_requests);
     const successRateCell = document.createElement("td");
@@ -1295,8 +1417,8 @@ const renderHistoryList = (history) => {
     avgLatencyCell.textContent = formatLatency(metrics.avg_latency_ms);
     const rpsCell = document.createElement("td");
     rpsCell.textContent = formatRate(metrics.rps);
-    const questionsCell = document.createElement("td");
-    questionsCell.textContent = formatQuestionsSummary(run);
+    const datasetCell = document.createElement("td");
+    datasetCell.textContent = formatQuestionSetSummary(run);
     const actionCell = document.createElement("td");
     const restoreBtn = document.createElement("button");
     restoreBtn.className = "secondary btn-with-icon";
@@ -1315,12 +1437,12 @@ const renderHistoryList = (history) => {
     row.appendChild(startedCell);
     row.appendChild(statusCell);
     row.appendChild(maxCell);
-    row.appendChild(stepCell);
+    row.appendChild(concurrencyCell);
     row.appendChild(totalCell);
     row.appendChild(successRateCell);
     row.appendChild(avgLatencyCell);
     row.appendChild(rpsCell);
-    row.appendChild(questionsCell);
+    row.appendChild(datasetCell);
     row.appendChild(actionCell);
     elements.throughputHistoryList.appendChild(row);
   });
@@ -1360,12 +1482,9 @@ const resolveHistorySample = (report) => {
   return reportSamples[reportSamples.length - 1];
 };
 
-const applyHistorySpeedMetrics = (report) => {
-  const sample = resolveHistorySample(report);
+const resolveSpeedMetrics = (sample) => {
   if (!sample) {
-    setTotalSpeedMetrics(null, null);
-    setSingleSpeedMetrics(null, null);
-    return;
+    return null;
   }
   const concurrency = Number(sample.concurrency);
   const legacyPrefill = Number(sample.prefill_speed_tps);
@@ -1408,8 +1527,47 @@ const applyHistorySpeedMetrics = (report) => {
       singleDecode = totalDecode / concurrency;
     }
   }
-  setSingleSpeedMetrics(singlePrefill, singleDecode);
-  setTotalSpeedMetrics(totalPrefill, totalDecode);
+  return {
+    singlePrefill,
+    singleDecode,
+    totalPrefill,
+    totalDecode,
+  };
+};
+
+const applyHistorySpeedMetrics = (report) => {
+  const sample = resolveHistorySample(report);
+  if (!sample) {
+    setTotalSpeedMetrics(null, null);
+    setSingleSpeedMetrics(null, null);
+    return;
+  }
+  const metrics = resolveSpeedMetrics(sample);
+  if (!metrics) {
+    return;
+  }
+  setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
+  setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+};
+
+const applyLiveSpeedMetrics = (report) => {
+  if (state.runtime.throughputHistoryMode) {
+    return;
+  }
+  const sample = resolveHistorySample(report);
+  if (!sample) {
+    return;
+  }
+  const metrics = resolveSpeedMetrics(sample);
+  if (!metrics) {
+    return;
+  }
+  if (Number.isFinite(metrics.singlePrefill) || Number.isFinite(metrics.singleDecode)) {
+    setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
+  }
+  if (Number.isFinite(metrics.totalPrefill) || Number.isFinite(metrics.totalDecode)) {
+    setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+  }
 };
 
 const restoreHistoryReport = async (runId) => {
@@ -1482,15 +1640,19 @@ const buildCsv = (report) => {
   const summary = report?.summary || {};
   const run = summary.run || {};
   const metrics = summary.metrics || {};
-  const questions = Array.isArray(run.questions)
+  const concurrencyList = resolveRunConcurrencyList(run);
+  const maxConcurrency = resolveRunMaxConcurrency(run, concurrencyList);
+  const concurrencyText = concurrencyList.join(",");
+  const concurrencyCount = concurrencyList.length;
+  const questionSet = formatQuestionSetSummary(run);
+  const questionCount = Number(run.question_count ?? run.questionCount);
+  const legacyQuestions = Array.isArray(run.questions)
     ? run.questions
     : run.question
     ? [run.question]
     : [];
-  const questionText = questions.join(" | ");
-  const questionCount = questions.length;
-  const maxConcurrency = run.max_concurrency ?? run.maxConcurrency ?? run.users ?? "";
-  const step = run.step ?? "";
+  const questionCountValue =
+    Number.isFinite(questionCount) && questionCount > 0 ? questionCount : legacyQuestions.length;
   const columns = [
     "section",
     "run_id",
@@ -1498,10 +1660,11 @@ const buildCsv = (report) => {
     "started_at",
     "finished_at",
     "max_concurrency",
-    "step",
+    "concurrency_list",
+    "concurrency_count",
     "user_id_prefix",
+    "question_set",
     "question_count",
-    "questions",
     "concurrency",
     "elapsed_s",
     "timestamp",
@@ -1529,11 +1692,12 @@ const buildCsv = (report) => {
       run.status || "",
       run.started_at || "",
       run.finished_at || "",
-      maxConcurrency,
-      step,
+      maxConcurrency ?? "",
+      concurrencyText,
+      concurrencyCount,
       run.user_id_prefix || "",
-      questionCount,
-      questionText,
+      questionSet,
+      questionCountValue,
       row.concurrency ?? "",
       elapsed ?? "",
       timestamp || "",
@@ -1782,10 +1946,9 @@ export const initThroughputPanel = async () => {
     button.addEventListener("click", () => setThreadFilter(filter));
   });
   [
-    elements.throughputMaxConcurrency,
-    elements.throughputStep,
-    elements.throughputQuestion,
+    elements.throughputConcurrencyList,
     elements.throughputUserPrefix,
+    elements.throughputMaxTokens,
     elements.throughputTimeout,
     elements.throughputModelSelect,
   ].forEach((input) => {
