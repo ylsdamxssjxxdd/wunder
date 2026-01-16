@@ -50,6 +50,7 @@ let chartCurve = null;
 let currentRunId = "";
 let currentStatus = "";
 let samples = [];
+let reportSampleByConcurrency = new Map();
 let lastReportFetchAt = 0;
 let throughputSessions = [];
 let throughputSessionMap = new Map();
@@ -829,6 +830,7 @@ const syncCurveRun = (runId) => {
   }
   currentRunId = nextId;
   samples = [];
+  reportSampleByConcurrency = new Map();
   lastReportFetchAt = 0;
   renderCurveChart();
 };
@@ -1047,36 +1049,38 @@ const loadThroughputSessions = async (options = {}) => {
     updateThroughputSessions(scoped);
     renderThroughputSessions();
     const targetConcurrency = resolveTargetConcurrency(scoped);
-    const concurrencySessions = filterSessionsByConcurrency(scoped, targetConcurrency);
-    const prefillSpeed = computeAverageSpeed(
-      concurrencySessions,
-      "prefill_tokens",
-      "prefill_duration_s",
-      "prefill_speed_tps"
-    );
-    const decodeSpeed = computeAverageSpeed(
-      concurrencySessions,
-      "decode_tokens",
-      "decode_duration_s",
-      "decode_speed_tps"
-    );
-    if (Number.isFinite(prefillSpeed) || Number.isFinite(decodeSpeed)) {
-      setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
-    }
-    const totalPrefillSpeed = computeSumSpeed(
-      concurrencySessions,
-      "prefill_tokens",
-      "prefill_duration_s",
-      "prefill_speed_tps"
-    );
-    const totalDecodeSpeed = computeSumSpeed(
-      concurrencySessions,
-      "decode_tokens",
-      "decode_duration_s",
-      "decode_speed_tps"
-    );
-    if (Number.isFinite(totalPrefillSpeed) || Number.isFinite(totalDecodeSpeed)) {
-      setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
+    if (!applyReportSampleSpeedMetrics(targetConcurrency)) {
+      const concurrencySessions = filterSessionsByConcurrency(scoped, targetConcurrency);
+      const prefillSpeed = computeAverageSpeed(
+        concurrencySessions,
+        "prefill_tokens",
+        "prefill_duration_s",
+        "prefill_speed_tps"
+      );
+      const decodeSpeed = computeAverageSpeed(
+        concurrencySessions,
+        "decode_tokens",
+        "decode_duration_s",
+        "decode_speed_tps"
+      );
+      if (Number.isFinite(prefillSpeed) || Number.isFinite(decodeSpeed)) {
+        setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
+      }
+      const totalPrefillSpeed = computeSumSpeed(
+        concurrencySessions,
+        "prefill_tokens",
+        "prefill_duration_s",
+        "prefill_speed_tps"
+      );
+      const totalDecodeSpeed = computeSumSpeed(
+        concurrencySessions,
+        "decode_tokens",
+        "decode_duration_s",
+        "decode_speed_tps"
+      );
+      if (Number.isFinite(totalPrefillSpeed) || Number.isFinite(totalDecodeSpeed)) {
+        setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
+      }
     }
   } catch (error) {
     if (!silent) {
@@ -1116,6 +1120,7 @@ const buildPayload = () => {
 
 const resetCharts = () => {
   samples = [];
+  reportSampleByConcurrency = new Map();
   currentRunId = "";
   lastReportFetchAt = 0;
   renderCurveChart();
@@ -1160,6 +1165,17 @@ const normalizeCurveSamples = (reportSamples) =>
     .map(normalizeCurveSample)
     .filter(Boolean)
     .sort((left, right) => left.concurrency - right.concurrency);
+
+const buildReportSampleMap = (reportSamples) => {
+  const map = new Map();
+  reportSamples.forEach((sample) => {
+    const concurrency = Number(sample?.concurrency);
+    if (Number.isFinite(concurrency) && concurrency > 0) {
+      map.set(concurrency, sample);
+    }
+  });
+  return map;
+};
 
 const getCurveBaseline = (curveSamples) => {
   const baseline = {};
@@ -1262,6 +1278,7 @@ const applyCurveReport = (report) => {
     currentRunId = runId;
   }
   const reportSamples = Array.isArray(report.samples) ? report.samples : [];
+  reportSampleByConcurrency = buildReportSampleMap(reportSamples);
   const normalized = normalizeCurveSamples(reportSamples);
   samples = normalized.slice(-MAX_SAMPLES);
   renderCurveChart();
@@ -1482,6 +1499,13 @@ const resolveHistorySample = (report) => {
   return reportSamples[reportSamples.length - 1];
 };
 
+const getReportSampleByConcurrency = (concurrency) => {
+  if (!Number.isFinite(concurrency) || concurrency <= 0) {
+    return null;
+  }
+  return reportSampleByConcurrency.get(concurrency) || null;
+};
+
 const resolveSpeedMetrics = (sample) => {
   if (!sample) {
     return null;
@@ -1533,6 +1557,28 @@ const resolveSpeedMetrics = (sample) => {
     totalPrefill,
     totalDecode,
   };
+};
+
+const applyReportSampleSpeedMetrics = (concurrency) => {
+  const sample = getReportSampleByConcurrency(concurrency);
+  if (!sample) {
+    return false;
+  }
+  const metrics = resolveSpeedMetrics(sample);
+  if (!metrics) {
+    return false;
+  }
+  const hasSingle =
+    Number.isFinite(metrics.singlePrefill) || Number.isFinite(metrics.singleDecode);
+  const hasTotal =
+    Number.isFinite(metrics.totalPrefill) || Number.isFinite(metrics.totalDecode);
+  if (hasSingle) {
+    setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
+  }
+  if (hasTotal) {
+    setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+  }
+  return hasSingle || hasTotal;
 };
 
 const applyHistorySpeedMetrics = (report) => {

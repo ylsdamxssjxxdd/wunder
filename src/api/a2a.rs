@@ -594,6 +594,7 @@ impl A2aService {
             user_id: user_id.clone(),
             question,
             tool_names,
+            skip_tool_calls: false,
             stream: false,
             session_id: Some(session_id.clone()),
             model_name: if model_name.is_empty() {
@@ -676,6 +677,7 @@ impl A2aService {
             user_id: user_id.clone(),
             question,
             tool_names,
+            skip_tool_calls: false,
             stream: true,
             session_id: Some(session_id.clone()),
             model_name: if model_name.is_empty() {

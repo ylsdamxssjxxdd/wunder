@@ -395,6 +395,7 @@ async fn send_message(
         user_id: resolved.user.user_id.clone(),
         question: content,
         tool_names,
+        skip_tool_calls: false,
         stream: payload.stream.unwrap_or(true),
         session_id: Some(session_id.clone()),
         model_name: None,

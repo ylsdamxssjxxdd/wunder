@@ -55,6 +55,7 @@ struct PreparedRequest {
     question: String,
     session_id: String,
     tool_names: Option<Vec<String>>,
+    skip_tool_calls: bool,
     model_name: Option<String>,
     config_overrides: Option<Value>,
     stream: bool,
@@ -786,6 +787,7 @@ impl Orchestrator {
             question,
             session_id,
             tool_names,
+            skip_tool_calls: request.skip_tool_calls,
             model_name: request.model_name.clone(),
             config_overrides: request.config_overrides.clone(),
             stream: request.stream,
@@ -1170,9 +1172,17 @@ impl Orchestrator {
                     .save_session_token_usage_async(&user_id, &session_id, usage.total as i64)
                     .await;
 
-                let tool_calls = collect_tool_calls_from_output(&content, &reasoning);
+                let tool_calls = if prepared.skip_tool_calls {
+                    Vec::new()
+                } else {
+                    collect_tool_calls_from_output(&content, &reasoning)
+                };
                 if tool_calls.is_empty() {
-                    answer = self.resolve_final_answer(&content);
+                    if prepared.skip_tool_calls {
+                        answer = content.trim().to_string();
+                    } else {
+                        answer = self.resolve_final_answer(&content);
+                    }
                     stop_reason = Some("model_response".to_string());
                     let assistant_content = if answer.is_empty() { content.clone() } else { answer.clone() };
                     if !assistant_content.trim().is_empty() {

@@ -19,6 +19,7 @@
   - `user_id`: string, user identifier
   - `question`: string, user question
   - `tool_names`: list of strings, optional, tools to enable
+  - `skip_tool_calls`: boolean, optional, ignore tool calls in model output and stop directly (default false)
   - `stream`: boolean, optional, stream response (default true)
   - `session_id`: string, optional, session id
   - `model_name`: string, optional, model config name

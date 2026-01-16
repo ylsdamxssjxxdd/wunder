@@ -9,6 +9,8 @@ pub struct WunderRequest {
     pub question: String,
     #[serde(default)]
     pub tool_names: Vec<String>,
+    #[serde(default)]
+    pub skip_tool_calls: bool,
     #[serde(default = "default_stream")]
     pub stream: bool,
     #[serde(default)]

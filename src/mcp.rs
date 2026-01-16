@@ -198,6 +198,7 @@ impl ServerHandler for WunderMcpServer {
                 user_id: MCP_USER_ID.to_string(),
                 question: task,
                 tool_names,
+                skip_tool_calls: false,
                 stream: false,
                 session_id: None,
                 model_name: None,
