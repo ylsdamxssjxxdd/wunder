@@ -226,7 +226,51 @@
   - `warnings`：转换警告列表
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
-### 4.1.2.13 `/wunder/mcp`
+### 4.1.2.13 `/wunder/temp_dir/download`
+
+- 方法：`GET`
+- 鉴权：无
+- 入参（query）：`filename` 文件路径（相对 `temp_dir/`，不支持 `..`）
+- 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
+- 返回：文件流（`Content-Disposition: attachment`）
+
+### 4.1.2.14 `/wunder/temp_dir/upload`
+
+- 方法：`POST`
+- 鉴权：无
+- 类型：`multipart/form-data`
+- 入参：
+  - `file` 文件字段（支持多个同名字段）
+  - `path` 目标子目录路径（相对 `temp_dir/`，可选）
+  - `overwrite` 是否覆盖同名文件（可选，默认 true）
+- 说明：上传文件到项目根目录 `temp_dir/`，若设置 `path` 则自动创建目录。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `files`：上传后的文件名列表
+
+### 4.1.2.15 `/wunder/temp_dir/list`
+
+- 方法：`GET`
+- 鉴权：无
+- 说明：列出项目根目录 `temp_dir/` 的文件（包含子目录，返回相对路径）。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `files`：文件列表（`name`/`size`/`updated_time`）
+
+### 4.1.2.16 `/wunder/temp_dir/remove`
+
+- 方法：`POST`
+- 鉴权：无
+- 入参（JSON）：
+  - `all`：是否清空目录（true 表示清空）
+  - `filename`：要删除的文件路径（相对 `temp_dir/`）
+  - `filenames`：要删除的文件路径数组（相对 `temp_dir/`）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `removed`：已删除文件名列表
+  - `missing`：未找到的文件名列表
+
+### 4.1.2.17 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
@@ -243,7 +287,7 @@
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.14 `/wunder/i18n`
+### 4.1.2.18 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：

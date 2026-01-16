@@ -183,7 +183,51 @@
   - `ok`, `name`, `content`, `converter`, `warnings`
 - Note: debug UI only (auth required); conversion logic matches `/wunder/doc2md/convert`.
 
-### 4.1.2.13 `/wunder/mcp`
+### 4.1.2.13 `/wunder/temp_dir/download`
+
+- Method: `GET`
+- Auth: none
+- Query: `filename` (relative path under `temp_dir/`, no `..`)
+- Note: downloads files from the project root `temp_dir/` folder.
+- Response: file stream (`Content-Disposition: attachment`)
+
+### 4.1.2.14 `/wunder/temp_dir/upload`
+
+- Method: `POST`
+- Auth: none
+- Type: `multipart/form-data`
+- Fields:
+  - `file` (supports multiple files with the same field name)
+  - `path` (optional subdir path under `temp_dir/`)
+  - `overwrite` (optional, default true)
+- Note: uploads files into the project root `temp_dir/`, creates subdir if `path` is set.
+- Response:
+  - `ok`
+  - `files`
+
+### 4.1.2.15 `/wunder/temp_dir/list`
+
+- Method: `GET`
+- Auth: none
+- Note: list files under the project root `temp_dir/` (recursive, returns relative paths).
+- Response:
+  - `ok`
+  - `files` (`name`/`size`/`updated_time`)
+
+### 4.1.2.16 `/wunder/temp_dir/remove`
+
+- Method: `POST`
+- Auth: none
+- Body (JSON):
+  - `all`: clear all files when true
+  - `filename`: relative path under `temp_dir/`
+  - `filenames`: list of relative paths
+- Response:
+  - `ok`
+  - `removed`
+  - `missing`
+
+### 4.1.2.17 `/wunder/mcp`
 
 - Type: MCP service (streamable-http)
 - Auth: `X-API-Key` or `Authorization: Bearer <key>`
@@ -198,7 +242,7 @@
 - Endpoint config: `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - Timeout: `config.mcp.timeout_s`
 
-### 4.1.2.14 `/wunder/i18n`
+### 4.1.2.18 `/wunder/i18n`
 
 - Method: `GET`
 - Response:

@@ -37,3 +37,5 @@ EVA_SKILLS
 .env
 frontend/.env
 frontend/node_modules/
+download
+temp_dir

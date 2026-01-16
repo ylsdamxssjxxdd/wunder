@@ -55,6 +55,30 @@
     "en-US": "Content is required",
     "zh-CN": "内容不能为空"
   },
+  "error.download_filename_required": {
+    "en-US": "Filename is required",
+    "zh-CN": "文件名不能为空"
+  },
+  "error.download_filename_invalid": {
+    "en-US": "Filename is invalid",
+    "zh-CN": "文件名不合法"
+  },
+  "error.temp_dir_upload_no_file": {
+    "en-US": "No file uploaded",
+    "zh-CN": "未上传文件"
+  },
+  "error.temp_dir_file_exists": {
+    "en-US": "File already exists",
+    "zh-CN": "文件已存在"
+  },
+  "error.temp_dir_target_not_file": {
+    "en-US": "Target exists and is not a file",
+    "zh-CN": "目标已存在且不是文件"
+  },
+  "error.temp_dir_remove_required": {
+    "en-US": "Specify filename(s) or set all=true",
+    "zh-CN": "请指定文件名或设置 all=true"
+  },
   "error.converter_doc2md_convert_failed": {
     "en-US": "doc2md conversion failed",
     "zh-CN": "doc2md 转换失败"
