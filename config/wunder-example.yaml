@@ -44,7 +44,8 @@ mcp: # MCP 工具配置
     - name: wunder # MCP 服务名称（用于 server@tool 标识）
       endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
       allow_tools: # 允许调用的工具白名单（为空表示全部）
-        - run
+        - excute
+        - doc2md
       enabled: false # 是否启用该 MCP 服务
       transport: streamable-http # 传输协议类型（http/sse/streamable-http）
       description: wunder 自托管 MCP 服务，用于执行内部智能体任务。 # 服务描述信息（用于前端展示）
@@ -53,8 +54,8 @@ mcp: # MCP 工具配置
         Authorization: Bearer ${WUNDER_API_KEY}
       auth: null # MCP auth 字段（可选，保留原始接入参数）
       tool_specs: # 预缓存的工具规格（避免首次调用远端探测）
-        - name: run # 工具名称
-          description: 执行 wunder 智能体任务并返回最终回复。 # 工具描述
+        - name: excute # 工具名称
+          description: 执行 wunder 智能体任务并返回最终回复。# 工具描述
           input_schema: # 工具输入 Schema（JSON Schema 结构）
             properties: # 入参属性定义
               task: # 任务描述文本
@@ -62,7 +63,15 @@ mcp: # MCP 工具配置
             required: # 必填字段列表
               - task
             type: object # Schema 类型
-
+        - name: doc2md # 工具名称
+          description: 解析文档并返回 Markdown 文本。# 工具描述
+          input_schema: # 工具输入 Schema（JSON Schema 结构）
+            properties: # 入参属性定义
+              source_url: # 文件下载地址（URL，需包含扩展名）
+                type: string
+            required: # 必填字段列表
+              - source_url
+            type: object # Schema 类型
 a2a: # A2A 配置
   timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表

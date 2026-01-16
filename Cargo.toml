@@ -48,3 +48,8 @@ argon2 = "0.5"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio-postgres = "0.7.15"
 deadpool-postgres = "0.14.1"
+calamine = "0.25"
+cfb = "0.10"
+html2md = "0.2"
+pdf-extract = "0.10"
+quick-xml = "0.31"

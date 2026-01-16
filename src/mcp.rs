@@ -1,4 +1,5 @@
 // MCP 服务与客户端：对齐 codex-main 的 rmcp SDK，用于流式 HTTP 与工具调用。
+use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::config::{Config, McpServerConfig};
 use crate::i18n;
 use crate::schemas::{ToolSpec, WunderRequest};
@@ -28,16 +29,21 @@ use serde_json::{json, Value};
 use sse_stream::SseStream;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 const MCP_SERVER_NAME: &str = "wunder";
-const MCP_TOOL_NAME: &str = "run";
+const MCP_EXECUTE_TOOL_NAME: &str = "excute";
+const MCP_DOC2MD_TOOL_NAME: &str = "doc2md";
 const MCP_USER_ID: &str = "wunder";
-const MCP_INSTRUCTIONS: &str = "调用 wunder 智能体执行任务并返回最终回复。";
-const MCP_RUN_DESCRIPTION: &str = "执行 wunder 智能体任务并返回最终回复。";
+const MCP_INSTRUCTIONS: &str = "调用 wunder 智能体执行任务或解析文档并返回结果。";
+const MCP_EXECUTE_DESCRIPTION: &str = "执行 wunder 智能体任务并返回最终回复。";
+const MCP_DOC2MD_DESCRIPTION: &str = "解析文档并返回 Markdown 文本。";
 
 /// 构建 MCP 服务路由：挂载 /wunder/mcp 的 Streamable HTTP 服务。
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
@@ -52,7 +58,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new().nest_service("/wunder/mcp", service)
 }
 
-/// MCP 服务器实现：仅暴露 wunder@run 工具。
+/// MCP 服务器实现：暴露 wunder@excute/doc2md 工具。
 #[derive(Clone)]
 struct WunderMcpServer {
     state: Arc<AppState>,
@@ -63,7 +69,7 @@ impl WunderMcpServer {
         Self { state }
     }
 
-    fn run_tool() -> Tool {
+    fn execute_tool() -> Tool {
         let schema: JsonObject = serde_json::from_value(json!({
             "type": "object",
             "properties": {
@@ -73,8 +79,24 @@ impl WunderMcpServer {
         }))
         .unwrap_or_default();
         Tool::new(
-            Cow::Borrowed(MCP_TOOL_NAME),
-            Cow::Borrowed(MCP_RUN_DESCRIPTION),
+            Cow::Borrowed(MCP_EXECUTE_TOOL_NAME),
+            Cow::Borrowed(MCP_EXECUTE_DESCRIPTION),
+            Arc::new(schema),
+        )
+    }
+
+    fn doc2md_tool() -> Tool {
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "source_url": { "type": "string", "description": "文件下载地址（URL，需包含扩展名）" }
+            },
+            "required": ["source_url"]
+        }))
+        .unwrap_or_default();
+        Tool::new(
+            Cow::Borrowed(MCP_DOC2MD_TOOL_NAME),
+            Cow::Borrowed(MCP_DOC2MD_DESCRIPTION),
             Arc::new(schema),
         )
     }
@@ -110,7 +132,7 @@ impl WunderMcpServer {
             }
             names.insert(format!("a2a@{}", service.name));
         }
-        names.remove(&format!("{}@{}", MCP_SERVER_NAME, MCP_TOOL_NAME));
+        names.remove(&format!("{}@{}", MCP_SERVER_NAME, MCP_EXECUTE_TOOL_NAME));
         names.remove("a2ui");
         let mut sorted: Vec<String> = names.into_iter().collect();
         sorted.sort();
@@ -135,7 +157,7 @@ impl ServerHandler for WunderMcpServer {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        let tools = vec![Self::run_tool()];
+        let tools = vec![Self::execute_tool(), Self::doc2md_tool()];
         async move {
             Ok(ListToolsResult {
                 tools,
@@ -150,8 +172,12 @@ impl ServerHandler for WunderMcpServer {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if request.name.as_ref() != MCP_TOOL_NAME {
+        let tool_name = request.name.as_ref();
+        if tool_name != MCP_EXECUTE_TOOL_NAME && tool_name != MCP_DOC2MD_TOOL_NAME {
             return Err(McpError::invalid_params("未知 MCP 工具", None));
+        }
+        if tool_name == MCP_DOC2MD_TOOL_NAME {
+            return self.handle_doc2md(request.arguments.as_ref()).await;
         }
         let task = request
             .arguments
@@ -200,6 +226,166 @@ impl ServerHandler for WunderMcpServer {
             meta: None,
         })
     }
+}
+
+impl WunderMcpServer {
+    async fn handle_doc2md(
+        &self,
+        arguments: Option<&JsonObject>,
+    ) -> Result<CallToolResult, McpError> {
+        let empty_args = JsonObject::new();
+        let args = arguments.unwrap_or(&empty_args);
+        let source_url = args
+            .get("source_url")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if source_url.is_empty() {
+            return Err(McpError::invalid_params("source_url 不能为空", None));
+        }
+        let parsed_url = url::Url::parse(&source_url)
+            .map_err(|err| McpError::invalid_params(format!("source_url 无效: {err}"), None))?;
+        let name = parsed_url
+            .path_segments()
+            .and_then(|segments| segments.last())
+            .unwrap_or("")
+            .trim();
+        let name = if name.is_empty() { "document" } else { name }.to_string();
+        let extension = Path::new(&name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if extension.is_empty() {
+            return Err(McpError::invalid_params("source_url 缺少文件扩展名", None));
+        }
+        let extension = format!(".{extension}");
+        let supported = get_supported_extensions();
+        if !supported
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case(&extension))
+        {
+            let message = i18n::t_with_params(
+                "error.unsupported_file_type",
+                &HashMap::from([("extension".to_string(), extension.clone())]),
+            );
+            return Err(McpError::invalid_params(message, None));
+        }
+        let stem = Path::new(&name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("document");
+        let stem = sanitize_filename_stem(stem);
+        let stem = if stem.trim().is_empty() {
+            "document".to_string()
+        } else {
+            stem
+        };
+        let temp_dir = create_doc2md_temp_dir().await.map_err(|err| {
+            McpError::internal_error(
+                "创建临时目录失败",
+                Some(json!({ "detail": err.to_string() })),
+            )
+        })?;
+        let input_path = temp_dir.join(format!("{stem}{extension}"));
+        let output_path = temp_dir.join(format!("{stem}.md"));
+        let result = async {
+            let response = reqwest::Client::new()
+                .get(&source_url)
+                .send()
+                .await
+                .map_err(|err| {
+                    McpError::internal_error(
+                        "下载文件失败",
+                        Some(json!({ "detail": err.to_string() })),
+                    )
+                })?;
+            let status = response.status();
+            if !status.is_success() {
+                let detail = response.text().await.unwrap_or_default();
+                return Err(McpError::internal_error(
+                    "下载文件失败",
+                    Some(json!({
+                        "status": status.as_u16(),
+                        "detail": detail
+                    })),
+                ));
+            }
+            {
+                let mut file = tokio::fs::File::create(&input_path).await.map_err(|err| {
+                    McpError::internal_error(
+                        "写入临时文件失败",
+                        Some(json!({ "detail": err.to_string() })),
+                    )
+                })?;
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|err| {
+                        McpError::internal_error(
+                            "下载文件失败",
+                            Some(json!({ "detail": err.to_string() })),
+                        )
+                    })?;
+                    file.write_all(&chunk).await.map_err(|err| {
+                        McpError::internal_error(
+                            "写入临时文件失败",
+                            Some(json!({ "detail": err.to_string() })),
+                        )
+                    })?;
+                }
+                file.flush().await.map_err(|err| {
+                    McpError::internal_error(
+                        "写入临时文件失败",
+                        Some(json!({ "detail": err.to_string() })),
+                    )
+                })?;
+            }
+            let conversion = convert_to_markdown(&input_path, &output_path, &extension)
+                .await
+                .map_err(|err| {
+                    McpError::internal_error(
+                        "文档解析失败",
+                        Some(json!({ "detail": err.to_string() })),
+                    )
+                })?;
+            let content = tokio::fs::read_to_string(&output_path)
+                .await
+                .map_err(|err| {
+                    McpError::internal_error(
+                        "读取解析结果失败",
+                        Some(json!({ "detail": err.to_string() })),
+                    )
+                })?;
+            if content.trim().is_empty() {
+                return Err(McpError::internal_error("文档解析结果为空", None));
+            }
+            Ok((conversion, content))
+        }
+        .await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let (conversion, content) = result?;
+        Ok(CallToolResult {
+            content: Vec::new(),
+            structured_content: Some(json!({
+                "ok": true,
+                "name": name,
+                "content": content,
+                "converter": conversion.converter,
+                "warnings": conversion.warnings,
+            })),
+            is_error: Some(false),
+            meta: None,
+        })
+    }
+}
+
+async fn create_doc2md_temp_dir() -> Result<PathBuf, std::io::Error> {
+    let mut root = std::env::temp_dir();
+    root.push("wunder_mcp_doc2md");
+    root.push(Uuid::new_v4().simple().to_string());
+    tokio::fs::create_dir_all(&root).await?;
+    Ok(root)
 }
 
 #[derive(Clone, Default)]

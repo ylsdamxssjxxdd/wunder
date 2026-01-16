@@ -5,7 +5,7 @@ x-rust-build: &rust-build
     RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
 
 services:
-  WUNDER_RUST:
+  wunder_rust:
     build: *rust-build
     privileged: true
     security_opt:
@@ -101,6 +101,9 @@ services:
       - seccomp:unconfined
     platform: linux/amd64
     container_name: wunder-nginx
+    depends_on:
+      - wunder_rust
+    restart: always
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro

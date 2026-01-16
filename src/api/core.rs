@@ -1,5 +1,5 @@
 // 核心 API：/wunder 入口、系统提示词、工具清单与 i18n 配置。
-use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
+use crate::api::attachment_convert::convert_multipart;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{
@@ -18,13 +18,10 @@ use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 use tracing::error;
-use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -572,115 +569,15 @@ async fn wunder_i18n(
     }))
 }
 
-async fn wunder_attachment_convert(mut multipart: Multipart) -> Result<Json<Value>, Response> {
-    let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    else {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.file_not_found"),
-        ));
-    };
-
-    let filename = field.file_name().unwrap_or("upload").to_string();
-    let extension = Path::new(&filename)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if extension.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.file_extension_missing"),
-        ));
-    }
-    let extension = format!(".{extension}");
-    let supported = get_supported_extensions();
-    if !supported
-        .iter()
-        .any(|item| item.eq_ignore_ascii_case(&extension))
-    {
-        let message = i18n::t_with_params(
-            "error.unsupported_file_type",
-            &HashMap::from([("extension".to_string(), extension.clone())]),
-        );
-        return Err(error_response(StatusCode::BAD_REQUEST, message));
-    }
-    let stem = Path::new(&filename)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("document");
-    let stem = sanitize_filename_stem(stem);
-    let stem = if stem.trim().is_empty() {
-        "document".to_string()
-    } else {
-        stem
-    };
-
-    let temp_dir = create_temp_dir()
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let input_path = temp_dir.join(format!("{stem}{extension}"));
-    let output_path = temp_dir.join(format!("{stem}.md"));
-    let result = async {
-        save_multipart_field(field, &input_path).await?;
-        let conversion = convert_to_markdown(&input_path, &output_path, &extension)
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let content = tokio::fs::read_to_string(&output_path)
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if content.trim().is_empty() {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                i18n::t("error.empty_parse_result"),
-            ));
-        }
-        Ok(Json(json!({
-            "ok": true,
-            "name": filename,
-            "content": content,
-            "converter": conversion.converter,
-            "warnings": conversion.warnings,
-        })))
-    }
-    .await;
-    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-    result
-}
-
-async fn create_temp_dir() -> Result<std::path::PathBuf, std::io::Error> {
-    let mut root = std::env::temp_dir();
-    root.push("wunder_uploads");
-    root.push(Uuid::new_v4().simple().to_string());
-    tokio::fs::create_dir_all(&root).await?;
-    Ok(root)
-}
-
-async fn save_multipart_field(
-    mut field: axum::extract::multipart::Field<'_>,
-    target: &Path,
-) -> Result<(), Response> {
-    if let Some(parent) = target.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    }
-    let mut file = tokio::fs::File::create(target)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    while let Some(chunk) = field
-        .chunk()
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    {
-        file.write_all(&chunk)
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    }
-    Ok(())
+async fn wunder_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Response> {
+    let conversion = convert_multipart(multipart).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "name": conversion.name,
+        "content": conversion.content,
+        "converter": conversion.converter,
+        "warnings": conversion.warnings,
+    })))
 }
 
 fn map_orchestrator_error(err: Error) -> Response {
@@ -703,10 +600,6 @@ fn map_orchestrator_error(err: Error) -> Response {
 
 fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
     (status, Json(json!({ "detail": payload }))).into_response()
-}
-
-fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]

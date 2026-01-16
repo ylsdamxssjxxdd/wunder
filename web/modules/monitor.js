@@ -822,8 +822,11 @@ const resolveToolIcon = (name, category) => {
   const toolName = String(name || "").trim();
   const lowerName = toolName.toLowerCase();
   const normalizedName = normalizeToolMatchKey(lowerName);
-  if (lowerName === "wunder@run" || lowerName.endsWith("@wunder@run")) {
+  if (lowerName === "wunder@excute" || lowerName.endsWith("@wunder@excute")) {
     return "fa-dragon";
+  }
+  if (lowerName === "wunder@doc2md" || lowerName.endsWith("@wunder@doc2md")) {
+    return "fa-file-lines";
   }
   for (const rule of TOOL_HEATMAP_ICON_RULES) {
     if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {

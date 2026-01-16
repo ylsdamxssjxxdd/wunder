@@ -1308,6 +1308,7 @@ const USER_KNOWLEDGE_UPLOAD_EXTENSIONS = [
   ".doc",
   ".docx",
   ".odt",
+  ".pdf",
   ".pptx",
   ".odp",
   ".xlsx",

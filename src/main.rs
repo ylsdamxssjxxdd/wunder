@@ -5,6 +5,7 @@ mod attachment;
 mod auth;
 mod config;
 mod config_store;
+mod doc2md;
 mod evaluation;
 mod evaluation_runner;
 mod history;

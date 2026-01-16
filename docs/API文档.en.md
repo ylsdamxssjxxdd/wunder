@@ -155,7 +155,7 @@
   - `user_id`, `base`, `file`
 - Response:
   - `ok`, `message`, `path`, `converter`, `warnings`
-- Note: supports doc2md extensions; falls back to Python converters when needed.
+- Note: this endpoint currently stores Markdown files only. For non-Markdown files, call `/wunder/doc2md/convert` first and upload the converted Markdown.
 
 ### 4.1.2.10 `/wunder/user_tools/extra_prompt`
 
@@ -165,27 +165,40 @@
 - Response:
   - `user_id`, `extra_prompt`
 
-### 4.1.2.11 `/wunder/attachments/convert`
+### 4.1.2.11 `/wunder/doc2md/convert`
 
 - Method: `POST`
 - Body (multipart/form-data):
   - `file`: file to parse
 - Response:
   - `ok`, `name`, `content`, `converter`, `warnings`
-- Note: debug-only attachment parsing; uses doc2md extensions.
+- Note: no auth required; supports doc2md extensions. Internal attachment conversion uses the same logic.
 
-### 4.1.2.12 `/wunder/mcp`
+### 4.1.2.12 `/wunder/attachments/convert`
+
+- Method: `POST`
+- Body (multipart/form-data):
+  - `file`: file to parse
+- Response:
+  - `ok`, `name`, `content`, `converter`, `warnings`
+- Note: debug UI only (auth required); conversion logic matches `/wunder/doc2md/convert`.
+
+### 4.1.2.13 `/wunder/mcp`
 
 - Type: MCP service (streamable-http)
 - Auth: `X-API-Key` or `Authorization: Bearer <key>`
-- Tool: `wunder@run`
+- Tool: `wunder@excute`
   - Input: `task` string
-  - Behavior: fixed `user_id = wunder`, uses enabled tools, filters `wunder@run` itself
+  - Behavior: fixed `user_id = wunder`, uses enabled tools, filters `wunder@excute` itself
   - Output: `answer`/`session_id`/`usage`
+- Tool: `wunder@doc2md`
+  - Input: `source_url` (download URL, must include extension)
+  - Behavior: download the file from `source_url` and convert to Markdown
+  - Output: `name`/`content`/`converter`/`warnings`
 - Endpoint config: `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - Timeout: `config.mcp.timeout_s`
 
-### 4.1.2.13 `/wunder/i18n`
+### 4.1.2.14 `/wunder/i18n`
 
 - Method: `GET`
 - Response:
@@ -395,6 +408,7 @@
 - Method: `POST`
 - Body: `base`, `file`
 - Response: `ok`, `message`, `path`, `converter`, `warnings`
+- Note: this endpoint currently stores Markdown files only. For non-Markdown files, call `/wunder/doc2md/convert` first and upload the converted Markdown.
 
 ### 4.1.30 `/wunder/admin/knowledge/refresh`
 

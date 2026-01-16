@@ -17,6 +17,7 @@ const ENDPOINT_GROUPS = [
       { method: "GET", path: "/wunder/tools", descKey: "apiDocs.endpoint.tools" },
       { method: "GET", path: "/wunder/i18n", descKey: "apiDocs.endpoint.i18n" },
       { method: "POST", path: "/wunder/attachments/convert", descKey: "apiDocs.endpoint.attachments" },
+      { method: "POST", path: "/wunder/doc2md/convert", descKey: "apiDocs.endpoint.doc2md" },
     ],
   },
   {

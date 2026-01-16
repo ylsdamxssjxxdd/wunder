@@ -186,9 +186,9 @@
   - `ok`：是否成功
   - `message`：提示信息
   - `path`：转换后的 Markdown 相对路径
-  - `converter`：使用的转换器（doc2md/python-xxx）
+  - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
   - `warnings`：转换警告列表
-- 说明：支持 doc2md README 中列出的扩展名；若 doc2md 不可用或执行失败，将尝试使用 Python 库进行兜底转换。
+- 说明：该接口当前仅保存 Markdown 文件；非 Markdown 文件请先调用 `/wunder/doc2md/convert` 转换后再上传。
 
 ### 4.1.2.10 `/wunder/user_tools/extra_prompt`
 
@@ -200,7 +200,7 @@
   - `user_id`：用户唯一标识
   - `extra_prompt`：附加提示词文本
 
-### 4.1.2.11 `/wunder/attachments/convert`
+### 4.1.2.11 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -209,24 +209,41 @@
   - `ok`：是否成功
   - `name`：文件名
   - `content`：解析后的 Markdown 文本
-  - `converter`：转换器（doc2md/python-xxx）
+  - `converter`：转换器（doc2md/text/html/code/pdf）
   - `warnings`：转换警告列表
-- 说明：仅用于调试面板附件解析，支持 doc2md README 中列出的扩展名。
+- 说明：接口无需鉴权，支持 doc2md 扩展名；系统内部附件转换统一调用该逻辑。
 
-### 4.1.2.12 `/wunder/mcp`
+### 4.1.2.12 `/wunder/attachments/convert`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `file`：待解析文件
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `name`：文件名
+  - `content`：解析后的 Markdown 文本
+  - `converter`：转换器（doc2md/text/html/code/pdf）
+  - `warnings`：转换警告列表
+- 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
+
+### 4.1.2.13 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
 - Rust 版已实现该入口，基于 rmcp 的 streamable-http 传输。
 - 鉴权：请求头需携带 `X-API-Key` 或 `Authorization: Bearer <key>`。
-- 工具：`run`（在 wunder 内部映射为 `wunder@run`）
+- 工具：`excute`（在 wunder 内部映射为 `wunder@excute`）
   - 入参：`task` 字符串，任务描述
-  - 行为：使用固定 `user_id = wunder` 执行任务，按管理员启用的工具清单运行，并剔除 `wunder@run` 避免递归调用
+  - 行为：使用固定 `user_id = wunder` 执行任务，按管理员启用的工具清单运行，并剔除 `wunder@excute` 避免递归调用
   - 返回：`answer`/`session_id`/`usage`
+- 工具：`doc2md`（在 wunder 内部映射为 `wunder@doc2md`）
+  - 入参：`source_url` 文件下载地址（URL，需包含扩展名）
+  - 行为：下载 `source_url` 对应文件后解析并返回 Markdown
+  - 返回：`name`/`content`/`converter`/`warnings`
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.13 `/wunder/i18n`
+### 4.1.2.14 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -654,13 +671,13 @@
 - 入参（multipart/form-data）：
   - `base`：知识库名称
   - `file`：待上传文件
-- 返回（JSON）：
-  - `ok`：是否成功
-  - `message`：提示信息
-  - `path`：转换后的 Markdown 相对路径
-  - `converter`：使用的转换器（doc2md/python-xxx）
-  - `warnings`：转换警告列表
-- 说明：支持 doc2md README 中列出的扩展名；若 doc2md 不可用或执行失败，将尝试使用 Python 库进行兜底转换。
+  - 返回（JSON）：
+    - `ok`：是否成功
+    - `message`：提示信息
+    - `path`：转换后的 Markdown 相对路径
+    - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
+    - `warnings`：转换警告列表
+  - 说明：该接口当前仅保存 Markdown 文件；非 Markdown 文件请先调用 `/wunder/doc2md/convert` 转换后再上传。
 
 ### 4.1.30 `/wunder/admin/knowledge/refresh`
 

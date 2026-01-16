@@ -21,6 +21,9 @@ pub fn is_admin_path(path: &str) -> bool {
     if path.starts_with("/wunder/i18n") {
         return false;
     }
+    if path.starts_with("/wunder/doc2md") {
+        return false;
+    }
     if path.starts_with("/wunder/auth") {
         return false;
     }
@@ -89,6 +92,7 @@ mod tests {
         assert!(!is_admin_path("/wunder/ppt"));
         assert!(!is_admin_path("/wunder/ppt-en"));
         assert!(!is_admin_path("/wunder/i18n"));
+        assert!(!is_admin_path("/wunder/doc2md/convert"));
         assert!(!is_admin_path("/.well-known/agent-card.json"));
         assert!(!is_admin_path("/wunder/auth/login"));
         assert!(!is_admin_path("/wunder/chat/sessions"));
