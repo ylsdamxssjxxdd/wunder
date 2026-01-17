@@ -1284,22 +1284,14 @@ impl Orchestrator {
             );
 
             let mut system_prompt = self
-                .build_system_prompt_with_allowed(
+                .resolve_session_prompt(
                     &config,
                     prepared.config_overrides.as_ref(),
                     &allowed_tool_names,
                     &skills_snapshot,
                     Some(&user_tool_bindings),
                     &user_id,
-                )
-                .await;
-            system_prompt = self
-                .resolve_session_prompt(
-                    &user_id,
                     &session_id,
-                    system_prompt,
-                    prepared.tool_names.as_ref(),
-                    prepared.config_overrides.as_ref(),
                     Some(&prepared.language),
                 )
                 .await;
@@ -3007,26 +2999,36 @@ impl Orchestrator {
 
     async fn resolve_session_prompt(
         &self,
+        config: &Config,
+        config_overrides: Option<&Value>,
+        allowed_tool_names: &HashSet<String>,
+        skills: &SkillRegistry,
+        user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
         session_id: &str,
-        prompt: String,
-        tool_names: Option<&Vec<String>>,
-        overrides: Option<&Value>,
         language: Option<&str>,
     ) -> String {
         let stored = self
             .workspace
-            .load_session_system_prompt_async(user_id, session_id, language)
+            .load_session_system_prompt_async(user_id, session_id, None)
             .await
             .unwrap_or(None);
-        if stored.is_some() && tool_names.is_none() && overrides.is_none() {
-            return stored.unwrap_or(prompt);
+        if let Some(prompt) = stored {
+            return prompt;
         }
-        if stored.is_none() {
-            let _ = self
-                .workspace
-                .save_session_system_prompt(user_id, session_id, &prompt, language);
-        }
+        let prompt = self
+            .build_system_prompt_with_allowed(
+                config,
+                config_overrides,
+                allowed_tool_names,
+                skills,
+                user_tool_bindings,
+                user_id,
+            )
+            .await;
+        let _ = self
+            .workspace
+            .save_session_system_prompt(user_id, session_id, &prompt, language);
         prompt
     }
 
@@ -3924,7 +3926,38 @@ fn extract_json_values(payload: &str) -> Vec<Value> {
     values
 }
 
+fn has_tool_call_args(map: &serde_json::Map<String, Value>) -> bool {
+    map.contains_key("arguments")
+        || map.contains_key("args")
+        || map.contains_key("parameters")
+        || map.contains_key("params")
+        || map.contains_key("input")
+        || map.contains_key("payload")
+}
+
+fn is_tool_result_map(map: &serde_json::Map<String, Value>) -> bool {
+    let tool = map.get("tool").and_then(Value::as_str).unwrap_or("").trim();
+    if tool.is_empty() {
+        return false;
+    }
+    let has_ok = map.get("ok").and_then(Value::as_bool).is_some();
+    let has_data = map.contains_key("data") || map.contains_key("result");
+    let has_error = map.contains_key("error");
+    let has_timestamp = map
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(|text| !text.trim().is_empty())
+        .unwrap_or(false);
+    (has_ok && (has_data || has_error)) || (has_timestamp && has_data)
+}
+
 fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall> {
+    if is_tool_result_map(map) {
+        return None;
+    }
+    if !has_tool_call_args(map) {
+        return None;
+    }
     let name_value = map
         .get("name")
         .or_else(|| map.get("tool"))
@@ -4011,6 +4044,14 @@ fn parse_tool_calls_payload(payload: &str) -> Vec<ToolCall> {
 }
 
 fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
+    parse_tool_calls_from_text_inner(content, false)
+}
+
+fn parse_tool_calls_from_text_strict(content: &str) -> Vec<ToolCall> {
+    parse_tool_calls_from_text_inner(content, true)
+}
+
+fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall> {
     if content.trim().is_empty() {
         return Vec::new();
     }
@@ -4059,13 +4100,16 @@ fn parse_tool_calls_from_text(content: &str) -> Vec<ToolCall> {
         }
     }
 
-    calls.extend(parse_tool_calls_payload(content));
+    if !strict {
+        calls.extend(parse_tool_calls_payload(content));
+    }
     dedupe_tool_calls(calls)
 }
 
 fn tool_call_signature(call: &ToolCall) -> String {
-    let args = serde_json::to_string(&call.arguments).unwrap_or_default();
-    format!("{}|{}", call.name.trim(), args)
+    let normalized_name = resolve_tool_name(call.name.trim());
+    let args = serde_json::to_string(&canonicalize_json(&call.arguments)).unwrap_or_default();
+    format!("{normalized_name}|{args}")
 }
 
 fn dedupe_tool_calls(calls: Vec<ToolCall>) -> Vec<ToolCall> {
@@ -4082,8 +4126,28 @@ fn dedupe_tool_calls(calls: Vec<ToolCall>) -> Vec<ToolCall> {
 
 fn collect_tool_calls_from_output(content: &str, reasoning: &str) -> Vec<ToolCall> {
     let mut calls = parse_tool_calls_from_text(content);
-    calls.extend(parse_tool_calls_from_text(reasoning));
+    if calls.is_empty() {
+        calls.extend(parse_tool_calls_from_text_strict(reasoning));
+    }
     dedupe_tool_calls(calls)
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys = map.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            let mut ordered = Map::new();
+            for key in keys {
+                if let Some(entry) = map.get(&key) {
+                    ordered.insert(key, canonicalize_json(entry));
+                }
+            }
+            Value::Object(ordered)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
+        _ => value.clone(),
+    }
 }
 
 fn strip_tool_calls(content: &str) -> String {
@@ -4303,5 +4367,20 @@ mod tests {
             calls[0].arguments.get("path").and_then(Value::as_str),
             Some("a.txt")
         );
+    }
+
+    #[test]
+    fn test_parse_tool_call_ignores_tool_result_payload() {
+        let content = r#"{"tool":"read_file","ok":true,"data":{"path":"a.txt"}}"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_call_dedup_with_argument_order() {
+        let content = r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt","mode":"r"}}</tool_call>{"tool":"read_file","arguments":{"mode":"r","path":"a.txt"}}"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
     }
 }

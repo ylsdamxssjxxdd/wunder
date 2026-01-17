@@ -687,6 +687,14 @@ async fn session_system_prompt(
             i18n::t("error.session_not_found"),
         ));
     }
+    let stored_prompt = state
+        .workspace
+        .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
+        .await
+        .unwrap_or(None);
+    if let Some(prompt) = stored_prompt {
+        return Ok(Json(json!({ "data": { "prompt": prompt } })));
+    }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
     let allowed = compute_allowed_tool_names(
         &resolved.user,

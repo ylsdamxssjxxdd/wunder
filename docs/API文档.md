@@ -1144,6 +1144,7 @@
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
   - 入参（JSON）：`content`、`stream`（默认 true）、`selected_shared_tools`（可选）、`attachments`（可选）
+  - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
@@ -1153,6 +1154,8 @@
   - 入参（JSON）：`selected_shared_tools`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/sessions/{session_id}/system-prompt`：会话系统提示词预览（校验会话归属）
+  - 会话已保存提示词时直接返回该版本，不受工具勾选或工作区变化影响
+  - 未保存时才按 `selected_shared_tools` 构建当前提示词预览
   - 入参（JSON）：`selected_shared_tools`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/attachments/convert`：附件转换
