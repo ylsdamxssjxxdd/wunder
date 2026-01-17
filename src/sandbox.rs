@@ -111,22 +111,6 @@ fn normalize_container_path(value: &str) -> Option<String> {
     Some(replaced)
 }
 
-fn clean_posix_relative(value: &str) -> String {
-    let mut segments = Vec::new();
-    for part in value.split('/') {
-        let part = part.trim();
-        if part.is_empty() || part == "." {
-            continue;
-        }
-        if part == ".." {
-            segments.pop();
-            continue;
-        }
-        segments.push(part);
-    }
-    segments.join("/")
-}
-
 fn join_posix(base: &str, child: &str) -> String {
     let base = base.trim_end_matches('/');
     let child = child.trim_start_matches('/');
@@ -206,28 +190,21 @@ fn resolve_container_workspace_root(
         .filter(|value| !value.is_empty())
         .unwrap_or("anonymous");
 
-    let workspace_root_raw = config.workspace.root.trim();
-    let workspace_root_norm = normalize_container_path(workspace_root_raw);
-    let base_root = match workspace_root_norm {
-        Some(root) if root.starts_with('/') => {
-            let trimmed = root.trim_end_matches('/');
-            if trimmed.is_empty() {
-                container_root.to_string()
-            } else if container_root == "/" || trimmed.starts_with(&container_root) {
-                trimmed.to_string()
-            } else {
-                join_posix(&container_root, "workspaces")
+    let base_root = if container_root == "/" {
+        let workspace_root_raw = config.workspace.root.trim();
+        match normalize_container_path(workspace_root_raw) {
+            Some(root) if root.starts_with('/') => {
+                let trimmed = root.trim_end_matches('/');
+                if trimmed.is_empty() {
+                    container_root.to_string()
+                } else {
+                    trimmed.to_string()
+                }
             }
+            _ => container_root.to_string(),
         }
-        Some(root) => {
-            let rel = clean_posix_relative(&root);
-            if rel.is_empty() {
-                container_root.to_string()
-            } else {
-                join_posix(&container_root, &rel)
-            }
-        }
-        None => join_posix(&container_root, "workspaces"),
+    } else {
+        container_root.to_string()
     };
 
     join_posix(&base_root, safe_id)
@@ -450,6 +427,10 @@ fn replace_paths_in_value(value: &mut Value, from_root: &str, to_root: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::SqliteStorage;
+    use crate::workspace::WorkspaceManager;
+    use std::sync::Arc;
+    use uuid::Uuid;
 
     fn with_env_var<F: FnOnce() -> R, R>(key: &str, value: Option<&str>, f: F) -> R {
         let original = env::var(key).ok();
@@ -491,5 +472,23 @@ mod tests {
                 .any(|item| item == "http://127.0.0.1:9001"));
             assert!(candidates.iter().any(|item| item == "http://sandbox:9001"));
         });
+    }
+
+    #[test]
+    fn test_container_workspace_root_prefers_container_root() {
+        let root =
+            std::env::temp_dir().join(format!("wunder-workspace-{}", Uuid::new_v4().simple()));
+        let db_path =
+            std::env::temp_dir().join(format!("wunder-test-{}.db", Uuid::new_v4().simple()));
+        let root_text = root.to_string_lossy().to_string();
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace = WorkspaceManager::new(&root_text, storage, 0);
+
+        let mut config = Config::default();
+        config.workspace.root = "./workspaces".to_string();
+        config.sandbox.container_root = "/workspaces".to_string();
+
+        let resolved = resolve_container_workspace_root(&config, &workspace, "demo_user");
+        assert_eq!(resolved, "/workspaces/demo_user");
     }
 }

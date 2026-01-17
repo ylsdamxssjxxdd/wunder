@@ -82,6 +82,10 @@ services:
 
   wunder_frontend:
     image: node:22.14
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/amd64
     container_name: wunder-frontend
     working_dir: /app
     volumes:

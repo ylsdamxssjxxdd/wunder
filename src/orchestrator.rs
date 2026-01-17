@@ -460,7 +460,9 @@ fn should_persist_stream_event(event_type: &str) -> bool {
         event_type,
         "progress"
             | "llm_request"
+            | "llm_response"
             | "knowledge_request"
+            | "compaction"
             | "tool_call"
             | "tool_result"
             | "llm_output_delta"
@@ -1218,6 +1220,28 @@ impl Orchestrator {
                 return Err(OrchestratorError::user_busy(i18n::t("error.user_session_busy")));
             }
             acquired = true;
+
+            if prepared.stream {
+                let cleanup_session = session_id.clone();
+                let storage = self.storage.clone();
+                match tokio::task::spawn_blocking(move || {
+                    storage.delete_stream_events_by_session(&cleanup_session)
+                })
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        warn!(
+                            "failed to clear stream events for session {session_id}: {err}"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "failed to clear stream events for session {session_id}: {err}"
+                        );
+                    }
+                }
+            }
 
             // 心跳续租会话锁，避免长任务被误判超时。
             let heartbeat_limiter = limiter.clone();

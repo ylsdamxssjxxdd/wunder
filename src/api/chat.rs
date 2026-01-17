@@ -1051,6 +1051,7 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
     let mut order = Vec::new();
     let mut grouped: HashMap<i64, Vec<Value>> = HashMap::new();
     let mut current_round: Option<i64> = None;
+    let mut has_round_start = false;
     let register_round = |round: i64,
                           order: &mut Vec<i64>,
                           grouped: &mut HashMap<i64, Vec<Value>>,
@@ -1073,12 +1074,19 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
                 .or_else(|| current_round.map(|value| value + 1))
                 .unwrap_or(1);
             register_round(round, &mut order, &mut grouped, &mut current_round);
+            has_round_start = true;
             continue;
         }
-        if let Some(round) = data_round {
-            register_round(round, &mut order, &mut grouped, &mut current_round);
-        } else if current_round.is_none() && is_workflow_event(event_type) {
-            register_round(1, &mut order, &mut grouped, &mut current_round);
+        if current_round.is_none() {
+            if let Some(round) = data_round {
+                register_round(round, &mut order, &mut grouped, &mut current_round);
+            } else if is_workflow_event(event_type) {
+                register_round(1, &mut order, &mut grouped, &mut current_round);
+            }
+        } else if !has_round_start {
+            if let Some(round) = data_round {
+                register_round(round, &mut order, &mut grouped, &mut current_round);
+            }
         }
         let Some(round) = current_round else {
             continue;
@@ -1120,7 +1128,9 @@ fn is_workflow_event(event_type: &str) -> bool {
         event_type,
         "progress"
             | "llm_request"
+            | "llm_response"
             | "knowledge_request"
+            | "compaction"
             | "tool_call"
             | "tool_result"
             | "llm_output_delta"
