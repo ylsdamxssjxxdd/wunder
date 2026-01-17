@@ -464,7 +464,64 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
     return parts.join('\n\n');
   };
 
+  let pendingContent = '';
+  let pendingReasoning = '';
+  let streamTimer = null;
+  const scheduleFrame =
+    typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (callback) => setTimeout(callback, 16);
+  const cancelFrame = typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout;
+
+  const flushStream = (force = false) => {
+    if (streamTimer !== null) {
+      cancelFrame(streamTimer);
+      streamTimer = null;
+    }
+    const hasContentDelta = Boolean(pendingContent);
+    const hasReasoningDelta = Boolean(pendingReasoning);
+    if (!hasContentDelta && !hasReasoningDelta && !force) {
+      return;
+    }
+    if (hasReasoningDelta) {
+      outputReasoning += pendingReasoning;
+      pendingReasoning = '';
+      outputState.reasoningStreaming = true;
+    }
+    if (hasContentDelta) {
+      outputContent += pendingContent;
+      pendingContent = '';
+      assistantMessage.content = outputContent;
+      outputState.streaming = true;
+    }
+    syncReasoningToMessage();
+    if (hasContentDelta || hasReasoningDelta) {
+      const outputId = ensureOutputItem();
+      updateWorkflowItem(assistantMessage.workflowItems, outputId, {
+        detail: buildOutputDetail()
+      });
+    }
+  };
+
+  const scheduleStreamFlush = () => {
+    if (streamTimer !== null) return;
+    streamTimer = scheduleFrame(() => {
+      streamTimer = null;
+      flushStream();
+    });
+  };
+
+  const resetStreamPending = () => {
+    if (streamTimer !== null) {
+      cancelFrame(streamTimer);
+      streamTimer = null;
+    }
+    pendingContent = '';
+    pendingReasoning = '';
+  };
+
   const clearVisibleOutput = () => {
+    resetStreamPending();
     assistantMessage.content = '';
     outputContent = '';
     outputReasoning = '';
@@ -613,19 +670,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         const reasoningDeltaText =
           typeof reasoningDelta === 'string' ? reasoningDelta : reasoningDelta ? String(reasoningDelta) : '';
         if (reasoningDeltaText) {
-          outputReasoning += reasoningDeltaText;
+          pendingReasoning += reasoningDeltaText;
           outputState.reasoningStreaming = true;
         }
         if (typeof delta === 'string' && delta) {
-          outputContent += delta;
-          assistantMessage.content += delta;
+          pendingContent += delta;
           outputState.streaming = true;
         }
-        syncReasoningToMessage();
-        const outputId = ensureOutputItem();
-        updateWorkflowItem(assistantMessage.workflowItems, outputId, {
-          detail: buildOutputDetail()
-        });
+        if (pendingContent || pendingReasoning) {
+          ensureOutputItem();
+          scheduleStreamFlush();
+        }
         break;
       }
       case 'llm_output': {
@@ -640,6 +695,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
           clearVisibleOutput();
           visibleRound = round;
         }
+        flushStream(true);
         const content = data?.content ?? payload?.content ?? data?.output ?? payload?.output ?? '';
         const reasoningRaw =
           data?.reasoning ??
@@ -674,6 +730,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         break;
       }
       case 'final': {
+        flushStream(true);
         const answer =
           data?.answer ??
           payload?.answer ??
@@ -688,6 +745,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
           outputContent = answerText;
           visibleRound = lastRound ?? visibleRound;
         }
+        outputState.streaming = false;
         outputState.reasoningStreaming = false;
         syncReasoningToMessage();
         const outputId = ensureOutputItem();
@@ -720,6 +778,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
   };
 
   const finalize = () => {
+    flushStream(true);
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();

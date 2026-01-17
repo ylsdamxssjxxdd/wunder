@@ -281,7 +281,12 @@
                     </el-tooltip>
                   </template>
                   <template v-else-if="message.role === 'assistant'">
-                    <div class="markdown-body" v-html="renderAssistantMarkdown(message.content)"></div>
+                    <div
+                      v-if="isAssistantStreaming(message)"
+                      class="markdown-body streaming"
+                      v-text="message.content"
+                    ></div>
+                    <div v-else class="markdown-body" v-html="renderAssistantMarkdown(message)"></div>
                   </template>
                   <template v-else>
                     {{ message.content }}
@@ -476,8 +481,25 @@ const shouldShowMessageText = (message) => {
   return Boolean(String(message.content || '').trim());
 };
 
+const markdownCache = new WeakMap();
+
+const isAssistantStreaming = (message) => {
+  if (!message || message.role !== 'assistant') return false;
+  return Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete);
+};
+
 // AI 回复使用 Markdown 渲染，主要用于表格等富文本展示
-const renderAssistantMarkdown = (content) => renderMarkdown(content || '');
+const renderAssistantMarkdown = (message) => {
+  const content = String(message?.content || '');
+  if (!content) return '';
+  const cached = markdownCache.get(message);
+  if (cached && cached.source === content) {
+    return cached.html;
+  }
+  const html = renderMarkdown(content);
+  markdownCache.set(message, { source: content, html });
+  return html;
+};
 
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];

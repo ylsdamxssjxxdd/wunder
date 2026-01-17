@@ -2176,6 +2176,12 @@ body {
   color: var(--chat-text);
 }
 
+.chat-shell .message-text .markdown-body.streaming {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .chat-shell .message-text .markdown-body p {
   margin: 0 0 8px;
 }

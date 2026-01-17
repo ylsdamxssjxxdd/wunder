@@ -212,7 +212,9 @@
   - `content`：解析后的 Markdown 文本
   - `converter`：转换器（doc2md/text/html/code/pdf）
   - `warnings`：转换警告列表
-- 说明：接口无需鉴权，支持 doc2md 扩展名；系统内部附件转换统一调用该逻辑。
+- 说明：接口无需鉴权，系统内部附件转换统一调用该逻辑。
+- 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
+- 上传限制：默认 200MB。
 
 ### 4.1.2.12 `/wunder/attachments/convert`
 
@@ -668,6 +670,18 @@
 
 - 方法：`GET`
 - 说明：提供系统介绍 PPT 英文版静态资源（`docs/ppt-en` 目录，页面拆分为 `slides/*.js`，顺序由 `slides/manifest.js` 维护），用于前端系统介绍页面嵌入或独立打开。
+
+### 4.1.24.3 管理端前端页面与接口
+
+- 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`。
+- 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`。
+- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
+- 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
+- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/server`、`/wunder/i18n`。
+- 内置工具/MCP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
+- 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
+- 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`。
+- 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
 
 ### 4.1.25 `/wunder/admin/tools`
 
@@ -1136,6 +1150,9 @@
 - `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
   - 返回：`data.cancelled`
 - `POST /wunder/chat/system-prompt`：系统提示词预览
+  - 入参（JSON）：`selected_shared_tools`（可选）
+  - 返回：`data.prompt`
+- `POST /wunder/chat/sessions/{session_id}/system-prompt`：会话系统提示词预览（校验会话归属）
   - 入参（JSON）：`selected_shared_tools`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/attachments/convert`：附件转换

@@ -21,40 +21,40 @@ wunder can expose itself as an MCP tool and become the ultimate tool.
 - Debugging & monitoring: `/wunder/web` console and `/wunder/admin/monitor` resource/session metrics.
 
 ## 2. Quick Start
-### 2.1 Build base image
+### 2.1 Update configuration
+Copy the example config to the real config: `config/wunder-example.yaml` -> `config/wunder.yaml`
+Copy the env example: `.env.example` -> `.env`
+Update `WUNDER_API_KEY` in `.env`.
+
+### 2.2 Start the service
 x86
 ```bash
-docker buildx build --platform linux/x86_64 -t wunder:20250105-x86 -f Dockerfile .
+docker compose -f docker-compose.rust.x86.yml up
 ```
 arm
 ```bash
-docker buildx build --platform linux/arm64 -t wunder:20250105-arm64 -f Dockerfile .
+docker compose -f docker-compose.rust.arm.yml up
 ```
+The first start pulls base images and builds dependencies, so it may take a while.
 
-### 2.2 Update configuration
-Copy the example config to the real config: `config/wunder-example.yaml` -> `config/wunder.yaml`
-Copy the env example: `.env.example` -> `.env`
-Update `WUNDER_API_KEY` (and any other overrides) in `.env`.
-
-### 2.3 Start the service
-```bash
-docker compose up
-```
-The first `docker compose up` downloads images and dependencies and may take a few minutes, so it is normal to see sparse logs initially.
-
-
-### 2.4 Open the settings panel
+### 2.3 Open the settings panel
 Open in browser:
 ```
-http://127.0.0.1:18000/wunder/web
+http://127.0.0.1:18000
 ```
 Go to the Settings page, fill in the API base and key, and it will connect to the backend.
 
-### 2.5 Open the model config panel
+### 2.4 Open the model config panel
 Add a model and save. You can use the probe button to get the max context length.
 
-### 2.6 Open the debug panel
+### 2.5 Open the debug panel
 Go to Debug and send a test question.
+
+### 2.6 Open the user frontend
+Open in browser:
+```
+http://127.0.0.1:18001
+```
 
 ## 3. Request Examples
 ### 3.1 Non-stream request
@@ -91,13 +91,12 @@ curl -X GET http://127.0.0.1:18000/wunder/tools ^
 ```
 
 ## 4. API Entry Overview
-See `docs/API文档.en.md` for details.
+See `docs/API-Documentation.md` for details.
 
 Core endpoints:
 - `POST /wunder`
 - `POST /wunder/system_prompt`
 - `GET /wunder/tools`
-- `GET /wunder/i18n`
 
 Admin & ops:
 - `GET/POST /wunder/admin/llm`
@@ -140,7 +139,6 @@ Base config: `config/wunder.yaml`
 Persistent overrides: `data/config/wunder.override.yaml` (admin changes are written here)
 LLM/MCP/tools are recommended to be configured via the admin console and saved to the override file.
 - `server`: service port and stream chunk size
-- `i18n`: default and supported languages
 - `llm`: model service configuration
 - `mcp`: MCP service configuration
 - `skills`: skill paths and enabled list
@@ -151,7 +149,7 @@ LLM/MCP/tools are recommended to be configured via the admin console and saved t
 - `cors`: CORS policy
 
 ## 8. Tests
-See `docs/测试方案.en.md` for a full test plan.
+See `docs/Test-Plan.md` for a full test plan.
 
 ## 9. Project Structure
 ```
@@ -170,10 +168,6 @@ tests/               # functional and load tests
 ```
 
 ## 10. Related Docs
-- Design: `docs/设计方案.en.md`
-- API: `docs/API文档.en.md`
-- Test plan: `docs/测试方案.en.md`
-- System overview: `docs/系统介绍.en.md`
-- Request samples: `docs/请求示例.en.md`
-- Narrative outline: `docs/叙事主线.en.md`
-- PPT (EN): `/wunder/ppt-en`
+- Design: `docs/Design-Plan.md`
+- API: `docs/API-Documentation.md`
+- Test plan: `docs/Test-Plan.md`
