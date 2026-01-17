@@ -6,9 +6,12 @@ import '@/styles/main.css';
 
 import App from './App.vue';
 import router from './router';
+import { usePerformanceStore } from '@/stores/performance';
 
 const app = createApp(App);
-app.use(createPinia());
+const pinia = createPinia();
+app.use(pinia);
+usePerformanceStore(pinia);
 app.use(ElementPlus);
 app.use(router);
 app.mount('#app');

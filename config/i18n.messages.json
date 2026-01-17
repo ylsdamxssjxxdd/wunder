@@ -8,8 +8,8 @@
     "zh-CN": "请参考以下图片。"
   },
   "attachment.label": {
-    "en-US": "User provided",
-    "zh-CN": "用户提供"
+    "en-US": "The content of the file provided by the user",
+    "zh-CN": "用户提供的文件内容"
   },
   "attachment.label.separator": {
     "en-US": ": ",

@@ -113,7 +113,7 @@ knowledge: # 字面知识库配置
       enabled: true # 是否启用该知识库
 
 workspace: # 工作区配置
-  root: ./workspaces # 工作区根目录（按 user_id 划分子目录）
+  root: ${WUNDER_WORKSPACE_ROOT:-./workspaces} # 工作区根目录（按 user_id 划分子目录）
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
@@ -133,7 +133,7 @@ observability: # 可观测性配置
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）
-  image: wunder:20250105-x86 # 沙盒容器镜像名称
+  image: wunder-x86 # 沙盒容器镜像名称
   endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
   container_root: /workspaces # 容器内项目根目录
   network: bridge # 容器网络模式（bridge/host）

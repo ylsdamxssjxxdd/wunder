@@ -338,7 +338,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
@@ -445,11 +445,25 @@ const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
+  const persisted = chatStore.getPersistedState();
   await chatStore.loadSessions();
-  if (chatStore.sessions.length > 0) {
-    await chatStore.loadSessionDetail(chatStore.sessions[0].id);
-  } else {
+  if (persisted?.draft) {
     chatStore.openDraftSession();
+    return;
+  }
+  if (chatStore.sessions.length === 0) {
+    chatStore.openDraftSession();
+    return;
+  }
+  const preferredId = persisted?.activeSessionId || '';
+  const matched = preferredId
+    ? chatStore.sessions.find((session) => session.id === preferredId)
+    : null;
+  const targetId = matched?.id || chatStore.sessions[0].id;
+  try {
+    await chatStore.loadSessionDetail(targetId);
+  } catch (error) {
+    await chatStore.loadSessionDetail(chatStore.sessions[0].id);
   }
 };
 
@@ -557,6 +571,15 @@ const handleLogout = () => {
 
 const handleHistoryScroll = (event) => {
   historyScrollTop.value = event.target.scrollTop || 0;
+};
+
+const flushChatSnapshot = () => {
+  chatStore.scheduleSnapshot(true);
+};
+
+const handleBeforeUnload = () => {
+  chatStore.markPageUnloading();
+  flushChatSnapshot();
 };
 
 // 触发 Popper 重新计算，避免首帧内容变化导致溢出
@@ -669,6 +692,13 @@ const formatTitle = (title) => {
 onMounted(async () => {
   await init();
   loadToolSummary();
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  document.addEventListener('visibilitychange', flushChatSnapshot);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload);
+  document.removeEventListener('visibilitychange', flushChatSnapshot);
 });
 
 watch(

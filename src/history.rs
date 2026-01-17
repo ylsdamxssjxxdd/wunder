@@ -100,7 +100,6 @@ impl HistoryManager {
             .unwrap_or_default();
         let (filtered_items, summary_item, _, _) = filter_history_items(&history);
         let mut messages = Vec::new();
-        let mut has_summary = false;
         if let Some(summary_item) = summary_item {
             let summary_content = Self::format_compaction_summary(
                 summary_item
@@ -109,13 +108,6 @@ impl HistoryManager {
                     .unwrap_or(""),
             );
             messages.push(json!({ "role": "user", "content": summary_content }));
-            has_summary = true;
-        }
-        if !has_summary {
-            let artifact_content = self.load_artifact_index_message(workspace, user_id, session_id);
-            if !artifact_content.is_empty() {
-                messages.push(json!({ "role": "system", "content": artifact_content }));
-            }
         }
         for item in filtered_items {
             if let Some(message) = build_message_from_item(&item, true) {
@@ -432,6 +424,15 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
     Some(message)
 }
 
+fn is_tool_call_item(item: &Value) -> bool {
+    item.get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("type"))
+        .and_then(Value::as_str)
+        .map(|value| value == "tool_call")
+        .unwrap_or(false)
+}
+
 fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option<f64>, i64) {
     let mut summary_index: i64 = -1;
     let mut summary_item: Option<Value> = None;
@@ -443,6 +444,7 @@ fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option
     }
     let compacted_until_ts = extract_compacted_until_ts(summary_item.as_ref());
     let mut filtered = Vec::new();
+    let mut skip_next_assistant = false;
     for (index, item) in history.iter().enumerate() {
         if HistoryManager::is_compaction_summary_item(item) {
             continue;
@@ -463,6 +465,16 @@ fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option
             }
         } else if summary_index >= 0 && index as i64 <= summary_index {
             continue;
+        }
+        if skip_next_assistant {
+            if role == "assistant" {
+                skip_next_assistant = false;
+                continue;
+            }
+            skip_next_assistant = false;
+        }
+        if role == "assistant" && is_tool_call_item(item) {
+            skip_next_assistant = true;
         }
         filtered.push(item.clone());
     }

@@ -1,16 +1,20 @@
-﻿const parseSseBlock = (block) => {
+const parseSseBlock = (block) => {
   const lines = block.split(/\r?\n/);
   let eventType = 'message';
+  let eventId = '';
   const dataLines = [];
   lines.forEach((line) => {
     if (line.startsWith('event:')) {
       eventType = line.slice(6).trim();
+    } else if (line.startsWith('id:')) {
+      eventId = line.slice(3).trim();
     } else if (line.startsWith('data:')) {
       dataLines.push(line.slice(5).trim());
     }
   });
   return {
     eventType,
+    eventId,
     dataText: dataLines.join('\n')
   };
 };
@@ -29,8 +33,8 @@ export const consumeSseStream = async (response, onEvent) => {
     buffer = parts.pop() || '';
     parts.forEach((part) => {
       if (!part.trim()) return;
-      const { eventType, dataText } = parseSseBlock(part);
-      onEvent(eventType, dataText);
+      const { eventType, dataText, eventId } = parseSseBlock(part);
+      onEvent(eventType, dataText, eventId);
     });
   };
 
@@ -42,7 +46,7 @@ export const consumeSseStream = async (response, onEvent) => {
   }
 
   if (buffer.trim()) {
-    const { eventType, dataText } = parseSseBlock(buffer);
-    onEvent(eventType, dataText);
+    const { eventType, dataText, eventId } = parseSseBlock(buffer);
+    onEvent(eventType, dataText, eventId);
   }
 };

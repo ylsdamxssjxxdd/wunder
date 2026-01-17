@@ -1137,7 +1137,7 @@
   - 返回：`data.total`、`data.items`
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
-  - 返回：`data`（会话信息 + messages）
+  - 返回：`data`（会话信息 + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
   - 返回：`data.id`、`data.rounds`（round/events）
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
@@ -1146,7 +1146,7 @@
   - 入参（JSON）：`content`、`stream`（默认 true）、`selected_shared_tools`（可选）、`attachments`（可选）
   - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
-  - Query：`after_event_id`（可选）
+  - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
 - `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
   - 返回：`data.cancelled`
 - `POST /wunder/chat/system-prompt`：系统提示词预览

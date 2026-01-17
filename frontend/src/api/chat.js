@@ -37,7 +37,15 @@ export const sendMessageStream = (id, payload, options = {}) => {
 
 export const resumeMessageStream = (id, options = {}) => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
-  return fetch(buildUrl(`/chat/sessions/${id}/resume`), {
+  const params = new URLSearchParams();
+  if (Number.isFinite(options.afterEventId) && options.afterEventId > 0) {
+    params.set('after_event_id', String(options.afterEventId));
+  }
+  const suffix = params.toString();
+  const url = suffix
+    ? buildUrl(`/chat/sessions/${id}/resume?${suffix}`)
+    : buildUrl(`/chat/sessions/${id}/resume`);
+  return fetch(url, {
     method: 'GET',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {})

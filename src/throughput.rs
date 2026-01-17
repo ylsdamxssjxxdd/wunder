@@ -776,6 +776,9 @@ impl SpeedAccumulator {
     }
 
     fn total_prefill_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
+        if self.prefill_speed_count > 0 {
+            return Some(self.prefill_speed_sum);
+        }
         if elapsed_s <= 0.0 {
             return None;
         }
@@ -786,14 +789,15 @@ impl SpeedAccumulator {
         };
         if tokens > 0 {
             Some(tokens as f64 / elapsed_s)
-        } else if self.prefill_speed_count > 0 {
-            Some(self.prefill_speed_sum)
         } else {
             None
         }
     }
 
     fn total_decode_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
+        if self.decode_speed_count > 0 {
+            return Some(self.decode_speed_sum);
+        }
         if elapsed_s <= 0.0 {
             return None;
         }
@@ -804,8 +808,6 @@ impl SpeedAccumulator {
         };
         if tokens > 0 {
             Some(tokens as f64 / elapsed_s)
-        } else if self.decode_speed_count > 0 {
-            Some(self.decode_speed_sum)
         } else {
             None
         }

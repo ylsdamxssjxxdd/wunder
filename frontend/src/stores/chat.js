@@ -24,6 +24,285 @@ const buildMessage = (role, content) => ({
 });
 
 const DEFAULT_GREETING = '你好！我是智能体助手，有什么可以帮你的吗？';
+const CHAT_STATE_KEY = 'wille-chat-state';
+
+const buildChatPersistState = () => ({
+  activeSessionId: '',
+  draft: false
+});
+
+const normalizeChatPersistState = (value) => {
+  if (!value || typeof value !== 'object') {
+    return buildChatPersistState();
+  }
+  return {
+    activeSessionId: typeof value.activeSessionId === 'string' ? value.activeSessionId : '',
+    draft: value.draft === true
+  };
+};
+
+const readChatPersistState = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_STATE_KEY);
+    if (!raw) return buildChatPersistState();
+    return normalizeChatPersistState(JSON.parse(raw));
+  } catch (error) {
+    return buildChatPersistState();
+  }
+};
+
+const writeChatPersistState = (patch) => {
+  try {
+    const current = readChatPersistState();
+    const next = normalizeChatPersistState({ ...current, ...patch });
+    localStorage.setItem(CHAT_STATE_KEY, JSON.stringify(next));
+  } catch (error) {
+    // ignore persistence errors
+  }
+};
+
+const persistActiveSession = (sessionId) => {
+  writeChatPersistState({ activeSessionId: String(sessionId || ''), draft: false });
+};
+
+const persistDraftSession = () => {
+  writeChatPersistState({ activeSessionId: '', draft: true });
+};
+
+const CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
+const SNAPSHOT_FLUSH_MS = 400;
+const MAX_SNAPSHOT_MESSAGES = 50;
+let snapshotTimer = null;
+let pageUnloading = false;
+
+const normalizeStreamEventId = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const normalizeStreamRound = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const assignStreamEventId = (message, eventId) => {
+  if (!message || message.role !== 'assistant') return;
+  const normalized = normalizeStreamEventId(eventId);
+  if (normalized === null) return;
+  const current = normalizeStreamEventId(message.stream_event_id);
+  if (current === null || normalized > current) {
+    message.stream_event_id = normalized;
+  }
+};
+
+const normalizeSnapshotMessage = (message) => {
+  if (!message || typeof message !== 'object') return null;
+  const base = {
+    role: message.role,
+    content: typeof message.content === 'string' ? message.content : String(message.content || ''),
+    created_at: message.created_at || ''
+  };
+  if (message.role === 'assistant') {
+    base.reasoning = message.reasoning || '';
+    base.reasoningStreaming = Boolean(message.reasoningStreaming);
+    base.workflowStreaming = Boolean(message.workflowStreaming);
+    base.stream_incomplete = Boolean(message.stream_incomplete);
+    const streamEventId = normalizeStreamEventId(message.stream_event_id);
+    if (streamEventId !== null) {
+      base.stream_event_id = streamEventId;
+    }
+    const streamRound = normalizeStreamRound(message.stream_round);
+    if (streamRound !== null) {
+      base.stream_round = streamRound;
+    }
+    if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
+      base.workflowItems = message.workflowItems;
+    }
+  }
+  if (message.isGreeting) {
+    base.isGreeting = true;
+  }
+  return base;
+};
+
+const buildSnapshotMessages = (messages = []) => {
+  const sliced = messages.slice(-MAX_SNAPSHOT_MESSAGES);
+  let lastAssistantIndex = -1;
+  for (let i = sliced.length - 1; i >= 0; i -= 1) {
+    if (sliced[i]?.role === 'assistant') {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+  return sliced
+    .map((message, index) => {
+      const normalized = normalizeSnapshotMessage(message);
+      if (!normalized) return null;
+      const shouldKeepWorkflow =
+        index === lastAssistantIndex || normalized.stream_incomplete || normalized.workflowStreaming;
+      if (!shouldKeepWorkflow) {
+        delete normalized.workflowItems;
+      }
+      return normalized;
+    })
+    .filter(Boolean);
+};
+
+const buildChatSnapshot = (storeState) => {
+  const sessionId = String(storeState.activeSessionId || '');
+  if (!sessionId) return null;
+  const messages = buildSnapshotMessages(storeState.messages || []);
+  if (!messages.length) return null;
+  return {
+    sessionId,
+    messages,
+    updatedAt: Date.now()
+  };
+};
+
+const readChatSnapshot = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const sessionId = String(parsed.sessionId || '');
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+    if (!sessionId || !messages.length) return null;
+    return {
+      sessionId,
+      messages
+    };
+  } catch (error) {
+    return null;
+  }
+};
+
+const writeChatSnapshot = (payload) => {
+  if (!payload) return;
+  try {
+    localStorage.setItem(CHAT_SNAPSHOT_KEY, JSON.stringify(payload));
+  } catch (error) {
+    // ignore persistence errors
+  }
+};
+
+const clearChatSnapshot = (sessionId) => {
+  try {
+    const current = readChatSnapshot();
+    if (!current || current.sessionId !== String(sessionId || '')) return;
+    localStorage.removeItem(CHAT_SNAPSHOT_KEY);
+  } catch (error) {
+    // ignore storage errors
+  }
+};
+
+const scheduleChatSnapshot = (storeState, immediate = false) => {
+  const flush = () => {
+    const snapshot = buildChatSnapshot(storeState);
+    if (snapshot) {
+      writeChatSnapshot(snapshot);
+    }
+  };
+  if (immediate) {
+    flush();
+    return;
+  }
+  if (snapshotTimer !== null) return;
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = null;
+    flush();
+  }, SNAPSHOT_FLUSH_MS);
+};
+
+const mergeSnapshotIntoMessages = (messages, snapshot) => {
+  if (!snapshot || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
+    return messages;
+  }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return snapshot.messages.map((item) => normalizeSnapshotMessage(item)).filter(Boolean);
+  }
+  const snapshotMessages = snapshot.messages
+    .map((item) => normalizeSnapshotMessage(item))
+    .filter(Boolean);
+  if (!snapshotMessages.length) {
+    return messages;
+  }
+  const snapshotLastAssistant = [...snapshotMessages]
+    .reverse()
+    .find((message) => message.role === 'assistant');
+  const snapshotLastMessage = snapshotMessages[snapshotMessages.length - 1];
+  const serverLastMessage = messages[messages.length - 1];
+  if (
+    serverLastMessage?.role === 'user' &&
+    snapshotLastMessage?.role === 'assistant' &&
+    snapshotLastMessage.stream_incomplete
+  ) {
+    return [...messages, { ...snapshotLastMessage }];
+  }
+  if (!snapshotLastAssistant) return messages;
+  let lastAssistantIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'assistant') {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+  if (lastAssistantIndex < 0) return messages;
+  const target = messages[lastAssistantIndex];
+  const snapshotContent = String(snapshotLastAssistant.content || '');
+  const serverContent = String(target.content || '');
+  const snapshotEventId = normalizeStreamEventId(snapshotLastAssistant.stream_event_id);
+  const targetEventId = normalizeStreamEventId(target.stream_event_id);
+  const snapshotRound = normalizeStreamRound(snapshotLastAssistant.stream_round);
+  const targetRound = normalizeStreamRound(target.stream_round);
+  const shouldMergeContent =
+    snapshotContent.length > serverContent.length ||
+    (snapshotLastAssistant.stream_incomplete && serverContent.length === 0);
+  const shouldMergeFlags = Boolean(
+    snapshotLastAssistant.stream_incomplete ||
+      snapshotLastAssistant.workflowStreaming ||
+      snapshotLastAssistant.reasoningStreaming ||
+      (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length > 0) ||
+      snapshotRound !== null ||
+      snapshotEventId !== null
+  );
+  if (!shouldMergeContent && !shouldMergeFlags) {
+    return messages;
+  }
+  if (shouldMergeContent && snapshotContent) {
+    target.content = snapshotContent;
+  }
+  if (snapshotLastAssistant.reasoning) {
+    target.reasoning = snapshotLastAssistant.reasoning;
+  }
+  if (shouldMergeFlags) {
+    target.reasoningStreaming = Boolean(
+      snapshotLastAssistant.reasoningStreaming || target.reasoningStreaming
+    );
+    if (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length) {
+      target.workflowItems = snapshotLastAssistant.workflowItems;
+    }
+    target.workflowStreaming = Boolean(
+      snapshotLastAssistant.workflowStreaming || target.workflowStreaming
+    );
+    target.stream_incomplete = Boolean(
+      snapshotLastAssistant.stream_incomplete || target.stream_incomplete
+    );
+    if (snapshotRound !== null && targetRound === null) {
+      target.stream_round = snapshotRound;
+    }
+    if (snapshotRound !== null && targetRound !== null && snapshotRound > targetRound) {
+      target.stream_round = snapshotRound;
+    }
+    if (snapshotEventId !== null && (targetEventId === null || snapshotEventId > targetEventId)) {
+      target.stream_event_id = snapshotEventId;
+    }
+  }
+  return messages;
+};
 
 // 演示模式聊天缓存结构（仅用于本地暂存）
 const buildDemoChatState = () => ({
@@ -374,13 +653,14 @@ const abortSendStream = () => {
   }
 };
 
-const createWorkflowProcessor = (assistantMessage, workflowState) => {
+const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
   let outputItemId = null;
   const blockedRounds = new Set();
   let lastRound = null;
-  let visibleRound = null;
+  const initialRound = normalizeStreamRound(assistantMessage.stream_round);
+  let visibleRound = initialRound;
   // 参照调试面板：记录模型输出轮次与内容，方便还原事件日志
   const outputState = {
     streaming: false,
@@ -501,6 +781,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         detail: buildOutputDetail()
       });
     }
+    if (hasContentDelta || hasReasoningDelta) {
+      notifySnapshot();
+    }
   };
 
   const scheduleStreamFlush = () => {
@@ -520,6 +803,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
     pendingReasoning = '';
   };
 
+  const notifySnapshot = () => {
+    if (typeof onSnapshot === 'function') {
+      onSnapshot();
+    }
+  };
+
   const clearVisibleOutput = () => {
     resetStreamPending();
     assistantMessage.content = '';
@@ -527,6 +816,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
     outputReasoning = '';
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
+    assistantMessage.stream_round = null;
     syncReasoningToMessage();
     if (outputItemId) {
       updateWorkflowItem(assistantMessage.workflowItems, outputItemId, {
@@ -545,6 +835,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         registerToolItem(toolName, item.id);
       }
     });
+  }
+  if (initialRound !== null) {
+    updateRoundState(initialRound);
   }
 
   const ensureOutputItem = () => {
@@ -657,13 +950,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         const round = resolveRound(payload, data);
         if (round !== null) {
           lastRound = round;
+          assistantMessage.stream_round = round;
         }
         if (round !== null && blockedRounds.has(round)) {
           break;
         }
         if (round !== null && visibleRound !== round) {
-          clearVisibleOutput();
-          visibleRound = round;
+          if (visibleRound === null && outputContent) {
+            visibleRound = round;
+          } else {
+            clearVisibleOutput();
+            visibleRound = round;
+          }
         }
         const delta = data?.delta ?? payload?.delta ?? data?.content ?? payload?.content ?? '';
         const reasoningDelta = data?.reasoning_delta ?? payload?.reasoning_delta ?? '';
@@ -687,13 +985,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         const round = resolveRound(payload, data);
         if (round !== null) {
           lastRound = round;
+          assistantMessage.stream_round = round;
         }
         if (round !== null && blockedRounds.has(round)) {
           break;
         }
         if (round !== null && visibleRound !== round) {
-          clearVisibleOutput();
-          visibleRound = round;
+          if (visibleRound === null && outputContent) {
+            visibleRound = round;
+          } else {
+            clearVisibleOutput();
+            visibleRound = round;
+          }
         }
         flushStream(true);
         const content = data?.content ?? payload?.content ?? data?.output ?? payload?.output ?? '';
@@ -745,6 +1048,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
           outputContent = answerText;
           visibleRound = lastRound ?? visibleRound;
         }
+        if (lastRound !== null) {
+          assistantMessage.stream_round = lastRound;
+        }
         outputState.streaming = false;
         outputState.reasoningStreaming = false;
         syncReasoningToMessage();
@@ -775,6 +1081,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         break;
       }
     }
+    notifySnapshot();
   };
 
   const finalize = () => {
@@ -787,6 +1094,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState) => {
         status: 'completed'
       });
     }
+    notifySnapshot();
   };
 
   return { handleEvent, finalize };
@@ -805,7 +1113,7 @@ const hydrateMessage = (message, workflowState) => {
     reasoningStreaming: Boolean(message?.reasoningStreaming)
   };
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
-    const processor = createWorkflowProcessor(hydrated, workflowState);
+    const processor = createWorkflowProcessor(hydrated, workflowState, null);
     message.workflow_events.forEach((event) => {
       processor.handleEvent(event?.event || '', event?.raw || '');
     });
@@ -822,6 +1130,22 @@ export const useChatStore = defineStore('chat', {
     loading: false
   }),
   actions: {
+    markPageUnloading() {
+      pageUnloading = true;
+    },
+    getPersistedState() {
+      return readChatPersistState();
+    },
+    getSnapshotForSession(sessionId) {
+      const snapshot = readChatSnapshot();
+      if (!snapshot || snapshot.sessionId !== String(sessionId || '')) {
+        return null;
+      }
+      return snapshot;
+    },
+    scheduleSnapshot(immediate = false) {
+      scheduleChatSnapshot(this, immediate);
+    },
     async loadSessions() {
       const { data } = await listSessions();
       this.sessions = data.data.items || [];
@@ -835,6 +1159,7 @@ export const useChatStore = defineStore('chat', {
       this.loading = false;
       this.activeSessionId = null;
       this.messages = ensureGreetingMessage([]);
+      persistDraftSession();
     },
     async createSession(payload = {}) {
       abortResumeStream();
@@ -844,6 +1169,7 @@ export const useChatStore = defineStore('chat', {
       this.activeSessionId = session.id;
       this.messages = ensureGreetingMessage([]);
       getSessionWorkflowState(session.id, { reset: true });
+      persistActiveSession(session.id);
       syncDemoChatCache({
         sessions: this.sessions,
         sessionId: this.activeSessionId,
@@ -853,18 +1179,27 @@ export const useChatStore = defineStore('chat', {
     },
     async loadSessionDetail(sessionId) {
       abortResumeStream();
+      this.activeSessionId = sessionId;
+      persistActiveSession(sessionId);
+      const snapshot = this.getSnapshotForSession(sessionId);
+      if (snapshot?.messages?.length) {
+        const cachedMessages = snapshot.messages
+          .map((item) => normalizeSnapshotMessage(item))
+          .filter(Boolean);
+        this.messages = ensureGreetingMessage(cachedMessages);
+      }
       const [sessionRes, eventsRes] = await Promise.all([
         getSession(sessionId),
         getSessionEvents(sessionId).catch(() => null)
       ]);
       const data = sessionRes?.data;
       const rounds = eventsRes?.data?.data?.rounds || [];
-      this.activeSessionId = sessionId;
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
       const rawMessages = attachWorkflowEvents(data?.data?.messages || [], rounds);
-      const messages = rawMessages.map((message) =>
+      let messages = rawMessages.map((message) =>
         hydrateMessage(message, workflowState)
       );
+      messages = mergeSnapshotIntoMessages(messages, snapshot);
       this.messages = ensureGreetingMessage(messages);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]
@@ -873,6 +1208,7 @@ export const useChatStore = defineStore('chat', {
       if (pendingMessage) {
         this.resumeStream(sessionId, pendingMessage);
       }
+      this.scheduleSnapshot(true);
       return data.data;
     },
     async deleteSession(sessionId) {
@@ -884,6 +1220,7 @@ export const useChatStore = defineStore('chat', {
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       sessionWorkflowState.delete(String(targetId));
       removeDemoChatSession(targetId);
+      clearChatSnapshot(targetId);
       if (this.activeSessionId === targetId) {
         if (this.sessions.length > 0) {
           await this.loadSessionDetail(this.sessions[0].id);
@@ -919,15 +1256,23 @@ export const useChatStore = defineStore('chat', {
       const assistantMessageRaw = {
         ...buildMessage('assistant', ''),
         workflowItems: [],
-        workflowStreaming: true
+        workflowStreaming: true,
+        stream_incomplete: true,
+        stream_event_id: 0,
+        stream_round: null
       };
       this.messages.push(assistantMessageRaw);
       const assistantMessage = this.messages[this.messages.length - 1];
+      this.scheduleSnapshot(true);
 
       this.loading = true;
 
       const workflowState = getSessionWorkflowState(this.activeSessionId);
-      const processor = createWorkflowProcessor(assistantMessage, workflowState);
+      const processor = createWorkflowProcessor(
+        assistantMessage,
+        workflowState,
+        () => this.scheduleSnapshot()
+      );
 
       try {
         sendController = new AbortController();
@@ -947,12 +1292,17 @@ export const useChatStore = defineStore('chat', {
           const errorText = await response.text();
           throw new Error(errorText || `请求失败 (${response.status})`);
         }
-        await consumeSseStream(response, processor.handleEvent);
+        await consumeSseStream(response, (eventType, dataText, eventId) => {
+          assignStreamEventId(assistantMessage, eventId);
+          processor.handleEvent(eventType, dataText);
+        });
       } catch (error) {
-        if (error?.name === 'AbortError' || stopRequested) {
-          assistantMessage.workflowItems.push(
-            buildWorkflowItem('已终止', '用户终止了当前请求', 'failed')
-          );
+        if (error?.name === 'AbortError' || stopRequested || pageUnloading) {
+          if (!pageUnloading) {
+            assistantMessage.workflowItems.push(
+              buildWorkflowItem('已终止', '用户终止了当前请求', 'failed')
+            );
+          }
         } else {
           assistantMessage.workflowItems.push(
             buildWorkflowItem('请求失败', error?.message || '无法获取回复', 'failed')
@@ -963,6 +1313,7 @@ export const useChatStore = defineStore('chat', {
         }
       } finally {
         assistantMessage.workflowStreaming = false;
+        assistantMessage.stream_incomplete = false;
         this.loading = false;
         processor.finalize();
         sendController = null;
@@ -972,6 +1323,7 @@ export const useChatStore = defineStore('chat', {
           sessionId: this.activeSessionId,
           messages: this.messages
         });
+        this.scheduleSnapshot(true);
       }
     },
     async stopStream() {
@@ -989,19 +1341,29 @@ export const useChatStore = defineStore('chat', {
     },
     async resumeStream(sessionId, message) {
       if (!message || !message.stream_incomplete) return;
+      this.loading = true;
       message.workflowStreaming = true;
+      message.stream_incomplete = true;
+      this.scheduleSnapshot();
       const workflowState = getSessionWorkflowState(sessionId);
-      const processor = createWorkflowProcessor(message, workflowState);
+      const processor = createWorkflowProcessor(message, workflowState, () => this.scheduleSnapshot());
       abortResumeStream();
       resumeController = new AbortController();
       let aborted = false;
+      const afterEventId = normalizeStreamEventId(message.stream_event_id);
       try {
-        const response = await resumeMessageStream(sessionId, { signal: resumeController.signal });
+        const response = await resumeMessageStream(sessionId, {
+          signal: resumeController.signal,
+          afterEventId
+        });
         if (!response.ok) {
           const errorText = await response.text();
           throw new Error(errorText || `恢复失败 (${response.status})`);
         }
-        await consumeSseStream(response, processor.handleEvent);
+        await consumeSseStream(response, (eventType, dataText, eventId) => {
+          assignStreamEventId(message, eventId);
+          processor.handleEvent(eventType, dataText);
+        });
       } catch (error) {
         if (error?.name === 'AbortError') {
           aborted = true;
@@ -1018,10 +1380,12 @@ export const useChatStore = defineStore('chat', {
         if (!aborted) {
           message.stream_incomplete = false;
         }
+        this.loading = false;
         processor.finalize();
         if (!aborted) {
           resumeController = null;
         }
+        this.scheduleSnapshot(true);
       }
     }
   }

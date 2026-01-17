@@ -1025,7 +1025,7 @@ const fetchWorkspaceContent = async (path, options = {}) => {
     return null;
   }
   const endpoint = buildWorkspaceContentUrl(path, options);
-  const response = await fetch(endpoint);
+  const response = await fetch(endpoint, { headers: getWorkspaceAuthHeaders() });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
     throw new Error(
@@ -1052,7 +1052,7 @@ const fetchWorkspaceSearch = async (keyword, options = {}) => {
     params.set("limit", String(options.limit));
   }
   const endpoint = `${wunderBase}/workspace/search?${params.toString()}`;
-  const response = await fetch(endpoint);
+  const response = await fetch(endpoint, { headers: getWorkspaceAuthHeaders() });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
     throw new Error(
@@ -1072,6 +1072,7 @@ const batchWorkspaceAction = async (action, paths, destination) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getWorkspaceAuthHeaders(),
     },
     body: JSON.stringify({
       user_id: userId,
@@ -1107,6 +1108,7 @@ const createWorkspaceDirectory = async (path) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getWorkspaceAuthHeaders(),
     },
     body: JSON.stringify({ user_id: userId, path }),
   });
@@ -1131,6 +1133,7 @@ const moveWorkspaceEntry = async (source, destination) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getWorkspaceAuthHeaders(),
     },
     body: JSON.stringify({ user_id: userId, source, destination }),
   });
@@ -1155,6 +1158,7 @@ const saveWorkspaceFileContent = async (path, content, options = {}) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getWorkspaceAuthHeaders(),
     },
     body: JSON.stringify({
       user_id: userId,

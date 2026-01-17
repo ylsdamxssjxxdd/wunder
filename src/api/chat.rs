@@ -1,8 +1,12 @@
 use crate::api::attachment_convert::convert_multipart;
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::monitor::MonitorState;
 use crate::orchestrator::OrchestratorError;
-use crate::orchestrator_constants::OBSERVATION_PREFIX;
+use crate::orchestrator_constants::{
+    OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S,
+    STREAM_EVENT_QUEUE_SIZE,
+};
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
@@ -18,12 +22,13 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
-const STREAM_RESUME_LIMIT: i64 = 2000;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -211,7 +216,18 @@ async fn get_session(
         .collect::<Vec<_>>();
 
     if session_running {
-        if let Some(target) = messages.iter_mut().rev().find(|item| {
+        let last_role = messages
+            .last()
+            .and_then(|item| item.get("role").and_then(Value::as_str))
+            .unwrap_or("");
+        if last_role == "user" || messages.is_empty() {
+            messages.push(json!({
+                "role": "assistant",
+                "content": "",
+                "created_at": format_ts(now_ts()),
+                "stream_incomplete": true,
+            }));
+        } else if let Some(target) = messages.iter_mut().rev().find(|item| {
             item.get("role")
                 .and_then(Value::as_str)
                 .map(|value| value == "assistant")
@@ -465,21 +481,129 @@ async fn resume_session(
         ));
     }
 
-    let after_event_id = query.after_event_id.unwrap_or(0);
-    let records =
-        state
-            .workspace
-            .load_stream_events(&session_id, after_event_id, STREAM_RESUME_LIMIT);
-    let stream =
-        tokio_stream::iter(records.into_iter().filter_map(map_stream_event)).map(|event| {
-            let mut builder = Event::default()
-                .event(event.event)
-                .data(event.data.to_string());
-            if let Some(id) = event.id {
-                builder = builder.id(id);
+    if let Some(after_event_id) = query.after_event_id {
+        let workspace = state.workspace.clone();
+        let monitor = state.monitor.clone();
+        let session_id = session_id.clone();
+        let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
+        tokio::spawn(async move {
+            let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+            let mut last_event_id = after_event_id;
+            loop {
+                let session_id_snapshot = session_id.clone();
+                let workspace_snapshot = workspace.clone();
+                let records = tokio::task::spawn_blocking(move || {
+                    workspace_snapshot.load_stream_events(
+                        &session_id_snapshot,
+                        last_event_id,
+                        STREAM_EVENT_FETCH_LIMIT,
+                    )
+                })
+                .await
+                .unwrap_or_default();
+                let mut progressed = false;
+                for record in records {
+                    let Some(event) = map_stream_event(record) else {
+                        continue;
+                    };
+                    let parsed_id = event
+                        .id
+                        .as_ref()
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .unwrap_or(0);
+                    if parsed_id > last_event_id {
+                        last_event_id = parsed_id;
+                    }
+                    let mut builder = Event::default()
+                        .event(event.event)
+                        .data(event.data.to_string());
+                    if let Some(id) = event.id {
+                        builder = builder.id(id);
+                    }
+                    if event_tx.send(builder).await.is_err() {
+                        return;
+                    }
+                    progressed = true;
+                }
+                if !progressed {
+                    let running = monitor
+                        .get_record(&session_id)
+                        .map(|record| {
+                            record
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .map(|status| {
+                                    status == MonitorState::STATUS_RUNNING
+                                        || status == MonitorState::STATUS_CANCELLING
+                                })
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+                    if !running {
+                        break;
+                    }
+                    tokio::time::sleep(poll_interval).await;
+                }
             }
-            Ok::<Event, std::convert::Infallible>(builder)
         });
+        let stream =
+            ReceiverStream::new(event_rx).map(|event| Ok::<Event, std::convert::Infallible>(event));
+        let sse = Sse::new(stream)
+            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+        return Ok(sse.into_response());
+    }
+
+    let monitor = state.monitor.clone();
+    let session_id = session_id.clone();
+    let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
+    tokio::spawn(async move {
+        let mut last_len: usize = 0;
+        let mut initialized = false;
+        let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+        loop {
+            let Some(record) = monitor.get_record(&session_id) else {
+                break;
+            };
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            let running =
+                status == MonitorState::STATUS_RUNNING || status == MonitorState::STATUS_CANCELLING;
+            let events = record
+                .get("events")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if !initialized {
+                last_len = events.len();
+                initialized = true;
+            } else if events.len() < last_len {
+                last_len = 0;
+            }
+            let mut has_new_events = false;
+            if events.len() > last_len {
+                has_new_events = true;
+                for event in events.iter().skip(last_len) {
+                    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+                    if event_type.is_empty() || !is_workflow_event(event_type) {
+                        continue;
+                    }
+                    let data = event.get("data").cloned().unwrap_or(Value::Null);
+                    let builder = Event::default()
+                        .event(event_type.to_string())
+                        .data(data.to_string());
+                    if event_tx.send(builder).await.is_err() {
+                        return;
+                    }
+                }
+                last_len = events.len();
+            }
+            if !running && !has_new_events {
+                break;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    });
+    let stream =
+        ReceiverStream::new(event_rx).map(|event| Ok::<Event, std::convert::Infallible>(event));
     let sse =
         Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
     Ok(sse.into_response())
