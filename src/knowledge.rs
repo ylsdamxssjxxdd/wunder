@@ -205,11 +205,15 @@ pub async fn query_knowledge_documents(
             role: "system".to_string(),
             content: json!(prompt),
             reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
         },
         ChatMessage {
             role: "user".to_string(),
             content: json!(question.clone()),
             reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
         },
     ];
     if let Some(logger) = request_logger {

@@ -137,6 +137,8 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub history_compaction_reset: Option<String>,
     #[serde(default)]
+    pub tool_call_mode: Option<String>,
+    #[serde(default)]
     pub stop: Option<Vec<String>>,
     #[serde(default)]
     pub mock_if_unconfigured: Option<bool>,

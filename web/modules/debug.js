@@ -148,6 +148,7 @@ const buildResponseText = (data) => {
   }
   const content = data.content ? String(data.content) : "";
   const reasoning = data.reasoning ? String(data.reasoning) : data.reasoning_content ? String(data.reasoning_content) : "";
+  const toolCallsText = !content ? formatToolCalls(data.tool_calls) : "";
   const sections = [];
   if (reasoning) {
     sections.push(`${t("debug.response.thought")}\n${reasoning}`);
@@ -155,10 +156,103 @@ const buildResponseText = (data) => {
   if (content) {
     sections.push(content);
   }
+  if (!content && toolCallsText) {
+    sections.push(`${t("debug.response.toolCalls")}\n${toolCallsText}`);
+  }
   if (!sections.length) {
     return t("debug.response.empty");
   }
   return sections.join("\n\n");
+};
+
+const parseJsonIfPossible = (value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const text = value.trim();
+  if (!text) {
+    return value;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return value;
+  }
+};
+
+const normalizeToolCallEntry = (entry) => {
+  if (!entry || typeof entry !== "object") {
+    return entry;
+  }
+  const functionValue = entry.function && typeof entry.function === "object" ? entry.function : null;
+  const name =
+    functionValue?.name ||
+    entry.name ||
+    entry.tool ||
+    entry.tool_name ||
+    entry.toolName ||
+    entry.function_name ||
+    entry.functionName ||
+    "";
+  const rawArgs =
+    functionValue?.arguments ??
+    entry.arguments ??
+    entry.args ??
+    entry.parameters ??
+    entry.params ??
+    entry.input ??
+    entry.payload;
+  const normalizedArgs = parseJsonIfPossible(rawArgs ?? {});
+  const id = entry.id || entry.tool_call_id || entry.toolCallId || entry.call_id || entry.callId || "";
+  const output = {};
+  if (id) {
+    output.id = id;
+  }
+  if (name) {
+    output.name = name;
+  }
+  output.arguments = normalizedArgs;
+  return output;
+};
+
+const normalizeToolCallsPayload = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = parseJsonIfPossible(value);
+  if (Array.isArray(parsed)) {
+    return parsed.map(normalizeToolCallEntry);
+  }
+  if (parsed && typeof parsed === "object") {
+    if (Array.isArray(parsed.tool_calls)) {
+      return parsed.tool_calls.map(normalizeToolCallEntry);
+    }
+    if (parsed.tool_calls) {
+      return normalizeToolCallEntry(parsed.tool_calls);
+    }
+    if (parsed.tool_call) {
+      return normalizeToolCallEntry(parsed.tool_call);
+    }
+    if (parsed.function_call) {
+      return normalizeToolCallEntry(parsed.function_call);
+    }
+  }
+  return normalizeToolCallEntry(parsed);
+};
+
+const formatToolCalls = (value) => {
+  const normalized = normalizeToolCallsPayload(value);
+  if (normalized === null || normalized === undefined || normalized === "") {
+    return "";
+  }
+  if (typeof normalized === "string") {
+    return normalized;
+  }
+  try {
+    return JSON.stringify(normalized, null, 2);
+  } catch (error) {
+    return String(normalized);
+  }
 };
 
 // 在请求日志条目上补充耗时标签，保持与事件日志展示一致

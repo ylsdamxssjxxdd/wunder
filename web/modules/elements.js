@@ -587,6 +587,7 @@ export const elements = {
   llmMaxOutput: document.getElementById("llmMaxOutput"),
   llmVision: document.getElementById("llmVision"),
   llmStreamIncludeUsage: document.getElementById("llmStreamIncludeUsage"),
+  llmToolCallMode: document.getElementById("llmToolCallMode"),
   llmHistoryCompactionRatio: document.getElementById("llmHistoryCompactionRatio"),
   llmHistoryCompactionReset: document.getElementById("llmHistoryCompactionReset"),
 };

@@ -1,6 +1,7 @@
 // 系统提示词构建：模板渲染、工具描述拼接与缓存管理。
 use crate::config::Config;
 use crate::i18n;
+use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
 use crate::skills::{SkillRegistry, SkillSpec};
 use crate::tools::{
@@ -104,11 +105,16 @@ impl PromptComposer {
         workdir: &Path,
         overrides: Option<&Value>,
         allowed_tool_names: &HashSet<String>,
+        tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
         let language = i18n::get_language();
+        let tool_mode_key = match tool_call_mode {
+            ToolCallMode::FunctionCall => "function_call",
+            ToolCallMode::ToolCall => "tool_call",
+        };
         let user_tool_version = user_tool_bindings
             .map(|item| item.user_version)
             .unwrap_or(0.0);
@@ -118,7 +124,7 @@ impl PromptComposer {
         let overrides_key = build_overrides_key(overrides);
         let workdir_key = workdir.to_string_lossy();
         let base_key = format!(
-            "{user_id}|{config_version}|{workdir_key}|{overrides_key}|{tool_key}|{user_tool_version}|{shared_tool_version}|{language}"
+            "{user_id}|{config_version}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{language}"
         );
         let workspace_version = workspace.get_tree_cache_version(user_id);
         let cache_key = format!("{base_key}|{workspace_version}");
@@ -204,6 +210,7 @@ impl PromptComposer {
                 &workdir_display,
                 &workspace_tree,
                 include_tools_protocol,
+                tool_call_mode,
             );
             let skill_block = build_skill_prompt_block(&workdir_display, &skills_for_prompt);
             if !skill_block.is_empty() {
@@ -317,6 +324,7 @@ fn build_system_prompt(
     workdir_display: &str,
     workspace_tree: &str,
     include_tools_protocol: bool,
+    tool_call_mode: ToolCallMode,
 ) -> String {
     if !include_tools_protocol {
         let engineer_info = build_engineer_info(workdir_display, workspace_tree, false);
@@ -330,7 +338,10 @@ fn build_system_prompt(
     let include_ptc = tools
         .iter()
         .any(|spec| resolve_tool_name(&spec.name) == "ptc");
-    let extra_path = Path::new("app/prompts/extra_prompt_template.txt");
+    let extra_path = match tool_call_mode {
+        ToolCallMode::FunctionCall => Path::new("app/prompts/extra_prompt_function_call.txt"),
+        ToolCallMode::ToolCall => Path::new("app/prompts/extra_prompt_template.txt"),
+    };
     let extra_template = read_prompt_template(extra_path);
     let extra_prompt = render_template(
         &extra_template,

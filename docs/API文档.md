@@ -368,7 +368,7 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
 - `POST` 入参：
@@ -1236,9 +1236,10 @@
 
 ### 4.4 工具协议（EVA 风格）
 
-- 模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具。
+- `tool_call_mode=tool_call`（默认）：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
+- `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
-- 工具结果以 `tool` 角色回填给模型，用于下一轮判断。
+- 工具结果以 `tool_response: ` 前缀的 user 消息回填给模型，用于下一轮判断（`tool_call` 模式）。
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。

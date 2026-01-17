@@ -23,12 +23,39 @@ const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallMode {
+    ToolCall,
+    FunctionCall,
+}
+
+pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
+    let raw = value.unwrap_or("").trim();
+    if raw.is_empty() {
+        return ToolCallMode::ToolCall;
+    }
+    match raw
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .replace(' ', "_")
+        .as_str()
+    {
+        "function_call" | "functioncall" | "function" | "fc" => ToolCallMode::FunctionCall,
+        "tool_call" | "toolcall" | "tool" | "tag" | "xml" => ToolCallMode::ToolCall,
+        _ => ToolCallMode::ToolCall,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +63,7 @@ pub struct LlmResponse {
     pub content: String,
     pub reasoning: String,
     pub usage: Option<TokenUsage>,
+    pub tool_calls: Option<Value>,
 }
 
 #[derive(Clone)]
@@ -50,11 +78,19 @@ impl LlmClient {
     }
 
     pub async fn complete(&self, messages: &[ChatMessage]) -> Result<LlmResponse> {
+        self.complete_with_tools(messages, None).await
+    }
+
+    pub async fn complete_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Value]>,
+    ) -> Result<LlmResponse> {
         let response = self
             .http
             .post(self.endpoint())
             .headers(self.headers())
-            .json(&self.build_payload(messages, false, false))
+            .json(&self.build_payload(messages, false, false, tools))
             .send()
             .await?;
         let status = response.status();
@@ -79,17 +115,33 @@ impl LlmClient {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let tool_calls = extract_tool_calls(&message);
         let usage = normalize_usage(body.get("usage"));
         Ok(LlmResponse {
             content,
             reasoning,
             usage,
+            tool_calls,
         })
     }
 
     pub async fn stream_complete_with_callback<F, Fut>(
         &self,
         messages: &[ChatMessage],
+        on_delta: F,
+    ) -> Result<LlmResponse>
+    where
+        F: FnMut(String, String) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        self.stream_complete_with_callback_with_tools(messages, None, on_delta)
+            .await
+    }
+
+    pub async fn stream_complete_with_callback_with_tools<F, Fut>(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Value]>,
         mut on_delta: F,
     ) -> Result<LlmResponse>
     where
@@ -103,7 +155,7 @@ impl LlmClient {
                 .http
                 .post(self.endpoint())
                 .headers(self.headers())
-                .json(&self.build_payload(messages, true, include_usage))
+                .json(&self.build_payload(messages, true, include_usage, tools))
                 .send()
                 .await?;
             let status = response.status();
@@ -121,6 +173,7 @@ impl LlmClient {
             let mut combined = String::new();
             let mut reasoning_combined = String::new();
             let mut usage: Option<TokenUsage> = None;
+            let mut tool_calls_accumulator: Vec<StreamToolCall> = Vec::new();
             while let Some(item) = stream.next().await {
                 let bytes = item?;
                 let part = String::from_utf8_lossy(&bytes);
@@ -133,10 +186,12 @@ impl LlmClient {
                     }
                     let data = line.trim_start_matches("data:").trim();
                     if data == "[DONE]" {
+                        let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
                         return Ok(LlmResponse {
                             content: combined,
                             reasoning: reasoning_combined,
                             usage,
+                            tool_calls,
                         });
                     }
                     if let Ok(payload) = serde_json::from_str::<Value>(data) {
@@ -156,6 +211,7 @@ impl LlmClient {
                             .or_else(|| delta.get("reasoning"))
                             .and_then(Value::as_str)
                             .unwrap_or("");
+                        update_stream_tool_calls(&mut tool_calls_accumulator, &delta);
                         if !content_delta.is_empty() {
                             combined.push_str(content_delta);
                         }
@@ -169,10 +225,12 @@ impl LlmClient {
                     }
                 }
             }
+            let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
             return Ok(LlmResponse {
                 content: combined,
                 reasoning: reasoning_combined,
                 usage,
+                tool_calls,
             });
         }
     }
@@ -204,10 +262,31 @@ impl LlmClient {
             messages,
             stream,
             self.config.stream_include_usage.unwrap_or(true),
+            None,
         )
     }
 
-    fn build_payload(&self, messages: &[ChatMessage], stream: bool, include_usage: bool) -> Value {
+    pub fn build_request_payload_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        tools: Option<&[Value]>,
+    ) -> Value {
+        self.build_payload(
+            messages,
+            stream,
+            self.config.stream_include_usage.unwrap_or(true),
+            tools,
+        )
+    }
+
+    fn build_payload(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        include_usage: bool,
+        tools: Option<&[Value]>,
+    ) -> Value {
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
@@ -226,6 +305,12 @@ impl LlmClient {
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
                 payload["stop"] = json!(stop);
+            }
+        }
+        if let Some(tool_defs) = tools {
+            if !tool_defs.is_empty() {
+                payload["tools"] = Value::Array(tool_defs.to_vec());
+                payload["tool_choice"] = json!("auto");
             }
         }
         payload
@@ -347,6 +432,99 @@ fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
         output,
         total,
     })
+}
+
+fn extract_tool_calls(message: &Value) -> Option<Value> {
+    let Value::Object(map) = message else {
+        return None;
+    };
+    map.get("tool_calls")
+        .or_else(|| map.get("tool_call"))
+        .or_else(|| map.get("function_call"))
+        .or_else(|| map.get("functionCall"))
+        .cloned()
+}
+
+#[derive(Debug, Default, Clone)]
+struct StreamToolCall {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
+fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, delta: &Value) {
+    let tool_calls = match delta.get("tool_calls").or_else(|| delta.get("tool_call")) {
+        Some(Value::Array(items)) => Some(items.as_slice()),
+        Some(Value::Object(_)) => Some(std::slice::from_ref(
+            delta
+                .get("tool_calls")
+                .or_else(|| delta.get("tool_call"))
+                .unwrap(),
+        )),
+        _ => None,
+    };
+    if let Some(items) = tool_calls {
+        for item in items {
+            if let Value::Object(map) = item {
+                let index = map.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                while acc.len() <= index {
+                    acc.push(StreamToolCall::default());
+                }
+                let slot = &mut acc[index];
+                if let Some(id) = map.get("id").and_then(Value::as_str) {
+                    slot.id = Some(id.to_string());
+                }
+                if let Some(function) = map.get("function") {
+                    apply_function_delta(slot, function);
+                }
+            }
+        }
+    }
+
+    if let Some(function_call) = delta.get("function_call") {
+        if acc.is_empty() {
+            acc.push(StreamToolCall::default());
+        }
+        apply_function_delta(&mut acc[0], function_call);
+    }
+}
+
+fn apply_function_delta(slot: &mut StreamToolCall, function: &Value) {
+    if let Value::Object(map) = function {
+        if let Some(name) = map.get("name").and_then(Value::as_str) {
+            slot.name.push_str(name);
+        }
+        if let Some(arguments) = map.get("arguments").and_then(Value::as_str) {
+            slot.arguments.push_str(arguments);
+        }
+    }
+}
+
+fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
+    let mut output = Vec::new();
+    for call in acc {
+        if call.name.trim().is_empty() {
+            continue;
+        }
+        let mut payload = json!({
+            "type": "function",
+            "function": {
+                "name": call.name,
+                "arguments": call.arguments,
+            }
+        });
+        if let Some(id) = &call.id {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("id".to_string(), Value::String(id.clone()));
+            }
+        }
+        output.push(payload);
+    }
+    if output.is_empty() {
+        None
+    } else {
+        Some(Value::Array(output))
+    }
 }
 
 fn round_f32(value: f32) -> f64 {

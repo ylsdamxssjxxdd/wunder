@@ -60,6 +60,27 @@ const getProviderPreset = (provider) =>
 
 const resolveProviderBaseUrl = (provider) => getProviderPreset(provider)?.baseUrl || "";
 
+const TOOL_CALL_MODE_OPTIONS = new Set(["tool_call", "function_call"]);
+const normalizeToolCallMode = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "tool_call";
+  }
+  const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "function" || normalized === "functioncall" || normalized === "fc") {
+    return "function_call";
+  }
+  if (
+    normalized === "tool" ||
+    normalized === "toolcall" ||
+    normalized === "tag" ||
+    normalized === "xml"
+  ) {
+    return "tool_call";
+  }
+  return TOOL_CALL_MODE_OPTIONS.has(normalized) ? normalized : "tool_call";
+};
+
 const renderProviderOptions = (activeProvider) => {
   if (!elements.llmProvider) {
     return;
@@ -160,6 +181,7 @@ const normalizeLlmConfig = (raw) => ({
   support_vision: raw?.support_vision === true,
   stream: raw?.stream === true,
   stream_include_usage: raw?.stream_include_usage !== false,
+  tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode),
   history_compaction_ratio:
     typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
       ? raw.history_compaction_ratio
@@ -222,6 +244,9 @@ const clearLlmForm = () => {
   elements.llmMaxOutput.value = "";
   elements.llmVision.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
+  if (elements.llmToolCallMode) {
+    elements.llmToolCallMode.value = "tool_call";
+  }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
@@ -251,6 +276,9 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmMaxOutput.value = llm.max_output ?? "";
   elements.llmVision.checked = llm.support_vision;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
+  if (elements.llmToolCallMode) {
+    elements.llmToolCallMode.value = llm.tool_call_mode || "tool_call";
+  }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(
     llm.history_compaction_ratio ?? 0.8,
     0.8
@@ -387,6 +415,9 @@ const buildLlmConfigFromForm = (baseConfig) => {
     support_vision: elements.llmVision.checked,
     stream: base.stream,
     stream_include_usage: elements.llmStreamIncludeUsage.checked,
+    tool_call_mode: normalizeToolCallMode(
+      elements.llmToolCallMode?.value || base.tool_call_mode
+    ),
     history_compaction_ratio:
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio

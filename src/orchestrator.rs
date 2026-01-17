@@ -4,7 +4,9 @@ use crate::config::{Config, LlmModelConfig};
 use crate::config_store::ConfigStore;
 use crate::history::HistoryManager;
 use crate::i18n;
-use crate::llm::{build_llm_client, is_llm_configured, ChatMessage};
+use crate::llm::{
+    build_llm_client, is_llm_configured, normalize_tool_call_mode, ChatMessage, ToolCallMode,
+};
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
@@ -26,7 +28,8 @@ use crate::token_utils::{
     trim_text_to_tokens,
 };
 use crate::tools::{
-    collect_available_tool_names, resolve_tool_name, ToolContext, ToolEventEmitter,
+    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs, resolve_tool_name,
+    ToolContext, ToolEventEmitter,
 };
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
@@ -38,6 +41,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
@@ -181,8 +185,15 @@ impl std::error::Error for OrchestratorError {}
 
 #[derive(Debug, Clone)]
 struct ToolCall {
+    id: Option<String>,
     name: String,
     arguments: Value,
+}
+
+#[derive(Debug, Clone)]
+struct FunctionTooling {
+    tools: Vec<Value>,
+    name_map: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -825,11 +836,13 @@ impl Orchestrator {
     ) -> String {
         let allowed_tool_names =
             self.resolve_allowed_tool_names(config, tool_names, skills, user_tool_bindings);
+        let tool_call_mode = self.resolve_tool_call_mode(config, None);
         let prompt = self
             .build_system_prompt_with_allowed(
                 config,
                 config_overrides,
                 &allowed_tool_names,
+                tool_call_mode,
                 skills,
                 user_tool_bindings,
                 user_id,
@@ -1282,12 +1295,26 @@ impl Orchestrator {
                 &skills_snapshot,
                 Some(&user_tool_bindings),
             );
+            let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
+            let function_tooling = if tool_call_mode == ToolCallMode::FunctionCall
+                && !prepared.skip_tool_calls
+            {
+                self.build_function_tooling(
+                    &config,
+                    &skills_snapshot,
+                    &allowed_tool_names,
+                    Some(&user_tool_bindings),
+                )
+            } else {
+                None
+            };
 
             let mut system_prompt = self
                 .resolve_session_prompt(
                     &config,
                     prepared.config_overrides.as_ref(),
                     &allowed_tool_names,
+                    tool_call_mode,
                     &skills_snapshot,
                     Some(&user_tool_bindings),
                     &user_id,
@@ -1352,7 +1379,10 @@ impl Orchestrator {
                     )
                     .await;
 
-                let (content, reasoning, usage) = self
+                let tools_payload = function_tooling
+                    .as_ref()
+                    .map(|tooling| tooling.tools.as_slice());
+                let (content, reasoning, usage, tool_calls_payload) = self
                     .call_llm(
                         &llm_config,
                         &messages,
@@ -1361,6 +1391,7 @@ impl Orchestrator {
                         prepared.stream,
                         round,
                         true,
+                        tools_payload,
                         None,
                     )
                     .await?;
@@ -1373,7 +1404,12 @@ impl Orchestrator {
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
                 } else {
-                    collect_tool_calls_from_output(&content, &reasoning)
+                    collect_tool_calls_from_output(&content, &reasoning, tool_calls_payload.as_ref())
+                };
+                let tool_calls = if let Some(tooling) = function_tooling.as_ref() {
+                    apply_tool_name_map(tool_calls, &tooling.name_map)
+                } else {
+                    tool_calls
                 };
                 if tool_calls.is_empty() {
                     if prepared.skip_tool_calls {
@@ -1408,6 +1444,9 @@ impl Orchestrator {
                     });
                     if !assistant_reasoning.trim().is_empty() {
                         assistant_message["reasoning_content"] = json!(assistant_reasoning.clone());
+                    }
+                    if let Some(tool_calls_payload) = tool_calls_payload.clone() {
+                        assistant_message["tool_calls"] = tool_calls_payload;
                     }
                     messages.push(assistant_message);
                     let meta = json!({ "type": "tool_call" });
@@ -1548,10 +1587,31 @@ impl Orchestrator {
                     };
 
                     let observation = self.build_tool_observation(&name, &tool_result);
-                    messages.push(json!({
-                        "role": "user",
-                        "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                    }));
+                    if tool_call_mode == ToolCallMode::FunctionCall {
+                        let tool_call_id = call
+                            .id
+                            .as_ref()
+                            .map(|value| value.trim())
+                            .filter(|value| !value.is_empty())
+                            .map(|value| value.to_string());
+                        if let Some(tool_call_id) = tool_call_id {
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": observation,
+                            }));
+                        } else {
+                            messages.push(json!({
+                                "role": "user",
+                                "content": format!("{OBSERVATION_PREFIX}{observation}"),
+                            }));
+                        }
+                    } else {
+                        messages.push(json!({
+                            "role": "user",
+                            "content": format!("{OBSERVATION_PREFIX}{observation}"),
+                        }));
+                    }
                     self.append_chat(
                         &user_id,
                         &session_id,
@@ -1696,6 +1756,12 @@ impl Orchestrator {
         Err(OrchestratorError::llm_unavailable(i18n::t(
             "error.llm_unavailable",
         )))
+    }
+
+    fn resolve_tool_call_mode(&self, config: &Config, model_name: Option<&str>) -> ToolCallMode {
+        self.resolve_llm_config(config, model_name)
+            .map(|(_, config)| normalize_tool_call_mode(config.tool_call_mode.as_deref()))
+            .unwrap_or(ToolCallMode::ToolCall)
     }
 
     fn ensure_not_cancelled(&self, session_id: &str) -> Result<(), OrchestratorError> {
@@ -2209,10 +2275,35 @@ impl Orchestrator {
                             Some(text.to_string())
                         }
                     });
+                let tool_calls = message
+                    .get("tool_calls")
+                    .or_else(|| message.get("tool_call"))
+                    .or_else(|| message.get("function_call"))
+                    .cloned();
+                let tool_call_id = message
+                    .get("tool_call_id")
+                    .or_else(|| message.get("toolCallId"))
+                    .or_else(|| message.get("call_id"))
+                    .or_else(|| message.get("callId"))
+                    .and_then(|value| match value {
+                        Value::String(text) => Some(text.clone()),
+                        Value::Number(num) => Some(num.to_string()),
+                        _ => None,
+                    })
+                    .and_then(|text| {
+                        let cleaned = text.trim().to_string();
+                        if cleaned.is_empty() {
+                            None
+                        } else {
+                            Some(cleaned)
+                        }
+                    });
                 Some(ChatMessage {
                     role,
                     content,
                     reasoning_content,
+                    tool_calls,
+                    tool_call_id,
                 })
             })
             .collect()
@@ -2251,8 +2342,9 @@ impl Orchestrator {
         stream: bool,
         round_index: i64,
         emit_events: bool,
+        tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
-    ) -> Result<(String, String, TokenUsage), OrchestratorError> {
+    ) -> Result<(String, String, TokenUsage, Option<Value>), OrchestratorError> {
         self.ensure_not_cancelled(session_id)?;
         let effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
         if !is_llm_configured(&effective_config) {
@@ -2278,7 +2370,7 @@ impl Orchestrator {
                         )
                         .await;
                 }
-                return Ok((content, String::new(), usage));
+                return Ok((content, String::new(), usage, None));
             }
             let detail = i18n::t("error.llm_config_missing");
             return Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
@@ -2294,7 +2386,8 @@ impl Orchestrator {
         if emit_events {
             let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
             let payload_chat = self.build_chat_messages(&payload_messages);
-            let payload = client.build_request_payload(&payload_chat, will_stream);
+            let payload =
+                client.build_request_payload_with_tools(&payload_chat, will_stream, tools);
             let request_payload = json!({
                 "provider": effective_config.provider,
                 "model": effective_config.model,
@@ -2343,10 +2436,24 @@ impl Orchestrator {
                         Ok(())
                     }
                 };
-                let fut = client.stream_complete_with_callback(&chat_messages, on_delta);
+                let fut = async {
+                    if tools.is_some() {
+                        client
+                            .stream_complete_with_callback_with_tools(
+                                &chat_messages,
+                                tools,
+                                on_delta,
+                            )
+                            .await
+                    } else {
+                        client
+                            .stream_complete_with_callback(&chat_messages, on_delta)
+                            .await
+                    }
+                };
                 self.await_with_cancel(session_id, timeout_s, fut).await?
             } else {
-                let fut = client.complete(&chat_messages);
+                let fut = client.complete_with_tools(&chat_messages, tools);
                 self.await_with_cancel(session_id, timeout_s, fut).await?
             };
 
@@ -2355,6 +2462,7 @@ impl Orchestrator {
                     let response_finished_at = Instant::now();
                     let content = response.content;
                     let reasoning = response.reasoning;
+                    let tool_calls = response.tool_calls;
                     let mut usage = response.usage;
                     if let Some(item) = usage.as_mut() {
                         if item.total == 0 {
@@ -2388,6 +2496,7 @@ impl Orchestrator {
                         (None, None)
                     };
                     if emit_events {
+                        let tool_calls_snapshot = tool_calls.clone();
                         emitter
                             .emit(
                                 "llm_output",
@@ -2396,6 +2505,7 @@ impl Orchestrator {
                                     "reasoning": reasoning,
                                     "round": round_index,
                                     "usage": usage,
+                                    "tool_calls": tool_calls_snapshot,
                                     "prefill_duration_s": prefill_duration_s,
                                     "decode_duration_s": decode_duration_s,
                                 }),
@@ -2415,7 +2525,7 @@ impl Orchestrator {
                             )
                             .await;
                     }
-                    return Ok((content, reasoning, usage));
+                    return Ok((content, reasoning, usage, tool_calls));
                 }
                 Err(err) => {
                     last_err = err;
@@ -2827,11 +2937,12 @@ impl Orchestrator {
                 false,
                 0,
                 false,
+                None,
                 Some(summary_config),
             )
             .await
         {
-            Ok((content, _, _)) => self.resolve_final_answer(&content),
+            Ok((content, _, _, _)) => self.resolve_final_answer(&content),
             Err(_) => {
                 summary_fallback = true;
                 i18n::t("compaction.summary_fallback")
@@ -2968,11 +3079,56 @@ impl Orchestrator {
         allowed_tool_names
     }
 
+    fn build_function_tooling(
+        &self,
+        config: &Config,
+        skills: &SkillRegistry,
+        allowed_tool_names: &HashSet<String>,
+        user_tool_bindings: Option<&UserToolBindings>,
+    ) -> Option<FunctionTooling> {
+        if allowed_tool_names.is_empty() {
+            return None;
+        }
+        let specs =
+            collect_prompt_tool_specs(config, skills, allowed_tool_names, user_tool_bindings);
+        if specs.is_empty() {
+            return None;
+        }
+        let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
+        for (alias, canonical) in builtin_aliases() {
+            canonical_aliases.entry(canonical).or_default().push(alias);
+        }
+        for aliases in canonical_aliases.values_mut() {
+            aliases.sort();
+        }
+
+        let mut used_names = HashSet::new();
+        let mut tools = Vec::new();
+        let mut name_map = HashMap::new();
+        for spec in specs {
+            let preferred = select_preferred_tool_name(&spec.name, &canonical_aliases);
+            let sanitized = sanitize_function_name(&preferred);
+            let function_name =
+                ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
+            name_map.insert(function_name.clone(), spec.name.clone());
+            tools.push(json!({
+                "type": "function",
+                "function": {
+                    "name": function_name,
+                    "description": spec.description,
+                    "parameters": spec.input_schema,
+                }
+            }));
+        }
+        Some(FunctionTooling { tools, name_map })
+    }
+
     async fn build_system_prompt_with_allowed(
         &self,
         config: &Config,
         config_overrides: Option<&Value>,
         allowed_tool_names: &HashSet<String>,
+        tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
@@ -2991,6 +3147,7 @@ impl Orchestrator {
                 &workdir,
                 config_overrides,
                 allowed_tool_names,
+                tool_call_mode,
                 skills,
                 user_tool_bindings,
             )
@@ -3002,6 +3159,7 @@ impl Orchestrator {
         config: &Config,
         config_overrides: Option<&Value>,
         allowed_tool_names: &HashSet<String>,
+        tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
@@ -3021,6 +3179,7 @@ impl Orchestrator {
                 config,
                 config_overrides,
                 allowed_tool_names,
+                tool_call_mode,
                 skills,
                 user_tool_bindings,
                 user_id,
@@ -3343,7 +3502,7 @@ impl Orchestrator {
             None,
             self.monitor.clone(),
         );
-        let (content, _, _) = self
+        let (content, _, _, _) = self
             .call_llm(
                 &llm_config,
                 &messages,
@@ -3352,6 +3511,7 @@ impl Orchestrator {
                 false,
                 1,
                 false,
+                None,
                 Some(summary_config),
             )
             .await?;
@@ -3820,6 +3980,137 @@ fn merge_json(base: &mut Value, override_value: &Value) {
     }
 }
 
+const MAX_FUNCTION_NAME_LEN: usize = 64;
+
+fn select_preferred_tool_name(
+    name: &str,
+    canonical_aliases: &HashMap<String, Vec<String>>,
+) -> String {
+    if is_valid_function_name(name) {
+        return name.to_string();
+    }
+    let canonical = resolve_tool_name(name);
+    if let Some(aliases) = canonical_aliases.get(&canonical) {
+        if let Some(alias) = aliases.iter().find(|alias| is_valid_function_name(alias)) {
+            return alias.to_string();
+        }
+    }
+    name.to_string()
+}
+
+fn is_valid_function_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+fn sanitize_function_name(name: &str) -> String {
+    let mut output = String::new();
+    let mut last_underscore = false;
+    for ch in name.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else if ch == '_' || ch == '-' {
+            ch
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if last_underscore {
+                continue;
+            }
+            last_underscore = true;
+        } else {
+            last_underscore = false;
+        }
+        output.push(mapped);
+    }
+    let trimmed = output.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        String::new()
+    } else if trimmed
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        format!("tool_{trimmed}")
+    } else {
+        trimmed
+    }
+}
+
+fn ensure_unique_function_name(base: &str, original: &str, used: &mut HashSet<String>) -> String {
+    let mut candidate = truncate_function_name(base, MAX_FUNCTION_NAME_LEN);
+    if candidate.is_empty() {
+        candidate = format!("tool_{}", short_hash(original));
+    }
+    if used.insert(candidate.clone()) {
+        return candidate;
+    }
+    let suffix = short_hash(original);
+    candidate = format_with_suffix(base, &suffix);
+    if used.insert(candidate.clone()) {
+        return candidate;
+    }
+    let mut index = 2;
+    loop {
+        let extra = format!("{suffix}_{index}");
+        candidate = format_with_suffix(base, &extra);
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn truncate_function_name(name: &str, max_len: usize) -> String {
+    if max_len == 0 {
+        return String::new();
+    }
+    if name.len() <= max_len {
+        return name.to_string();
+    }
+    name[..max_len].trim_matches('_').to_string()
+}
+
+fn format_with_suffix(base: &str, suffix: &str) -> String {
+    let max_base = MAX_FUNCTION_NAME_LEN.saturating_sub(suffix.len().saturating_add(1));
+    let mut trimmed = truncate_function_name(base, max_base);
+    if trimmed.is_empty() {
+        trimmed = "tool".to_string();
+    }
+    format!("{trimmed}_{suffix}")
+}
+
+fn short_hash(value: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    let hash = format!("{:x}", hasher.finish());
+    hash.chars().take(6).collect()
+}
+
+fn apply_tool_name_map(calls: Vec<ToolCall>, map: &HashMap<String, String>) -> Vec<ToolCall> {
+    if map.is_empty() {
+        return calls;
+    }
+    calls
+        .into_iter()
+        .map(|call| {
+            let name = map.get(call.name.trim()).cloned().unwrap_or(call.name);
+            ToolCall {
+                id: call.id,
+                name,
+                arguments: call.arguments,
+            }
+        })
+        .collect()
+}
+
 fn tool_call_block_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
@@ -3935,6 +4226,31 @@ fn has_tool_call_args(map: &serde_json::Map<String, Value>) -> bool {
         || map.contains_key("payload")
 }
 
+fn extract_tool_call_id(map: &serde_json::Map<String, Value>) -> Option<String> {
+    for key in [
+        "id",
+        "tool_call_id",
+        "toolCallId",
+        "call_id",
+        "callId",
+        "tool_use_id",
+        "toolUseId",
+    ] {
+        if let Some(value) = map.get(key) {
+            let text = match value {
+                Value::String(text) => text.clone(),
+                Value::Number(num) => num.to_string(),
+                _ => continue,
+            };
+            let cleaned = text.trim().to_string();
+            if !cleaned.is_empty() {
+                return Some(cleaned);
+            }
+        }
+    }
+    None
+}
+
 fn is_tool_result_map(map: &serde_json::Map<String, Value>) -> bool {
     let tool = map.get("tool").and_then(Value::as_str).unwrap_or("").trim();
     if tool.is_empty() {
@@ -3952,6 +4268,13 @@ fn is_tool_result_map(map: &serde_json::Map<String, Value>) -> bool {
 }
 
 fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall> {
+    normalize_tool_call_with_id(map, None)
+}
+
+fn normalize_tool_call_with_id(
+    map: &serde_json::Map<String, Value>,
+    id_override: Option<String>,
+) -> Option<ToolCall> {
     if is_tool_result_map(map) {
         return None;
     }
@@ -3990,14 +4313,29 @@ fn normalize_tool_call(map: &serde_json::Map<String, Value>) -> Option<ToolCall>
         }
         other => other,
     };
-    Some(ToolCall { name, arguments })
+    let id = id_override.or_else(|| extract_tool_call_id(map));
+    Some(ToolCall {
+        id,
+        name,
+        arguments,
+    })
 }
 
 fn collect_tool_calls_from_value(value: &Value, calls: &mut Vec<ToolCall>) {
     match value {
         Value::Object(map) => {
+            let mut handled = false;
             if let Some(call) = normalize_tool_call(map) {
                 calls.push(call);
+                handled = true;
+            }
+            if !handled {
+                if let Some(function) = map.get("function").and_then(Value::as_object) {
+                    let id = extract_tool_call_id(map);
+                    if let Some(call) = normalize_tool_call_with_id(function, id) {
+                        calls.push(call);
+                    }
+                }
             }
             for key in [
                 "tool_calls",
@@ -4006,7 +4344,6 @@ fn collect_tool_calls_from_value(value: &Value, calls: &mut Vec<ToolCall>) {
                 "toolCall",
                 "function_call",
                 "functionCall",
-                "function",
             ] {
                 if let Some(inner) = map.get(key) {
                     collect_tool_calls_from_value(inner, calls);
@@ -4106,28 +4443,73 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
     dedupe_tool_calls(calls)
 }
 
-fn tool_call_signature(call: &ToolCall) -> String {
+fn tool_call_name_args_signature(call: &ToolCall) -> String {
     let normalized_name = resolve_tool_name(call.name.trim());
     let args = serde_json::to_string(&canonicalize_json(&call.arguments)).unwrap_or_default();
     format!("{normalized_name}|{args}")
 }
 
+fn tool_call_signature(call: &ToolCall) -> String {
+    if let Some(id) = call
+        .id
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|id| !id.is_empty())
+    {
+        return format!("id:{id}");
+    }
+    tool_call_name_args_signature(call)
+}
+
 fn dedupe_tool_calls(calls: Vec<ToolCall>) -> Vec<ToolCall> {
     let mut seen = HashSet::new();
+    let mut seen_name_args_with_id = HashSet::new();
+    for call in &calls {
+        if call
+            .id
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            seen_name_args_with_id.insert(tool_call_name_args_signature(call));
+        }
+    }
     let mut merged = Vec::new();
     for call in calls {
-        let signature = tool_call_signature(&call);
-        if seen.insert(signature) {
+        let name_args = tool_call_name_args_signature(&call);
+        if call
+            .id
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            let signature = tool_call_signature(&call);
+            if seen.insert(signature) {
+                merged.push(call);
+            }
+            continue;
+        }
+        if seen_name_args_with_id.contains(&name_args) {
+            continue;
+        }
+        if seen.insert(name_args) {
             merged.push(call);
         }
     }
     merged
 }
 
-fn collect_tool_calls_from_output(content: &str, reasoning: &str) -> Vec<ToolCall> {
+fn collect_tool_calls_from_output(
+    content: &str,
+    reasoning: &str,
+    tool_calls_payload: Option<&Value>,
+) -> Vec<ToolCall> {
     let mut calls = parse_tool_calls_from_text(content);
     if calls.is_empty() {
         calls.extend(parse_tool_calls_from_text_strict(reasoning));
+    }
+    if let Some(payload) = tool_calls_payload {
+        calls.extend(normalize_tool_calls(payload.clone()));
     }
     dedupe_tool_calls(calls)
 }
@@ -4332,7 +4714,7 @@ mod tests {
         let content = "no tools here";
         let reasoning =
             r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
-        let calls = collect_tool_calls_from_output(content, reasoning);
+        let calls = collect_tool_calls_from_output(content, reasoning, None);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
     }
@@ -4340,9 +4722,24 @@ mod tests {
     #[test]
     fn test_collect_tool_calls_dedup() {
         let payload = r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
-        let calls = collect_tool_calls_from_output(payload, payload);
+        let calls = collect_tool_calls_from_output(payload, payload, None);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_collect_tool_calls_from_payload_value() {
+        let payload = json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "read_file", "arguments": "{\"path\":\"a.txt\"}" }
+            }]
+        });
+        let calls = collect_tool_calls_from_output("", "", Some(&payload));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].id.as_deref(), Some("call_1"));
     }
 
     #[test]
