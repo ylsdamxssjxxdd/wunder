@@ -3,7 +3,7 @@ import { elements } from "./elements.js?v=20260115-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
+import { escapeHtml, formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { t } from "./i18n.js?v=20260115-03";
@@ -1774,6 +1774,403 @@ const buildCsv = (report) => {
   return rows.join("\n");
 };
 
+const formatSuccessRate = (total, success) => {
+  const totalValue = Number(total);
+  const successValue = Number(success);
+  if (!Number.isFinite(totalValue) || totalValue <= 0 || !Number.isFinite(successValue)) {
+    return "-";
+  }
+  return formatPercent((successValue / totalValue) * 100);
+};
+
+const formatTimeoutValue = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  return String(numeric);
+};
+
+const pickSpeedSample = (reportSamples, maxConcurrency) => {
+  const list = Array.isArray(reportSamples) ? reportSamples : [];
+  if (!list.length) {
+    return null;
+  }
+  if (Number.isFinite(maxConcurrency) && maxConcurrency > 0) {
+    const match = list.find(
+      (sample) => Number(sample.concurrency) === Number(maxConcurrency)
+    );
+    if (match) {
+      return match;
+    }
+  }
+  return list[list.length - 1];
+};
+
+const buildLatencyRows = (buckets, totalRequests) => {
+  const list = Array.isArray(buckets) ? buckets : [];
+  if (!list.length) {
+    return { rows: [], total: 0, lastBound: 0 };
+  }
+  const lastBound = list.reduce((max, bucket) => {
+    const bound = Number(bucket?.le_ms);
+    return Number.isFinite(bound) ? Math.max(max, bound) : max;
+  }, 0);
+  const total =
+    Number.isFinite(totalRequests) && totalRequests > 0
+      ? totalRequests
+      : list.reduce((sum, bucket) => sum + Number(bucket?.count || 0), 0);
+  const rows = list.map((bucket) => {
+    const bound = Number(bucket?.le_ms);
+    const label = Number.isFinite(bound)
+      ? `<= ${bound} ms`
+      : lastBound > 0
+      ? `> ${lastBound} ms`
+      : "> 0 ms";
+    const count = Number(bucket?.count || 0);
+    const ratio = total > 0 ? formatPercent((count / total) * 100) : "-";
+    return {
+      label,
+      count: formatCount(count),
+      ratio,
+    };
+  });
+  return { rows, total, lastBound };
+};
+
+const buildHtmlReport = (report, options = {}) => {
+  const summary = report?.summary || {};
+  const run = summary.run || {};
+  const metrics = summary.metrics || {};
+  const errors = Array.isArray(summary.errors) ? summary.errors : [];
+  const reportSamples = Array.isArray(report?.samples) ? report.samples : [];
+  const concurrencyList = resolveRunConcurrencyList(run);
+  const maxConcurrency = resolveRunMaxConcurrency(run, concurrencyList);
+  const speedSample = pickSpeedSample(reportSamples, maxConcurrency);
+  const speedMetrics = resolveSpeedMetrics(speedSample);
+  const latencyBuckets = Array.isArray(metrics.latency_buckets)
+    ? metrics.latency_buckets
+    : [];
+  const totalRequests = Number(metrics.total_requests);
+  const { rows: latencyRows } = buildLatencyRows(latencyBuckets, totalRequests);
+  const chartImage = String(options.chartImage || "");
+  const language = document?.documentElement?.lang || "zh-CN";
+  const safe = (value) => escapeHtml(value ?? "-");
+  const statusValue = run.status || "";
+  const metaRows = [
+    { label: t("throughput.report.meta.generatedAt"), value: formatTimestamp(new Date().toISOString()) },
+    { label: t("throughput.report.meta.runId"), value: run.id || "-" },
+    { label: t("throughput.report.meta.status"), value: resolveStatusLabel(statusValue) },
+    { label: t("throughput.report.meta.model"), value: resolveModelName(run, getSelectedModelName()) },
+    { label: t("throughput.report.meta.startedAt"), value: formatTimestamp(run.started_at) },
+    { label: t("throughput.report.meta.finishedAt"), value: formatTimestamp(run.finished_at) },
+    { label: t("throughput.report.meta.elapsed"), value: formatElapsed(run.elapsed_s) },
+    { label: t("throughput.report.meta.userPrefix"), value: run.user_id_prefix || "-" },
+    {
+      label: t("throughput.report.meta.concurrencyList"),
+      value: concurrencyList.length ? concurrencyList.join(", ") : "-",
+    },
+    {
+      label: t("throughput.report.meta.maxConcurrency"),
+      value: formatCount(
+        Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : null
+      ),
+    },
+    { label: t("throughput.report.meta.dataset"), value: formatQuestionSetSummary(run) },
+    {
+      label: t("throughput.report.meta.requestTimeout"),
+      value: formatTimeoutValue(run.request_timeout_s),
+    },
+    {
+      label: t("throughput.report.meta.maxTokens"),
+      value: formatCount(run.max_tokens),
+    },
+    {
+      label: t("throughput.report.meta.stream"),
+      value: run.stream ? t("common.yes") : t("common.no"),
+    },
+  ];
+  const summaryRows = [
+    { label: t("throughput.metric.total"), value: formatCount(metrics.total_requests) },
+    { label: t("throughput.metric.success"), value: formatCount(metrics.success_requests) },
+    { label: t("throughput.metric.error"), value: formatCount(metrics.error_requests) },
+    {
+      label: t("throughput.history.successRate"),
+      value: formatSuccessRate(metrics.total_requests, metrics.success_requests),
+    },
+    { label: t("throughput.metric.rps"), value: formatRate(metrics.rps) },
+    { label: t("throughput.metric.avgLatency"), value: formatLatency(metrics.avg_latency_ms) },
+    {
+      label: t("throughput.metric.firstTokenLatency"),
+      value: formatLatency(metrics.first_token_latency_ms),
+    },
+    { label: t("throughput.metric.p50"), value: formatLatency(metrics.p50_latency_ms) },
+    { label: t("throughput.metric.p90"), value: formatLatency(metrics.p90_latency_ms) },
+    { label: t("throughput.metric.p99"), value: formatLatency(metrics.p99_latency_ms) },
+    { label: t("throughput.metric.inputTokens"), value: formatTokenCount(metrics.input_tokens) },
+    {
+      label: t("throughput.metric.outputTokens"),
+      value: formatTokenCount(metrics.output_tokens),
+    },
+    { label: t("throughput.metric.totalTokens"), value: formatTokenCount(metrics.total_tokens) },
+    { label: t("throughput.metric.avgTokens"), value: formatTokenCount(metrics.avg_total_tokens) },
+    {
+      label: t("throughput.metric.totalPrefillSpeed"),
+      value: formatTokenRate(speedMetrics?.totalPrefill),
+    },
+    {
+      label: t("throughput.metric.singlePrefillSpeed"),
+      value: formatTokenRate(speedMetrics?.singlePrefill),
+    },
+    {
+      label: t("throughput.metric.totalDecodeSpeed"),
+      value: formatTokenRate(speedMetrics?.totalDecode),
+    },
+    {
+      label: t("throughput.metric.singleDecodeSpeed"),
+      value: formatTokenRate(speedMetrics?.singleDecode),
+    },
+  ];
+  const summaryRowsHtml = summaryRows
+    .map((row) => `<tr><td>${safe(row.label)}</td><td>${safe(row.value)}</td></tr>`)
+    .join("");
+  const metaRowsHtml = metaRows
+    .map((row) => `<tr><td>${safe(row.label)}</td><td>${safe(row.value)}</td></tr>`)
+    .join("");
+  const sampleColumns = [
+    { label: t("throughput.chart.axis.concurrency"), value: (sample) => formatCount(sample.concurrency) },
+    { label: t("throughput.field.elapsed"), value: (sample) => formatElapsed(sample.elapsed_s) },
+    { label: t("throughput.metric.total"), value: (sample) => formatCount(sample.total_requests) },
+    {
+      label: t("throughput.history.successRate"),
+      value: (sample) =>
+        formatSuccessRate(sample.total_requests, sample.success_requests),
+    },
+    { label: t("throughput.metric.rps"), value: (sample) => formatRate(sample.rps) },
+    {
+      label: t("throughput.metric.avgLatency"),
+      value: (sample) => formatLatency(sample.avg_latency_ms),
+    },
+    { label: t("throughput.metric.p50"), value: (sample) => formatLatency(sample.p50_latency_ms) },
+    { label: t("throughput.metric.p90"), value: (sample) => formatLatency(sample.p90_latency_ms) },
+    { label: t("throughput.metric.p99"), value: (sample) => formatLatency(sample.p99_latency_ms) },
+    {
+      label: t("throughput.metric.totalPrefillSpeed"),
+      value: (sample) => formatTokenRate(sample.total_prefill_speed_tps),
+    },
+    {
+      label: t("throughput.metric.singlePrefillSpeed"),
+      value: (sample) => formatTokenRate(sample.single_prefill_speed_tps),
+    },
+    {
+      label: t("throughput.metric.totalDecodeSpeed"),
+      value: (sample) => formatTokenRate(sample.total_decode_speed_tps),
+    },
+    {
+      label: t("throughput.metric.singleDecodeSpeed"),
+      value: (sample) => formatTokenRate(sample.single_decode_speed_tps),
+    },
+    {
+      label: t("throughput.metric.inputTokens"),
+      value: (sample) => formatTokenCount(sample.input_tokens),
+    },
+    {
+      label: t("throughput.metric.outputTokens"),
+      value: (sample) => formatTokenCount(sample.output_tokens),
+    },
+    { label: t("throughput.metric.totalTokens"), value: (sample) => formatTokenCount(sample.total_tokens) },
+    {
+      label: t("throughput.metric.avgTokens"),
+      value: (sample) => formatTokenCount(sample.avg_total_tokens),
+    },
+  ];
+  const sampleRowsHtml = reportSamples.length
+    ? reportSamples
+        .map(
+          (sample) =>
+            `<tr>${sampleColumns
+              .map((column) => `<td>${safe(column.value(sample))}</td>`)
+              .join("")}</tr>`
+        )
+        .join("")
+    : `<tr><td colspan="${sampleColumns.length}" class="muted">${safe(
+        t("common.noData")
+      )}</td></tr>`;
+  const errorRowsHtml = errors.length
+    ? errors
+        .map(
+          (error) =>
+            `<tr><td>${safe(formatTimestamp(error.timestamp))}</td><td>${safe(
+              error.message
+            )}</td></tr>`
+        )
+        .join("")
+    : `<tr><td colspan="2" class="muted">${safe(t("throughput.errors.empty"))}</td></tr>`;
+  const latencyRowsHtml = latencyRows.length
+    ? latencyRows
+        .map(
+          (row) =>
+            `<tr><td>${safe(row.label)}</td><td>${safe(row.count)}</td><td>${safe(
+              row.ratio
+            )}</td></tr>`
+        )
+        .join("")
+    : `<tr><td colspan="3" class="muted">${safe(t("common.noData"))}</td></tr>`;
+  const chartHtml = chartImage
+    ? `<img class="chart-image" src="${safe(chartImage)}" alt="${safe(
+        t("throughput.report.section.curve")
+      )}" />`
+    : `<div class="muted">${safe(t("common.noData"))}</div>`;
+  return `<!DOCTYPE html>
+<html lang="${safe(language)}">
+  <head>
+    <meta charset="utf-8" />
+    <title>${safe(t("throughput.report.title"))}</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 32px;
+        font-family: "Segoe UI", "Noto Sans", "PingFang SC", "Microsoft Yahei", Arial, sans-serif;
+        color: #0f172a;
+        background: #ffffff;
+      }
+      h1 { font-size: 24px; margin: 0 0 4px; }
+      h2 { font-size: 18px; margin: 24px 0 12px; }
+      .subtitle { font-size: 13px; color: #64748b; }
+      .report-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #e2e8f0;
+        color: #475569;
+      }
+      .status-badge.running { background: #dbeafe; color: #1d4ed8; }
+      .status-badge.stopping { background: #fef9c3; color: #a16207; }
+      .status-badge.finished { background: #dcfce7; color: #15803d; }
+      .status-badge.stopped { background: #fee2e2; color: #b91c1c; }
+      .muted { color: #94a3b8; font-size: 12px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #e2e8f0; padding: 8px 10px; font-size: 12px; }
+      th { background: #f8fafc; text-align: left; }
+      .table-scroll { overflow-x: auto; }
+      .section-block { margin-bottom: 20px; }
+      .note-list { margin: 0; padding-left: 18px; font-size: 12px; color: #475569; }
+      .chart-wrap { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
+      .chart-image { max-width: 100%; height: auto; display: block; }
+    </style>
+  </head>
+  <body>
+    <header class="report-header">
+      <div>
+        <h1>${safe(t("throughput.report.title"))}</h1>
+        <div class="subtitle">${safe(t("throughput.report.subtitle"))}</div>
+      </div>
+      <div class="status-badge ${safe(statusValue)}">${safe(
+        resolveStatusLabel(statusValue)
+      )}</div>
+    </header>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.overview"))}</h2>
+      <table>
+        <tbody>
+          ${metaRowsHtml}
+        </tbody>
+      </table>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.summary"))}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>${safe(t("throughput.report.table.metric"))}</th>
+            <th>${safe(t("throughput.report.table.value"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summaryRowsHtml}
+        </tbody>
+      </table>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.curve"))}</h2>
+      <div class="chart-wrap">
+        ${chartHtml}
+      </div>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.samples"))}</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              ${sampleColumns.map((column) => `<th>${safe(column.label)}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${sampleRowsHtml}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.errors"))}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>${safe(t("throughput.errors.time"))}</th>
+            <th>${safe(t("throughput.errors.message"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${errorRowsHtml}
+        </tbody>
+      </table>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.latency"))}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>${safe(t("throughput.report.latency.bucket"))}</th>
+            <th>${safe(t("throughput.report.latency.count"))}</th>
+            <th>${safe(t("throughput.report.latency.ratio"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${latencyRowsHtml}
+        </tbody>
+      </table>
+    </section>
+    <section class="section-block">
+      <h2>${safe(t("throughput.report.section.notes"))}</h2>
+      <ul class="note-list">
+        <li>${safe(t("throughput.report.note.tokens"))}</li>
+      </ul>
+    </section>
+  </body>
+</html>`;
+};
+
+const getCurveChartDataUrl = () => {
+  const chart = ensureCurveChart();
+  if (!chart || typeof chart.getDataURL !== "function") {
+    return "";
+  }
+  try {
+    return chart.getDataURL({
+      type: "png",
+      pixelRatio: 2,
+      backgroundColor: "#ffffff",
+    });
+  } catch (error) {
+    return "";
+  }
+};
+
 const downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1794,14 +2191,22 @@ const handleExport = async () => {
       : "";
     const report = await fetchThroughputReport(runId || undefined);
     let blob;
+    let extension = "json";
     if (format === "csv") {
       const csv = buildCsv(report);
       blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      extension = "csv";
+    } else if (format === "html") {
+      const chartImage = getCurveChartDataUrl();
+      const html = buildHtmlReport(report, { chartImage });
+      blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      extension = "html";
     } else {
       const json = JSON.stringify(report, null, 2);
       blob = new Blob([json], { type: "application/json;charset=utf-8" });
+      extension = "json";
     }
-    const filename = buildReportFilename(report, format === "csv" ? "csv" : "json");
+    const filename = buildReportFilename(report, extension);
     downloadBlob(blob, filename);
     setFormStatus(t("throughput.message.exported"));
     notify(t("throughput.message.exported"), "success");
