@@ -58,7 +58,7 @@ import {
   loadLspConfig,
   onLspPanelActivate,
   onLspPanelDeactivate,
-} from "./modules/lsp.js?v=20260118-04";
+} from "./modules/lsp.js?v=20260118-06";
 
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260115-05";
 
@@ -76,7 +76,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-04";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-06";
 
 
 

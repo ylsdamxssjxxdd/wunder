@@ -4,7 +4,7 @@ import { getWunderBase } from "./api.js";
 import { formatTimestamp, isPlainObject } from "./utils.js?v=20251229-02";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260118-04";
+import { t } from "./i18n.js?v=20260118-06";
 import { loadWorkspace } from "./workspace.js?v=20260118-04";
 
 const normalizeLspConfig = (config) => {
@@ -95,14 +95,6 @@ const LSP_TEMPLATES = [
         enabled: true,
       },
       {
-        id: "markdown",
-        name: "Marksman",
-        command: ["marksman", "server"],
-        extensions: ["md", "markdown"],
-        root_markers: ["README.md", ".git"],
-        enabled: true,
-      },
-      {
         id: "bash",
         name: "Bash LS",
         command: ["bash-language-server", "start"],
@@ -116,14 +108,6 @@ const LSP_TEMPLATES = [
         command: ["docker-langserver", "--stdio"],
         extensions: ["dockerfile"],
         root_markers: ["Dockerfile", ".git"],
-        enabled: true,
-      },
-      {
-        id: "sql",
-        name: "SQL LS",
-        command: ["sql-language-server", "up", "--method", "stdio"],
-        extensions: ["sql"],
-        root_markers: [".git"],
         enabled: true,
       },
     ],
@@ -194,14 +178,6 @@ const LSP_TEMPLATES = [
         root_markers: ["pyproject.toml", "setup.py", "requirements.txt"],
         enabled: true,
       },
-      {
-        id: "sql",
-        name: "SQL LS",
-        command: ["sql-language-server", "up", "--method", "stdio"],
-        extensions: ["sql"],
-        root_markers: [".git"],
-        enabled: true,
-      },
     ],
   },
   {
@@ -236,22 +212,6 @@ const LSP_TEMPLATES = [
         command: ["docker-langserver", "--stdio"],
         extensions: ["dockerfile"],
         root_markers: ["Dockerfile", ".git"],
-        enabled: true,
-      },
-      {
-        id: "sql",
-        name: "SQL LS",
-        command: ["sql-language-server", "up", "--method", "stdio"],
-        extensions: ["sql"],
-        root_markers: [".git"],
-        enabled: true,
-      },
-      {
-        id: "markdown",
-        name: "Marksman",
-        command: ["marksman", "server"],
-        extensions: ["md", "markdown"],
-        root_markers: ["README.md", ".git"],
         enabled: true,
       },
     ],

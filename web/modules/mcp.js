@@ -5,7 +5,7 @@ import { isPlainObject, parseHeadersValue, getToolInputSchema } from "./utils.js
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260118-04";
+import { t } from "./i18n.js?v=20260118-06";
 import { openToolDetailModal, setToolDetailTestMode } from "./tool-detail.js?v=20260115-05";
 
 let mcpTestFields = [];

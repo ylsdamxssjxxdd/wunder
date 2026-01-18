@@ -2410,7 +2410,7 @@ button.danger {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(520px, 1.6fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1.2fr);
   gap: 12px;
   overflow: hidden;
 }

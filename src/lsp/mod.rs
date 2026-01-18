@@ -857,7 +857,6 @@ fn detect_language_id(path: &Path) -> String {
         "json" => "json",
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
-        "md" => "markdown",
         "c" => "c",
         "cpp" | "cc" | "cxx" => "cpp",
         "h" => "c",

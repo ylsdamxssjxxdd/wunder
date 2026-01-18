@@ -9,7 +9,7 @@ import { loadWorkspace } from "./workspace.js?v=20260118-04";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260118-04";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260118-06";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);

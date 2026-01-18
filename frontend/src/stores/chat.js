@@ -489,6 +489,84 @@ const normalizeAssistantContent = (content) => {
   return answer || content;
 };
 
+const normalizeToolNameForFinal = (name) => {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  if (raw === '最终回复') return raw;
+  return raw.toLowerCase().replace(/[\s-]+/g, '_');
+};
+
+const isFinalToolName = (name) => {
+  const normalized = normalizeToolNameForFinal(name);
+  return (
+    normalized === '最终回复' ||
+    normalized === 'final_response' ||
+    normalized === 'final' ||
+    normalized === 'final_answer'
+  );
+};
+
+const normalizeToolCallsPayload = (toolCalls) => {
+  if (!toolCalls) return [];
+  let payload = toolCalls;
+  if (typeof payload === 'string') {
+    const parsed = safeJsonParse(payload);
+    if (parsed !== null) {
+      payload = parsed;
+    }
+  }
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    if (Array.isArray(payload.tool_calls)) return payload.tool_calls;
+    if (payload.tool_calls) return [payload.tool_calls];
+    if (payload.tool_call) return [payload.tool_call];
+    if (payload.function_call) return [payload.function_call];
+    return [payload];
+  }
+  return [];
+};
+
+const parseToolCallArgs = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const parsed = safeJsonParse(value);
+    return parsed !== null ? parsed : value;
+  }
+  if (typeof value === 'object') return value;
+  return String(value);
+};
+
+const extractFinalAnswerFromToolCalls = (toolCalls) => {
+  const calls = normalizeToolCallsPayload(toolCalls);
+  for (const call of calls) {
+    if (!call || typeof call !== 'object') continue;
+    const functionPayload = call.function || call;
+    const name = functionPayload.name || call.name || call.tool;
+    if (!isFinalToolName(name)) continue;
+    const argsRaw =
+      functionPayload.arguments ??
+      call.arguments ??
+      call.args ??
+      functionPayload.args ??
+      functionPayload.parameters ??
+      call.parameters;
+    const args = parseToolCallArgs(argsRaw);
+    if (typeof args === 'string') {
+      const text = args.trim();
+      if (text) return text;
+      continue;
+    }
+    if (args && typeof args === 'object') {
+      const answer = args.content ?? args.answer ?? args.message;
+      if (answer !== undefined && answer !== null) {
+        const text = String(answer).trim();
+        if (text) return text;
+      }
+    }
+  }
+  return '';
+};
+
 const buildWorkflowEventRaw = (data, timestamp) => {
   const payload = { data: data ?? null };
   if (timestamp) {
@@ -1009,17 +1087,32 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         const reasoningText =
           typeof reasoningRaw === 'string' ? reasoningRaw : reasoningRaw ? String(reasoningRaw) : '';
         const hasContent = typeof content === 'string' && content !== '';
+        const toolCallsPayload =
+          data?.tool_calls ??
+          payload?.tool_calls ??
+          data?.tool_call ??
+          payload?.tool_call ??
+          data?.function_call ??
+          payload?.function_call;
+        const toolCallAnswer = !hasContent ? extractFinalAnswerFromToolCalls(toolCallsPayload) : '';
+        const resolvedContent = hasContent ? content : toolCallAnswer;
+        const resolvedHasContent =
+          typeof resolvedContent === 'string' && resolvedContent !== '';
         const hasReasoning = reasoningText !== '';
-        if (!hasContent && !hasReasoning && (outputState.streaming || outputState.reasoningStreaming)) {
+        if (
+          !resolvedHasContent &&
+          !hasReasoning &&
+          (outputState.streaming || outputState.reasoningStreaming)
+        ) {
           outputState.streaming = false;
           outputState.reasoningStreaming = false;
         } else {
           if (hasReasoning) {
             outputReasoning = reasoningText;
           }
-          if (hasContent) {
-            outputContent = content;
-            assistantMessage.content = content;
+          if (resolvedHasContent) {
+            outputContent = resolvedContent;
+            assistantMessage.content = resolvedContent;
           }
           outputState.streaming = false;
           outputState.reasoningStreaming = false;

@@ -5,7 +5,9 @@ use crate::i18n;
 use crate::knowledge;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::mcp;
-use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
+use crate::path_utils::{
+    is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+};
 use crate::sandbox;
 use crate::schemas::ToolSpec;
 use crate::skills::{execute_skill, SkillRegistry};
@@ -1020,8 +1022,9 @@ async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .unwrap_or(DEFAULT_LIST_DEPTH as u64) as usize;
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
+    let extra_roots = collect_read_roots(context);
     tokio::task::spawn_blocking(move || {
-        list_files_inner(workspace.as_ref(), &user_id, &path, max_depth)
+        list_files_inner(workspace.as_ref(), &user_id, &path, &extra_roots, max_depth)
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))?
@@ -1031,9 +1034,10 @@ fn list_files_inner(
     workspace: &WorkspaceManager,
     user_id: &str,
     path: &str,
+    extra_roots: &[PathBuf],
     max_depth: usize,
 ) -> Result<Value> {
-    let root = workspace.resolve_path(user_id, path)?;
+    let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
         return Ok(json!({
             "ok": false,
@@ -1090,6 +1094,7 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
     let max_files = args.get("max_files").and_then(Value::as_u64).unwrap_or(0) as usize;
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
+    let extra_roots = collect_read_roots(context);
     tokio::task::spawn_blocking(move || {
         search_content_inner(
             workspace.as_ref(),
@@ -1097,6 +1102,7 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
             &query,
             &path,
             &file_pattern,
+            &extra_roots,
             max_depth,
             max_files,
         )
@@ -1111,10 +1117,11 @@ fn search_content_inner(
     query: &str,
     path: &str,
     file_pattern: &str,
+    extra_roots: &[PathBuf],
     max_depth: usize,
     max_files: usize,
 ) -> Result<Value> {
-    let root = workspace.resolve_path(user_id, path)?;
+    let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
         return Ok(json!({
             "ok": false,
@@ -1318,6 +1325,46 @@ fn build_glob_matcher(pattern: &str) -> Option<Regex> {
     Regex::new(&regex).ok()
 }
 
+fn dedupe_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for root in roots {
+        let normalized = normalize_existing_path(&root);
+        let key = normalize_path_for_compare(&normalized);
+        if seen.insert(key) {
+            output.push(normalized);
+        }
+    }
+    output
+}
+
+fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let cwd = std::env::current_dir().ok();
+    for raw in &context.config.security.allow_paths {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(trimmed);
+        let resolved = if path.is_absolute() {
+            path
+        } else if let Some(base) = &cwd {
+            base.join(path)
+        } else {
+            path
+        };
+        roots.push(resolved);
+    }
+    dedupe_roots(roots)
+}
+
+fn collect_read_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    let mut roots = collect_allow_roots(context);
+    roots.extend(collect_skill_roots(context));
+    dedupe_roots(roots)
+}
+
 fn collect_skill_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = context
         .skills
@@ -1331,6 +1378,47 @@ fn collect_skill_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
         }
     }
     roots
+}
+
+fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = {
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            path
+        } else {
+            let relative = sanitize_relative_path(trimmed)?;
+            let cwd = std::env::current_dir().ok()?;
+            cwd.join(relative)
+        }
+    };
+    for root in roots {
+        if is_within_root(root, &candidate) {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
+fn resolve_tool_path(
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    raw_path: &str,
+    extra_roots: &[PathBuf],
+) -> Result<PathBuf> {
+    match workspace.resolve_path(user_id, raw_path) {
+        Ok(path) => Ok(path),
+        Err(err) => {
+            if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
+                Ok(resolved)
+            } else {
+                Err(err)
+            }
+        }
+    }
 }
 
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1348,9 +1436,9 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let specs_for_lsp = specs.clone();
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
-    let skill_roots = collect_skill_roots(context);
+    let extra_roots = collect_read_roots(context);
     let result = tokio::task::spawn_blocking(move || {
-        read_files_inner(workspace.as_ref(), &user_id, &skill_roots, specs)
+        read_files_inner(workspace.as_ref(), &user_id, &extra_roots, specs)
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))?;
@@ -1367,7 +1455,7 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 fn read_files_inner(
     workspace: &WorkspaceManager,
     user_id: &str,
-    skill_roots: &[PathBuf],
+    extra_roots: &[PathBuf],
     specs: Vec<ReadFileSpec>,
 ) -> Result<Value> {
     let mut outputs = Vec::new();
@@ -1383,7 +1471,7 @@ fn read_files_inner(
         let target = match workspace.resolve_path(user_id, raw_path) {
             Ok(path) => Some(path),
             Err(err) => {
-                if let Some(resolved) = resolve_skill_read_path(raw_path, skill_roots) {
+                if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
                     Some(resolved)
                 } else {
                     outputs.push(format!(">>> {}\n{}", raw_path, err));
@@ -1458,29 +1546,6 @@ fn read_files_inner(
         "content": result,
         "meta": { "files": summaries }
     }))
-}
-
-fn resolve_skill_read_path(raw_path: &str, roots: &[PathBuf]) -> Option<PathBuf> {
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let candidate = {
-        let path = PathBuf::from(trimmed);
-        if path.is_absolute() {
-            path
-        } else {
-            let relative = sanitize_relative_path(trimmed)?;
-            let cwd = std::env::current_dir().ok()?;
-            cwd.join(relative)
-        }
-    };
-    for root in roots {
-        if is_within_root(root, &candidate) {
-            return Some(candidate.clone());
-        }
-    }
-    None
 }
 
 fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
@@ -1607,13 +1672,30 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
     let path_for_write = path.clone();
-    tokio::task::spawn_blocking(move || {
-        workspace.write_file(&user_id, &path_for_write, &content, true)
+    let allow_roots = collect_allow_roots(context);
+    let target = tokio::task::spawn_blocking(move || {
+        let target =
+            resolve_tool_path(workspace.as_ref(), &user_id, &path_for_write, &allow_roots)?;
+        let workspace_root = workspace.workspace_root(&user_id);
+        if is_within_root(&workspace_root, &target) {
+            workspace.write_file(&user_id, &path_for_write, &content, true)?;
+        } else {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&target, &content)?;
+        }
+        Ok::<PathBuf, anyhow::Error>(target)
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))??;
-    let target = context.workspace.resolve_path(context.user_id, &path)?;
-    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
+    let workspace_root = context.workspace.workspace_root(context.user_id);
+    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
+    {
+        touch_lsp_file(context, &target, true).await
+    } else {
+        None
+    };
     Ok(json!({
         "ok": true,
         "path": path,
@@ -1636,7 +1718,13 @@ async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> 
     let path = path.to_string();
     let old = old.to_string();
     let new_str = new_str.to_string();
-    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    let allow_roots = collect_allow_roots(context);
+    let target = resolve_tool_path(
+        context.workspace.as_ref(),
+        context.user_id,
+        &path,
+        &allow_roots,
+    )?;
     let target_for_read = target.clone();
     let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
         .await
@@ -1652,8 +1740,16 @@ async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> 
     tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, replaced))
         .await
         .map_err(|err| anyhow!(err.to_string()))??;
-    context.workspace.bump_version(context.user_id);
-    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
+    let workspace_root = context.workspace.workspace_root(context.user_id);
+    if is_within_root(&workspace_root, &target) {
+        context.workspace.bump_version(context.user_id);
+    }
+    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
+    {
+        touch_lsp_file(context, &target, true).await
+    } else {
+        None
+    };
     Ok(json!({
         "ok": true,
         "path": path,
@@ -1673,7 +1769,13 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("缺少 edits"))?
         .to_vec();
-    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    let allow_roots = collect_allow_roots(context);
+    let target = resolve_tool_path(
+        context.workspace.as_ref(),
+        context.user_id,
+        &path,
+        &allow_roots,
+    )?;
     let target_for_read = target.clone();
     let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
         .await
@@ -1731,8 +1833,16 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, output))
         .await
         .map_err(|err| anyhow!(err.to_string()))??;
-    context.workspace.bump_version(context.user_id);
-    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
+    let workspace_root = context.workspace.workspace_root(context.user_id);
+    if is_within_root(&workspace_root, &target) {
+        context.workspace.bump_version(context.user_id);
+    }
+    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
+    {
+        touch_lsp_file(context, &target, true).await
+    } else {
+        None
+    };
     Ok(json!({
         "ok": true,
         "path": path,

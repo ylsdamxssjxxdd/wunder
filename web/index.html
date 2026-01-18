@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260118-04" />
+    <link rel="stylesheet" href="./app.css?v=20260118-05" />
   </head>
   <body>
     <div class="app">
@@ -1240,33 +1240,33 @@
             </div>
           </div>
         </section>
-                <section id="lspPanel" class="panel">
+        <section id="lspPanel" class="panel">
           <div class="list-header">
-            <h1 data-i18n="lsp.title">LSP</h1>
+            <h1 data-i18n="lsp.title">LSP 管理</h1>
             <div class="header-actions lsp-header-actions">
               <button id="lspStatusIndicator" class="status-indicator" type="button">
                 <span class="status-dot"></span>
-                <span id="lspStatusIndicatorText" data-i18n="lsp.status.summary.loading">...</span>
+                <span id="lspStatusIndicatorText" data-i18n="lsp.status.summary.loading">LSP 状态加载中</span>
               </button>
               <button id="lspStatusBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-plug"></i>
-                <span data-i18n="lsp.action.status">Status</span>
+                <span data-i18n="lsp.action.status">连接状态</span>
               </button>
               <button id="lspConfigBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-sliders"></i>
-                <span data-i18n="lsp.action.config">Config</span>
+                <span data-i18n="lsp.action.config">LSP 配置</span>
               </button>
             </div>
           </div>
           <div class="tips" data-i18n="lsp.tip">
-            Configure and enable LSP services to provide code navigation, symbol lookup, and diagnostics.
+            配置并启用 LSP 服务后，可为模型提供代码导航、符号检索与诊断能力。
           </div>
           <div class="lsp-layout lsp-layout-main">
             <div class="lsp-column lsp-column-main">
               <div class="settings-card lsp-workspace-card">
                 <div class="settings-card-title">
                   <i class="fa-solid fa-folder-tree"></i>
-                  <span data-i18n="lsp.workspace.title">Workspace</span>
+                  <span data-i18n="lsp.workspace.title">LSP 调试工作区</span>
                 </div>
                 <div class="settings-grid">
                   <div class="form-row">
@@ -1275,7 +1275,7 @@
                       <input id="lspTestUserId" type="text" placeholder="demo_user" />
                       <button id="lspWorkspaceSyncBtn" class="secondary btn-with-icon" type="button">
                         <i class="fa-solid fa-arrows-rotate"></i>
-                        <span data-i18n="lsp.workspace.sync">Sync</span>
+                        <span data-i18n="lsp.workspace.sync">同步</span>
                       </button>
                     </div>
                     <div id="lspWorkspaceStatus" class="muted mcp-test-status"></div>
@@ -1283,13 +1283,13 @@
                   <div class="form-row">
                     <label class="checkbox-row">
                       <input id="lspWorkspaceAutoTrigger" type="checkbox" checked />
-                      <span data-i18n="lsp.workspace.autoTrigger">Trigger LSP after save</span>
+                      <span data-i18n="lsp.workspace.autoTrigger">保存后触发 LSP</span>
                     </label>
                   </div>
                 </div>
                 <div id="lspWorkspaceMount" class="lsp-workspace-mount"></div>
                 <div class="muted" data-i18n="lsp.workspace.tip">
-                  Reuse the debug workspace. Saving triggers LSP refresh.
+                  复用调试面板的临时文件区，保存文件后自动触发 LSP 刷新。
                 </div>
               </div>
             </div>
@@ -1297,7 +1297,7 @@
               <div class="settings-card lsp-result-card">
                 <div class="settings-card-title">
                   <i class="fa-solid fa-terminal"></i>
-                  <span data-i18n="lsp.result.title">LSP Result</span>
+                  <span data-i18n="lsp.result.title">LSP 结果</span>
                 </div>
                 <div id="lspResultMeta" class="muted"></div>
                 <div id="lspTestStatus" class="muted mcp-test-status"></div>
@@ -3657,93 +3657,98 @@
       </div>
     </div>
     <div id="toastContainer" class="toast-container"></div>
-    <!-- 引入调试脚本：负责请求与 SSE 解析 -->
-    <script src="./third/echarts/echarts.min.js?v=20260110-04"></script>
-    <script src="./third/marked.min.js"></script>
-    <script type="module" src="./app.js?v=20260118-04"></script>
-      <div id="lspStatusModal" class="modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div class="detail-title" data-i18n="lsp.status.title">Connection Status</div>
-          <button id="lspStatusModalClose" class="icon-btn" type="button">?</button>
-        </div>
-        <div class="modal-body">
-          <div id="lspStatusList" class="list-body"></div>
-        </div>
-        <div class="modal-actions">
-          <button id="lspRefreshBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">Refresh</span>
-          </button>
-          <button id="lspStatusModalCloseBtn" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">Close</span>
-          </button>
-        </div>
-      </div>
-    </div>
+
+  
     <div id="lspConfigModal" class="modal">
       <div class="modal-card modal-card-lg">
         <div class="modal-header">
-          <div class="detail-title" data-i18n="lsp.config.title">LSP Config</div>
-          <button id="lspConfigModalClose" class="icon-btn" type="button">?</button>
+          <div class="detail-title" data-i18n="lsp.config.title">LSP 配置</div>
+          <button id="lspConfigModalClose" class="icon-btn" type="button">&times;</button>
         </div>
         <div class="modal-body">
           <div class="settings-grid">
             <div class="form-row">
               <label class="checkbox-row">
                 <input id="lspEnabled" type="checkbox" />
-                <span data-i18n="lsp.config.enabled">Enable LSP</span>
+                <span data-i18n="lsp.config.enabled">启用 LSP</span>
               </label>
             </div>
             <div class="form-row">
-              <label for="lspTimeout" data-i18n="lsp.config.timeout">Timeout (s)</label>
+              <label for="lspTimeout" data-i18n="lsp.config.timeout">请求超时（秒）</label>
               <input id="lspTimeout" type="number" min="0" step="1" placeholder="30" />
             </div>
             <div class="form-row">
-              <label for="lspDiagnosticsDebounce" data-i18n="lsp.config.debounce">Diagnostics debounce (ms)</label>
+              <label for="lspDiagnosticsDebounce" data-i18n="lsp.config.debounce">诊断去抖（毫秒）</label>
               <input id="lspDiagnosticsDebounce" type="number" min="0" step="10" placeholder="150" />
             </div>
             <div class="form-row">
-              <label for="lspIdleTtl" data-i18n="lsp.config.idleTtl">Idle TTL (s)</label>
+              <label for="lspIdleTtl" data-i18n="lsp.config.idleTtl">空闲回收（秒）</label>
               <input id="lspIdleTtl" type="number" min="0" step="60" placeholder="1800" />
             </div>
             <div class="form-row">
-              <label data-i18n="lsp.config.template">Template</label>
+              <label data-i18n="lsp.config.template">配置模板</label>
               <div class="form-row-inline">
                 <select id="lspTemplateSelect">
-                  <option value="" data-i18n="lsp.template.select">Select template</option>
-                  <option value="fullstack" data-i18n="lsp.template.fullstack">Fullstack</option>
-                  <option value="frontend" data-i18n="lsp.template.frontend">Frontend</option>
-                  <option value="backend" data-i18n="lsp.template.backend">Backend</option>
+                  <option value="" data-i18n="lsp.template.select">选择模板</option>
+                  <option value="fullstack" data-i18n="lsp.template.fullstack">全栈</option>
+                  <option value="frontend" data-i18n="lsp.template.frontend">前端</option>
+                  <option value="backend" data-i18n="lsp.template.backend">后端</option>
                   <option value="cpp" data-i18n="lsp.template.cpp">C/C++</option>
-                  <option value="ops" data-i18n="lsp.template.ops">Ops</option>
+                  <option value="ops" data-i18n="lsp.template.ops">运维</option>
                 </select>
                 <button id="lspTemplateApplyBtn" class="secondary btn-with-icon" type="button">
                   <i class="fa-solid fa-wand-magic-sparkles"></i>
-                  <span data-i18n="lsp.template.apply">Apply</span>
+                  <span data-i18n="lsp.template.apply">应用模板</span>
                 </button>
               </div>
-              <div class="muted" data-i18n="lsp.config.templateHint">Template will overwrite existing servers.</div>
+              <div class="muted" data-i18n="lsp.config.templateHint">
+                选择模板后会覆盖服务列表，请先确认保存的配置。
+              </div>
             </div>
             <div class="form-row">
-              <label for="lspServers" data-i18n="lsp.config.servers">LSP Servers (JSON array)</label>
+              <label for="lspServers" data-i18n="lsp.config.servers">LSP 服务（JSON 数组）</label>
               <textarea
                 id="lspServers"
                 class="code-preview"
                 placeholder='[{"id":"rust-analyzer","command":["rust-analyzer"],"extensions":["rs"],"root_markers":["Cargo.toml"],"enabled":true}]'
               ></textarea>
-              <div class="muted" data-i18n="lsp.config.serversHint">Each server needs id/command and file extensions.</div>
+              <div class="muted" data-i18n="lsp.config.serversHint">
+                每个服务需要 id/command，extensions 与 root_markers 用于匹配项目与文件类型。
+              </div>
             </div>
           </div>
         </div>
         <div class="modal-actions">
           <button id="lspConfigModalCloseBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">Close</span>
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
           <button id="lspSaveBtn" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-check"></i><span data-i18n="common.save">Save</span>
+            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>
     </div>
-  </body>
+    <div id="lspStatusModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title" data-i18n="lsp.status.title">连接状态</div>
+          <button id="lspStatusModalClose" class="icon-btn" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="lspStatusList" class="list-body"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="lspRefreshBtn" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
+          </button>
+          <button id="lspStatusModalCloseBtn" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <script src="./third/echarts/echarts.min.js?v=20260118-06"></script>
+    <script src="./third/marked.min.js?v=20260118-06"></script>
+    <script type="module" src="./app.js?v=20260118-06"></script>
+</body>
 </html>

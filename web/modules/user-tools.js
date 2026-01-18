@@ -16,7 +16,7 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-04";
+import { t } from "./i18n.js?v=20260118-06";
 
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;
