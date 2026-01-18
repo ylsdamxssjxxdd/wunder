@@ -4,6 +4,7 @@ use crate::a2a_store::A2aStore;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::evaluation_runner::EvaluationManager;
+use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub workspace: Arc<WorkspaceManager>,
     pub monitor: Arc<MonitorState>,
     pub orchestrator: Arc<Orchestrator>,
+    pub lsp_manager: Arc<LspManager>,
     pub memory: Arc<MemoryStore>,
     pub skills: Arc<RwLock<SkillRegistry>>,
     pub user_tool_store: Arc<UserToolStore>,
@@ -41,6 +43,7 @@ impl AppState {
             storage.clone(),
             config.workspace.retention_days,
         ));
+        let lsp_manager = LspManager::new(workspace.clone());
         let monitor = Arc::new(MonitorState::new(
             storage.clone(),
             config.observability.clone(),
@@ -62,6 +65,7 @@ impl AppState {
             a2a_store.clone(),
             skills.clone(),
             user_tool_manager.clone(),
+            lsp_manager.clone(),
             storage.clone(),
         ));
         let memory = Arc::new(MemoryStore::new(storage.clone()));
@@ -80,6 +84,7 @@ impl AppState {
             workspace,
             monitor,
             orchestrator,
+            lsp_manager,
             memory,
             skills,
             user_tool_store,

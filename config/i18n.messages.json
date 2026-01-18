@@ -1155,6 +1155,34 @@
     "en-US": "Apply structured line-based edits to a text file.",
     "zh-CN": "对现有文本文件应用结构化的行级编辑。"
   },
+  "tool.spec.lsp.args.operation": {
+    "en-US": "LSP operation: definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy.",
+    "zh-CN": "LSP 操作类型：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy。"
+  },
+  "tool.spec.lsp.args.path": {
+    "en-US": "File path within the workspace.",
+    "zh-CN": "工作区内的文件路径。"
+  },
+  "tool.spec.lsp.args.line": {
+    "en-US": "Line number (1-based, required for position-based operations).",
+    "zh-CN": "行号（从 1 开始，定位类操作必填）。"
+  },
+  "tool.spec.lsp.args.character": {
+    "en-US": "Character offset (1-based, required for position-based operations).",
+    "zh-CN": "列号（从 1 开始，定位类操作必填）。"
+  },
+  "tool.spec.lsp.args.query": {
+    "en-US": "Workspace symbol search query (required for workspaceSymbol).",
+    "zh-CN": "工作区符号搜索关键词（workspaceSymbol 必填）。"
+  },
+  "tool.spec.lsp.args.call_hierarchy_direction": {
+    "en-US": "Call hierarchy direction: incoming/outgoing.",
+    "zh-CN": "调用层级方向：incoming/outgoing。"
+  },
+  "tool.spec.lsp.description": {
+    "en-US": "Query language server for definitions, references, hover info, symbols, implementations, or call hierarchy.",
+    "zh-CN": "调用 LSP 获取定义、引用、悬停信息、符号、实现或调用层级。"
+  },
   "tool.spec.exec.args.content": {
     "en-US": "CLI command.",
     "zh-CN": "CLI 命令。"

@@ -7,7 +7,7 @@
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml`。
 - docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
-- 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性。
+- 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
@@ -305,6 +305,32 @@
   - `servers`：MCP 服务列表（name/endpoint/allow_tools/enabled）
 - `POST` 入参：
   - `servers`：完整 MCP 服务列表，用于保存配置
+
+### 4.1.3.1 `/wunder/admin/lsp`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `lsp`：LSP 配置（enabled/timeout_s/diagnostics_debounce_ms/idle_ttl_s/servers）
+  - `status`：LSP 连接状态列表（server_id/server_name/user_id/root/status/last_used_at）
+- `POST` 入参：
+  - `lsp`：完整 LSP 配置，用于保存配置
+
+#### `/wunder/admin/lsp/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `path`：文件路径（相对用户工作区）
+  - `operation`：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy
+  - `line`：行号（定位类操作必填，1-based）
+  - `character`：列号（定位类操作必填，1-based）
+  - `query`：workspaceSymbol 查询关键词（可选）
+  - `call_hierarchy_direction`：incoming/outgoing（可选）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `operation`：请求操作
+  - `path`：文件路径
+  - `results`：按 LSP 服务返回的结果列表
 
 ### 4.1.4 `/wunder/admin/mcp/tools`
 
@@ -678,7 +704,7 @@
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/server`、`/wunder/i18n`。
-- 内置工具/MCP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
+- 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
@@ -1238,9 +1264,11 @@
 
 - `tool_call_mode=tool_call`（默认）：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
 - `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
+- `function_call` 模式下系统提示词不再注入工具清单与工具调用引导，工具清单仅通过请求 `tools` 传入；技能提示词仍会注入。
+- `function_call` 模式需要在后续请求中携带历史的 assistant `tool_calls` 与 role=tool/tool_call_id 结果；wunder 会将其写入对话历史并自动回填。
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
 - 工具结果以 `tool_response: ` 前缀的 user 消息回填给模型，用于下一轮判断（`tool_call` 模式）。
-- A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式注入系统提示词。
+- A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式对模型可用；`tool_call` 模式下注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
 - 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。

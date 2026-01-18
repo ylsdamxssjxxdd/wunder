@@ -4,7 +4,7 @@ import {
   resetStoredConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260115-02";
+import { elements } from "./elements.js?v=20260118-04";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260113-01";
 import { notify } from "./notify.js";
@@ -14,7 +14,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260115-03";
+} from "./i18n.js?v=20260118-04";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 

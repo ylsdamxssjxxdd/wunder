@@ -102,7 +102,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install --break-system-packages \
     "markitdown[docx,pptx,xlsx]" \
   -i https://pypi.tuna.tsinghua.edu.cn/simple
+  
+# LSP tools (append-only)
+RUN rustup component add rust-analyzer
+RUN npm install -g pyright @vue/language-server typescript typescript-language-server
+
+# LSP extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clangd \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN npm install -g vscode-langservers-extracted bash-language-server \
+    dockerfile-language-server-nodejs
 
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]
+
+# docker build -t wunder-x86 --platform linux/amd64 -f Dockerfile.rust .
+# docker build -t wunder-arm --platform linux/arm64 -f Dockerfile.rust .

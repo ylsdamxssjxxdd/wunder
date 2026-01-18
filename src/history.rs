@@ -403,9 +403,20 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
     let role = item.get("role").and_then(Value::as_str)?;
     let content = item.get("content")?.clone();
     if role == "tool" {
+        let content_text = match &content {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        if let Some(tool_call_id) = extract_tool_call_id(item) {
+            return Some(json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content_text,
+            }));
+        }
         return Some(json!({
             "role": "user",
-            "content": format!("{OBSERVATION_PREFIX}{}", content.as_str().unwrap_or(&content.to_string())),
+            "content": format!("{OBSERVATION_PREFIX}{content_text}"),
         }));
     }
     let mut message = json!({ "role": role, "content": content });
@@ -421,6 +432,18 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
             }
         }
     }
+    if role == "assistant" {
+        if let Some(tool_calls) = extract_tool_calls_payload(item) {
+            if let Value::Object(ref mut map) = message {
+                map.insert("tool_calls".to_string(), tool_calls);
+            }
+        }
+        if let Some(tool_call_id) = extract_tool_call_id(item) {
+            if let Value::Object(ref mut map) = message {
+                map.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+            }
+        }
+    }
     Some(message)
 }
 
@@ -431,6 +454,42 @@ fn is_tool_call_item(item: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|value| value == "tool_call")
         .unwrap_or(false)
+}
+
+fn extract_tool_calls_payload(item: &Value) -> Option<Value> {
+    let value = item
+        .get("tool_calls")
+        .or_else(|| item.get("tool_call"))
+        .or_else(|| item.get("function_call"))?;
+    if value.is_null() {
+        None
+    } else {
+        Some(value.clone())
+    }
+}
+
+fn extract_tool_call_id(item: &Value) -> Option<String> {
+    item.get("tool_call_id")
+        .or_else(|| item.get("toolCallId"))
+        .or_else(|| item.get("call_id"))
+        .or_else(|| item.get("callId"))
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(num) => Some(num.to_string()),
+            _ => None,
+        })
+        .and_then(|text| {
+            let cleaned = text.trim().to_string();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned)
+            }
+        })
+}
+
+fn has_tool_calls_payload(item: &Value) -> bool {
+    extract_tool_calls_payload(item).is_some()
 }
 
 fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option<f64>, i64) {
@@ -473,7 +532,7 @@ fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option
             }
             skip_next_assistant = false;
         }
-        if role == "assistant" && is_tool_call_item(item) {
+        if role == "assistant" && is_tool_call_item(item) && !has_tool_calls_payload(item) {
             skip_next_assistant = true;
         }
         filtered.push(item.clone());

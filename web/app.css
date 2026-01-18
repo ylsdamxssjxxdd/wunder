@@ -373,7 +373,11 @@ h1 {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+}
+
+#performancePanel .performance-form .form-section {
+  flex: 0 0 auto;
 }
 
 .performance-history .monitor-table-scroll {
@@ -2402,6 +2406,72 @@ button.danger {
 }
 
 /* 管理面板布局 */
+.lsp-layout {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(520px, 1.6fr) minmax(320px, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.lsp-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.lsp-header-actions {
+  flex-wrap: wrap;
+}
+
+#lspStatusIndicator {
+  cursor: pointer;
+}
+
+#debugWorkspaceMount {
+  display: contents;
+}
+
+.lsp-workspace-mount {
+  margin-top: 6px;
+}
+
+.lsp-test-advanced {
+  margin-top: 8px;
+  border: 1px dashed #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #f8fafc;
+}
+
+.lsp-test-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #475569;
+}
+
+.lsp-test-advanced .settings-grid {
+  margin-top: 8px;
+}
+
+.lsp-result-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#lspPanel #lspTestResult {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 .management-layout {
   flex: 1 1 0;
   min-height: 0;
@@ -3003,6 +3073,28 @@ button.danger {
   color: #64748b;
   font-size: 12px;
   margin-top: 4px;
+}
+
+.lsp-status-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lsp-status-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#lspPanel #lspServers {
+  min-height: 180px;
 }
 
 .monitor-status-list {

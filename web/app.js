@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260115-02";
+import { elements } from "./modules/elements.js?v=20260118-04";
 
 import { state } from "./modules/state.js";
 
@@ -21,7 +21,7 @@ import { loadI18nConfig } from "./modules/i18n-config.js";
 
 import { initToolDetailModal } from "./modules/tool-detail.js?v=20260115-05";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260113-03";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260118-04";
 import {
 
   applyPromptToolError,
@@ -53,6 +53,12 @@ import {
 } from "./modules/memory.js?v=20251231-05";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260115-05";
+import {
+  initLspPanel,
+  loadLspConfig,
+  onLspPanelActivate,
+  onLspPanelDeactivate,
+} from "./modules/lsp.js?v=20260118-04";
 
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260115-05";
 
@@ -70,7 +76,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260115-03";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-04";
 
 
 
@@ -162,6 +168,8 @@ const panelMap = {
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
 
   mcp: { panel: elements.mcpPanel, nav: elements.navMcp },
+
+  lsp: { panel: elements.lspPanel, nav: elements.navLsp },
 
   a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navA2aServices },
 
@@ -280,6 +288,7 @@ const expandActiveNavGroupOnly = () => {
 
 
 const switchPanel = (panel) => {
+  const previousPanel = state.runtime.activePanel;
 
   Object.keys(panelMap).forEach((key) => {
 
@@ -300,6 +309,12 @@ const switchPanel = (panel) => {
   updateNavGroupState();
 
   state.runtime.activePanel = panel;
+
+  if (previousPanel === "lsp" && panel !== "lsp") {
+    onLspPanelDeactivate();
+  } else if (panel === "lsp" && previousPanel !== "lsp") {
+    onLspPanelActivate();
+  }
 
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
 
@@ -531,6 +546,32 @@ const bindNavigation = () => {
       } catch (error) {
 
         elements.mcpServerList.textContent = t("common.loadFailedWithMessage", {
+
+          message: error.message,
+
+        });
+
+      }
+
+    }
+
+  });
+
+  elements.navLsp.addEventListener("click", async () => {
+
+    switchPanel("lsp");
+
+    if (!state.panelLoaded.lsp) {
+
+      try {
+
+        await loadLspConfig();
+
+        state.panelLoaded.lsp = true;
+
+      } catch (error) {
+
+        elements.lspStatusList.textContent = t("common.loadFailedWithMessage", {
 
           message: error.message,
 
@@ -982,6 +1023,8 @@ const bootstrap = async () => {
   initMemoryPanel();
 
   initMcpPanel();
+
+  initLspPanel();
 
   initBuiltinPanel();
 

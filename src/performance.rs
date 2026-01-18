@@ -1,5 +1,6 @@
 use crate::a2a_store::A2aStore;
 use crate::config::Config;
+use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
 use crate::state::AppState;
@@ -45,6 +46,7 @@ struct PerformanceContext {
     config: Arc<Config>,
     orchestrator: Arc<Orchestrator>,
     workspace: Arc<WorkspaceManager>,
+    lsp_manager: Arc<LspManager>,
     skills: Arc<SkillRegistry>,
     user_tool_bindings: Arc<UserToolBindings>,
     a2a_store: Arc<A2aStore>,
@@ -82,6 +84,7 @@ pub async fn run_sample(
         config: Arc::new(config),
         orchestrator: state.orchestrator.clone(),
         workspace: state.workspace.clone(),
+        lsp_manager: state.lsp_manager.clone(),
         skills: Arc::new(skills_snapshot),
         user_tool_bindings: Arc::new(user_tool_bindings),
         a2a_store: Arc::new(A2aStore::new()),
@@ -326,6 +329,7 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         user_id: &context.user_id,
         session_id,
         workspace: context.workspace.clone(),
+        lsp_manager: context.lsp_manager.clone(),
         config: context.config.as_ref(),
         a2a_store: context.a2a_store.as_ref(),
         skills: context.skills.as_ref(),

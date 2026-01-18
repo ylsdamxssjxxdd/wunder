@@ -175,32 +175,27 @@ impl PromptComposer {
             let workspace_version = tree_snapshot.version;
             let cache_key = format!("{base_key}|{workspace_version}");
             let workspace_tree = tree_snapshot.tree;
-            let include_tools_protocol = !allowed_tool_names.is_empty();
-            let base_skill_specs = skills.list_specs();
-            let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
-            if let Some(bindings) = user_tool_bindings {
-                if !bindings.skill_specs.is_empty() {
-                    let user_skills = filter_skill_specs(&bindings.skill_specs, allowed_tool_names);
-                    if !user_skills.is_empty() {
-                        skills_for_prompt = merge_skill_specs(skills_for_prompt, user_skills);
-                    }
-                }
-            }
-            let tool_cache_key = format!(
-                "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
-            );
-            let now = now_ts();
-            let tool_specs = if let Some(specs) = self.get_cached_tool_specs(&tool_cache_key, now) {
-                specs
-            } else {
-                let specs = collect_prompt_tool_specs(
-                    config,
-                    skills,
-                    allowed_tool_names,
-                    user_tool_bindings,
+            let include_tools_protocol =
+                !allowed_tool_names.is_empty() && tool_call_mode == ToolCallMode::ToolCall;
+            let tool_specs = if include_tools_protocol {
+                let tool_cache_key = format!(
+                    "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
                 );
-                self.insert_cached_tool_specs(tool_cache_key, specs.clone(), now);
-                specs
+                let now = now_ts();
+                if let Some(specs) = self.get_cached_tool_specs(&tool_cache_key, now) {
+                    specs
+                } else {
+                    let specs = collect_prompt_tool_specs(
+                        config,
+                        skills,
+                        allowed_tool_names,
+                        user_tool_bindings,
+                    );
+                    self.insert_cached_tool_specs(tool_cache_key, specs.clone(), now);
+                    specs
+                }
+            } else {
+                Vec::new()
             };
             let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
             let workdir_display = workspace.display_path(user_id, workdir);
@@ -212,6 +207,16 @@ impl PromptComposer {
                 include_tools_protocol,
                 tool_call_mode,
             );
+            let base_skill_specs = skills.list_specs();
+            let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
+            if let Some(bindings) = user_tool_bindings {
+                if !bindings.skill_specs.is_empty() {
+                    let user_skills = filter_skill_specs(&bindings.skill_specs, allowed_tool_names);
+                    if !user_skills.is_empty() {
+                        skills_for_prompt = merge_skill_specs(skills_for_prompt, user_skills);
+                    }
+                }
+            }
             let skill_block = build_skill_prompt_block(&workdir_display, &skills_for_prompt);
             if !skill_block.is_empty() {
                 prompt = format!("{}\n\n{}", prompt.trim_end(), skill_block.trim());
@@ -222,7 +227,7 @@ impl PromptComposer {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
                 }
             }
-            if allowed_tool_names.contains("a2ui") {
+            if tool_call_mode == ToolCallMode::ToolCall && allowed_tool_names.contains("a2ui") {
                 let a2ui_prompt = build_a2ui_prompt();
                 if !a2ui_prompt.is_empty() {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), a2ui_prompt.trim());

@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260115-02";
+import { elements } from "./elements.js?v=20260118-04";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260115-03";
+import { t } from "./i18n.js?v=20260118-04";
 
 let contextProbeTimer = null;
 let lastProbeKey = "";
@@ -64,7 +64,7 @@ const TOOL_CALL_MODE_OPTIONS = new Set(["tool_call", "function_call"]);
 const normalizeToolCallMode = (value) => {
   const raw = String(value || "").trim();
   if (!raw) {
-    return "tool_call";
+    return "function_call";
   }
   const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
   if (normalized === "function" || normalized === "functioncall" || normalized === "fc") {
@@ -78,7 +78,7 @@ const normalizeToolCallMode = (value) => {
   ) {
     return "tool_call";
   }
-  return TOOL_CALL_MODE_OPTIONS.has(normalized) ? normalized : "tool_call";
+  return TOOL_CALL_MODE_OPTIONS.has(normalized) ? normalized : "function_call";
 };
 
 const renderProviderOptions = (activeProvider) => {
@@ -245,7 +245,7 @@ const clearLlmForm = () => {
   elements.llmVision.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
   if (elements.llmToolCallMode) {
-    elements.llmToolCallMode.value = "tool_call";
+    elements.llmToolCallMode.value = "function_call";
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
@@ -277,7 +277,7 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmVision.checked = llm.support_vision;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
   if (elements.llmToolCallMode) {
-    elements.llmToolCallMode.value = llm.tool_call_mode || "tool_call";
+    elements.llmToolCallMode.value = llm.tool_call_mode || "function_call";
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(
     llm.history_compaction_ratio ?? 0.8,

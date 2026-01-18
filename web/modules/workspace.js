@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260115-02";
+import { elements } from "./elements.js?v=20260118-04";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260115-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260118-04";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -769,6 +769,7 @@ const handleWorkspaceItemDoubleClick = (entry) => {
   if (!entry || state.workspace.renamingPath) {
     return;
   }
+  const preferEditor = Boolean(elements.workspaceSharedBlock?.closest("#lspPanel"));
   if (entry.type === "dir") {
     state.workspace.path = entry.path;
     state.workspace.expanded = new Set();
@@ -776,7 +777,11 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     return;
   }
   if (entry.type === "file") {
-    openWorkspacePreview(entry);
+    if (preferEditor && isWorkspaceTextEditable(entry)) {
+      openWorkspaceEditor(entry);
+    } else {
+      openWorkspacePreview(entry);
+    }
   }
 };
 
@@ -1416,6 +1421,15 @@ const saveWorkspaceEditor = async () => {
         name: editorEntry.name || t("workspace.editor.file"),
       }),
       "success"
+    );
+    document.dispatchEvent(
+      new CustomEvent("wunder:workspace-file-saved", {
+        detail: {
+          path: editorEntry.path,
+          name: editorEntry.name || "",
+          userId: String(elements.userId?.value || "").trim(),
+        },
+      })
     );
     closeWorkspaceEditor();
   } catch (error) {

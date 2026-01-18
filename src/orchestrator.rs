@@ -7,6 +7,7 @@ use crate::i18n;
 use crate::llm::{
     build_llm_client, is_llm_configured, normalize_tool_call_mode, ChatMessage, ToolCallMode,
 };
+use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
@@ -294,6 +295,7 @@ pub struct Orchestrator {
     a2a_store: Arc<A2aStore>,
     skills: Arc<RwLock<SkillRegistry>>,
     user_tool_manager: Arc<UserToolManager>,
+    lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
     memory_store: Arc<MemoryStore>,
@@ -372,6 +374,7 @@ impl Orchestrator {
         a2a_store: Arc<A2aStore>,
         skills: Arc<RwLock<SkillRegistry>>,
         user_tool_manager: Arc<UserToolManager>,
+        lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
     ) -> Self {
         let memory_store = Arc::new(MemoryStore::new(storage.clone()));
@@ -382,6 +385,7 @@ impl Orchestrator {
             a2a_store,
             skills,
             user_tool_manager,
+            lsp_manager,
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
             memory_store,
@@ -1337,7 +1341,16 @@ impl Orchestrator {
             messages.extend(history_messages);
             let user_message = self.build_user_message(&question, prepared.attachments.as_deref());
             messages.push(user_message.clone());
-            self.append_chat(&user_id, &session_id, "user", user_message.get("content"), None, None);
+            self.append_chat(
+                &user_id,
+                &session_id,
+                "user",
+                user_message.get("content"),
+                None,
+                None,
+                None,
+                None,
+            );
 
             let max_rounds = llm_config.max_rounds.unwrap_or(1).max(1) as i64;
             let mut last_usage: Option<TokenUsage> = None;
@@ -1427,6 +1440,8 @@ impl Orchestrator {
                             Some(&json!(assistant_content)),
                             None,
                             Some(&reasoning),
+                            None,
+                            None,
                         );
                     }
                     if answer.is_empty() {
@@ -1457,6 +1472,8 @@ impl Orchestrator {
                         Some(&json!(assistant_content)),
                         Some(&meta),
                         Some(&assistant_reasoning),
+                        tool_calls_payload.as_ref(),
+                        None,
                     );
                 }
 
@@ -1512,6 +1529,8 @@ impl Orchestrator {
                                 Some(&json!(answer.clone())),
                                 None,
                                 None,
+                                None,
+                                None,
                             );
                         }
                         break;
@@ -1528,6 +1547,8 @@ impl Orchestrator {
                                 Some(&json!(answer.clone())),
                                 None,
                                 None,
+                                None,
+                                None,
                             );
                         }
                         break;
@@ -1537,6 +1558,7 @@ impl Orchestrator {
                         user_id: &user_id,
                         session_id: &session_id,
                         workspace: self.workspace.clone(),
+                        lsp_manager: self.lsp_manager.clone(),
                         config: &config,
                         a2a_store: &self.a2a_store,
                         skills: &skills_snapshot,
@@ -1587,18 +1609,21 @@ impl Orchestrator {
                     };
 
                     let observation = self.build_tool_observation(&name, &tool_result);
-                    if tool_call_mode == ToolCallMode::FunctionCall {
-                        let tool_call_id = call
-                            .id
+                    let tool_call_id = if tool_call_mode == ToolCallMode::FunctionCall {
+                        call.id
                             .as_ref()
                             .map(|value| value.trim())
                             .filter(|value| !value.is_empty())
-                            .map(|value| value.to_string());
-                        if let Some(tool_call_id) = tool_call_id {
+                            .map(|value| value.to_string())
+                    } else {
+                        None
+                    };
+                    if tool_call_mode == ToolCallMode::FunctionCall {
+                        if let Some(tool_call_id) = tool_call_id.as_ref() {
                             messages.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_call_id,
-                                "content": observation,
+                                "content": observation.clone(),
                             }));
                         } else {
                             messages.push(json!({
@@ -1619,6 +1644,8 @@ impl Orchestrator {
                         Some(&json!(observation)),
                         None,
                         None,
+                        None,
+                        tool_call_id.as_deref(),
                     );
 
                     self.append_tool_log(&user_id, &session_id, &name, &args, &tool_result);
@@ -1828,6 +1855,8 @@ impl Orchestrator {
         content: Option<&Value>,
         meta: Option<&Value>,
         reasoning: Option<&str>,
+        tool_calls: Option<&Value>,
+        tool_call_id: Option<&str>,
     ) {
         let timestamp = Utc::now().to_rfc3339();
         let content_value = content
@@ -1853,6 +1882,17 @@ impl Orchestrator {
         if let Some(meta) = meta {
             if !meta.is_null() {
                 payload["meta"] = meta.clone();
+            }
+        }
+        if let Some(tool_calls) = tool_calls {
+            if !tool_calls.is_null() {
+                payload["tool_calls"] = tool_calls.clone();
+            }
+        }
+        if let Some(tool_call_id) = tool_call_id {
+            let cleaned = tool_call_id.trim();
+            if !cleaned.is_empty() {
+                payload["tool_call_id"] = Value::String(cleaned.to_string());
             }
         }
         let _ = self.workspace.append_chat(user_id, &payload);
@@ -2979,6 +3019,8 @@ impl Orchestrator {
             Some(&Value::String(summary_text.clone())),
             Some(&meta_value),
             None,
+            None,
+            None,
         );
 
         if skipped_question && !question_text.is_empty() {
@@ -2992,6 +3034,8 @@ impl Orchestrator {
                     session_id,
                     "user",
                     Some(&question_value),
+                    None,
+                    None,
                     None,
                     None,
                 );
@@ -3601,7 +3645,7 @@ impl Orchestrator {
                 continue;
             };
             let role = obj.get("role").and_then(Value::as_str).unwrap_or("").trim();
-            if role.is_empty() || role == "system" {
+            if role.is_empty() || role == "system" || role == "tool" {
                 continue;
             }
             if Self::is_observation_message(role, obj.get("content").unwrap_or(&Value::Null)) {

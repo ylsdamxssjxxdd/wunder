@@ -28,6 +28,8 @@ pub struct Config {
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]
+    pub lsp: LspConfig,
+    #[serde(default)]
     pub a2a: A2aConfig,
     #[serde(default)]
     pub skills: SkillsConfig,
@@ -181,6 +183,39 @@ pub struct McpConfig {
     pub timeout_s: u64,
     #[serde(default)]
     pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LspConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub timeout_s: u64,
+    #[serde(default)]
+    pub diagnostics_debounce_ms: u64,
+    #[serde(default)]
+    pub idle_ttl_s: u64,
+    #[serde(default)]
+    pub servers: Vec<LspServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LspServerConfig {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub root_markers: Vec<String>,
+    #[serde(default)]
+    pub initialization_options: Option<Value>,
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

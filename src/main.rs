@@ -12,6 +12,7 @@ mod history;
 mod i18n;
 mod knowledge;
 mod llm;
+mod lsp;
 mod mcp;
 mod memory;
 mod monitor;
@@ -62,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let config = config_store.get().await;
     init_tracing(&config);
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
+    state.lsp_manager.sync_with_config(&config).await;
 
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());

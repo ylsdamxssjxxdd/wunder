@@ -1,15 +1,15 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260115-02";
+import { elements } from "./elements.js?v=20260118-04";
 import { state } from "./state.js";
 import { appendLog, appendRequestLog, clearOutput } from "./log.js?v=20260108-02";
 import { applyA2uiMessages, resetA2uiState } from "./a2ui.js";
 import { getWunderBase } from "./api.js";
 import { applyPromptToolError, ensureToolSelectionLoaded, getSelectedToolNames } from "./tools.js?v=20251227-13";
-import { loadWorkspace } from "./workspace.js?v=20260113-03";
+import { loadWorkspace } from "./workspace.js?v=20260118-04";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260115-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260118-04";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
@@ -1351,11 +1351,12 @@ const getModelOutputState = () => {
 };
 
 // 统一推进模型轮次，并准备对应的轮次容器
-const advanceModelRound = (timestamp) => {
+const advanceModelRound = (timestamp, options = {}) => {
+  const autoSelect = options.autoSelect !== false;
   const outputState = getModelOutputState();
   outputState.globalRound = (Number.isFinite(outputState.globalRound) ? outputState.globalRound : 0) + 1;
   outputState.currentRound = outputState.globalRound;
-  ensureRoundEntry(outputState, outputState.currentRound, timestamp, { autoSelect: true });
+  ensureRoundEntry(outputState, outputState.currentRound, timestamp, { autoSelect });
   return outputState.currentRound;
 };
 
@@ -2054,7 +2055,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     }
     const showStageBadge = stage && !["received", "llm_call", "compacting"].includes(stage);
     if (stage === "llm_call") {
-      const roundNumber = advanceModelRound(eventTimestamp);
+      const roundNumber = advanceModelRound(eventTimestamp, { autoSelect: false });
       summary = t("debug.event.llmCall", { round: roundNumber });
       if (Number.isFinite(data?.round)) {
         if (data.round !== roundNumber) {
@@ -2235,12 +2236,18 @@ const handleEvent = (eventType, dataText, options = {}) => {
     ensureRoundHeader(outputState, entry, eventTimestamp);
     const content = data?.content ? String(data.content) : "";
     const reasoning = data?.reasoning ? String(data.reasoning) : "";
+    const toolCallsText = formatToolCalls(data?.tool_calls);
     const hasContent = Boolean(content);
     const hasReasoning = Boolean(reasoning);
+    const hasToolCalls = Boolean(toolCallsText);
     const isContentStreaming = entry.streaming;
     const isReasoningStreaming = entry.reasoningStreaming;
 
     if (isContentStreaming && (!hasReasoning || isReasoningStreaming) && !hasContent) {
+      if (hasToolCalls) {
+        ensureRoundSection(outputState, entry, t("debug.output.toolCallSection"));
+        appendRoundText(outputState, entry, toolCallsText, { countContent: true });
+      }
       // 已通过增量输出渲染过内容时，仅补齐换行并结束该轮流式状态
       if (entry.totalChars > 0 && entry.tail !== "\n\n") {
         appendRoundText(outputState, entry, "\n\n");
@@ -2261,6 +2268,10 @@ const handleEvent = (eventType, dataText, options = {}) => {
     if (hasContent && !isContentStreaming) {
       ensureRoundSection(outputState, entry, t("debug.output.answerSection"));
       appendRoundText(outputState, entry, content, { countContent: true });
+    }
+    if (hasToolCalls && !hasContent) {
+      ensureRoundSection(outputState, entry, t("debug.output.toolCallSection"));
+      appendRoundText(outputState, entry, toolCallsText, { countContent: true });
     }
 
     if (entry.totalChars > 0 && entry.tail !== "\n\n") {

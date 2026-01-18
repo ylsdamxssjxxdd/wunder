@@ -1,6 +1,6 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
 use crate::config::Config;
-use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, McpServerConfig};
+use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, LspConfig, McpServerConfig};
 use crate::i18n;
 use crate::knowledge;
 use crate::llm;
@@ -17,6 +17,7 @@ use crate::throughput::{
 };
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use crate::user_store::UserStore;
+use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -43,6 +44,11 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/mcp",
             get(admin_mcp_list).post(admin_mcp_update),
         )
+        .route(
+            "/wunder/admin/lsp",
+            get(admin_lsp_get).post(admin_lsp_update),
+        )
+        .route("/wunder/admin/lsp/test", post(admin_lsp_test))
         .route("/wunder/admin/mcp/tools", post(admin_mcp_tools))
         .route("/wunder/admin/mcp/tools/call", post(admin_mcp_tool_call))
         .route(
@@ -247,6 +253,249 @@ async fn admin_mcp_update(
         }
     }
     Ok(Json(json!({ "servers": updated.mcp.servers })))
+}
+
+async fn admin_lsp_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let status = state.lsp_manager.status();
+    Ok(Json(json!({ "lsp": config.lsp, "status": status })))
+}
+
+async fn admin_lsp_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LspUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let updated = state
+        .config_store
+        .update(|config| {
+            config.lsp = payload.lsp.clone();
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state.lsp_manager.sync_with_config(&updated).await;
+    Ok(Json(json!({
+        "lsp": updated.lsp,
+        "status": state.lsp_manager.status()
+    })))
+}
+
+async fn admin_lsp_test(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LspTestRequest>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    if !config.lsp.enabled {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "LSP 未启用".to_string(),
+        ));
+    }
+    let user_id = payload.user_id.trim();
+    if user_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "user_id 不能为空".to_string(),
+        ));
+    }
+    let path = payload.path.trim();
+    if path.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "path 不能为空".to_string(),
+        ));
+    }
+    let target = state
+        .workspace
+        .resolve_path(user_id, path)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !target.exists() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("文件不存在: {path}"),
+        ));
+    }
+    state
+        .lsp_manager
+        .touch_file(&config, user_id, &target, false)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let uri = Url::from_file_path(&target)
+        .map(|value| value.to_string())
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "文件路径无效".to_string()))?;
+    let operation = payload.operation.trim().to_lowercase();
+    if operation.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "operation 不能为空".to_string(),
+        ));
+    }
+    let timeout_s = if config.lsp.timeout_s == 0 {
+        30
+    } else {
+        config.lsp.timeout_s
+    };
+    let needs_position = matches!(
+        operation.as_str(),
+        "definition" | "references" | "hover" | "implementation" | "callhierarchy"
+    );
+    let position_value = if needs_position {
+        let line = payload
+            .line
+            .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "缺少 line".to_string()))?;
+        let character = payload
+            .character
+            .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "缺少 character".to_string()))?;
+        if line == 0 || character == 0 {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "line/character 必须 >= 1".to_string(),
+            ));
+        }
+        Some(json!({ "line": line - 1, "character": character - 1 }))
+    } else {
+        None
+    };
+    let query = if operation == "workspacesymbol" {
+        Some(payload.query.clone().unwrap_or_default())
+    } else {
+        None
+    };
+    if operation == "workspacesymbol" && query.as_deref().unwrap_or("").trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "workspaceSymbol 缺少 query".to_string(),
+        ));
+    }
+    let direction = payload
+        .call_hierarchy_direction
+        .clone()
+        .unwrap_or_else(|| "incoming".to_string())
+        .trim()
+        .to_lowercase();
+    let text_document = json!({ "uri": uri });
+    let position_value = position_value.clone();
+    let query_value = query.clone();
+    let operation_key = operation.clone();
+    let direction_key = direction.clone();
+    let results = state
+        .lsp_manager
+        .run_on_clients(&config, user_id, &target, move |client| {
+            let text_document = text_document.clone();
+            let position = position_value.clone();
+            let query = query_value.clone();
+            let operation = operation_key.clone();
+            let direction = direction_key.clone();
+            async move {
+                let server_id = client.server_id().to_string();
+                let server_name = client.server_name().to_string();
+                let result = match operation.as_str() {
+                    "definition" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/definition",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "references" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/references",
+                                json!({
+                                    "textDocument": text_document,
+                                    "position": position,
+                                    "context": { "includeDeclaration": true }
+                                }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "hover" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/hover",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "documentsymbol" => {
+                        client
+                            .request(
+                                "textDocument/documentSymbol",
+                                json!({ "textDocument": text_document }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "workspacesymbol" => {
+                        let query = query.unwrap_or_default();
+                        client
+                            .request("workspace/symbol", json!({ "query": query }), timeout_s)
+                            .await?
+                    }
+                    "implementation" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/implementation",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "callhierarchy" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        let items = client
+                            .request(
+                                "textDocument/prepareCallHierarchy",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?;
+                        let calls = if let Some(item) =
+                            items.as_array().and_then(|items| items.first()).cloned()
+                        {
+                            let method = if direction == "outgoing" {
+                                "callHierarchy/outgoingCalls"
+                            } else {
+                                "callHierarchy/incomingCalls"
+                            };
+                            client
+                                .request(method, json!({ "item": item }), timeout_s)
+                                .await?
+                        } else {
+                            Value::Null
+                        };
+                        json!({
+                            "items": items,
+                            "direction": direction,
+                            "calls": calls
+                        })
+                    }
+                    _ => {
+                        return Err(anyhow!("未知 LSP operation: {operation}"));
+                    }
+                };
+                Ok(json!({
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "result": result
+                }))
+            }
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "ok": true,
+        "operation": payload.operation,
+        "path": payload.path,
+        "results": results
+    })))
 }
 
 async fn admin_mcp_tools(
@@ -2615,6 +2864,26 @@ fn build_a2a_agent_card_urls(endpoint: &str) -> Result<Vec<String>, String> {
 #[derive(Debug, Deserialize)]
 struct McpUpdateRequest {
     servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspUpdateRequest {
+    lsp: LspConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct LspTestRequest {
+    user_id: String,
+    path: String,
+    operation: String,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    character: Option<u32>,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    call_hierarchy_direction: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -36,6 +36,7 @@ export const state = {
     performance: false,
     evaluation: false,
     mcp: false,
+    lsp: false,
     a2aServices: false,
     builtin: false,
     skills: false,
@@ -54,6 +55,10 @@ export const state = {
     saveVersion: 0,
     lastAction: null,
     selectedTool: null,
+  },
+  lsp: {
+    config: null,
+    status: [],
   },
   a2aServices: {
     services: [],

@@ -3,8 +3,9 @@ use crate::a2a_store::{A2aStore, A2aTask};
 use crate::config::{A2aServiceConfig, Config, KnowledgeBaseConfig};
 use crate::i18n;
 use crate::knowledge;
+use crate::lsp::{LspDiagnostic, LspManager};
 use crate::mcp;
-use crate::path_utils::is_within_root;
+use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use crate::sandbox;
 use crate::schemas::ToolSpec;
 use crate::skills::{execute_skill, SkillRegistry};
@@ -27,6 +28,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::sleep;
 use tracing::warn;
+use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -37,6 +39,7 @@ const MAX_RANGE_SPAN: usize = 1000;
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_ITEMS: usize = 200;
 const MAX_SEARCH_MATCHES: usize = 200;
+const MAX_LSP_DIAGNOSTICS: usize = 20;
 
 #[derive(Clone)]
 pub struct ToolEventEmitter {
@@ -62,6 +65,7 @@ pub struct ToolContext<'a> {
     pub user_id: &'a str,
     pub session_id: &'a str,
     pub workspace: Arc<WorkspaceManager>,
+    pub lsp_manager: Arc<LspManager>,
     pub config: &'a Config,
     pub a2a_store: &'a A2aStore,
     pub skills: &'a SkillRegistry,
@@ -245,6 +249,38 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                 "required": ["path", "edits"]
             }),
         },
+        ToolSpec {
+            name: "LSP查询".to_string(),
+            description: i18n::t("tool.spec.lsp.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "description": i18n::t("tool.spec.lsp.args.operation"),
+                        "enum": [
+                            "definition",
+                            "references",
+                            "hover",
+                            "documentSymbol",
+                            "workspaceSymbol",
+                            "implementation",
+                            "callHierarchy"
+                        ]
+                    },
+                    "path": {"type": "string", "description": i18n::t("tool.spec.lsp.args.path")},
+                    "line": {"type": "integer", "description": i18n::t("tool.spec.lsp.args.line"), "minimum": 1},
+                    "character": {"type": "integer", "description": i18n::t("tool.spec.lsp.args.character"), "minimum": 1},
+                    "query": {"type": "string", "description": i18n::t("tool.spec.lsp.args.query")},
+                    "call_hierarchy_direction": {
+                        "type": "string",
+                        "description": i18n::t("tool.spec.lsp.args.call_hierarchy_direction"),
+                        "enum": ["incoming", "outgoing"]
+                    }
+                },
+                "required": ["operation", "path"]
+            }),
+        },
     ]
 }
 
@@ -261,6 +297,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("write_file".to_string(), "写入文件".to_string());
     map.insert("replace_text".to_string(), "替换文本".to_string());
     map.insert("edit_file".to_string(), "编辑文件".to_string());
+    map.insert("lsp".to_string(), "LSP查询".to_string());
     map
 }
 
@@ -535,6 +572,7 @@ pub async fn execute_builtin_tool(
         "写入文件" => write_file(context, args).await,
         "替换文本" => replace_text(context, args).await,
         "编辑文件" => edit_file(context, args).await,
+        "LSP查询" => lsp_query(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(
@@ -1307,14 +1345,23 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         }
     };
 
+    let specs_for_lsp = specs.clone();
     let workspace = context.workspace.clone();
     let user_id = context.user_id.to_string();
     let skill_roots = collect_skill_roots(context);
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         read_files_inner(workspace.as_ref(), &user_id, &skill_roots, specs)
     })
     .await
-    .map_err(|err| anyhow!(err.to_string()))?
+    .map_err(|err| anyhow!(err.to_string()))?;
+    if result.is_ok() && context.config.lsp.enabled {
+        for spec in specs_for_lsp {
+            if let Ok(target) = context.workspace.resolve_path(context.user_id, &spec.path) {
+                let _ = touch_lsp_file(context, &target, false).await;
+            }
+        }
+    }
+    result
 }
 
 fn read_files_inner(
@@ -1454,6 +1501,100 @@ fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+fn resolve_lsp_timeout_s(config: &Config) -> u64 {
+    if config.lsp.timeout_s == 0 {
+        30
+    } else {
+        config.lsp.timeout_s
+    }
+}
+
+fn parse_lsp_position(args: &Value) -> Result<(u32, u32)> {
+    let line = args
+        .get("line")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("缺少 line"))?;
+    let character = args
+        .get("character")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("缺少 character"))?;
+    if line == 0 || character == 0 {
+        return Err(anyhow!("line/character 必须 >= 1"));
+    }
+    Ok(((line - 1) as u32, (character - 1) as u32))
+}
+
+fn lsp_path_to_uri(path: &Path) -> Result<String> {
+    Url::from_file_path(path)
+        .map(|url| url.to_string())
+        .map_err(|_| anyhow!("LSP 文件路径无效"))
+}
+
+fn format_lsp_diagnostics(diagnostics: &[LspDiagnostic]) -> Option<Value> {
+    if diagnostics.is_empty() {
+        return None;
+    }
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for diag in diagnostics {
+        if diag.is_error() {
+            errors.push(diag.pretty());
+        } else {
+            warnings.push(diag.pretty());
+        }
+    }
+    let total = errors.len() + warnings.len();
+    let mut items: Vec<String> = errors.iter().chain(warnings.iter()).cloned().collect();
+    let truncated = items.len() > MAX_LSP_DIAGNOSTICS;
+    if truncated {
+        items.truncate(MAX_LSP_DIAGNOSTICS);
+    }
+    Some(json!({
+        "total": total,
+        "errors": errors.len(),
+        "warnings": warnings.len(),
+        "truncated": truncated,
+        "items": items,
+    }))
+}
+
+fn lsp_diagnostics_summary(context: &ToolContext<'_>, path: &Path) -> Option<Value> {
+    let diagnostics_map = context.lsp_manager.diagnostics_for_user(context.user_id);
+    if diagnostics_map.is_empty() {
+        return None;
+    }
+    let target = normalize_target_path(path);
+    let target_compare = normalize_path_for_compare(&target);
+    for (candidate, diagnostics) in diagnostics_map {
+        if normalize_path_for_compare(&candidate) == target_compare {
+            return format_lsp_diagnostics(&diagnostics);
+        }
+    }
+    None
+}
+
+async fn touch_lsp_file(
+    context: &ToolContext<'_>,
+    path: &Path,
+    wait_for_diagnostics: bool,
+) -> Option<Value> {
+    if !context.config.lsp.enabled {
+        return None;
+    }
+    if let Err(err) = context
+        .lsp_manager
+        .touch_file(context.config, context.user_id, path, wait_for_diagnostics)
+        .await
+    {
+        warn!("LSP touch failed: {err}");
+        return None;
+    }
+    if !wait_for_diagnostics {
+        return None;
+    }
+    lsp_diagnostics_summary(context, path)
+}
+
 async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args
         .get("path")
@@ -1471,10 +1612,13 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))??;
+    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
-        "bytes": bytes
+        "bytes": bytes,
+        "lsp": lsp_diagnostics
     }))
 }
 
@@ -1509,10 +1653,12 @@ async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> 
         .await
         .map_err(|err| anyhow!(err.to_string()))??;
     context.workspace.bump_version(context.user_id);
+    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
-        "replaced": count
+        "replaced": count,
+        "lsp": lsp_diagnostics
     }))
 }
 
@@ -1586,10 +1732,200 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .await
         .map_err(|err| anyhow!(err.to_string()))??;
     context.workspace.bump_version(context.user_id);
+    let lsp_diagnostics = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
-        "lines": lines.len()
+        "lines": lines.len(),
+        "lsp": lsp_diagnostics
+    }))
+}
+
+async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if !context.config.lsp.enabled {
+        return Err(anyhow!("LSP 未启用"));
+    }
+    let operation = args
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("缺少 operation"))?
+        .trim()
+        .to_string();
+    if operation.is_empty() {
+        return Err(anyhow!("operation 不能为空"));
+    }
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("缺少 path"))?
+        .trim()
+        .to_string();
+    if path.is_empty() {
+        return Err(anyhow!("path 不能为空"));
+    }
+    let target = context.workspace.resolve_path(context.user_id, &path)?;
+    if !target.exists() {
+        return Err(anyhow!("LSP 文件不存在: {path}"));
+    }
+    context
+        .lsp_manager
+        .touch_file(context.config, context.user_id, &target, false)
+        .await?;
+    let uri = lsp_path_to_uri(&target)?;
+    let timeout_s = resolve_lsp_timeout_s(context.config);
+    let operation_key = operation.to_lowercase();
+    let needs_position = matches!(
+        operation_key.as_str(),
+        "definition" | "references" | "hover" | "implementation" | "callhierarchy"
+    );
+    let position_value = if needs_position {
+        let (line, character) = parse_lsp_position(args)?;
+        Some(json!({ "line": line, "character": character }))
+    } else {
+        None
+    };
+    let query = if operation_key == "workspacesymbol" {
+        Some(
+            args.get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    if operation_key == "workspacesymbol" && query.as_deref().unwrap_or("").is_empty() {
+        return Err(anyhow!("workspaceSymbol 缺少 query"));
+    }
+    let call_direction = args
+        .get("call_hierarchy_direction")
+        .and_then(Value::as_str)
+        .unwrap_or("incoming")
+        .trim()
+        .to_lowercase();
+    let text_document = json!({ "uri": uri });
+    let position_value = position_value.clone();
+    let query_value = query.clone();
+    let operation_key = operation_key.clone();
+    let call_direction = call_direction.clone();
+    let results = context
+        .lsp_manager
+        .run_on_clients(context.config, context.user_id, &target, move |client| {
+            let text_document = text_document.clone();
+            let position = position_value.clone();
+            let query = query_value.clone();
+            let operation = operation_key.clone();
+            let direction = call_direction.clone();
+            async move {
+                let server_id = client.server_id().to_string();
+                let server_name = client.server_name().to_string();
+                let result = match operation.as_str() {
+                    "definition" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/definition",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "references" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/references",
+                                json!({
+                                    "textDocument": text_document,
+                                    "position": position,
+                                    "context": { "includeDeclaration": true }
+                                }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "hover" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/hover",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "documentsymbol" => {
+                        client
+                            .request(
+                                "textDocument/documentSymbol",
+                                json!({ "textDocument": text_document }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "workspacesymbol" => {
+                        let query = query.unwrap_or_default();
+                        client
+                            .request("workspace/symbol", json!({ "query": query }), timeout_s)
+                            .await?
+                    }
+                    "implementation" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        client
+                            .request(
+                                "textDocument/implementation",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?
+                    }
+                    "callhierarchy" => {
+                        let position = position.ok_or_else(|| anyhow!("缺少 line/character"))?;
+                        let items = client
+                            .request(
+                                "textDocument/prepareCallHierarchy",
+                                json!({ "textDocument": text_document, "position": position }),
+                                timeout_s,
+                            )
+                            .await?;
+                        let calls = if let Some(item) =
+                            items.as_array().and_then(|items| items.first()).cloned()
+                        {
+                            let method = if direction == "outgoing" {
+                                "callHierarchy/outgoingCalls"
+                            } else {
+                                "callHierarchy/incomingCalls"
+                            };
+                            client
+                                .request(method, json!({ "item": item }), timeout_s)
+                                .await?
+                        } else {
+                            Value::Null
+                        };
+                        json!({
+                            "items": items,
+                            "direction": direction,
+                            "calls": calls
+                        })
+                    }
+                    _ => {
+                        return Err(anyhow!("未知 LSP operation: {operation}"));
+                    }
+                };
+                Ok(json!({
+                    "server_id": server_id,
+                    "server_name": server_name,
+                    "result": result
+                }))
+            }
+        })
+        .await?;
+    Ok(json!({
+        "ok": true,
+        "operation": operation,
+        "path": path,
+        "results": results
     }))
 }
 
