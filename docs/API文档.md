@@ -321,7 +321,7 @@
 - 入参（JSON）：
   - `user_id`：用户唯一标识
   - `path`：文件路径（相对用户工作区）
-  - `operation`：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy
+  - `operation`：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy/diagnostics
   - `line`：行号（定位类操作必填，1-based）
   - `character`：列号（定位类操作必填，1-based）
   - `query`：workspaceSymbol 查询关键词（可选）
@@ -331,6 +331,7 @@
   - `operation`：请求操作
   - `path`：文件路径
   - `results`：按 LSP 服务返回的结果列表
+  - `diagnostics`：诊断摘要（errors/warnings/items），`diagnostics` 操作返回该字段
 
 ### 4.1.4 `/wunder/admin/mcp/tools`
 

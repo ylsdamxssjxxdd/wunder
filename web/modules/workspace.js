@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260118-04";
+import { elements } from "./elements.js?v=20260118-07";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { formatBytes } from "./utils.js?v=20251229-02";
+import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260118-06";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -50,6 +50,9 @@ const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 let previewObjectUrl = null;
 let editorEntry = null;
 let editorLoading = false;
+let editorReadOnly = false;
+let editorMode = "modal";
+let inlineHighlightTimer = 0;
 let workspaceUploadCount = 0;
 
 const setWorkspaceUploadProgress = (options = {}) => {
@@ -193,6 +196,203 @@ const isWorkspaceTextEditable = (entry) => {
   }
   const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
   return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
+};
+
+const isInlineEditorPreferred = () =>
+  Boolean(elements.workspaceSharedBlock?.closest("#lspPanel") && elements.lspEditorContent);
+
+const updateInlineEditorHeader = (entry) => {
+  if (!elements.lspEditorTitle || !elements.lspEditorPath) {
+    return;
+  }
+  const name = entry?.name || "";
+  elements.lspEditorTitle.textContent = entry
+    ? t("workspace.editor.title", { name })
+    : t("workspace.editor.title", { name: t("lsp.workspace.editor.empty") });
+  elements.lspEditorPath.textContent = entry?.path || "";
+};
+
+const setInlineEditorStatus = (message, status) => {
+  if (!elements.lspEditorStatus) {
+    return;
+  }
+  elements.lspEditorStatus.textContent = message || "";
+  elements.lspEditorStatus.classList.remove("is-success", "is-error", "is-warning");
+  if (status === "success") {
+    elements.lspEditorStatus.classList.add("is-success");
+  } else if (status === "error") {
+    elements.lspEditorStatus.classList.add("is-error");
+  } else if (status === "warning") {
+    elements.lspEditorStatus.classList.add("is-warning");
+  }
+};
+
+const setInlineEditorContent = ({ value = "", placeholder = "", readOnly = false } = {}) => {
+  if (!elements.lspEditorContent) {
+    return;
+  }
+  elements.lspEditorContent.value = value;
+  elements.lspEditorContent.placeholder = placeholder;
+  elements.lspEditorContent.readOnly = readOnly;
+  scheduleInlineEditorHighlight();
+};
+
+const setInlineEditorSaveEnabled = (enabled) => {
+  if (!elements.lspEditorSave) {
+    return;
+  }
+  elements.lspEditorSave.disabled = !enabled;
+};
+
+const setInlineEditorHistoryEnabled = (enabled) => {
+  if (elements.lspEditorUndo) {
+    elements.lspEditorUndo.disabled = !enabled;
+  }
+  if (elements.lspEditorRedo) {
+    elements.lspEditorRedo.disabled = !enabled;
+  }
+};
+
+const resetInlineEditor = (placeholderKey = "lsp.workspace.editor.empty") => {
+  if (!elements.lspEditorContent) {
+    return;
+  }
+  editorEntry = null;
+  editorLoading = false;
+  editorReadOnly = true;
+  updateInlineEditorHeader(null);
+  setInlineEditorStatus("", "");
+  setInlineEditorContent({ value: "", placeholder: t(placeholderKey), readOnly: true });
+  setInlineEditorSaveEnabled(false);
+  setInlineEditorHistoryEnabled(false);
+};
+
+const HIGHLIGHT_KEYWORDS = new Set([
+  "true",
+  "false",
+  "null",
+  "undefined",
+  "async",
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "default",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "finally",
+  "for",
+  "fn",
+  "function",
+  "if",
+  "impl",
+  "import",
+  "in",
+  "interface",
+  "let",
+  "match",
+  "new",
+  "pub",
+  "return",
+  "self",
+  "static",
+  "struct",
+  "switch",
+  "throw",
+  "try",
+  "type",
+  "use",
+  "var",
+  "while",
+  "yield",
+]);
+
+const HIGHLIGHT_TOKEN_REGEX =
+  /(\"(?:\\.|[^\"\\])*\"|\'(?:\\.|[^'\\])*\'|`(?:\\.|[^`\\])*`|\/\/.*?$|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/gm;
+
+const highlightInlineCode = (text) => {
+  const raw = String(text ?? "");
+  if (!raw) {
+    return "&nbsp;";
+  }
+  let result = "";
+  let lastIndex = 0;
+  for (const match of raw.matchAll(HIGHLIGHT_TOKEN_REGEX)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      result += escapeHtml(raw.slice(lastIndex, index));
+    }
+    let className = "";
+    if (token.startsWith("//") || token.startsWith("/*")) {
+      className = "code-token-comment";
+    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
+      className = "code-token-string";
+    } else if (/^\d/.test(token)) {
+      className = "code-token-number";
+    } else if (HIGHLIGHT_KEYWORDS.has(token)) {
+      className = "code-token-keyword";
+    }
+    if (className) {
+      result += `<span class="${className}">${escapeHtml(token)}</span>`;
+    } else {
+      result += escapeHtml(token);
+    }
+    lastIndex = index + token.length;
+  }
+  if (lastIndex < raw.length) {
+    result += escapeHtml(raw.slice(lastIndex));
+  }
+  return result || "&nbsp;";
+};
+
+const updateInlineEditorHighlight = () => {
+  if (!elements.lspEditorHighlight || !elements.lspEditorContent) {
+    return;
+  }
+  elements.lspEditorHighlight.innerHTML = highlightInlineCode(elements.lspEditorContent.value);
+  elements.lspEditorHighlight.scrollTop = elements.lspEditorContent.scrollTop;
+  elements.lspEditorHighlight.scrollLeft = elements.lspEditorContent.scrollLeft;
+};
+
+const scheduleInlineEditorHighlight = () => {
+  if (!elements.lspEditorHighlight) {
+    return;
+  }
+  if (inlineHighlightTimer) {
+    cancelAnimationFrame(inlineHighlightTimer);
+  }
+  inlineHighlightTimer = requestAnimationFrame(() => {
+    inlineHighlightTimer = 0;
+    updateInlineEditorHighlight();
+  });
+};
+
+const syncInlineEditorScroll = () => {
+  if (!elements.lspEditorHighlight || !elements.lspEditorContent) {
+    return;
+  }
+  elements.lspEditorHighlight.scrollTop = elements.lspEditorContent.scrollTop;
+  elements.lspEditorHighlight.scrollLeft = elements.lspEditorContent.scrollLeft;
+};
+
+const runInlineEditorCommand = (command) => {
+  if (!elements.lspEditorContent) {
+    return;
+  }
+  elements.lspEditorContent.focus();
+  try {
+    document.execCommand(command);
+  } catch {
+    // Ignore unsupported commands.
+  }
+  scheduleInlineEditorHighlight();
 };
 
 // 规范化拼接工作区路径，避免出现重复斜杠
@@ -769,7 +969,7 @@ const handleWorkspaceItemDoubleClick = (entry) => {
   if (!entry || state.workspace.renamingPath) {
     return;
   }
-  const preferEditor = Boolean(elements.workspaceSharedBlock?.closest("#lspPanel"));
+  const preferEditor = isInlineEditorPreferred();
   if (entry.type === "dir") {
     state.workspace.path = entry.path;
     state.workspace.expanded = new Set();
@@ -777,7 +977,11 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     return;
   }
   if (entry.type === "file") {
-    if (preferEditor && isWorkspaceTextEditable(entry)) {
+    if (preferEditor) {
+      openWorkspaceEditor(entry);
+      return;
+    }
+    if (isWorkspaceTextEditable(entry)) {
       openWorkspaceEditor(entry);
     } else {
       openWorkspacePreview(entry);
@@ -1352,9 +1556,99 @@ const openWorkspacePreview = async (entry) => {
   await renderTextPreview(entry, downloadUrl);
 };
 
+const openWorkspaceInlineEditor = async (entry) => {
+  if (!entry || entry.type !== "file") {
+    return;
+  }
+  if (!getWorkspaceUserId()) {
+    return;
+  }
+  editorMode = "inline";
+  editorEntry = entry;
+  editorLoading = true;
+  editorReadOnly = false;
+  updateInlineEditorHeader(entry);
+  setInlineEditorStatus(t("common.loading"), "warning");
+  setInlineEditorContent({
+    value: t("common.loading"),
+    placeholder: "",
+    readOnly: true,
+  });
+  setInlineEditorSaveEnabled(false);
+  setInlineEditorHistoryEnabled(false);
+
+  const extension = getWorkspaceExtension(entry);
+  const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
+  if (!TEXT_EXTENSIONS.has(extension)) {
+    editorLoading = false;
+    editorReadOnly = true;
+    setInlineEditorStatus(t("lsp.workspace.editor.unsupported"), "warning");
+    setInlineEditorContent({
+      value: "",
+      placeholder: t("lsp.workspace.editor.unsupported"),
+      readOnly: true,
+    });
+    setInlineEditorHistoryEnabled(false);
+    return;
+  }
+  if (sizeValue > MAX_TEXT_PREVIEW_SIZE) {
+    editorLoading = false;
+    editorReadOnly = true;
+    setInlineEditorStatus(t("lsp.workspace.editor.tooLarge"), "warning");
+    setInlineEditorContent({
+      value: "",
+      placeholder: t("lsp.workspace.editor.tooLarge"),
+      readOnly: true,
+    });
+    setInlineEditorHistoryEnabled(false);
+    return;
+  }
+  try {
+    const result = await fetchWorkspaceContent(entry.path, {
+      includeContent: true,
+      maxBytes: MAX_TEXT_PREVIEW_SIZE,
+    });
+    const text = result?.content ?? "";
+    if (result?.truncated) {
+      throw new Error(t("lsp.workspace.editor.tooLarge"));
+    }
+    if (!editorEntry || editorEntry.path !== entry.path) {
+      return;
+    }
+    editorReadOnly = false;
+    setInlineEditorStatus("", "");
+    setInlineEditorContent({
+      value: text,
+      placeholder: t("lsp.workspace.editor.placeholder"),
+      readOnly: false,
+    });
+    setInlineEditorSaveEnabled(true);
+    setInlineEditorHistoryEnabled(true);
+  } catch (error) {
+    if (editorEntry?.path === entry.path) {
+      editorReadOnly = true;
+      const message = error?.message || t("workspace.editor.loadFailed");
+      setInlineEditorStatus(message, "error");
+      setInlineEditorContent({
+        value: "",
+        placeholder: message,
+        readOnly: true,
+      });
+      setInlineEditorSaveEnabled(false);
+      setInlineEditorHistoryEnabled(false);
+    }
+  } finally {
+    editorLoading = false;
+  }
+};
+
 // 打开文件编辑弹窗
 const openWorkspaceEditor = async (entry) => {
   if (!entry || entry.type !== "file") {
+    return;
+  }
+  if (isInlineEditorPreferred()) {
+    await openWorkspaceInlineEditor(entry);
     return;
   }
   if (!getWorkspaceUserId()) {
@@ -1364,8 +1658,10 @@ const openWorkspaceEditor = async (entry) => {
     notify(t("workspace.editor.unsupported"), "warn");
     return;
   }
+  editorMode = "modal";
   editorEntry = entry;
   editorLoading = true;
+  editorReadOnly = false;
   elements.workspaceEditorTitle.textContent = t("workspace.editor.title", {
     name: entry.name || "",
   });
@@ -1397,14 +1693,22 @@ const openWorkspaceEditor = async (entry) => {
 
 // 关闭编辑弹窗并清理状态
 const closeWorkspaceEditor = () => {
+  if (editorMode === "inline") {
+    resetInlineEditor();
+    return;
+  }
   editorEntry = null;
   editorLoading = false;
+  editorReadOnly = false;
   elements.workspaceEditorContent.value = "";
   elements.workspaceEditorModal.classList.remove("active");
 };
 
 // 保存编辑内容
 const saveWorkspaceEditor = async () => {
+  if (editorMode === "inline") {
+    return;
+  }
   if (!editorEntry || editorLoading) {
     return;
   }
@@ -1434,6 +1738,58 @@ const saveWorkspaceEditor = async () => {
     closeWorkspaceEditor();
   } catch (error) {
     notify(error.message || t("workspace.editor.saveFailed"), "error");
+  }
+};
+
+const saveWorkspaceInlineEditor = async () => {
+  if (editorMode !== "inline") {
+    return;
+  }
+  if (!editorEntry || editorLoading || editorReadOnly) {
+    return;
+  }
+  editorLoading = true;
+  setInlineEditorSaveEnabled(false);
+  setInlineEditorStatus(t("lsp.workspace.status.saving"), "warning");
+  try {
+    const ok = await saveWorkspaceFileContent(
+      editorEntry.path,
+      elements.lspEditorContent?.value || ""
+    );
+    if (!ok) {
+      return;
+    }
+    setInlineEditorStatus(
+      t("workspace.editor.saveSuccess", {
+        name: editorEntry.name || t("workspace.editor.file"),
+      }),
+      "success"
+    );
+    notify(
+      t("workspace.editor.saveSuccess", {
+        name: editorEntry.name || t("workspace.editor.file"),
+      }),
+      "success"
+    );
+    document.dispatchEvent(
+      new CustomEvent("wunder:workspace-file-saved", {
+        detail: {
+          path: editorEntry.path,
+          name: editorEntry.name || "",
+          userId: String(elements.userId?.value || "").trim(),
+        },
+      })
+    );
+  } catch (error) {
+    const message = error?.message || t("workspace.editor.saveFailed");
+    setInlineEditorStatus(message, "error");
+    notify(message, "error");
+  } finally {
+    editorLoading = false;
+    if (!editorReadOnly) {
+      setInlineEditorSaveEnabled(true);
+      setInlineEditorHistoryEnabled(true);
+    }
   }
 };
 
@@ -1927,6 +2283,7 @@ export const resetWorkspaceState = () => {
   }
   closeWorkspacePreview();
   closeWorkspaceEditor();
+  resetInlineEditor();
 };
 
 // 初始化工作区相关交互
@@ -2114,6 +2471,20 @@ export const initWorkspace = () => {
       closeWorkspaceEditor();
     }
   });
+  if (elements.lspEditorSave) {
+    elements.lspEditorSave.addEventListener("click", saveWorkspaceInlineEditor);
+  }
+  if (elements.lspEditorUndo) {
+    elements.lspEditorUndo.addEventListener("click", () => runInlineEditorCommand("undo"));
+  }
+  if (elements.lspEditorRedo) {
+    elements.lspEditorRedo.addEventListener("click", () => runInlineEditorCommand("redo"));
+  }
+  if (elements.lspEditorContent) {
+    elements.lspEditorContent.addEventListener("input", scheduleInlineEditorHighlight);
+    elements.lspEditorContent.addEventListener("scroll", syncInlineEditorScroll);
+    resetInlineEditor();
+  }
   document.addEventListener("click", (event) => {
     if (!elements.workspaceMenu.contains(event.target)) {
       closeWorkspaceMenu();

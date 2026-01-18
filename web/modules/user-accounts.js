@@ -1,10 +1,10 @@
-﻿import { elements } from "./elements.js?v=20260118-04";
+﻿import { elements } from "./elements.js?v=20260118-07";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-06";
+import { t } from "./i18n.js?v=20260118-07";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
 

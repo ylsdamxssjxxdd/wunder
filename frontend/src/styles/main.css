@@ -1701,6 +1701,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   min-height: 44px;
+  position: relative;
 }
 
 .chat-shell .history-item.active {
@@ -1743,14 +1744,19 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.94);
   opacity: 0;
   pointer-events: none;
-  transition: all 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .chat-shell .history-item:hover .history-delete-btn {
   opacity: 1;
   pointer-events: auto;
+  transform: translateY(-50%) scale(1);
 }
 
 .chat-shell .history-delete-btn:hover {
@@ -1779,7 +1785,6 @@ body {
   overflow: hidden;
   min-height: 0;
   width: calc(100% - 16px);
-  max-width: 1200px;
   justify-self: center;
 }
 

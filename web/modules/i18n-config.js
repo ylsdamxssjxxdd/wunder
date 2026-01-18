@@ -1,4 +1,4 @@
-import { configureI18n } from "./i18n.js?v=20260118-06";
+import { configureI18n } from "./i18n.js?v=20260118-07";
 
 // 统一拉取后端 i18n 配置，保持语言设置一致
 const resolveI18nEndpoint = (apiBase) => {

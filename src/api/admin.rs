@@ -4,6 +4,7 @@ use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, LspConfig, McpServerC
 use crate::i18n;
 use crate::knowledge;
 use crate::llm;
+use crate::lsp::{LspDiagnostic, LspManager};
 use crate::path_utils::{
     normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -279,6 +280,51 @@ async fn admin_lsp_update(
     })))
 }
 
+const MAX_LSP_DIAGNOSTICS: usize = 20;
+
+fn format_lsp_diagnostics(diagnostics: &[LspDiagnostic]) -> Option<Value> {
+    if diagnostics.is_empty() {
+        return None;
+    }
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for diag in diagnostics {
+        if diag.is_error() {
+            errors.push(diag.pretty());
+        } else {
+            warnings.push(diag.pretty());
+        }
+    }
+    let total = errors.len() + warnings.len();
+    let mut items: Vec<String> = errors.iter().chain(warnings.iter()).cloned().collect();
+    let truncated = items.len() > MAX_LSP_DIAGNOSTICS;
+    if truncated {
+        items.truncate(MAX_LSP_DIAGNOSTICS);
+    }
+    Some(json!({
+        "total": total,
+        "errors": errors.len(),
+        "warnings": warnings.len(),
+        "truncated": truncated,
+        "items": items
+    }))
+}
+
+fn lsp_diagnostics_summary(lsp_manager: &LspManager, user_id: &str, path: &Path) -> Option<Value> {
+    let diagnostics_map = lsp_manager.diagnostics_for_user(user_id);
+    if diagnostics_map.is_empty() {
+        return None;
+    }
+    let target = normalize_target_path(path);
+    let target_compare = normalize_path_for_compare(&target);
+    for (candidate, diagnostics) in diagnostics_map {
+        if normalize_path_for_compare(&candidate) == target_compare {
+            return format_lsp_diagnostics(&diagnostics);
+        }
+    }
+    None
+}
+
 async fn admin_lsp_test(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LspTestRequest>,
@@ -314,14 +360,6 @@ async fn admin_lsp_test(
             format!("文件不存在: {path}"),
         ));
     }
-    state
-        .lsp_manager
-        .touch_file(&config, user_id, &target, false)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let uri = Url::from_file_path(&target)
-        .map(|value| value.to_string())
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "文件路径无效".to_string()))?;
     let operation = payload.operation.trim().to_lowercase();
     if operation.is_empty() {
         return Err(error_response(
@@ -329,6 +367,24 @@ async fn admin_lsp_test(
             "operation 不能为空".to_string(),
         ));
     }
+    let wait_for_diagnostics = operation == "diagnostics";
+    state
+        .lsp_manager
+        .touch_file(&config, user_id, &target, wait_for_diagnostics)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if wait_for_diagnostics {
+        let diagnostics = lsp_diagnostics_summary(&state.lsp_manager, user_id, &target);
+        return Ok(Json(json!({
+            "ok": true,
+            "operation": payload.operation,
+            "path": payload.path,
+            "diagnostics": diagnostics
+        })));
+    }
+    let uri = Url::from_file_path(&target)
+        .map(|value| value.to_string())
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "文件路径无效".to_string()))?;
     let timeout_s = if config.lsp.timeout_s == 0 {
         30
     } else {
@@ -490,11 +546,13 @@ async fn admin_lsp_test(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let diagnostics = lsp_diagnostics_summary(&state.lsp_manager, user_id, &target);
     Ok(Json(json!({
         "ok": true,
         "operation": payload.operation,
         "path": payload.path,
-        "results": results
+        "results": results,
+        "diagnostics": diagnostics
     })))
 }
 

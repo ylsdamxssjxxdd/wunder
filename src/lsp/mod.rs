@@ -184,7 +184,7 @@ impl LspManager {
         }
         for client in clients {
             let target = file_path.to_path_buf();
-            client.open_file(&target).await?;
+            client.open_file(&target, wait_for_diagnostics).await?;
             if wait_for_diagnostics {
                 let debounce = resolve_diagnostics_debounce_ms(config);
                 client
@@ -545,7 +545,7 @@ impl LspClient {
         Ok(())
     }
 
-    async fn open_file(&self, path: &Path) -> Result<()> {
+    async fn open_file(&self, path: &Path, notify_save: bool) -> Result<()> {
         let content = tokio::fs::read(path).await?;
         let text = String::from_utf8_lossy(&content).to_string();
         let language_id = detect_language_id(path);
@@ -567,6 +567,16 @@ impl LspClient {
                 }),
             )
             .await?;
+            if notify_save {
+                self.send_notification(
+                    "textDocument/didSave",
+                    json!({
+                        "textDocument": { "uri": uri },
+                        "text": text
+                    }),
+                )
+                .await?;
+            }
             return Ok(());
         }
         versions.insert(path.to_path_buf(), 0);
@@ -587,6 +597,16 @@ impl LspClient {
             }),
         )
         .await?;
+        if notify_save {
+            self.send_notification(
+                "textDocument/didSave",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "text": text
+                }),
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -855,8 +875,18 @@ fn detect_language_id(path: &Path) -> String {
         "go" => "go",
         "java" => "java",
         "json" => "json",
+        "jsonc" => "jsonc",
         "yaml" | "yml" => "yaml",
         "toml" => "toml",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "md" | "markdown" => "markdown",
+        "sh" | "bash" | "zsh" => "shellscript",
+        "dockerfile" => "dockerfile",
+        "xml" => "xml",
+        "sql" => "sql",
         "c" => "c",
         "cpp" | "cc" | "cxx" => "cpp",
         "h" => "c",

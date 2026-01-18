@@ -1,11 +1,11 @@
-import { elements } from "./elements.js?v=20260118-04";
+import { elements } from "./elements.js?v=20260118-07";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp, isPlainObject } from "./utils.js?v=20251229-02";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { t } from "./i18n.js?v=20260118-06";
-import { loadWorkspace } from "./workspace.js?v=20260118-04";
+import { t } from "./i18n.js?v=20260118-07";
+import { loadWorkspace } from "./workspace.js?v=20260118-07";
 
 const normalizeLspConfig = (config) => {
   const raw = isPlainObject(config) ? config : {};
@@ -223,6 +223,9 @@ let lspWorkspaceTriggering = false;
 let lastLspPath = "";
 let lastLspResultAt = 0;
 let lastLspOutput = null;
+const LSP_STATUS_POLL_INTERVAL = 4000;
+let lspStatusPollTimer = 0;
+let lspStatusPollPending = false;
 
 const moveWorkspaceBlock = (target) => {
   const block = elements.workspaceSharedBlock;
@@ -251,17 +254,16 @@ const setLspWorkspaceStatus = (message, status) => {
 };
 
 const setLspResultStatus = (message, status) => {
-  if (!elements.lspTestStatus) {
+  if (!elements.lspResultStatus) {
     return;
   }
-  elements.lspTestStatus.textContent = message || "";
-  elements.lspTestStatus.classList.remove("is-success", "is-error", "is-warning");
-  if (status === "success") {
-    elements.lspTestStatus.classList.add("is-success");
-  } else if (status === "error") {
-    elements.lspTestStatus.classList.add("is-error");
-  } else if (status === "warning") {
-    elements.lspTestStatus.classList.add("is-warning");
+  const normalized = status || "idle";
+  const label = message || t("lsp.result.status.idle");
+  elements.lspResultStatus.dataset.status = normalized;
+  elements.lspResultStatus.title = label;
+  elements.lspResultStatus.setAttribute("aria-label", label);
+  if (elements.lspResultStatusText) {
+    elements.lspResultStatusText.textContent = label;
   }
 };
 
@@ -297,7 +299,7 @@ const updateLspResultMeta = (path, timestamp) => {
 };
 
 const resetLspResult = () => {
-  setLspResultStatus("", "");
+  setLspResultStatus(t("lsp.result.status.idle"), "idle");
   if (lastLspOutput !== null && lastLspOutput !== undefined) {
     setLspResultOutput(lastLspOutput);
   } else {
@@ -330,6 +332,8 @@ const updateLspStatusIndicator = () => {
   }
   elements.lspStatusIndicator.dataset.status = status;
   elements.lspStatusIndicator.classList.toggle("is-active", status === "active");
+  elements.lspStatusIndicator.title = label;
+  elements.lspStatusIndicator.setAttribute("aria-label", label);
   if (elements.lspStatusIndicatorText) {
     elements.lspStatusIndicatorText.textContent = label;
   }
@@ -363,6 +367,15 @@ const syncLspWorkspace = async () => {
   setLspWorkspaceStatus(t("lsp.workspace.status.synced"), "success");
 };
 
+const trySyncLspWorkspace = () => {
+  const userId = String(elements.lspTestUserId?.value || "").trim();
+  if (!userId) {
+    setLspWorkspaceStatus("", "");
+    return;
+  }
+  syncLspWorkspace().catch(() => {});
+};
+
 const requestLspTest = async (payload) => {
   const wunderBase = getWunderBase();
   const response = await fetch(`${wunderBase}/admin/lsp/test`, {
@@ -388,7 +401,10 @@ const triggerLspForPath = async (path) => {
   if (!lspWorkspaceActive) {
     return;
   }
-  if (!elements.lspWorkspaceAutoTrigger?.checked) {
+  const autoTrigger = elements.lspWorkspaceAutoTrigger
+    ? elements.lspWorkspaceAutoTrigger.checked
+    : true;
+  if (!autoTrigger) {
     return;
   }
   if (!path) {
@@ -413,22 +429,22 @@ const triggerLspForPath = async (path) => {
   lastLspResultAt = Date.now();
   updateLspResultMeta(path, lastLspResultAt);
   setLspWorkspaceStatus(t("lsp.workspace.status.lspRunning"), "warning");
-  setLspResultStatus(t("lsp.result.running"), "warning");
+  setLspResultStatus(t("lsp.result.status.running"), "warning");
   try {
     const result = await requestLspTest({
       user_id: userId,
       path,
-      operation: "documentSymbol",
+      operation: "diagnostics",
     });
     lastLspOutput = result;
     setLspResultOutput(result);
-    setLspResultStatus(t("lsp.result.success"), "success");
+    setLspResultStatus(t("lsp.result.status.success"), "success");
     setLspWorkspaceStatus(t("lsp.workspace.status.lspDone"), "success");
   } catch (error) {
     const message = error?.message || String(error);
     lastLspOutput = message;
     setLspResultOutput(message);
-    setLspResultStatus(t("lsp.result.failed", { message }), "error");
+    setLspResultStatus(t("lsp.result.status.failed"), "error");
     setLspWorkspaceStatus(t("lsp.workspace.status.lspFailed", { message }), "error");
   } finally {
     lspWorkspaceTriggering = false;
@@ -612,6 +628,7 @@ const openLspStatusModal = () => {
   }
   elements.lspStatusModal.classList.add("active");
   renderLspStatus();
+  loadLspStatus().catch(() => {});
 };
 
 const closeLspStatusModal = () => {
@@ -634,6 +651,30 @@ const openLspConfigModal = async () => {
 
 const closeLspConfigModal = () => {
   elements.lspConfigModal?.classList.remove("active");
+};
+
+const loadLspStatus = async () => {
+  if (lspStatusPollPending) {
+    return;
+  }
+  lspStatusPollPending = true;
+  try {
+    const wunderBase = getWunderBase();
+    const response = await fetch(`${wunderBase}/admin/lsp`);
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const payload = await response.json().catch(() => ({}));
+    state.lsp.status = Array.isArray(payload?.status) ? payload.status : [];
+    updateLspStatusIndicator();
+    if (elements.lspStatusModal?.classList.contains("active")) {
+      renderLspStatus();
+    }
+  } catch {
+    // Ignore status polling errors to avoid noisy toasts.
+  } finally {
+    lspStatusPollPending = false;
+  }
 };
 
 export const loadLspConfig = async () => {
@@ -680,11 +721,31 @@ const saveLspConfig = async () => {
   updateLspStatusIndicator();
 };
 
+const startLspStatusPolling = () => {
+  if (lspStatusPollTimer) {
+    return;
+  }
+  loadLspStatus().catch(() => {});
+  lspStatusPollTimer = window.setInterval(() => {
+    loadLspStatus().catch(() => {});
+  }, LSP_STATUS_POLL_INTERVAL);
+};
+
+const stopLspStatusPolling = () => {
+  if (!lspStatusPollTimer) {
+    return;
+  }
+  clearInterval(lspStatusPollTimer);
+  lspStatusPollTimer = 0;
+};
+
 export const onLspPanelActivate = () => {
   lspWorkspaceActive = true;
   moveWorkspaceBlock(elements.lspWorkspaceMount);
   syncTestUserId();
   resetLspResult();
+  trySyncLspWorkspace();
+  startLspStatusPolling();
 };
 
 export const onLspPanelDeactivate = () => {
@@ -692,14 +753,12 @@ export const onLspPanelDeactivate = () => {
   moveWorkspaceBlock(elements.debugWorkspaceMount);
   closeLspStatusModal();
   closeLspConfigModal();
+  stopLspStatusPolling();
 };
 
 export const initLspPanel = () => {
   if (elements.lspStatusIndicator) {
     elements.lspStatusIndicator.addEventListener("click", openLspStatusModal);
-  }
-  if (elements.lspStatusBtn) {
-    elements.lspStatusBtn.addEventListener("click", openLspStatusModal);
   }
   if (elements.lspConfigBtn) {
     elements.lspConfigBtn.addEventListener("click", () => {
@@ -763,16 +822,14 @@ export const initLspPanel = () => {
       applyTemplate(template);
     });
   }
-  if (elements.lspWorkspaceSyncBtn) {
-    elements.lspWorkspaceSyncBtn.addEventListener("click", () => {
-      syncLspWorkspace().catch(() => {});
-    });
-  }
   if (elements.lspTestUserId) {
+    elements.lspTestUserId.addEventListener("change", () => {
+      trySyncLspWorkspace();
+    });
     elements.lspTestUserId.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        syncLspWorkspace().catch(() => {});
+        trySyncLspWorkspace();
       }
     });
   }

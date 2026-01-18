@@ -2410,7 +2410,7 @@ button.danger {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1.2fr);
+  grid-template-columns: minmax(340px, 0.9fr) minmax(420px, 1.4fr);
   gap: 12px;
   overflow: hidden;
 }
@@ -2428,8 +2428,31 @@ button.danger {
   flex-wrap: wrap;
 }
 
-#lspStatusIndicator {
-  cursor: pointer;
+.lsp-inline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lsp-inline-label {
+  font-size: 12px;
+  color: #475569;
+}
+
+.lsp-inline-controls input[type="text"] {
+  min-width: 140px;
+  max-width: 200px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.lsp-inline-toggle {
+  gap: 6px;
+}
+
+.lsp-workspace-status {
+  min-height: 0;
 }
 
 #debugWorkspaceMount {
@@ -2438,6 +2461,14 @@ button.danger {
 
 .lsp-workspace-mount {
   margin-top: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.lsp-workspace-card {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .lsp-test-advanced {
@@ -2459,17 +2490,197 @@ button.danger {
 }
 
 .lsp-result-card {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow: hidden;
+}
+
+.lsp-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lsp-result-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.lsp-result-status-text {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lsp-result-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.lsp-result-status[data-status="running"] .status-dot,
+.lsp-result-status[data-status="warning"] .status-dot {
+  background: #f97316;
+}
+
+.lsp-result-status[data-status="success"] .status-dot {
+  background: #22c55e;
+}
+
+.lsp-result-status[data-status="error"] .status-dot {
+  background: #ef4444;
+}
+
+.lsp-editor-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.lsp-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lsp-editor-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lsp-editor-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+  --lsp-editor-padding: 10px 12px;
+  --lsp-editor-font: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  --lsp-editor-font-size: 13px;
+  --lsp-editor-line-height: 1.5;
+}
+
+.lsp-editor-highlight {
+  position: absolute;
+  inset: 0;
+  padding: var(--lsp-editor-padding);
+  margin: 0;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font-family: var(--lsp-editor-font);
+  font-size: var(--lsp-editor-font-size);
+  line-height: var(--lsp-editor-line-height);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  pointer-events: none;
+  box-sizing: border-box;
+  scrollbar-width: none;
+}
+
+.lsp-editor-highlight::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.lsp-editor-highlight .code-token-comment {
+  color: #94a3b8;
+}
+
+.lsp-editor-highlight .code-token-string {
+  color: #38bdf8;
+}
+
+.lsp-editor-highlight .code-token-number {
+  color: #f97316;
+}
+
+.lsp-editor-highlight .code-token-keyword {
+  color: #8b5cf6;
+  font-weight: 600;
+}
+
+#lspPanel .lsp-editor-card .workspace-editor-text {
+  position: absolute;
+  inset: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--lsp-editor-padding);
+  resize: none;
+  background: transparent;
+  border: none;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: #0f172a;
+  font-family: var(--lsp-editor-font);
+  font-size: var(--lsp-editor-font-size);
+  line-height: var(--lsp-editor-line-height);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  z-index: 1;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+#lspPanel .lsp-editor-card .workspace-editor-text::placeholder {
+  color: #94a3b8;
+  opacity: 1;
 }
 
 #lspPanel #lspTestResult {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.status-indicator-compact {
+  padding: 4px 6px;
+}
+
+#lspPanel #lspEditorStatus {
+  min-height: 0;
+}
+
+#lspPanel #lspEditorStatus:empty {
+  display: none;
+}
+
+.status-indicator-compact .status-dot {
+  width: 10px;
+  height: 10px;
+}
+
+#lspPanel #workspaceSharedBlock {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#lspPanel #workspaceSharedBlock .workspace-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 
 .management-layout {

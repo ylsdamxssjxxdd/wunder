@@ -1566,6 +1566,38 @@ fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+fn normalize_lsp_extension(value: &str) -> String {
+    value.trim().trim_start_matches('.').to_lowercase()
+}
+
+fn lsp_file_extension(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    normalize_lsp_extension(&ext)
+}
+
+fn lsp_matches_file(config: &Config, path: &Path) -> bool {
+    let extension = lsp_file_extension(path);
+    config
+        .lsp
+        .servers
+        .iter()
+        .filter(|server| server.enabled)
+        .any(|server| {
+            if server.extensions.is_empty() {
+                return true;
+            }
+            server
+                .extensions
+                .iter()
+                .any(|ext| normalize_lsp_extension(ext) == extension)
+        })
+}
+
 fn resolve_lsp_timeout_s(config: &Config) -> u64 {
     if config.lsp.timeout_s == 0 {
         30
@@ -1642,22 +1674,54 @@ async fn touch_lsp_file(
     context: &ToolContext<'_>,
     path: &Path,
     wait_for_diagnostics: bool,
-) -> Option<Value> {
+) -> Value {
     if !context.config.lsp.enabled {
-        return None;
+        return Value::Null;
     }
-    if let Err(err) = context
+    let workspace_root = context.workspace.workspace_root(context.user_id);
+    if !is_within_root(&workspace_root, path) {
+        return json!({
+            "enabled": true,
+            "matched": false,
+            "touched": false,
+            "diagnostics": Option::<Value>::None,
+            "error": "文件不在工作区范围内"
+        });
+    }
+    let matched = lsp_matches_file(context.config, path);
+    if !matched {
+        return json!({
+            "enabled": true,
+            "matched": false,
+            "touched": false,
+            "diagnostics": Option::<Value>::None,
+            "error": "未匹配到可用的 LSP 服务"
+        });
+    }
+    let mut diagnostics = None;
+    let mut error = None;
+    let touched = match context
         .lsp_manager
         .touch_file(context.config, context.user_id, path, wait_for_diagnostics)
         .await
     {
-        warn!("LSP touch failed: {err}");
-        return None;
+        Ok(()) => true,
+        Err(err) => {
+            warn!("LSP touch failed: {err}");
+            error = Some(err.to_string());
+            false
+        }
+    };
+    if touched && wait_for_diagnostics {
+        diagnostics = lsp_diagnostics_summary(context, path);
     }
-    if !wait_for_diagnostics {
-        return None;
-    }
-    lsp_diagnostics_summary(context, path)
+    json!({
+        "enabled": true,
+        "matched": matched,
+        "touched": touched,
+        "diagnostics": diagnostics,
+        "error": error
+    })
 }
 
 async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1689,18 +1753,12 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))??;
-    let workspace_root = context.workspace.workspace_root(context.user_id);
-    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
-    {
-        touch_lsp_file(context, &target, true).await
-    } else {
-        None
-    };
+    let lsp_info = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
         "bytes": bytes,
-        "lsp": lsp_diagnostics
+        "lsp": lsp_info
     }))
 }
 
@@ -1744,17 +1802,12 @@ async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> 
     if is_within_root(&workspace_root, &target) {
         context.workspace.bump_version(context.user_id);
     }
-    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
-    {
-        touch_lsp_file(context, &target, true).await
-    } else {
-        None
-    };
+    let lsp_info = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
         "replaced": count,
-        "lsp": lsp_diagnostics
+        "lsp": lsp_info
     }))
 }
 
@@ -1837,17 +1890,12 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if is_within_root(&workspace_root, &target) {
         context.workspace.bump_version(context.user_id);
     }
-    let lsp_diagnostics = if context.config.lsp.enabled && is_within_root(&workspace_root, &target)
-    {
-        touch_lsp_file(context, &target, true).await
-    } else {
-        None
-    };
+    let lsp_info = touch_lsp_file(context, &target, true).await;
     Ok(json!({
         "ok": true,
         "path": path,
         "lines": lines.len(),
-        "lsp": lsp_diagnostics
+        "lsp": lsp_info
     }))
 }
 

@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260118-04";
+import { elements } from "./modules/elements.js?v=20260118-07";
 
 import { state } from "./modules/state.js";
 
@@ -21,7 +21,7 @@ import { loadI18nConfig } from "./modules/i18n-config.js";
 
 import { initToolDetailModal } from "./modules/tool-detail.js?v=20260115-05";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260118-04";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260118-07";
 import {
 
   applyPromptToolError,
@@ -36,7 +36,7 @@ import {
 
 import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
 
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260110-04";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260118-07";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260115-03";
@@ -58,7 +58,7 @@ import {
   loadLspConfig,
   onLspPanelActivate,
   onLspPanelDeactivate,
-} from "./modules/lsp.js?v=20260118-06";
+} from "./modules/lsp.js?v=20260118-09";
 
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260115-05";
 
@@ -76,7 +76,7 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-06";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-07";
 
 
 

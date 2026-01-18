@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260118-05" />
+    <link rel="stylesheet" href="./app.css?v=20260118-07" />
   </head>
   <body>
     <div class="app">
@@ -1242,20 +1242,19 @@
         </section>
         <section id="lspPanel" class="panel">
           <div class="list-header">
-            <h1 data-i18n="lsp.title">LSP 管理</h1>
+            <h1 data-i18n="lsp.title">LSP 服务</h1>
             <div class="header-actions lsp-header-actions">
-              <button id="lspStatusIndicator" class="status-indicator" type="button">
+              <button id="lspStatusIndicator" class="status-indicator status-indicator-compact" type="button">
                 <span class="status-dot"></span>
-                <span id="lspStatusIndicatorText" data-i18n="lsp.status.summary.loading">LSP 状态加载中</span>
-              </button>
-              <button id="lspStatusBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-plug"></i>
-                <span data-i18n="lsp.action.status">连接状态</span>
               </button>
               <button id="lspConfigBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-sliders"></i>
                 <span data-i18n="lsp.action.config">LSP 配置</span>
               </button>
+              <div class="lsp-inline-controls">
+                <label for="lspTestUserId" class="lsp-inline-label" data-i18n="lsp.workspace.userId">user_id</label>
+                <input id="lspTestUserId" type="text" placeholder="demo_user" />
+              </div>
             </div>
           </div>
           <div class="tips" data-i18n="lsp.tip">
@@ -1268,40 +1267,82 @@
                   <i class="fa-solid fa-folder-tree"></i>
                   <span data-i18n="lsp.workspace.title">LSP 调试工作区</span>
                 </div>
-                <div class="settings-grid">
-                  <div class="form-row">
-                    <label for="lspTestUserId" data-i18n="lsp.workspace.userId">user_id</label>
-                    <div class="form-row-inline">
-                      <input id="lspTestUserId" type="text" placeholder="demo_user" />
-                      <button id="lspWorkspaceSyncBtn" class="secondary btn-with-icon" type="button">
-                        <i class="fa-solid fa-arrows-rotate"></i>
-                        <span data-i18n="lsp.workspace.sync">同步</span>
-                      </button>
-                    </div>
-                    <div id="lspWorkspaceStatus" class="muted mcp-test-status"></div>
-                  </div>
-                  <div class="form-row">
-                    <label class="checkbox-row">
-                      <input id="lspWorkspaceAutoTrigger" type="checkbox" checked />
-                      <span data-i18n="lsp.workspace.autoTrigger">保存后触发 LSP</span>
-                    </label>
-                  </div>
-                </div>
                 <div id="lspWorkspaceMount" class="lsp-workspace-mount"></div>
                 <div class="muted" data-i18n="lsp.workspace.tip">
                   复用调试面板的临时文件区，保存文件后自动触发 LSP 刷新。
                 </div>
               </div>
-            </div>
-            <div class="lsp-column lsp-column-result">
               <div class="settings-card lsp-result-card">
-                <div class="settings-card-title">
+                <div class="settings-card-title lsp-result-header">
                   <i class="fa-solid fa-terminal"></i>
                   <span data-i18n="lsp.result.title">LSP 结果</span>
+                  <span
+                    id="lspResultStatus"
+                    class="lsp-result-status"
+                    data-status="idle"
+                    aria-live="polite"
+                  >
+                    <span class="status-dot"></span>
+                    <span id="lspResultStatusText" class="lsp-result-status-text" data-i18n="lsp.result.status.idle">空闲</span>
+                  </span>
                 </div>
                 <div id="lspResultMeta" class="muted"></div>
-                <div id="lspTestStatus" class="muted mcp-test-status"></div>
                 <pre id="lspTestResult" class="tool-schema"></pre>
+              </div>
+            </div>
+            <div class="lsp-column lsp-column-editor">
+              <div class="settings-card lsp-editor-card">
+                <div class="settings-card-title lsp-editor-header">
+                  <div>
+                    <div id="lspEditorTitle" class="detail-title">编辑文件</div>
+                    <div id="lspEditorPath" class="muted"></div>
+                  </div>
+                  <div class="lsp-editor-actions">
+                    <button
+                      id="lspEditorUndo"
+                      class="secondary btn-with-icon icon-only"
+                      type="button"
+                      title="撤销"
+                      aria-label="撤销"
+                      data-i18n-title="common.undo"
+                      data-i18n-aria-label="common.undo"
+                    >
+                      <i class="fa-solid fa-rotate-left"></i>
+                    </button>
+                    <button
+                      id="lspEditorRedo"
+                      class="secondary btn-with-icon icon-only"
+                      type="button"
+                      title="恢复"
+                      aria-label="恢复"
+                      data-i18n-title="common.redo"
+                      data-i18n-aria-label="common.redo"
+                    >
+                      <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                    <button
+                      id="lspEditorSave"
+                      class="btn-with-icon icon-only"
+                      type="button"
+                      title="保存"
+                      aria-label="保存"
+                      data-i18n-title="common.save"
+                      data-i18n-aria-label="common.save"
+                    >
+                      <i class="fa-solid fa-floppy-disk"></i>
+                    </button>
+                  </div>
+                </div>
+                <div id="lspEditorStatus" class="muted mcp-test-status"></div>
+                <div class="lsp-editor-body">
+                  <pre id="lspEditorHighlight" class="lsp-editor-highlight"></pre>
+                  <textarea
+                    id="lspEditorContent"
+                    class="workspace-editor-text"
+                    placeholder="选择文件开始编辑"
+                    data-i18n-placeholder="lsp.workspace.editor.placeholder"
+                  ></textarea>
+                </div>
               </div>
             </div>
           </div>
@@ -3747,8 +3788,8 @@
         </div>
       </div>
     </div>
-    <script src="./third/echarts/echarts.min.js?v=20260118-06"></script>
-    <script src="./third/marked.min.js?v=20260118-06"></script>
-    <script type="module" src="./app.js?v=20260118-06"></script>
+    <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
+    <script src="./third/marked.min.js?v=20260118-07"></script>
+    <script type="module" src="./app.js?v=20260118-09"></script>
 </body>
 </html>

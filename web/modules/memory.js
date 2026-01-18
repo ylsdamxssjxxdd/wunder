@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260118-04";
+import { elements } from "./elements.js?v=20260118-07";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { formatDuration, formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-06";
+import { t } from "./i18n.js?v=20260118-07";
 
 const MEMORY_POLL_INTERVAL_MS = 4000;
 const DEFAULT_MEMORY_USERS_PAGE_SIZE = 100;
