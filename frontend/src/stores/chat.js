@@ -734,6 +734,8 @@ const abortSendStream = () => {
 const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
+  const toolOutputItemMap = new Map();
+  const toolOutputBufferMap = new Map();
   let outputItemId = null;
   const blockedRounds = new Set();
   let lastRound = null;
@@ -780,6 +782,70 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     const queue = toolItemMap.get(toolName);
     if (!queue || queue.length === 0) return null;
     return queue.shift() || null;
+  };
+
+  const peekToolItemId = (toolName) => {
+    if (!toolName) return null;
+    const queue = toolItemMap.get(toolName);
+    if (!queue || queue.length === 0) return null;
+    return queue[0] || null;
+  };
+
+  const resolveToolOutputKey = (toolName, callId) => {
+    if (callId) return `call:${callId}`;
+    if (toolName) return `tool:${toolName}`;
+    return 'tool:unknown';
+  };
+
+  const getToolOutputBuffer = (key) => {
+    let buffer = toolOutputBufferMap.get(key);
+    if (!buffer) {
+      buffer = { stdout: '', stderr: '', command: '' };
+      toolOutputBufferMap.set(key, buffer);
+    }
+    return buffer;
+  };
+
+  const buildToolOutputDetail = (buffer) => {
+    if (!buffer) return '';
+    const parts = [];
+    if (buffer.command) {
+      parts.push(`[command]\n${buffer.command}`);
+    }
+    if (buffer.stdout) {
+      parts.push(`[stdout]\n${buffer.stdout}`);
+    }
+    if (buffer.stderr) {
+      parts.push(`[stderr]\n${buffer.stderr}`);
+    }
+    return parts.join('\n\n');
+  };
+
+  const ensureToolOutputItem = (toolName, key, toolCategory) => {
+    if (!key) return null;
+    const existing = toolOutputItemMap.get(key);
+    if (existing) return existing;
+    const title = toolName ? `工具输出：${toolName}` : '工具输出';
+    const item = buildWorkflowItem(title, '', 'loading', {
+      isTool: true,
+      toolCategory
+    });
+    assistantMessage.workflowItems.push(item);
+    toolOutputItemMap.set(key, item.id);
+    return item.id;
+  };
+
+  const finalizeToolOutputItem = (key, failed) => {
+    if (!key) return;
+    const itemId = toolOutputItemMap.get(key);
+    if (!itemId) return;
+    const buffer = toolOutputBufferMap.get(key);
+    updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+      status: failed ? 'failed' : 'completed',
+      detail: buffer ? buildToolOutputDetail(buffer) : ''
+    });
+    toolOutputItemMap.delete(key);
+    toolOutputBufferMap.delete(key);
   };
 
   const updateRoundState = (roundNumber) => {
@@ -988,6 +1054,35 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         }
         break;
       }
+      case 'tool_output_delta': {
+        const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '';
+        const delta = data?.delta ?? payload?.delta ?? '';
+        if (!delta) {
+          break;
+        }
+        const streamName = String(data?.stream ?? payload?.stream ?? 'stdout').toLowerCase();
+        const command = typeof data?.command === 'string' ? data.command : payload?.command;
+        const toolCategory = resolveToolCategory(toolName, data ?? payload);
+        const callId = toolName ? peekToolItemId(toolName) : null;
+        const outputKey = resolveToolOutputKey(toolName, callId);
+        const buffer = getToolOutputBuffer(outputKey);
+        if (command && !buffer.command) {
+          buffer.command = String(command);
+        }
+        if (streamName.includes('err')) {
+          buffer.stderr += delta;
+        } else {
+          buffer.stdout += delta;
+        }
+        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory);
+        if (itemId) {
+          updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+            detail: buildToolOutputDetail(buffer),
+            status: 'loading'
+          });
+        }
+        break;
+      }
       case 'tool_result': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name;
         const result = data?.result ?? payload?.result ?? data?.output ?? payload?.output ?? data ?? payload;
@@ -995,6 +1090,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         const targetId = toolName ? resolveToolItemId(toolName) : null;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         const sandboxed = data?.sandbox === true;
+        const outputKey = resolveToolOutputKey(toolName, targetId);
         const detailSource =
           data && typeof data === 'object'
             ? data
@@ -1011,6 +1107,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
             status: failed ? 'failed' : 'completed'
           });
         }
+        finalizeToolOutputItem(outputKey, failed);
         assistantMessage.workflowItems.push(
           buildWorkflowItem(
             `工具结果：${toolName || '未知工具'}`,

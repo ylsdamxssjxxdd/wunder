@@ -2428,6 +2428,22 @@ button.danger {
   flex-wrap: wrap;
 }
 
+.lsp-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lsp-title-toggle {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.lsp-title-toggle span {
+  font-size: 12px;
+}
+
 .lsp-inline-controls {
   display: inline-flex;
   align-items: center;
@@ -2502,16 +2518,25 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.lsp-result-meta {
+  margin-left: auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lsp-result-status {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: #64748b;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .lsp-result-status-text {
@@ -2560,6 +2585,72 @@ button.danger {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+#lspPanel .lsp-editor-actions .btn-with-icon.icon-only {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: #1f2937;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+#lspPanel .lsp-editor-actions .btn-with-icon.icon-only:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+#lspPanel .lsp-editor-actions .btn-with-icon.icon-only:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+#lspPanel .lsp-editor-actions .btn-with-icon.icon-only:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+#lspPanel .lsp-editor-actions .btn-with-icon.icon-only:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+#lspPanel #lspEditorUndo {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #c2410c;
+}
+
+#lspPanel #lspEditorUndo:hover:not(:disabled) {
+  background: #ffedd5;
+  border-color: #fb923c;
+}
+
+#lspPanel #lspEditorRedo {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+#lspPanel #lspEditorRedo:hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: #60a5fa;
+}
+
+#lspPanel #lspEditorSave {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+#lspPanel #lspEditorSave:hover:not(:disabled) {
+  background: #d1fae5;
+  border-color: #34d399;
 }
 
 .lsp-editor-body {

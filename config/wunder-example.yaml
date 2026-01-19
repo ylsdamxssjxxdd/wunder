@@ -130,6 +130,7 @@ observability: # 可观测性配置
   monitor_payload_max_chars: 0 # 监控事件单条最大字符数（<= 0 表示不截断）
   monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）
     - llm_output_delta
+    - tool_output_delta
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）

@@ -1241,12 +1241,18 @@
           </div>
         </section>
         <section id="lspPanel" class="panel">
-          <div class="list-header">
-            <h1 data-i18n="lsp.title">LSP 服务</h1>
-            <div class="header-actions lsp-header-actions">
+          <div class="list-header lsp-list-header">
+            <div class="lsp-title-group">
+              <h1 data-i18n="lsp.title">LSP 服务</h1>
               <button id="lspStatusIndicator" class="status-indicator status-indicator-compact" type="button">
                 <span class="status-dot"></span>
               </button>
+              <label class="checkbox-row checkbox-compact lsp-title-toggle">
+                <input id="lspEnabled" type="checkbox" />
+                <span data-i18n="lsp.config.enabled">启用 LSP</span>
+              </label>
+            </div>
+            <div class="header-actions lsp-header-actions">
               <button id="lspConfigBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-sliders"></i>
                 <span data-i18n="lsp.action.config">LSP 配置</span>
@@ -1276,6 +1282,7 @@
                 <div class="settings-card-title lsp-result-header">
                   <i class="fa-solid fa-terminal"></i>
                   <span data-i18n="lsp.result.title">LSP 结果</span>
+                  <span id="lspResultMeta" class="muted lsp-result-meta"></span>
                   <span
                     id="lspResultStatus"
                     class="lsp-result-status"
@@ -1286,7 +1293,6 @@
                     <span id="lspResultStatusText" class="lsp-result-status-text" data-i18n="lsp.result.status.idle">空闲</span>
                   </span>
                 </div>
-                <div id="lspResultMeta" class="muted"></div>
                 <pre id="lspTestResult" class="tool-schema"></pre>
               </div>
             </div>
@@ -2565,6 +2571,10 @@
                       <span data-i18n="apiDocs.event.toolCall">工具调用信息</span>
                     </li>
                     <li>
+                      <code>tool_output_delta</code>
+                      <span data-i18n="apiDocs.event.toolOutputDelta">工具输出增量</span>
+                    </li>
+                    <li>
                       <code>tool_result</code>
                       <span data-i18n="apiDocs.event.toolResult">工具执行结果</span>
                     </li>
@@ -3708,12 +3718,6 @@
         </div>
         <div class="modal-body">
           <div class="settings-grid">
-            <div class="form-row">
-              <label class="checkbox-row">
-                <input id="lspEnabled" type="checkbox" />
-                <span data-i18n="lsp.config.enabled">启用 LSP</span>
-              </label>
-            </div>
             <div class="form-row">
               <label for="lspTimeout" data-i18n="lsp.config.timeout">请求超时（秒）</label>
               <input id="lspTimeout" type="number" min="0" step="1" placeholder="30" />

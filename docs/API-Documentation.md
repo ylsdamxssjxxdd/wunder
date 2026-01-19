@@ -530,6 +530,7 @@
 - `event: llm_output`: final aggregated output
 - `event: token_usage`: token usage per round
 - `event: tool_call`: tool call info
+- `event: tool_output_delta`: tool output streaming chunk (`data.tool`/`data.command`/`data.stream`/`data.delta`; currently only for local built-in `execute_command`, not sandboxed)
 - `event: tool_result`: tool execution result
 - `event: compaction`: context compaction info
 - `event: final`: final response

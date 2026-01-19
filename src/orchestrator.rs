@@ -1486,7 +1486,7 @@ impl Orchestrator {
                             emitter.emit(&event_name, data).await;
                         });
                     }
-                });
+                }, prepared.stream);
 
                 for call in tool_calls {
                     let mut name = call.name.clone();

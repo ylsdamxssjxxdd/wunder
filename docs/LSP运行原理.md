@@ -77,6 +77,36 @@ LSP 客户端以 JSON-RPC over stdio 的方式运行：
 - 后续写入：`textDocument/didChange`，并维护文件版本号。
 - 同时发送 `workspace/didChangeWatchedFiles`，增强服务器的文件状态感知。
 
+### 3.4 原理时序图
+
+```mermaid
+sequenceDiagram
+    participant User as 用户/模型
+    participant API as Wunder /wunder
+    participant Manager as LspManager
+    participant Server as LSP 服务器
+    participant Cache as 诊断缓存
+
+    User->>API: LSP查询(路径/操作)
+    API->>Manager: 选择匹配服务与进程
+    alt 进程不存在
+        Manager->>Server: 启动 command
+        Manager->>Server: initialize
+        Manager->>Server: initialized
+        Manager->>Server: didChangeConfiguration (可选)
+    end
+    API->>Manager: 同步文件(didOpen/didChange)
+    Manager->>Server: textDocument/didOpen 或 didChange
+    Manager->>Server: workspace/didChangeWatchedFiles
+    API->>Manager: 发送 LSP 请求(operation)
+    Manager->>Server: textDocument/* 请求
+    Server-->>Manager: 响应结果
+    Server-->>Manager: publishDiagnostics (异步)
+    Manager->>Cache: 缓存诊断
+    Manager-->>API: 汇总结果与诊断摘要
+    API-->>User: 流式返回
+```
+
 ## 4. 诊断与缓存机制
 
 - 服务器的 `textDocument/publishDiagnostics` 会被缓存到内存并按路径归档。

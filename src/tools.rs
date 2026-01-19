@@ -25,8 +25,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::sleep;
 use tracing::warn;
@@ -46,20 +48,26 @@ const MAX_LSP_DIAGNOSTICS: usize = 20;
 #[derive(Clone)]
 pub struct ToolEventEmitter {
     callback: Arc<dyn Fn(&str, Value) + Send + Sync>,
+    stream: bool,
 }
 
 impl ToolEventEmitter {
-    pub fn new<F>(callback: F) -> Self
+    pub fn new<F>(callback: F, stream: bool) -> Self
     where
         F: Fn(&str, Value) + Send + Sync + 'static,
     {
         Self {
             callback: Arc::new(callback),
+            stream,
         }
     }
 
     pub fn emit(&self, event_type: &str, data: Value) {
         (self.callback)(event_type, data);
+    }
+
+    pub fn stream_enabled(&self) -> bool {
+        self.stream
     }
 }
 
@@ -827,6 +835,259 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     }
 }
 
+fn resolve_stream_chunk_size(config: &Config) -> usize {
+    let size = config.server.stream_chunk_size;
+    if size == 0 {
+        1024
+    } else {
+        size
+    }
+}
+
+fn safe_chunk_boundary(text: &str, max_bytes: usize) -> usize {
+    if text.len() <= max_bytes {
+        return text.len();
+    }
+    let mut index = max_bytes.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    if index == 0 {
+        index = max_bytes.min(text.len());
+        while index < text.len() && !text.is_char_boundary(index) {
+            index += 1;
+        }
+        if index == 0 {
+            index = text.len();
+        }
+    }
+    index
+}
+
+fn emit_tool_output_chunks(
+    emitter: &ToolEventEmitter,
+    tool_name: &str,
+    command: &str,
+    stream_name: &str,
+    pending: &mut String,
+    chunk_size: usize,
+    force: bool,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let limit = chunk_size.max(1);
+    loop {
+        if pending.is_empty() {
+            break;
+        }
+        if !force && pending.len() < limit {
+            break;
+        }
+        let take_len = if pending.len() <= limit {
+            pending.len()
+        } else {
+            safe_chunk_boundary(pending, limit)
+        };
+        if take_len == 0 {
+            break;
+        }
+        let chunk = pending[..take_len].to_string();
+        pending.replace_range(..take_len, "");
+        if chunk.is_empty() {
+            break;
+        }
+        emitter.emit(
+            "tool_output_delta",
+            json!({
+                "tool": tool_name,
+                "command": command,
+                "stream": stream_name,
+                "delta": chunk,
+            }),
+        );
+    }
+}
+
+async fn read_stream_output<R>(
+    mut reader: R,
+    emitter: Option<ToolEventEmitter>,
+    tool_name: String,
+    command: String,
+    stream_name: &'static str,
+    chunk_size: usize,
+) -> Result<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let Some(stream_emitter) = emitter.as_ref().filter(|item| item.stream_enabled()) else {
+        let mut output = Vec::new();
+        reader.read_to_end(&mut output).await?;
+        return Ok(output);
+    };
+
+    let mut output = Vec::new();
+    let read_size = chunk_size.max(256);
+    let mut buffer = vec![0u8; read_size];
+    let mut pending_bytes = Vec::new();
+    let mut pending_text = String::new();
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        output.extend_from_slice(chunk);
+        pending_bytes.extend_from_slice(chunk);
+        loop {
+            match std::str::from_utf8(&pending_bytes) {
+                Ok(valid) => {
+                    if !valid.is_empty() {
+                        pending_text.push_str(valid);
+                    }
+                    pending_bytes.clear();
+                    break;
+                }
+                Err(err) => {
+                    let valid_up_to = err.valid_up_to();
+                    if valid_up_to == 0 {
+                        break;
+                    }
+                    let valid = &pending_bytes[..valid_up_to];
+                    let text = std::str::from_utf8(valid).unwrap_or_default();
+                    if !text.is_empty() {
+                        pending_text.push_str(text);
+                    }
+                    pending_bytes.drain(..valid_up_to);
+                }
+            }
+        }
+        emit_tool_output_chunks(
+            stream_emitter,
+            &tool_name,
+            &command,
+            stream_name,
+            &mut pending_text,
+            chunk_size,
+            false,
+        );
+    }
+
+    if !pending_bytes.is_empty() {
+        pending_text.push_str(&String::from_utf8_lossy(&pending_bytes));
+        pending_bytes.clear();
+    }
+    emit_tool_output_chunks(
+        stream_emitter,
+        &tool_name,
+        &command,
+        stream_name,
+        &mut pending_text,
+        chunk_size,
+        true,
+    );
+
+    Ok(output)
+}
+
+struct CommandRunResult {
+    returncode: i32,
+    stdout: String,
+    stderr: String,
+    timed_out: bool,
+}
+
+async fn join_output_task(
+    handle: Option<tokio::task::JoinHandle<Result<Vec<u8>>>>,
+) -> Result<Vec<u8>> {
+    match handle {
+        Some(handle) => match handle.await {
+            Ok(result) => result,
+            Err(err) => Err(anyhow!(err.to_string())),
+        },
+        None => Ok(Vec::new()),
+    }
+}
+
+async fn run_command_streaming(
+    context: &ToolContext<'_>,
+    command: &str,
+    cwd: &Path,
+    timeout: Option<Duration>,
+) -> Result<CommandRunResult> {
+    let chunk_size = resolve_stream_chunk_size(context.config);
+    let tool_name = "执行命令".to_string();
+    let command_text = command.to_string();
+    let mut cmd = Command::new("bash");
+    cmd.arg("-lc").arg(command).current_dir(cwd);
+    cmd.kill_on_drop(true);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = stdout.map(|stdout| {
+        let emitter = context.event_emitter.clone();
+        let tool_name = tool_name.clone();
+        let command_text = command_text.clone();
+        tokio::spawn(async move {
+            read_stream_output(
+                stdout,
+                emitter,
+                tool_name,
+                command_text,
+                "stdout",
+                chunk_size,
+            )
+            .await
+        })
+    });
+    let stderr_task = stderr.map(|stderr| {
+        let emitter = context.event_emitter.clone();
+        let tool_name = tool_name.clone();
+        let command_text = command_text.clone();
+        tokio::spawn(async move {
+            read_stream_output(
+                stderr,
+                emitter,
+                tool_name,
+                command_text,
+                "stderr",
+                chunk_size,
+            )
+            .await
+        })
+    });
+
+    let mut timed_out = false;
+    let status = if let Some(timeout) = timeout {
+        match tokio::time::timeout(timeout, child.wait()).await {
+            Ok(result) => Some(result?),
+            Err(_) => {
+                timed_out = true;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                None
+            }
+        }
+    } else {
+        Some(child.wait().await?)
+    };
+
+    let stdout_bytes = join_output_task(stdout_task).await?;
+    let stderr_bytes = join_output_task(stderr_task).await?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+    let returncode = status.and_then(|value| value.code()).unwrap_or(-1);
+
+    Ok(CommandRunResult {
+        returncode,
+        stdout,
+        stderr,
+        timed_out,
+    })
+}
+
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
@@ -908,47 +1169,44 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "sandbox": false,
             }));
         }
-        let mut cmd = Command::new("bash");
-        cmd.arg("-lc").arg(command).current_dir(&cwd);
-        cmd.kill_on_drop(true);
-        let output = if let Some(timeout) = timeout {
-            match tokio::time::timeout(timeout, cmd.output()).await {
-                Ok(result) => result?,
-                Err(_) => {
-                    let detail = if timeout_s > 0.0 {
-                        format!("timeout after {timeout_s}s")
-                    } else {
-                        "timeout".to_string()
-                    };
-                    results.push(json!({
-                        "command": command,
-                        "returncode": -1,
-                        "stdout": "",
-                        "stderr": detail.clone(),
-                    }));
-                    context.workspace.mark_tree_dirty(context.user_id);
-                    return Ok(json!({
-                        "ok": false,
-                        "data": { "results": results },
-                        "error": i18n::t_with_params(
-                            "tool.exec.command_failed",
-                            &HashMap::from([("detail".to_string(), detail)]),
-                        ),
-                        "sandbox": false,
-                    }));
-                }
-            }
-        } else {
-            cmd.output().await?
-        };
-        let returncode = output.status.code().unwrap_or(-1);
+        let run = run_command_streaming(context, command, &cwd, timeout).await?;
         results.push(json!({
             "command": command,
-            "returncode": returncode,
-            "stdout": String::from_utf8_lossy(&output.stdout),
-            "stderr": String::from_utf8_lossy(&output.stderr),
+            "returncode": run.returncode,
+            "stdout": run.stdout,
+            "stderr": run.stderr,
         }));
-        if returncode != 0 {
+        if run.timed_out {
+            let detail = if timeout_s > 0.0 {
+                format!("timeout after {timeout_s}s")
+            } else {
+                "timeout".to_string()
+            };
+            if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                let previous = last
+                    .get("stderr")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let merged = if previous.trim().is_empty() {
+                    detail.clone()
+                } else {
+                    format!("{previous}\n{detail}")
+                };
+                last.insert("stderr".to_string(), Value::String(merged));
+            }
+            context.workspace.mark_tree_dirty(context.user_id);
+            return Ok(json!({
+                "ok": false,
+                "data": { "results": results },
+                "error": i18n::t_with_params(
+                    "tool.exec.command_failed",
+                    &HashMap::from([("detail".to_string(), detail)]),
+                ),
+                "sandbox": false,
+            }));
+        }
+        if run.returncode != 0 {
             context.workspace.mark_tree_dirty(context.user_id);
             return Ok(json!({
                 "ok": false,

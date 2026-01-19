@@ -1223,6 +1223,8 @@
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
 - `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
 - `event: tool_call`：工具调用信息（名称、参数）
+- `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
+  - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果
 - `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
 - `event: a2a_task`：A2A 任务创建/识别（task_id/context_id）
