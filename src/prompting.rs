@@ -237,6 +237,15 @@ impl PromptComposer {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), a2ui_prompt.trim());
                 }
             }
+            let include_plan_prompt = allowed_tool_names
+                .iter()
+                .any(|name| resolve_tool_name(name) == "计划面板");
+            if include_plan_prompt {
+                let plan_prompt = read_prompt_template(Path::new("app/prompts/plan_prompt.txt"));
+                if !plan_prompt.trim().is_empty() {
+                    prompt = format!("{}\n\n{}", prompt.trim_end(), plan_prompt.trim());
+                }
+            }
 
             self.insert_cached_prompt(cache_key, prompt.clone(), now_ts());
             self.notify_inflight(&base_key).await;

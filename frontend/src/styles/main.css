@@ -2518,6 +2518,40 @@ body {
   font-size: 12px;
 }
 
+.chat-shell .workflow-spacer {
+  flex: 1 1 auto;
+}
+
+.chat-shell .workflow-plan-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--chat-muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.chat-shell .workflow-plan-btn:hover {
+  color: var(--chat-text);
+  border-color: rgba(109, 213, 255, 0.6);
+}
+
+.chat-shell .workflow-plan-btn.is-active {
+  color: var(--chat-text);
+  border-color: rgba(109, 213, 255, 0.8);
+  background: rgba(109, 213, 255, 0.18);
+}
+
+.chat-shell .workflow-plan-icon {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
 .chat-shell .message-workflow summary::marker {
   display: none;
 }
@@ -2739,6 +2773,102 @@ body {
   color: var(--chat-text, #f1f5f9);
   max-height: 60vh;
   overflow: auto;
+}
+
+.plan-dialog {
+  --chat-text: #f1f5f9;
+  --chat-primary: #6ad9ff;
+  --el-dialog-bg-color: #111a2f;
+  --el-text-color-primary: #f1f5f9;
+  --el-text-color-regular: #f1f5f9;
+  --el-text-color-secondary: #b3bccb;
+  --el-border-color: rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+}
+
+.plan-dialog.el-dialog {
+  background: #111a2f;
+  border: 1px solid rgba(77, 216, 255, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.plan-dialog .el-dialog__header {
+  border-bottom: 1px solid rgba(77, 216, 255, 0.2);
+}
+
+.plan-dialog .el-dialog__body {
+  padding-top: 16px;
+}
+
+.plan-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plan-explanation {
+  font-size: 12px;
+  color: var(--chat-muted);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(77, 216, 255, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.plan-step--pending {
+  border-color: rgba(148, 163, 184, 0.4);
+}
+
+.plan-step--in_progress {
+  border-color: rgba(96, 165, 250, 0.7);
+}
+
+.plan-step--completed {
+  border-color: rgba(74, 222, 128, 0.6);
+}
+
+.plan-index {
+  font-size: 12px;
+  color: var(--chat-text);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 2px 6px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.plan-text {
+  flex: 1 1 auto;
+  color: var(--chat-text);
+  font-size: 13px;
+}
+
+.plan-status {
+  font-size: 12px;
+  color: var(--chat-muted);
+}
+
+.plan-empty {
+  font-size: 12px;
+  color: var(--chat-muted);
 }
 
 .chat-shell .input-container {
@@ -3884,6 +4014,47 @@ body {
   background: #ffffff;
   border-color: rgba(15, 23, 42, 0.12);
   color: #0f172a;
+}
+
+:root[data-user-theme='light'] .plan-dialog {
+  --chat-text: #0f172a;
+  --chat-primary: #3b82f6;
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:root[data-user-theme='light'] .plan-dialog.el-dialog {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .plan-explanation {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #64748b;
+}
+
+:root[data-user-theme='light'] .plan-step {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .plan-index {
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+:root[data-user-theme='light'] .plan-text {
+  color: #0f172a;
+}
+
+:root[data-user-theme='light'] .plan-status {
+  color: #64748b;
 }
 
 :root[data-user-theme='light'] .user-tools-dialog {

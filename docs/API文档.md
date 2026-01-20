@@ -65,6 +65,7 @@
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+- 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -190,7 +191,7 @@
   - `path`：转换后的 Markdown 相对路径
   - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
   - `warnings`：转换警告列表
-- 说明：该接口当前仅保存 Markdown 文件；非 Markdown 文件请先调用 `/wunder/doc2md/convert` 转换后再上传。
+- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
 
 ### 4.1.2.10 `/wunder/user_tools/extra_prompt`
 
@@ -766,7 +767,7 @@
     - `path`：转换后的 Markdown 相对路径
     - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
     - `warnings`：转换警告列表
-  - 说明：该接口当前仅保存 Markdown 文件；非 Markdown 文件请先调用 `/wunder/doc2md/convert` 转换后再上传。
+  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
 
 ### 4.1.30 `/wunder/admin/knowledge/refresh`
 
@@ -1233,7 +1234,7 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
-- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`tool_call`、`tool_result`、`final` 等事件，其余事件待补齐。
+- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`tool_call`、`tool_result`、`plan_update`、`final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；监控持久化会裁剪为 `payload_summary`，若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
@@ -1245,6 +1246,7 @@
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果
+- `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
 - `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
 - `event: a2a_task`：A2A 任务创建/识别（task_id/context_id）
 - `event: a2a_status`：A2A 任务状态更新（state/final）
@@ -1357,6 +1359,7 @@
 
 - 共享沙盒服务不创建子容器，依赖同一镜像运行与工作区挂载即可。
 - docker compose 内网部署推荐使用容器内部 DNS（默认 `http://sandbox:9001`）直连沙盒且无需对外暴露 9001 端口；运行时会优先读取 `WUNDER_SANDBOX_ENDPOINT` 并在常见地址间自动回退以降低 IP 配置失败概率。
+- 如需在 ptc/Matplotlib 或其他字体依赖中渲染中文，建议将仓库 `fonts/` 挂载到 `/usr/share/fonts/wunder`，并使用 `FONTCONFIG_FILE=/app/config/fonts.conf`、`XDG_CACHE_HOME=/workspaces/.cache`、`MATPLOTLIBRC=/app/config/matplotlibrc` 与 `MPLCONFIGDIR=/workspaces/.matplotlib`（docker compose 已默认配置）。
 
 ### 4.7 A2A 标准接口
 

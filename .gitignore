@@ -26,6 +26,12 @@ images/*.tar
 images/*.tar.gz
 images/arm/
 images/x86/
+fonts/*.ttf
+fonts/*.otf
+fonts/*.ttc
+fonts/*.otc
+fonts/*.woff
+fonts/*.woff2
 .pytest_cache
 **/__pycache__/
 *.pyc

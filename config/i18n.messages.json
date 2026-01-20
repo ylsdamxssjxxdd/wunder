@@ -579,6 +579,10 @@
     "en-US": "Tool call: {tool}",
     "zh-CN": "调用工具：{tool}"
   },
+  "monitor.summary.plan_update": {
+    "en-US": "Plan updated",
+    "zh-CN": "计划更新"
+  },
   "monitor.summary.user_deleted_cancel": {
     "en-US": "User deleted; cancellation requested",
     "zh-CN": "用户已删除，已请求终止"
@@ -838,6 +842,10 @@
   "tool.invoke.wunder_run_failed": {
     "en-US": "wunder@run call failed: {detail}",
     "zh-CN": "wunder@run 调用失败: {detail}"
+  },
+  "tool.plan.plan_required": {
+    "en-US": "Plan steps are required.",
+    "zh-CN": "计划步骤不能为空。"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
@@ -1222,6 +1230,26 @@
   "tool.spec.list.description": {
     "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted.",
     "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。"
+  },
+  "tool.spec.plan.args.explanation": {
+    "en-US": "Optional. Short explanation for the plan.",
+    "zh-CN": "可选，计划说明。"
+  },
+  "tool.spec.plan.args.plan": {
+    "en-US": "Plan step list.",
+    "zh-CN": "计划步骤列表。"
+  },
+  "tool.spec.plan.args.plan.step": {
+    "en-US": "Step description.",
+    "zh-CN": "步骤描述。"
+  },
+  "tool.spec.plan.args.plan.status": {
+    "en-US": "Step status (pending, in_progress, completed).",
+    "zh-CN": "步骤状态（pending/in_progress/completed）。"
+  },
+  "tool.spec.plan.description": {
+    "en-US": "Update the plan board with steps and status.",
+    "zh-CN": "更新计划看板，提供步骤与状态。"
   },
   "tool.spec.ptc.args.content": {
     "en-US": "Full Python script content.",

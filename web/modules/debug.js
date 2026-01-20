@@ -87,6 +87,7 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "compaction",
   "tool_call",
   "tool_result",
+  "plan_update",
   "llm_request",
   "llm_response",
   "knowledge_request",
@@ -1282,6 +1283,7 @@ const resetModelOutputState = (options = {}) => {
     resetA2uiState(elements.modelOutputA2ui);
     renderRoundSelectOptions(outputState);
     updateModelOutputPreviewButton(outputState);
+    resetPlanBoardState();
   }
 };
 
@@ -1701,6 +1703,184 @@ const openModelOutputPreview = () => {
 const closeModelOutputPreview = () => {
   elements.modelOutputPreviewModal?.classList.remove("active");
   elements.modelOutputPreviewBtn?.classList.remove("is-active");
+};
+
+const normalizePlanStatus = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "pending";
+  }
+  const normalized = raw.replace(/[-\s]+/g, "_");
+  if (normalized === "pending") {
+    return "pending";
+  }
+  if (normalized === "in_progress" || normalized === "inprogress") {
+    return "in_progress";
+  }
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") {
+    return "completed";
+  }
+  return "pending";
+};
+
+const normalizePlanPayload = (payload) => {
+  if (!payload) {
+    return null;
+  }
+  const rawPlan = Array.isArray(payload?.plan)
+    ? payload.plan
+    : Array.isArray(payload?.steps)
+      ? payload.steps
+      : Array.isArray(payload)
+        ? payload
+        : [];
+  if (!rawPlan.length) {
+    return null;
+  }
+  const explanation = typeof payload?.explanation === "string" ? payload.explanation.trim() : "";
+  const steps = [];
+  let hasInProgress = false;
+  rawPlan.forEach((item) => {
+    if (!item) {
+      return;
+    }
+    const step = String(item?.step ?? item?.title ?? item).trim();
+    if (!step) {
+      return;
+    }
+    let status = normalizePlanStatus(item?.status);
+    if (status === "in_progress") {
+      if (hasInProgress) {
+        status = "pending";
+      } else {
+        hasInProgress = true;
+      }
+    }
+    steps.push({ step, status });
+  });
+  if (!steps.length) {
+    return null;
+  }
+  return { explanation, steps };
+};
+
+const resolvePlanStatusLabel = (status) => {
+  if (status === "in_progress") {
+    return t("debug.plan.status.in_progress");
+  }
+  if (status === "completed") {
+    return t("debug.plan.status.completed");
+  }
+  return t("debug.plan.status.pending");
+};
+
+const getPlanBoardState = () => {
+  if (!state.runtime.planBoard) {
+    state.runtime.planBoard = {
+      explanation: "",
+      steps: [],
+      updatedAt: null,
+    };
+  }
+  if (!Array.isArray(state.runtime.planBoard.steps)) {
+    state.runtime.planBoard.steps = [];
+  }
+  if (typeof state.runtime.planBoard.explanation !== "string") {
+    state.runtime.planBoard.explanation = "";
+  }
+  return state.runtime.planBoard;
+};
+
+const hasPlanBoardSteps = (planState) =>
+  Array.isArray(planState?.steps) && planState.steps.length > 0;
+
+const updatePlanBoardButton = () => {
+  if (!elements.modelOutputPlanBtn) {
+    return;
+  }
+  elements.modelOutputPlanBtn.disabled = false;
+  elements.modelOutputPlanBtn.setAttribute("aria-label", t("debug.output.plan"));
+  elements.modelOutputPlanBtn.setAttribute("title", t("debug.output.plan"));
+  const icon = elements.modelOutputPlanBtn.querySelector("i");
+  if (icon) {
+    icon.className = "fa-solid fa-table";
+  }
+};
+
+const renderPlanBoard = () => {
+  const planState = getPlanBoardState();
+  const explanation = String(planState.explanation || "").trim();
+  if (elements.planBoardExplanation) {
+    elements.planBoardExplanation.textContent = explanation;
+    elements.planBoardExplanation.style.display = explanation ? "" : "none";
+  }
+  if (elements.planBoardList) {
+    elements.planBoardList.textContent = "";
+    planState.steps.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = `plan-board-item plan-board-item--${item.status}`;
+      const indexNode = document.createElement("span");
+      indexNode.className = "plan-board-index";
+      indexNode.textContent = String(index + 1);
+      const textNode = document.createElement("div");
+      textNode.className = "plan-board-text";
+      textNode.textContent = item.step;
+      const statusNode = document.createElement("span");
+      statusNode.className = "plan-board-status";
+      statusNode.textContent = resolvePlanStatusLabel(item.status);
+      row.appendChild(indexNode);
+      row.appendChild(textNode);
+      row.appendChild(statusNode);
+      elements.planBoardList.appendChild(row);
+    });
+  }
+  if (elements.planBoardEmpty) {
+    elements.planBoardEmpty.style.display = hasPlanBoardSteps(planState) ? "none" : "block";
+  }
+};
+
+const isPlanBoardOpen = () =>
+  Boolean(elements.planBoardModal?.classList.contains("active"));
+
+const openPlanBoard = () => {
+  if (!elements.planBoardModal) {
+    return;
+  }
+  renderPlanBoard();
+  elements.planBoardModal.classList.add("active");
+  elements.modelOutputPlanBtn?.classList.add("is-active");
+};
+
+const closePlanBoard = () => {
+  elements.planBoardModal?.classList.remove("active");
+  elements.modelOutputPlanBtn?.classList.remove("is-active");
+};
+
+const resetPlanBoardState = () => {
+  const planState = getPlanBoardState();
+  planState.explanation = "";
+  planState.steps = [];
+  planState.updatedAt = null;
+  renderPlanBoard();
+  updatePlanBoardButton();
+  if (isPlanBoardOpen()) {
+    closePlanBoard();
+  }
+};
+
+const applyPlanUpdate = (payload) => {
+  const normalized = normalizePlanPayload(payload);
+  if (!normalized) {
+    return null;
+  }
+  const planState = getPlanBoardState();
+  planState.explanation = normalized.explanation;
+  planState.steps = normalized.steps;
+  planState.updatedAt = Date.now();
+  renderPlanBoard();
+  updatePlanBoardButton();
+  openPlanBoard();
+  return normalized;
 };
 
 const recordA2uiMessages = (payload, timestamp) => {
@@ -2137,6 +2317,18 @@ const handleEvent = (eventType, dataText, options = {}) => {
       detail: JSON.stringify(data, null, 2),
       timestamp: eventTimestamp,
     });
+    return;
+  }
+
+  if (eventType === "plan_update") {
+    const data = payload.data || payload;
+    const normalized = applyPlanUpdate(data);
+    if (normalized) {
+      appendLog(t("debug.event.planUpdate"), {
+        detail: JSON.stringify(data, null, 2),
+        timestamp: eventTimestamp,
+      });
+    }
     return;
   }
 
@@ -2980,13 +3172,26 @@ export const initDebugPanel = () => {
   if (elements.modelOutputPreviewBtn) {
     elements.modelOutputPreviewBtn.addEventListener("click", openModelOutputPreview);
   }
+  if (elements.modelOutputPlanBtn) {
+    elements.modelOutputPlanBtn.addEventListener("click", openPlanBoard);
+  }
   if (elements.modelOutputPreviewClose) {
     elements.modelOutputPreviewClose.addEventListener("click", closeModelOutputPreview);
+  }
+  if (elements.planBoardClose) {
+    elements.planBoardClose.addEventListener("click", closePlanBoard);
   }
   if (elements.modelOutputPreviewModal) {
     elements.modelOutputPreviewModal.addEventListener("click", (event) => {
       if (event.target === elements.modelOutputPreviewModal) {
         closeModelOutputPreview();
+      }
+    });
+  }
+  if (elements.planBoardModal) {
+    elements.planBoardModal.addEventListener("click", (event) => {
+      if (event.target === elements.planBoardModal) {
+        closePlanBoard();
       }
     });
   }
@@ -3026,6 +3231,7 @@ export const initDebugPanel = () => {
   const outputState = getModelOutputState();
   renderRoundSelectOptions(outputState);
   updateModelOutputPreviewButton(outputState);
+  updatePlanBoardButton();
 };
 
 

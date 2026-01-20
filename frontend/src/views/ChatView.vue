@@ -181,7 +181,14 @@
                   v-if="message.role === 'assistant'"
                   :items="message.workflowItems || []"
                   :loading="message.workflowStreaming"
-                  :visible="message.workflowStreaming || (message.workflowItems && message.workflowItems.length > 0)"
+                  :visible="
+                    message.workflowStreaming ||
+                    (message.workflowItems && message.workflowItems.length > 0) ||
+                    hasPlan(message)
+                  "
+                  :plan="message.plan"
+                  :plan-visible="message.planVisible"
+                  @update:plan-visible="(value) => (message.planVisible = value)"
                 />
                 <div
                   v-if="shouldShowMessageText(message)"
@@ -494,6 +501,9 @@ const shouldShowMessageText = (message) => {
   if (message.role !== 'assistant') return true;
   return Boolean(String(message.content || '').trim());
 };
+
+const hasPlan = (message) =>
+  Array.isArray(message?.plan?.steps) && message.plan.steps.length > 0;
 
 const markdownCache = new WeakMap();
 

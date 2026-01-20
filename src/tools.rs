@@ -19,6 +19,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
@@ -111,6 +112,33 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     "content": {"type": "string", "description": t("tool.spec.a2ui.args.content")}
                 },
                 "required": ["uid", "a2ui"]
+            }),
+        },
+        ToolSpec {
+            name: "计划面板".to_string(),
+            description: t("tool.spec.plan.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "explanation": {"type": "string", "description": t("tool.spec.plan.args.explanation")},
+                    "plan": {
+                        "type": "array",
+                        "description": t("tool.spec.plan.args.plan"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step": {"type": "string", "description": t("tool.spec.plan.args.plan.step")},
+                                "status": {
+                                    "type": "string",
+                                    "description": t("tool.spec.plan.args.plan.status"),
+                                    "enum": ["pending", "in_progress", "completed"]
+                                }
+                            },
+                            "required": ["step", "status"]
+                        }
+                    }
+                },
+                "required": ["plan"]
             }),
         },
         ToolSpec {
@@ -303,6 +331,7 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
 pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
     map.insert("final_response".to_string(), "最终回复".to_string());
+    map.insert("update_plan".to_string(), "计划面板".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -618,8 +647,86 @@ pub async fn execute_builtin_tool(
         "a2ui" => Ok(
             json!({"uid": args.get("uid"), "a2ui": args.get("a2ui"), "content": args.get("content")}),
         ),
+        "计划面板" => execute_plan_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct PlanUpdateArgs {
+    #[serde(default)]
+    explanation: Option<String>,
+    plan: Vec<PlanItemArgs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlanItemArgs {
+    step: String,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+fn normalize_plan_status(value: Option<&str>) -> String {
+    let raw = value.unwrap_or("").trim().to_lowercase();
+    if raw.is_empty() {
+        return "pending".to_string();
+    }
+    let normalized = raw.replace('-', "_").replace(' ', "_");
+    match normalized.as_str() {
+        "pending" => "pending".to_string(),
+        "in_progress" | "inprogress" => "in_progress".to_string(),
+        "completed" | "complete" | "done" => "completed".to_string(),
+        _ => "pending".to_string(),
+    }
+}
+
+async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: PlanUpdateArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    if payload.plan.is_empty() {
+        return Err(anyhow!(i18n::t("tool.plan.plan_required")));
+    }
+    let mut seen_in_progress = false;
+    let mut normalized_plan = Vec::new();
+    for item in payload.plan {
+        let step = item.step.trim().to_string();
+        if step.is_empty() {
+            continue;
+        }
+        let mut status = normalize_plan_status(item.status.as_deref());
+        if status == "in_progress" {
+            if seen_in_progress {
+                status = "pending".to_string();
+            } else {
+                seen_in_progress = true;
+            }
+        }
+        normalized_plan.push(json!({
+            "step": step,
+            "status": status
+        }));
+    }
+    if normalized_plan.is_empty() {
+        return Err(anyhow!(i18n::t("tool.plan.plan_required")));
+    }
+    let explanation = payload.explanation.and_then(|text| {
+        let trimmed = text.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(
+            "plan_update",
+            json!({
+                "explanation": explanation,
+                "plan": normalized_plan
+            }),
+        );
+    }
+    Ok(json!({ "status": "ok" }))
 }
 
 async fn execute_user_tool(

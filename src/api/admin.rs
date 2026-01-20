@@ -1,4 +1,5 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
+use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::config::Config;
 use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, LspConfig, McpServerConfig};
 use crate::i18n;
@@ -34,8 +35,10 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tracing::info;
 use url::Url;
+use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -1361,8 +1364,7 @@ async fn admin_knowledge_upload(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, Response> {
     let mut base = String::new();
-    let mut name = String::new();
-    let mut data = Vec::new();
+    let mut upload: Option<UploadedKnowledgeFile> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1373,25 +1375,39 @@ async fn admin_knowledge_upload(
             base = field.text().await.unwrap_or_default();
             continue;
         }
-        name = field.file_name().unwrap_or("upload.md").to_string();
-        data = field.bytes().await.unwrap_or_default().to_vec();
+        if let Some(previous) = upload.take() {
+            let _ = tokio::fs::remove_dir_all(&previous.temp_dir).await;
+        }
+        upload = Some(save_knowledge_upload_field(field).await?);
     }
     if base.trim().is_empty() {
+        if let Some(previous) = upload {
+            let _ = tokio::fs::remove_dir_all(&previous.temp_dir).await;
+        }
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.knowledge_base_name_required"),
         ));
     }
+    let upload = match upload {
+        Some(value) => value,
+        None => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.file_not_found"),
+            ))
+        }
+    };
     let config = state.config_store.get().await;
     let base_config = resolve_knowledge_base(&config, &base)?;
     let root = resolve_knowledge_root(&base_config, true)?;
-    let target = resolve_knowledge_path(&root, &name)?;
-    if let Some(parent) = target.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
-    }
-    tokio::fs::write(&target, data)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let output_name = build_markdown_output_path(&upload.filename, &upload.stem);
+    let target = resolve_knowledge_path(&root, &output_name)?;
+    let temp_dir = upload.temp_dir.clone();
+    let result = persist_knowledge_upload(&upload, &target).await;
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    let (converter, warnings) = result?;
+    cleanup_non_markdown_upload(&root, &upload.filename, &output_name).await;
     knowledge::refresh_knowledge_cache(&KnowledgeBaseConfig {
         name: base_config.name.clone(),
         description: base_config.description.clone(),
@@ -1403,9 +1419,9 @@ async fn admin_knowledge_upload(
     Ok(Json(json!({
         "ok": true,
         "message": i18n::t("message.upload_converted"),
-        "path": name,
-        "converter": "raw",
-        "warnings": []
+        "path": output_name,
+        "converter": converter,
+        "warnings": warnings
     })))
 }
 
@@ -2763,6 +2779,157 @@ fn merge_tool_session_usage(records: Vec<HashMap<String, Value>>) -> Vec<HashMap
             record
         })
         .collect()
+}
+
+struct UploadedKnowledgeFile {
+    filename: String,
+    extension: String,
+    stem: String,
+    temp_dir: PathBuf,
+    input_path: PathBuf,
+}
+
+async fn save_knowledge_upload_field(
+    field: axum::extract::multipart::Field<'_>,
+) -> Result<UploadedKnowledgeFile, Response> {
+    let filename = field.file_name().unwrap_or("upload").to_string();
+    let extension = Path::new(&filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if extension.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.file_extension_missing"),
+        ));
+    }
+    let extension = format!(".{extension}");
+    let supported = get_supported_extensions();
+    if !supported
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&extension))
+    {
+        let message = i18n::t_with_params(
+            "error.unsupported_file_type",
+            &HashMap::from([("extension".to_string(), extension.clone())]),
+        );
+        return Err(error_response(StatusCode::BAD_REQUEST, message));
+    }
+    let stem_raw = Path::new(&filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document");
+    let stem = sanitize_filename_stem(stem_raw);
+    let stem = if stem.trim().is_empty() {
+        "document".to_string()
+    } else {
+        stem
+    };
+    let temp_dir = create_knowledge_temp_dir().await?;
+    let input_path = temp_dir.join(format!("{stem}{extension}"));
+    save_knowledge_upload_content(field, &input_path).await?;
+    Ok(UploadedKnowledgeFile {
+        filename,
+        extension,
+        stem,
+        temp_dir,
+        input_path,
+    })
+}
+
+fn build_markdown_output_path(filename: &str, stem: &str) -> String {
+    let raw_path = Path::new(filename);
+    let output_name = format!("{stem}.md");
+    let output = match raw_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        Some(parent) => parent.join(output_name),
+        None => PathBuf::from(output_name),
+    };
+    output.to_string_lossy().replace('\\', "/")
+}
+
+async fn persist_knowledge_upload(
+    upload: &UploadedKnowledgeFile,
+    target: &Path,
+) -> Result<(String, Vec<String>), Response> {
+    let output_path = upload.temp_dir.join(format!("{}.md", upload.stem));
+    let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let content = tokio::fs::read_to_string(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.empty_parse_result"),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+    tokio::fs::write(target, content)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok((conversion.converter, conversion.warnings))
+}
+
+async fn create_knowledge_temp_dir() -> Result<PathBuf, Response> {
+    let mut root = std::env::temp_dir();
+    root.push("wunder_uploads");
+    root.push(Uuid::new_v4().simple().to_string());
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(root)
+}
+
+async fn save_knowledge_upload_content(
+    mut field: axum::extract::multipart::Field<'_>,
+    target: &Path,
+) -> Result<(), Response> {
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    let mut file = tokio::fs::File::create(target)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    while let Some(chunk) = field
+        .chunk()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        file.write_all(&chunk)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    Ok(())
+}
+
+async fn cleanup_non_markdown_upload(root: &Path, filename: &str, output_name: &str) {
+    if filename == output_name {
+        return;
+    }
+    let raw_path = match resolve_knowledge_path(root, filename) {
+        Ok(path) => path,
+        Err(_) => return,
+    };
+    let is_markdown = raw_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("md"))
+        .unwrap_or(false);
+    if is_markdown {
+        return;
+    }
+    if raw_path.exists() && raw_path.is_file() {
+        let _ = tokio::fs::remove_file(raw_path).await;
+    }
 }
 
 fn list_markdown_files(root: &Path) -> Vec<String> {

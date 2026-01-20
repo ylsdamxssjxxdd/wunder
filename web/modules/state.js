@@ -22,9 +22,15 @@ export const state = {
     llmOutput: {
       globalRound: 0,
       currentRound: null,
-      // 模型输出按轮次拆分的运行时状态      rounds: [],
+      // 模型输出按轮次拆分的运行时状态
+      rounds: [],
       selectedRound: null,
       userSelectedRound: false,
+    },
+    planBoard: {
+      explanation: "",
+      steps: [],
+      updatedAt: null,
     },
   },
   panelLoaded: {

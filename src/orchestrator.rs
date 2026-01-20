@@ -480,6 +480,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "compaction"
             | "tool_call"
             | "tool_result"
+            | "plan_update"
             | "llm_output_delta"
             | "llm_output"
             | "final"

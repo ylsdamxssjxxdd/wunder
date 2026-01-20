@@ -20,7 +20,9 @@ const buildMessage = (role, content) => ({
   content,
   created_at: new Date().toISOString(),
   reasoning: '',
-  reasoningStreaming: false
+  reasoningStreaming: false,
+  plan: null,
+  planVisible: false
 });
 
 const DEFAULT_GREETING = '你好！我是智能体助手，有什么可以帮你的吗？';
@@ -119,6 +121,11 @@ const normalizeSnapshotMessage = (message) => {
     }
     if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
       base.workflowItems = message.workflowItems;
+    }
+    const plan = normalizePlanPayload(message.plan);
+    if (plan) {
+      base.plan = plan;
+      base.planVisible = Boolean(message.planVisible) || hasPlanSteps(plan);
     }
   }
   if (message.isGreeting) {
@@ -258,6 +265,8 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
   const targetEventId = normalizeStreamEventId(target.stream_event_id);
   const snapshotRound = normalizeStreamRound(snapshotLastAssistant.stream_round);
   const targetRound = normalizeStreamRound(target.stream_round);
+  const snapshotPlan = normalizePlanPayload(snapshotLastAssistant.plan);
+  const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
   const shouldMergeContent =
     snapshotContent.length > serverContent.length ||
     (snapshotLastAssistant.stream_incomplete && serverContent.length === 0);
@@ -266,6 +275,7 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
       snapshotLastAssistant.workflowStreaming ||
       snapshotLastAssistant.reasoningStreaming ||
       (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length > 0) ||
+      hasSnapshotPlan ||
       snapshotRound !== null ||
       snapshotEventId !== null
   );
@@ -299,6 +309,10 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
     }
     if (snapshotEventId !== null && (targetEventId === null || snapshotEventId > targetEventId)) {
       target.stream_event_id = snapshotEventId;
+    }
+    if (snapshotPlan) {
+      target.plan = snapshotPlan;
+      target.planVisible = true;
     }
   }
   return messages;
@@ -386,6 +400,61 @@ const stringifyPayload = (payload) => {
 const tailText = (text, maxLength = 240) => {
   if (!text) return '';
   return text.length > maxLength ? `...${text.slice(-maxLength)}` : text;
+};
+
+const normalizePlanStatus = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return 'pending';
+  const normalized = raw.replace(/[-\s]+/g, '_');
+  if (normalized === 'pending') return 'pending';
+  if (normalized === 'in_progress' || normalized === 'inprogress') return 'in_progress';
+  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') return 'completed';
+  return 'pending';
+};
+
+const normalizePlanPayload = (payload) => {
+  if (!payload) return null;
+  const rawPlan = Array.isArray(payload?.plan)
+    ? payload.plan
+    : Array.isArray(payload?.steps)
+      ? payload.steps
+      : Array.isArray(payload)
+        ? payload
+        : [];
+  if (!rawPlan.length) return null;
+  const explanation = typeof payload?.explanation === 'string' ? payload.explanation.trim() : '';
+  const steps = [];
+  let hasInProgress = false;
+  rawPlan.forEach((item) => {
+    if (!item) return;
+    const step = String(item?.step ?? item?.title ?? item).trim();
+    if (!step) return;
+    let status = normalizePlanStatus(item?.status);
+    if (status === 'in_progress') {
+      if (hasInProgress) {
+        status = 'pending';
+      } else {
+        hasInProgress = true;
+      }
+    }
+    steps.push({ step, status });
+  });
+  if (!steps.length) return null;
+  return {
+    explanation,
+    steps
+  };
+};
+
+const hasPlanSteps = (plan) => Array.isArray(plan?.steps) && plan.steps.length > 0;
+
+const applyPlanUpdate = (assistantMessage, payload) => {
+  if (!assistantMessage || assistantMessage.role !== 'assistant') return null;
+  const normalized = normalizePlanPayload(payload);
+  if (!normalized) return null;
+  assistantMessage.plan = normalized;
+  assistantMessage.planVisible = true;
+  return normalized;
 };
 
 const buildWorkflowItem = (title, detail, status = 'completed', meta = {}) => ({
@@ -749,6 +818,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   // 思考内容需要同步到消息头部展示
   assistantMessage.reasoning = assistantMessage.reasoning || '';
   assistantMessage.reasoningStreaming = Boolean(assistantMessage.reasoningStreaming);
+  const normalizedPlan = normalizePlanPayload(assistantMessage.plan);
+  assistantMessage.plan = normalizedPlan;
+  if (typeof assistantMessage.planVisible !== 'boolean') {
+    assistantMessage.planVisible = hasPlanSteps(normalizedPlan);
+  }
   let outputContent = assistantMessage.content || '';
   let outputReasoning = assistantMessage.reasoning || '';
   const existingOutput = assistantMessage.workflowItems?.find((item) => item.title === '模型输出');
@@ -1121,6 +1195,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         );
         break;
       }
+      case 'plan_update': {
+        const normalized = applyPlanUpdate(assistantMessage, data);
+        if (normalized) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(
+              '计划更新',
+              buildDetail({ explanation: normalized.explanation, plan: normalized.steps })
+            )
+          );
+        }
+        break;
+      }
       case 'llm_output_delta': {
         const round = resolveRound(payload, data);
         if (round !== null) {
@@ -1302,6 +1388,9 @@ const hydrateMessage = (message, workflowState) => {
     reasoning: message?.reasoning || '',
     reasoningStreaming: Boolean(message?.reasoningStreaming)
   };
+  const plan = normalizePlanPayload(message.plan);
+  hydrated.plan = plan;
+  hydrated.planVisible = Boolean(message.planVisible) || hasPlanSteps(plan);
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
     const processor = createWorkflowProcessor(hydrated, workflowState, null);
     message.workflow_events.forEach((event) => {

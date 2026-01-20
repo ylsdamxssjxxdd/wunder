@@ -1058,6 +1058,17 @@
                     >
                       <i class="fa-solid fa-eye"></i>
                     </button>
+                    <button
+                      id="modelOutputPlanBtn"
+                      class="model-output-preview-toggle plan-board-toggle"
+                      type="button"
+                      aria-label="计划看板"
+                      title="计划看板"
+                      data-i18n-aria-label="debug.output.plan"
+                      data-i18n-title="debug.output.plan"
+                    >
+                      <i class="fa-solid fa-table"></i>
+                    </button>
                   </div>
                 </div>
                 <div id="modelOutput" class="log">
@@ -3717,6 +3728,19 @@
             <div id="modelOutputPreviewText" class="model-output-preview-pane model-output-preview-markdown"></div>
             <div id="modelOutputPreviewA2ui" class="model-output-preview-pane a2ui-output"></div>
           </div>
+        </div>
+      </div>
+    </div>
+    <div id="planBoardModal" class="modal">
+      <div class="modal-card plan-board-card">
+        <div class="modal-header">
+          <div id="planBoardTitle" class="detail-title" data-i18n="debug.plan.title">计划看板</div>
+          <button id="planBoardClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="planBoardExplanation" class="plan-board-explanation"></div>
+          <div id="planBoardList" class="plan-board-list"></div>
+          <div id="planBoardEmpty" class="plan-board-empty" data-i18n="debug.plan.empty">暂无计划</div>
         </div>
       </div>
     </div>

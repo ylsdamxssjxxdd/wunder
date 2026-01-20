@@ -542,6 +542,9 @@ impl MonitorState {
                             "monitor.summary.tool_call",
                             &HashMap::from([("tool".to_string(), tool.to_string())]),
                         );
+                    } else if event_type == "plan_update" {
+                        record.stage = "plan_update".to_string();
+                        record.summary = i18n::t("monitor.summary.plan_update");
                     } else if event_type == "llm_request" {
                         record.stage = "llm_request".to_string();
                         record.summary = i18n::t("monitor.summary.model_call");

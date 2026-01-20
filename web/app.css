@@ -4529,6 +4529,77 @@ button.danger {
   color: #64748b;
 }
 
+.plan-board-card {
+  width: min(640px, 92vw);
+  max-height: 70vh;
+}
+
+.plan-board-explanation {
+  font-size: 12px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+}
+
+.plan-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-board-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.plan-board-item--pending {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.plan-board-item--in_progress {
+  border-color: rgba(96, 165, 250, 0.7);
+}
+
+.plan-board-item--completed {
+  border-color: rgba(74, 222, 128, 0.6);
+}
+
+.plan-board-index {
+  font-size: 12px;
+  color: #475569;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  padding: 2px 6px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.plan-board-text {
+  flex: 1 1 auto;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.plan-board-status {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.plan-board-empty {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
 .user-tool-layout {
   display: flex;
   gap: 12px;

@@ -1,0 +1,4 @@
+# Matplotlib defaults for CJK-friendly rendering in sandbox.
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK SC, Noto Sans CJK TC, Noto Sans CJK JP, Noto Sans CJK KR, Noto Sans, Source Han Sans SC, Source Han Sans CN, Microsoft YaHei, SimSun, SimHei, KaiTi, FangSong, FangSong_GB2312, STFangsong, WenQuanYi Zen Hei, DejaVu Sans
+axes.unicode_minus: False

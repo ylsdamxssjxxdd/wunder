@@ -70,6 +70,7 @@ pub async fn convert_path(path: &Path, extension: &str) -> Result<Doc2mdResult> 
 
 fn convert_sync(path: &Path, extension: &str) -> Result<Doc2mdResult> {
     let ext = normalize_extension(extension);
+    let (ext, mut sniff_warnings) = sniff_office_extension(path, &ext);
     let result = match ext.as_str() {
         ".md" | ".markdown" | ".txt" | ".log" => convert_text(path),
         ".html" | ".htm" => convert_html(path),
@@ -103,6 +104,10 @@ fn convert_sync(path: &Path, extension: &str) -> Result<Doc2mdResult> {
     if result.markdown.trim().is_empty() {
         return Err(anyhow!(i18n::t("error.converter_empty_result")));
     }
+    let mut result = result;
+    if !sniff_warnings.is_empty() {
+        result.warnings.append(&mut sniff_warnings);
+    }
     Ok(result)
 }
 
@@ -113,6 +118,108 @@ fn normalize_extension(extension: &str) -> String {
     } else {
         format!(".{trimmed}")
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfficeContainer {
+    Zip,
+    Ole,
+    Unknown,
+}
+
+fn sniff_office_extension(path: &Path, extension: &str) -> (String, Vec<String>) {
+    let mut warnings = Vec::new();
+    let normalized = extension.to_lowercase();
+    let container = sniff_office_container(path);
+    let mut effective = normalized.clone();
+
+    if container == OfficeContainer::Zip {
+        if let Some(kind) = detect_zip_kind(path) {
+            let inferred = match kind {
+                "docx" => ".docx",
+                "pptx" => ".pptx",
+                "xlsx" => ".xlsx",
+                "odt" => ".odt",
+                "odp" => ".odp",
+                "ods" => ".ods",
+                _ => "",
+            };
+            if !inferred.is_empty() && inferred != normalized {
+                warnings.push(format!(
+                    "file header indicates {inferred} container; overriding extension"
+                ));
+                effective = inferred.to_string();
+            }
+        }
+    } else if container == OfficeContainer::Ole {
+        if normalized == ".docx" {
+            warnings.push("file header indicates legacy .doc format; treating as .doc".to_string());
+            effective = ".doc".to_string();
+        }
+    }
+
+    (effective, warnings)
+}
+
+fn sniff_office_container(path: &Path) -> OfficeContainer {
+    let mut header = [0u8; 8];
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return OfficeContainer::Unknown,
+    };
+    let read_len = match file.read(&mut header) {
+        Ok(size) => size,
+        Err(_) => return OfficeContainer::Unknown,
+    };
+    if read_len >= 4 {
+        if header.starts_with(b"PK\x03\x04")
+            || header.starts_with(b"PK\x05\x06")
+            || header.starts_with(b"PK\x07\x08")
+        {
+            return OfficeContainer::Zip;
+        }
+    }
+    if read_len >= 8 && header == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
+        return OfficeContainer::Ole;
+    }
+    OfficeContainer::Unknown
+}
+
+fn detect_zip_kind(path: &Path) -> Option<&'static str> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    if archive.by_name("word/document.xml").is_ok() {
+        return Some("docx");
+    }
+    if archive.by_name("ppt/presentation.xml").is_ok()
+        || archive.file_names().any(|name| name.starts_with("ppt/"))
+    {
+        return Some("pptx");
+    }
+    if archive.by_name("xl/workbook.xml").is_ok()
+        || archive.file_names().any(|name| name.starts_with("xl/"))
+    {
+        return Some("xlsx");
+    }
+    if archive.by_name("content.xml").is_ok() {
+        if let Ok(mut mimetype) = archive.by_name("mimetype") {
+            let mut buffer = String::new();
+            if mimetype.read_to_string(&mut buffer).is_ok() {
+                let value = buffer.trim();
+                if value.contains("opendocument.text") {
+                    return Some("odt");
+                }
+                if value.contains("opendocument.presentation") {
+                    return Some("odp");
+                }
+                if value.contains("opendocument.spreadsheet") {
+                    return Some("ods");
+                }
+            }
+        }
+        return Some("odt");
+    }
+    None
 }
 
 fn convert_text(path: &Path) -> Result<Doc2mdResult> {
