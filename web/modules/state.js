@@ -155,6 +155,7 @@ export const state = {
   monitor: {
     sessions: [],
     selected: null,
+    detail: null,
     tokenTrend: [],
     tokenDeltas: [],
     tokenUsageBySession: {},

@@ -18,7 +18,7 @@ wunder can expose itself as an MCP tool and become the ultimate tool.
 - Unified entry `/wunder`: streaming SSE and non-stream responses.
 - Tooling: built-in tools + MCP tools + Skills, precisely enabled via `tool_names`.
 - Multi-user isolation: a dedicated workspace per user_id with persistence.
-- Debugging & monitoring: `/wunder/web` console and `/wunder/admin/monitor` resource/session metrics.
+- Debugging & monitoring: `/` console and `/wunder/admin/monitor` resource/session metrics.
 
 ## 2. Quick Start
 ### 2.1 Update configuration

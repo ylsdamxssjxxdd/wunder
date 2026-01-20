@@ -134,6 +134,7 @@ stateDiagram-v2
 
 ## 7. Security and efficiency
 - API auth: `/wunder`, `/a2a`, and `/wunder/mcp` require API key (`security.api_key`).
+- Default admin account is `admin/admin`, auto-created on startup and protected from deletion (reset via user management).
 - Tool access control: `security.allow_commands/allow_paths/deny_globs`.
 - Sandbox execution: commands/ptc can run in shared sandbox with network/readonly constraints.
 - Prompt caching and workspace tree caching reduce IO and repeated prompt builds.
@@ -151,7 +152,6 @@ stateDiagram-v2
 - `/wunder/admin/memory/*`: long-term memory management.
 - `/wunder/workspace/*`: workspace operations.
 - `/`: admin debug UI entry (`web/index.html`), `web/simple-chat` temporarily disabled.
-- `/wunder/web`: admin debug UI compatibility entry (maps to `/`).
 - `/wunder/ppt`: system intro PPT.
 - `/wunder/ppt-en`: system intro PPT (EN).
 

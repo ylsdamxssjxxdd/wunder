@@ -335,6 +335,10 @@
     "en-US": "User not found",
     "zh-CN": "用户不存在"
   },
+  "error.user_protected": {
+    "en-US": "Default admin account cannot be deleted",
+    "zh-CN": "默认管理员账号不可删除"
+  },
   "error.user_session_busy": {
     "en-US": "This user already has an active session running",
     "zh-CN": "该用户已有会话正在执行"

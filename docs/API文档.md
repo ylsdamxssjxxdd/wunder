@@ -11,6 +11,7 @@
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
+- 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -683,11 +684,6 @@
 - 方法：`GET`
 - 说明：管理端调试前端入口（`web/index.html`），包含幻灯片（系统介绍）与 A2A 服务管理面板；`web/simple-chat` 简易聊天测试页暂时停用。
 
-### 4.1.24 `/wunder/web`
-
-- 方法：`GET`
-- 说明：提供管理端调试页面与静态资源（`web/` 目录），默认入口已映射至 `/`，此处保留兼容访问；包含幻灯片（系统介绍）与 A2A 服务管理面板，幻灯片入口位于侧边栏「文档 / 幻灯片」，侧边栏支持滚动、分组收起与父级展开/收起。
-
 ### 4.1.24.1 `/wunder/ppt`
 
 - 方法：`GET`
@@ -701,7 +697,7 @@
 ### 4.1.24.3 管理端前端页面与接口
 
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`。
-- 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`。
+- 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/server`、`/wunder/i18n`。
@@ -809,7 +805,23 @@
   - `workspace_deleted`：工作区是否删除
   - `legacy_history_deleted`：旧版历史目录是否删除
 
-### 4.1.34 `/wunder/admin/memory/users`
+### 4.1.34 `/wunder/admin/users/throughput/cleanup`
+
+- 方法：`POST`
+- 入参（JSON，可选）：
+  - `prefix`：压测用户前缀，默认 `throughput_user`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `prefix`：匹配前缀
+  - `users`：清理的用户数量
+  - `cancelled_sessions`：终止的活动线程数量
+  - `deleted_sessions`：清除的会话数量
+  - `deleted_storage`：持久化存储中删除的会话数量
+  - `deleted_chat_records`：删除的对话记录数
+  - `deleted_tool_records`：删除的工具日志数
+  - `workspace_deleted`：删除的工作区数量
+
+### 4.1.35 `/wunder/admin/memory/users`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -820,7 +832,7 @@
     - `last_updated_time`：最近更新时间（ISO）
     - `last_updated_time_ts`：最近更新时间戳（秒）
 
-### 4.1.35 `/wunder/admin/memory/status`
+### 4.1.36 `/wunder/admin/memory/status`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -838,7 +850,7 @@
     - `elapsed_s`：耗时（秒）
   - `history`：历史队列任务列表（字段同上，状态为已完成/失败）
 
-### 4.1.36 `/wunder/admin/memory/status/{task_id}`
+### 4.1.37 `/wunder/admin/memory/status/{task_id}`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -857,7 +869,7 @@
   - `result`：记忆总结结果（纯文本段落）
   - `error`：失败原因（无则为空）
 
-### 4.1.37 `/wunder/admin/memory/{user_id}`
+### 4.1.38 `/wunder/admin/memory/{user_id}`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -871,7 +883,7 @@
     - `created_time_ts`：创建时间戳（秒）
     - `updated_time_ts`：更新时间戳（秒）
 
-### 4.1.38 `/wunder/admin/memory/{user_id}/{session_id}`
+### 4.1.39 `/wunder/admin/memory/{user_id}/{session_id}`
 
 - 方法：`PUT`
 - 入参（JSON）：
@@ -880,7 +892,7 @@
   - `ok`：是否成功
   - `message`：提示信息
 
-### 4.1.39 `/wunder/admin/memory/{user_id}/enabled`
+### 4.1.40 `/wunder/admin/memory/{user_id}/enabled`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -889,7 +901,7 @@
   - `user_id`：用户标识
   - `enabled`：是否启用长期记忆
 
-### 4.1.40 `/wunder/admin/memory/{user_id}/{session_id}`
+### 4.1.41 `/wunder/admin/memory/{user_id}/{session_id}`
 
 - 方法：`DELETE`
 - 返回（JSON）：
@@ -897,7 +909,7 @@
   - `message`：提示信息
   - `deleted`：删除条数
 
-### 4.1.41 `/wunder/admin/memory/{user_id}`
+### 4.1.42 `/wunder/admin/memory/{user_id}`
 
 - 方法：`DELETE`
 - 返回（JSON）：
@@ -905,7 +917,7 @@
   - `message`：提示信息
   - `deleted`：删除条数
 
-### 4.1.42 `/wunder/admin/throughput/start`
+### 4.1.43 `/wunder/admin/throughput/start`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -921,20 +933,20 @@
   - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
 - 返回（JSON）：`ThroughputSnapshot`
 
-### 4.1.43 `/wunder/admin/throughput/stop`
+### 4.1.44 `/wunder/admin/throughput/stop`
 
 - 方法：`POST`
 - 返回（JSON）：`ThroughputSnapshot`
 - 说明：仅停止新请求，已在执行中的请求会继续完成；状态会先变为 `stopping`，全部结束后变为 `stopped`。
 
-### 4.1.44 `/wunder/admin/throughput/status`
+### 4.1.45 `/wunder/admin/throughput/status`
 
 - 方法：`GET`
 - 返回（JSON）：
   - `active`：当前压测任务快照（`ThroughputSnapshot`，无则为 null）
   - `history`：历史压测快照数组（最多保留 50 条）
 
-### 4.1.45 `/wunder/admin/throughput/report`
+### 4.1.46 `/wunder/admin/throughput/report`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -997,7 +1009,7 @@
 - `input_tokens/output_tokens/total_tokens`：该档位 token 统计
 - `avg_total_tokens`：平均 token（按成功请求统计）
 
-### 4.1.46 `/wunder/admin/performance/sample`
+### 4.1.47 `/wunder/admin/performance/sample`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -1018,7 +1030,7 @@
   - 每个并发点会执行两轮采样，返回两轮平均耗时。
   - 用于不同并发下的性能采样，不涉及模型调用。
 
-### 4.1.47 `/wunder/admin/evaluation/start`
+### 4.1.48 `/wunder/admin/evaluation/start`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -1035,14 +1047,14 @@
   - `status`：任务状态（`running`）
   - `case_count`：用例数量
 
-### 4.1.48 `/wunder/admin/evaluation/{run_id}/cancel`
+### 4.1.49 `/wunder/admin/evaluation/{run_id}/cancel`
 
 - 方法：`POST`
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：失败原因（可选）
 
-### 4.1.49 `/wunder/admin/evaluation/runs`
+### 4.1.50 `/wunder/admin/evaluation/runs`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -1055,7 +1067,7 @@
 - 返回（JSON）：
   - `runs`：评估任务列表（`EvaluationRun`）
 
-### 4.1.50 `/wunder/admin/evaluation/{run_id}`
+### 4.1.51 `/wunder/admin/evaluation/{run_id}`
 
 - 方法：`GET/DELETE`
 - `GET` 返回（JSON）：
@@ -1067,7 +1079,7 @@
   - `deleted`：删除条数（包含 run 与 items）
   - `message`：提示信息
 
-### 4.1.51 `/wunder/admin/evaluation/cases`
+### 4.1.52 `/wunder/admin/evaluation/cases`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -1079,7 +1091,7 @@
       - `dimensions`：维度分布统计（维度 -> 数量）
 - 说明：评估用例文件默认读取 `config/evaluation/cases`。
 
-### 4.1.52 `/wunder/admin/evaluation/stream/{run_id}`
+### 4.1.53 `/wunder/admin/evaluation/stream/{run_id}`
 
 - 方法：`GET`（SSE）
 - 事件：
@@ -1126,7 +1138,7 @@
 - `error`：错误信息（可选）
 - `session_id`：评估用会话标识
 
-### 4.1.53 `/wunder/auth/*`
+### 4.1.54 `/wunder/auth/*`
 
 - `POST /wunder/auth/register`
   - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）
@@ -1154,7 +1166,7 @@
 - `created_at`/`updated_at`：时间戳（秒）
 - `last_login_at`：最近登录时间（秒，可选）
 
-### 4.1.54 `/wunder/chat/*`
+### 4.1.55 `/wunder/chat/*`
 
 - `POST /wunder/chat/sessions`：创建会话
   - 入参（JSON）：`title`（可选）
@@ -1189,7 +1201,7 @@
   - 入参：`multipart/form-data`，`file`
   - 返回：`data`（转换结果/消息/告警）
 
-### 4.1.55 `/wunder/admin/user_accounts/*`
+### 4.1.56 `/wunder/admin/user_accounts/*`
 
 - `GET /wunder/admin/user_accounts`
   - Query：`keyword`、`offset`、`limit`

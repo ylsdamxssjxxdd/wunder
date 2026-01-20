@@ -67,6 +67,7 @@ See `docs/API-Documentation.md`.
 - Lightweight ASGI entry (`app/asgi.py`) with lazy warmup.
 - Connection lifecycle management, SSE streaming.
 - Unified auth and validation (Pydantic), API/MCP secured by `security.api_key`.
+- Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
 - Added `/wunder/temp_dir/*` public temp-file endpoints for upload/download/list/remove from the project root `temp_dir/` folder.
 - Routes split by domain (core/admin/workspace/user_tools), logic in `app/services` for reuse.
 
@@ -144,7 +145,7 @@ See `docs/API-Documentation.md`.
 ### 5.7 Frontend debug console
 
 - A simple web UI to test `/wunder` streaming and non-stream APIs.
-- Static assets served at `/` by default (`/wunder/web` kept for compatibility).
+- Static assets served at `/` by default.
 - System intro panel embeds `/wunder/ppt` (and `/wunder/ppt-en`).
 - UI includes user_id/session_id/question, event log, prompt viewer.
 - MCP/Skills/Built-in tools/Knowledge management panels.

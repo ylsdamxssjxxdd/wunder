@@ -68,11 +68,9 @@ async fn main() -> anyhow::Result<()> {
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
     let app = mount_simple_chat_disabled(app);
-    let app = mount_trailing_slash_redirect(app, "/wunder/web", "/wunder/web/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt", "/wunder/ppt/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt-en", "/wunder/ppt-en/");
     let app = mount_static(app, "web", "/");
-    let app = mount_static(app, "web", "/wunder/web");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");
 
@@ -146,9 +144,6 @@ where
     app.route("/simple-chat", get(simple_chat_disabled))
         .route("/simple-chat/", get(simple_chat_disabled))
         .route("/simple-chat/{*path}", get(simple_chat_disabled))
-        .route("/wunder/web/simple-chat", get(simple_chat_disabled))
-        .route("/wunder/web/simple-chat/", get(simple_chat_disabled))
-        .route("/wunder/web/simple-chat/{*path}", get(simple_chat_disabled))
 }
 
 fn mount_trailing_slash_redirect<S>(app: Router<S>, from: &str, to: &'static str) -> Router<S>

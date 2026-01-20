@@ -12,9 +12,6 @@ pub fn is_admin_path(path: &str) -> bool {
     if !path.starts_with("/wunder") {
         return false;
     }
-    if path.starts_with("/wunder/web") {
-        return false;
-    }
     if path.starts_with("/wunder/ppt") {
         return false;
     }
@@ -91,7 +88,6 @@ mod tests {
     #[test]
     fn test_is_admin_path() {
         assert!(!is_admin_path("/"));
-        assert!(!is_admin_path("/wunder/web"));
         assert!(!is_admin_path("/wunder/ppt"));
         assert!(!is_admin_path("/wunder/ppt-en"));
         assert!(!is_admin_path("/wunder/i18n"));

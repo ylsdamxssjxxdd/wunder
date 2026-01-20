@@ -75,6 +75,7 @@ import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
+import { applyAuthHeaders, initAdminAuth } from "./modules/admin-auth.js?v=20260120-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-07";
 
@@ -100,17 +101,7 @@ const patchApiFetch = () => {
 
     }
 
-    const apiKey = String(elements.apiKey?.value || "").trim();
-
-    if (!headers.has("X-API-Key") && !headers.has("Authorization")) {
-
-      if (apiKey) {
-
-        headers.set("X-API-Key", apiKey);
-
-      }
-
-    }
+    applyAuthHeaders(headers);
 
     nextInit.headers = headers;
 
@@ -1053,6 +1044,8 @@ const bootstrap = async () => {
 
   bindGlobalInputs();
   bindSidebarCollapse();
+
+  await initAdminAuth();
 
   const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
 

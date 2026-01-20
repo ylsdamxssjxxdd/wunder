@@ -146,6 +146,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/user_accounts/{user_id}/tool_access",
             get(admin_user_accounts_tool_access_get).put(admin_user_accounts_tool_access_update),
         )
+        .route(
+            "/wunder/admin/users/throughput/cleanup",
+            post(admin_users_cleanup_throughput),
+        )
         .route("/wunder/admin/users", get(admin_users))
         .route(
             "/wunder/admin/users/{user_id}/sessions",
@@ -2091,6 +2095,12 @@ async fn admin_user_accounts_delete(
             i18n::t("error.user_id_required"),
         ));
     }
+    if UserStore::is_default_admin(cleaned) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.user_protected"),
+        ));
+    }
     let exists = state
         .user_store
         .get_user_by_id(cleaned)
@@ -2239,6 +2249,12 @@ async fn admin_user_delete(
             i18n::t("error.user_id_required"),
         ));
     }
+    if UserStore::is_default_admin(cleaned) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.user_protected"),
+        ));
+    }
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
     let purge_result = state.workspace.purge_user_data(cleaned);
     Ok(Json(json!({
@@ -2250,6 +2266,86 @@ async fn admin_user_delete(
         "deleted_tool_records": purge_result.tool_records,
         "workspace_deleted": purge_result.workspace_deleted,
         "legacy_history_deleted": purge_result.legacy_history_deleted
+    })))
+}
+
+fn normalize_throughput_prefix(prefix: Option<String>) -> String {
+    let fallback = "throughput_user";
+    let cleaned = prefix
+        .as_deref()
+        .unwrap_or(fallback)
+        .trim()
+        .trim_end_matches('-');
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn is_throughput_user(user_id: &str, prefix: &str) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+    let cleaned = user_id.trim();
+    if cleaned.len() <= prefix.len() {
+        return false;
+    }
+    cleaned.starts_with(prefix) && cleaned.as_bytes().get(prefix.len()) == Some(&b'-')
+}
+
+async fn admin_users_cleanup_throughput(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ThroughputUserCleanupRequest>,
+) -> Result<Json<Value>, Response> {
+    let prefix = normalize_throughput_prefix(payload.prefix);
+    state.monitor.warm_history(true);
+    let mut user_ids = HashSet::new();
+    for session in state.monitor.list_sessions(false) {
+        if let Some(user_id) = session.get("user_id").and_then(Value::as_str) {
+            let cleaned = user_id.trim();
+            if !cleaned.is_empty() {
+                user_ids.insert(cleaned.to_string());
+            }
+        }
+    }
+    let usage_stats = state.workspace.get_user_usage_stats();
+    user_ids.extend(usage_stats.keys().cloned());
+    let mut throughput_users = user_ids
+        .into_iter()
+        .filter(|user_id| is_throughput_user(user_id, &prefix))
+        .collect::<Vec<_>>();
+    throughput_users.sort();
+
+    let mut cancelled_sessions = 0;
+    let mut deleted_sessions = 0;
+    let mut deleted_storage = 0;
+    let mut deleted_chat_records = 0;
+    let mut deleted_tool_records = 0;
+    let mut workspace_deleted = 0;
+    for user_id in &throughput_users {
+        let monitor_result = state.monitor.purge_user_sessions(user_id);
+        cancelled_sessions += monitor_result.get("cancelled").copied().unwrap_or(0);
+        deleted_sessions += monitor_result.get("deleted").copied().unwrap_or(0);
+        deleted_storage += monitor_result.get("deleted_storage").copied().unwrap_or(0);
+        let purge_result = state.workspace.purge_user_data(user_id);
+        deleted_chat_records += purge_result.chat_records;
+        deleted_tool_records += purge_result.tool_records;
+        if purge_result.workspace_deleted {
+            workspace_deleted += 1;
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "prefix": prefix,
+        "users": throughput_users.len(),
+        "cancelled_sessions": cancelled_sessions,
+        "deleted_sessions": deleted_sessions,
+        "deleted_storage": deleted_storage,
+        "deleted_chat_records": deleted_chat_records,
+        "deleted_tool_records": deleted_tool_records,
+        "workspace_deleted": workspace_deleted
     })))
 }
 
@@ -3120,6 +3216,11 @@ struct UserAccountToolAccessRequest {
 #[derive(Debug, Deserialize, Default)]
 struct UserSessionsQuery {
     active_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ThroughputUserCleanupRequest {
+    prefix: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

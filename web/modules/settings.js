@@ -17,6 +17,7 @@ import {
 } from "./i18n.js?v=20260118-07";
 import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
+import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
 const MIN_MONITOR_INTERVAL_MS = 500;
 const MIN_PROMPT_DELAY_MS = 50;
@@ -174,14 +175,6 @@ const resolveSandboxEnabled = () => {
     return null;
   }
   return Boolean(elements.settingsSandboxEnabled.checked);
-};
-
-const getAuthHeaders = () => {
-  const apiKey = String(elements.apiKey?.value || "").trim();
-  if (!apiKey) {
-    return undefined;
-  }
-  return { "X-API-Key": apiKey };
 };
 
 const fetchServerSettings = async () => {

@@ -9,6 +9,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const DEFAULT_TOKEN_TTL_S: i64 = 7 * 24 * 3600;
+const DEFAULT_ADMIN_USER_ID: &str = "admin";
+const DEFAULT_ADMIN_PASSWORD: &str = "admin";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserProfile {
@@ -37,6 +39,39 @@ pub struct UserStore {
 impl UserStore {
     pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self { storage }
+    }
+
+    pub fn is_default_admin(user_id: &str) -> bool {
+        user_id.trim() == DEFAULT_ADMIN_USER_ID
+    }
+
+    pub fn ensure_default_admin(&self) -> Result<()> {
+        if let Some(mut existing) = self.storage.get_user_account(DEFAULT_ADMIN_USER_ID)? {
+            let mut changed = false;
+            if existing.status.trim().to_lowercase() != "active" {
+                existing.status = "active".to_string();
+                changed = true;
+            }
+            if !Self::is_admin(&existing) {
+                existing.roles.push("admin".to_string());
+                changed = true;
+            }
+            if changed {
+                existing.updated_at = now_ts();
+                self.storage.upsert_user_account(&existing)?;
+            }
+            return Ok(());
+        }
+        let _ = self.create_user(
+            DEFAULT_ADMIN_USER_ID,
+            None,
+            DEFAULT_ADMIN_PASSWORD,
+            Some("A"),
+            vec!["admin".to_string()],
+            "active",
+            false,
+        )?;
+        Ok(())
     }
 
     pub fn normalize_user_id(raw: &str) -> Option<String> {
@@ -180,6 +215,9 @@ impl UserStore {
     }
 
     pub fn delete_user(&self, user_id: &str) -> Result<i64> {
+        if Self::is_default_admin(user_id) {
+            return Err(anyhow!("default admin account is protected"));
+        }
         self.storage.delete_user_account(user_id)
     }
 
@@ -231,10 +269,19 @@ impl UserStore {
     pub fn login(&self, username: &str, password: &str) -> Result<UserSession> {
         let user_id =
             Self::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
-        let mut user = self
-            .storage
-            .get_user_account_by_username(&user_id)?
-            .ok_or_else(|| anyhow!("user not found"))?;
+        let mut user = match self.storage.get_user_account_by_username(&user_id)? {
+            Some(user) => user,
+            None => {
+                if Self::is_default_admin(&user_id) {
+                    self.ensure_default_admin()?;
+                    self.storage
+                        .get_user_account_by_username(&user_id)?
+                        .ok_or_else(|| anyhow!("user not found"))?
+                } else {
+                    return Err(anyhow!("user not found"));
+                }
+            }
+        };
         if user.status.trim().to_lowercase() != "active" {
             return Err(anyhow!("user disabled"));
         }

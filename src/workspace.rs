@@ -902,6 +902,11 @@ impl WorkspaceManager {
             cache.remove(&safe_id);
         }
         let _ = self.versions.remove(&safe_id);
+        {
+            let mut cache = self.user_usage_cache.lock();
+            cache.data.remove(cleaned);
+            cache.updated_ts = 0.0;
+        }
         let _ = self
             .storage
             .delete_meta_prefix(&format!("session_token_usage:{safe_id}:"));

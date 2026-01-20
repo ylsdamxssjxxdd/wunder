@@ -144,6 +144,11 @@ const ensureMonitorState = () => {
   if (!Array.isArray(state.monitor.sessions)) {
     state.monitor.sessions = [];
   }
+  if (!Object.prototype.hasOwnProperty.call(state.monitor, "detail")) {
+    state.monitor.detail = null;
+  } else if (state.monitor.detail && typeof state.monitor.detail !== "object") {
+    state.monitor.detail = null;
+  }
   if (typeof state.monitor.tokenZoomLocked !== "boolean") {
     state.monitor.tokenZoomLocked = false;
   }
@@ -2416,9 +2421,74 @@ const scrollMonitorDetailToLine = (line) => {
   });
 };
 
+const setMonitorDetailExportEnabled = (enabled) => {
+  if (!elements.monitorDetailExport) {
+    return;
+  }
+  elements.monitorDetailExport.disabled = !enabled;
+};
+
+const sanitizeFilenamePart = (value, fallback) => {
+  const text = String(value || "").trim();
+  const safe = text.replace(/[\\/:*?"<>|]+/g, "_");
+  if (safe) {
+    return safe;
+  }
+  return fallback || "session";
+};
+
+const buildMonitorDetailExportFilename = (sessionId) => {
+  const safeSessionId = sanitizeFilenamePart(sessionId, "session");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `monitor-detail-${safeSessionId}-${timestamp}.json`;
+};
+
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const buildMonitorDetailExportPayload = () => {
+  const detail = state.monitor?.detail;
+  if (!detail) {
+    return null;
+  }
+  return {
+    exported_at: new Date().toISOString(),
+    session: detail.session || {},
+    events: Array.isArray(detail.events) ? detail.events : [],
+  };
+};
+
+const exportMonitorDetailLogs = () => {
+  try {
+    const payload = buildMonitorDetailExportPayload();
+    if (!payload) {
+      notify(t("monitor.detail.exportEmpty"), "warning");
+      return;
+    }
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+    const filename = buildMonitorDetailExportFilename(payload.session?.session_id);
+    downloadBlob(blob, filename);
+    notify(t("monitor.detail.exported"), "success");
+  } catch (error) {
+    const message = error?.message || String(error);
+    notify(t("monitor.detail.exportFailed", { message }), "error");
+  }
+};
+
 export const openMonitorDetail = async (sessionId, options = {}) => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
+  setMonitorDetailExportEnabled(false);
+  state.monitor.detail = null;
   try {
     const response = await fetch(endpoint);
     if (response.status === 404) {
@@ -2474,6 +2544,11 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       });
     }
     const events = Array.isArray(result.events) ? result.events : [];
+    state.monitor.detail = {
+      session,
+      events,
+    };
+    setMonitorDetailExportEnabled(true);
     const focusTool =
       typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
     const focusLine = renderMonitorDetailEvents(events, { focusTool });
@@ -2490,6 +2565,8 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
 
 const closeMonitorDetail = () => {
   elements.monitorDetailModal.classList.remove("active");
+  state.monitor.detail = null;
+  setMonitorDetailExportEnabled(false);
 };
 
 const requestDeleteSession = async (sessionId) => {
@@ -2573,6 +2650,10 @@ export const initMonitorPanel = () => {
       notify(t("monitor.refreshFailed", { message: error.message }), "error");
     }
   });
+  if (elements.monitorDetailExport) {
+    elements.monitorDetailExport.addEventListener("click", exportMonitorDetailLogs);
+    setMonitorDetailExportEnabled(false);
+  }
   elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);
   elements.monitorDetailCloseBtn.addEventListener("click", closeMonitorDetail);
   elements.monitorDetailModal.addEventListener("click", (event) => {

@@ -8,6 +8,7 @@ import { formatTokenCount } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260118-07";
 
 const DEFAULT_USER_STATS_PAGE_SIZE = 100;
+const THROUGHPUT_USER_PREFIX = "throughput_user";
 
 // 兼容旧版本状态结构，避免缓存旧 state.js 时导致空指针
 const ensureUsersState = () => {
@@ -59,6 +60,7 @@ const ensureUsersState = () => {
 const ensureUserElements = () => {
   const requiredKeys = [
     "userRefreshBtn",
+    "userThroughputCleanupBtn",
     "userSearchInput",
     "userStatsBody",
     "userStatsEmpty",
@@ -90,6 +92,29 @@ const getFilteredUsers = () => {
   return state.users.list.filter((item) =>
     String(item?.user_id || "").toLowerCase().includes(lowered)
   );
+};
+
+const isThroughputUserId = (userId) => {
+  const normalized = String(userId || "").trim();
+  if (!normalized) {
+    return false;
+  }
+  const prefix = `${THROUGHPUT_USER_PREFIX}-`;
+  return normalized.startsWith(prefix);
+};
+
+const getThroughputUserCandidates = () => {
+  if (!Array.isArray(state.users.list)) {
+    return [];
+  }
+  const unique = new Set();
+  state.users.list.forEach((item) => {
+    const userId = String(item?.user_id || "").trim();
+    if (isThroughputUserId(userId)) {
+      unique.add(userId);
+    }
+  });
+  return Array.from(unique);
 };
 
 // 解析用户统计分页大小，兜底为默认值
@@ -452,6 +477,55 @@ const requestDeleteUser = async (userId) => {
   }
 };
 
+const setThroughputCleanupBusy = (busy) => {
+  if (!elements.userThroughputCleanupBtn) {
+    return;
+  }
+  elements.userThroughputCleanupBtn.disabled = busy;
+};
+
+const requestCleanupThroughputUsers = async () => {
+  ensureUsersState();
+  if (!ensureUserElements()) {
+    return;
+  }
+  const candidates = getThroughputUserCandidates();
+  if (!candidates.length) {
+    notify(t("users.cleanup.throughputEmpty"), "info");
+    return;
+  }
+  const confirmed = window.confirm(
+    t("users.cleanup.throughputConfirm", { count: candidates.length })
+  );
+  if (!confirmed) {
+    return;
+  }
+  setThroughputCleanupBusy(true);
+  try {
+    const wunderBase = getWunderBase();
+    const endpoint = `${wunderBase}/admin/users/throughput/cleanup`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefix: THROUGHPUT_USER_PREFIX }),
+    });
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const cleanedCount = Number(result?.users) || candidates.length;
+    notify(t("users.cleanup.throughputSuccess", { count: cleanedCount }), "success");
+    await loadUserStats();
+    await loadMonitorData({ mode: "sessions" });
+  } catch (error) {
+    const message = t("users.cleanup.throughputFailed", { message: error.message });
+    appendLog(message);
+    notify(message, "error");
+  } finally {
+    setThroughputCleanupBusy(false);
+  }
+};
+
 // 用户管理面板初始化：绑定刷新与删除操作
 export const initUserManagementPanel = () => {
   ensureUsersState();
@@ -491,6 +565,8 @@ export const initUserManagementPanel = () => {
       notify(t("users.refreshFailed", { message: error.message }), "error");
     }
   });
+  elements.userThroughputCleanupBtn.addEventListener("click", requestCleanupThroughputUsers);
+  setThroughputCleanupBusy(false);
 };
 
 

@@ -57,6 +57,9 @@ impl AppState {
             Arc::new(UserToolStore::new(&config).context("用户工具目录初始化失败")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
+        user_store
+            .ensure_default_admin()
+            .context("Failed to ensure default admin account")?;
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
             config.clone(),

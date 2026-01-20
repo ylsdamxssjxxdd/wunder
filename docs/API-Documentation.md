@@ -10,6 +10,7 @@
 - Lightweight entry: use `uvicorn app.asgi:app`; control warmup via `WUNDER_LAZY_WARMUP_S`.
 - Config layering: base `config/wunder.yaml` (`WUNDER_CONFIG_PATH` to override); admin updates go to `data/config/wunder.override.yaml` (`WUNDER_CONFIG_OVERRIDE_PATH`).
 - Auth: all `/wunder` and `/wunder/mcp` require `X-API-Key` or `Authorization: Bearer <key>`; key in `security.api_key`.
+- Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
 - i18n: send `X-Wunder-Language` or `Accept-Language` (also `lang`/`language` query). Supported languages come from `i18n.supported_languages`. Responses include `Content-Language`, and system prompts/messages follow it.
 
 ### 4.1 `/wunder` Request
@@ -409,11 +410,6 @@
 
 - Method: `GET`
 - Description: admin debug UI entry (`web/index.html`); `web/simple-chat` is temporarily disabled.
-
-### 4.1.24 `/wunder/web`
-
-- Method: `GET`
-- Description: admin debug UI static assets (`web/`), default entry mapped to `/` and kept for compatibility.
 
 ### 4.1.24.1 `/wunder/ppt`
 

@@ -863,6 +863,27 @@ impl StorageBackend for PostgresStorage {
         Ok(sessions)
     }
 
+    fn get_log_usage(&self) -> Result<u64> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT \
+            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM chat_history) + \
+            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM tool_logs) + \
+            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM artifact_logs) + \
+            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM monitor_sessions) + \
+            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM stream_events) + \
+            (SELECT COALESCE(SUM( \
+                COALESCE(octet_length(request_payload), 0) + \
+                COALESCE(octet_length(result), 0) + \
+                COALESCE(octet_length(error), 0) \
+            ), 0) FROM memory_task_logs)",
+            &[],
+        )?;
+        let total: i64 = row.get(0);
+        Ok(total.max(0) as u64)
+    }
+
     fn delete_chat_history(&self, _user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = _user_id.trim();

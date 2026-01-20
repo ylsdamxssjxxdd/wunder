@@ -18,7 +18,7 @@ wunder可以暴露自身作为mcp工具，成为最终武器
 - 统一入口 `/wunder`：支持流式 SSE 与非流式响应。
 - 工具链：内置工具 + MCP 工具 + Skills，可按 `tool_names` 精准启用。
 - 多用户隔离：按 user_id 创建独立工作区，数据持久化。
-- 调试与监控：/wunder/web 调试页面，/wunder/admin/monitor 资源与会话监控。
+- 调试与监控：根路径 `/` 调试页面，/wunder/admin/monitor 资源与会话监控。
 
 ## 2. 快速开始
 ### 2.1 修改配置文件

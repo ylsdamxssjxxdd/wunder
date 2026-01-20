@@ -1,7 +1,14 @@
 // 前端统一配置：集中管理默认值与页面行为参数
+const DEFAULT_API_BASE = (() => {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}/wunder`;
+  }
+  return "http://127.0.0.1:18000/wunder";
+})();
+
 const APP_CONFIG_DEFAULTS = {
   // 默认 API 地址：用于初始化调试面板输入框
-  defaultApiBase: "http://127.0.0.1:18000/wunder",
+  defaultApiBase: DEFAULT_API_BASE,
   // 默认 API Key：为空表示由用户自行输入
   defaultApiKey: "",
   // 默认用户 ID：用于初始化调试面板输入框

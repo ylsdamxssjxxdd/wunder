@@ -93,6 +93,7 @@ pub trait StorageBackend: Send + Sync {
         since_time: Option<f64>,
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
+    fn get_log_usage(&self) -> Result<u64>;
 
     fn delete_chat_history(&self, user_id: &str) -> Result<i64>;
     fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;

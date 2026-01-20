@@ -376,7 +376,6 @@ pub struct MonitorState {
     disks: Mutex<Disks>,
     system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
     system_snapshot_ttl_s: f64,
-    log_roots: Vec<PathBuf>,
     workspace_root: PathBuf,
     log_usage_cache: Mutex<UsageCache>,
     workspace_usage_cache: Mutex<UsageCache>,
@@ -421,11 +420,6 @@ impl MonitorState {
             .filter(|value| !value.is_empty())
             .collect::<HashSet<_>>();
         let history_dir = PathBuf::from("data/historys/monitor");
-        let log_roots = vec![
-            PathBuf::from("data/logs"),
-            PathBuf::from("data/tmp"),
-            PathBuf::from("data/historys"),
-        ];
         let workspace_root = PathBuf::from(workspace_root);
         let _ = storage.ensure_initialized();
         let write_queue = MonitorWriteQueue::new(storage.clone());
@@ -438,7 +432,6 @@ impl MonitorState {
             disks: Mutex::new(disks),
             system_snapshot_cache: Mutex::new(None),
             system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
-            log_roots,
             workspace_root,
             log_usage_cache: Mutex::new(UsageCache::default()),
             workspace_usage_cache: Mutex::new(UsageCache::default()),
@@ -873,12 +866,13 @@ impl MonitorState {
     }
 
     fn calc_log_usage(&self) -> u64 {
-        const LOG_EXTENSIONS: [&str; 3] = ["log", "json", "jsonl"];
-        let mut total: u64 = 0;
-        for root in &self.log_roots {
-            total = total.saturating_add(calc_dir_size(root, Some(&LOG_EXTENSIONS)));
+        match self.storage.get_log_usage() {
+            Ok(value) => value,
+            Err(error) => {
+                warn!("monitor log usage query failed: {error}");
+                0
+            }
         }
-        total
     }
 
     fn calc_workspace_usage(&self) -> u64 {

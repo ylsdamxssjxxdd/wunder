@@ -5,6 +5,7 @@ import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
+import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -1104,13 +1105,7 @@ const buildWorkspaceArchiveUrl = (path = "") => {
   return `${wunderBase}/workspace/archive?${params.toString()}`;
 };
 
-const getWorkspaceAuthHeaders = () => {
-  const apiKey = String(elements.apiKey?.value || "").trim();
-  if (!apiKey) {
-    return undefined;
-  }
-  return { "X-API-Key": apiKey };
-};
+const getWorkspaceAuthHeaders = () => getAuthHeaders();
 
 const downloadWorkspaceByFetch = async (url, filename) => {
   if (!url) {
@@ -2047,9 +2042,11 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
       };
       xhr.open("POST", endpoint, true);
       xhr.responseType = "json";
-      const apiKey = String(elements.apiKey?.value || "").trim();
-      if (apiKey) {
-        xhr.setRequestHeader("X-API-Key", apiKey);
+      const authHeaders = getAuthHeaders();
+      if (authHeaders) {
+        Object.entries(authHeaders).forEach(([key, value]) => {
+          xhr.setRequestHeader(key, value);
+        });
       }
       const language = getCurrentLanguage();
       if (language) {

@@ -750,6 +750,27 @@ impl StorageBackend for SqliteStorage {
         Ok(sessions)
     }
 
+    fn get_log_usage(&self) -> Result<u64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let total: i64 = conn.query_row(
+            "SELECT \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM chat_history) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tool_logs) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM artifact_logs) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM monitor_sessions) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM stream_events) + \
+            (SELECT COALESCE(SUM( \
+                COALESCE(length(CAST(request_payload AS BLOB)), 0) + \
+                COALESCE(length(CAST(result AS BLOB)), 0) + \
+                COALESCE(length(CAST(error AS BLOB)), 0) \
+            ), 0) FROM memory_task_logs)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(total.max(0) as u64)
+    }
+
     fn delete_chat_history(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let conn = self.open()?;

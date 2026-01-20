@@ -406,6 +406,10 @@
                   <i class="fa-solid fa-arrows-rotate"></i>
                   <span data-i18n="common.refresh">刷新</span>
                 </button>
+                <button id="userThroughputCleanupBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-broom"></i>
+                  <span data-i18n="users.cleanup.throughput">清理压测线程</span>
+                </button>
               </div>
             </div>
             <div class="tips" data-i18n="users.tip">
@@ -3480,7 +3484,13 @@
       <div class="modal-card">
         <div class="modal-header">
           <div id="monitorDetailTitle" class="detail-title">线程详情</div>
-          <button id="monitorDetailClose" class="icon-btn" type="button">×</button>
+          <div class="modal-header-actions">
+            <button id="monitorDetailExport" class="secondary btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-download"></i>
+              <span data-i18n="monitor.detail.export">导出日志</span>
+            </button>
+            <button id="monitorDetailClose" class="icon-btn" type="button">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div id="monitorDetailMeta" class="muted"></div>
@@ -3790,6 +3800,34 @@
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
+      </div>
+    </div>
+    <div id="adminLoginModal" class="auth-overlay" aria-hidden="true">
+      <div class="auth-card">
+        <h2 data-i18n="auth.login.title">管理员登录</h2>
+        <p class="auth-subtitle" data-i18n="auth.login.subtitle">首次进入请使用管理员账号</p>
+        <form id="adminLoginForm" class="auth-form">
+          <label for="adminLoginUsername" data-i18n="auth.login.username">账号</label>
+          <input
+            id="adminLoginUsername"
+            type="text"
+            autocomplete="username"
+            placeholder="admin"
+          />
+          <label for="adminLoginPassword" data-i18n="auth.login.password">密码</label>
+          <input
+            id="adminLoginPassword"
+            type="password"
+            autocomplete="current-password"
+            placeholder="admin"
+          />
+          <div id="adminLoginError" class="auth-error" role="alert"></div>
+          <button id="adminLoginBtn" class="btn-with-icon" type="submit">
+            <i class="fa-solid fa-right-to-bracket"></i>
+            <span data-i18n="auth.login.action">登录</span>
+          </button>
+          <div class="auth-hint" data-i18n="auth.login.hint">默认账号：admin / admin</div>
+        </form>
       </div>
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
