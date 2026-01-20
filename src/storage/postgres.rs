@@ -868,16 +868,12 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let row = conn.query_one(
             "SELECT \
-            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM chat_history) + \
-            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM tool_logs) + \
-            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM artifact_logs) + \
-            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM monitor_sessions) + \
-            (SELECT COALESCE(SUM(octet_length(payload)), 0) FROM stream_events) + \
-            (SELECT COALESCE(SUM( \
-                COALESCE(octet_length(request_payload), 0) + \
-                COALESCE(octet_length(result), 0) + \
-                COALESCE(octet_length(error), 0) \
-            ), 0) FROM memory_task_logs)",
+            COALESCE(pg_total_relation_size(to_regclass('chat_history')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('tool_logs')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('artifact_logs')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('stream_events')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('memory_task_logs')), 0)",
             &[],
         )?;
         let total: i64 = row.get(0);

@@ -1,6 +1,7 @@
 import { elements } from "./elements.js?v=20260118-07";
+import { getWunderBase } from "./api.js";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
-import { normalizeApiBase, formatDuration } from "./utils.js";
+import { formatDuration } from "./utils.js";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { state } from "./state.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
@@ -421,7 +422,7 @@ const applyRunPayload = (run) => {
   updateCurrentCaseDisplay();
 };
 
-const buildApiBase = () => normalizeApiBase(elements.apiBase?.value || "");
+const buildApiBase = () => getWunderBase();
 
 const fillSelect = (select, options, fallback) => {
   if (!select) {

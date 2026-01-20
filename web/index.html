@@ -1080,6 +1080,10 @@
                 <i class="fa-solid fa-rotate-left"></i>
                 <span data-i18n="settings.reset">恢复默认</span>
               </button>
+              <button id="settingsAdvancedBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-sliders"></i>
+                <span data-i18n="settings.advanced.title">高级设置</span>
+              </button>
               <button id="settingsSaveBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-floppy-disk"></i>
                 <span data-i18n="settings.save">保存设置</span>
@@ -1088,39 +1092,7 @@
           </div>
           <div class="tips" data-i18n="settings.tip">设置仅保存在当前浏览器，用于控制调试面板与常用系统行为。</div>
           <div class="settings-layout">
-            <div class="settings-card">
-              <div class="settings-card-title">
-                <i class="fa-solid fa-link"></i>
-                <span data-i18n="settings.card.api">接口与鉴权</span>
-              </div>
-              <div class="settings-grid">
-                <div class="form-row">
-                  <label for="apiBase" data-i18n="settings.label.apiBase">API 地址</label>
-                  <input id="apiBase" type="text" placeholder="http://127.0.0.1:18000/wunder" />
-                </div>
-                <div class="form-row">
-                  <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
-                  <div class="api-key-field settings-api-key-field">
-                    <input id="apiKey" type="password" placeholder="可选" data-i18n-placeholder="settings.placeholder.optional" />
-                    <button
-                      id="apiKeyToggle"
-                      class="api-key-toggle"
-                      type="button"
-                      aria-label="显示 API Key"
-                      title="显示 API Key"
-                      data-i18n-aria-label="ui.apiKey.show"
-                      data-i18n-title="ui.apiKey.show"
-                    >
-                      <i class="fa-solid fa-eye"></i>
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div class="settings-hint" data-i18n="settings.hint.api">
-                用于调试面板与管理接口请求，支持本地或远程地址。
-              </div>
-            </div>
-            <div class="settings-card">
+            <div class="settings-card settings-card-general">
               <div class="settings-card-title">
                 <i class="fa-solid fa-gear"></i>
                 <span data-i18n="settings.card.general">常用系统配置</span>
@@ -1168,7 +1140,7 @@
                   <label for="settingsMaxActiveSessions" data-i18n="settings.label.maxActiveSessions">最大并发会话</label>
                   <input id="settingsMaxActiveSessions" type="number" min="1" step="1" />
                 </div>
-                <div class="form-row">
+                <div class="form-row form-row-span">
                   <label for="settingsSandboxEnabled" data-i18n="settings.label.sandbox">沙盒执行</label>
                   <label class="checkbox-row">
                     <input id="settingsSandboxEnabled" type="checkbox" checked />
@@ -2616,6 +2588,59 @@
           </div>
         </section>
       </main>
+    </div>
+    <div id="settingsAdvancedModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title" data-i18n="settings.advanced.title">高级设置</div>
+          <button
+            id="settingsAdvancedModalClose"
+            class="icon-btn"
+            type="button"
+            aria-label="关闭"
+            data-i18n-aria-label="common.close"
+          >
+            ×
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-grid settings-advanced-grid">
+            <div class="form-row">
+              <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
+              <div class="api-key-field settings-api-key-field">
+                <input
+                  id="apiKey"
+                  type="password"
+                  placeholder="可选"
+                  data-i18n-placeholder="settings.placeholder.optional"
+                />
+                <button
+                  id="apiKeyToggle"
+                  class="api-key-toggle"
+                  type="button"
+                  aria-label="显示 API Key"
+                  title="显示 API Key"
+                  data-i18n-aria-label="ui.apiKey.show"
+                  data-i18n-title="ui.apiKey.show"
+                >
+                  <i class="fa-solid fa-eye"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-hint" data-i18n="settings.hint.advanced">
+            API base 固定为当前访问地址，API Key 默认从服务端配置加载。
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="settingsAdvancedCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+          <button id="settingsAdvancedSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
     </div>
     <div id="mcpModal" class="modal">
       <div class="modal-card">

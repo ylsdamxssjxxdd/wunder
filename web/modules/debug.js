@@ -1214,7 +1214,6 @@ const writeDebugState = (patch) => {
 // 将当前输入同步到本地存储
 const syncDebugInputs = () => {
   writeDebugState({
-    apiBase: elements.apiBase?.value || "",
     apiKey: elements.apiKey?.value || "",
     userId: elements.userId?.value || "",
     sessionId: elements.sessionId?.value || "",
@@ -2309,9 +2308,6 @@ const handleEvent = (eventType, dataText, options = {}) => {
 // 还原本地保存的调试输入，便于刷新后继续查看
 const applyStoredDebugInputs = () => {
   const stored = readDebugState();
-  if (stored.apiBase && elements.apiBase) {
-    elements.apiBase.value = stored.apiBase;
-  }
   if (stored.apiKey && elements.apiKey) {
     elements.apiKey.value = stored.apiKey;
   }
@@ -2921,9 +2917,6 @@ export const initDebugPanel = () => {
     }, 200);
   };
 
-  if (elements.apiBase) {
-    elements.apiBase.addEventListener("change", syncDebugInputs);
-  }
   if (elements.apiKey) {
     elements.apiKey.addEventListener("change", syncDebugInputs);
   }

@@ -177,6 +177,9 @@ impl PromptComposer {
             let workspace_tree = tree_snapshot.tree;
             let include_tools_protocol =
                 !allowed_tool_names.is_empty() && tool_call_mode == ToolCallMode::ToolCall;
+            let include_ptc = allowed_tool_names
+                .iter()
+                .any(|name| resolve_tool_name(name) == "ptc");
             let tool_specs = if include_tools_protocol {
                 let tool_cache_key = format!(
                     "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
@@ -206,6 +209,7 @@ impl PromptComposer {
                 &workspace_tree,
                 include_tools_protocol,
                 tool_call_mode,
+                include_ptc,
             );
             let base_skill_specs = skills.list_specs();
             let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
@@ -330,9 +334,10 @@ fn build_system_prompt(
     workspace_tree: &str,
     include_tools_protocol: bool,
     tool_call_mode: ToolCallMode,
+    include_ptc: bool,
 ) -> String {
     if !include_tools_protocol {
-        let engineer_info = build_engineer_info(workdir_display, workspace_tree, false);
+        let engineer_info = build_engineer_info(workdir_display, workspace_tree, include_ptc);
         return format!("{}\n\n{}", base_prompt.trim(), engineer_info.trim());
     }
     let tools_text = tools
@@ -340,9 +345,6 @@ fn build_system_prompt(
         .map(render_tool_spec)
         .collect::<Vec<_>>()
         .join("\n");
-    let include_ptc = tools
-        .iter()
-        .any(|spec| resolve_tool_name(&spec.name) == "ptc");
     let extra_path = match tool_call_mode {
         ToolCallMode::FunctionCall => Path::new("app/prompts/extra_prompt_function_call.txt"),
         ToolCallMode::ToolCall => Path::new("app/prompts/extra_prompt_template.txt"),

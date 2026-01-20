@@ -297,6 +297,12 @@
 - `POST` Body: `max_active_sessions` (> 0)
 - `POST` Response: `server.max_active_sessions`
 
+### 4.1.6.3 `/wunder/admin/security`
+
+- Method: `GET`
+- Response: `security.api_key` (null when not configured)
+- Notes: admin-only, used by the console to prefill the default API key.
+
 ### 4.1.7 `/wunder/admin/skills/upload`
 
 - Method: `POST`

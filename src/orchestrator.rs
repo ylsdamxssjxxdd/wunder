@@ -29,8 +29,8 @@ use crate::token_utils::{
     trim_text_to_tokens,
 };
 use crate::tools::{
-    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs, resolve_tool_name,
-    ToolContext, ToolEventEmitter,
+    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs_with_language,
+    resolve_tool_name, ToolContext, ToolEventEmitter,
 };
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
@@ -3133,8 +3133,13 @@ impl Orchestrator {
         if allowed_tool_names.is_empty() {
             return None;
         }
-        let specs =
-            collect_prompt_tool_specs(config, skills, allowed_tool_names, user_tool_bindings);
+        let specs = collect_prompt_tool_specs_with_language(
+            config,
+            skills,
+            allowed_tool_names,
+            user_tool_bindings,
+            "en-US",
+        );
         if specs.is_empty() {
             return None;
         }

@@ -753,6 +753,18 @@ impl StorageBackend for SqliteStorage {
     fn get_log_usage(&self) -> Result<u64> {
         self.ensure_initialized()?;
         let conn = self.open()?;
+        let dbstat_query = "SELECT COALESCE(SUM(pgsize), 0) \
+            FROM dbstat WHERE name IN ( \
+                'chat_history', \
+                'tool_logs', \
+                'artifact_logs', \
+                'monitor_sessions', \
+                'stream_events', \
+                'memory_task_logs' \
+            )";
+        if let Ok(total) = conn.query_row(dbstat_query, [], |row| row.get::<_, i64>(0)) {
+            return Ok(total.max(0) as u64);
+        }
         let total: i64 = conn.query_row(
             "SELECT \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM chat_history) + \

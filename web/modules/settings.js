@@ -2,6 +2,7 @@ import {
   APP_CONFIG,
   applyStoredConfig,
   resetStoredConfig,
+  updateDefaultConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
 import { elements } from "./elements.js?v=20260118-07";
@@ -15,7 +16,6 @@ import {
   setLanguage,
   t,
 } from "./i18n.js?v=20260118-07";
-import { normalizeApiBase } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
@@ -27,6 +27,8 @@ const serverSettings = {
   maxActiveSessions: null,
   sandboxEnabled: null,
 };
+let adminDefaultsLoaded = false;
+let adminDefaultsLoading = null;
 
 // 解析数字输入，确保落在合理区间内
 const resolveNumberInput = (rawValue, fallback, minValue) => {
@@ -81,12 +83,8 @@ const syncDefaultUserId = (nextDefault, previousDefault) => {
   elements.userId.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-// 同步 API 配置输入，确保变更后写回本地缓存
-const syncApiInputs = (nextBase, nextKey) => {
-  if (elements.apiBase && elements.apiBase.value !== nextBase) {
-    elements.apiBase.value = nextBase;
-    elements.apiBase.dispatchEvent(new Event("change", { bubbles: true }));
-  }
+// 同步 API Key 输入，确保变更后写回本地缓存
+const syncApiInputs = (nextKey) => {
   if (elements.apiKey && elements.apiKey.value !== nextKey) {
     elements.apiKey.value = nextKey;
     elements.apiKey.dispatchEvent(new Event("change", { bubbles: true }));
@@ -243,11 +241,79 @@ const loadServerSettings = async (options = {}) => {
   }
 };
 
+const fetchSecurityDefaults = async () => {
+  const wunderBase = getWunderBase();
+  if (!wunderBase) {
+    throw new Error(t("settings.error.apiBase"));
+  }
+  const response = await fetch(`${wunderBase}/admin/security`, {
+    headers: getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return payload?.security || {};
+};
+
+const applyDefaultApiKey = (apiKey) => {
+  const cleaned = String(apiKey || "").trim();
+  updateDefaultConfig({ defaultApiKey: cleaned });
+  if (!elements.apiKey || elements.apiKey.value.trim()) {
+    return;
+  }
+  elements.apiKey.value = cleaned;
+  elements.apiKey.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+const setAdvancedModalVisible = (visible) => {
+  if (!elements.settingsAdvancedModal) {
+    return;
+  }
+  elements.settingsAdvancedModal.classList.toggle("active", visible);
+  elements.settingsAdvancedModal.setAttribute("aria-hidden", visible ? "false" : "true");
+  if (visible && elements.apiKey) {
+    elements.apiKey.focus();
+  }
+};
+
+const openAdvancedModal = () => {
+  setAdvancedModalVisible(true);
+  loadAdminDefaults({ silent: false }).catch(() => {});
+};
+
+const closeAdvancedModal = () => {
+  setAdvancedModalVisible(false);
+};
+
+export const loadAdminDefaults = async (options = {}) => {
+  if (adminDefaultsLoaded && !options.force) {
+    return;
+  }
+  if (adminDefaultsLoading) {
+    return adminDefaultsLoading;
+  }
+  adminDefaultsLoading = (async () => {
+    try {
+      const security = await fetchSecurityDefaults();
+      applyDefaultApiKey(security.api_key);
+      adminDefaultsLoaded = true;
+    } catch (error) {
+      if (!options.silent) {
+        notify(t("settings.toast.advancedLoadFailed", { message: error.message }), "error");
+      }
+    } finally {
+      adminDefaultsLoading = null;
+    }
+  })();
+  return adminDefaultsLoading;
+};
+
 // 保存设置并应用到运行时
 const handleSaveSettings = async () => {
   const previous = { ...APP_CONFIG };
-  const nextApiBase = normalizeApiBase(elements.apiBase?.value || "");
-  const nextApiKey = String(elements.apiKey?.value || "");
+  const nextApiBase = getWunderBase();
+  const nextApiKey = String(elements.apiKey?.value || "").trim();
   const nextDefaultUserId = String(elements.settingsDefaultUserId?.value || "").trim();
   const nextDefaultPanel = resolveSelectValue(
     elements.settingsDefaultPanel,
@@ -277,7 +343,7 @@ const handleSaveSettings = async () => {
   });
 
   applySettingsForm(updated);
-  syncApiInputs(updated.defaultApiBase, updated.defaultApiKey);
+  syncApiInputs(updated.defaultApiKey);
   syncDefaultUserId(updated.defaultUserId, previous.defaultUserId);
 
   if (updated.language !== previous.language) {
@@ -289,9 +355,6 @@ const handleSaveSettings = async () => {
     refreshMonitorInterval(updated.monitorPollIntervalMs);
   }
 
-  if (!updated.defaultApiBase) {
-    notify(t("settings.toast.apiBaseEmpty"), "warn");
-  }
   notify(t("settings.toast.saved"), "success");
 
   if (elements.settingsMaxActiveSessions || elements.settingsSandboxEnabled) {
@@ -353,7 +416,7 @@ const handleResetSettings = async () => {
   const previous = { ...APP_CONFIG };
   const defaults = resetStoredConfig();
   applySettingsForm(defaults);
-  syncApiInputs(defaults.defaultApiBase, defaults.defaultApiKey);
+  syncApiInputs(defaults.defaultApiKey);
   syncDefaultUserId(defaults.defaultUserId, previous.defaultUserId);
   refreshMonitorInterval(defaults.monitorPollIntervalMs);
   setLanguage(defaults.language, { force: true });
@@ -376,6 +439,29 @@ export const initSettingsPanel = () => {
   if (elements.settingsResetBtn) {
     elements.settingsResetBtn.addEventListener("click", () => {
       handleResetSettings().catch(() => {});
+    });
+  }
+  if (elements.settingsAdvancedBtn) {
+    elements.settingsAdvancedBtn.addEventListener("click", openAdvancedModal);
+  }
+  if (elements.settingsAdvancedModal) {
+    elements.settingsAdvancedModal.addEventListener("click", (event) => {
+      if (event.target === elements.settingsAdvancedModal) {
+        closeAdvancedModal();
+      }
+    });
+  }
+  if (elements.settingsAdvancedModalClose) {
+    elements.settingsAdvancedModalClose.addEventListener("click", closeAdvancedModal);
+  }
+  if (elements.settingsAdvancedCancel) {
+    elements.settingsAdvancedCancel.addEventListener("click", closeAdvancedModal);
+  }
+  if (elements.settingsAdvancedSave) {
+    elements.settingsAdvancedSave.addEventListener("click", () => {
+      handleSaveSettings()
+        .then(closeAdvancedModal)
+        .catch(() => {});
     });
   }
   window.addEventListener("wunder:language-changed", renderLanguageOptions);

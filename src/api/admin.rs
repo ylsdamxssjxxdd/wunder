@@ -100,6 +100,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/server",
             get(admin_server_get).post(admin_server_update),
         )
+        .route("/wunder/admin/security", get(admin_security_get))
         .route("/wunder/admin/monitor", get(admin_monitor))
         .route(
             "/wunder/admin/monitor/tool_usage",
@@ -1503,6 +1504,16 @@ async fn admin_server_get(State(state): State<Arc<AppState>>) -> Result<Json<Val
         "server": {
             "max_active_sessions": config.server.max_active_sessions,
             "sandbox_enabled": sandbox_enabled
+        }
+    })))
+}
+
+async fn admin_security_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let api_key = config.api_key();
+    Ok(Json(json!({
+        "security": {
+            "api_key": api_key
         }
     })))
 }

@@ -3313,6 +3313,20 @@ button.danger {
   gap: 12px;
 }
 
+.settings-card-general .settings-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  column-gap: 16px;
+  row-gap: 10px;
+}
+
+.settings-card-general .form-row {
+  gap: 4px;
+}
+
+.settings-card-general .form-row.form-row-span {
+  grid-column: 1 / -1;
+}
+
 .settings-grid .form-row {
   margin-bottom: 0;
 }

@@ -14,7 +14,6 @@ import { elements } from "./modules/elements.js?v=20260118-07";
 
 import { state } from "./modules/state.js";
 
-import { normalizeApiBase } from "./modules/utils.js";
 
 import { appendLog } from "./modules/log.js?v=20260108-02";
 import { loadI18nConfig } from "./modules/i18n-config.js";
@@ -68,7 +67,7 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260112-06";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260115-05";
 
-import { initSettingsPanel } from "./modules/settings.js?v=20260110-06";
+import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260110-06";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
@@ -940,30 +939,6 @@ const bindGlobalInputs = () => {
 
   }
 
-  elements.apiBase.addEventListener("change", () => {
-
-    const normalized = normalizeApiBase(elements.apiBase.value);
-
-    if (normalized) {
-
-      elements.apiBase.value = normalized;
-
-    }
-
-    loadWorkspace();
-
-    resetToolSelection();
-
-    resetUserToolsState();
-
-    loadAvailableTools().catch((error) => {
-
-      applyPromptToolError(error.message);
-
-    });
-
-  });
-
 };
 
 
@@ -975,13 +950,8 @@ const bootstrap = async () => {
   const stored = readStoredConfig();
 
   const i18nConfig = await loadI18nConfig({
-
-    apiBase: stored.defaultApiBase || APP_CONFIG.defaultApiBase,
-
     apiKey: stored.defaultApiKey || APP_CONFIG.defaultApiKey,
-
     language: stored.language || APP_CONFIG.language,
-
   });
 
   if (i18nConfig?.default_language) {
@@ -1046,6 +1016,7 @@ const bootstrap = async () => {
   bindSidebarCollapse();
 
   await initAdminAuth();
+  loadAdminDefaults({ silent: true }).catch(() => {});
 
   const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
 

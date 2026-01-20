@@ -86,120 +86,121 @@ pub struct ToolContext<'a> {
     pub http: &'a reqwest::Client,
 }
 
-pub fn builtin_tool_specs() -> Vec<ToolSpec> {
+fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
+    let t = |key: &str| i18n::t_in_language(key, language);
     vec![
         ToolSpec {
             name: "最终回复".to_string(),
-            description: i18n::t("tool.spec.final.description"),
+            description: t("tool.spec.final.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": i18n::t("tool.spec.final.args.content")}
+                    "content": {"type": "string", "description": t("tool.spec.final.args.content")}
                 },
                 "required": ["content"]
             }),
         },
         ToolSpec {
             name: "a2ui".to_string(),
-            description: i18n::t("tool.spec.a2ui.description"),
+            description: t("tool.spec.a2ui.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "string", "description": i18n::t("tool.spec.a2ui.args.uid")},
-                    "a2ui": {"type": "array", "description": i18n::t("tool.spec.a2ui.args.messages"), "items": {"type": "object"}},
-                    "content": {"type": "string", "description": i18n::t("tool.spec.a2ui.args.content")}
+                    "uid": {"type": "string", "description": t("tool.spec.a2ui.args.uid")},
+                    "a2ui": {"type": "array", "description": t("tool.spec.a2ui.args.messages"), "items": {"type": "object"}},
+                    "content": {"type": "string", "description": t("tool.spec.a2ui.args.content")}
                 },
                 "required": ["uid", "a2ui"]
             }),
         },
         ToolSpec {
             name: "a2a观察".to_string(),
-            description: i18n::t("tool.spec.a2a_observe.description"),
+            description: t("tool.spec.a2a_observe.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "task_ids": {"type": "array", "items": {"type": "string"}, "description": i18n::t("tool.spec.a2a_observe.args.task_ids")},
-                    "tasks": {"type": "array", "items": {"type": "object"}, "description": i18n::t("tool.spec.a2a_observe.args.tasks")},
-                    "endpoint": {"type": "string", "description": i18n::t("tool.spec.a2a_observe.args.endpoint")},
-                    "service_name": {"type": "string", "description": i18n::t("tool.spec.a2a_observe.args.service_name")},
-                    "refresh": {"type": "boolean", "description": i18n::t("tool.spec.a2a_observe.args.refresh")},
-                    "timeout_s": {"type": "number", "description": i18n::t("tool.spec.a2a_observe.args.timeout")}
+                    "task_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.a2a_observe.args.task_ids")},
+                    "tasks": {"type": "array", "items": {"type": "object"}, "description": t("tool.spec.a2a_observe.args.tasks")},
+                    "endpoint": {"type": "string", "description": t("tool.spec.a2a_observe.args.endpoint")},
+                    "service_name": {"type": "string", "description": t("tool.spec.a2a_observe.args.service_name")},
+                    "refresh": {"type": "boolean", "description": t("tool.spec.a2a_observe.args.refresh")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.a2a_observe.args.timeout")}
                 }
             }),
         },
         ToolSpec {
             name: "a2a等待".to_string(),
-            description: i18n::t("tool.spec.a2a_wait.description"),
+            description: t("tool.spec.a2a_wait.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "wait_s": {"type": "number", "description": i18n::t("tool.spec.a2a_wait.args.wait_s")},
-                    "poll_interval_s": {"type": "number", "description": i18n::t("tool.spec.a2a_wait.args.poll_interval")},
+                    "wait_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.wait_s")},
+                    "poll_interval_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.poll_interval")},
                     "task_ids": {"type": "array", "items": {"type": "string"}},
                     "tasks": {"type": "array", "items": {"type": "object"}},
-                    "endpoint": {"type": "string", "description": i18n::t("tool.spec.a2a_wait.args.endpoint")},
-                    "service_name": {"type": "string", "description": i18n::t("tool.spec.a2a_wait.args.service_name")},
-                    "refresh": {"type": "boolean", "description": i18n::t("tool.spec.a2a_wait.args.refresh")},
-                    "timeout_s": {"type": "number", "description": i18n::t("tool.spec.a2a_wait.args.timeout")}
+                    "endpoint": {"type": "string", "description": t("tool.spec.a2a_wait.args.endpoint")},
+                    "service_name": {"type": "string", "description": t("tool.spec.a2a_wait.args.service_name")},
+                    "refresh": {"type": "boolean", "description": t("tool.spec.a2a_wait.args.refresh")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.timeout")}
                 }
             }),
         },
         ToolSpec {
             name: "执行命令".to_string(),
-            description: i18n::t("tool.spec.exec.description"),
+            description: t("tool.spec.exec.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": i18n::t("tool.spec.exec.args.content")},
-                    "workdir": {"type": "string", "description": i18n::t("tool.spec.exec.args.workdir")},
-                    "timeout_s": {"type": "integer", "description": i18n::t("tool.spec.exec.args.timeout")},
-                    "shell": {"type": "boolean", "description": i18n::t("tool.spec.exec.args.shell")}
+                    "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
+                    "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
+                    "timeout_s": {"type": "integer", "description": t("tool.spec.exec.args.timeout")},
+                    "shell": {"type": "boolean", "description": t("tool.spec.exec.args.shell")}
                 },
                 "required": ["content"]
             }),
         },
         ToolSpec {
             name: "ptc".to_string(),
-            description: i18n::t("tool.spec.ptc.description"),
+            description: t("tool.spec.ptc.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string", "description": i18n::t("tool.spec.ptc.args.filename")},
-                    "workdir": {"type": "string", "description": i18n::t("tool.spec.ptc.args.workdir")},
-                    "content": {"type": "string", "description": i18n::t("tool.spec.ptc.args.content")}
+                    "filename": {"type": "string", "description": t("tool.spec.ptc.args.filename")},
+                    "workdir": {"type": "string", "description": t("tool.spec.ptc.args.workdir")},
+                    "content": {"type": "string", "description": t("tool.spec.ptc.args.content")}
                 },
                 "required": ["filename", "workdir", "content"]
             }),
         },
         ToolSpec {
             name: "列出文件".to_string(),
-            description: i18n::t("tool.spec.list.description"),
+            description: t("tool.spec.list.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": i18n::t("tool.spec.list.args.path")},
+                    "path": {"type": "string", "description": t("tool.spec.list.args.path")},
                     "max_depth": {"type": "integer", "minimum": 0}
                 }
             }),
         },
         ToolSpec {
             name: "搜索内容".to_string(),
-            description: i18n::t("tool.spec.search.description"),
+            description: t("tool.spec.search.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": i18n::t("tool.spec.search.args.query")},
-                    "path": {"type": "string", "description": i18n::t("tool.spec.search.args.path")},
-                    "file_pattern": {"type": "string", "description": i18n::t("tool.spec.search.args.file_pattern")},
-                    "max_depth": {"type": "integer", "minimum": 0, "description": i18n::t("tool.spec.search.args.max_depth")},
-                    "max_files": {"type": "integer", "minimum": 0, "description": i18n::t("tool.spec.search.args.max_files")}
+                    "query": {"type": "string", "description": t("tool.spec.search.args.query")},
+                    "path": {"type": "string", "description": t("tool.spec.search.args.path")},
+                    "file_pattern": {"type": "string", "description": t("tool.spec.search.args.file_pattern")},
+                    "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
+                    "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")}
                 },
                 "required": ["query"]
             }),
         },
         ToolSpec {
             name: "读取文件".to_string(),
-            description: i18n::t("tool.spec.read.description"),
+            description: t("tool.spec.read.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -208,9 +209,9 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "path": {"type": "string", "description": i18n::t("tool.spec.read.args.files.path")},
-                                "start_line": {"type": "integer", "description": i18n::t("tool.spec.read.args.files.start_line")},
-                                "end_line": {"type": "integer", "description": i18n::t("tool.spec.read.args.files.end_line")},
+                                "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
+                                "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
+                                "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
                                 "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}}
                             },
                             "required": ["path"]
@@ -222,52 +223,52 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "写入文件".to_string(),
-            description: i18n::t("tool.spec.write.description"),
+            description: t("tool.spec.write.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": i18n::t("tool.spec.write.args.path")},
-                    "content": {"type": "string", "description": i18n::t("tool.spec.write.args.content")}
+                    "path": {"type": "string", "description": t("tool.spec.write.args.path")},
+                    "content": {"type": "string", "description": t("tool.spec.write.args.content")}
                 },
                 "required": ["path", "content"]
             }),
         },
         ToolSpec {
             name: "替换文本".to_string(),
-            description: i18n::t("tool.spec.replace.description"),
+            description: t("tool.spec.replace.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": i18n::t("tool.spec.replace.args.path")},
-                    "old_string": {"type": "string", "description": i18n::t("tool.spec.replace.args.old_string")},
-                    "new_string": {"type": "string", "description": i18n::t("tool.spec.replace.args.new_string")},
-                    "expected_replacements": {"type": "integer", "description": i18n::t("tool.spec.replace.args.expected_replacements")}
+                    "path": {"type": "string", "description": t("tool.spec.replace.args.path")},
+                    "old_string": {"type": "string", "description": t("tool.spec.replace.args.old_string")},
+                    "new_string": {"type": "string", "description": t("tool.spec.replace.args.new_string")},
+                    "expected_replacements": {"type": "integer", "description": t("tool.spec.replace.args.expected_replacements")}
                 },
                 "required": ["path", "old_string", "new_string"]
             }),
         },
         ToolSpec {
             name: "编辑文件".to_string(),
-            description: i18n::t("tool.spec.edit.description"),
+            description: t("tool.spec.edit.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": i18n::t("tool.spec.edit.args.path")},
-                    "edits": {"type": "array", "description": i18n::t("tool.spec.edit.args.edits")},
-                    "ensure_newline_at_eof": {"type": "boolean", "description": i18n::t("tool.spec.edit.args.ensure_newline")}
+                    "path": {"type": "string", "description": t("tool.spec.edit.args.path")},
+                    "edits": {"type": "array", "description": t("tool.spec.edit.args.edits")},
+                    "ensure_newline_at_eof": {"type": "boolean", "description": t("tool.spec.edit.args.ensure_newline")}
                 },
                 "required": ["path", "edits"]
             }),
         },
         ToolSpec {
             name: "LSP查询".to_string(),
-            description: i18n::t("tool.spec.lsp.description"),
+            description: t("tool.spec.lsp.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "operation": {
                         "type": "string",
-                        "description": i18n::t("tool.spec.lsp.args.operation"),
+                        "description": t("tool.spec.lsp.args.operation"),
                         "enum": [
                             "definition",
                             "references",
@@ -278,13 +279,13 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
                             "callHierarchy"
                         ]
                     },
-                    "path": {"type": "string", "description": i18n::t("tool.spec.lsp.args.path")},
-                    "line": {"type": "integer", "description": i18n::t("tool.spec.lsp.args.line"), "minimum": 1},
-                    "character": {"type": "integer", "description": i18n::t("tool.spec.lsp.args.character"), "minimum": 1},
-                    "query": {"type": "string", "description": i18n::t("tool.spec.lsp.args.query")},
+                    "path": {"type": "string", "description": t("tool.spec.lsp.args.path")},
+                    "line": {"type": "integer", "description": t("tool.spec.lsp.args.line"), "minimum": 1},
+                    "character": {"type": "integer", "description": t("tool.spec.lsp.args.character"), "minimum": 1},
+                    "query": {"type": "string", "description": t("tool.spec.lsp.args.query")},
                     "call_hierarchy_direction": {
                         "type": "string",
-                        "description": i18n::t("tool.spec.lsp.args.call_hierarchy_direction"),
+                        "description": t("tool.spec.lsp.args.call_hierarchy_direction"),
                         "enum": ["incoming", "outgoing"]
                     }
                 },
@@ -292,6 +293,11 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
             }),
         },
     ]
+}
+
+pub fn builtin_tool_specs() -> Vec<ToolSpec> {
+    let language = i18n::get_language();
+    builtin_tool_specs_with_language(&language)
 }
 
 pub fn builtin_aliases() -> HashMap<String, String> {
@@ -424,15 +430,33 @@ pub fn collect_prompt_tool_specs(
     allowed_names: &HashSet<String>,
     user_tool_bindings: Option<&UserToolBindings>,
 ) -> Vec<ToolSpec> {
+    let language = i18n::get_language();
+    collect_prompt_tool_specs_with_language(
+        config,
+        skills,
+        allowed_names,
+        user_tool_bindings,
+        &language,
+    )
+}
+
+pub fn collect_prompt_tool_specs_with_language(
+    config: &Config,
+    skills: &SkillRegistry,
+    allowed_names: &HashSet<String>,
+    user_tool_bindings: Option<&UserToolBindings>,
+    language: &str,
+) -> Vec<ToolSpec> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
-    let language = i18n::get_language().to_lowercase();
+    let language = language.trim();
+    let language_lower = language.to_lowercase();
     let alias_map = builtin_aliases();
     let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
     for (alias, canonical) in alias_map {
         canonical_aliases.entry(canonical).or_default().push(alias);
     }
-    for spec in builtin_tool_specs() {
+    for spec in builtin_tool_specs_with_language(language) {
         let aliases: &[String] = canonical_aliases
             .get(&spec.name)
             .map(|value| value.as_slice())
@@ -442,7 +466,7 @@ pub fn collect_prompt_tool_specs(
         if !enabled {
             continue;
         }
-        let preferred_alias = if language.starts_with("en") {
+        let preferred_alias = if language_lower.starts_with("en") {
             aliases.iter().find(|alias| allowed_names.contains(*alias))
         } else {
             None
@@ -496,7 +520,7 @@ pub fn collect_prompt_tool_specs(
         output.push(ToolSpec {
             name: full_name,
             description: service.description.clone().unwrap_or_default(),
-            input_schema: a2a_service_schema(),
+            input_schema: a2a_service_schema_with_language(language),
         });
     }
     let skill_names: HashSet<String> = skills
@@ -516,9 +540,10 @@ pub fn collect_prompt_tool_specs(
             continue;
         }
         let description = if base.description.trim().is_empty() {
-            i18n::t_with_params(
+            i18n::t_with_params_in_language(
                 "knowledge.tool.description",
                 &HashMap::from([("name".to_string(), name.to_string())]),
+                language,
             )
         } else {
             base.description.clone()
@@ -529,8 +554,8 @@ pub fn collect_prompt_tool_specs(
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": i18n::t("knowledge.tool.query.description")},
-                    "limit": {"type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description")}
+                    "query": {"type": "string", "description": i18n::t_in_language("knowledge.tool.query.description", language)},
+                    "limit": {"type": "integer", "minimum": 1, "description": i18n::t_in_language("knowledge.tool.limit.description", language)}
                 },
                 "required": ["query"]
             }),
@@ -554,11 +579,16 @@ fn yaml_to_json(value: &YamlValue) -> Value {
 
 /// A2A 服务工具的通用入参 Schema。
 pub fn a2a_service_schema() -> Value {
+    let language = i18n::get_language();
+    a2a_service_schema_with_language(&language)
+}
+
+pub fn a2a_service_schema_with_language(language: &str) -> Value {
     json!({
         "type": "object",
         "properties": {
-            "content": {"type": "string", "description": i18n::t("tool.spec.a2a_service.args.content")},
-            "session_id": {"type": "string", "description": i18n::t("tool.spec.a2a_service.args.session_id")}
+            "content": {"type": "string", "description": i18n::t_in_language("tool.spec.a2a_service.args.content", language)},
+            "session_id": {"type": "string", "description": i18n::t_in_language("tool.spec.a2a_service.args.session_id", language)}
         },
         "required": ["content"]
     })

@@ -194,9 +194,6 @@ export const initApiDocsPanel = () => {
   renderExamples();
   renderEndpointGroups();
 
-  if (elements.apiBase) {
-    elements.apiBase.addEventListener("change", renderExamples);
-  }
   if (elements.userId) {
     elements.userId.addEventListener("change", renderExamples);
   }

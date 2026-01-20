@@ -147,6 +147,34 @@ pub fn t_with_params(key: &str, params: &HashMap<String, String>) -> String {
     format_template(template, params)
 }
 
+/// 使用指定语言翻译 key，忽略当前任务上下文语言。
+pub fn t_with_params_in_language(
+    key: &str,
+    params: &HashMap<String, String>,
+    language: &str,
+) -> String {
+    if key.trim().is_empty() {
+        return "".to_string();
+    }
+    let normalized = normalize_language(Some(language), true);
+    let state = state().read();
+    let entry = state.messages.get(key);
+    let template = entry
+        .and_then(|map| map.get(&normalized))
+        .or_else(|| entry.and_then(|map| map.get(&state.default_language)))
+        .map(|value| value.as_str())
+        .unwrap_or(key);
+    if params.is_empty() {
+        return template.to_string();
+    }
+    format_template(template, params)
+}
+
+/// 使用指定语言翻译 key（无参数）。
+pub fn t_in_language(key: &str, language: &str) -> String {
+    t_with_params_in_language(key, &HashMap::new(), language)
+}
+
 /// 获取某个翻译 key 的全部前缀，便于历史兼容。
 pub fn get_known_prefixes(key: &str) -> Vec<String> {
     if key.trim().is_empty() {
