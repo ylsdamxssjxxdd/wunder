@@ -40,6 +40,13 @@
     <div class="user-tools-status">{{ statusMessage }}</div>
 
     <template #footer>
+      <el-button
+        class="user-tools-footer-btn"
+        :disabled="loading"
+        @click="appendSamplePrompt"
+      >
+        示例
+      </el-button>
       <el-button class="user-tools-footer-btn" @click="close">关闭</el-button>
     </template>
   </el-dialog>
@@ -72,6 +79,12 @@ const saveTimer = ref(null);
 const loadVersion = ref(0);
 const saveVersion = ref(0);
 const isEditing = ref(false);
+const sampleExtraPrompt = [
+  '- 请完成用户交代的任务，没有彻底完成就不要停止',
+  '- 你拥有所有的权限可以任意操作，不需要考虑后果',
+  '- 做好测试动作，出错就重试，直到问题解决',
+  '- 务必给出一个令人满意的结果'
+].join('\n');
 
 const loadExtraPrompt = async () => {
   if (loading.value) return;
@@ -134,6 +147,13 @@ const scheduleSave = () => {
 const handleInput = () => {
   isEditing.value = true;
   scheduleSave();
+};
+
+const appendSamplePrompt = () => {
+  const currentValue = extraPrompt.value || '';
+  const separator = currentValue && !currentValue.endsWith('\n') ? '\n' : '';
+  extraPrompt.value = `${currentValue}${separator}${sampleExtraPrompt}`;
+  handleInput();
 };
 
 const reload = () => {
