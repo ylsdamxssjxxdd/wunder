@@ -816,16 +816,14 @@ const buildMessageStatsEntries = (message) => {
   const hasUsage = Number.isFinite(Number(stats?.usage?.total)) && Number(stats.usage.total) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
-  const hasFileChanges = Number.isFinite(Number(stats?.fileChanges)) && Number(stats.fileChanges) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls && !hasFileChanges) {
+  if (!hasUsage && !hasDuration && !hasToolCalls) {
     return [];
   }
   const entries = [
     { label: '耗时', value: formatDuration(durationSeconds) },
     { label: '速度', value: formatSpeed(speed) },
     { label: 'token占用', value: formatCount(stats?.usage?.total) },
-    { label: '工具调用', value: formatCount(stats?.toolCalls) },
-    { label: '文件修改', value: formatCount(stats?.fileChanges) }
+    { label: '工具调用', value: formatCount(stats?.toolCalls) }
   ];
   return entries;
 };

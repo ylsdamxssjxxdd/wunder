@@ -17,7 +17,6 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 
 const buildMessageStats = () => ({
   toolCalls: 0,
-  fileChanges: 0,
   usage: null,
   prefill_duration_s: null,
   decode_duration_s: null
@@ -68,7 +67,6 @@ const normalizeMessageStats = (stats) => {
   }
   return {
     toolCalls: normalizeStatsCount(stats.toolCalls),
-    fileChanges: normalizeStatsCount(stats.fileChanges),
     usage: normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage),
     prefill_duration_s: normalizeDurationValue(
       stats.prefill_duration_s ?? stats.prefillDurationS ?? stats.prefillDuration
@@ -99,7 +97,6 @@ const mergeMessageStats = (base, incoming) => {
   if (!right) return left;
   return {
     toolCalls: Math.max(left.toolCalls, right.toolCalls),
-    fileChanges: Math.max(left.fileChanges, right.fileChanges),
     usage: right.usage || left.usage,
     prefill_duration_s:
       right.prefill_duration_s === null || right.prefill_duration_s === undefined
@@ -110,17 +107,6 @@ const mergeMessageStats = (base, incoming) => {
         ? left.decode_duration_s
         : right.decode_duration_s
   };
-};
-
-const FILE_CHANGE_TOOL_NAMES = new Set(['写入文件', '替换文本', '编辑文件', '写文件', 'write_file', 'replace_text', 'edit_file']);
-const FILE_CHANGE_TOOL_KEYS = new Set(['writefile', 'replacetext', 'editfile']);
-
-const isFileChangeTool = (toolName) => {
-  const raw = String(toolName || '').trim();
-  if (!raw) return false;
-  if (FILE_CHANGE_TOOL_NAMES.has(raw)) return true;
-  const normalized = raw.toLowerCase().replace(/[\s_-]/g, '');
-  return FILE_CHANGE_TOOL_KEYS.has(normalized);
 };
 
 const resolveTimestampMs = (value) => {
@@ -1033,9 +1019,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   const registerToolStats = (toolName) => {
     if (!stats) return;
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
-    if (isFileChangeTool(toolName)) {
-      stats.fileChanges = normalizeStatsCount(stats.fileChanges) + 1;
-    }
   };
 
   const updateUsageStats = (usagePayload, prefillDuration, decodeDuration) => {
