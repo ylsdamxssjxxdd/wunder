@@ -2085,6 +2085,7 @@ body {
   font-size: 12px;
   line-height: 1.5;
   color: #f1f5f9;
+  background: transparent;
 }
 
 .thinking-tooltip-popper .el-popper__arrow {
@@ -2169,6 +2170,10 @@ body {
   border: 1px solid var(--el-tooltip-border-color);
 }
 
+.ability-tooltip-popper .el-popper__arrow {
+  box-shadow: none;
+}
+
 .ability-tooltip {
   position: relative;
   z-index: 1;
@@ -2188,6 +2193,7 @@ body {
 .ability-tooltip .ability-title {
   font-weight: 700;
   letter-spacing: 0.5px;
+  color: #f1f5f9;
 }
 
 .ability-tooltip .ability-sub {
@@ -4607,6 +4613,10 @@ body {
 :root[data-user-theme='light'] .ability-tooltip-popper::before {
   background: radial-gradient(circle at 15% 10%, rgba(59, 130, 246, 0.12), transparent 45%),
     radial-gradient(circle at 85% 0%, rgba(124, 108, 255, 0.12), transparent 42%);
+}
+
+:root[data-user-theme='light'] .ability-tooltip .ability-title {
+  color: #0f172a;
 }
 
 :root[data-user-theme='light'] .ability-tooltip-popper .ability-sub,
