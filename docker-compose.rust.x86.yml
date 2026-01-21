@@ -98,6 +98,7 @@ services:
     platform: linux/amd64
     container_name: wunder-frontend
     working_dir: /app
+    restart: always
     volumes:
       - ./frontend:/app
     ports:
