@@ -824,8 +824,8 @@ const buildMessageStatsEntries = (message) => {
     { label: '耗时', value: formatDuration(durationSeconds) },
     { label: '速度', value: formatSpeed(speed) },
     { label: 'token占用', value: formatCount(stats?.usage?.total) },
-    { label: '工具调用次数', value: formatCount(stats?.toolCalls) },
-    { label: '文件修改次数', value: formatCount(stats?.fileChanges) }
+    { label: '工具调用', value: formatCount(stats?.toolCalls) },
+    { label: '文件修改', value: formatCount(stats?.fileChanges) }
   ];
   return entries;
 };
