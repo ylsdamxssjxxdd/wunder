@@ -99,6 +99,8 @@ const assignStreamEventId = (message, eventId) => {
   }
 };
 
+const normalizeFlag = (value) => value === true || value === 'true';
+
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
   const base = {
@@ -108,9 +110,9 @@ const normalizeSnapshotMessage = (message) => {
   };
   if (message.role === 'assistant') {
     base.reasoning = message.reasoning || '';
-    base.reasoningStreaming = Boolean(message.reasoningStreaming);
-    base.workflowStreaming = Boolean(message.workflowStreaming);
-    base.stream_incomplete = Boolean(message.stream_incomplete);
+    base.reasoningStreaming = normalizeFlag(message.reasoningStreaming);
+    base.workflowStreaming = normalizeFlag(message.workflowStreaming);
+    base.stream_incomplete = normalizeFlag(message.stream_incomplete);
     const streamEventId = normalizeStreamEventId(message.stream_event_id);
     if (streamEventId !== null) {
       base.stream_event_id = streamEventId;
@@ -125,8 +127,8 @@ const normalizeSnapshotMessage = (message) => {
     const plan = normalizePlanPayload(message.plan);
     if (plan) {
       base.plan = plan;
-      base.planVisible = Boolean(message.planVisible) || shouldAutoShowPlan(plan, message);
     }
+    base.planVisible = shouldAutoShowPlan(plan, message);
   }
   if (message.isGreeting) {
     base.isGreeting = true;
@@ -289,18 +291,18 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
     target.reasoning = snapshotLastAssistant.reasoning;
   }
   if (shouldMergeFlags) {
-    target.reasoningStreaming = Boolean(
-      snapshotLastAssistant.reasoningStreaming || target.reasoningStreaming
-    );
+    target.reasoningStreaming =
+      normalizeFlag(snapshotLastAssistant.reasoningStreaming) ||
+      normalizeFlag(target.reasoningStreaming);
     if (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length) {
       target.workflowItems = snapshotLastAssistant.workflowItems;
     }
-    target.workflowStreaming = Boolean(
-      snapshotLastAssistant.workflowStreaming || target.workflowStreaming
-    );
-    target.stream_incomplete = Boolean(
-      snapshotLastAssistant.stream_incomplete || target.stream_incomplete
-    );
+    target.workflowStreaming =
+      normalizeFlag(snapshotLastAssistant.workflowStreaming) ||
+      normalizeFlag(target.workflowStreaming);
+    target.stream_incomplete =
+      normalizeFlag(snapshotLastAssistant.stream_incomplete) ||
+      normalizeFlag(target.stream_incomplete);
     if (snapshotRound !== null && targetRound === null) {
       target.stream_round = snapshotRound;
     }
@@ -313,9 +315,7 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
     if (snapshotPlan) {
       target.plan = snapshotPlan;
       target.planVisible =
-        Boolean(target.planVisible) ||
-        Boolean(snapshotLastAssistant.planVisible) ||
-        shouldAutoShowPlan(snapshotPlan, snapshotLastAssistant);
+        Boolean(target.planVisible) || shouldAutoShowPlan(snapshotPlan, snapshotLastAssistant);
     }
   }
   return messages;
@@ -450,11 +450,9 @@ const normalizePlanPayload = (payload) => {
 };
 
 const hasPlanSteps = (plan) => Array.isArray(plan?.steps) && plan.steps.length > 0;
-const hasPlanInProgress = (plan) =>
-  Array.isArray(plan?.steps) && plan.steps.some((item) => item.status === 'in_progress');
 const isMessageRunning = (message) =>
-  Boolean(message?.stream_incomplete || message?.workflowStreaming || message?.reasoningStreaming);
-const shouldAutoShowPlan = (plan, message) => hasPlanInProgress(plan) || isMessageRunning(message);
+  normalizeFlag(message?.stream_incomplete) || normalizeFlag(message?.workflowStreaming);
+const shouldAutoShowPlan = (plan, message) => hasPlanSteps(plan) && isMessageRunning(message);
 
 const applyPlanUpdate = (assistantMessage, payload) => {
   if (!assistantMessage || assistantMessage.role !== 'assistant') return null;
@@ -826,7 +824,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   };
   // 思考内容需要同步到消息头部展示
   assistantMessage.reasoning = assistantMessage.reasoning || '';
-  assistantMessage.reasoningStreaming = Boolean(assistantMessage.reasoningStreaming);
+  assistantMessage.reasoningStreaming = normalizeFlag(assistantMessage.reasoningStreaming);
   const normalizedPlan = normalizePlanPayload(assistantMessage.plan);
   assistantMessage.plan = normalizedPlan;
   assistantMessage.planVisible =
@@ -1392,13 +1390,14 @@ const hydrateMessage = (message, workflowState) => {
     ...message,
     content: normalizeAssistantContent(message.content),
     workflowItems: [],
-    workflowStreaming: false,
+    workflowStreaming: normalizeFlag(message?.workflowStreaming),
+    stream_incomplete: normalizeFlag(message?.stream_incomplete),
     reasoning: message?.reasoning || '',
-    reasoningStreaming: Boolean(message?.reasoningStreaming)
+    reasoningStreaming: normalizeFlag(message?.reasoningStreaming)
   };
   const plan = normalizePlanPayload(message.plan);
   hydrated.plan = plan;
-  hydrated.planVisible = Boolean(message.planVisible) || shouldAutoShowPlan(plan, message);
+  hydrated.planVisible = shouldAutoShowPlan(plan, message);
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
     const processor = createWorkflowProcessor(hydrated, workflowState, null);
     message.workflow_events.forEach((event) => {

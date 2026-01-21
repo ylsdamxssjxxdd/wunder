@@ -7,7 +7,7 @@ use crate::state::AppState;
 use crate::tools::{execute_tool, ToolContext};
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
-use chrono::Utc;
+use chrono::Local;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -278,7 +278,7 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
             "error": "",
             "args": { "index": index },
             "data": { "tag": "performance" },
-            "timestamp": Utc::now().to_rfc3339(),
+            "timestamp": Local::now().to_rfc3339(),
         });
         let started = Instant::now();
         tokio::task::spawn_blocking(move || workspace.append_tool_log(&user_id, &payload))

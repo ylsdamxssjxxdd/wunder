@@ -2,7 +2,7 @@
 use crate::config::{ObservabilityConfig, SandboxConfig};
 use crate::i18n;
 use crate::storage::StorageBackend;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1768,7 +1768,7 @@ fn format_ts(ts: f64) -> String {
     let Some(dt) = DateTime::<Utc>::from_timestamp(ts as i64, 0) else {
         return String::new();
     };
-    dt.to_rfc3339()
+    dt.with_timezone(&Local).to_rfc3339()
 }
 
 fn round2(value: f64) -> f64 {

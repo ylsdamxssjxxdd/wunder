@@ -16,7 +16,7 @@ use crate::user_tools::{
 };
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{Local, Utc};
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
@@ -2800,7 +2800,7 @@ fn build_snapshot_from_task(task: &A2aTask) -> A2aTaskSnapshot {
         } else {
             Some(task.answer.clone())
         },
-        updated_time: Some(task.updated_time.to_rfc3339()),
+        updated_time: Some(task.updated_time.with_timezone(&Local).to_rfc3339()),
         refresh_error: None,
     }
 }
@@ -2941,7 +2941,7 @@ async fn refresh_a2a_task(
         snapshot.context_id = info.context_id.clone();
         snapshot.status = info.status.clone();
         snapshot.answer = info.answer.clone();
-        snapshot.updated_time = Some(Utc::now().to_rfc3339());
+        snapshot.updated_time = Some(Local::now().to_rfc3339());
         snapshot.refresh_error = None;
         context.a2a_store.update(&info.id, |task| {
             task.context_id = info.context_id.clone();

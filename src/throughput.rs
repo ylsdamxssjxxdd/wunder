@@ -1,7 +1,7 @@
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::{TokenUsage, WunderRequest};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use futures::future::join_all;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
@@ -334,7 +334,7 @@ impl ThroughputMetrics {
     fn push_error(&self, message: String) {
         let mut guard = self.errors.lock();
         guard.push(ThroughputErrorSnapshot {
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: Local::now().to_rfc3339(),
             message,
         });
         if guard.len() > MAX_ERROR_SAMPLES {
@@ -662,8 +662,10 @@ impl ActiveRun {
                 model_name: self.config.model_name.clone(),
                 request_timeout_s: self.config.request_timeout_s,
                 max_tokens: self.config.max_tokens,
-                started_at: self.started_at.to_rfc3339(),
-                finished_at: self.finished_at.map(|value| value.to_rfc3339()),
+                started_at: self.started_at.with_timezone(&Local).to_rfc3339(),
+                finished_at: self
+                    .finished_at
+                    .map(|value| value.with_timezone(&Local).to_rfc3339()),
                 elapsed_s,
             },
             metrics,
@@ -923,7 +925,7 @@ async fn run_supervisor(
             }
         }
         let sample = ThroughputSample {
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: Local::now().to_rfc3339(),
             concurrency,
             elapsed_s,
             total_requests: snapshot.total_requests,

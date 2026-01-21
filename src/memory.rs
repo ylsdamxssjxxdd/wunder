@@ -1,7 +1,7 @@
 // 长期记忆存储：基于持久化存储封装读写与提示构建。
 use crate::i18n;
 use crate::storage::StorageBackend;
-use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Local, TimeZone, Timelike};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
@@ -613,7 +613,7 @@ fn format_ts(ts: f64) -> String {
     if ts <= 0.0 {
         return String::new();
     }
-    let dt = Utc.timestamp_opt(ts as i64, 0).single();
+    let dt = Local.timestamp_opt(ts as i64, 0).single();
     dt.map(|value| value.to_rfc3339()).unwrap_or_default()
 }
 

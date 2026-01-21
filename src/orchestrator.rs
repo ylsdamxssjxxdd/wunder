@@ -35,7 +35,7 @@ use crate::tools::{
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use futures::{Stream, StreamExt};
 use parking_lot::Mutex as ParkingMutex;
 use regex::Regex;
@@ -262,7 +262,7 @@ impl ToolResultPayload {
             "tool": tool_name,
             "ok": self.ok,
             "data": self.data,
-            "timestamp": self.timestamp.to_rfc3339(),
+            "timestamp": self.timestamp.with_timezone(&Local).to_rfc3339(),
         });
         if !self.error.trim().is_empty() {
             if let Value::Object(ref mut map) = payload {
@@ -591,7 +591,7 @@ impl EventEmitter {
         let payload = json!({
             "event": event_type,
             "data": enrich_event_payload(data, Some(&self.session_id), timestamp),
-            "timestamp": timestamp.to_rfc3339(),
+            "timestamp": timestamp.with_timezone(&Local).to_rfc3339(),
         });
         let session_id = self.session_id.clone();
         let user_id = self.user_id.clone();
@@ -667,7 +667,9 @@ impl EventEmitter {
         let payload = json!({
             "event": event.event,
             "data": event.data,
-            "timestamp": event.timestamp.map(|ts| ts.to_rfc3339()),
+            "timestamp": event
+                .timestamp
+                .map(|ts| ts.with_timezone(&Local).to_rfc3339()),
         });
         let session_id = self.session_id.clone();
         let user_id = self.user_id.clone();
@@ -1204,7 +1206,7 @@ fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTi
     }
     map.insert(
         "timestamp".to_string(),
-        Value::String(timestamp.to_rfc3339()),
+        Value::String(timestamp.with_timezone(&Local).to_rfc3339()),
     );
     map.insert("data".to_string(), data);
     Value::Object(map)
@@ -1859,7 +1861,7 @@ impl Orchestrator {
         tool_calls: Option<&Value>,
         tool_call_id: Option<&str>,
     ) {
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = Local::now().to_rfc3339();
         let content_value = content
             .cloned()
             .unwrap_or_else(|| Value::String(String::new()));
@@ -1912,7 +1914,7 @@ impl Orchestrator {
         args: &Value,
         result: &ToolResultPayload,
     ) {
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
             args.clone()
         } else {
@@ -1945,7 +1947,7 @@ impl Orchestrator {
         if entries.is_empty() {
             return;
         }
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = Local::now().to_rfc3339();
         for mut entry in entries {
             if let Value::Object(ref mut map) = entry {
                 map.entry("tool".to_string())
@@ -3328,7 +3330,8 @@ impl Orchestrator {
             if ts <= 0.0 {
                 return String::new();
             }
-            Utc.timestamp_opt(ts as i64, 0)
+            Local
+                .timestamp_opt(ts as i64, 0)
                 .single()
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_default()

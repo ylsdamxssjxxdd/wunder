@@ -1,12 +1,25 @@
 ﻿<template>
-  <div v-if="visible" class="message-thinking">
-    <span class="message-thinking-label">思考</span>
-    <div ref="marqueeRef" class="message-thinking-marquee">
-      <span class="message-thinking-track">
-        {{ displayText }}
-      </span>
+  <el-tooltip
+    v-if="visible"
+    :show-after="160"
+    :disabled="!fullText"
+    :teleported="true"
+    placement="bottom-start"
+    popper-class="thinking-tooltip-popper"
+    :enterable="true"
+  >
+    <template #content>
+      <div class="thinking-tooltip">{{ fullText }}</div>
+    </template>
+    <div class="message-thinking">
+      <span class="message-thinking-label">思考</span>
+      <div ref="marqueeRef" class="message-thinking-marquee">
+        <span class="message-thinking-track">
+          {{ displayText }}
+        </span>
+      </div>
     </div>
-  </div>
+  </el-tooltip>
 </template>
 
 <script setup>
@@ -54,6 +67,8 @@ const displayText = computed(() => {
   const normalized = String(props.content || '').replace(/\s+/g, ' ').trim();
   return stripTrailingTimestamp(normalized);
 });
+
+const fullText = computed(() => stripTrailingTimestamp(String(props.content || '')));
 
 const visible = computed(() => Boolean(displayText.value));
 

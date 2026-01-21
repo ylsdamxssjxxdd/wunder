@@ -10,7 +10,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
-use chrono::{DateTime, Utc};
+use chrono::{Local, TimeZone};
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -1434,7 +1434,7 @@ fn build_status(
     }
     let ts = timestamp
         .map(|value| value.to_string())
-        .unwrap_or_else(utc_now);
+        .unwrap_or_else(local_now);
     payload.insert("timestamp".to_string(), Value::String(ts));
     Value::Object(payload)
 }
@@ -1570,7 +1570,7 @@ fn build_status_from_record(record: &Value, session_id: &str) -> Value {
             .and_then(Value::as_f64)
             .and_then(|value| format_timestamp(value))
     };
-    let timestamp = timestamp.unwrap_or_else(utc_now);
+    let timestamp = timestamp.unwrap_or_else(local_now);
     let message_text = if summary.trim().is_empty() {
         i18n::t("monitor.summary.received")
     } else {
@@ -1644,11 +1644,14 @@ fn format_timestamp(value: f64) -> Option<String> {
     }
     let secs = value.floor() as i64;
     let nanos = ((value - secs as f64) * 1_000_000_000.0) as u32;
-    DateTime::<Utc>::from_timestamp(secs, nanos).map(|dt| dt.to_rfc3339())
+    Local
+        .timestamp_opt(secs, nanos)
+        .single()
+        .map(|dt| dt.to_rfc3339())
 }
 
-fn utc_now() -> String {
-    Utc::now().to_rfc3339()
+fn local_now() -> String {
+    Local::now().to_rfc3339()
 }
 fn resolve_user_id(params: &Value) -> String {
     for key in ["userId", "user_id", "tenant"] {

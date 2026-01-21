@@ -8,7 +8,7 @@
       <button
         class="workflow-plan-btn"
         type="button"
-        :class="{ 'is-active': planDialogVisible || hasPlan }"
+        :class="{ 'is-active': planDialogVisible }"
         title="计划看板"
         aria-label="计划看板"
         @click.stop="openPlanDialog"

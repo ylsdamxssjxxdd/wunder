@@ -26,7 +26,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{
     routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
 };
-use chrono::{TimeZone, Utc};
+use chrono::{Local, TimeZone, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -2570,7 +2570,7 @@ fn format_ts(ts: f64) -> String {
     }
     let secs = ts.trunc() as i64;
     let nanos = ((ts.fract()) * 1_000_000_000.0) as u32;
-    match Utc.timestamp_opt(secs, nanos).single() {
+    match Local.timestamp_opt(secs, nanos).single() {
         Some(dt) => dt.to_rfc3339(),
         None => String::new(),
     }

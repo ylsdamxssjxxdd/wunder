@@ -3,7 +3,7 @@ use crate::i18n;
 use crate::path_utils::is_within_root;
 use crate::storage::StorageBackend;
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -775,7 +775,7 @@ impl WorkspaceManager {
             "role": "system",
             "content": content,
             "session_id": session_id,
-            "timestamp": Utc::now().to_rfc3339(),
+            "timestamp": Local::now().to_rfc3339(),
             "meta": {
                 "type": "system_prompt",
                 "language": language.unwrap_or("").trim(),

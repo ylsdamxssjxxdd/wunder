@@ -16,7 +16,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -759,11 +759,8 @@ fn map_history_message(item: Value) -> Option<Value> {
             return None;
         }
     }
-    let created_at = item
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let created_at_raw = item.get("timestamp").and_then(Value::as_str).unwrap_or("");
+    let created_at = format_ts_text(created_at_raw);
     let mut message = json!({
         "role": role,
         "content": content,
@@ -1048,8 +1045,19 @@ fn build_session_title(content: &str) -> Option<String> {
 fn format_ts(ts: f64) -> String {
     let millis = (ts * 1000.0) as i64;
     DateTime::<Utc>::from_timestamp_millis(millis)
-        .map(|dt| dt.to_rfc3339())
+        .map(|dt| dt.with_timezone(&Local).to_rfc3339())
         .unwrap_or_default()
+}
+
+fn format_ts_text(value: &str) -> String {
+    let text = value.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+        return parsed.with_timezone(&Local).to_rfc3339();
+    }
+    text.to_string()
 }
 
 fn collect_session_event_rounds(record: &Value) -> Vec<Value> {

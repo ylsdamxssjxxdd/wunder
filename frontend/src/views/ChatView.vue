@@ -130,7 +130,14 @@
               :key="index"
               :class="['message', message.role === 'user' ? 'from-user' : 'from-ai']"
             >
-              <div class="avatar" :class="message.role === 'user' ? 'user-avatar' : 'ai-avatar'">
+              <div
+                class="avatar"
+                :class="[
+                  message.role === 'user' ? 'user-avatar' : 'ai-avatar',
+                  { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
+                ]"
+                :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
+              >
                 {{ message.role === 'user' ? '你' : 'AI' }}
               </div>
               <div class="message-content">
@@ -673,23 +680,53 @@ const closePromptPreview = () => {
   promptPreviewVisible.value = false;
 };
 
-const formatTime = (value) => {
-  if (!value) return '';
-  let text = '';
-  if (typeof value === 'string') {
-    text = value.trim();
-  } else if (value instanceof Date) {
-    text = value.toISOString();
-  } else {
-    text = String(value);
+const parseTimeValue = (value) => {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
   }
-  if (!text) return '';
-  const normalized = text.replace('T', ' ');
-  const fullMatch = normalized.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
-  if (fullMatch) return fullMatch[0];
-  const shortMatch = normalized.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
-  if (shortMatch) return `${shortMatch[0]}:00`;
-  return normalized;
+  if (typeof value === 'number') {
+    const millis = value < 1e12 ? value * 1000 : value;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return null;
+    const millis = numeric < 1e12 ? numeric * 1000 : numeric;
+    const date = new Date(millis);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/
+  );
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const hour = Number(match[4] || 0);
+  const minute = Number(match[5] || 0);
+  const second = Number(match[6] || 0);
+  const date = new Date(year, month, day, hour, minute, second);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatTime = (value) => {
+  const parsed = parseTimeValue(value);
+  if (!parsed) {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(
+    parsed.getHours()
+  )}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
 };
 
 const formatTitle = (title) => {

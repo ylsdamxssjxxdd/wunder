@@ -9,6 +9,7 @@
   --light-panel: #ffffff;
   --light-border: #e5e7eb;
   --light-text: #1f2937;
+  --scrollbar-size: 6px;
 }
 
 * {
@@ -21,8 +22,8 @@ body {
 }
 
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track {
@@ -36,6 +37,45 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-user-theme='dark'],
+:root[data-user-theme='light'],
+.theme-dark,
+.theme-light {
+  scrollbar-width: thin;
+}
+
+:root[data-user-theme='light'] {
+  scrollbar-color: rgba(15, 23, 42, 0.35) transparent;
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.theme-light {
+  scrollbar-color: rgba(15, 23, 42, 0.35) transparent;
+}
+
+.theme-light ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.45);
 }
 
 .theme-dark {
@@ -679,6 +719,8 @@ body {
   --chat-muted: #b3bccb;
   --chat-primary: #6ad9ff;
   --chat-accent: #b4a9ff;
+  --chat-primary-rgb: 106, 217, 255;
+  --chat-accent-rgb: 180, 169, 255;
   --code-bg: rgba(15, 23, 42, 0.55);
   --code-header: rgba(15, 23, 42, 0.7);
   --code-border: rgba(77, 216, 255, 0.22);
@@ -1833,6 +1875,68 @@ body {
   color: #0a0d19;
 }
 
+.chat-shell .ai-avatar-working {
+  position: relative;
+  overflow: visible;
+  transform-origin: center;
+  animation: ai-avatar-breathe 1.6s ease-in-out infinite;
+}
+
+.chat-shell .ai-avatar-working::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 16px;
+  border: 1px solid rgba(var(--chat-primary-rgb), 0.4);
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--chat-primary-rgb), 0.22),
+    rgba(var(--chat-accent-rgb), 0.08) 55%,
+    transparent 70%
+  );
+  opacity: 0.12;
+  transform: scale(0.92);
+  animation: ai-avatar-halo 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes ai-avatar-breathe {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.06);
+    filter: brightness(1.08);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes ai-avatar-halo {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.12;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.32;
+  }
+  100% {
+    transform: scale(0.92);
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .ai-avatar-working,
+  .chat-shell .ai-avatar-working::before {
+    animation: none;
+  }
+}
+
 .chat-shell .message-content {
   flex: 1;
   display: flex;
@@ -1958,6 +2062,45 @@ body {
   color: var(--chat-muted);
 }
 
+.thinking-tooltip-popper {
+  --el-tooltip-bg-color: rgba(17, 26, 47, 0.96);
+  --el-tooltip-border-color: rgba(106, 217, 255, 0.28);
+  --el-bg-color: var(--el-tooltip-bg-color);
+  --el-border-color: var(--el-tooltip-border-color);
+  background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(21, 33, 60, 0.92));
+  border: 1px solid var(--el-tooltip-border-color);
+  color: #f1f5f9;
+  border-radius: 12px;
+  padding: 0;
+  max-width: min(480px, calc(100vw - 48px));
+  box-shadow: 0 18px 40px rgba(5, 8, 18, 0.35);
+}
+
+.thinking-tooltip {
+  max-height: min(320px, calc(100vh - 160px));
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #f1f5f9;
+}
+
+.thinking-tooltip-popper .el-popper__arrow {
+  display: none;
+}
+
+.thinking-tooltip-popper .el-popper__arrow::before {
+  background: var(--el-tooltip-bg-color);
+  border: 1px solid var(--el-tooltip-border-color);
+}
+
+.thinking-tooltip-popper .el-popper__arrow::after {
+  background: var(--el-tooltip-bg-color);
+  border: 1px solid var(--el-tooltip-border-color);
+}
+
 .chat-shell .prompt-preview-btn {
   width: 30px;
   height: 30px;
@@ -1996,6 +2139,8 @@ body {
 .ability-tooltip-popper {
   --el-tooltip-bg-color: rgba(17, 26, 47, 0.95);
   --el-tooltip-border-color: rgba(106, 217, 255, 0.32);
+  --el-bg-color: var(--el-tooltip-bg-color);
+  --el-border-color: var(--el-tooltip-border-color);
   position: relative;
   background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(21, 33, 60, 0.92));
   border: 1px solid var(--el-tooltip-border-color);
@@ -2016,6 +2161,12 @@ body {
   background: radial-gradient(circle at 15% 10%, rgba(106, 217, 255, 0.18), transparent 45%),
     radial-gradient(circle at 85% 0%, rgba(180, 169, 255, 0.18), transparent 42%);
   pointer-events: none;
+}
+
+.ability-tooltip-popper .el-popper__arrow::before,
+.ability-tooltip-popper .el-popper__arrow::after {
+  background: var(--el-tooltip-bg-color);
+  border: 1px solid var(--el-tooltip-border-color);
 }
 
 .ability-tooltip {
@@ -2529,9 +2680,9 @@ body {
 }
 
 .chat-shell .workflow-plan-btn {
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(109, 213, 255, 0.4);
   background: rgba(15, 23, 42, 0.35);
-  color: var(--chat-muted);
+  color: var(--chat-primary);
   width: 22px;
   height: 22px;
   border-radius: 6px;
@@ -2547,9 +2698,9 @@ body {
 }
 
 .chat-shell .workflow-plan-btn.is-active {
-  color: var(--chat-text);
-  border-color: rgba(109, 213, 255, 0.8);
-  background: rgba(109, 213, 255, 0.18);
+  color: var(--chat-muted);
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(148, 163, 184, 0.18);
 }
 
 .chat-shell .workflow-plan-icon {
@@ -3926,6 +4077,8 @@ body {
   --chat-muted: #64748b;
   --chat-primary: #3b82f6;
   --chat-accent: #7c6cff;
+  --chat-primary-rgb: 59, 130, 246;
+  --chat-accent-rgb: 124, 108, 255;
   --code-bg: rgba(15, 23, 42, 0.06);
   --code-header: rgba(15, 23, 42, 0.08);
   --code-border: rgba(15, 23, 42, 0.16);
@@ -4071,7 +4224,16 @@ body {
 
 :root[data-user-theme='light'] .chat-shell .markdown-body .ai-rich-table {
   background: #ffffff;
-  border-color: rgba(15, 23, 42, 0.12);
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-rich-table table {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-rich-table th,
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-rich-table td {
+  border-color: rgba(15, 23, 42, 0.22);
 }
 
 :root[data-user-theme='light'] .chat-shell .markdown-body .ai-rich-table th {
@@ -4110,6 +4272,23 @@ body {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.12);
   color: var(--chat-text);
+}
+
+:root[data-user-theme='light'] .chat-shell .workflow-plan-btn {
+  color: rgba(59, 130, 246, 0.85);
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+:root[data-user-theme='light'] .chat-shell .workflow-plan-btn:hover {
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+:root[data-user-theme='light'] .chat-shell .workflow-plan-btn.is-active {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.04);
 }
 
 :root[data-user-theme='light'] .chat-shell .workflow-item {
@@ -4410,6 +4589,19 @@ body {
   border-color: var(--el-tooltip-border-color);
   color: #0f172a;
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12), 0 0 16px rgba(59, 130, 246, 0.12);
+}
+
+:root[data-user-theme='light'] .thinking-tooltip-popper {
+  --el-tooltip-bg-color: #ffffff;
+  --el-tooltip-border-color: rgba(15, 23, 42, 0.12);
+  background: linear-gradient(160deg, #ffffff, #f5f7fb);
+  border-color: var(--el-tooltip-border-color);
+  color: #0f172a;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .thinking-tooltip {
+  color: #0f172a;
 }
 
 :root[data-user-theme='light'] .ability-tooltip-popper::before {
