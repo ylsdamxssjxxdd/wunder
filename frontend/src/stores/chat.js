@@ -123,10 +123,39 @@ const isFileChangeTool = (toolName) => {
   return FILE_CHANGE_TOOL_KEYS.has(normalized);
 };
 
-const buildMessage = (role, content) => ({
+const resolveTimestampMs = (value) => {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? null : time;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const millis = value < 1e12 ? value * 1000 : value;
+    return Number.isFinite(millis) ? millis : null;
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const numeric = Number.parseInt(text, 10);
+    if (!Number.isFinite(numeric)) return null;
+    const millis = numeric < 1e12 ? numeric * 1000 : numeric;
+    return Number.isFinite(millis) ? millis : null;
+  }
+  const parsed = new Date(text);
+  const time = parsed.getTime();
+  return Number.isNaN(time) ? null : time;
+};
+
+const resolveTimestampIso = (value) => {
+  const millis = resolveTimestampMs(value);
+  return millis === null ? '' : new Date(millis).toISOString();
+};
+
+const buildMessage = (role, content, createdAt) => ({
   role,
   content,
-  created_at: new Date().toISOString(),
+  created_at: resolveTimestampIso(createdAt) || new Date().toISOString(),
   reasoning: '',
   reasoningStreaming: false,
   plan: null,
@@ -481,21 +510,55 @@ const removeDemoChatSession = (sessionId) => {
   persistDemoChatState(state);
 };
 
-const buildGreetingMessage = () => ({
-  ...buildMessage('assistant', DEFAULT_GREETING),
+const sortSessionsByCreatedAt = (sessions = []) =>
+  (Array.isArray(sessions) ? sessions.slice() : [])
+    .map((session, index) => ({ session, index }))
+    .sort((a, b) => {
+      const aTime = resolveTimestampMs(a.session?.created_at);
+      const bTime = resolveTimestampMs(b.session?.created_at);
+      if (aTime !== null && bTime !== null && aTime !== bTime) {
+        return bTime - aTime;
+      }
+      if (aTime !== null && bTime === null) return -1;
+      if (aTime === null && bTime !== null) return 1;
+      return a.index - b.index;
+    })
+    .map((item) => item.session);
+
+const buildGreetingMessage = (createdAt) => ({
+  ...buildMessage('assistant', DEFAULT_GREETING, createdAt),
   workflowItems: [],
   workflowStreaming: false,
   isGreeting: true
 });
 
-const ensureGreetingMessage = (messages) => {
+const resolveGreetingTimestamp = (messages, createdAt) => {
+  const direct = resolveTimestampIso(createdAt);
+  if (direct) return direct;
+  const safeMessages = Array.isArray(messages) ? messages : [];
+  const candidate = safeMessages.find((message) => message?.created_at)?.created_at;
+  return resolveTimestampIso(candidate);
+};
+
+const ensureGreetingMessage = (messages, options = {}) => {
   const safeMessages = Array.isArray(messages) ? messages : [];
   // 无论历史会话与否，都补一条问候语，保证提示词预览入口稳定可见
-  const hasGreeting = safeMessages.some((message) => message?.isGreeting);
-  if (hasGreeting) {
+  const greetingIndex = safeMessages.findIndex((message) => message?.isGreeting);
+  if (greetingIndex >= 0) {
+    const createdAt = options?.createdAt ?? options?.sessionCreatedAt;
+    if (createdAt) {
+      const greetingAt = resolveGreetingTimestamp(safeMessages, createdAt);
+      if (greetingAt) {
+        const currentAt = resolveTimestampIso(safeMessages[greetingIndex]?.created_at);
+        if (currentAt !== greetingAt) {
+          safeMessages[greetingIndex].created_at = greetingAt;
+        }
+      }
+    }
     return safeMessages;
   }
-  return [buildGreetingMessage(), ...safeMessages];
+  const greetingAt = resolveGreetingTimestamp(safeMessages, options?.createdAt ?? options?.sessionCreatedAt);
+  return [buildGreetingMessage(greetingAt), ...safeMessages];
 };
 
 const safeJsonParse = (raw) => {
@@ -1591,7 +1654,7 @@ export const useChatStore = defineStore('chat', {
     },
     async loadSessions() {
       const { data } = await listSessions();
-      this.sessions = data.data.items || [];
+      this.sessions = sortSessionsByCreatedAt(data.data.items || []);
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },
@@ -1610,7 +1673,7 @@ export const useChatStore = defineStore('chat', {
       const session = data.data;
       this.sessions.unshift(session);
       this.activeSessionId = session.id;
-      this.messages = ensureGreetingMessage([]);
+      this.messages = ensureGreetingMessage([], { createdAt: session.created_at });
       getSessionWorkflowState(session.id, { reset: true });
       persistActiveSession(session.id);
       syncDemoChatCache({
@@ -1636,6 +1699,7 @@ export const useChatStore = defineStore('chat', {
         getSessionEvents(sessionId).catch(() => null)
       ]);
       const data = sessionRes?.data;
+      const sessionCreatedAt = data?.data?.created_at;
       const rounds = eventsRes?.data?.data?.rounds || [];
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
       const rawMessages = attachWorkflowEvents(data?.data?.messages || [], rounds);
@@ -1643,7 +1707,7 @@ export const useChatStore = defineStore('chat', {
         hydrateMessage(message, workflowState)
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
-      this.messages = ensureGreetingMessage(messages);
+      this.messages = ensureGreetingMessage(messages, { createdAt: sessionCreatedAt });
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]
         .reverse()
