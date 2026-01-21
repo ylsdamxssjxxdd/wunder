@@ -15,6 +15,114 @@ import { consumeSseStream } from '@/utils/sse';
 import { loadSharedToolSelection } from '@/utils/toolSelection';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 
+const buildMessageStats = () => ({
+  toolCalls: 0,
+  fileChanges: 0,
+  usage: null,
+  prefill_duration_s: null,
+  decode_duration_s: null
+});
+
+const normalizeStatsCount = (value) => {
+  if (value === null || value === undefined) return 0;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const normalizeDurationValue = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const normalizeUsagePayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  const source = payload;
+  const input = Number.parseInt(
+    source.input_tokens ?? source.prompt_tokens ?? source.input ?? source.prompt ?? 0,
+    10
+  );
+  const output = Number.parseInt(
+    source.output_tokens ?? source.completion_tokens ?? source.output ?? source.completion ?? 0,
+    10
+  );
+  const totalRaw = source.total_tokens ?? source.total ?? null;
+  const totalParsed = totalRaw === null || totalRaw === undefined ? null : Number.parseInt(totalRaw, 10);
+  const hasInput = Number.isFinite(input) && input > 0;
+  const hasOutput = Number.isFinite(output) && output > 0;
+  const total =
+    Number.isFinite(totalParsed) && totalParsed >= 0 ? totalParsed : (hasInput || hasOutput ? input + output : null);
+  if (!hasInput && !hasOutput && total === null) {
+    return null;
+  }
+  return {
+    input: hasInput ? input : 0,
+    output: hasOutput ? output : 0,
+    total: total ?? 0
+  };
+};
+
+const normalizeMessageStats = (stats) => {
+  if (!stats || typeof stats !== 'object') {
+    return null;
+  }
+  return {
+    toolCalls: normalizeStatsCount(stats.toolCalls),
+    fileChanges: normalizeStatsCount(stats.fileChanges),
+    usage: normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage),
+    prefill_duration_s: normalizeDurationValue(
+      stats.prefill_duration_s ?? stats.prefillDurationS ?? stats.prefillDuration
+    ),
+    decode_duration_s: normalizeDurationValue(
+      stats.decode_duration_s ?? stats.decodeDurationS ?? stats.decodeDuration
+    )
+  };
+};
+
+const ensureMessageStats = (message) => {
+  if (!message || message.role !== 'assistant') return null;
+  const normalized = normalizeMessageStats(message.stats);
+  if (normalized) {
+    message.stats = normalized;
+    return normalized;
+  }
+  const fresh = buildMessageStats();
+  message.stats = fresh;
+  return fresh;
+};
+
+const mergeMessageStats = (base, incoming) => {
+  const left = normalizeMessageStats(base);
+  const right = normalizeMessageStats(incoming);
+  if (!left && !right) return null;
+  if (!left) return right;
+  if (!right) return left;
+  return {
+    toolCalls: Math.max(left.toolCalls, right.toolCalls),
+    fileChanges: Math.max(left.fileChanges, right.fileChanges),
+    usage: right.usage || left.usage,
+    prefill_duration_s:
+      right.prefill_duration_s === null || right.prefill_duration_s === undefined
+        ? left.prefill_duration_s
+        : right.prefill_duration_s,
+    decode_duration_s:
+      right.decode_duration_s === null || right.decode_duration_s === undefined
+        ? left.decode_duration_s
+        : right.decode_duration_s
+  };
+};
+
+const FILE_CHANGE_TOOL_NAMES = new Set(['写入文件', '替换文本', '编辑文件', '写文件', 'write_file', 'replace_text', 'edit_file']);
+const FILE_CHANGE_TOOL_KEYS = new Set(['writefile', 'replacetext', 'editfile']);
+
+const isFileChangeTool = (toolName) => {
+  const raw = String(toolName || '').trim();
+  if (!raw) return false;
+  if (FILE_CHANGE_TOOL_NAMES.has(raw)) return true;
+  const normalized = raw.toLowerCase().replace(/[\s_-]/g, '');
+  return FILE_CHANGE_TOOL_KEYS.has(normalized);
+};
+
 const buildMessage = (role, content) => ({
   role,
   content,
@@ -22,7 +130,8 @@ const buildMessage = (role, content) => ({
   reasoning: '',
   reasoningStreaming: false,
   plan: null,
-  planVisible: false
+  planVisible: false,
+  stats: role === 'assistant' ? buildMessageStats() : null
 });
 
 const DEFAULT_GREETING = '你好！我是智能体助手，有什么可以帮你的吗？';
@@ -127,6 +236,10 @@ const normalizeSnapshotMessage = (message) => {
     const plan = normalizePlanPayload(message.plan);
     if (plan) {
       base.plan = plan;
+    }
+    const stats = normalizeMessageStats(message.stats);
+    if (stats) {
+      base.stats = stats;
     }
     base.planVisible = shouldAutoShowPlan(plan, message);
   }
@@ -269,6 +382,7 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
   const targetRound = normalizeStreamRound(target.stream_round);
   const snapshotPlan = normalizePlanPayload(snapshotLastAssistant.plan);
   const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
+  const snapshotStats = normalizeMessageStats(snapshotLastAssistant.stats);
   const shouldMergeContent =
     snapshotContent.length > serverContent.length ||
     (snapshotLastAssistant.stream_incomplete && serverContent.length === 0);
@@ -317,6 +431,9 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
       target.planVisible =
         Boolean(target.planVisible) || shouldAutoShowPlan(snapshotPlan, snapshotLastAssistant);
     }
+  }
+  if (snapshotStats) {
+    target.stats = mergeMessageStats(target.stats, snapshotStats);
   }
   return messages;
 };
@@ -829,6 +946,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   assistantMessage.plan = normalizedPlan;
   assistantMessage.planVisible =
     Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
+  const stats = ensureMessageStats(assistantMessage);
   let outputContent = assistantMessage.content || '';
   let outputReasoning = assistantMessage.reasoning || '';
   const existingOutput = assistantMessage.workflowItems?.find((item) => item.title === '模型输出');
@@ -847,6 +965,30 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
       return title.replace('调用工具：', '').trim();
     }
     return '';
+  };
+
+  const registerToolStats = (toolName) => {
+    if (!stats) return;
+    stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
+    if (isFileChangeTool(toolName)) {
+      stats.fileChanges = normalizeStatsCount(stats.fileChanges) + 1;
+    }
+  };
+
+  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration) => {
+    if (!stats) return;
+    const normalizedUsage = normalizeUsagePayload(usagePayload);
+    if (normalizedUsage) {
+      stats.usage = normalizedUsage;
+    }
+    const prefill = normalizeDurationValue(prefillDuration);
+    if (prefill !== null) {
+      stats.prefill_duration_s = prefill;
+    }
+    const decode = normalizeDurationValue(decodeDuration);
+    if (decode !== null) {
+      stats.decode_duration_s = decode;
+    }
   };
 
   const registerToolItem = (toolName, itemId) => {
@@ -1125,6 +1267,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id);
+        registerToolStats(toolName);
         if (lastRound !== null) {
           // 工具调用轮次的模型输出不展示在正式回答区
           blockedRounds.add(lastRound);
@@ -1250,6 +1393,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
       }
       case 'llm_output': {
         const round = resolveRound(payload, data);
+        updateUsageStats(
+          data?.usage ?? payload?.usage ?? data,
+          data?.prefill_duration_s ?? payload?.prefill_duration_s,
+          data?.decode_duration_s ?? payload?.decode_duration_s
+        );
         if (round !== null) {
           lastRound = round;
           assistantMessage.stream_round = round;
@@ -1312,6 +1460,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
           status: 'completed',
           detail: buildOutputDetail()
         });
+        break;
+      }
+      case 'token_usage': {
+        updateUsageStats(
+          data?.usage ?? payload?.usage ?? data,
+          data?.prefill_duration_s ?? payload?.prefill_duration_s,
+          data?.decode_duration_s ?? payload?.decode_duration_s
+        );
         break;
       }
       case 'final': {
@@ -1393,7 +1549,8 @@ const hydrateMessage = (message, workflowState) => {
     workflowStreaming: normalizeFlag(message?.workflowStreaming),
     stream_incomplete: normalizeFlag(message?.stream_incomplete),
     reasoning: message?.reasoning || '',
-    reasoningStreaming: normalizeFlag(message?.reasoningStreaming)
+    reasoningStreaming: normalizeFlag(message?.reasoningStreaming),
+    stats: normalizeMessageStats(message.stats) || buildMessageStats()
   };
   const plan = normalizePlanPayload(message.plan);
   hydrated.plan = plan;

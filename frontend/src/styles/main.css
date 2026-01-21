@@ -2345,6 +2345,30 @@ body {
   white-space: pre-wrap;
 }
 
+.chat-shell .message-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--chat-muted);
+}
+
+.chat-shell .message-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-shell .message-stat-label {
+  color: var(--chat-muted);
+}
+
+.chat-shell .message-stat-value {
+  color: var(--chat-text);
+}
+
 .chat-shell .message-text .markdown-body {
   white-space: normal;
   line-height: 1.7;

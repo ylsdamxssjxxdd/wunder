@@ -124,7 +124,7 @@
         </aside>
 
         <section class="chat-panel">
-          <div class="messages-container" @click="handleMessageClick">
+          <div ref="messagesContainerRef" class="messages-container" @click="handleMessageClick">
             <div
               v-for="(message, index) in chatStore.messages"
               :key="index"
@@ -304,6 +304,16 @@
                   <template v-else>
                     {{ message.content }}
                   </template>
+                  <div v-if="shouldShowMessageStats(message)" class="message-stats">
+                    <span
+                      v-for="item in buildMessageStatsEntries(message)"
+                      :key="item.label"
+                      class="message-stat"
+                    >
+                      <span class="message-stat-label">{{ item.label }}：</span>
+                      <span class="message-stat-value">{{ item.value }}</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -390,6 +400,7 @@ const sharedToolsVisible = ref(false);
 const extraPromptVisible = ref(false);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
+const messagesContainerRef = ref(null);
 // 系统提示词预览状态
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
@@ -453,6 +464,8 @@ const historyPaddingTop = computed(() =>
 const historyPaddingBottom = computed(() =>
   historyVirtual.value ? Math.max(0, (historyTotal.value - historyEndIndex.value) * HISTORY_ROW_HEIGHT) : 0
 );
+let pendingAutoScroll = false;
+let pendingAutoScrollCount = 0;
 
 const init = async () => {
   if (demoMode.value || !authStore.user) {
@@ -534,7 +547,15 @@ const renderAssistantMarkdown = (message) => {
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];
   if (!content && payloadAttachments.length === 0) return;
-  await chatStore.sendMessage(content, { attachments: payloadAttachments });
+  pendingAutoScroll = true;
+  pendingAutoScrollCount = chatStore.messages.length;
+  try {
+    await chatStore.sendMessage(content, { attachments: payloadAttachments });
+  } catch (error) {
+    pendingAutoScroll = false;
+    pendingAutoScrollCount = 0;
+    throw error;
+  }
 };
 
 const handleStop = async () => {
@@ -735,6 +756,89 @@ const formatTitle = (title) => {
   return text.length > 20 ? `${text.slice(0, 20)}...` : text;
 };
 
+const formatDuration = (seconds) => {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return '-';
+  if (value < 1) {
+    return `${Math.max(1, Math.round(value * 1000))} ms`;
+  }
+  return `${value.toFixed(2)} s`;
+};
+
+const formatCount = (value) => {
+  if (value === null || value === undefined) return '-';
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return '-';
+  return String(parsed);
+};
+
+const formatSpeed = (value) => {
+  if (value === null || value === undefined) return '-';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '-';
+  return `${parsed.toFixed(2)} token/s`;
+};
+
+const normalizeDurationSeconds = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const resolveDurationSeconds = (stats) => {
+  const prefill = normalizeDurationSeconds(stats?.prefill_duration_s);
+  const decode = normalizeDurationSeconds(stats?.decode_duration_s);
+  if (prefill === null && decode === null) return null;
+  return (prefill ?? 0) + (decode ?? 0);
+};
+
+const resolveTokenSpeed = (stats, durationSeconds) => {
+  const outputTokens = Number(stats?.usage?.output);
+  const decode = normalizeDurationSeconds(stats?.decode_duration_s);
+  if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
+    return outputTokens / decode;
+  }
+  const totalTokens = Number(stats?.usage?.total);
+  if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {
+    return totalTokens / durationSeconds;
+  }
+  return null;
+};
+
+const buildMessageStatsEntries = (message) => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return [];
+  if (isAssistantStreaming(message)) return [];
+  const stats = message.stats || null;
+  if (!stats) return [];
+  const durationSeconds = resolveDurationSeconds(stats);
+  const speed = resolveTokenSpeed(stats, durationSeconds);
+  const hasUsage = Number.isFinite(Number(stats?.usage?.total)) && Number(stats.usage.total) > 0;
+  const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
+  const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
+  const hasFileChanges = Number.isFinite(Number(stats?.fileChanges)) && Number(stats.fileChanges) > 0;
+  if (!hasUsage && !hasDuration && !hasToolCalls && !hasFileChanges) {
+    return [];
+  }
+  const entries = [
+    { label: '耗时', value: formatDuration(durationSeconds) },
+    { label: '速度', value: formatSpeed(speed) },
+    { label: 'token占用', value: formatCount(stats?.usage?.total) },
+    { label: '工具调用次数', value: formatCount(stats?.toolCalls) },
+    { label: '文件修改次数', value: formatCount(stats?.fileChanges) }
+  ];
+  return entries;
+};
+
+const shouldShowMessageStats = (message) => buildMessageStatsEntries(message).length > 0;
+
+const scrollMessagesToBottom = async () => {
+  await nextTick();
+  const container = messagesContainerRef.value;
+  if (!container) return;
+  container.scrollTop = container.scrollHeight;
+};
+
 onMounted(async () => {
   await init();
   loadToolSummary();
@@ -753,6 +857,17 @@ watch(
     if (!value && oldValue) {
       draftKey.value += 1;
     }
+  }
+);
+
+watch(
+  () => chatStore.messages.length,
+  (value) => {
+    if (!pendingAutoScroll) return;
+    if (value <= pendingAutoScrollCount) return;
+    pendingAutoScroll = false;
+    pendingAutoScrollCount = value;
+    scrollMessagesToBottom();
   }
 );
 
