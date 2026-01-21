@@ -5,12 +5,12 @@ const THEME_STORAGE_KEY = 'wille-user-theme';
 // 支持的主题值，避免非法值污染配置
 const THEME_MODES = ['dark', 'light'];
 
-// 统一校验并归一化主题值，非法值回落为暗色
+// 统一校验并归一化主题值，非法值回落为浅色
 const normalizeThemeMode = (value) => {
   if (THEME_MODES.includes(value)) {
     return value;
   }
-  return 'dark';
+  return 'light';
 };
 
 // 从本地缓存读取主题，保证刷新后保持用户偏好

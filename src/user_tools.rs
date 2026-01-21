@@ -817,7 +817,7 @@ impl UserToolManager {
         let mut scan_config = config.clone();
         scan_config.skills.paths = vec![source.root.to_string_lossy().to_string()];
         scan_config.skills.enabled = source.names.clone();
-        let registry = load_skills(&scan_config, true, true);
+        let registry = load_skills(&scan_config, true, true, false);
         cache.registry_cache.insert(
             key.clone(),
             SkillRegistryCacheEntry {
@@ -852,7 +852,7 @@ impl UserToolManager {
         let mut scan_config = config.clone();
         scan_config.skills.paths = vec![root.to_string_lossy().to_string()];
         scan_config.skills.enabled = names.iter().cloned().collect();
-        let registry = load_skills(&scan_config, false, true);
+        let registry = load_skills(&scan_config, false, true, false);
         let specs = registry.list_specs();
         cache.spec_cache.insert(
             key.clone(),

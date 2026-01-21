@@ -842,7 +842,7 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: HashSet<String> = config.skills.enabled.iter().cloned().collect();
     let skills = registry
         .list_specs()
@@ -884,7 +884,7 @@ async fn admin_skills_content(
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths;
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let spec = registry
         .get(name)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;
@@ -969,7 +969,7 @@ async fn admin_skills_update(
     let mut scan_config = updated.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: HashSet<String> = updated.skills.enabled.iter().cloned().collect();
     let skills = registry
         .list_specs()
@@ -1014,7 +1014,7 @@ async fn admin_skills_delete(
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths;
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let spec = registry
         .get(name)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;

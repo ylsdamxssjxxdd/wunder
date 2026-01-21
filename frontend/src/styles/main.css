@@ -1472,6 +1472,12 @@ body {
   color: var(--chat-text);
 }
 
+.workspace-dialog .el-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .workspace-dialog .workspace-btn {
   padding: 6px 12px;
   border-radius: 10px;
@@ -3216,6 +3222,9 @@ body {
 
 .user-tools-dialog .el-dialog__footer {
   flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 12px 20px 16px;
 }
 

@@ -467,7 +467,7 @@ fn collect_user_skill_tools<F>(
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     for spec in registry.list_specs() {
         if shared_only {
             if !shared_set.contains(&spec.name) {

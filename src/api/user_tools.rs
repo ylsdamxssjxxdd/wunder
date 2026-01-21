@@ -158,7 +158,7 @@ async fn user_skills_get(
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: std::collections::HashSet<String> =
         payload.skills.enabled.iter().cloned().collect();
     let shared_set: std::collections::HashSet<String> =
@@ -244,7 +244,7 @@ async fn user_skills_update(
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: std::collections::HashSet<String> =
         updated.skills.enabled.iter().cloned().collect();
     let shared_set: std::collections::HashSet<String> =
@@ -291,7 +291,7 @@ async fn user_skills_content(
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false);
+    let registry = load_skills(&scan_config, false, false, false);
     let spec = registry
         .get(name)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;

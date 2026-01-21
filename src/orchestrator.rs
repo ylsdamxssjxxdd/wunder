@@ -1286,7 +1286,7 @@ impl Orchestrator {
             let (_llm_name, llm_config) =
                 self.resolve_llm_config(&config, prepared.model_name.as_deref())?;
             let skills = if prepared.config_overrides.is_some() {
-                Arc::new(RwLock::new(load_skills(&config, true, true)))
+                Arc::new(RwLock::new(load_skills(&config, true, true, true)))
             } else {
                 self.skills.clone()
             };

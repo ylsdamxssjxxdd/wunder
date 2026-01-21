@@ -125,7 +125,7 @@ const normalizeSnapshotMessage = (message) => {
     const plan = normalizePlanPayload(message.plan);
     if (plan) {
       base.plan = plan;
-      base.planVisible = Boolean(message.planVisible) || hasPlanSteps(plan);
+      base.planVisible = Boolean(message.planVisible) || shouldAutoShowPlan(plan, message);
     }
   }
   if (message.isGreeting) {
@@ -312,7 +312,10 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
     }
     if (snapshotPlan) {
       target.plan = snapshotPlan;
-      target.planVisible = true;
+      target.planVisible =
+        Boolean(target.planVisible) ||
+        Boolean(snapshotLastAssistant.planVisible) ||
+        shouldAutoShowPlan(snapshotPlan, snapshotLastAssistant);
     }
   }
   return messages;
@@ -447,13 +450,19 @@ const normalizePlanPayload = (payload) => {
 };
 
 const hasPlanSteps = (plan) => Array.isArray(plan?.steps) && plan.steps.length > 0;
+const hasPlanInProgress = (plan) =>
+  Array.isArray(plan?.steps) && plan.steps.some((item) => item.status === 'in_progress');
+const isMessageRunning = (message) =>
+  Boolean(message?.stream_incomplete || message?.workflowStreaming || message?.reasoningStreaming);
+const shouldAutoShowPlan = (plan, message) => hasPlanInProgress(plan) || isMessageRunning(message);
 
 const applyPlanUpdate = (assistantMessage, payload) => {
   if (!assistantMessage || assistantMessage.role !== 'assistant') return null;
   const normalized = normalizePlanPayload(payload);
   if (!normalized) return null;
   assistantMessage.plan = normalized;
-  assistantMessage.planVisible = true;
+  assistantMessage.planVisible =
+    Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalized, assistantMessage);
   return normalized;
 };
 
@@ -820,9 +829,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   assistantMessage.reasoningStreaming = Boolean(assistantMessage.reasoningStreaming);
   const normalizedPlan = normalizePlanPayload(assistantMessage.plan);
   assistantMessage.plan = normalizedPlan;
-  if (typeof assistantMessage.planVisible !== 'boolean') {
-    assistantMessage.planVisible = hasPlanSteps(normalizedPlan);
-  }
+  assistantMessage.planVisible =
+    Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
   let outputContent = assistantMessage.content || '';
   let outputReasoning = assistantMessage.reasoning || '';
   const existingOutput = assistantMessage.workflowItems?.find((item) => item.title === '模型输出');
@@ -1390,7 +1398,7 @@ const hydrateMessage = (message, workflowState) => {
   };
   const plan = normalizePlanPayload(message.plan);
   hydrated.plan = plan;
-  hydrated.planVisible = Boolean(message.planVisible) || hasPlanSteps(plan);
+  hydrated.planVisible = Boolean(message.planVisible) || shouldAutoShowPlan(plan, message);
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
     const processor = createWorkflowProcessor(hydrated, workflowState, null);
     message.workflow_events.forEach((event) => {

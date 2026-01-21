@@ -51,7 +51,7 @@ impl AppState {
             config.workspace.root.clone(),
         ));
         let a2a_store = Arc::new(A2aStore::new());
-        let skills_registry = load_skills(&config, true, true);
+        let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
         let user_tool_store =
             Arc::new(UserToolStore::new(&config).context("用户工具目录初始化失败")?);
@@ -100,7 +100,7 @@ impl AppState {
 
     /// 重新加载技能注册表，供管理端更新后调用。
     pub async fn reload_skills(&self, config: &Config) {
-        let registry = load_skills(config, true, true);
+        let registry = load_skills(config, true, true, true);
         let mut guard = self.skills.write().await;
         *guard = registry;
     }
