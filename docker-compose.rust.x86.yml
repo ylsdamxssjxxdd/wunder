@@ -104,6 +104,7 @@ services:
     ports:
       - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
     environment:
+      - TZ=Asia/Shanghai
       - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
       - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
@@ -117,6 +118,8 @@ services:
   #     - seccomp:unconfined
   #   platform: linux/amd64
   #   container_name: wunder-nginx
+  #   environment:
+  #     - TZ=Asia/Shanghai
   #   depends_on:
   #     - wunder_rust
   #   restart: always
