@@ -170,7 +170,7 @@ const normalizeLlmConfig = (raw) => ({
   temperature:
     typeof raw?.temperature === "number" && !Number.isNaN(raw.temperature) ? raw.temperature : 0.7,
   timeout_s:
-    typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 60,
+    typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 120,
   retry: typeof raw?.retry === "number" && !Number.isNaN(raw.retry) ? raw.retry : 1,
   max_rounds:
     typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds) ? raw.max_rounds : 10,
@@ -237,7 +237,7 @@ const clearLlmForm = () => {
   elements.llmBaseUrl.value = "";
   elements.llmApiKey.value = "";
   elements.llmTemperature.value = formatFloatForInput(0.7, 0.7);
-  elements.llmTimeout.value = 60;
+  elements.llmTimeout.value = 120;
   elements.llmRetry.value = 1;
   elements.llmMaxRounds.value = 10;
   elements.llmMaxContext.value = "";
@@ -407,7 +407,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
     api_key: elements.llmApiKey.value.trim(),
     model: elements.llmModel.value.trim(),
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
-    timeout_s: Number.isFinite(timeout) ? timeout : 60,
+    timeout_s: Number.isFinite(timeout) ? timeout : 120,
     retry: Number.isFinite(retry) ? retry : 1,
     max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 10,
     max_context: Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null,

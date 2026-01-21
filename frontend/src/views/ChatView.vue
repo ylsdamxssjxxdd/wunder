@@ -5,9 +5,8 @@
         <div class="brand">
           <div class="brand-mark">AI</div>
           <div class="brand-meta">
-            <div class="brand-title">智能体对话系统</div>
+            <div class="brand-title">智能体交互系统</div>
             <div class="brand-sub">
-              AI 助手 · <span class="model-tag">通用问答</span>
               <span v-if="demoMode" class="demo-badge">演示模式</span>
             </div>
           </div>
