@@ -620,13 +620,6 @@ impl EventEmitter {
         }
         self.monitor
             .record_event(&self.session_id, event_type, &data);
-        if should_persist_stream_event(event_type) {
-            if event_type == "llm_output_delta" {
-                self.buffer_delta(event_id, &data);
-            } else {
-                self.persist_stream_event(event_id, event_type, data.clone(), timestamp);
-            }
-        }
         let payload = enrich_event_payload(data, Some(&self.session_id), timestamp);
         let event = StreamEvent {
             event: event_type.to_string(),
@@ -640,12 +633,16 @@ impl EventEmitter {
 
     async fn enqueue_event(&self, event: &StreamEvent) {
         if self.closed.load(AtomicOrdering::SeqCst) {
+            self.record_overflow(event).await;
             return;
         }
         if let Some(queue) = &self.queue {
             match queue.try_send(StreamSignal::Event(event.clone())) {
                 Ok(_) => return,
-                Err(mpsc::error::TrySendError::Closed(_)) => return,
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    self.record_overflow(event).await;
+                    return;
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     self.record_overflow(event).await;
                     return;
@@ -655,39 +652,28 @@ impl EventEmitter {
     }
 
     async fn record_overflow(&self, event: &StreamEvent) {
-        let Some(storage) = &self.storage else {
-            return;
-        };
-        if event.event == "llm_output_delta" && self.delta_buffer.is_some() {
+        if self.storage.is_none() {
             return;
         }
         let Some(event_id) = event.id.as_ref().and_then(|text| text.parse::<i64>().ok()) else {
             return;
         };
-        let payload = json!({
-            "event": event.event,
-            "data": event.data,
-            "timestamp": event
-                .timestamp
-                .map(|ts| ts.with_timezone(&Local).to_rfc3339()),
-        });
-        let session_id = self.session_id.clone();
-        let user_id = self.user_id.clone();
-        let storage = storage.clone();
-        let cleanup_cutoff = self.cleanup_cutoff();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || {
-                let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
-                if let Some(cutoff) = cleanup_cutoff {
-                    let _ = storage.delete_stream_events_before(cutoff);
-                }
-            });
-        } else {
-            let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
-            if let Some(cutoff) = cleanup_cutoff {
-                let _ = storage.delete_stream_events_before(cutoff);
+        if !should_persist_stream_event(&event.event) {
+            return;
+        }
+        let raw_data = event
+            .data
+            .get("data")
+            .cloned()
+            .unwrap_or_else(|| event.data.clone());
+        let timestamp = event.timestamp.unwrap_or_else(Utc::now);
+        if event.event == "llm_output_delta" {
+            if self.delta_buffer.is_some() {
+                self.buffer_delta(event_id, &raw_data);
+                return;
             }
         }
+        self.persist_stream_event(event_id, &event.event, raw_data, timestamp);
     }
 
     fn cleanup_cutoff(&self) -> Option<f64> {
