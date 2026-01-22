@@ -421,7 +421,15 @@ impl StorageBackend for SqliteStorage {
             .get("data")
             .and_then(|value| serde_json::to_string(value).ok());
         let timestamp = Self::parse_string(payload.get("timestamp"));
-        let payload_text = Self::json_to_string(payload);
+        let omit_payload = payload
+            .get("__omit_payload")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let payload_text = if omit_payload {
+            "{}".to_string()
+        } else {
+            Self::json_to_string(payload)
+        };
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(

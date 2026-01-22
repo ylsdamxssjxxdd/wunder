@@ -1,6 +1,6 @@
 // 内置工具定义与执行入口，保持工具名称与协议一致。
 use crate::a2a_store::{A2aStore, A2aTask};
-use crate::config::{A2aServiceConfig, Config, KnowledgeBaseConfig};
+use crate::config::{is_debug_log_level, A2aServiceConfig, Config, KnowledgeBaseConfig};
 use crate::i18n;
 use crate::knowledge;
 use crate::lsp::{LspDiagnostic, LspManager};
@@ -836,7 +836,13 @@ async fn execute_user_knowledge(
     };
     let llm_config = knowledge::resolve_llm_config(context.config, None);
     let docs = if let Some(emitter) = context.event_emitter.as_ref() {
-        let log_request = |payload: Value| {
+        let include_payload = is_debug_log_level(&context.config.observability.log_level);
+        let log_request = |mut payload: Value| {
+            if !include_payload {
+                if let Value::Object(ref mut map) = payload {
+                    map.remove("payload");
+                }
+            }
             emitter.emit("knowledge_request", payload);
         };
         knowledge::query_knowledge_documents(
@@ -885,7 +891,13 @@ async fn execute_knowledge_tool(
         knowledge::resolve_knowledge_root(base, false).map_err(|err| anyhow!(err.to_string()))?;
     let llm_config = knowledge::resolve_llm_config(context.config, None);
     let docs = if let Some(emitter) = context.event_emitter.as_ref() {
-        let log_request = |payload: Value| {
+        let include_payload = is_debug_log_level(&context.config.observability.log_level);
+        let log_request = |mut payload: Value| {
+            if !include_payload {
+                if let Value::Object(ref mut map) = payload {
+                    map.remove("payload");
+                }
+            }
             emitter.emit("knowledge_request", payload);
         };
         knowledge::query_knowledge_documents(

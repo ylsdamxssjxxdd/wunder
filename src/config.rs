@@ -397,6 +397,11 @@ impl Config {
     }
 }
 
+pub fn is_debug_log_level(raw: &str) -> bool {
+    let level = raw.trim().to_ascii_lowercase();
+    matches!(level.as_str(), "debug" | "trace")
+}
+
 fn deserialize_u16_from_any<'de, D>(deserializer: D) -> Result<u16, D::Error>
 where
     D: Deserializer<'de>,

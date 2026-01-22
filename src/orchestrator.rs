@@ -1,6 +1,6 @@
 // 调度引擎：负责会话锁、LLM 调用、工具执行、历史压缩与 SSE 事件流。
 use crate::a2a_store::A2aStore;
-use crate::config::{Config, LlmModelConfig};
+use crate::config::{is_debug_log_level, Config, LlmModelConfig};
 use crate::config_store::ConfigStore;
 use crate::history::HistoryManager;
 use crate::i18n;
@@ -920,8 +920,9 @@ impl Orchestrator {
         }
         if let Some(task) = self.find_memory_task(cleaned).await {
             let mut detail = self.format_memory_task(&task, now_ts());
+            let log_payload = self.log_payload_enabled().await;
             let mut request_payload = task.request_payload.clone();
-            if request_payload.is_none() {
+            if log_payload && request_payload.is_none() {
                 if let Ok(payload) = self.build_memory_summary_request_payload(&task).await {
                     request_payload = Some(payload);
                 }
@@ -1285,6 +1286,7 @@ impl Orchestrator {
                 .await;
 
             let config = self.resolve_config(prepared.config_overrides.as_ref()).await;
+            let log_payload = is_debug_log_level(&config.observability.log_level);
             let (_llm_name, llm_config) =
                 self.resolve_llm_config(&config, prepared.model_name.as_deref())?;
             let skills = if prepared.config_overrides.is_some() {
@@ -1523,7 +1525,16 @@ impl Orchestrator {
                             content
                         };
                         stop_reason = Some("a2ui".to_string());
-                        self.log_a2ui_tool_call(&user_id, &session_id, &name, &args, &uid, &a2ui_messages, &answer);
+                        self.log_a2ui_tool_call(
+                            &user_id,
+                            &session_id,
+                            &name,
+                            &args,
+                            &uid,
+                            &a2ui_messages,
+                            &answer,
+                            log_payload,
+                        );
                         if !answer.trim().is_empty() {
                             self.append_chat(
                                 &user_id,
@@ -1541,7 +1552,7 @@ impl Orchestrator {
                     if name == "最终回复" {
                         answer = self.resolve_final_answer_from_tool(&args);
                         stop_reason = Some("final_tool".to_string());
-                        self.log_final_tool_call(&user_id, &session_id, &name, &args);
+                        self.log_final_tool_call(&user_id, &session_id, &name, &args, log_payload);
                         if !answer.trim().is_empty() {
                             self.append_chat(
                                 &user_id,
@@ -1651,7 +1662,14 @@ impl Orchestrator {
                         tool_call_id.as_deref(),
                     );
 
-                    self.append_tool_log(&user_id, &session_id, &name, &args, &tool_result);
+                    self.append_tool_log(
+                        &user_id,
+                        &session_id,
+                        &name,
+                        &args,
+                        &tool_result,
+                        log_payload,
+                    );
                     self.append_artifact_logs(
                         &user_id,
                         &session_id,
@@ -1666,6 +1684,7 @@ impl Orchestrator {
                             &args,
                             &skills_snapshot,
                             Some(&user_tool_bindings),
+                            log_payload,
                         );
                     }
 
@@ -1913,6 +1932,7 @@ impl Orchestrator {
         tool_name: &str,
         args: &Value,
         result: &ToolResultPayload,
+        include_payload: bool,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
@@ -1929,6 +1949,9 @@ impl Orchestrator {
             "data": result.data,
             "timestamp": timestamp,
         });
+        if !include_payload {
+            payload["__omit_payload"] = Value::Bool(true);
+        }
         if result.sandbox {
             payload["sandbox"] = Value::Bool(true);
         }
@@ -2108,6 +2131,7 @@ impl Orchestrator {
         args: &Value,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
+        include_payload: bool,
     ) {
         let paths = extract_file_paths(args);
         if paths.is_empty() {
@@ -2158,7 +2182,7 @@ impl Orchestrator {
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
         for name in matched {
-            self.append_tool_log(user_id, session_id, &name, args, &result);
+            self.append_tool_log(user_id, session_id, &name, args, &result, include_payload);
         }
     }
 
@@ -2259,7 +2283,14 @@ impl Orchestrator {
         (uid, messages_payload, content)
     }
 
-    fn log_final_tool_call(&self, user_id: &str, session_id: &str, name: &str, args: &Value) {
+    fn log_final_tool_call(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        name: &str,
+        args: &Value,
+        include_payload: bool,
+    ) {
         let content = self.resolve_final_answer_from_tool(args);
         let data = if content.trim().is_empty() {
             json!({})
@@ -2267,7 +2298,7 @@ impl Orchestrator {
             json!({ "content": content })
         };
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result);
+        self.append_tool_log(user_id, session_id, name, args, &result, include_payload);
     }
 
     fn log_a2ui_tool_call(
@@ -2279,6 +2310,7 @@ impl Orchestrator {
         uid: &str,
         messages: &Option<Value>,
         content: &str,
+        include_payload: bool,
     ) {
         let message_count = messages
             .as_ref()
@@ -2298,7 +2330,7 @@ impl Orchestrator {
             }
         }
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result);
+        self.append_tool_log(user_id, session_id, name, args, &result, include_payload);
     }
 
     fn build_chat_messages(&self, messages: &[Value]) -> Vec<ChatMessage> {
@@ -2376,6 +2408,11 @@ impl Orchestrator {
         }
     }
 
+    async fn log_payload_enabled(&self) -> bool {
+        let config = self.config_store.get().await;
+        is_debug_log_level(&config.observability.log_level)
+    }
+
     async fn call_llm(
         &self,
         llm_config: &LlmModelConfig,
@@ -2427,18 +2464,30 @@ impl Orchestrator {
         let will_stream = stream;
 
         if emit_events {
-            let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
-            let payload_chat = self.build_chat_messages(&payload_messages);
-            let payload =
-                client.build_request_payload_with_tools(&payload_chat, will_stream, tools);
-            let request_payload = json!({
-                "provider": effective_config.provider,
-                "model": effective_config.model,
-                "base_url": effective_config.base_url,
-                "round": round_index,
-                "stream": will_stream,
-                "payload": payload,
-            });
+            let include_payload = self.log_payload_enabled().await;
+            let request_payload = if include_payload {
+                let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
+                let payload_chat = self.build_chat_messages(&payload_messages);
+                let payload =
+                    client.build_request_payload_with_tools(&payload_chat, will_stream, tools);
+                json!({
+                    "provider": effective_config.provider,
+                    "model": effective_config.model,
+                    "base_url": effective_config.base_url,
+                    "round": round_index,
+                    "stream": will_stream,
+                    "payload": payload,
+                })
+            } else {
+                json!({
+                    "provider": effective_config.provider,
+                    "model": effective_config.model,
+                    "base_url": effective_config.base_url,
+                    "round": round_index,
+                    "stream": will_stream,
+                    "payload_omitted": true,
+                })
+            };
             emitter.emit("llm_request", request_payload).await;
         }
 
@@ -3531,6 +3580,7 @@ impl Orchestrator {
             return Ok(false);
         }
         let config = self.resolve_config(task.config_overrides.as_ref()).await;
+        let log_payload = is_debug_log_level(&config.observability.log_level);
         let (llm_name, llm_config) =
             self.resolve_llm_config(&config, task.model_name.as_deref())?;
         let mut summary_config = llm_config.clone();
@@ -3543,10 +3593,14 @@ impl Orchestrator {
         let messages = self
             .build_memory_summary_messages(task, &summary_config, &config)
             .await;
-        let payload_messages =
-            self.sanitize_messages_for_log(messages.clone(), task.attachments.as_deref());
-        task.request_payload =
-            Some(self.build_memory_summary_payload(task, &llm_name, payload_messages));
+        if log_payload {
+            let payload_messages =
+                self.sanitize_messages_for_log(messages.clone(), task.attachments.as_deref());
+            task.request_payload =
+                Some(self.build_memory_summary_payload(task, &llm_name, payload_messages));
+        } else {
+            task.request_payload = None;
+        }
 
         let emitter = EventEmitter::new(
             task.session_id.clone(),
@@ -3588,6 +3642,11 @@ impl Orchestrator {
     ) -> Result<Value, OrchestratorError> {
         i18n::with_language(task.language.clone(), async {
             let config = self.resolve_config(task.config_overrides.as_ref()).await;
+            if !is_debug_log_level(&config.observability.log_level) {
+                return Err(OrchestratorError::internal(
+                    "memory payload logging disabled".to_string(),
+                ));
+            }
             let (llm_name, llm_config) =
                 self.resolve_llm_config(&config, task.model_name.as_deref())?;
             let mut summary_config = llm_config.clone();

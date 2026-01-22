@@ -1,5 +1,5 @@
 use crate::a2a_store::A2aStore;
-use crate::config::Config;
+use crate::config::{is_debug_log_level, Config};
 use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
@@ -267,11 +267,12 @@ async fn measure_command_exec(
 }
 
 async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    let include_payload = is_debug_log_level(&context.config.observability.log_level);
     run_concurrent(concurrency, |index| async move {
         let workspace = context.workspace.clone();
         let user_id = context.user_id.clone();
         let session_id = format!("perf_log_{}_{}", context.run_id, index);
-        let payload = json!({
+        let mut payload = json!({
             "tool": "performance_log",
             "session_id": session_id,
             "ok": true,
@@ -280,6 +281,11 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
             "data": { "tag": "performance" },
             "timestamp": Local::now().to_rfc3339(),
         });
+        if !include_payload {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("__omit_payload".to_string(), Value::Bool(true));
+            }
+        }
         let started = Instant::now();
         tokio::task::spawn_blocking(move || workspace.append_tool_log(&user_id, &payload))
             .await
