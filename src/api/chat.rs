@@ -413,6 +413,7 @@ async fn send_message(
         tool_names,
         skip_tool_calls: false,
         stream: payload.stream.unwrap_or(true),
+        debug_payload: false,
         session_id: Some(session_id.clone()),
         model_name: None,
         language: Some(i18n::get_language()),

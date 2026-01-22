@@ -1005,6 +1005,7 @@ async fn run_request(
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,
+        debug_payload: false,
         session_id: Some(session_id.clone()),
         model_name,
         language: None,

@@ -811,6 +811,7 @@ async fn run_case(
         tool_names: ctx.requested_tool_names.clone(),
         skip_tool_calls: false,
         stream: true,
+        debug_payload: false,
         session_id: Some(session_id.to_string()),
         model_name: ctx.model_name.clone(),
         language: Some(ctx.language.clone()),

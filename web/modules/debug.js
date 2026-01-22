@@ -1150,6 +1150,7 @@ const buildPayload = () => {
     question: elements.question.value.trim(),
     session_id: elements.sessionId.value.trim() || null,
     stream: true,
+    debug_payload: true,
   };
   const modelName = String(elements.debugModelName?.value || "").trim();
   if (modelName) {

@@ -200,6 +200,7 @@ impl ServerHandler for WunderMcpServer {
                 tool_names,
                 skip_tool_calls: false,
                 stream: false,
+                debug_payload: false,
                 session_id: None,
                 model_name: None,
                 language: Some(i18n::get_default_language()),

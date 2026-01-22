@@ -596,6 +596,7 @@ impl A2aService {
             tool_names,
             skip_tool_calls: false,
             stream: false,
+            debug_payload: false,
             session_id: Some(session_id.clone()),
             model_name: if model_name.is_empty() {
                 None
@@ -679,6 +680,7 @@ impl A2aService {
             tool_names,
             skip_tool_calls: false,
             stream: true,
+            debug_payload: false,
             session_id: Some(session_id.clone()),
             model_name: if model_name.is_empty() {
                 None

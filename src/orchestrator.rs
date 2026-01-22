@@ -65,6 +65,7 @@ struct PreparedRequest {
     model_name: Option<String>,
     config_overrides: Option<Value>,
     stream: bool,
+    debug_payload: bool,
     attachments: Option<Vec<AttachmentPayload>>,
     language: String,
 }
@@ -982,6 +983,7 @@ impl Orchestrator {
             model_name: request.model_name.clone(),
             config_overrides: request.config_overrides.clone(),
             stream: request.stream,
+            debug_payload: request.debug_payload,
             attachments,
             language,
         })
@@ -1272,7 +1274,8 @@ impl Orchestrator {
                 .await;
 
             let config = self.resolve_config(prepared.config_overrides.as_ref()).await;
-            let log_payload = is_debug_log_level(&config.observability.log_level);
+            let log_payload =
+                is_debug_log_level(&config.observability.log_level) || prepared.debug_payload;
             let (_llm_name, llm_config) =
                 self.resolve_llm_config(&config, prepared.model_name.as_deref())?;
             let skills = if prepared.config_overrides.is_some() {
@@ -1359,12 +1362,13 @@ impl Orchestrator {
                         &config,
                         &llm_config,
                         &user_id,
-                        &session_id,
-                        messages,
-                        &emitter,
-                        &question,
-                    )
-                    .await?;
+                    &session_id,
+                    messages,
+                    &emitter,
+                    &question,
+                    log_payload,
+                )
+                .await?;
                 self.ensure_not_cancelled(&session_id)?;
 
                 last_request_messages = Some(self.sanitize_messages_for_log(
@@ -1395,6 +1399,7 @@ impl Orchestrator {
                         prepared.stream,
                         round,
                         true,
+                        log_payload,
                         tools_payload,
                         None,
                     )
@@ -2408,6 +2413,7 @@ impl Orchestrator {
         stream: bool,
         round_index: i64,
         emit_events: bool,
+        log_payload: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
     ) -> Result<(String, String, TokenUsage, Option<Value>), OrchestratorError> {
@@ -2450,8 +2456,7 @@ impl Orchestrator {
         let will_stream = stream;
 
         if emit_events {
-            let include_payload = self.log_payload_enabled().await;
-            let request_payload = if include_payload {
+            let request_payload = if log_payload {
                 let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
                 let payload_chat = self.build_chat_messages(&payload_messages);
                 let payload =
@@ -2806,6 +2811,7 @@ impl Orchestrator {
         messages: Vec<Value>,
         emitter: &EventEmitter,
         current_question: &str,
+        log_payload: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
         let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
             return Ok(messages);
@@ -2989,21 +2995,27 @@ impl Orchestrator {
         summary_config.max_output = Some(max_output);
         summary_config.max_rounds = Some(1);
 
-        let payload_messages = self.sanitize_messages_for_log(summary_input.clone(), None);
-        let payload = build_llm_client(&summary_config, self.http.clone())
-            .build_request_payload(&self.build_chat_messages(&payload_messages), false);
-        emitter
-            .emit(
-                "llm_request",
-                json!({
-                    "provider": summary_config.provider,
-                    "model": summary_config.model,
-                    "base_url": summary_config.base_url,
-                    "payload": payload,
-                    "purpose": "compaction_summary",
-                }),
-            )
-            .await;
+        let request_payload = if log_payload {
+            let payload_messages = self.sanitize_messages_for_log(summary_input.clone(), None);
+            let payload = build_llm_client(&summary_config, self.http.clone())
+                .build_request_payload(&self.build_chat_messages(&payload_messages), false);
+            json!({
+                "provider": summary_config.provider,
+                "model": summary_config.model,
+                "base_url": summary_config.base_url,
+                "payload": payload,
+                "purpose": "compaction_summary",
+            })
+        } else {
+            json!({
+                "provider": summary_config.provider,
+                "model": summary_config.model,
+                "base_url": summary_config.base_url,
+                "payload_omitted": true,
+                "purpose": "compaction_summary",
+            })
+        };
+        emitter.emit("llm_request", request_payload).await;
 
         let mut summary_fallback = false;
         let summary_text = match self
@@ -3015,6 +3027,7 @@ impl Orchestrator {
                 false,
                 0,
                 false,
+                log_payload,
                 None,
                 Some(summary_config),
             )
@@ -3604,6 +3617,7 @@ impl Orchestrator {
                 false,
                 1,
                 false,
+                log_payload,
                 None,
                 Some(summary_config),
             )
