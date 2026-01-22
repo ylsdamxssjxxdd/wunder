@@ -343,6 +343,10 @@
     "en-US": "This user already has an active session running",
     "zh-CN": "该用户已有会话正在执行"
   },
+  "error.user_quota_exceeded": {
+    "en-US": "Daily quota reached. Please try again tomorrow or contact an administrator.",
+    "zh-CN": "今日额度已用完，请明日再试或联系管理员调整。"
+  },
   "error.zip_invalid": {
     "en-US": "Invalid archive format",
     "zh-CN": "压缩包格式错误"

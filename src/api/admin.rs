@@ -100,6 +100,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_llm_context_window),
         )
         .route(
+            "/wunder/admin/system",
+            get(admin_system_get).post(admin_system_update),
+        )
+        .route(
             "/wunder/admin/server",
             get(admin_server_get).post(admin_server_update),
         )
@@ -1513,6 +1517,194 @@ async fn admin_llm_context_window(
     Ok(Json(payload))
 }
 
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn build_system_settings_payload(config: &Config) -> Value {
+    let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
+    json!({
+        "server": {
+            "max_active_sessions": config.server.max_active_sessions,
+            "stream_chunk_size": config.server.stream_chunk_size,
+        },
+        "security": {
+            "api_key": config.api_key(),
+            "allow_commands": config.security.allow_commands.clone(),
+            "allow_paths": config.security.allow_paths.clone(),
+            "deny_globs": config.security.deny_globs.clone(),
+        },
+        "sandbox": {
+            "enabled": sandbox_enabled,
+            "mode": config.sandbox.mode.clone(),
+            "endpoint": config.sandbox.endpoint.clone(),
+            "image": config.sandbox.image.clone(),
+            "container_root": config.sandbox.container_root.clone(),
+            "network": config.sandbox.network.clone(),
+            "readonly_rootfs": config.sandbox.readonly_rootfs,
+            "idle_ttl_s": config.sandbox.idle_ttl_s,
+            "timeout_s": config.sandbox.timeout_s,
+            "resources": {
+                "cpu": config.sandbox.resources.cpu,
+                "memory_mb": config.sandbox.resources.memory_mb,
+                "pids": config.sandbox.resources.pids,
+            }
+        },
+        "observability": {
+            "log_level": config.observability.log_level.clone(),
+            "monitor_event_limit": config.observability.monitor_event_limit,
+            "monitor_payload_max_chars": config.observability.monitor_payload_max_chars,
+            "monitor_drop_event_types": config.observability.monitor_drop_event_types.clone(),
+        },
+        "cors": {
+            "allow_origins": config.cors.allow_origins.clone(),
+            "allow_methods": config.cors.allow_methods.clone(),
+            "allow_headers": config.cors.allow_headers.clone(),
+            "allow_credentials": config.cors.allow_credentials,
+        }
+    })
+}
+
+async fn admin_system_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    Ok(Json(build_system_settings_payload(&config)))
+}
+
+async fn admin_system_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SystemUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let has_updates = payload.server.is_some()
+        || payload.security.is_some()
+        || payload.sandbox.is_some()
+        || payload.observability.is_some()
+        || payload.cors.is_some();
+    if !has_updates {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    if let Some(server) = payload.server.as_ref() {
+        if let Some(max_active_sessions) = server.max_active_sessions {
+            if max_active_sessions == 0 {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.max_active_sessions_invalid"),
+                ));
+            }
+        }
+    }
+    let updated = state
+        .config_store
+        .update(|config| {
+            if let Some(server) = payload.server {
+                if let Some(max_active_sessions) = server.max_active_sessions {
+                    config.server.max_active_sessions = max_active_sessions;
+                }
+                if let Some(stream_chunk_size) = server.stream_chunk_size {
+                    config.server.stream_chunk_size = stream_chunk_size;
+                }
+            }
+            if let Some(security) = payload.security {
+                if let Some(api_key) = security.api_key {
+                    let cleaned = api_key.trim().to_string();
+                    if cleaned.is_empty() {
+                        config.security.api_key = None;
+                    } else {
+                        config.security.api_key = Some(cleaned);
+                    }
+                }
+                if let Some(allow_commands) = security.allow_commands {
+                    config.security.allow_commands = normalize_string_list(allow_commands);
+                }
+                if let Some(allow_paths) = security.allow_paths {
+                    config.security.allow_paths = normalize_string_list(allow_paths);
+                }
+                if let Some(deny_globs) = security.deny_globs {
+                    config.security.deny_globs = normalize_string_list(deny_globs);
+                }
+            }
+            if let Some(sandbox) = payload.sandbox {
+                if let Some(enabled) = sandbox.enabled {
+                    config.sandbox.mode = if enabled {
+                        "sandbox".to_string()
+                    } else {
+                        "local".to_string()
+                    };
+                }
+                if let Some(endpoint) = sandbox.endpoint {
+                    config.sandbox.endpoint = endpoint.trim().to_string();
+                }
+                if let Some(image) = sandbox.image {
+                    config.sandbox.image = image.trim().to_string();
+                }
+                if let Some(container_root) = sandbox.container_root {
+                    config.sandbox.container_root = container_root.trim().to_string();
+                }
+                if let Some(network) = sandbox.network {
+                    config.sandbox.network = network.trim().to_string();
+                }
+                if let Some(readonly_rootfs) = sandbox.readonly_rootfs {
+                    config.sandbox.readonly_rootfs = readonly_rootfs;
+                }
+                if let Some(idle_ttl_s) = sandbox.idle_ttl_s {
+                    config.sandbox.idle_ttl_s = idle_ttl_s;
+                }
+                if let Some(timeout_s) = sandbox.timeout_s {
+                    config.sandbox.timeout_s = timeout_s;
+                }
+                if let Some(resources) = sandbox.resources {
+                    if let Some(cpu) = resources.cpu {
+                        config.sandbox.resources.cpu = cpu;
+                    }
+                    if let Some(memory_mb) = resources.memory_mb {
+                        config.sandbox.resources.memory_mb = memory_mb;
+                    }
+                    if let Some(pids) = resources.pids {
+                        config.sandbox.resources.pids = pids;
+                    }
+                }
+            }
+            if let Some(observability) = payload.observability {
+                if let Some(log_level) = observability.log_level {
+                    config.observability.log_level = log_level.trim().to_string();
+                }
+                if let Some(monitor_event_limit) = observability.monitor_event_limit {
+                    config.observability.monitor_event_limit = monitor_event_limit;
+                }
+                if let Some(monitor_payload_max_chars) = observability.monitor_payload_max_chars {
+                    config.observability.monitor_payload_max_chars = monitor_payload_max_chars;
+                }
+                if let Some(drop_event_types) = observability.monitor_drop_event_types {
+                    config.observability.monitor_drop_event_types =
+                        normalize_string_list(drop_event_types);
+                }
+            }
+            if let Some(cors) = payload.cors {
+                if let Some(allow_origins) = cors.allow_origins {
+                    config.cors.allow_origins = Some(normalize_string_list(allow_origins));
+                }
+                if let Some(allow_methods) = cors.allow_methods {
+                    config.cors.allow_methods = Some(normalize_string_list(allow_methods));
+                }
+                if let Some(allow_headers) = cors.allow_headers {
+                    config.cors.allow_headers = Some(normalize_string_list(allow_headers));
+                }
+                if let Some(allow_credentials) = cors.allow_credentials {
+                    config.cors.allow_credentials = Some(allow_credentials);
+                }
+            }
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(build_system_settings_payload(&updated)))
+}
+
 async fn admin_server_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
@@ -1926,6 +2118,7 @@ async fn admin_user_accounts_list(
         .user_store
         .list_users(keyword, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let today = UserStore::today_string();
     let active_sessions = state.monitor.list_sessions(true);
     let mut active_map: HashMap<String, i64> = HashMap::new();
     for session in active_sessions {
@@ -1945,10 +2138,21 @@ async fn admin_user_accounts_list(
         .map(|user| {
             let profile = UserStore::to_profile(&user);
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
+            let quota_total = user.daily_quota.max(0);
+            let quota_used = if user.daily_quota_date.as_deref() == Some(today.as_str()) {
+                user.daily_quota_used.max(0)
+            } else {
+                0
+            };
+            let quota_remaining = (quota_total - quota_used).max(0);
             let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
             if let Value::Object(ref mut map) = value {
                 map.insert("active_sessions".to_string(), json!(active_count));
                 map.insert("online".to_string(), json!(active_count > 0));
+                map.insert("daily_quota".to_string(), json!(quota_total));
+                map.insert("daily_quota_used".to_string(), json!(quota_used));
+                map.insert("daily_quota_remaining".to_string(), json!(quota_remaining));
+                map.insert("daily_quota_date".to_string(), json!(today));
             }
             value
         })
@@ -2010,10 +2214,20 @@ async fn admin_user_accounts_update(
         record.status = normalize_user_status(Some(&status));
     }
     if let Some(access_level) = payload.access_level {
-        record.access_level = UserStore::normalize_access_level(Some(&access_level));
+        let normalized = UserStore::normalize_access_level(Some(&access_level));
+        if normalized != record.access_level {
+            let previous_default = UserStore::default_daily_quota(&record.access_level);
+            record.access_level = normalized;
+            if payload.daily_quota.is_none() && record.daily_quota == previous_default {
+                record.daily_quota = UserStore::default_daily_quota(&record.access_level);
+            }
+        }
     }
     if let Some(roles) = payload.roles {
         record.roles = normalize_user_roles(roles);
+    }
+    if let Some(daily_quota) = payload.daily_quota {
+        record.daily_quota = daily_quota.max(0);
     }
     record.updated_at = now_ts();
     state
@@ -3378,6 +3592,8 @@ struct UserAccountUpdateRequest {
     access_level: Option<String>,
     #[serde(default)]
     roles: Option<Vec<String>>,
+    #[serde(default)]
+    daily_quota: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3416,6 +3632,96 @@ struct LlmContextProbeRequest {
     model: String,
     #[serde(default)]
     timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemUpdateRequest {
+    #[serde(default)]
+    server: Option<SystemServerUpdateRequest>,
+    #[serde(default)]
+    security: Option<SystemSecurityUpdateRequest>,
+    #[serde(default)]
+    sandbox: Option<SystemSandboxUpdateRequest>,
+    #[serde(default)]
+    observability: Option<SystemObservabilityUpdateRequest>,
+    #[serde(default)]
+    cors: Option<SystemCorsUpdateRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemServerUpdateRequest {
+    #[serde(default)]
+    max_active_sessions: Option<usize>,
+    #[serde(default)]
+    stream_chunk_size: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemSecurityUpdateRequest {
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    allow_commands: Option<Vec<String>>,
+    #[serde(default)]
+    allow_paths: Option<Vec<String>>,
+    #[serde(default)]
+    deny_globs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemSandboxUpdateRequest {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    image: Option<String>,
+    #[serde(default)]
+    container_root: Option<String>,
+    #[serde(default)]
+    network: Option<String>,
+    #[serde(default)]
+    readonly_rootfs: Option<bool>,
+    #[serde(default)]
+    idle_ttl_s: Option<u64>,
+    #[serde(default)]
+    timeout_s: Option<u64>,
+    #[serde(default)]
+    resources: Option<SystemSandboxResourceUpdateRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemSandboxResourceUpdateRequest {
+    #[serde(default)]
+    cpu: Option<f32>,
+    #[serde(default)]
+    memory_mb: Option<u64>,
+    #[serde(default)]
+    pids: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemObservabilityUpdateRequest {
+    #[serde(default)]
+    log_level: Option<String>,
+    #[serde(default)]
+    monitor_event_limit: Option<i64>,
+    #[serde(default)]
+    monitor_payload_max_chars: Option<i64>,
+    #[serde(default)]
+    monitor_drop_event_types: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemCorsUpdateRequest {
+    #[serde(default)]
+    allow_origins: Option<Vec<String>>,
+    #[serde(default)]
+    allow_methods: Option<Vec<String>>,
+    #[serde(default)]
+    allow_headers: Option<Vec<String>>,
+    #[serde(default)]
+    allow_credentials: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

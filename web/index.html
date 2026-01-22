@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260118-07" />
+    <link rel="stylesheet" href="./app.css?v=20260122-03" />
   </head>
   <body>
     <div class="app">
@@ -135,6 +135,10 @@
               <button id="navIntro" class="nav-btn">
                 <i class="fa-solid fa-display"></i>
                 <span data-i18n="panel.intro">幻灯片</span>
+              </button>
+              <button id="navPaper" class="nav-btn">
+                <i class="fa-solid fa-file-lines"></i>
+                <span data-i18n="panel.paper">论文</span>
               </button>
               <button id="navApiDocs" class="nav-btn">
                 <i class="fa-solid fa-file-code"></i>
@@ -602,7 +606,7 @@
               </div>
             </div>
             <div class="tips" data-i18n="userAccounts.tip">
-              管理账号状态、访问级别、角色、重置密码与工具权限。
+              管理账号状态、访问级别、额度与工具权限。
             </div>
             <div class="monitor-section-body monitor-paged">
               <div class="monitor-table-scroll">
@@ -612,10 +616,8 @@
                     <col class="col-user-email" />
                     <col class="col-user-access" />
                     <col class="col-user-status" />
-                    <col class="col-user-online" />
-                    <col class="col-user-roles" />
+                    <col class="col-user-quota" />
                     <col class="col-user-login" />
-                    <col class="col-user-password" />
                     <col class="col-user-action" />
                   </colgroup>
                   <thead>
@@ -624,10 +626,8 @@
                       <th data-i18n="userAccounts.table.email">邮箱</th>
                       <th data-i18n="userAccounts.table.access">访问级别</th>
                       <th data-i18n="userAccounts.table.status">状态</th>
-                      <th data-i18n="userAccounts.table.online">在线</th>
-                      <th data-i18n="userAccounts.table.roles">角色</th>
+                      <th data-i18n="userAccounts.table.quota">额度</th>
                       <th data-i18n="userAccounts.table.lastLogin">最近登录</th>
-                      <th data-i18n="userAccounts.table.password">重置密码</th>
                       <th data-i18n="userAccounts.table.actions">操作</th>
                     </tr>
                   </thead>
@@ -1085,91 +1085,273 @@
         </section>
         <section id="settingsPanel" class="panel">
           <div class="list-header">
-            <h1 data-i18n="settings.title">系统设置</h1>
+            <h1 data-i18n="settings.title">System Settings</h1>
             <div class="header-actions">
               <button id="settingsResetBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-rotate-left"></i>
-                <span data-i18n="settings.reset">恢复默认</span>
+                <span data-i18n="settings.reset">Reset</span>
               </button>
               <button id="settingsAdvancedBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-sliders"></i>
-                <span data-i18n="settings.advanced.title">高级设置</span>
+                <span data-i18n="settings.advanced.title">Advanced</span>
               </button>
               <button id="settingsSaveBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-floppy-disk"></i>
-                <span data-i18n="settings.save">保存设置</span>
+                <span data-i18n="settings.save">Save</span>
               </button>
             </div>
           </div>
-          <div class="tips" data-i18n="settings.tip">设置仅保存在当前浏览器，用于控制调试面板与常用系统行为。</div>
+          <div class="tips" data-i18n="settings.tip">System settings are stored locally and in the server config.</div>
           <div class="settings-layout">
             <div class="settings-card settings-card-general">
               <div class="settings-card-title">
                 <i class="fa-solid fa-gear"></i>
-                <span data-i18n="settings.card.general">常用系统配置</span>
+                <span data-i18n="settings.card.general">General</span>
               </div>
-              <div class="settings-grid">
-                <div class="form-row">
-                  <label for="settingsDefaultUserId" data-i18n="settings.label.defaultUserId">默认 user_id</label>
-                  <input id="settingsDefaultUserId" type="text" placeholder="demo_user" />
+              <div class="settings-card-body">
+                <div class="settings-grid">
+                  <div class="form-row">
+                    <label for="settingsDefaultUserId" data-i18n="settings.label.defaultUserId">Default user_id</label>
+                    <input id="settingsDefaultUserId" type="text" placeholder="demo_user" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsDefaultPanel" data-i18n="settings.label.defaultPanel">Default panel</label>
+                    <select id="settingsDefaultPanel">
+                      <option value="monitor" data-i18n="panel.monitor">Monitor</option>
+                      <option value="users" data-i18n="panel.users">Sessions</option>
+                      <option value="memory" data-i18n="panel.memory">Memory</option>
+                      <option value="llm" data-i18n="panel.llm">LLM</option>
+                      <option value="settings" data-i18n="panel.settings">Settings</option>
+                      <option value="builtin" data-i18n="panel.builtin">Builtin</option>
+                      <option value="mcp" data-i18n="panel.mcp">MCP</option>
+                      <option value="knowledge" data-i18n="panel.knowledge">Knowledge</option>
+                      <option value="a2aServices" data-i18n="panel.a2aServices">A2A</option>
+                      <option value="skills" data-i18n="panel.skills">Skills</option>
+                      <option value="throughput" data-i18n="panel.throughput">Throughput</option>
+                      <option value="performance" data-i18n="panel.performance">Performance</option>
+                      <option value="prompt" data-i18n="panel.prompt">Prompt</option>
+                      <option value="evaluation" data-i18n="panel.evaluation">Evaluation</option>
+                      <option value="debug" data-i18n="panel.debug">Debug</option>
+                      <option value="lsp" data-i18n="panel.lsp">LSP</option>
+                      <option value="intro" data-i18n="panel.intro">Intro</option>
+                      <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsLanguage" data-i18n="settings.label.language">Language</label>
+                    <select id="settingsLanguage">
+                      <option value="zh-CN" data-i18n="language.zh-CN">简体中文</option>
+                      <option value="en-US" data-i18n="language.en-US">English</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsMonitorInterval" data-i18n="settings.label.monitorInterval">Monitor interval (ms)</label>
+                    <input id="settingsMonitorInterval" type="number" min="500" step="100" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsPromptDelay" data-i18n="settings.label.promptDelay">Prompt refresh delay (ms)</label>
+                    <input id="settingsPromptDelay" type="number" min="50" step="50" />
+                  </div>
                 </div>
-                <div class="form-row">
-                  <label for="settingsDefaultPanel" data-i18n="settings.label.defaultPanel">默认进入面板</label>
-                  <select id="settingsDefaultPanel">
-                    <option value="monitor" data-i18n="panel.monitor">内部状态</option>
-                    <option value="users" data-i18n="panel.users">线程管理</option>
-                    <option value="memory" data-i18n="panel.memory">记忆管理</option>
-                    <option value="llm" data-i18n="panel.llm">模型配置</option>
-                    <option value="settings" data-i18n="panel.settings">系统设置</option>
-                    <option value="builtin" data-i18n="panel.builtin">内置工具</option>
-                    <option value="mcp" data-i18n="panel.mcp">MCP 服务</option>
-                    <option value="knowledge" data-i18n="panel.knowledge">知识库</option>
-                    <option value="a2aServices" data-i18n="panel.a2aServices">A2A 服务</option>
-                    <option value="skills" data-i18n="panel.skills">技能管理</option>
-                    <option value="throughput" data-i18n="panel.throughput">吞吐量测试</option>
-                    <option value="performance" data-i18n="panel.performance">性能测试</option>
-                    <option value="prompt" data-i18n="panel.prompt">系统提示词</option>
-                    <option value="evaluation" data-i18n="panel.evaluation">能力评估</option>
-                    <option value="debug" data-i18n="panel.debug">调试面板</option>
-                    <option value="lsp" data-i18n="panel.lsp">LSP</option>
-                    <option value="intro" data-i18n="panel.intro">幻灯片</option>
-                    <option value="apiDocs" data-i18n="panel.apiDocs">接口</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label for="settingsLanguage" data-i18n="settings.label.language">系统语言</label>
-                  <select id="settingsLanguage">
-                    <option value="zh-CN" data-i18n="language.zh-CN">简体中文</option>
-                    <option value="en-US" data-i18n="language.en-US">English</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label for="settingsMonitorInterval" data-i18n="settings.label.monitorInterval">监控刷新间隔（毫秒）</label>
-                  <input id="settingsMonitorInterval" type="number" min="500" step="100" />
-                </div>
-                <div class="form-row">
-                  <label for="settingsMaxActiveSessions" data-i18n="settings.label.maxActiveSessions">最大并发会话</label>
-                  <input id="settingsMaxActiveSessions" type="number" min="1" step="1" />
-                </div>
-                <div class="form-row form-row-span">
-                  <label for="settingsSandboxEnabled" data-i18n="settings.label.sandbox">沙盒执行</label>
-                  <label class="checkbox-row">
-                    <input id="settingsSandboxEnabled" type="checkbox" checked />
-                    <span data-i18n="settings.option.sandboxEnabled">启用沙盒（执行命令/ptc）</span>
-                  </label>
-                </div>
-                <div class="form-row">
-                  <label for="settingsPromptDelay" data-i18n="settings.label.promptDelay">提示词刷新延迟（毫秒）</label>
-                  <input id="settingsPromptDelay" type="number" min="50" step="50" />
+                <div class="settings-hint" data-i18n="settings.hint.general">
+                  Save to apply polling interval. Default panel requires a refresh.
                 </div>
               </div>
-              <div class="settings-hint" data-i18n="settings.hint.general">
-                保存后立即更新轮询间隔，默认面板需刷新页面生效。
+            </div>
+            <div class="settings-card settings-card-server">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-server"></i>
+                <span data-i18n="settings.card.server">Server</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="settingsMaxActiveSessions" data-i18n="settings.label.maxActiveSessions">Max active sessions</label>
+                    <input id="settingsMaxActiveSessions" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsStreamChunkSize" data-i18n="settings.label.streamChunkSize">Stream chunk size</label>
+                    <input
+                      id="settingsStreamChunkSize"
+                      type="number"
+                      min="0"
+                      step="128"
+                      placeholder="1024"
+                      data-i18n-placeholder="settings.placeholder.streamChunkSize"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsLogLevel" data-i18n="settings.label.logLevel">Log level</label>
+                    <select id="settingsLogLevel">
+                      <option value="trace">TRACE</option>
+                      <option value="debug">DEBUG</option>
+                      <option value="info">INFO</option>
+                      <option value="warn">WARN</option>
+                      <option value="error">ERROR</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsMonitorEventLimit" data-i18n="settings.label.monitorEventLimit">Monitor events</label>
+                    <input id="settingsMonitorEventLimit" type="number" min="0" step="10" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsMonitorPayloadLimit" data-i18n="settings.label.monitorPayloadLimit">Payload max chars</label>
+                    <input id="settingsMonitorPayloadLimit" type="number" min="0" step="256" />
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsMonitorDropTypes" data-i18n="settings.label.monitorDropTypes">Drop event types</label>
+                    <textarea
+                      id="settingsMonitorDropTypes"
+                      placeholder="llm_output_delta"
+                      data-i18n-placeholder="settings.placeholder.monitorDropTypes"
+                    ></textarea>
+                    <div class="settings-field-hint" data-i18n="settings.hint.monitorDropTypes">
+                      One type per line.
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.server">
+                  Controls concurrency and stream chunk size. Log/monitor limits usually require a restart.
+                </div>
+              </div>
+            </div>
+            <div class="settings-card settings-card-security">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-shield-halved"></i>
+                <span data-i18n="settings.card.security">Security</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--runtime" data-i18n="settings.badge.runtime">Live</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row form-row-span">
+                    <label for="settingsAllowCommands" data-i18n="settings.label.allowCommands">Allow commands</label>
+                    <textarea
+                      id="settingsAllowCommands"
+                      placeholder="*"
+                      data-i18n-placeholder="settings.placeholder.allowCommands"
+                    ></textarea>
+                    <div class="settings-field-hint" data-i18n="settings.hint.allowCommands">
+                      One item per line. Use * to allow all.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsAllowPaths" data-i18n="settings.label.allowPaths">Allow paths</label>
+                    <textarea
+                      id="settingsAllowPaths"
+                      placeholder="./skills"
+                      data-i18n-placeholder="settings.placeholder.allowPaths"
+                    ></textarea>
+                    <div class="settings-field-hint" data-i18n="settings.hint.allowPaths">
+                      Whitelist extra directories for tools.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsDenyGlobs" data-i18n="settings.label.denyGlobs">Deny globs</label>
+                    <textarea
+                      id="settingsDenyGlobs"
+                      placeholder="**/.git/**"
+                      data-i18n-placeholder="settings.placeholder.denyGlobs"
+                    ></textarea>
+                    <div class="settings-field-hint" data-i18n="settings.hint.denyGlobs">
+                      Glob patterns to block sensitive paths.
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.security">
+                  API Key is managed in Advanced settings.
+                </div>
+              </div>
+            </div>
+            <div class="settings-card settings-card-sandbox">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-cube"></i>
+                <span data-i18n="settings.card.sandbox">Sandbox</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--runtime" data-i18n="settings.badge.runtime">Live</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row form-row-span">
+                    <label for="settingsSandboxEnabled" data-i18n="settings.label.sandbox">Sandbox</label>
+                    <label class="checkbox-row">
+                      <input id="settingsSandboxEnabled" type="checkbox" checked />
+                      <span data-i18n="settings.option.sandboxEnabled">Enable sandbox execution</span>
+                    </label>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxEndpoint" data-i18n="settings.label.sandboxEndpoint">Sandbox endpoint</label>
+                    <input
+                      id="settingsSandboxEndpoint"
+                      type="text"
+                      placeholder="http://sandbox:9001"
+                      data-i18n-placeholder="settings.placeholder.sandboxEndpoint"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxImage" data-i18n="settings.label.sandboxImage">Sandbox image</label>
+                    <input
+                      id="settingsSandboxImage"
+                      type="text"
+                      placeholder="wunder-x86"
+                      data-i18n-placeholder="settings.placeholder.sandboxImage"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxContainerRoot" data-i18n="settings.label.sandboxContainerRoot">Container root</label>
+                    <input
+                      id="settingsSandboxContainerRoot"
+                      type="text"
+                      placeholder="/workspaces"
+                      data-i18n-placeholder="settings.placeholder.sandboxContainerRoot"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxNetwork" data-i18n="settings.label.sandboxNetwork">Network mode</label>
+                    <input
+                      id="settingsSandboxNetwork"
+                      type="text"
+                      placeholder="bridge"
+                      data-i18n-placeholder="settings.placeholder.sandboxNetwork"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxReadonly" data-i18n="settings.label.sandboxReadonly">Readonly rootfs</label>
+                    <label class="checkbox-row">
+                      <input id="settingsSandboxReadonly" type="checkbox" />
+                      <span data-i18n="settings.option.sandboxReadonly">Enable readonly rootfs</span>
+                    </label>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxIdleTtl" data-i18n="settings.label.sandboxIdleTtl">Idle TTL (s)</label>
+                    <input id="settingsSandboxIdleTtl" type="number" min="0" step="10" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxTimeout" data-i18n="settings.label.sandboxTimeout">Timeout (s)</label>
+                    <input id="settingsSandboxTimeout" type="number" min="0" step="10" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxCpu" data-i18n="settings.label.sandboxCpu">CPU</label>
+                    <input id="settingsSandboxCpu" type="number" min="0" step="0.1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxMemory" data-i18n="settings.label.sandboxMemory">Memory (MB)</label>
+                    <input id="settingsSandboxMemory" type="number" min="0" step="64" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsSandboxPids" data-i18n="settings.label.sandboxPids">PIDs</label>
+                    <input id="settingsSandboxPids" type="number" min="0" step="1" />
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.sandbox">
+                  Adjust sandbox endpoint and resource limits for command/ptc tools.
+                </div>
               </div>
             </div>
           </div>
-        </section>
-          <section id="mcpPanel" class="panel">
+        </section><section id="mcpPanel" class="panel">
             <div class="list-header">
               <h1 data-i18n="mcp.title">MCP 服务管理</h1>
               <div class="header-actions">
@@ -2598,6 +2780,40 @@
             </div>
           </div>
         </section>
+        <section id="paperPanel" class="panel" data-paper-src="/docs/paper.md?v=20260122-03">
+          <div class="list-header">
+            <h1 data-i18n="paper.title">论文阅读</h1>
+            <div class="header-actions">
+              <div class="paper-meta">
+                <span class="paper-meta-label" data-i18n="paper.meta.source">来源</span>
+                <span class="paper-meta-value">/docs/paper.md</span>
+              </div>
+              <div class="paper-meta">
+                <span class="paper-meta-label" data-i18n="paper.meta.updated">更新</span>
+                <span class="paper-meta-value">2026-01-22</span>
+              </div>
+            </div>
+          </div>
+          <div class="tips" data-i18n="paper.tip">
+            用于在管理端快速阅读《智能体调度平台的设计与实现》论文，支持目录跳转与代码块展示。
+          </div>
+          <div class="paper-layout">
+            <div class="paper-side">
+              <div class="paper-card">
+                <div class="paper-card-title">
+                  <i class="fa-solid fa-list"></i>
+                  <span data-i18n="paper.toc">目录</span>
+                </div>
+                <nav id="paperToc" class="paper-toc"></nav>
+              </div>
+            </div>
+            <div class="paper-main">
+              <div class="paper-card paper-content-card">
+                <article id="paperContent" class="paper-content"></article>
+              </div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
     <div id="settingsAdvancedModal" class="modal">
@@ -2615,32 +2831,89 @@
           </button>
         </div>
         <div class="modal-body">
-          <div class="settings-grid settings-advanced-grid">
-            <div class="form-row">
-              <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
-              <div class="api-key-field settings-api-key-field">
-                <input
-                  id="apiKey"
-                  type="password"
-                  placeholder="可选"
-                  data-i18n-placeholder="settings.placeholder.optional"
-                />
-                <button
-                  id="apiKeyToggle"
-                  class="api-key-toggle"
-                  type="button"
-                  aria-label="显示 API Key"
-                  title="显示 API Key"
-                  data-i18n-aria-label="ui.apiKey.show"
-                  data-i18n-title="ui.apiKey.show"
-                >
-                  <i class="fa-solid fa-eye"></i>
-                </button>
+          <div class="settings-advanced-layout">
+            <div class="settings-card settings-advanced-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-key"></i>
+                <span data-i18n="settings.card.api">API & Auth</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-advanced-grid">
+                  <div class="form-row">
+                    <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
+                    <div class="api-key-field settings-api-key-field">
+                      <input
+                        id="apiKey"
+                        type="password"
+                        placeholder="可选"
+                        data-i18n-placeholder="settings.placeholder.optional"
+                      />
+                      <button
+                        id="apiKeyToggle"
+                        class="api-key-toggle"
+                        type="button"
+                        aria-label="显示 API Key"
+                        title="显示 API Key"
+                        data-i18n-aria-label="ui.apiKey.show"
+                        data-i18n-title="ui.apiKey.show"
+                      >
+                        <i class="fa-solid fa-eye"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.advanced">
+                  API base 固定为当前访问地址，API Key 默认从服务端配置加载。
+                </div>
               </div>
             </div>
-          </div>
-          <div class="settings-hint" data-i18n="settings.hint.advanced">
-            API base 固定为当前访问地址，API Key 默认从服务端配置加载。
+            <div class="settings-card settings-card-cors settings-advanced-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-globe"></i>
+                <span data-i18n="settings.card.cors">CORS</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--restart" data-i18n="settings.badge.restart">Restart</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row form-row-span">
+                    <label for="settingsCorsOrigins" data-i18n="settings.label.corsOrigins">Allow origins</label>
+                    <textarea
+                      id="settingsCorsOrigins"
+                      placeholder="*"
+                      data-i18n-placeholder="settings.placeholder.corsOrigins"
+                    ></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsCorsMethods" data-i18n="settings.label.corsMethods">Allow methods</label>
+                    <textarea
+                      id="settingsCorsMethods"
+                      placeholder="*"
+                      data-i18n-placeholder="settings.placeholder.corsMethods"
+                    ></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsCorsHeaders" data-i18n="settings.label.corsHeaders">Allow headers</label>
+                    <textarea
+                      id="settingsCorsHeaders"
+                      placeholder="*"
+                      data-i18n-placeholder="settings.placeholder.corsHeaders"
+                    ></textarea>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsCorsCredentials" data-i18n="settings.label.corsCredentials">Credentials</label>
+                    <label class="checkbox-row">
+                      <input id="settingsCorsCredentials" type="checkbox" />
+                      <span data-i18n="settings.option.corsCredentials">Allow credentials</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.cors">
+                  CORS changes take effect after restart.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-actions">
@@ -3243,15 +3516,6 @@
               <option value="disabled">disabled</option>
             </select>
           </div>
-          <div class="form-row">
-            <label for="userAccountFormRoles" data-i18n="userAccounts.modal.create.roles">角色</label>
-            <input
-              id="userAccountFormRoles"
-              type="text"
-              placeholder="user,admin"
-              data-i18n-placeholder="userAccounts.modal.create.roles.placeholder"
-            />
-          </div>
         </div>
         <div class="modal-actions">
           <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
@@ -3263,42 +3527,56 @@
         </div>
       </div>
     </div>
-    <div id="userAccountPasswordModal" class="modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div id="userAccountPasswordTitle" class="detail-title" data-i18n="userAccounts.modal.password.title">
-            重置密码
-          </div>
-          <button id="userAccountPasswordClose" class="icon-btn" type="button">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-row">
-            <label for="userAccountPasswordInput" data-i18n="userAccounts.modal.password.label">新密码</label>
-            <input id="userAccountPasswordInput" type="password" />
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="userAccountPasswordCancel" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
-          </button>
-          <button id="userAccountPasswordSave" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
-          </button>
-        </div>
-      </div>
-    </div>
-    <div id="userAccountToolModal" class="modal">
+    <div id="userAccountSettingsModal" class="modal">
       <div class="modal-card modal-card-lg">
         <div class="modal-header">
-          <div id="userAccountToolTitle" class="detail-title" data-i18n="userAccounts.modal.tool.title">
-            工具权限
+          <div id="userAccountSettingsTitle" class="detail-title" data-i18n="userAccounts.modal.settings.title">
+            用户设置
           </div>
-          <button id="userAccountToolClose" class="icon-btn" type="button">×</button>
+          <button id="userAccountSettingsClose" class="icon-btn" type="button">×</button>
         </div>
         <div class="modal-body">
           <div class="form-row">
-            <label data-i18n="userAccounts.modal.tool.user">用户</label>
-            <div id="userAccountToolUser" class="muted">-</div>
+            <label data-i18n="userAccounts.modal.settings.user">用户</label>
+            <div id="userAccountSettingsUser" class="muted">-</div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountQuotaInput" data-i18n="userAccounts.modal.settings.quota.label">每日额度</label>
+            <div class="form-row-inline">
+              <input id="userAccountQuotaInput" type="number" min="0" step="1" />
+              <button id="userAccountQuotaSave" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+              </button>
+            </div>
+            <div id="userAccountQuotaMeta" class="muted" data-i18n="userAccounts.modal.settings.quota.meta">
+              今日已用 0 / 剩余 0（总额 0）
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountSettingsPasswordInput" data-i18n="userAccounts.modal.settings.password.label">
+              重置密码
+            </label>
+            <div class="form-row-inline">
+              <input id="userAccountSettingsPasswordInput" type="password" />
+              <button id="userAccountSettingsPasswordSave" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-key"></i><span data-i18n="userAccounts.modal.settings.password.action">重置</span>
+              </button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountSettingsRolesInput" data-i18n="userAccounts.modal.settings.roles.label">用户权限</label>
+            <div class="form-row-inline">
+              <input
+                id="userAccountSettingsRolesInput"
+                type="text"
+                placeholder="user,admin"
+                data-i18n-placeholder="userAccounts.modal.settings.roles.placeholder"
+              />
+              <button id="userAccountSettingsRolesSave" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+              </button>
+            </div>
+            <div class="muted" data-i18n="userAccounts.modal.settings.roles.hint">逗号分隔权限标识</div>
           </div>
           <div class="form-row">
             <label for="userAccountToolDefault" data-i18n="userAccounts.modal.tool.default">
@@ -3312,20 +3590,18 @@
           <div class="form-row">
             <label for="userAccountToolList" data-i18n="userAccounts.modal.tool.allowed">可用工具</label>
             <div id="userAccountToolList" class="tool-list"></div>
-            <div id="userAccountToolEmpty" class="muted" data-i18n="userAccounts.modal.tool.empty">
-              暂无工具
-            </div>
+            <div id="userAccountToolEmpty" class="muted" data-i18n="userAccounts.modal.tool.empty">暂无工具</div>
             <div class="muted" data-i18n="userAccounts.modal.tool.tip">
               访问级别 A 默认全量工具，B 隐藏技能，C 隐藏技能和知识库。
             </div>
           </div>
         </div>
         <div class="modal-actions">
-          <button id="userAccountToolCancel" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          <button id="userAccountSettingsDelete" class="danger btn-with-icon" type="button">
+            <i class="fa-solid fa-trash"></i><span data-i18n="common.delete">删除</span>
           </button>
-          <button id="userAccountToolSave" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          <button id="userAccountSettingsCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
           </button>
         </div>
       </div>
@@ -3881,6 +4157,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260118-09"></script>
+    <script type="module" src="./app.js?v=20260122-03"></script>
 </body>
 </html>

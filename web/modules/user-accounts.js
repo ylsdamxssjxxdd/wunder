@@ -67,17 +67,18 @@ const ensureUserAccountElements = () => {
     "userAccountFormPassword",
     "userAccountFormAccess",
     "userAccountFormStatus",
-    "userAccountFormRoles",
-    "userAccountPasswordModal",
-    "userAccountPasswordClose",
-    "userAccountPasswordCancel",
-    "userAccountPasswordSave",
-    "userAccountPasswordInput",
-    "userAccountToolModal",
-    "userAccountToolClose",
-    "userAccountToolCancel",
-    "userAccountToolSave",
-    "userAccountToolUser",
+    "userAccountSettingsModal",
+    "userAccountSettingsClose",
+    "userAccountSettingsCancel",
+    "userAccountSettingsUser",
+    "userAccountQuotaInput",
+    "userAccountQuotaSave",
+    "userAccountQuotaMeta",
+    "userAccountSettingsPasswordInput",
+    "userAccountSettingsPasswordSave",
+    "userAccountSettingsRolesInput",
+    "userAccountSettingsRolesSave",
+    "userAccountSettingsDelete",
     "userAccountToolDefault",
     "userAccountToolList",
     "userAccountToolEmpty",
@@ -96,6 +97,14 @@ const normalizeUserAccount = (item) => {
   const activeSessions = Number(item?.active_sessions ?? item?.activeSessions ?? 0);
   const online =
     typeof item?.online === "boolean" ? item.online : Number.isFinite(activeSessions) && activeSessions > 0;
+  const dailyQuota = Number(item?.daily_quota ?? item?.dailyQuota ?? 0);
+  const dailyUsed = Number(item?.daily_quota_used ?? item?.dailyQuotaUsed ?? 0);
+  let dailyRemaining = Number(item?.daily_quota_remaining ?? item?.dailyQuotaRemaining);
+  const safeDailyQuota = Number.isFinite(dailyQuota) ? Math.max(0, Math.floor(dailyQuota)) : 0;
+  const safeDailyUsed = Number.isFinite(dailyUsed) ? Math.max(0, Math.floor(dailyUsed)) : 0;
+  if (!Number.isFinite(dailyRemaining)) {
+    dailyRemaining = Math.max(safeDailyQuota - safeDailyUsed, 0);
+  }
   return {
     id,
     username,
@@ -103,6 +112,10 @@ const normalizeUserAccount = (item) => {
     access_level: String(item?.access_level || item?.accessLevel || "A"),
     status: String(item?.status || "active"),
     roles: Array.isArray(item?.roles) ? item.roles : [],
+    daily_quota: safeDailyQuota,
+    daily_quota_used: safeDailyUsed,
+    daily_quota_remaining: Number.isFinite(dailyRemaining) ? Math.max(0, Math.floor(dailyRemaining)) : 0,
+    daily_quota_date: String(item?.daily_quota_date || item?.dailyQuotaDate || "").trim(),
     last_login_at: item?.last_login_at ?? item?.lastLoginAt ?? null,
     is_demo: Boolean(item?.is_demo || item?.isDemo),
     active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
@@ -116,6 +129,38 @@ const formatLoginTime = (value) => {
     return "-";
   }
   return formatTimestamp(ts * 1000);
+};
+
+const formatQuotaValue = (user) => {
+  if (!user) {
+    return "-";
+  }
+  const total = Number(user.daily_quota);
+  if (!Number.isFinite(total)) {
+    return "-";
+  }
+  const safeTotal = Math.max(0, Math.floor(total));
+  const remaining = Number(user.daily_quota_remaining);
+  if (!Number.isFinite(remaining)) {
+    return String(safeTotal);
+  }
+  const safeRemaining = Math.max(0, Math.floor(remaining));
+  if (!safeTotal) {
+    return "0";
+  }
+  return `${safeRemaining} / ${safeTotal}`;
+};
+
+const formatQuotaMeta = (user) => {
+  if (!user) {
+    return "";
+  }
+  const total = Number.isFinite(user.daily_quota) ? Math.max(0, Math.floor(user.daily_quota)) : 0;
+  const used = Number.isFinite(user.daily_quota_used) ? Math.max(0, Math.floor(user.daily_quota_used)) : 0;
+  const remaining = Number.isFinite(user.daily_quota_remaining)
+    ? Math.max(0, Math.floor(user.daily_quota_remaining))
+    : Math.max(total - used, 0);
+  return t("userAccounts.modal.settings.quota.meta", { used, remaining, total });
 };
 
 const resolveUserAccountPageSize = () => {
@@ -197,67 +242,29 @@ const renderUserAccountRows = () => {
     });
     statusCell.appendChild(statusSelect);
 
-    const onlineCell = document.createElement("td");
-    onlineCell.textContent = user.online
-      ? t("userAccounts.status.online")
-      : t("userAccounts.status.offline");
-
-    const rolesCell = document.createElement("td");
-    const rolesText = document.createElement("span");
-    rolesText.textContent = user.roles.length ? user.roles.join(",") : "-";
-    const rolesEdit = document.createElement("button");
-    rolesEdit.type = "button";
-    rolesEdit.className = "link-button";
-    rolesEdit.textContent = t("common.edit");
-    rolesEdit.addEventListener("click", (event) => {
-      event.stopPropagation();
-      requestUpdateRoles(user);
-    });
-    rolesCell.appendChild(rolesText);
-    rolesCell.appendChild(rolesEdit);
+    const quotaCell = document.createElement("td");
+    quotaCell.textContent = formatQuotaValue(user);
 
     const loginCell = document.createElement("td");
     loginCell.textContent = formatLoginTime(user.last_login_at);
 
-    const passwordCell = document.createElement("td");
-    const resetBtn = document.createElement("button");
-    resetBtn.type = "button";
-    resetBtn.className = "secondary";
-    resetBtn.textContent = t("userAccounts.action.resetPassword");
-    resetBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openPasswordModal(user);
-    });
-    passwordCell.appendChild(resetBtn);
-
     const actionCell = document.createElement("td");
-    const toolBtn = document.createElement("button");
-    toolBtn.type = "button";
-    toolBtn.className = "secondary";
-    toolBtn.textContent = t("userAccounts.action.toolAccess");
-    toolBtn.addEventListener("click", (event) => {
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "secondary";
+    settingsBtn.textContent = t("userAccounts.action.settings");
+    settingsBtn.addEventListener("click", (event) => {
       event.stopPropagation();
-      openToolAccessModal(user);
+      openSettingsModal(user);
     });
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "danger";
-    deleteBtn.textContent = t("common.delete");
-    deleteBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      requestDeleteUser(user.id);
-    });
-    actionCell.appendChild(toolBtn);
-    actionCell.appendChild(deleteBtn);
+    actionCell.appendChild(settingsBtn);
 
     row.appendChild(userCell);
     row.appendChild(emailCell);
     row.appendChild(accessCell);
     row.appendChild(statusCell);
-    row.appendChild(onlineCell);
-    row.appendChild(rolesCell);
+    row.appendChild(quotaCell);
     row.appendChild(loginCell);
-    row.appendChild(passwordCell);
     row.appendChild(actionCell);
 
     elements.userAccountTableBody.appendChild(row);
@@ -324,7 +331,7 @@ export const loadUserAccounts = async () => {
 
 const updateUserAccount = async (userId, payload) => {
   if (!userId) {
-    return;
+    return false;
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}`;
@@ -337,38 +344,24 @@ const updateUserAccount = async (userId, payload) => {
     if (!response.ok) {
       const message = t("common.requestFailed", { status: response.status });
       notify(message, "error");
-      return;
+      return false;
     }
     notify(t("userAccounts.toast.updateSuccess"), "success");
     await loadUserAccounts();
+    return true;
   } catch (error) {
     notify(t("userAccounts.toast.updateFailed", { message: error.message }), "error");
+    return false;
   }
 };
 
-const requestUpdateRoles = async (user) => {
-  if (!user?.id) {
-    return;
-  }
-  const current = user.roles.length ? user.roles.join(",") : "";
-  const raw = window.prompt(t("userAccounts.roles.prompt"), current);
-  if (raw === null) {
-    return;
-  }
-  const roles = raw
-    .split(/[,\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  await updateUserAccount(user.id, { roles });
-};
-
-const requestDeleteUser = async (userId) => {
+const requestDeleteUser = async (userId, options = {}) => {
   if (!userId) {
-    return;
+    return false;
   }
   const confirmed = window.confirm(t("userAccounts.deleteConfirm", { userId }));
   if (!confirmed) {
-    return;
+    return false;
   }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}`;
@@ -376,12 +369,17 @@ const requestDeleteUser = async (userId) => {
     const response = await fetch(endpoint, { method: "DELETE" });
     if (!response.ok) {
       notify(t("userAccounts.deleteFailed", { status: response.status }), "error");
-      return;
+      return false;
     }
     notify(t("userAccounts.deleteSuccess"), "success");
     await loadUserAccounts();
+    if (typeof options.onSuccess === "function") {
+      options.onSuccess();
+    }
+    return true;
   } catch (error) {
     notify(t("userAccounts.deleteFailed", { status: error.message }), "error");
+    return false;
   }
 };
 
@@ -391,7 +389,6 @@ const openCreateModal = () => {
   elements.userAccountFormPassword.value = "";
   elements.userAccountFormAccess.value = "A";
   elements.userAccountFormStatus.value = "active";
-  elements.userAccountFormRoles.value = "";
   if (elements.userAccountModalTitle) {
     elements.userAccountModalTitle.textContent = t("userAccounts.modal.create.title");
   }
@@ -406,17 +403,12 @@ const submitCreateUser = async () => {
     return;
   }
   const email = String(elements.userAccountFormEmail.value || "").trim();
-  const roles = String(elements.userAccountFormRoles.value || "")
-    .split(/[,\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
   const payload = {
     username,
     email: email || null,
     password,
     access_level: elements.userAccountFormAccess.value || "A",
     status: elements.userAccountFormStatus.value || "active",
-    roles,
   };
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/user_accounts`;
@@ -438,31 +430,43 @@ const submitCreateUser = async () => {
   }
 };
 
-let passwordTarget = null;
+let settingsTarget = null;
+let toolGroupsCache = [];
+let toolSaveTimer = null;
 
-const openPasswordModal = (user) => {
-  passwordTarget = user;
-  elements.userAccountPasswordInput.value = "";
-  if (elements.userAccountPasswordTitle) {
-    const label = user?.username || user?.id || "-";
-    elements.userAccountPasswordTitle.textContent = t("userAccounts.modal.password.titleWithUser", {
-      user: label,
-    });
+const syncSettingsTarget = (user) => {
+  settingsTarget = user;
+  if (!user) {
+    return;
   }
-  openModal(elements.userAccountPasswordModal);
+  elements.userAccountSettingsUser.textContent = user.username || user.id || "-";
+  elements.userAccountQuotaInput.value = Number.isFinite(user.daily_quota) ? user.daily_quota : "";
+  elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
+  elements.userAccountSettingsPasswordInput.value = "";
+  elements.userAccountSettingsRolesInput.value = user.roles.length ? user.roles.join(",") : "";
+};
+
+const refreshSettingsTarget = () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const updated = state.userAccounts.list.find((item) => item.id === settingsTarget.id);
+  if (updated) {
+    syncSettingsTarget(updated);
+  }
 };
 
 const submitPasswordReset = async () => {
-  if (!passwordTarget?.id) {
+  if (!settingsTarget?.id) {
     return;
   }
-  const password = String(elements.userAccountPasswordInput.value || "").trim();
+  const password = String(elements.userAccountSettingsPasswordInput.value || "").trim();
   if (!password) {
     notify(t("userAccounts.toast.passwordRequired"), "warn");
     return;
   }
   const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(passwordTarget.id)}/password`;
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/password`;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -473,15 +477,41 @@ const submitPasswordReset = async () => {
       notify(t("userAccounts.toast.passwordFailed", { status: response.status }), "error");
       return;
     }
-    closeModal(elements.userAccountPasswordModal);
+    elements.userAccountSettingsPasswordInput.value = "";
     notify(t("userAccounts.toast.passwordSuccess"), "success");
   } catch (error) {
     notify(t("userAccounts.toast.passwordFailed", { status: error.message }), "error");
   }
 };
 
-let toolAccessTarget = null;
-let toolGroupsCache = [];
+const saveQuota = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const raw = Number(elements.userAccountQuotaInput.value);
+  if (!Number.isFinite(raw) || raw < 0) {
+    notify(t("userAccounts.toast.quotaInvalid"), "warn");
+    return;
+  }
+  const ok = await updateUserAccount(settingsTarget.id, { daily_quota: Math.floor(raw) });
+  if (ok) {
+    refreshSettingsTarget();
+  }
+};
+
+const saveRoles = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const roles = String(elements.userAccountSettingsRolesInput.value || "")
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const ok = await updateUserAccount(settingsTarget.id, { roles });
+  if (ok) {
+    refreshSettingsTarget();
+  }
+};
 
 const buildToolOptions = (list) =>
   (Array.isArray(list) ? list : [])
@@ -507,6 +537,17 @@ const buildToolGroups = (payload) => [
   { label: t("userAccounts.toolGroup.shared"), options: buildToolOptions(payload.shared_tools) },
 ].filter((group) => group.options.length > 0);
 
+const scheduleToolSave = (options = {}) => {
+  if (toolSaveTimer) {
+    clearTimeout(toolSaveTimer);
+  }
+  const delay = Number.isFinite(options.delay) ? Math.max(0, options.delay) : 400;
+  const silent = options.silent !== false;
+  toolSaveTimer = setTimeout(() => {
+    saveToolAccess({ silent }).catch(() => {});
+  }, delay);
+};
+
 const renderToolOptions = (groups, selected) => {
   const list = elements.userAccountToolList;
   list.textContent = "";
@@ -530,6 +571,9 @@ const renderToolOptions = (groups, selected) => {
       checkbox.value = option.value;
       checkbox.checked = selectedSet.has(option.value);
       checkbox.disabled = disabled;
+      checkbox.addEventListener("change", () => {
+        scheduleToolSave({ silent: true });
+      });
       const label = document.createElement("label");
       const desc = option.description ? `<span class="muted">${option.description}</span>` : "";
       label.innerHTML = `<strong>${option.label}</strong>${desc}`;
@@ -538,6 +582,7 @@ const renderToolOptions = (groups, selected) => {
           return;
         }
         checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
       });
       item.appendChild(checkbox);
       item.appendChild(label);
@@ -580,18 +625,17 @@ const syncToolAccessToggle = () => {
   }
 };
 
-const openToolAccessModal = async (user) => {
+const openSettingsModal = async (user) => {
   if (!user?.id) {
     return;
   }
-  toolAccessTarget = user;
-  elements.userAccountToolUser.textContent = user.username || user.id || "-";
+  syncSettingsTarget(user);
   elements.userAccountToolDefault.checked = true;
   elements.userAccountToolList.textContent = "";
   elements.userAccountToolEmpty.textContent = t("common.loading");
   elements.userAccountToolEmpty.style.display = "block";
   syncToolAccessToggle();
-  openModal(elements.userAccountToolModal);
+  openModal(elements.userAccountSettingsModal);
   try {
     const [groups, allowed] = await Promise.all([
       loadToolCatalog(user.id),
@@ -612,14 +656,15 @@ const collectSelectedTools = () =>
     .filter((input) => input.checked)
     .map((input) => input.value);
 
-const saveToolAccess = async () => {
-  if (!toolAccessTarget?.id) {
+const saveToolAccess = async (options = {}) => {
+  if (!settingsTarget?.id) {
     return;
   }
+  const silent = options.silent === true;
   const useDefault = elements.userAccountToolDefault.checked;
   const allowed = useDefault ? null : collectSelectedTools();
   const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(toolAccessTarget.id)}/tool_access`;
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/tool_access`;
   try {
     const response = await fetch(endpoint, {
       method: "PUT",
@@ -630,8 +675,9 @@ const saveToolAccess = async () => {
       notify(t("userAccounts.toast.toolSaveFailed", { status: response.status }), "error");
       return;
     }
-    notify(t("userAccounts.toast.toolSaveSuccess"), "success");
-    closeModal(elements.userAccountToolModal);
+    if (!silent) {
+      notify(t("userAccounts.toast.toolSaveSuccess"), "success");
+    }
   } catch (error) {
     notify(t("userAccounts.toast.toolSaveFailed", { status: error.message }), "error");
   }
@@ -665,13 +711,20 @@ export const initUserAccountsPanel = () => {
   elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalSave.addEventListener("click", submitCreateUser);
-  elements.userAccountPasswordClose?.addEventListener("click", () => closeModal(elements.userAccountPasswordModal));
-  elements.userAccountPasswordCancel.addEventListener("click", () => closeModal(elements.userAccountPasswordModal));
-  elements.userAccountPasswordSave.addEventListener("click", submitPasswordReset);
-  elements.userAccountToolClose?.addEventListener("click", () => closeModal(elements.userAccountToolModal));
-  elements.userAccountToolCancel.addEventListener("click", () => closeModal(elements.userAccountToolModal));
-  elements.userAccountToolSave.addEventListener("click", saveToolAccess);
-  elements.userAccountToolDefault.addEventListener("change", syncToolAccessToggle);
+  elements.userAccountSettingsClose?.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
+  elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
+  elements.userAccountQuotaSave.addEventListener("click", saveQuota);
+  elements.userAccountSettingsPasswordSave.addEventListener("click", submitPasswordReset);
+  elements.userAccountSettingsRolesSave.addEventListener("click", saveRoles);
+  elements.userAccountSettingsDelete.addEventListener("click", () => {
+    requestDeleteUser(settingsTarget?.id, {
+      onSuccess: () => closeModal(elements.userAccountSettingsModal),
+    });
+  });
+  elements.userAccountToolDefault.addEventListener("change", () => {
+    syncToolAccessToggle();
+    scheduleToolSave({ silent: true });
+  });
   elements.userAccountPrevBtn.addEventListener("click", async () => {
     state.userAccounts.pagination.page = Math.max(1, state.userAccounts.pagination.page - 1);
     await loadUserAccounts();

@@ -582,10 +582,9 @@ async fn wunder_attachment_convert(multipart: Multipart) -> Result<Json<Value>, 
 
 fn map_orchestrator_error(err: Error) -> Response {
     if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
-        let status = if orchestrator_err.code() == "USER_BUSY" {
-            StatusCode::TOO_MANY_REQUESTS
-        } else {
-            StatusCode::BAD_REQUEST
+        let status = match orchestrator_err.code() {
+            "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::BAD_REQUEST,
         };
         return orchestrator_error_response(status, orchestrator_err.to_payload());
     }

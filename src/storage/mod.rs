@@ -21,10 +21,22 @@ pub struct UserAccountRecord {
     pub roles: Vec<String>,
     pub status: String,
     pub access_level: String,
+    pub daily_quota: i64,
+    pub daily_quota_used: i64,
+    pub daily_quota_date: Option<String>,
     pub is_demo: bool,
     pub created_at: f64,
     pub updated_at: f64,
     pub last_login_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserQuotaStatus {
+    pub daily_quota: i64,
+    pub used: i64,
+    pub remaining: i64,
+    pub date: String,
+    pub allowed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -250,6 +262,8 @@ pub trait StorageBackend: Send + Sync {
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
     ) -> Result<()>;
+
+    fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
 }
 
 /// 构建存储后端，根据 backend 配置选择 SQLite/Postgres。

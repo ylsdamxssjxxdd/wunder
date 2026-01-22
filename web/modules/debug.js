@@ -2809,6 +2809,48 @@ export const toggleDebugPolling = (enabled) => {
   });
 };
 
+const extractErrorMessage = (payload) => {
+  if (!payload) {
+    return "";
+  }
+  const detail = payload.detail;
+  if (detail) {
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (detail.message) {
+      return detail.message;
+    }
+    if (detail.error) {
+      return detail.error;
+    }
+    if (detail.detail?.message) {
+      return detail.detail.message;
+    }
+  }
+  return payload.message || payload.error || "";
+};
+
+const readErrorMessage = async (response) => {
+  if (!response) {
+    return "";
+  }
+  try {
+    const text = await response.text();
+    if (!text) {
+      return "";
+    }
+    try {
+      const payload = JSON.parse(text);
+      return extractErrorMessage(payload) || text;
+    } catch (error) {
+      return text;
+    }
+  } catch (error) {
+    return "";
+  }
+};
+
 const sendStreamRequest = async (endpoint, payload) => {
   stopDebugPolling();
   state.runtime.debugStreaming = true;
@@ -2826,7 +2868,8 @@ const sendStreamRequest = async (endpoint, payload) => {
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(t("common.requestFailed", { status: response.status }));
+      const message = await readErrorMessage(response);
+      throw new Error(message || t("common.requestFailed", { status: response.status }));
     }
 
     const reader = response.body.getReader();
@@ -2887,7 +2930,8 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   });
 
   if (!response.ok) {
-    throw new Error(t("common.requestFailed", { status: response.status }));
+    const message = await readErrorMessage(response);
+    throw new Error(message || t("common.requestFailed", { status: response.status }));
   }
 
   const result = await response.json();

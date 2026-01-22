@@ -344,7 +344,6 @@ async fn send_message(
             i18n::t("error.content_required"),
         ));
     }
-
     let now = now_ts();
     let record = state
         .user_store
@@ -1154,6 +1153,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "plan_update"
             | "llm_output_delta"
             | "llm_output"
+            | "quota_usage"
             | "final"
             | "error"
     )
@@ -1168,10 +1168,9 @@ fn now_ts() -> f64 {
 
 fn map_orchestrator_error(err: Error) -> Response {
     if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
-        let status = if orchestrator_err.code() == "USER_BUSY" {
-            StatusCode::TOO_MANY_REQUESTS
-        } else {
-            StatusCode::BAD_REQUEST
+        let status = match orchestrator_err.code() {
+            "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
+            _ => StatusCode::BAD_REQUEST,
         };
         return orchestrator_error_response(status, orchestrator_err.to_payload());
     }

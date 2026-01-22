@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::i18n;
+use crate::orchestrator::OrchestratorError;
 use crate::schemas::{StreamEvent, WunderRequest};
 use crate::state::AppState;
+use crate::storage::UserQuotaStatus;
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use axum::body::Bytes;
 use axum::extract::State;
@@ -9,6 +11,7 @@ use axum::http::{header, HeaderMap};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
+use anyhow::Error;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use chrono::{Local, TimeZone};
 use futures::StreamExt;
@@ -34,6 +37,7 @@ const A2A_TASK_NOT_FOUND: i64 = -32001;
 const A2A_TASK_NOT_CANCELABLE: i64 = -32002;
 const A2A_PUSH_NOT_SUPPORTED: i64 = -32003;
 const A2A_CONTENT_TYPE_NOT_SUPPORTED: i64 = -32005;
+const A2A_QUOTA_EXCEEDED: i64 = -32006;
 const A2A_VERSION_NOT_SUPPORTED: i64 = -32009;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -408,6 +412,47 @@ impl A2AError {
             Some(json!({ "detail": detail })),
         )
     }
+
+    fn quota_exceeded(status: &UserQuotaStatus) -> Self {
+        let message = i18n::t("error.user_quota_exceeded");
+        Self::new(
+            A2A_QUOTA_EXCEEDED,
+            message,
+            Some(json!({
+                "quota": {
+                    "daily_quota": status.daily_quota,
+                    "used": status.used,
+                    "remaining": status.remaining,
+                    "date": status.date,
+                }
+            })),
+        )
+    }
+}
+
+fn quota_status_from_payload(payload: &Value) -> Option<UserQuotaStatus> {
+    let detail = payload.get("detail")?.as_object()?;
+    let daily_quota = detail
+        .get("daily_quota")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let used = detail.get("used").and_then(Value::as_i64).unwrap_or(0);
+    let remaining = detail
+        .get("remaining")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let date = detail
+        .get("date")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some(UserQuotaStatus {
+        daily_quota,
+        used,
+        remaining,
+        date,
+        allowed: false,
+    })
 }
 
 async fn a2a_entry(
@@ -568,6 +613,24 @@ impl A2aService {
         Self { state }
     }
 
+    fn map_orchestrator_error(&self, err: Error) -> A2AError {
+        if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
+            if orchestrator_err.code() == "USER_QUOTA_EXCEEDED" {
+                let payload = orchestrator_err.to_payload();
+                if let Some(status) = quota_status_from_payload(&payload) {
+                    return A2AError::quota_exceeded(&status);
+                }
+                return A2AError::new(
+                    A2A_QUOTA_EXCEEDED,
+                    orchestrator_err.to_string(),
+                    None,
+                );
+            }
+            return A2AError::internal(&orchestrator_err.to_string());
+        }
+        A2AError::internal(&err.to_string())
+    }
+
     async fn send_message(&self, params: &Value) -> Result<Value, A2AError> {
         let message = params
             .get("message")
@@ -614,7 +677,7 @@ impl A2aService {
                 .orchestrator
                 .run(request)
                 .await
-                .map_err(|err| A2AError::internal(&err.to_string()))?;
+                .map_err(|err| self.map_orchestrator_error(err))?;
             let usage_value = result
                 .usage
                 .as_ref()

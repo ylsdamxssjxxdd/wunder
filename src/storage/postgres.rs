@@ -1,13 +1,14 @@
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserTokenRecord,
+    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserQuotaStatus,
+    UserTokenRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -217,6 +218,46 @@ impl PostgresStorage {
             client,
         })
     }
+
+    fn ensure_user_account_quota_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_accounts'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        let mut quota_added = false;
+        if !columns.contains("daily_quota") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN daily_quota BIGINT NOT NULL DEFAULT 10000",
+                &[],
+            )?;
+            quota_added = true;
+        }
+        if !columns.contains("daily_quota_used") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN daily_quota_used BIGINT NOT NULL DEFAULT 0",
+                &[],
+            )?;
+        }
+        if !columns.contains("daily_quota_date") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN daily_quota_date TEXT",
+                &[],
+            )?;
+        }
+        if quota_added {
+            conn.execute(
+                "UPDATE user_accounts SET daily_quota = CASE UPPER(access_level) \
+                 WHEN 'B' THEN 1000 WHEN 'C' THEN 100 ELSE 10000 END",
+                &[],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl StorageBackend for PostgresStorage {
@@ -395,6 +436,9 @@ impl StorageBackend for PostgresStorage {
                   roles TEXT NOT NULL,
                   status TEXT NOT NULL,
                   access_level TEXT NOT NULL,
+                  daily_quota BIGINT NOT NULL DEFAULT 10000,
+                  daily_quota_used BIGINT NOT NULL DEFAULT 0,
+                  daily_quota_date TEXT,
                   is_demo INTEGER NOT NULL DEFAULT 0,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL,
@@ -437,6 +481,7 @@ impl StorageBackend for PostgresStorage {
             );
             match result {
                 Ok(_) => {
+                    self.ensure_user_account_quota_columns(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
                 }
@@ -1929,11 +1974,13 @@ impl StorageBackend for PostgresStorage {
         let roles = Self::string_list_to_json(&record.roles);
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, \
+             daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
              ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
-             roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, is_demo = EXCLUDED.is_demo, \
-             created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
+             roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, \
+             daily_quota = EXCLUDED.daily_quota, daily_quota_used = EXCLUDED.daily_quota_used, daily_quota_date = EXCLUDED.daily_quota_date, \
+             is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
             &[
                 &record.user_id,
                 &record.username,
@@ -1942,6 +1989,9 @@ impl StorageBackend for PostgresStorage {
                 &roles,
                 &record.status,
                 &record.access_level,
+                &record.daily_quota,
+                &record.daily_quota_used,
+                &record.daily_quota_date,
                 &(record.is_demo as i32),
                 &record.created_at,
                 &record.updated_at,
@@ -1959,8 +2009,8 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-             FROM user_accounts WHERE user_id = $1",
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+             is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| UserAccountRecord {
@@ -1971,10 +2021,13 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            is_demo: row.get::<_, i32>(7) != 0,
-            created_at: row.get(8),
-            updated_at: row.get(9),
-            last_login_at: row.get(10),
+            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_date: row.get(9),
+            is_demo: row.get::<_, i32>(10) != 0,
+            created_at: row.get(11),
+            updated_at: row.get(12),
+            last_login_at: row.get(13),
         }))
     }
 
@@ -1986,8 +2039,8 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-             FROM user_accounts WHERE username = $1",
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+             is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| UserAccountRecord {
@@ -1998,10 +2051,13 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            is_demo: row.get::<_, i32>(7) != 0,
-            created_at: row.get(8),
-            updated_at: row.get(9),
-            last_login_at: row.get(10),
+            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_date: row.get(9),
+            is_demo: row.get::<_, i32>(10) != 0,
+            created_at: row.get(11),
+            updated_at: row.get(12),
+            last_login_at: row.get(13),
         }))
     }
 
@@ -2013,8 +2069,8 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-             FROM user_accounts WHERE email = $1",
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+             is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| UserAccountRecord {
@@ -2025,10 +2081,13 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            is_demo: row.get::<_, i32>(7) != 0,
-            created_at: row.get(8),
-            updated_at: row.get(9),
-            last_login_at: row.get(10),
+            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_date: row.get(9),
+            is_demo: row.get::<_, i32>(10) != 0,
+            created_at: row.get(11),
+            updated_at: row.get(12),
+            last_login_at: row.get(13),
         }))
     }
 
@@ -2059,27 +2118,29 @@ impl StorageBackend for PostgresStorage {
             let pattern = format!("%{keyword}%");
             if limit > 0 {
                 conn.query(
-                    "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-                     FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                    "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                     is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 \
+                     ORDER BY created_at DESC LIMIT $2 OFFSET $3",
                     &[&pattern, &limit, &offset.max(0)],
                 )?
             } else {
                 conn.query(
-                    "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-                     FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 ORDER BY created_at DESC",
+                    "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                     is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 \
+                     ORDER BY created_at DESC",
                     &[&pattern],
                 )?
             }
         } else if limit > 0 {
             conn.query(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-                 FROM user_accounts ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                 is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC LIMIT $1 OFFSET $2",
                 &[&limit, &offset.max(0)],
             )?
         } else {
             conn.query(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, is_demo, created_at, updated_at, last_login_at \
-                 FROM user_accounts ORDER BY created_at DESC",
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                 is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC",
                 &[],
             )?
         };
@@ -2094,10 +2155,13 @@ impl StorageBackend for PostgresStorage {
                 roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
                 status: row.get(5),
                 access_level: row.get(6),
-                is_demo: row.get::<_, i32>(7) != 0,
-                created_at: row.get(8),
-                updated_at: row.get(9),
-                last_login_at: row.get(10),
+                daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
+                daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
+                daily_quota_date: row.get(9),
+                is_demo: row.get::<_, i32>(10) != 0,
+                created_at: row.get(11),
+                updated_at: row.get(12),
+                last_login_at: row.get(13),
             });
         }
         Ok((output, total))
@@ -2369,5 +2433,58 @@ impl StorageBackend for PostgresStorage {
             )?;
         }
         Ok(())
+    }
+
+    fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let today = today.trim();
+        if today.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let row = tx.query_opt(
+            "SELECT daily_quota, daily_quota_used, daily_quota_date \
+             FROM user_accounts WHERE user_id = $1 FOR UPDATE",
+            &[&cleaned],
+        )?;
+        let Some(row) = row else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let daily_quota: i64 = row.get(0);
+        let daily_used: i64 = row.get(1);
+        let daily_date: Option<String> = row.get(2);
+        let safe_quota = daily_quota.max(0);
+        let mut used = daily_used.max(0);
+        let date_match = daily_date.as_deref() == Some(today);
+        if !date_match {
+            used = 0;
+        }
+        let mut allowed = false;
+        if safe_quota > 0 && used < safe_quota {
+            allowed = true;
+            used += 1;
+        }
+        let should_update = allowed || !date_match;
+        if should_update {
+            tx.execute(
+                "UPDATE user_accounts SET daily_quota_used = $1, daily_quota_date = $2 WHERE user_id = $3",
+                &[&used, &today, &cleaned],
+            )?;
+        }
+        tx.commit()?;
+        let remaining = (safe_quota - used).max(0);
+        Ok(Some(UserQuotaStatus {
+            daily_quota: safe_quota,
+            used,
+            remaining,
+            date: today.to_string(),
+            allowed,
+        }))
     }
 }

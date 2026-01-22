@@ -25,7 +25,40 @@ const MIN_MAX_ACTIVE_SESSIONS = 1;
 
 const serverSettings = {
   maxActiveSessions: null,
-  sandboxEnabled: null,
+  streamChunkSize: null,
+};
+const securitySettings = {
+  apiKey: "",
+  allowCommands: [],
+  allowPaths: [],
+  denyGlobs: [],
+};
+const sandboxSettings = {
+  enabled: null,
+  endpoint: "",
+  image: "",
+  containerRoot: "",
+  network: "",
+  readonlyRootfs: null,
+  idleTtlS: null,
+  timeoutS: null,
+  resources: {
+    cpu: null,
+    memoryMb: null,
+    pids: null,
+  },
+};
+const observabilitySettings = {
+  logLevel: "",
+  monitorEventLimit: null,
+  monitorPayloadMaxChars: null,
+  monitorDropEventTypes: [],
+};
+const corsSettings = {
+  allowOrigins: [],
+  allowMethods: [],
+  allowHeaders: [],
+  allowCredentials: null,
 };
 let adminDefaultsLoaded = false;
 let adminDefaultsLoading = null;
@@ -38,6 +71,39 @@ const resolveNumberInput = (rawValue, fallback, minValue) => {
   }
   const rounded = Math.round(parsed);
   return Math.max(minValue, rounded);
+};
+
+const resolveOptionalNumber = (rawValue, fallback, minValue, options = {}) => {
+  const cleaned = String(rawValue ?? "").trim();
+  if (!cleaned) {
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed)) {
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+  const round = options.round !== false;
+  const value = round ? Math.round(parsed) : parsed;
+  const min = Number.isFinite(minValue) ? minValue : 0;
+  return Math.max(min, value);
+};
+
+const normalizeTextList = (rawValue) =>
+  String(rawValue || "")
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const renderTextList = (items, fallback = "") => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return fallback;
+  }
+  return items.join("\n");
+};
+
+const resolveCorsList = (rawValue) => {
+  const list = normalizeTextList(rawValue);
+  return list.length ? list : ["*"];
 };
 
 // 确保下拉框值可用，避免缓存旧值导致异常
@@ -137,6 +203,17 @@ const applyMaxActiveSessions = (maxActiveSessions) => {
   elements.settingsMaxActiveSessions.value = "";
 };
 
+const applyStreamChunkSize = (streamChunkSize) => {
+  if (!elements.settingsStreamChunkSize) {
+    return;
+  }
+  if (Number.isFinite(streamChunkSize)) {
+    elements.settingsStreamChunkSize.value = String(streamChunkSize);
+    return;
+  }
+  elements.settingsStreamChunkSize.value = "";
+};
+
 const applySandboxEnabled = (sandboxEnabled) => {
   if (!elements.settingsSandboxEnabled) {
     return;
@@ -150,7 +227,101 @@ const applySandboxEnabled = (sandboxEnabled) => {
 
 const applyServerSettings = (options = {}) => {
   applyMaxActiveSessions(options.maxActiveSessions);
-  applySandboxEnabled(options.sandboxEnabled);
+  applyStreamChunkSize(options.streamChunkSize);
+};
+
+const applySecuritySettings = (options = {}) => {
+  if (elements.settingsAllowCommands) {
+    elements.settingsAllowCommands.value = renderTextList(options.allowCommands);
+  }
+  if (elements.settingsAllowPaths) {
+    elements.settingsAllowPaths.value = renderTextList(options.allowPaths);
+  }
+  if (elements.settingsDenyGlobs) {
+    elements.settingsDenyGlobs.value = renderTextList(options.denyGlobs);
+  }
+};
+
+const applySandboxSettings = (options = {}) => {
+  applySandboxEnabled(options.enabled);
+  if (elements.settingsSandboxEndpoint) {
+    elements.settingsSandboxEndpoint.value = options.endpoint || "";
+  }
+  if (elements.settingsSandboxImage) {
+    elements.settingsSandboxImage.value = options.image || "";
+  }
+  if (elements.settingsSandboxContainerRoot) {
+    elements.settingsSandboxContainerRoot.value = options.containerRoot || "";
+  }
+  if (elements.settingsSandboxNetwork) {
+    elements.settingsSandboxNetwork.value = options.network || "";
+  }
+  if (elements.settingsSandboxReadonly) {
+    elements.settingsSandboxReadonly.checked = options.readonlyRootfs === true;
+  }
+  if (elements.settingsSandboxIdleTtl) {
+    elements.settingsSandboxIdleTtl.value = Number.isFinite(options.idleTtlS)
+      ? String(options.idleTtlS)
+      : "";
+  }
+  if (elements.settingsSandboxTimeout) {
+    elements.settingsSandboxTimeout.value = Number.isFinite(options.timeoutS)
+      ? String(options.timeoutS)
+      : "";
+  }
+  if (elements.settingsSandboxCpu) {
+    elements.settingsSandboxCpu.value = Number.isFinite(options.resources?.cpu)
+      ? String(options.resources.cpu)
+      : "";
+  }
+  if (elements.settingsSandboxMemory) {
+    elements.settingsSandboxMemory.value = Number.isFinite(options.resources?.memoryMb)
+      ? String(options.resources.memoryMb)
+      : "";
+  }
+  if (elements.settingsSandboxPids) {
+    elements.settingsSandboxPids.value = Number.isFinite(options.resources?.pids)
+      ? String(options.resources.pids)
+      : "";
+  }
+};
+
+const applyObservabilitySettings = (options = {}) => {
+  if (elements.settingsLogLevel) {
+    const resolved = resolveSelectValue(
+      elements.settingsLogLevel,
+      String(options.logLevel || "info").toLowerCase()
+    );
+    elements.settingsLogLevel.value = resolved;
+  }
+  if (elements.settingsMonitorEventLimit) {
+    elements.settingsMonitorEventLimit.value = Number.isFinite(options.monitorEventLimit)
+      ? String(options.monitorEventLimit)
+      : "";
+  }
+  if (elements.settingsMonitorPayloadLimit) {
+    elements.settingsMonitorPayloadLimit.value = Number.isFinite(options.monitorPayloadMaxChars)
+      ? String(options.monitorPayloadMaxChars)
+      : "";
+  }
+  if (elements.settingsMonitorDropTypes) {
+    elements.settingsMonitorDropTypes.value = renderTextList(options.monitorDropEventTypes);
+  }
+};
+
+const applyCorsSettings = (options = {}) => {
+  if (elements.settingsCorsOrigins) {
+    elements.settingsCorsOrigins.value = renderTextList(options.allowOrigins, "*");
+  }
+  if (elements.settingsCorsMethods) {
+    elements.settingsCorsMethods.value = renderTextList(options.allowMethods, "*");
+  }
+  if (elements.settingsCorsHeaders) {
+    elements.settingsCorsHeaders.value = renderTextList(options.allowHeaders, "*");
+  }
+  if (elements.settingsCorsCredentials) {
+    elements.settingsCorsCredentials.checked = options.allowCredentials === true;
+  }
 };
 
 const resolveMaxActiveSessions = () => {
@@ -168,6 +339,13 @@ const resolveMaxActiveSessions = () => {
   );
 };
 
+const resolveStreamChunkSize = () =>
+  resolveOptionalNumber(
+    elements.settingsStreamChunkSize?.value,
+    serverSettings.streamChunkSize,
+    0
+  );
+
 const resolveSandboxEnabled = () => {
   if (!elements.settingsSandboxEnabled) {
     return null;
@@ -175,37 +353,30 @@ const resolveSandboxEnabled = () => {
   return Boolean(elements.settingsSandboxEnabled.checked);
 };
 
-const fetchServerSettings = async () => {
+const fetchSystemSettings = async () => {
   const wunderBase = getWunderBase();
   if (!wunderBase) {
     throw new Error(t("settings.error.apiBase"));
   }
-  const response = await fetch(`${wunderBase}/admin/server`, {
+  const response = await fetch(`${wunderBase}/admin/system`, {
     headers: getAuthHeaders(),
   });
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const payload = await response.json();
-  return payload?.server || {};
+  return payload || {};
 };
 
-const updateServerSettings = async (options = {}) => {
+const updateSystemSettings = async (requestBody = {}) => {
   const wunderBase = getWunderBase();
   if (!wunderBase) {
     throw new Error(t("settings.error.apiBase"));
   }
-  const requestBody = {};
-  if (Number.isFinite(options.maxActiveSessions)) {
-    requestBody.max_active_sessions = options.maxActiveSessions;
-  }
-  if (typeof options.sandboxEnabled === "boolean") {
-    requestBody.sandbox_enabled = options.sandboxEnabled;
-  }
   if (!Object.keys(requestBody).length) {
     return {};
   }
-  const response = await fetch(`${wunderBase}/admin/server`, {
+  const response = await fetch(`${wunderBase}/admin/system`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -216,27 +387,89 @@ const updateServerSettings = async (options = {}) => {
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
-  const data = await response.json();
-  return data?.server || {};
+  return response.json();
 };
 
-const loadServerSettings = async (options = {}) => {
-  if (!elements.settingsMaxActiveSessions && !elements.settingsSandboxEnabled) {
-    return;
+const applySystemSettings = (payload = {}) => {
+  const server = payload.server || {};
+  serverSettings.maxActiveSessions = Number.isFinite(server.max_active_sessions)
+    ? server.max_active_sessions
+    : null;
+  serverSettings.streamChunkSize = Number.isFinite(server.stream_chunk_size)
+    ? server.stream_chunk_size
+    : null;
+  applyServerSettings({
+    maxActiveSessions: serverSettings.maxActiveSessions,
+    streamChunkSize: serverSettings.streamChunkSize,
+  });
+
+  const security = payload.security || {};
+  securitySettings.apiKey = typeof security.api_key === "string" ? security.api_key.trim() : "";
+  securitySettings.allowCommands = Array.isArray(security.allow_commands)
+    ? security.allow_commands
+    : [];
+  securitySettings.allowPaths = Array.isArray(security.allow_paths)
+    ? security.allow_paths
+    : [];
+  securitySettings.denyGlobs = Array.isArray(security.deny_globs)
+    ? security.deny_globs
+    : [];
+  applySecuritySettings(securitySettings);
+  if (Object.prototype.hasOwnProperty.call(security, "api_key")) {
+    applyDefaultApiKey(security.api_key);
   }
+
+  const sandbox = payload.sandbox || {};
+  sandboxSettings.enabled = typeof sandbox.enabled === "boolean" ? sandbox.enabled : true;
+  sandboxSettings.endpoint = String(sandbox.endpoint || "").trim();
+  sandboxSettings.image = String(sandbox.image || "").trim();
+  sandboxSettings.containerRoot = String(sandbox.container_root || "").trim();
+  sandboxSettings.network = String(sandbox.network || "").trim();
+  sandboxSettings.readonlyRootfs = sandbox.readonly_rootfs === true;
+  sandboxSettings.idleTtlS = Number.isFinite(sandbox.idle_ttl_s) ? sandbox.idle_ttl_s : null;
+  sandboxSettings.timeoutS = Number.isFinite(sandbox.timeout_s) ? sandbox.timeout_s : null;
+  const resources = sandbox.resources || {};
+  sandboxSettings.resources.cpu = Number.isFinite(resources.cpu) ? resources.cpu : null;
+  sandboxSettings.resources.memoryMb = Number.isFinite(resources.memory_mb)
+    ? resources.memory_mb
+    : null;
+  sandboxSettings.resources.pids = Number.isFinite(resources.pids) ? resources.pids : null;
+  applySandboxSettings(sandboxSettings);
+
+  const observability = payload.observability || {};
+  observabilitySettings.logLevel = String(observability.log_level || "").trim();
+  observabilitySettings.monitorEventLimit = Number.isFinite(observability.monitor_event_limit)
+    ? observability.monitor_event_limit
+    : null;
+  observabilitySettings.monitorPayloadMaxChars = Number.isFinite(
+    observability.monitor_payload_max_chars
+  )
+    ? observability.monitor_payload_max_chars
+    : null;
+  observabilitySettings.monitorDropEventTypes = Array.isArray(
+    observability.monitor_drop_event_types
+  )
+    ? observability.monitor_drop_event_types
+    : [];
+  applyObservabilitySettings(observabilitySettings);
+
+  const cors = payload.cors || {};
+  corsSettings.allowOrigins = Array.isArray(cors.allow_origins) ? cors.allow_origins : [];
+  corsSettings.allowMethods = Array.isArray(cors.allow_methods) ? cors.allow_methods : [];
+  corsSettings.allowHeaders = Array.isArray(cors.allow_headers) ? cors.allow_headers : [];
+  corsSettings.allowCredentials =
+    typeof cors.allow_credentials === "boolean" ? cors.allow_credentials : false;
+  applyCorsSettings(corsSettings);
+};
+
+const loadSystemSettings = async (options = {}) => {
   const silent = options.silent === true;
   try {
-    const server = await fetchServerSettings();
-    serverSettings.maxActiveSessions = server.max_active_sessions ?? null;
-    serverSettings.sandboxEnabled =
-      typeof server.sandbox_enabled === "boolean" ? server.sandbox_enabled : true;
-    applyServerSettings({
-      maxActiveSessions: serverSettings.maxActiveSessions,
-      sandboxEnabled: serverSettings.sandboxEnabled,
-    });
+    const payload = await fetchSystemSettings();
+    applySystemSettings(payload);
   } catch (error) {
     if (!silent) {
-      notify(t("settings.toast.serverLoadFailed", { message: error.message }), "error");
+      notify(t("settings.toast.systemLoadFailed", { message: error.message }), "error");
     }
   }
 };
@@ -309,6 +542,207 @@ export const loadAdminDefaults = async (options = {}) => {
   return adminDefaultsLoading;
 };
 
+const buildSystemUpdatePayload = () => {
+  const payload = {};
+
+  if (elements.settingsMaxActiveSessions || elements.settingsStreamChunkSize) {
+    const server = {};
+    const nextMaxActiveSessions = resolveMaxActiveSessions();
+    if (Number.isFinite(nextMaxActiveSessions)) {
+      server.max_active_sessions = nextMaxActiveSessions;
+    }
+    const nextStreamChunkSize = resolveStreamChunkSize();
+    if (Number.isFinite(nextStreamChunkSize)) {
+      server.stream_chunk_size = nextStreamChunkSize;
+    }
+    if (Object.keys(server).length) {
+      payload.server = server;
+    }
+  }
+
+  if (
+    elements.apiKey ||
+    elements.settingsAllowCommands ||
+    elements.settingsAllowPaths ||
+    elements.settingsDenyGlobs
+  ) {
+    const security = {};
+    if (elements.apiKey) {
+      security.api_key = String(elements.apiKey.value || "").trim();
+    }
+    if (elements.settingsAllowCommands) {
+      security.allow_commands = normalizeTextList(elements.settingsAllowCommands.value);
+    }
+    if (elements.settingsAllowPaths) {
+      security.allow_paths = normalizeTextList(elements.settingsAllowPaths.value);
+    }
+    if (elements.settingsDenyGlobs) {
+      security.deny_globs = normalizeTextList(elements.settingsDenyGlobs.value);
+    }
+    if (Object.keys(security).length) {
+      payload.security = security;
+    }
+  }
+
+  if (
+    elements.settingsSandboxEnabled ||
+    elements.settingsSandboxEndpoint ||
+    elements.settingsSandboxImage ||
+    elements.settingsSandboxContainerRoot ||
+    elements.settingsSandboxNetwork ||
+    elements.settingsSandboxReadonly ||
+    elements.settingsSandboxIdleTtl ||
+    elements.settingsSandboxTimeout ||
+    elements.settingsSandboxCpu ||
+    elements.settingsSandboxMemory ||
+    elements.settingsSandboxPids
+  ) {
+    const sandbox = {};
+    if (elements.settingsSandboxEnabled) {
+      sandbox.enabled = resolveSandboxEnabled();
+    }
+    if (elements.settingsSandboxEndpoint) {
+      sandbox.endpoint = String(elements.settingsSandboxEndpoint.value || "").trim();
+    }
+    if (elements.settingsSandboxImage) {
+      sandbox.image = String(elements.settingsSandboxImage.value || "").trim();
+    }
+    if (elements.settingsSandboxContainerRoot) {
+      sandbox.container_root = String(elements.settingsSandboxContainerRoot.value || "").trim();
+    }
+    if (elements.settingsSandboxNetwork) {
+      sandbox.network = String(elements.settingsSandboxNetwork.value || "").trim();
+    }
+    if (elements.settingsSandboxReadonly) {
+      sandbox.readonly_rootfs = Boolean(elements.settingsSandboxReadonly.checked);
+    }
+    if (elements.settingsSandboxIdleTtl) {
+      const value = resolveOptionalNumber(
+        elements.settingsSandboxIdleTtl.value,
+        sandboxSettings.idleTtlS,
+        0
+      );
+      if (value !== null) {
+        sandbox.idle_ttl_s = value;
+      }
+    }
+    if (elements.settingsSandboxTimeout) {
+      const value = resolveOptionalNumber(
+        elements.settingsSandboxTimeout.value,
+        sandboxSettings.timeoutS,
+        0
+      );
+      if (value !== null) {
+        sandbox.timeout_s = value;
+      }
+    }
+    const resources = {};
+    if (elements.settingsSandboxCpu) {
+      const value = resolveOptionalNumber(
+        elements.settingsSandboxCpu.value,
+        sandboxSettings.resources.cpu,
+        0,
+        { round: false }
+      );
+      if (value !== null) {
+        resources.cpu = value;
+      }
+    }
+    if (elements.settingsSandboxMemory) {
+      const value = resolveOptionalNumber(
+        elements.settingsSandboxMemory.value,
+        sandboxSettings.resources.memoryMb,
+        0
+      );
+      if (value !== null) {
+        resources.memory_mb = value;
+      }
+    }
+    if (elements.settingsSandboxPids) {
+      const value = resolveOptionalNumber(
+        elements.settingsSandboxPids.value,
+        sandboxSettings.resources.pids,
+        0
+      );
+      if (value !== null) {
+        resources.pids = value;
+      }
+    }
+    if (Object.keys(resources).length) {
+      sandbox.resources = resources;
+    }
+    if (Object.keys(sandbox).length) {
+      payload.sandbox = sandbox;
+    }
+  }
+
+  if (
+    elements.settingsLogLevel ||
+    elements.settingsMonitorEventLimit ||
+    elements.settingsMonitorPayloadLimit ||
+    elements.settingsMonitorDropTypes
+  ) {
+    const observability = {};
+    if (elements.settingsLogLevel) {
+      observability.log_level = String(elements.settingsLogLevel.value || "").trim();
+    }
+    if (elements.settingsMonitorEventLimit) {
+      const value = resolveOptionalNumber(
+        elements.settingsMonitorEventLimit.value,
+        observabilitySettings.monitorEventLimit,
+        0
+      );
+      if (value !== null) {
+        observability.monitor_event_limit = value;
+      }
+    }
+    if (elements.settingsMonitorPayloadLimit) {
+      const value = resolveOptionalNumber(
+        elements.settingsMonitorPayloadLimit.value,
+        observabilitySettings.monitorPayloadMaxChars,
+        0
+      );
+      if (value !== null) {
+        observability.monitor_payload_max_chars = value;
+      }
+    }
+    if (elements.settingsMonitorDropTypes) {
+      observability.monitor_drop_event_types = normalizeTextList(
+        elements.settingsMonitorDropTypes.value
+      );
+    }
+    if (Object.keys(observability).length) {
+      payload.observability = observability;
+    }
+  }
+
+  if (
+    elements.settingsCorsOrigins ||
+    elements.settingsCorsMethods ||
+    elements.settingsCorsHeaders ||
+    elements.settingsCorsCredentials
+  ) {
+    const cors = {};
+    if (elements.settingsCorsOrigins) {
+      cors.allow_origins = resolveCorsList(elements.settingsCorsOrigins.value);
+    }
+    if (elements.settingsCorsMethods) {
+      cors.allow_methods = resolveCorsList(elements.settingsCorsMethods.value);
+    }
+    if (elements.settingsCorsHeaders) {
+      cors.allow_headers = resolveCorsList(elements.settingsCorsHeaders.value);
+    }
+    if (elements.settingsCorsCredentials) {
+      cors.allow_credentials = Boolean(elements.settingsCorsCredentials.checked);
+    }
+    if (Object.keys(cors).length) {
+      payload.cors = cors;
+    }
+  }
+
+  return payload;
+};
+
 // 保存设置并应用到运行时
 const handleSaveSettings = async () => {
   const previous = { ...APP_CONFIG };
@@ -357,57 +791,16 @@ const handleSaveSettings = async () => {
 
   notify(t("settings.toast.saved"), "success");
 
-  if (elements.settingsMaxActiveSessions || elements.settingsSandboxEnabled) {
-    const nextMaxActiveSessions = resolveMaxActiveSessions();
-    const nextSandboxEnabled = resolveSandboxEnabled();
-    const payload = {};
-    let shouldUpdate = false;
-
-    if (nextMaxActiveSessions === null) {
-      applyMaxActiveSessions(serverSettings.maxActiveSessions);
-    } else if (nextMaxActiveSessions !== serverSettings.maxActiveSessions) {
-      payload.maxActiveSessions = nextMaxActiveSessions;
-      shouldUpdate = true;
-    }
-
-    if (nextSandboxEnabled === null) {
-      applySandboxEnabled(serverSettings.sandboxEnabled);
-    } else if (nextSandboxEnabled !== serverSettings.sandboxEnabled) {
-      payload.sandboxEnabled = nextSandboxEnabled;
-      shouldUpdate = true;
-    }
-
-    if (!shouldUpdate) {
-      applyServerSettings({
-        maxActiveSessions: serverSettings.maxActiveSessions,
-        sandboxEnabled: serverSettings.sandboxEnabled,
-      });
-      return;
-    }
-
-    try {
-      const server = await updateServerSettings(payload);
-      serverSettings.maxActiveSessions =
-        server.max_active_sessions ?? payload.maxActiveSessions ?? serverSettings.maxActiveSessions;
-      if (typeof server.sandbox_enabled === "boolean") {
-        serverSettings.sandboxEnabled = server.sandbox_enabled;
-      } else if (typeof payload.sandboxEnabled === "boolean") {
-        serverSettings.sandboxEnabled = payload.sandboxEnabled;
-      }
-      applyServerSettings({
-        maxActiveSessions: serverSettings.maxActiveSessions,
-        sandboxEnabled: serverSettings.sandboxEnabled,
-      });
-    } catch (error) {
-      notify(
-        t("settings.toast.serverUpdateFailed", { message: error.message }),
-        "error"
-      );
-      applyServerSettings({
-        maxActiveSessions: serverSettings.maxActiveSessions,
-        sandboxEnabled: serverSettings.sandboxEnabled,
-      });
-    }
+  const systemPayload = buildSystemUpdatePayload();
+  if (!Object.keys(systemPayload).length) {
+    return;
+  }
+  try {
+    const system = await updateSystemSettings(systemPayload);
+    applySystemSettings(system);
+  } catch (error) {
+    notify(t("settings.toast.systemUpdateFailed", { message: error.message }), "error");
+    await loadSystemSettings({ silent: true });
   }
 };
 
@@ -421,7 +814,7 @@ const handleResetSettings = async () => {
   refreshMonitorInterval(defaults.monitorPollIntervalMs);
   setLanguage(defaults.language, { force: true });
   state.runtime.promptNeedsRefresh = true;
-  await loadServerSettings({ silent: true });
+  await loadSystemSettings({ silent: true });
   notify(t("settings.toast.reset"), "success");
 };
 
@@ -430,7 +823,7 @@ export const initSettingsPanel = () => {
   applyStoredConfig();
   renderLanguageOptions();
   applySettingsForm(APP_CONFIG);
-  loadServerSettings({ silent: true }).catch(() => {});
+  loadSystemSettings({ silent: true }).catch(() => {});
   if (elements.settingsSaveBtn) {
     elements.settingsSaveBtn.addEventListener("click", () => {
       handleSaveSettings().catch(() => {});

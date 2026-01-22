@@ -14,6 +14,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
+- 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；超额返回 429，虚拟用户不受限制。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译，缺失时回退 `app/core/i18n.py`；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -33,6 +34,7 @@
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
 - 约束：同一 `user_id` 若已有运行中的会话，接口返回 429 并提示稍后再试。
+- 约束：注册用户每日有请求额度，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
@@ -419,7 +421,37 @@
   - `message`：探测结果说明
   - 说明：仅支持 OpenAI 兼容 provider（见 `/wunder/admin/llm` 说明）。
 
-### 4.1.6.2 `/wunder/admin/server`
+### 4.1.6.2 `/wunder/admin/system`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `server.max_active_sessions`：全局最大并发会话数
+  - `server.stream_chunk_size`：流式输出分片大小（字节）
+  - `security.api_key`：API Key（未配置时为 null）
+  - `security.allow_commands`：允许执行命令前缀列表
+  - `security.allow_paths`：允许访问的额外目录列表
+  - `security.deny_globs`：拒绝访问的路径通配规则列表
+  - `sandbox.enabled`：是否启用沙盒执行
+  - `sandbox.endpoint`：沙盒服务地址
+  - `sandbox.image`：沙盒镜像名称
+  - `sandbox.container_root`：容器内根目录
+  - `sandbox.network`：网络模式
+  - `sandbox.readonly_rootfs`：只读根文件系统开关
+  - `sandbox.idle_ttl_s`：空闲回收秒数
+  - `sandbox.timeout_s`：单次执行超时秒数
+  - `sandbox.resources`：资源限制（cpu/memory_mb/pids）
+  - `observability.log_level`：日志级别
+  - `observability.monitor_event_limit`：监控事件上限
+  - `observability.monitor_payload_max_chars`：监控事件内容最大字符
+  - `observability.monitor_drop_event_types`：需要丢弃的事件类型
+  - `cors.allow_origins`：允许来源列表
+  - `cors.allow_methods`：允许方法列表
+  - `cors.allow_headers`：允许请求头列表
+  - `cors.allow_credentials`：是否允许携带凭证
+- `POST` 入参：以上字段均可选，支持分组更新
+- `POST` 返回：同 `GET`
+
+### 4.1.6.3 `/wunder/admin/server`
 
 - 方法：`GET/POST`
 - `GET` 返回：
@@ -432,7 +464,7 @@
   - `server.max_active_sessions`：更新后的全局最大并发会话数
   - `server.sandbox_enabled`：更新后的沙盒执行开关
 
-### 4.1.6.3 `/wunder/admin/security`
+### 4.1.6.4 `/wunder/admin/security`
 
 - 方法：`GET`
 - `GET` 返回：
@@ -709,7 +741,7 @@
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
-- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
+- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`。
@@ -1194,6 +1226,7 @@
   - 入参（JSON）：`content`、`stream`（默认 true）、`selected_shared_tools`（可选）、`attachments`（可选）
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
+  - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
 - `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
@@ -1214,12 +1247,12 @@
 
 - `GET /wunder/admin/user_accounts`
   - Query：`keyword`、`offset`、`limit`
-  - 返回：`data.total`、`data.items`（UserProfile）
+  - 返回：`data.total`、`data.items`（UserProfile + `daily_quota`/`daily_quota_used`/`daily_quota_remaining`/`daily_quota_date`）
 - `POST /wunder/admin/user_accounts`
   - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
   - 返回：`data`（UserProfile）
 - `PATCH /wunder/admin/user_accounts/{user_id}`
-  - 入参（JSON）：`email`（可选）、`status`（可选）、`access_level`（可选）、`roles`（可选）
+  - 入参（JSON）：`email`（可选）、`status`（可选）、`access_level`（可选）、`roles`（可选）、`daily_quota`（可选）
   - 返回：`data`（UserProfile）
 - `DELETE /wunder/admin/user_accounts/{user_id}`
   - 返回：`data.ok`、`data.id`
@@ -1235,7 +1268,7 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
-- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`tool_call`、`tool_result`、`plan_update`、`final` 等事件，其余事件待补齐。
+- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`quota_usage`、`tool_call`、`tool_result`、`plan_update`、`final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
@@ -1243,6 +1276,7 @@
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
 - `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
+- `event: quota_usage`：额度消耗统计（`data.consumed` 本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，`data.round` 为轮次）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。

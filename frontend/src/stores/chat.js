@@ -19,13 +19,21 @@ const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
   prefill_duration_s: null,
-  decode_duration_s: null
+  decode_duration_s: null,
+  quotaConsumed: 0
 });
 
 const normalizeStatsCount = (value) => {
   if (value === null || value === undefined) return 0;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const normalizeQuotaConsumed = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return normalizeStatsCount(value.consumed ?? value.used ?? value.count ?? 0);
+  }
+  return normalizeStatsCount(value);
 };
 
 const normalizeDurationValue = (value) => {
@@ -73,8 +81,57 @@ const normalizeMessageStats = (stats) => {
     ),
     decode_duration_s: normalizeDurationValue(
       stats.decode_duration_s ?? stats.decodeDurationS ?? stats.decodeDuration
+    ),
+    quotaConsumed: normalizeQuotaConsumed(
+      stats.quotaConsumed ?? stats.quota_consumed ?? stats.quota
     )
   };
+};
+
+const extractErrorMessage = (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  const detail = payload.detail;
+  if (detail) {
+    if (typeof detail === 'string') {
+      return detail;
+    }
+    if (detail.message) {
+      return detail.message;
+    }
+    if (detail.error) {
+      return detail.error;
+    }
+    if (detail.detail?.message) {
+      return detail.detail.message;
+    }
+  }
+  return payload.message || payload.error || '';
+};
+
+const parseErrorText = (text) => {
+  if (!text) {
+    return '';
+  }
+  try {
+    const payload = JSON.parse(text);
+    return extractErrorMessage(payload) || text;
+  } catch (error) {
+    return text;
+  }
+};
+
+const readResponseError = async (response) => {
+  if (!response) {
+    return '';
+  }
+  try {
+    const text = await response.text();
+    return parseErrorText(text);
+  } catch (error) {
+    return '';
+  }
 };
 
 const ensureMessageStats = (message) => {
@@ -105,7 +162,8 @@ const mergeMessageStats = (base, incoming) => {
     decode_duration_s:
       right.decode_duration_s === null || right.decode_duration_s === undefined
         ? left.decode_duration_s
-        : right.decode_duration_s
+        : right.decode_duration_s,
+    quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed)
   };
 };
 
@@ -1037,6 +1095,15 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     }
   };
 
+  const updateQuotaUsage = (payload) => {
+    if (!stats) return;
+    const rawIncrement =
+      payload && typeof payload === 'object' ? payload.consumed ?? payload.count ?? payload.used : null;
+    const increment = normalizeStatsCount(rawIncrement);
+    const delta = increment > 0 ? increment : 1;
+    stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + delta;
+  };
+
   const registerToolItem = (toolName, itemId) => {
     if (!toolName || !itemId) return;
     if (!toolItemMap.has(toolName)) {
@@ -1516,6 +1583,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         );
         break;
       }
+      case 'quota_usage': {
+        updateQuotaUsage(data ?? payload ?? {});
+        break;
+      }
       case 'final': {
         flushStream(true);
         const answer =
@@ -1779,7 +1850,7 @@ export const useChatStore = defineStore('chat', {
           }
         );
         if (!response.ok) {
-          const errorText = await response.text();
+          const errorText = await readResponseError(response);
           throw new Error(errorText || `请求失败 (${response.status})`);
         }
         await consumeSseStream(response, (eventType, dataText, eventId) => {
@@ -1847,7 +1918,7 @@ export const useChatStore = defineStore('chat', {
           afterEventId
         });
         if (!response.ok) {
-          const errorText = await response.text();
+          const errorText = await readResponseError(response);
           throw new Error(errorText || `恢复失败 (${response.status})`);
         }
         await consumeSseStream(response, (eventType, dataText, eventId) => {

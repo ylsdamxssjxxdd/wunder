@@ -41,6 +41,7 @@ export const state = {
     throughput: false,
     performance: false,
     evaluation: false,
+    paper: false,
     mcp: false,
     lsp: false,
     a2aServices: false,

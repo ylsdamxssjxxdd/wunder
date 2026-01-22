@@ -11,6 +11,9 @@ use uuid::Uuid;
 const DEFAULT_TOKEN_TTL_S: i64 = 7 * 24 * 3600;
 const DEFAULT_ADMIN_USER_ID: &str = "admin";
 const DEFAULT_ADMIN_PASSWORD: &str = "admin";
+const DEFAULT_DAILY_QUOTA_A: i64 = 10_000;
+const DEFAULT_DAILY_QUOTA_B: i64 = 1_000;
+const DEFAULT_DAILY_QUOTA_C: i64 = 100;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserProfile {
@@ -103,6 +106,18 @@ impl UserStore {
         }
     }
 
+    pub fn default_daily_quota(access_level: &str) -> i64 {
+        match access_level.trim().to_uppercase().as_str() {
+            "B" => DEFAULT_DAILY_QUOTA_B,
+            "C" => DEFAULT_DAILY_QUOTA_C,
+            _ => DEFAULT_DAILY_QUOTA_A,
+        }
+    }
+
+    pub fn today_string() -> String {
+        chrono::Local::now().format("%Y-%m-%d").to_string()
+    }
+
     pub fn hash_password(password: &str) -> Result<String> {
         let trimmed = password.trim();
         if trimmed.is_empty() {
@@ -189,6 +204,7 @@ impl UserStore {
             }
         }
         let now = now_ts();
+        let access_level = Self::normalize_access_level(access_level);
         let record = UserAccountRecord {
             user_id: user_id.clone(),
             username: user_id.clone(),
@@ -200,7 +216,10 @@ impl UserStore {
                 roles
             },
             status: status.trim().to_string(),
-            access_level: Self::normalize_access_level(access_level),
+            access_level: access_level.clone(),
+            daily_quota: Self::default_daily_quota(&access_level),
+            daily_quota_used: 0,
+            daily_quota_date: None,
             is_demo,
             created_at: now,
             updated_at: now,

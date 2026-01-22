@@ -71,6 +71,7 @@ import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
+import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
@@ -178,6 +179,8 @@ const panelMap = {
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
 
   intro: { panel: elements.introPanel, nav: elements.navIntro },
+
+  paper: { panel: elements.paperPanel, nav: elements.navPaper },
 
   apiDocs: { panel: elements.apiDocsPanel, nav: elements.navApiDocs },
 
@@ -715,6 +718,19 @@ const bindNavigation = () => {
     elements.navIntro.addEventListener("click", () => switchPanel("intro"));
   }
 
+  if (elements.navPaper) {
+    elements.navPaper.addEventListener("click", () => {
+      switchPanel("paper");
+      if (!state.panelLoaded.paper) {
+        initPaperPanel()
+          .then((loaded) => {
+            state.panelLoaded.paper = loaded;
+          })
+          .catch(() => {});
+      }
+    });
+  }
+
   if (elements.navApiDocs) {
     elements.navApiDocs.addEventListener("click", () => switchPanel("apiDocs"));
   }
@@ -1022,6 +1038,14 @@ const bootstrap = async () => {
 
   switchPanel(initialPanel);
   expandActiveNavGroupOnly();
+
+  if (initialPanel === "paper" && !state.panelLoaded.paper) {
+    initPaperPanel()
+      .then((loaded) => {
+        state.panelLoaded.paper = loaded;
+      })
+      .catch(() => {});
+  }
 
   if (initialPanel === "performance" && !state.panelLoaded.performance) {
     try {

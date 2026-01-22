@@ -23,7 +23,7 @@ use crate::prompting::{read_prompt_template, PromptComposer};
 use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::skills::{load_skills, SkillRegistry};
-use crate::storage::{SessionLockStatus, StorageBackend};
+use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
     approx_token_count, estimate_message_tokens, estimate_messages_tokens, trim_messages_to_budget,
     trim_text_to_tokens,
@@ -32,6 +32,7 @@ use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs_with_language,
     resolve_tool_name, ToolContext, ToolEventEmitter,
 };
+use crate::user_store::UserStore;
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -157,6 +158,20 @@ impl OrchestratorError {
 
     fn internal(message: String) -> Self {
         Self::new("INTERNAL_ERROR", message, None)
+    }
+
+    fn user_quota_exceeded(status: UserQuotaStatus) -> Self {
+        let message = i18n::t("error.user_quota_exceeded");
+        Self::new(
+            "USER_QUOTA_EXCEEDED",
+            message,
+            Some(json!({
+                "daily_quota": status.daily_quota,
+                "used": status.used,
+                "remaining": status.remaining,
+                "date": status.date,
+            })),
+        )
     }
 
     pub(crate) fn code(&self) -> &'static str {
@@ -484,6 +499,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "plan_update"
             | "llm_output_delta"
             | "llm_output"
+            | "quota_usage"
             | "final"
             | "error"
     )
@@ -760,6 +776,42 @@ impl RequestLimiter {
     }
 }
 impl Orchestrator {
+    async fn consume_user_quota(
+        &self,
+        user_id: &str,
+        emitter: &EventEmitter,
+        round_index: i64,
+        emit_quota_events: bool,
+    ) -> Result<(), OrchestratorError> {
+        let today = UserStore::today_string();
+        let status = self
+            .storage
+            .consume_user_quota(user_id, &today)
+            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+        let Some(status) = status else {
+            return Ok(());
+        };
+        if !status.allowed {
+            return Err(OrchestratorError::user_quota_exceeded(status));
+        }
+        if emit_quota_events {
+            emitter
+                .emit(
+                    "quota_usage",
+                    json!({
+                        "round": round_index,
+                        "consumed": 1,
+                        "daily_quota": status.daily_quota,
+                        "used": status.used,
+                        "remaining": status.remaining,
+                        "date": status.date,
+                    }),
+                )
+                .await;
+        }
+        Ok(())
+    }
+
     pub async fn run(&self, request: WunderRequest) -> Result<WunderResponse> {
         let prepared = self.prepare_request(request)?;
         let language = prepared.language.clone();
@@ -1394,10 +1446,12 @@ impl Orchestrator {
                     .call_llm(
                         &llm_config,
                         &messages,
+                        &user_id,
                         &emitter,
                         &session_id,
                         prepared.stream,
                         round,
+                        true,
                         true,
                         log_payload,
                         tools_payload,
@@ -2408,11 +2462,13 @@ impl Orchestrator {
         &self,
         llm_config: &LlmModelConfig,
         messages: &[Value],
+        user_id: &str,
         emitter: &EventEmitter,
         session_id: &str,
         stream: bool,
         round_index: i64,
         emit_events: bool,
+        emit_quota_events: bool,
         log_payload: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
@@ -2450,6 +2506,9 @@ impl Orchestrator {
                 &HashMap::from([("detail".to_string(), detail)]),
             )));
         }
+
+        self.consume_user_quota(user_id, emitter, round_index, emit_quota_events)
+            .await?;
 
         let client = build_llm_client(&effective_config, self.http.clone());
         let chat_messages = self.build_chat_messages(messages);
@@ -3022,11 +3081,13 @@ impl Orchestrator {
             .call_llm(
                 llm_config,
                 &summary_input,
+                user_id,
                 emitter,
                 session_id,
                 false,
                 0,
                 false,
+                true,
                 log_payload,
                 None,
                 Some(summary_config),
@@ -3034,7 +3095,10 @@ impl Orchestrator {
             .await
         {
             Ok((content, _, _, _)) => self.resolve_final_answer(&content),
-            Err(_) => {
+            Err(err) => {
+                if err.code() == "USER_QUOTA_EXCEEDED" {
+                    return Err(err);
+                }
                 summary_fallback = true;
                 i18n::t("compaction.summary_fallback")
             }
@@ -3612,10 +3676,12 @@ impl Orchestrator {
             .call_llm(
                 &llm_config,
                 &messages,
+                &task.user_id,
                 &emitter,
                 &task.session_id,
                 false,
                 1,
+                false,
                 false,
                 log_payload,
                 None,
