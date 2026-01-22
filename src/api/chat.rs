@@ -4,8 +4,8 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::OrchestratorError;
 use crate::orchestrator_constants::{
-    OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_POLL_INTERVAL_S,
-    STREAM_EVENT_QUEUE_SIZE,
+    OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE,
+    STREAM_EVENT_RESUME_POLL_INTERVAL_S,
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::state::AppState;
@@ -487,7 +487,8 @@ async fn resume_session(
         let session_id = session_id.clone();
         let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
         tokio::spawn(async move {
-            let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+            let poll_interval =
+                std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
             let mut last_event_id = after_event_id;
             loop {
                 let session_id_snapshot = session_id.clone();
@@ -559,7 +560,7 @@ async fn resume_session(
     tokio::spawn(async move {
         let mut last_len: usize = 0;
         let mut initialized = false;
-        let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+        let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
         loop {
             let Some(record) = monitor.get_record(&session_id) else {
                 break;
