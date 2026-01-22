@@ -18,6 +18,7 @@ wunder can expose itself as an MCP tool and become the ultimate tool.
 - Unified entry `/wunder`: streaming SSE and non-stream responses.
 - Tooling: built-in tools + MCP tools + Skills, precisely enabled via `tool_names`.
 - Multi-user isolation: a dedicated workspace per user_id with persistence.
+- Quota governance: tiered daily quotas for registered users, per-model-call accounting, and user-visible consumption.
 - Debugging & monitoring: `/` console and `/wunder/admin/monitor` resource/session metrics.
 
 ## 2. Quick Start
@@ -74,7 +75,7 @@ curl -N -X POST http://127.0.0.1:18000/wunder ^
 ```
 
 SSE event types include:
-`progress`, `llm_request`, `llm_output`, `tool_call`, `tool_result`, `final`, `error`
+`progress`, `llm_request`, `llm_output`, `quota_usage`, `tool_call`, `tool_result`, `final`, `error`
 
 ### 3.3 Enable tools on demand
 ```

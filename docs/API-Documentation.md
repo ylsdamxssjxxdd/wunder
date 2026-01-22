@@ -11,6 +11,7 @@
 - Config layering: base `config/wunder.yaml` (`WUNDER_CONFIG_PATH` to override); admin updates go to `data/config/wunder.override.yaml` (`WUNDER_CONFIG_OVERRIDE_PATH`).
 - Auth: all `/wunder` and `/wunder/mcp` require `X-API-Key` or `Authorization: Bearer <key>`; key in `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
+- Registered users have daily request quotas (tiered by access level), reset at midnight; each model call consumes one unit and overages return 429. Virtual user IDs are not quota-limited.
 - i18n: send `X-Wunder-Language` or `Accept-Language` (also `lang`/`language` query). Supported languages come from `i18n.supported_languages`. Responses include `Content-Language`, and system prompts/messages follow it.
 
 ### 4.1 `/wunder` Request
@@ -27,6 +28,7 @@
   - `config_overrides`: object, optional, per-request config overrides
   - `attachments`: list, optional, attachments (Markdown files or data URL images)
 - Constraints: if a user already has a running session, returns 429.
+- Constraints: registered users are quota-limited per model call; overages return 429 with `detail.code=USER_QUOTA_EXCEEDED`.
 - Global concurrency cap: `server.max_active_sessions`.
 
 ### 4.1.1 `/wunder/system_prompt`
@@ -531,6 +533,7 @@
 - `event: llm_stream_retry`: retry info
 - `event: llm_output`: final aggregated output
 - `event: token_usage`: token usage per round
+- `event: quota_usage`: quota consumption per model call (`daily_quota/used/remaining/date`, `consumed`, `round`)
 - `event: tool_call`: tool call info
 - `event: tool_output_delta`: tool output streaming chunk (`data.tool`/`data.command`/`data.stream`/`data.delta`; currently only for local built-in `execute_command`, not sandboxed)
 - `event: tool_result`: tool execution result

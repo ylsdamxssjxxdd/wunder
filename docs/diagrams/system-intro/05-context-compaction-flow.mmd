@@ -1,27 +1,14 @@
-﻿flowchart TD
-  A["进入压缩检查"] --> B["读取配置<br/>max_context/history_compaction_ratio/max_output"]
-  B --> C["计算安全预算 limit<br/>min(max_context*0.9, max_context-输出预留-安全冗余)"]
-  C --> D["读取会话历史 usage"]
-  D --> E["估算当前 messages token"]
-  E --> F{"触发压缩？<br/>usage >= max_context*ratio<br/>或 tokens > limit"}
-  F -- "否" --> Z["跳过压缩，继续模型调用"]
-  F -- "是" --> G["筛选候选消息<br/>剔除 system 与历史摘要"]
-  G --> H{"候选为空？"}
-  H -- "是" --> Z
-  H -- "否" --> I["定位尾部交互块<br/>避免截断最新轮次"]
-  I --> J["按预算保留尾部<br/>keep_recent_tokens≈2000"]
-  J --> K{"尾部已覆盖且<br/>非历史强制？"}
-  K -- "是" --> Z
-  K -- "否" --> L["构建摘要输入<br/>替换最后 user 为压缩指令<br/>保留系统提示词"]
-  L --> M["摘要输入裁剪<br/>移除 reasoning<br/>限制单条长度/适配 limit"]
-  M --> N["计算压缩边界<br/>compacted_until"]
-  N --> O["调用模型生成摘要<br/>max_output<=1024"]
-  O --> P{"摘要成功？"}
-  P -- "是" --> Q["写入摘要系统消息<br/>标记 compaction_meta"]
-  P -- "否" --> R["写入占位摘要<br/>继续裁剪历史"]
-  Q --> S["重建上下文<br/>系统提示词+摘要+近期消息"]
-  R --> S
-  S --> T["极端超限时<br/>裁剪 tool_response 内容"]
-  T --> U["按策略重置 usage<br/>zero/current/keep"]
-  U --> V["发送 compaction 事件"]
-  V --> Z
+﻿flowchart LR
+  subgraph Row1[" "]
+    direction LR
+    A["压缩检查<br/>读取配置/估算 tokens/预算"] --> B{"触发压缩？"} -->|否| Z["跳过压缩"]
+  end
+
+  subgraph Row2[" "]
+    direction LR
+    C["准备压缩输入<br/>compact_prompt + 历史合并"] --> D["裁剪输入<br/>移除 reasoning/限长"] --> E["生成摘要<br/>max_output<=1024"] --> F{"摘要成功？"}
+    F -- "是" --> H["写入摘要 + 标记边界"] --> I["重建上下文<br/>补裁剪/重置 usage/发送事件"] --> Z
+  end
+
+  B -- "是" --> C
+  F -- "否" --> G["占位摘要<br/>继续裁剪"] --> H

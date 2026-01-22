@@ -10,6 +10,7 @@
   U->>API: POST /wunder (user_id, question, tool_names, stream)
   API->>O: create session and register
   O->>P: build system prompt (tools/skills/workspace)
+  O->>S: check & consume quota (registered users)
   O->>L: call model (streaming optional)
   L-->>O: tool calls or answer
   O->>T: execute tools (built-in/MCP/skills/knowledge/custom)

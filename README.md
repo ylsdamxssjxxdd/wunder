@@ -18,6 +18,7 @@ wunder可以暴露自身作为mcp工具，成为最终武器
 - 统一入口 `/wunder`：支持流式 SSE 与非流式响应。
 - 工具链：内置工具 + MCP 工具 + Skills，可按 `tool_names` 精准启用。
 - 多用户隔离：按 user_id 创建独立工作区，数据持久化。
+- 额度治理：注册用户按访问级别分配每日额度，按模型调用精确计数，前端可见消耗提示。
 - 调试与监控：根路径 `/` 调试页面，/wunder/admin/monitor 资源与会话监控。
 
 ## 2. 快速开始
@@ -73,7 +74,7 @@ curl -N -X POST http://127.0.0.1:18000/wunder ^
 ```
 
 SSE 事件类型包括：
-`progress`、`llm_request`、`llm_output`、`tool_call`、`tool_result`、`final`、`error`
+`progress`、`llm_request`、`llm_output`、`quota_usage`、`tool_call`、`tool_result`、`final`、`error`
 
 ### 3.3 按需启用工具
 ```

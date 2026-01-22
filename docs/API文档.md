@@ -14,7 +14,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
-- 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；超额返回 429，虚拟用户不受限制。
+- 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译，缺失时回退 `app/core/i18n.py`；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -34,7 +34,7 @@
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
 - 约束：同一 `user_id` 若已有运行中的会话，接口返回 429 并提示稍后再试。
-- 约束：注册用户每日有请求额度，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
+- 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
@@ -1276,7 +1276,7 @@
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
 - `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
-- `event: quota_usage`：额度消耗统计（`data.consumed` 本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，`data.round` 为轮次）
+- `event: quota_usage`：额度消耗统计（每次模型调用都会触发；`data.consumed` 为本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，`data.round` 为轮次）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。

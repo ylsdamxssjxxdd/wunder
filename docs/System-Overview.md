@@ -7,11 +7,13 @@ It also provides the A2A standard API at `/a2a` (JSON-RPC + SSE), and publishes 
 
 The self-hosted MCP endpoint `/wunder/mcp` is implemented by the Rust server (streamable-http). Legacy Python FastAPI code under `app/` is kept for reference and sandbox service only; `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` are the recommended runtime for the Rust server.
 With `sandbox.mode=sandbox`, built-in tools like command execution run via the shared sandbox service (`WUNDER_SANDBOX_ENDPOINT`); for docker compose deployments, prefer internal DNS `http://sandbox:9001` and do not publish port 9001.
+Registered users are governed by daily request quotas (default tiers A/B/C), reset at midnight; each model call consumes one unit. Virtual `user_id`s are not quota-limited. Quota usage is surfaced via SSE (`quota_usage`) and UI stats for transparent cost control.
 
 Its core value:
 - Unified entry + strong tool orchestration: integrate multi-model, multi-tool, multi-skill into one control plane.
 - Multi-user isolation + persistent workspaces: support concurrency and long-lived assets.
 - Observable + controllable: session monitoring, tool heatmap, cancellation.
+- Quota governance + cost control: per-call counting, daily reset, admin-adjustable limits, and user-visible consumption stats.
 - Provider presets: built-in OpenAI-compatible provider presets (openai/openrouter/siliconflow/deepseek/moonshot/qwen, etc.) for faster onboarding.
 - Throughput testing + capability evaluation: benchmark QPS/latency/resources and score test suites with regression comparisons.
 - Long-term memory: opt-in per user, auto-summarize and append as `[Long-term Memory]` with timestamp prefixes.
@@ -70,6 +72,7 @@ sequenceDiagram
   O-->>U: SSE events or final response
 ```
 
+Note: for registered users, each model call consumes one quota unit before invocation; if quota is exhausted the request is rejected with a quota error.
 Note: after the final answer, the session is enqueued into long-term memory summarization. The summarization currently uses `app/prompts/memory_summary.txt` as the system prompt, merges history into a single user content, and writes memory/task logs for tracking.
 
 ## 4. Tool system (key points)
@@ -107,7 +110,7 @@ stateDiagram-v2
 ```
 
 #### 5.2.3 Events and monitoring
-- Event types: `progress/llm_request/knowledge_request/llm_output_delta/llm_stream_retry/llm_output/tool_call/tool_result/a2ui/token_usage/final/error` (filtered by `observability.monitor_drop_event_types`).
+- Event types: `progress/llm_request/knowledge_request/llm_output_delta/llm_stream_retry/llm_output/quota_usage/tool_call/tool_result/a2ui/token_usage/final/error` (filtered by `observability.monitor_drop_event_types`).
 - Events are stored in the selected storage backend and visible via `/wunder/admin/monitor`.
 - Events are truncated by `observability.monitor_event_limit` and `monitor_payload_max_chars` (<= 0 disables truncation).
 - SSE disconnect does not stop tasks; events continue to be recorded.

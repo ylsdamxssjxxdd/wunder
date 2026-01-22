@@ -5,6 +5,7 @@
 - Build a FastAPI-based agent orchestration system that integrates LLMs, MCP, and Skills.
 - Expose `/wunder` as a unified entry, accepting user id and question, streaming intermediate progress and final responses.
 - Support multi-user concurrency with persistent workspaces per user id.
+- Registered users are governed by daily request quotas (tiered by access level), reset at midnight; each model call consumes one unit and overages are rejected.
 - Centralized configuration for LLM APIs, MCP tools, and Skills.
 
 ## 2. Requirements
@@ -16,6 +17,7 @@
 - Orchestrate via LLM + MCP + Skills with tool calls and workflows.
 - Persistent per-user workspaces and history.
 - Language switching: UI and API messages/system prompts follow selected language.
+- Quota management: admin can adjust daily limits; UI surfaces quota usage/remaining and blocks over-quota requests.
 
 ### 2.2 Non-functional requirements
 
@@ -68,6 +70,7 @@ See `docs/API-Documentation.md`.
 - Connection lifecycle management, SSE streaming.
 - Unified auth and validation (Pydantic), API/MCP secured by `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
+- Admin user management supports editing daily quota and observing daily usage/remaining fields.
 - Added `/wunder/temp_dir/*` public temp-file endpoints for upload/download/list/remove from the project root `temp_dir/` folder.
 - Routes split by domain (core/admin/workspace/user_tools), logic in `app/services` for reuse.
 
@@ -79,6 +82,7 @@ See `docs/API-Documentation.md`.
 - Admin settings can update `server.max_active_sessions` at runtime and persist overrides.
 - Per-user mutual exclusion via SQLite `session_locks` with TTL heartbeats.
 - Max rounds by `llm.models.<name>.max_rounds` to prevent loops.
+- Each model call consumes one quota unit for registered users; quota usage is emitted as `quota_usage` events and overages short-circuit with 429.
 - SSE disconnect does not stop tasks; events still recorded.
 - SSE overflow events stored and replayed.
 - Cancellation attempts to stop LLM calls and tools.
