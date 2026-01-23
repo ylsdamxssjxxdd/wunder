@@ -490,9 +490,41 @@ const recomputeSpeedSummary = () => {
     debugStats.decodeDuration = 0;
     return;
   }
-  const firstRound = Number.isFinite(debugStats.firstRound)
-    ? debugStats.firstRound
-    : Math.min(...roundIds);
+  let earliestStartMs = null;
+  let earliestOutputMs = null;
+  let latestOutputMs = null;
+  let earliestOutputRound = null;
+  let outputTokensTotal = 0;
+  roundIds.forEach((round) => {
+    const metrics = debugStats.llmRounds[String(round)];
+    if (!metrics) {
+      return;
+    }
+    if (Number.isFinite(metrics.startMs)) {
+      if (earliestStartMs === null || metrics.startMs < earliestStartMs) {
+        earliestStartMs = metrics.startMs;
+      }
+    }
+    if (Number.isFinite(metrics.firstOutputMs)) {
+      if (earliestOutputMs === null || metrics.firstOutputMs < earliestOutputMs) {
+        earliestOutputMs = metrics.firstOutputMs;
+        earliestOutputRound = round;
+      }
+    }
+    if (Number.isFinite(metrics.lastOutputMs)) {
+      if (latestOutputMs === null || metrics.lastOutputMs > latestOutputMs) {
+        latestOutputMs = metrics.lastOutputMs;
+      }
+    }
+    if (Number.isFinite(metrics.outputTokens) && metrics.outputTokens > 0) {
+      outputTokensTotal += metrics.outputTokens;
+    }
+  });
+  const firstRound = Number.isFinite(earliestOutputRound)
+    ? earliestOutputRound
+    : Number.isFinite(debugStats.firstRound)
+      ? debugStats.firstRound
+      : Math.min(...roundIds);
   const latestRound = Number.isFinite(debugStats.latestRound)
     ? debugStats.latestRound
     : Number.isFinite(debugStats.lastRoundSeen)
@@ -504,15 +536,20 @@ const recomputeSpeedSummary = () => {
   let prefillDuration = parseOptionalNumber(prefillMetrics?.prefillDuration);
   if (prefillDuration === null) {
     prefillDuration = resolveRoundDuration(
-      prefillMetrics?.startMs,
-      prefillMetrics?.firstOutputMs
+      Number.isFinite(prefillMetrics?.startMs) ? prefillMetrics?.startMs : earliestStartMs,
+      Number.isFinite(prefillMetrics?.firstOutputMs)
+        ? prefillMetrics?.firstOutputMs
+        : earliestOutputMs
     );
   }
   if (prefillDuration !== null && prefillDuration < MIN_PREFILL_DURATION_S) {
     prefillDuration = MIN_PREFILL_DURATION_S;
   }
-  const decodeTokens = parseOptionalNumber(decodeMetrics?.outputTokens);
+  const decodeTokens = outputTokensTotal > 0 ? outputTokensTotal : parseOptionalNumber(decodeMetrics?.outputTokens);
   let decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
+  if (decodeDuration === null) {
+    decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
+  }
   if (decodeDuration === null) {
     decodeDuration = resolveRoundDuration(
       decodeMetrics?.firstOutputMs,

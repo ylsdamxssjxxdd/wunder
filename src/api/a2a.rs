@@ -5,13 +5,13 @@ use crate::schemas::{StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::storage::UserQuotaStatus;
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
+use anyhow::Error;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{header, HeaderMap};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
-use anyhow::Error;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use chrono::{Local, TimeZone};
 use futures::StreamExt;
@@ -437,10 +437,7 @@ fn quota_status_from_payload(payload: &Value) -> Option<UserQuotaStatus> {
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let used = detail.get("used").and_then(Value::as_i64).unwrap_or(0);
-    let remaining = detail
-        .get("remaining")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+    let remaining = detail.get("remaining").and_then(Value::as_i64).unwrap_or(0);
     let date = detail
         .get("date")
         .and_then(Value::as_str)
@@ -620,11 +617,7 @@ impl A2aService {
                 if let Some(status) = quota_status_from_payload(&payload) {
                     return A2AError::quota_exceeded(&status);
                 }
-                return A2AError::new(
-                    A2A_QUOTA_EXCEEDED,
-                    orchestrator_err.to_string(),
-                    None,
-                );
+                return A2AError::new(A2A_QUOTA_EXCEEDED, orchestrator_err.to_string(), None);
             }
             return A2AError::internal(&orchestrator_err.to_string());
         }

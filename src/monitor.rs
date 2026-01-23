@@ -1566,29 +1566,27 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
         }
     }
 
-    let prefill_metrics = first_round.and_then(|round| rounds.get(&round));
+    let prefill_round = first_round;
+    let prefill_metrics = prefill_round.and_then(|round| rounds.get(&round));
     let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
-    let prefill_duration_s = prefill_metrics
-        .and_then(|metrics| metrics.prefill_duration_s)
-        .or_else(|| {
-            prefill_metrics.and_then(|metrics| {
-                let Some(start_ts) = metrics.start_ts else {
-                    return None;
-                };
-                let Some(first_output_ts) = metrics.first_output_ts else {
-                    return None;
-                };
-                Some((first_output_ts - start_ts).max(0.0))
-            })
-        })
-        .map(|value| {
-            let duration = value.max(0.0);
-            if duration < MIN_PREFILL_DURATION_S {
-                MIN_PREFILL_DURATION_S
-            } else {
-                duration
-            }
-        });
+    let mut prefill_duration_s = prefill_metrics.and_then(|metrics| metrics.prefill_duration_s);
+    let mut prefill_speed_lower_bound = false;
+    if prefill_duration_s.is_none() {
+        let start_ts = prefill_metrics.and_then(|metrics| metrics.start_ts);
+        let first_output_ts = prefill_metrics.and_then(|metrics| metrics.first_output_ts);
+        if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
+            prefill_duration_s = Some((first_output_ts - start_ts).max(0.0));
+            prefill_speed_lower_bound = true;
+        }
+    }
+    prefill_duration_s = prefill_duration_s.map(|value| {
+        let duration = value.max(0.0);
+        if duration < MIN_PREFILL_DURATION_S {
+            MIN_PREFILL_DURATION_S
+        } else {
+            duration
+        }
+    });
     let prefill_speed_tps = match (prefill_tokens, prefill_duration_s) {
         (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
             Some(tokens as f64 / duration)
@@ -1599,7 +1597,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     let decode_round = latest_round.or(first_round);
     let decode_metrics = decode_round.and_then(|round| rounds.get(&round));
     let decode_tokens = decode_metrics.and_then(|metrics| metrics.output_tokens);
-    let decode_duration_s = decode_metrics
+    let mut decode_duration_s = decode_metrics
         .and_then(|metrics| metrics.decode_duration_s)
         .map(|value| value.max(0.0))
         .or_else(|| {
@@ -1613,6 +1611,31 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                 Some((last_output_ts - first_output_ts).max(0.0))
             })
         });
+    if let Some(decode_round) = decode_round {
+        let mut prev_round: Option<i64> = None;
+        let mut prev_last_output_ts: Option<f64> = None;
+        for (round, metrics) in rounds.iter() {
+            if *round >= decode_round {
+                continue;
+            }
+            let Some(last_output_ts) = metrics.last_output_ts else {
+                continue;
+            };
+            if prev_round.map_or(true, |value| *round > value) {
+                prev_round = Some(*round);
+                prev_last_output_ts = Some(last_output_ts);
+            }
+        }
+        let decode_last_output_ts = decode_metrics.and_then(|metrics| metrics.last_output_ts);
+        if let (Some(prev_last_output_ts), Some(decode_last_output_ts)) =
+            (prev_last_output_ts, decode_last_output_ts)
+        {
+            let effective_duration = (decode_last_output_ts - prev_last_output_ts).max(0.0);
+            if effective_duration > 0.0 {
+                decode_duration_s = Some(effective_duration);
+            }
+        }
+    }
     let decode_speed_tps = match (decode_tokens, decode_duration_s) {
         (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
             Some(tokens as f64 / duration)
@@ -1624,7 +1647,10 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     result.insert("prefill_tokens".to_string(), json!(prefill_tokens));
     result.insert("prefill_duration_s".to_string(), json!(prefill_duration_s));
     result.insert("prefill_speed_tps".to_string(), json!(prefill_speed_tps));
-    result.insert("prefill_speed_lower_bound".to_string(), json!(false));
+    result.insert(
+        "prefill_speed_lower_bound".to_string(),
+        json!(prefill_speed_lower_bound),
+    );
     result.insert("decode_tokens".to_string(), json!(decode_tokens));
     result.insert("decode_duration_s".to_string(), json!(decode_duration_s));
     result.insert("decode_speed_tps".to_string(), json!(decode_speed_tps));

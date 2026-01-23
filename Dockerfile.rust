@@ -114,6 +114,67 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g vscode-langservers-extracted bash-language-server \
     dockerfile-language-server-nodejs
 
+# Graphics + office extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-dev \
+    libfreetype6 libfontconfig1 libharfbuzz0b libfribidi0 \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 \
+    libjpeg62-turbo libpng16-16 libtiff6 libwebp7 \
+    libopenblas0 liblapack3 libgfortran5 libomp5 \
+    libsm6 libxext6 libxrender1 \
+    libffi-dev libxml2-dev libxslt1-dev zlib1g-dev \
+    graphviz gnuplot \
+    librsvg2-bin ghostscript imagemagick \
+    unoconv wkhtmltopdf \
+    texlive-xetex texlive-latex-base texlive-latex-extra texlive-fonts-recommended \
+    fonts-noto fonts-noto-cjk fonts-dejavu fonts-liberation \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    plotly kaleido bokeh altair holoviews datashader plotnine \
+    pycairo cairocffi cairosvg svglib svgwrite pydot graphviz networkx \
+    pdfminer.six pikepdf pdfkit ocrmypdf camelot-py \
+    docxtpl mammoth xlsx2csv csvkit \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# GDAL / GIS extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdal-bin \
+    libgdal-dev \
+    python3-gdal \
+    proj-bin proj-data libproj-dev \
+    libgeos-dev \
+    libspatialindex-dev \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    geopandas shapely pyproj rtree fiona rasterio \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Cartopy offline data (append-only)
+ENV CARTOPY_DATA_DIR=/usr/local/share/cartopy
+
+RUN python3 -m pip install --break-system-packages \
+    cartopy \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN mkdir -p "$CARTOPY_DATA_DIR" && \
+    python3 - <<'PY'
+import cartopy.io.shapereader as shpreader
+
+targets = [
+    ("110m", "physical", "land"),
+    ("110m", "physical", "ocean"),
+    ("110m", "physical", "coastline"),
+    ("110m", "physical", "lakes"),
+    ("110m", "cultural", "admin_0_countries"),
+    ("110m", "cultural", "admin_1_states_provinces"),
+]
+
+for res, cat, name in targets:
+    shpreader.natural_earth(resolution=res, category=cat, name=name)
+PY
+
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]
