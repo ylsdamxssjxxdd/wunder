@@ -10,6 +10,7 @@ from typing import Optional
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -370,6 +371,10 @@ LEVEL2_NUMBER_RE = re.compile(r"^([一二三四五六七八九十百千]+、|\d+
 LEVEL3_NUMBER_RE = re.compile(r"^[（(][一二三四五六七八九十百千]+[）)]")
 LEVEL4_NUMBER_RE = re.compile(r"^\d+[\.、]")
 LEVEL5_NUMBER_RE = re.compile(r"^[（(]\d+[）)]")
+TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
+LINE_BREAK_RE = re.compile(r"(\\\\)\\s*$", re.IGNORECASE)
+BR_TAG_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]")
 
 
 def has_numbering(level: int, title: str) -> bool:
@@ -475,8 +480,201 @@ def add_right_paragraph(doc: Document, text: str, args: argparse.Namespace) -> N
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     paragraph.paragraph_format.first_line_indent = Pt(0)
-    run = paragraph.add_run(text)
-    set_run_font(run, args.font, args.font_size, None, args.digit_font)
+    add_text_with_breaks(paragraph, text, args, bold=None)
+
+
+def set_table_cell_margins(
+    table,
+    top_cm: float,
+    bottom_cm: float,
+    left_cm: float,
+    right_cm: float,
+) -> None:
+    def to_twips(value_cm: float) -> int:
+        return int(value_cm / 2.54 * 1440)
+
+    tbl_pr = table._tbl.tblPr
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        table._tbl.insert(0, tbl_pr)
+
+    tbl_cell_mar = tbl_pr.find(qn("w:tblCellMar"))
+    if tbl_cell_mar is None:
+        tbl_cell_mar = OxmlElement("w:tblCellMar")
+        tbl_pr.append(tbl_cell_mar)
+
+    for tag, value in (
+        ("top", top_cm),
+        ("bottom", bottom_cm),
+        ("left", left_cm),
+        ("right", right_cm),
+    ):
+        node = tbl_cell_mar.find(qn(f"w:{tag}"))
+        if node is None:
+            node = OxmlElement(f"w:{tag}")
+            tbl_cell_mar.append(node)
+        node.set(qn("w:w"), str(to_twips(value)))
+        node.set(qn("w:type"), "dxa")
+
+
+def add_text_with_breaks(
+    paragraph,
+    text: str,
+    args: argparse.Namespace,
+    bold: Optional[bool],
+) -> None:
+    has_run = False
+    for segment, inline_break in split_inline_breaks(text):
+        segment_text, hard_break = extract_manual_break(segment)
+        segment_text = segment_text.strip()
+        if segment_text:
+            run = paragraph.add_run(segment_text)
+            set_run_font(run, args.font, args.font_size, bold, args.digit_font)
+            has_run = True
+        if hard_break or inline_break:
+            if not has_run:
+                run = paragraph.add_run("")
+                set_run_font(run, args.font, args.font_size, bold, args.digit_font)
+            run.add_break()
+            has_run = False
+
+
+def needs_space(prev: str, next_text: str) -> bool:
+    if not prev or not next_text:
+        return False
+    prev_char = prev[-1]
+    next_char = next_text[0]
+    if ASCII_WORD_RE.match(prev_char) and ASCII_WORD_RE.match(next_char):
+        return True
+    if prev_char in ",.;:!?" and next_char.isalnum():
+        return True
+    return False
+
+
+def extract_manual_break(raw_line: str) -> tuple[str, bool]:
+    if raw_line.endswith("  "):
+        return raw_line.rstrip(), True
+    stripped = raw_line.rstrip()
+    match = LINE_BREAK_RE.search(stripped)
+    if match:
+        return stripped[: match.start()].rstrip(), True
+    return stripped, False
+
+
+def split_table_row(line: str) -> list[str]:
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [cell.strip() for cell in text.split("|")]
+
+
+def is_table_row(line: str) -> bool:
+    if "|" not in line:
+        return False
+    cells = split_table_row(line)
+    return len(cells) >= 2
+
+
+def is_table_separator_line(line: str) -> bool:
+    if "|" not in line:
+        return False
+    cells = split_table_row(line)
+    if len(cells) < 2:
+        return False
+    return all(TABLE_SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
+
+
+def parse_table_alignments(line: str) -> list[WD_ALIGN_PARAGRAPH]:
+    alignments: list[WD_ALIGN_PARAGRAPH] = []
+    cells = split_table_row(line)
+    for cell in cells:
+        cell_text = cell.strip()
+        if not TABLE_SEPARATOR_CELL_RE.match(cell_text):
+            alignments.append(WD_ALIGN_PARAGRAPH.LEFT)
+            continue
+        left = cell_text.startswith(":")
+        right = cell_text.endswith(":")
+        if left and right:
+            alignments.append(WD_ALIGN_PARAGRAPH.CENTER)
+        elif right:
+            alignments.append(WD_ALIGN_PARAGRAPH.RIGHT)
+        else:
+            alignments.append(WD_ALIGN_PARAGRAPH.LEFT)
+    return alignments
+
+
+def split_inline_breaks(raw_line: str) -> list[tuple[str, bool]]:
+    segments: list[tuple[str, bool]] = []
+    last_index = 0
+    for match in BR_TAG_RE.finditer(raw_line):
+        segment = raw_line[last_index:match.start()]
+        segments.append((segment, True))
+        last_index = match.end()
+    segments.append((raw_line[last_index:], False))
+    return segments
+
+
+def set_table_layout_fixed(table) -> None:
+    tbl_pr = table._tbl.tblPr
+    if tbl_pr is None:
+        tbl_pr = OxmlElement("w:tblPr")
+        table._tbl.insert(0, tbl_pr)
+
+    tbl_layout = tbl_pr.find(qn("w:tblLayout"))
+    if tbl_layout is None:
+        tbl_layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(tbl_layout)
+    tbl_layout.set(qn("w:type"), "fixed")
+
+
+def add_table(
+    doc: Document,
+    header: list[str],
+    rows: list[list[str]],
+    alignments: list[WD_ALIGN_PARAGRAPH],
+    args: argparse.Namespace,
+) -> None:
+    col_count = max([len(header)] + [len(row) for row in rows] + [0])
+    if col_count == 0:
+        return
+
+    table = doc.add_table(rows=1 + len(rows), cols=col_count)
+    table.style = "Table Grid"
+    table.autofit = False
+    if hasattr(table, "allow_autofit"):
+        table.allow_autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.LEFT
+    set_table_layout_fixed(table)
+
+    text_width_cm = 21.0 - args.margin_left_cm - args.margin_right_cm
+    col_width = text_width_cm / col_count if col_count else text_width_cm
+    for column in table.columns:
+        column.width = Cm(col_width)
+
+    set_table_cell_margins(table, top_cm=0.1, bottom_cm=0.1, left_cm=0.2, right_cm=0.2)
+
+    def fill_row(row_index: int, data: list[str], bold: bool) -> None:
+        for col_index in range(col_count):
+            text = data[col_index] if col_index < len(data) else ""
+            cell = table.cell(row_index, col_index)
+            cell.text = ""
+            cell.width = Cm(col_width)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            paragraph = cell.paragraphs[0]
+            paragraph.paragraph_format.first_line_indent = Pt(0)
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+            paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+            if col_index < len(alignments):
+                paragraph.alignment = alignments[col_index]
+            add_text_with_breaks(paragraph, text, args, bold)
+
+    fill_row(0, header, True)
+    for row_idx, row in enumerate(rows, start=1):
+        fill_row(row_idx, row, False)
 
 
 def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> None:
@@ -495,25 +693,80 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     separator_inserted = False
     signature_mode = False
     in_code_block = False
+    paragraph_buffer: list[tuple[str, bool]] = []
+    last_blank = False
 
-    for raw in lines:
-        line = raw.rstrip()
-        stripped = line.strip()
+    def flush_paragraph() -> None:
+        nonlocal last_blank
+        if not paragraph_buffer:
+            return
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+        for text, hard_break in paragraph_buffer:
+            run = paragraph.add_run(text)
+            if hard_break:
+                run.add_break()
+        paragraph_buffer.clear()
+        last_blank = False
+
+    def add_blank_paragraph() -> None:
+        nonlocal last_blank
+        if last_blank:
+            return
+        doc.add_paragraph("")
+        last_blank = True
+
+    def append_paragraph_segment(text: str, hard_break: bool) -> None:
+        text = text.strip()
+        if not text and not hard_break:
+            return
+        if not paragraph_buffer:
+            paragraph_buffer.append((text, hard_break))
+            return
+        last_text, last_break = paragraph_buffer[-1]
+        if last_break:
+            paragraph_buffer.append((text, hard_break))
+            return
+        if text:
+            if needs_space(last_text, text):
+                last_text = f"{last_text} {text}"
+            else:
+                last_text = f"{last_text}{text}"
+        paragraph_buffer[-1] = (last_text, hard_break)
+
+    def append_paragraph_line(raw_line: str) -> None:
+        for segment, inline_break in split_inline_breaks(raw_line):
+            text, hard_break = extract_manual_break(segment)
+            append_paragraph_segment(text, hard_break or inline_break)
+
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
+        stripped = raw_line.strip()
 
         if stripped.startswith("```"):
+            flush_paragraph()
             in_code_block = not in_code_block
+            i += 1
             continue
         if in_code_block:
+            i += 1
             continue
 
         if stripped == "":
+            flush_paragraph()
             if signature_mode:
                 signature_mode = False
-            doc.add_paragraph("")
+            add_blank_paragraph()
+            i += 1
             continue
 
         header_match = header_re.match(stripped)
         if header_match:
+            flush_paragraph()
             key, value = header_match.groups()
             value = value.strip()
             header_seen = True
@@ -543,80 +796,136 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 run = paragraph.add_run(value)
                 set_run_font(run, args.heading1_font, args.heading_size, None, args.digit_font)
+            last_blank = False
+            i += 1
             continue
 
         if stripped == "---" or re.match(r"^-{3,}$", stripped):
+            flush_paragraph()
             add_red_separator(doc)
             separator_inserted = True
+            last_blank = False
+            i += 1
+            continue
+
+        if (
+            is_table_row(stripped)
+            and i + 1 < len(lines)
+            and is_table_separator_line(lines[i + 1].strip())
+        ):
+            flush_paragraph()
+            header = split_table_row(stripped)
+            alignments = parse_table_alignments(lines[i + 1].strip())
+            rows: list[list[str]] = []
+            i += 2
+            while i < len(lines):
+                row_line = lines[i].strip()
+                if not row_line or not is_table_row(row_line) or is_table_separator_line(row_line):
+                    break
+                rows.append(split_table_row(row_line))
+                i += 1
+            add_table(doc, header, rows, alignments, args)
+            last_blank = False
             continue
 
         heading = heading_re.match(stripped)
         if heading:
+            flush_paragraph()
             prefix = heading.group(1)
             title = heading.group(2).strip()
             if header_seen and not separator_inserted and len(prefix) == 1:
                 add_red_separator(doc)
                 separator_inserted = True
             doc.add_heading(title, level=min(len(prefix), 5))
+            last_blank = False
+            i += 1
             continue
 
         signature_match = signature_re.match(stripped)
         if signature_match:
+            flush_paragraph()
             signature_mode = True
             value = signature_match.group(2).strip()
             if value:
                 add_right_paragraph(doc, value, args)
+            last_blank = False
+            i += 1
             continue
 
         if signature_mode:
             add_right_paragraph(doc, stripped, args)
+            last_blank = False
+            i += 1
             continue
 
         recipient_match = recipient_re.match(stripped)
         if recipient_match:
+            flush_paragraph()
             value = recipient_match.group(1).strip()
             paragraph = doc.add_paragraph()
             paragraph.paragraph_format.first_line_indent = Pt(0)
             run = paragraph.add_run(f"主送：{value}")
             set_run_font(run, args.font, args.font_size, None, args.digit_font)
+            last_blank = False
+            i += 1
             continue
 
         attachment_match = attachment_re.match(stripped)
         if attachment_match:
+            flush_paragraph()
             value = attachment_match.group(1).strip()
             paragraph = doc.add_paragraph()
             run = paragraph.add_run(f"附件：{value}" if value else "附件：")
             set_run_font(run, args.font, args.font_size, None, args.digit_font)
+            last_blank = False
+            i += 1
             continue
 
         copy_match = copy_re.match(stripped)
         if copy_match:
+            flush_paragraph()
             value = copy_match.group(1).strip()
             paragraph = doc.add_paragraph(style="Imprint")
             paragraph.paragraph_format.first_line_indent = Pt(0)
             run = paragraph.add_run(f"抄送：{value}")
             set_run_font(run, args.font, 14, None, args.digit_font)
+            last_blank = False
+            i += 1
             continue
 
         print_match = print_re.match(stripped)
         if print_match:
+            flush_paragraph()
             value = print_match.group(1).strip()
             paragraph = doc.add_paragraph(style="Imprint")
             paragraph.paragraph_format.first_line_indent = Pt(0)
             run = paragraph.add_run(f"印发：{value}" if value else "印发：")
             set_run_font(run, args.font, 14, None, args.digit_font)
+            last_blank = False
+            i += 1
             continue
 
         if stripped.startswith("- "):
-            doc.add_paragraph(stripped[2:].strip(), style="List Bullet")
+            flush_paragraph()
+            paragraph = doc.add_paragraph(style="List Bullet")
+            add_text_with_breaks(paragraph, stripped[2:].strip(), args, bold=None)
+            last_blank = False
+            i += 1
             continue
 
         if ordered_re.match(stripped):
+            flush_paragraph()
             text = ordered_re.sub("", stripped, count=1)
-            doc.add_paragraph(text.strip(), style="List Number")
+            paragraph = doc.add_paragraph(style="List Number")
+            add_text_with_breaks(paragraph, text.strip(), args, bold=None)
+            last_blank = False
+            i += 1
             continue
 
-        doc.add_paragraph(stripped)
+        append_paragraph_line(raw_line)
+        i += 1
+
+    flush_paragraph()
 
 
 def run_pandoc(input_path: Path, output_path: Path, reference_doc: Path) -> None:

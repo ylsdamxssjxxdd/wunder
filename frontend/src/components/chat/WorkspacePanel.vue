@@ -21,31 +21,6 @@
         </button>
         <button
           class="workspace-icon-btn"
-          title="新建文件"
-          aria-label="新建文件"
-          @click="createWorkspaceFile"
-        >
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-            <path d="M14 3v5h5" />
-            <path d="M9 13h6" />
-            <path d="M12 10v6" />
-          </svg>
-        </button>
-        <button
-          class="workspace-icon-btn"
-          title="新建文件夹"
-          aria-label="新建文件夹"
-          @click="createWorkspaceFolder"
-        >
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            <path d="M12 12v6" />
-            <path d="M9 15h6" />
-          </svg>
-        </button>
-        <button
-          class="workspace-icon-btn"
           title="刷新"
           aria-label="刷新"
           @click="refreshWorkspace"
@@ -53,6 +28,13 @@
           <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 12a8 8 0 1 1-2.3-5.7" />
             <path d="M20 4v6h-6" />
+          </svg>
+        </button>
+        <button class="workspace-icon-btn" title="清空" aria-label="清空" @click="clearWorkspaceCurrent">
+          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M6 6l1 14h10l1-14" />
           </svg>
         </button>
         <button class="workspace-icon-btn" title="上传" aria-label="上传" @click="triggerUpload">
@@ -820,6 +802,41 @@ const refreshWorkspace = async () => {
   const ok = await reloadWorkspaceView();
   if (ok) {
     ElMessage.success(state.searchMode ? '搜索结果已刷新' : '工作区已刷新');
+  }
+};
+
+const clearWorkspaceCurrent = async () => {
+  const display = displayPath.value;
+  try {
+    await ElMessageBox.confirm(`确认清空 ${display} 下所有内容吗？`, '清空临时文件区', {
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+      type: 'warning'
+    });
+  } catch (error) {
+    return;
+  }
+  try {
+    const { data } = await fetchWunderWorkspaceContent({
+      path: state.path,
+      include_content: true,
+      depth: 1,
+      sort_by: state.sortBy,
+      order: state.sortOrder
+    });
+    const entries = Array.isArray(data?.entries) ? data.entries : [];
+    if (!entries.length) {
+      ElMessage.info('当前目录为空，无需清空');
+      return;
+    }
+    const response = await batchWunderWorkspaceAction({
+      action: 'delete',
+      paths: entries.map((entry) => entry.path)
+    });
+    notifyBatchResult(response.data, '清空');
+    await reloadWorkspaceView();
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '清空失败');
   }
 };
 

@@ -1843,6 +1843,46 @@ const deleteWorkspaceSelection = async () => {
   }
 };
 
+const clearWorkspaceCurrent = async () => {
+  const userId = getWorkspaceUserId();
+  if (!userId) {
+    return;
+  }
+  const displayPath = state.workspace.path ? `/${state.workspace.path}` : "/";
+  const confirmed = window.confirm(
+    t("workspace.clear.confirm", {
+      path: displayPath,
+    })
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const result = await fetchWorkspaceContent(state.workspace.path, {
+      includeContent: true,
+      depth: 1,
+      sortBy: state.workspace.sortBy,
+      order: state.workspace.sortOrder,
+      keyword: "",
+      refreshTree: true,
+    });
+    const entries = normalizeWorkspaceEntries(result?.entries);
+    if (!entries.length) {
+      notify(t("workspace.clear.empty"), "info");
+      return;
+    }
+    const paths = entries.map((entry) => entry.path);
+    const batchResult = await batchWorkspaceAction("delete", paths);
+    if (!batchResult) {
+      return;
+    }
+    notifyBatchResult(batchResult, t("workspace.action.clear"));
+    await reloadWorkspaceView({ refreshTree: true });
+  } catch (error) {
+    notify(error.message || t("workspace.clear.failed"), "error");
+  }
+};
+
 const moveWorkspaceSelectionToDirectory = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) {
@@ -2323,12 +2363,6 @@ export const initWorkspace = () => {
   elements.workspaceUpBtn.addEventListener("dragover", handleWorkspaceUpDragOver);
   elements.workspaceUpBtn.addEventListener("dragleave", handleWorkspaceUpDragLeave);
   elements.workspaceUpBtn.addEventListener("drop", handleWorkspaceUpDrop);
-  elements.workspaceNewFileBtn.addEventListener("click", () => {
-    createWorkspaceFile();
-  });
-  elements.workspaceNewFolderQuickBtn.addEventListener("click", () => {
-    createWorkspaceFolder();
-  });
   elements.workspaceUploadBtn.addEventListener("click", () => {
     elements.workspaceUploadInput.value = "";
     elements.workspaceUploadInput.click();
@@ -2355,6 +2389,11 @@ export const initWorkspace = () => {
       notify(t("workspace.upload.failed", { message: error.message }), "error");
     }
   });
+  if (elements.workspaceClearBtn) {
+    elements.workspaceClearBtn.addEventListener("click", () => {
+      clearWorkspaceCurrent();
+    });
+  }
   if (elements.workspaceSearchInput) {
     let searchTimer = null;
     elements.workspaceSearchInput.addEventListener("input", () => {
