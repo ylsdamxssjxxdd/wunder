@@ -31,6 +31,7 @@ services:
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
+      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - RUST_LOG=info
       - CARGO_HOME=/app/.cargo/arm64
       - CARGO_TARGET_DIR=/app/target/arm64
@@ -56,6 +57,7 @@ services:
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
+      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
     volumes:
       - ./:/app:ro
       - wunder_workspaces:/workspaces
