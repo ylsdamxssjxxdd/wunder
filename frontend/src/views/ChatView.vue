@@ -583,10 +583,12 @@ const buildInquiryReply = (panel, routes) => {
 const activeInquiryPanel = computed(() => {
   for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
     const message = chatStore.messages[i];
+    if (message?.role !== 'assistant') continue;
     const panel = message?.questionPanel;
-    if (message?.role === 'assistant' && panel?.status === 'pending') {
+    if (panel?.status === 'pending') {
       return { message, panel };
     }
+    break;
   }
   return null;
 });

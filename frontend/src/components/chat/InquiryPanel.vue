@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="inquiry-panel">
     <div class="inquiry-panel-header">
       <div class="inquiry-panel-title">问询面板</div>
@@ -90,3 +90,4 @@ watch(
   }
 );
 </script>
+

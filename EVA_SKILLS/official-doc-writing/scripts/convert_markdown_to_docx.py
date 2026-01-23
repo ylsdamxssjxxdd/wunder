@@ -317,8 +317,10 @@ def add_page_field(paragraph, font_name: str, font_size: float) -> None:
     paragraph._p.append(field)
 
 
-def add_page_numbers(section, args: argparse.Namespace) -> None:
-    section.odd_and_even_pages_header_footer = True
+def add_page_numbers(doc: Document, section, args: argparse.Namespace) -> None:
+    doc.settings.odd_and_even_pages_header_footer = True
+    section.footer.is_linked_to_previous = False
+    section.even_page_footer.is_linked_to_previous = False
 
     def ensure_paragraph(footer, alignment):
         if footer.paragraphs:
@@ -341,7 +343,7 @@ def create_base_document(args: argparse.Namespace) -> Document:
     configure_section(section, args)
     setup_styles(doc, args)
     if not args.no_page_number:
-        add_page_numbers(section, args)
+        add_page_numbers(doc, section, args)
     return doc
 
 
@@ -1054,10 +1056,8 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     in_code_block = False
     code_block_lines: list[str] = []
     paragraph_buffer: list[tuple[str, bool]] = []
-    last_blank = False
 
     def flush_paragraph() -> None:
-        nonlocal last_blank
         if not paragraph_buffer:
             return
         paragraph = doc.add_paragraph()
@@ -1087,14 +1087,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 )
                 run.add_break()
         paragraph_buffer.clear()
-        last_blank = False
-
-    def add_blank_paragraph() -> None:
-        nonlocal last_blank
-        if last_blank:
-            return
-        doc.add_paragraph("")
-        last_blank = True
 
     def append_paragraph_segment(text: str, hard_break: bool) -> None:
         text = text.strip()
@@ -1144,7 +1136,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             flush_paragraph()
             if signature_mode:
                 signature_mode = False
-            add_blank_paragraph()
             i += 1
             continue
 
@@ -1180,7 +1171,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 run = paragraph.add_run(value)
                 set_run_font(run, args.heading1_font, args.heading_size, None, args.digit_font)
-            last_blank = False
             i += 1
             continue
 
@@ -1192,7 +1182,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             flush_paragraph()
             add_red_separator(doc)
             separator_inserted = True
-            last_blank = False
             i += 1
             continue
 
@@ -1213,7 +1202,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 rows.append(split_table_row(row_line))
                 i += 1
             add_table(doc, header, rows, alignments, args)
-            last_blank = False
             continue
 
         heading = heading_re.match(stripped)
@@ -1234,7 +1222,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 font_name=None,
                 font_size=None,
             )
-            last_blank = False
             i += 1
             continue
 
@@ -1245,13 +1232,11 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             value = signature_match.group(2).strip()
             if value:
                 add_right_paragraph(doc, value, args)
-            last_blank = False
             i += 1
             continue
 
         if signature_mode:
             add_right_paragraph(doc, stripped, args)
-            last_blank = False
             i += 1
             continue
 
@@ -1262,7 +1247,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             paragraph = doc.add_paragraph()
             paragraph.paragraph_format.first_line_indent = Pt(0)
             add_text_with_breaks(paragraph, f"主送：{value}", args, bold=None)
-            last_blank = False
             i += 1
             continue
 
@@ -1277,7 +1261,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 args,
                 bold=None,
             )
-            last_blank = False
             i += 1
             continue
 
@@ -1294,7 +1277,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 bold=None,
                 font_size=14,
             )
-            last_blank = False
             i += 1
             continue
 
@@ -1311,7 +1293,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 bold=None,
                 font_size=14,
             )
-            last_blank = False
             i += 1
             continue
 
@@ -1323,7 +1304,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             paragraph = doc.add_paragraph(style="List Bullet")
             marker = "☑ " if checked else "☐ "
             add_text_with_breaks(paragraph, f"{marker}{text}", args, bold=None)
-            last_blank = False
             i += 1
             continue
 
@@ -1332,7 +1312,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             text = bullet_re.sub("", stripped, count=1)
             paragraph = doc.add_paragraph(style="List Bullet")
             add_text_with_breaks(paragraph, text.strip(), args, bold=None)
-            last_blank = False
             i += 1
             continue
 
@@ -1341,7 +1320,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             text = ordered_re.sub("", stripped, count=1)
             paragraph = doc.add_paragraph(style="List Number")
             add_text_with_breaks(paragraph, text.strip(), args, bold=None)
-            last_blank = False
             i += 1
             continue
 
@@ -1351,7 +1329,6 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             paragraph = doc.add_paragraph()
             paragraph.paragraph_format.first_line_indent = Pt(0)
             add_text_with_breaks(paragraph, quote_text, args, bold=None)
-            last_blank = False
             i += 1
             continue
 
