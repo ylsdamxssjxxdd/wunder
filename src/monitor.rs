@@ -1490,9 +1490,81 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     let mut latest_round: Option<i64> = None;
     let mut last_round_seen: Option<i64> = None;
     let mut implicit_round: i64 = 0;
+    let mut last_round_number: Option<i64> = None;
+    let mut request_start_ts: Option<f64> = None;
+
+    fn reset_request(
+        rounds: &mut HashMap<i64, LlmRoundMetrics>,
+        first_round: &mut Option<i64>,
+        latest_round: &mut Option<i64>,
+        last_round_seen: &mut Option<i64>,
+        implicit_round: &mut i64,
+        last_round_number: &mut Option<i64>,
+        request_start_ts: &mut Option<f64>,
+    ) {
+        rounds.clear();
+        *first_round = None;
+        *latest_round = None;
+        *last_round_seen = None;
+        *implicit_round = 0;
+        *last_round_number = None;
+        *request_start_ts = None;
+    }
+    let is_request_boundary = |event: &MonitorEvent| {
+        if matches!(event.event_type.as_str(), "round_start" | "received") {
+            return true;
+        }
+        if event.event_type == "progress" {
+            return event
+                .data
+                .get("stage")
+                .and_then(Value::as_str)
+                .map(|stage| stage == "start")
+                .unwrap_or(false);
+        }
+        false
+    };
 
     for event in events {
-        match event.event_type.as_str() {
+        if is_request_boundary(event) {
+            reset_request(
+                &mut rounds,
+                &mut first_round,
+                &mut latest_round,
+                &mut last_round_seen,
+                &mut implicit_round,
+                &mut last_round_number,
+                &mut request_start_ts,
+            );
+            request_start_ts = Some(event.timestamp);
+            continue;
+        }
+
+        let event_type = event.event_type.as_str();
+        if matches!(
+            event_type,
+            "llm_request" | "llm_output_delta" | "llm_output" | "token_usage"
+        ) {
+            if let Some(round_value) = parse_round(&event.data) {
+                if let Some(last_round) = last_round_number {
+                    if round_value < last_round {
+                        reset_request(
+                            &mut rounds,
+                            &mut first_round,
+                            &mut latest_round,
+                            &mut last_round_seen,
+                            &mut implicit_round,
+                            &mut last_round_number,
+                            &mut request_start_ts,
+                        );
+                        request_start_ts = Some(event.timestamp);
+                    }
+                }
+                last_round_number = Some(round_value);
+            }
+        }
+
+        match event_type {
             "llm_request" => {
                 let round = parse_round(&event.data).unwrap_or_else(|| {
                     implicit_round += 1;
@@ -1566,16 +1638,67 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
         }
     }
 
-    let prefill_round = first_round;
+    let mut earliest_start_ts: Option<f64> = None;
+    let mut earliest_output_ts: Option<f64> = None;
+    let mut earliest_output_round: Option<i64> = None;
+    let mut latest_output_ts: Option<f64> = None;
+    let mut output_tokens_total: i64 = 0;
+    for (round, metrics) in rounds.iter() {
+        if let Some(start_ts) = metrics.start_ts {
+            earliest_start_ts = Some(match earliest_start_ts {
+                Some(value) => value.min(start_ts),
+                None => start_ts,
+            });
+        }
+        if let Some(first_output_ts) = metrics.first_output_ts {
+            let update = match earliest_output_ts {
+                Some(value) => first_output_ts < value,
+                None => true,
+            };
+            if update {
+                earliest_output_ts = Some(first_output_ts);
+                earliest_output_round = Some(*round);
+            }
+        }
+        if let Some(last_output_ts) = metrics.last_output_ts {
+            latest_output_ts = Some(match latest_output_ts {
+                Some(value) => value.max(last_output_ts),
+                None => last_output_ts,
+            });
+        }
+        if let Some(tokens) = metrics.output_tokens {
+            if tokens > 0 {
+                output_tokens_total = output_tokens_total.saturating_add(tokens);
+            }
+        }
+    }
+
+    let prefill_round = earliest_output_round
+        .or(first_round)
+        .or_else(|| rounds.keys().copied().min());
+    let decode_round = latest_round
+        .or(last_round_seen)
+        .or_else(|| rounds.keys().copied().max());
     let prefill_metrics = prefill_round.and_then(|round| rounds.get(&round));
     let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
     let mut prefill_duration_s = prefill_metrics.and_then(|metrics| metrics.prefill_duration_s);
     let mut prefill_speed_lower_bound = false;
-    if prefill_duration_s.is_none() {
-        let start_ts = prefill_metrics.and_then(|metrics| metrics.start_ts);
-        let first_output_ts = prefill_metrics.and_then(|metrics| metrics.first_output_ts);
-        if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
-            prefill_duration_s = Some((first_output_ts - start_ts).max(0.0));
+    let mut start_ts = prefill_metrics
+        .and_then(|metrics| metrics.start_ts)
+        .or(earliest_start_ts);
+    if let Some(request_start_ts) = request_start_ts {
+        start_ts = Some(match start_ts {
+            Some(value) => value.min(request_start_ts),
+            None => request_start_ts,
+        });
+    }
+    let first_output_ts = prefill_metrics
+        .and_then(|metrics| metrics.first_output_ts)
+        .or(earliest_output_ts);
+    if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
+        let observed_duration = (first_output_ts - start_ts).max(0.0);
+        if prefill_duration_s.map_or(true, |provided| observed_duration > provided) {
+            prefill_duration_s = Some(observed_duration);
             prefill_speed_lower_bound = true;
         }
     }
@@ -1594,47 +1717,38 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
         _ => None,
     };
 
-    let decode_round = latest_round.or(first_round);
     let decode_metrics = decode_round.and_then(|round| rounds.get(&round));
-    let decode_tokens = decode_metrics.and_then(|metrics| metrics.output_tokens);
-    let mut decode_duration_s = decode_metrics
-        .and_then(|metrics| metrics.decode_duration_s)
-        .map(|value| value.max(0.0))
-        .or_else(|| {
-            decode_metrics.and_then(|metrics| {
-                let Some(first_output_ts) = metrics.first_output_ts else {
-                    return None;
-                };
-                let Some(last_output_ts) = metrics.last_output_ts else {
-                    return None;
-                };
-                Some((last_output_ts - first_output_ts).max(0.0))
-            })
-        });
-    if let Some(decode_round) = decode_round {
-        let mut prev_round: Option<i64> = None;
-        let mut prev_last_output_ts: Option<f64> = None;
-        for (round, metrics) in rounds.iter() {
-            if *round >= decode_round {
-                continue;
-            }
-            let Some(last_output_ts) = metrics.last_output_ts else {
-                continue;
-            };
-            if prev_round.map_or(true, |value| *round > value) {
-                prev_round = Some(*round);
-                prev_last_output_ts = Some(last_output_ts);
+    let decode_tokens = if output_tokens_total > 0 {
+        Some(output_tokens_total)
+    } else {
+        decode_metrics.and_then(|metrics| metrics.output_tokens)
+    };
+    let mut decode_duration_s = match (earliest_output_ts, latest_output_ts) {
+        (Some(start), Some(end)) => {
+            let duration = (end - start).max(0.0);
+            if duration > 0.0 {
+                Some(duration)
+            } else {
+                None
             }
         }
-        let decode_last_output_ts = decode_metrics.and_then(|metrics| metrics.last_output_ts);
-        if let (Some(prev_last_output_ts), Some(decode_last_output_ts)) =
-            (prev_last_output_ts, decode_last_output_ts)
-        {
-            let effective_duration = (decode_last_output_ts - prev_last_output_ts).max(0.0);
-            if effective_duration > 0.0 {
-                decode_duration_s = Some(effective_duration);
-            }
-        }
+        _ => None,
+    };
+    if decode_duration_s.is_none() {
+        decode_duration_s = decode_metrics
+            .and_then(|metrics| metrics.decode_duration_s)
+            .map(|value| value.max(0.0))
+            .or_else(|| {
+                decode_metrics.and_then(|metrics| {
+                    let Some(first_output_ts) = metrics.first_output_ts else {
+                        return None;
+                    };
+                    let Some(last_output_ts) = metrics.last_output_ts else {
+                        return None;
+                    };
+                    Some((last_output_ts - first_output_ts).max(0.0))
+                })
+            });
     }
     let decode_speed_tps = match (decode_tokens, decode_duration_s) {
         (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {

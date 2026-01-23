@@ -438,6 +438,34 @@ const resetDebugStats = () => {
   renderDebugStats();
 };
 
+const resetLlmRoundMetrics = () => {
+  if (!debugStats) {
+    return;
+  }
+  debugStats.prefillTokens = 0;
+  debugStats.prefillDuration = 0;
+  debugStats.decodeTokens = 0;
+  debugStats.decodeDuration = 0;
+  debugStats.llmRounds = {};
+  debugStats.firstRound = null;
+  debugStats.latestRound = null;
+  debugStats.lastRoundSeen = null;
+  debugStats.implicitRound = 0;
+  debugStats.requestStartMs = null;
+  debugStats.requestEndMs = null;
+};
+
+const isRequestBoundaryEvent = (eventType, payload) => {
+  if (eventType === "round_start" || eventType === "received") {
+    return true;
+  }
+  if (eventType !== "progress") {
+    return false;
+  }
+  const data = payload?.data || payload;
+  return String(data?.stage || "").trim() === "start";
+};
+
 const parseOptionalNumber = (value) => {
   if (value === null || value === undefined) {
     return null;
@@ -534,21 +562,41 @@ const recomputeSpeedSummary = () => {
   const decodeMetrics = debugStats.llmRounds[String(latestRound)] || prefillMetrics;
   const prefillTokens = parseOptionalNumber(prefillMetrics?.inputTokens);
   let prefillDuration = parseOptionalNumber(prefillMetrics?.prefillDuration);
-  if (prefillDuration === null) {
-    prefillDuration = resolveRoundDuration(
-      Number.isFinite(prefillMetrics?.startMs) ? prefillMetrics?.startMs : earliestStartMs,
-      Number.isFinite(prefillMetrics?.firstOutputMs)
-        ? prefillMetrics?.firstOutputMs
-        : earliestOutputMs
-    );
+  let prefillStartMs = null;
+  if (Number.isFinite(prefillMetrics?.startMs)) {
+    prefillStartMs = prefillMetrics.startMs;
+  }
+  if (Number.isFinite(debugStats.requestStartMs)) {
+    prefillStartMs =
+      prefillStartMs === null
+        ? debugStats.requestStartMs
+        : Math.min(prefillStartMs, debugStats.requestStartMs);
+  }
+  if (Number.isFinite(earliestStartMs)) {
+    prefillStartMs =
+      prefillStartMs === null ? earliestStartMs : Math.min(prefillStartMs, earliestStartMs);
+  }
+  const prefillFirstOutputMs = Number.isFinite(prefillMetrics?.firstOutputMs)
+    ? prefillMetrics?.firstOutputMs
+    : earliestOutputMs;
+  const observedPrefill = resolveRoundDuration(prefillStartMs, prefillFirstOutputMs);
+  if (
+    observedPrefill !== null &&
+    (prefillDuration === null || observedPrefill > prefillDuration)
+  ) {
+    prefillDuration = observedPrefill;
   }
   if (prefillDuration !== null && prefillDuration < MIN_PREFILL_DURATION_S) {
     prefillDuration = MIN_PREFILL_DURATION_S;
   }
-  const decodeTokens = outputTokensTotal > 0 ? outputTokensTotal : parseOptionalNumber(decodeMetrics?.outputTokens);
-  let decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
+  const decodeTokens =
+    outputTokensTotal > 0 ? outputTokensTotal : parseOptionalNumber(decodeMetrics?.outputTokens);
+  let decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
+  if (decodeDuration !== null && decodeDuration <= 0) {
+    decodeDuration = null;
+  }
   if (decodeDuration === null) {
-    decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
+    decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
   }
   if (decodeDuration === null) {
     decodeDuration = resolveRoundDuration(
@@ -566,11 +614,30 @@ const updateLlmRoundMetrics = (eventType, payload, timestamp) => {
   if (!debugStats) {
     return;
   }
+  if (isRequestBoundaryEvent(eventType, payload)) {
+    resetLlmRoundMetrics();
+    const boundaryMs = resolveTimestampMs(timestamp);
+    if (Number.isFinite(boundaryMs)) {
+      debugStats.requestStartMs = boundaryMs;
+    }
+    return;
+  }
   if (!["llm_request", "llm_output_delta", "llm_output", "token_usage"].includes(eventType)) {
     return;
   }
   const data = payload?.data || payload;
   let round = resolveRoundNumber(data?.round);
+  if (
+    Number.isFinite(round) &&
+    Number.isFinite(debugStats.lastRoundSeen) &&
+    round < debugStats.lastRoundSeen
+  ) {
+    resetLlmRoundMetrics();
+    const boundaryMs = resolveTimestampMs(timestamp);
+    if (Number.isFinite(boundaryMs)) {
+      debugStats.requestStartMs = boundaryMs;
+    }
+  }
   if (eventType === "llm_request" && round === null) {
     debugStats.implicitRound += 1;
     round = debugStats.implicitRound;
