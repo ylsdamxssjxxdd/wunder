@@ -4,6 +4,7 @@ import argparse
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Optional
@@ -24,6 +25,7 @@ DEFAULT_HEADING3_FONT = "仿宋GB2312"
 DEFAULT_HEADING4_FONT = "仿宋GB2312"
 DEFAULT_DIGIT_FONT = "Times New Roman"
 DEFAULT_PAGE_NUMBER_FONT = "宋体"
+DEFAULT_CODE_FONT = "Courier New"
 
 
 class PandocNotFoundError(RuntimeError):
@@ -70,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--heading-size", type=float, default=16, help="Heading font size.")
     parser.add_argument("--digit-font", default=DEFAULT_DIGIT_FONT, help="Digit font name.")
+    parser.add_argument("--code-font", default=DEFAULT_CODE_FONT, help="Inline code font name.")
     parser.add_argument(
         "--page-number-font",
         default=DEFAULT_PAGE_NUMBER_FONT,
@@ -517,26 +520,153 @@ def set_table_cell_margins(
         node.set(qn("w:type"), "dxa")
 
 
+def apply_run_format(
+    run,
+    args: argparse.Namespace,
+    bold: Optional[bool],
+    italic: Optional[bool],
+    strike: Optional[bool],
+    font_name: Optional[str],
+    font_size: Optional[float],
+    code: bool = False,
+) -> None:
+    if code:
+        set_run_font(
+            run,
+            args.code_font,
+            font_size if font_size is not None else args.font_size,
+            False,
+            args.code_font,
+        )
+        run.font.italic = False
+        run.font.strike = False
+        return
+
+    if font_name is not None or font_size is not None or bold is not None:
+        set_run_font(
+            run,
+            font_name if font_name is not None else args.font,
+            font_size if font_size is not None else args.font_size,
+            bold,
+            args.digit_font,
+        )
+    elif bold is not None:
+        run.font.bold = bold
+
+    if italic:
+        run.font.italic = True
+    if strike:
+        run.font.strike = True
+
+
+def add_inline_runs(
+    paragraph,
+    text: str,
+    args: argparse.Namespace,
+    bold: Optional[bool],
+    font_name: Optional[str],
+    font_size: Optional[float],
+) -> bool:
+    added = False
+    for token in parse_inline_markdown(text):
+        if not token.text:
+            continue
+        run = paragraph.add_run(token.text)
+        if token.code:
+            apply_run_format(
+                run,
+                args,
+                bold=False,
+                italic=False,
+                strike=False,
+                font_name=args.code_font,
+                font_size=font_size,
+                code=True,
+            )
+        else:
+            apply_run_format(
+                run,
+                args,
+                bold=bold,
+                italic=token.italic if token.italic else None,
+                strike=token.strike if token.strike else None,
+                font_name=font_name,
+                font_size=font_size,
+            )
+            if token.bold:
+                run.font.bold = True
+        added = True
+    return added
+
+
 def add_text_with_breaks(
     paragraph,
     text: str,
     args: argparse.Namespace,
     bold: Optional[bool],
+    font_name: Optional[str] = None,
+    font_size: Optional[float] = None,
 ) -> None:
-    has_run = False
     for segment, inline_break in split_inline_breaks(text):
         segment_text, hard_break = extract_manual_break(segment)
         segment_text = segment_text.strip()
         if segment_text:
-            run = paragraph.add_run(segment_text)
-            set_run_font(run, args.font, args.font_size, bold, args.digit_font)
-            has_run = True
+            add_inline_runs(
+                paragraph,
+                segment_text,
+                args,
+                bold=bold,
+                font_name=font_name,
+                font_size=font_size,
+            )
         if hard_break or inline_break:
-            if not has_run:
-                run = paragraph.add_run("")
-                set_run_font(run, args.font, args.font_size, bold, args.digit_font)
+            run = paragraph.add_run("")
+            apply_run_format(
+                run,
+                args,
+                bold=bold,
+                italic=None,
+                strike=None,
+                font_name=font_name,
+                font_size=font_size,
+            )
             run.add_break()
-            has_run = False
+
+
+def add_code_block(doc: Document, lines: list[str], args: argparse.Namespace) -> None:
+    if not lines:
+        return
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.first_line_indent = Pt(0)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    for index, line in enumerate(lines):
+        if index > 0:
+            run = paragraph.add_run("")
+            apply_run_format(
+                run,
+                args,
+                bold=None,
+                italic=None,
+                strike=None,
+                font_name=args.code_font,
+                font_size=args.font_size,
+                code=True,
+            )
+            run.add_break()
+        run = paragraph.add_run(line)
+        apply_run_format(
+            run,
+            args,
+            bold=None,
+            italic=None,
+            strike=None,
+            font_name=args.code_font,
+            font_size=args.font_size,
+            code=True,
+        )
 
 
 def needs_space(prev: str, next_text: str) -> bool:
@@ -616,6 +746,233 @@ def split_inline_breaks(raw_line: str) -> list[tuple[str, bool]]:
     return segments
 
 
+@dataclass
+class InlineStyle:
+    bold: bool = False
+    italic: bool = False
+    strike: bool = False
+
+    def copy(self) -> "InlineStyle":
+        return InlineStyle(self.bold, self.italic, self.strike)
+
+
+@dataclass
+class InlineRun:
+    text: str
+    bold: bool = False
+    italic: bool = False
+    strike: bool = False
+    code: bool = False
+
+
+def parse_inline_markdown(text: str, base_style: Optional[InlineStyle] = None) -> list[InlineRun]:
+    runs: list[InlineRun] = []
+    buffer: list[str] = []
+    state = base_style.copy() if base_style else InlineStyle()
+
+    def flush_buffer() -> None:
+        if not buffer:
+            return
+        runs.append(
+            InlineRun(
+                "".join(buffer),
+                bold=state.bold,
+                italic=state.italic,
+                strike=state.strike,
+            )
+        )
+        buffer.clear()
+
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            if i + 1 < len(text):
+                buffer.append(text[i + 1])
+                i += 2
+                continue
+            buffer.append(ch)
+            i += 1
+            continue
+        if ch == "`":
+            tick_count = 1
+            while i + tick_count < len(text) and text[i + tick_count] == "`":
+                tick_count += 1
+            marker = "`" * tick_count
+            end_index = text.find(marker, i + tick_count)
+            if end_index != -1:
+                flush_buffer()
+                code_text = text[i + tick_count : end_index]
+                if code_text:
+                    runs.append(InlineRun(code_text, code=True))
+                i = end_index + tick_count
+                continue
+        if ch == "!" and i + 1 < len(text) and text[i + 1] == "[":
+            image = parse_markdown_link(text, i + 1)
+            if image is not None:
+                alt_text, url, end_index = image
+                flush_buffer()
+                runs.append(
+                    InlineRun(
+                        "图片：",
+                        bold=state.bold,
+                        italic=state.italic,
+                        strike=state.strike,
+                    )
+                )
+                if alt_text:
+                    runs.extend(parse_inline_markdown(alt_text, state.copy()))
+                if url:
+                    runs.append(
+                        InlineRun(
+                            f"（{url}）",
+                            bold=state.bold,
+                            italic=state.italic,
+                            strike=state.strike,
+                        )
+                    )
+                i = end_index
+                continue
+        if ch == "[":
+            link = parse_markdown_link(text, i)
+            if link is not None:
+                link_text, url, end_index = link
+                flush_buffer()
+                if link_text:
+                    runs.extend(parse_inline_markdown(link_text, state.copy()))
+                if url:
+                    runs.append(
+                        InlineRun(
+                            f"（{url}）",
+                            bold=state.bold,
+                            italic=state.italic,
+                            strike=state.strike,
+                        )
+                    )
+                i = end_index
+                continue
+        if ch == "<":
+            autolink = parse_autolink(text, i)
+            if autolink is not None:
+                url, end_index = autolink
+                flush_buffer()
+                runs.append(
+                    InlineRun(
+                        url,
+                        bold=state.bold,
+                        italic=state.italic,
+                        strike=state.strike,
+                    )
+                )
+                i = end_index
+                continue
+
+        marker_handled = False
+        for marker, toggles in (
+            ("***", ("bold", "italic")),
+            ("___", ("bold", "italic")),
+            ("**", ("bold",)),
+            ("__", ("bold",)),
+            ("*", ("italic",)),
+            ("_", ("italic",)),
+            ("~~", ("strike",)),
+        ):
+            if not text.startswith(marker, i):
+                continue
+            if not can_toggle_marker(text, i, marker):
+                break
+            if text.find(marker, i + len(marker)) == -1:
+                break
+            flush_buffer()
+            for flag in toggles:
+                if flag == "bold":
+                    state.bold = not state.bold
+                elif flag == "italic":
+                    state.italic = not state.italic
+                elif flag == "strike":
+                    state.strike = not state.strike
+            i += len(marker)
+            marker_handled = True
+            break
+        if marker_handled:
+            continue
+
+        buffer.append(ch)
+        i += 1
+
+    flush_buffer()
+    return runs
+
+
+def parse_markdown_link(text: str, start: int) -> Optional[tuple[str, str, int]]:
+    if start >= len(text) or text[start] != "[":
+        return None
+    end_label = find_matching_bracket(text, start, "[", "]")
+    if end_label is None:
+        return None
+    if end_label + 1 >= len(text) or text[end_label + 1] != "(":
+        return None
+    end_url = find_matching_bracket(text, end_label + 1, "(", ")")
+    if end_url is None:
+        return None
+    label = text[start + 1 : end_label]
+    url = text[end_label + 2 : end_url].strip()
+    if url.startswith("<") and url.endswith(">"):
+        url = url[1:-1].strip()
+    if url:
+        url = url.split()[0]
+    return label, url, end_url + 1
+
+
+def parse_autolink(text: str, start: int) -> Optional[tuple[str, int]]:
+    if text[start] != "<":
+        return None
+    end = text.find(">", start + 1)
+    if end == -1:
+        return None
+    content = text[start + 1 : end].strip()
+    if not content:
+        return None
+    if content.startswith(("http://", "https://", "mailto:")):
+        return content, end + 1
+    if "@" in content and " " not in content:
+        return content, end + 1
+    return None
+
+
+def find_matching_bracket(text: str, start: int, open_char: str, close_char: str) -> Optional[int]:
+    depth = 0
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == open_char:
+            depth += 1
+        elif ch == close_char:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def can_toggle_marker(text: str, start: int, marker: str) -> bool:
+    if not marker.startswith("_"):
+        return True
+    prev_char = text[start - 1] if start > 0 else ""
+    next_index = start + len(marker)
+    next_char = text[next_index] if next_index < len(text) else ""
+    if prev_char and next_char and is_word_char(prev_char) and is_word_char(next_char):
+        return False
+    return True
+
+
+def is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
 def set_table_layout_fixed(table) -> None:
     tbl_pr = table._tbl.tblPr
     if tbl_pr is None:
@@ -680,7 +1037,9 @@ def add_table(
 def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> None:
     lines = md_text.splitlines()
     heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
-    ordered_re = re.compile(r"^\d+\.\s+")
+    ordered_re = re.compile(r"^\d+[.)、]\s+")
+    bullet_re = re.compile(r"^[-+*]\s+")
+    task_re = re.compile(r"^[-+*]\s+\[( |x|X)\]\s+")
     header_keys = ["份号", "密级", "紧急程度", "发文机关标志", "发文字号", "签发人"]
     header_re = re.compile(rf"^({'|'.join(map(re.escape, header_keys))})[:：]\s*(.*)$")
     recipient_re = re.compile(r"^主送(?:机关)?[:：]\s*(.*)$")
@@ -693,6 +1052,7 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     separator_inserted = False
     signature_mode = False
     in_code_block = False
+    code_block_lines: list[str] = []
     paragraph_buffer: list[tuple[str, bool]] = []
     last_blank = False
 
@@ -706,8 +1066,25 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
         paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
         paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
         for text, hard_break in paragraph_buffer:
-            run = paragraph.add_run(text)
+            add_inline_runs(
+                paragraph,
+                text,
+                args,
+                bold=None,
+                font_name=args.font,
+                font_size=args.font_size,
+            )
             if hard_break:
+                run = paragraph.add_run("")
+                apply_run_format(
+                    run,
+                    args,
+                    bold=None,
+                    italic=None,
+                    strike=None,
+                    font_name=args.font,
+                    font_size=args.font_size,
+                )
                 run.add_break()
         paragraph_buffer.clear()
         last_blank = False
@@ -749,10 +1126,17 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
 
         if stripped.startswith("```"):
             flush_paragraph()
-            in_code_block = not in_code_block
+            if in_code_block:
+                add_code_block(doc, code_block_lines, args)
+                code_block_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+                code_block_lines = []
             i += 1
             continue
         if in_code_block:
+            code_block_lines.append(raw_line.rstrip("\n"))
             i += 1
             continue
 
@@ -800,7 +1184,11 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             i += 1
             continue
 
-        if stripped == "---" or re.match(r"^-{3,}$", stripped):
+        if (
+            stripped == "---"
+            or re.match(r"^-{3,}$", stripped)
+            or re.match(r"^[*_]{3,}$", stripped)
+        ):
             flush_paragraph()
             add_red_separator(doc)
             separator_inserted = True
@@ -836,7 +1224,16 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             if header_seen and not separator_inserted and len(prefix) == 1:
                 add_red_separator(doc)
                 separator_inserted = True
-            doc.add_heading(title, level=min(len(prefix), 5))
+            heading_level = min(len(prefix), 5)
+            paragraph = doc.add_paragraph(style=f"Heading {heading_level}")
+            add_text_with_breaks(
+                paragraph,
+                title,
+                args,
+                bold=None,
+                font_name=None,
+                font_size=None,
+            )
             last_blank = False
             i += 1
             continue
@@ -864,8 +1261,7 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             value = recipient_match.group(1).strip()
             paragraph = doc.add_paragraph()
             paragraph.paragraph_format.first_line_indent = Pt(0)
-            run = paragraph.add_run(f"主送：{value}")
-            set_run_font(run, args.font, args.font_size, None, args.digit_font)
+            add_text_with_breaks(paragraph, f"主送：{value}", args, bold=None)
             last_blank = False
             i += 1
             continue
@@ -875,8 +1271,12 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             flush_paragraph()
             value = attachment_match.group(1).strip()
             paragraph = doc.add_paragraph()
-            run = paragraph.add_run(f"附件：{value}" if value else "附件：")
-            set_run_font(run, args.font, args.font_size, None, args.digit_font)
+            add_text_with_breaks(
+                paragraph,
+                f"附件：{value}" if value else "附件：",
+                args,
+                bold=None,
+            )
             last_blank = False
             i += 1
             continue
@@ -887,8 +1287,13 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             value = copy_match.group(1).strip()
             paragraph = doc.add_paragraph(style="Imprint")
             paragraph.paragraph_format.first_line_indent = Pt(0)
-            run = paragraph.add_run(f"抄送：{value}")
-            set_run_font(run, args.font, 14, None, args.digit_font)
+            add_text_with_breaks(
+                paragraph,
+                f"抄送：{value}",
+                args,
+                bold=None,
+                font_size=14,
+            )
             last_blank = False
             i += 1
             continue
@@ -899,16 +1304,34 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             value = print_match.group(1).strip()
             paragraph = doc.add_paragraph(style="Imprint")
             paragraph.paragraph_format.first_line_indent = Pt(0)
-            run = paragraph.add_run(f"印发：{value}" if value else "印发：")
-            set_run_font(run, args.font, 14, None, args.digit_font)
+            add_text_with_breaks(
+                paragraph,
+                f"印发：{value}" if value else "印发：",
+                args,
+                bold=None,
+                font_size=14,
+            )
             last_blank = False
             i += 1
             continue
 
-        if stripped.startswith("- "):
+        task_match = task_re.match(stripped)
+        if task_match:
             flush_paragraph()
+            checked = task_match.group(1).lower() == "x"
+            text = stripped[task_match.end() :].strip()
             paragraph = doc.add_paragraph(style="List Bullet")
-            add_text_with_breaks(paragraph, stripped[2:].strip(), args, bold=None)
+            marker = "☑ " if checked else "☐ "
+            add_text_with_breaks(paragraph, f"{marker}{text}", args, bold=None)
+            last_blank = False
+            i += 1
+            continue
+
+        if bullet_re.match(stripped):
+            flush_paragraph()
+            text = bullet_re.sub("", stripped, count=1)
+            paragraph = doc.add_paragraph(style="List Bullet")
+            add_text_with_breaks(paragraph, text.strip(), args, bold=None)
             last_blank = False
             i += 1
             continue
@@ -918,6 +1341,16 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             text = ordered_re.sub("", stripped, count=1)
             paragraph = doc.add_paragraph(style="List Number")
             add_text_with_breaks(paragraph, text.strip(), args, bold=None)
+            last_blank = False
+            i += 1
+            continue
+
+        if stripped.startswith(">"):
+            flush_paragraph()
+            quote_text = stripped.lstrip(">").strip()
+            paragraph = doc.add_paragraph()
+            paragraph.paragraph_format.first_line_indent = Pt(0)
+            add_text_with_breaks(paragraph, quote_text, args, bold=None)
             last_blank = False
             i += 1
             continue

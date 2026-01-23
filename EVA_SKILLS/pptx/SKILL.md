@@ -20,10 +20,12 @@
 
 1. **选择模板**
    - 列出模板：`python scripts/list_templates.py`
-   - 模板清单与许可证：`templates/README.md` + `templates/manifest.yaml`
+   - ????????`templates/manifest.yaml`
+   - ?????????????-??????? / ??????-????????
+   - ?????????????`python scripts/patch_placeholders.py`
 
 2. **查看模板布局与占位符**
-   - `python scripts/inspect_template.py templates/coreoz-template.pptx`
+   - `python scripts/inspect_template.py templates/教学设计模板-浅.pptx`
    - 记录需要用到的 `layout` 与 `placeholder idx`
 
 3. **编写大纲**
@@ -31,7 +33,7 @@
    - 推荐：先写大纲再填占位符
 
 4. **生成 PPTX**
-   - `python scripts/build_deck.py --template templates/coreoz-template.pptx --outline examples/outline.yaml --output output.pptx`
+   - `python scripts/build_deck.py --template templates/教学设计模板-浅.pptx --outline examples/outline.yaml --output output.pptx`
 
 5. **快速校对（可选）**
    - 导出文本：`python -m markitdown output.pptx > output.md`
@@ -40,7 +42,7 @@
 
 ```yaml
 meta:
-  template: ../templates/coreoz-template.pptx
+  template: ../templates/教学设计模板-浅.pptx
   title: 项目名称
   slide_ratio: "16:9"
   theme:

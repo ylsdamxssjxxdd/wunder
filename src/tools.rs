@@ -142,6 +142,31 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "问询面板".to_string(),
+            description: t("tool.spec.question_panel.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": t("tool.spec.question_panel.args.question")},
+                    "routes": {
+                        "type": "array",
+                        "description": t("tool.spec.question_panel.args.routes"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": t("tool.spec.question_panel.args.routes.label")},
+                                "description": {"type": "string", "description": t("tool.spec.question_panel.args.routes.description")},
+                                "recommended": {"type": "boolean", "description": t("tool.spec.question_panel.args.routes.recommended")}
+                            },
+                            "required": ["label"]
+                        }
+                    },
+                    "multiple": {"type": "boolean", "description": t("tool.spec.question_panel.args.multiple")}
+                },
+                "required": ["routes"]
+            }),
+        },
+        ToolSpec {
             name: "a2a观察".to_string(),
             description: t("tool.spec.a2a_observe.description"),
             input_schema: json!({
@@ -332,6 +357,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
     map.insert("final_response".to_string(), "最终回复".to_string());
     map.insert("update_plan".to_string(), "计划面板".to_string());
+    map.insert("question_panel".to_string(), "问询面板".to_string());
+    map.insert("ask_panel".to_string(), "问询面板".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -648,6 +675,7 @@ pub async fn execute_builtin_tool(
             json!({"uid": args.get("uid"), "a2ui": args.get("a2ui"), "content": args.get("content")}),
         ),
         "计划面板" => execute_plan_tool(context, args).await,
+        "问询面板" => execute_question_panel_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
 }
@@ -727,6 +755,139 @@ async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -> Result<Va
         );
     }
     Ok(json!({ "status": "ok" }))
+}
+
+#[derive(Debug)]
+struct QuestionPanelRoute {
+    label: String,
+    description: Option<String>,
+    recommended: bool,
+}
+
+#[derive(Debug)]
+struct QuestionPanelPayload {
+    question: String,
+    routes: Vec<QuestionPanelRoute>,
+    multiple: bool,
+}
+
+fn normalize_question_panel_payload(args: &Value) -> Result<QuestionPanelPayload> {
+    let Some(obj) = args.as_object() else {
+        return Err(anyhow!(i18n::t("tool.question_panel.routes_required")));
+    };
+    let question = obj
+        .get("question")
+        .or_else(|| obj.get("prompt"))
+        .or_else(|| obj.get("title"))
+        .or_else(|| obj.get("header"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let question = if question.is_empty() {
+        i18n::t("tool.question_panel.default_question")
+    } else {
+        question
+    };
+    let multiple = obj
+        .get("multiple")
+        .or_else(|| obj.get("allow_multiple"))
+        .or_else(|| obj.get("multi"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let routes = obj
+        .get("routes")
+        .or_else(|| obj.get("options"))
+        .or_else(|| obj.get("choices"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut normalized = Vec::new();
+    for item in routes {
+        let (label, description, recommended) = match item {
+            Value::String(value) => (value, None, false),
+            Value::Object(map) => {
+                let label = map
+                    .get("label")
+                    .or_else(|| map.get("title"))
+                    .or_else(|| map.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let description = map
+                    .get("description")
+                    .or_else(|| map.get("detail"))
+                    .or_else(|| map.get("desc"))
+                    .or_else(|| map.get("summary"))
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string());
+                let recommended = map
+                    .get("recommended")
+                    .or_else(|| map.get("preferred"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                (label, description, recommended)
+            }
+            _ => (String::new(), None, false),
+        };
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let description = description.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+        let recommended = recommended || label.contains("推荐");
+        normalized.push(QuestionPanelRoute {
+            label,
+            description,
+            recommended,
+        });
+    }
+    if normalized.is_empty() {
+        return Err(anyhow!(i18n::t("tool.question_panel.routes_required")));
+    }
+    Ok(QuestionPanelPayload {
+        question,
+        routes: normalized,
+        multiple,
+    })
+}
+
+async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload = normalize_question_panel_payload(args)?;
+    let question = payload.question.clone();
+    let routes = payload
+        .routes
+        .iter()
+        .map(|route| {
+            json!({
+                "label": route.label,
+                "description": route.description,
+                "recommended": route.recommended
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(
+            "question_panel",
+            json!({
+                "question": question.clone(),
+                "routes": routes.clone(),
+                "multiple": payload.multiple
+            }),
+        );
+    }
+    Ok(json!({
+        "question": question,
+        "routes": routes,
+        "multiple": payload.multiple
+    }))
 }
 
 async fn execute_user_tool(

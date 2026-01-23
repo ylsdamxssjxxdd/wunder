@@ -587,6 +587,10 @@
     "en-US": "Plan updated",
     "zh-CN": "计划更新"
   },
+  "monitor.summary.question_panel": {
+    "en-US": "Inquiry panel",
+    "zh-CN": "问询面板"
+  },
   "monitor.summary.user_deleted_cancel": {
     "en-US": "User deleted; cancellation requested",
     "zh-CN": "用户已删除，已请求终止"
@@ -646,6 +650,10 @@
   "response.a2ui_fallback": {
     "en-US": "A2UI UI has been generated and rendered.",
     "zh-CN": "已生成 A2UI 界面并完成渲染。"
+  },
+  "response.question_panel_waiting": {
+    "en-US": "Please choose a route from the inquiry panel, or send a message to continue.",
+    "zh-CN": "请在问询面板选择路线，或直接发送消息继续。"
   },
   "sandbox.error.image_missing": {
     "en-US": "Sandbox image is not configured; cannot execute tool.",
@@ -850,6 +858,14 @@
   "tool.plan.plan_required": {
     "en-US": "Plan steps are required.",
     "zh-CN": "计划步骤不能为空。"
+  },
+  "tool.question_panel.default_question": {
+    "en-US": "Which route should we take next?",
+    "zh-CN": "接下来希望从哪个方向推进？"
+  },
+  "tool.question_panel.routes_required": {
+    "en-US": "At least one route is required.",
+    "zh-CN": "至少提供一条路线。"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
@@ -1254,6 +1270,34 @@
   "tool.spec.plan.description": {
     "en-US": "Update the plan board with steps and status.",
     "zh-CN": "更新计划看板，提供步骤与状态。"
+  },
+  "tool.spec.question_panel.args.question": {
+    "en-US": "Optional. Short question or prompt to show above the routes.",
+    "zh-CN": "可选，展示在路线列表上方的问题或提示。"
+  },
+  "tool.spec.question_panel.args.routes": {
+    "en-US": "Route list for the inquiry panel.",
+    "zh-CN": "问询面板的路线列表。"
+  },
+  "tool.spec.question_panel.args.routes.label": {
+    "en-US": "Short route label.",
+    "zh-CN": "路线标题。"
+  },
+  "tool.spec.question_panel.args.routes.description": {
+    "en-US": "Route explanation or scope.",
+    "zh-CN": "路线说明或范围。"
+  },
+  "tool.spec.question_panel.args.routes.recommended": {
+    "en-US": "Mark as recommended.",
+    "zh-CN": "是否推荐该路线。"
+  },
+  "tool.spec.question_panel.args.multiple": {
+    "en-US": "Allow multiple selections.",
+    "zh-CN": "允许多选。"
+  },
+  "tool.spec.question_panel.description": {
+    "en-US": "Show a route inquiry panel so the user can pick the next direction.",
+    "zh-CN": "展示问询面板，让用户选择下一步路线。"
   },
   "tool.spec.ptc.args.content": {
     "en-US": "Full Python script content.",

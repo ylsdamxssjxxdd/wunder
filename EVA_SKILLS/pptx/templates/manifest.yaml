@@ -1,70 +1,24 @@
 templates:
-  - id: coreoz-classic
-    name: Coreoz Classic
-    file: coreoz-template.pptx
-    source: https://github.com/Coreoz/PPT-Templates/blob/master/demo/src/main/resources/template.pptx
-    license: Apache-2.0
-    license_file: licenses/Apache-2.0-Coreoz-PPT-Templates.txt
+  - id: teaching-design-light
+    name: 教学设计模板（浅色）
+    file: 教学设计模板-浅.pptx
+    source: local
+    license: internal
     tags:
+      - education
+      - teaching
+      - light
       - clean
-      - corporate
-
-  - id: pptx-blueprint-example01
-    name: Blueprint Example 01
-    file: pptx-blueprint-example01.pptx
-    source: https://github.com/timhoffm/pptx-blueprint/blob/master/data/example01.pptx
-    license: MIT
-    license_file: licenses/MIT-timhoffm-pptx-blueprint.txt
-    tags:
-      - minimal
-      - neutral
-
-  - id: pptx-blueprint-example02-section
-    name: Blueprint Example 02 (Section)
-    file: pptx-blueprint-example02-section.pptx
-    source: https://github.com/timhoffm/pptx-blueprint/blob/master/data/example02_section.pptx
-    license: MIT
-    license_file: licenses/MIT-timhoffm-pptx-blueprint.txt
-    tags:
-      - section
       - minimal
 
-  - id: pptx-automizer-root
-    name: Automizer Root Template
-    file: pptx-automizer-root-template.pptx
-    source: https://github.com/singerla/pptx-automizer/blob/master/__tests__/pptx-templates/RootTemplate.pptx
-    license: MIT
-    license_file: licenses/MIT-singerla-pptx-automizer.txt
+  - id: teaching-design-dark
+    name: 教学设计模板（深色）
+    file: 教学设计模板-深.pptx
+    source: local
+    license: internal
     tags:
-      - basic
-      - placeholder
-
-  - id: pptx-automizer-root-with-images
-    name: Automizer Root (With Images)
-    file: pptx-automizer-root-with-images.pptx
-    source: https://github.com/singerla/pptx-automizer/blob/master/__tests__/pptx-templates/RootTemplateWithImages.pptx
-    license: MIT
-    license_file: licenses/MIT-singerla-pptx-automizer.txt
-    tags:
-      - image
-      - layout
-
-  - id: pptx-automizer-slide-with-images
-    name: Automizer Slide With Images
-    file: pptx-automizer-slide-with-images.pptx
-    source: https://github.com/singerla/pptx-automizer/blob/master/__tests__/pptx-templates/SlideWithImages.pptx
-    license: MIT
-    license_file: licenses/MIT-singerla-pptx-automizer.txt
-    tags:
-      - image
-      - cover
-
-  - id: pptx-automizer-slide-masters
-    name: Automizer Slide Masters
-    file: pptx-automizer-slide-masters.pptx
-    source: https://github.com/singerla/pptx-automizer/blob/master/__tests__/pptx-templates/SlideMasters.pptx
-    license: MIT
-    license_file: licenses/MIT-singerla-pptx-automizer.txt
-    tags:
-      - master
-      - theme
+      - education
+      - teaching
+      - dark
+      - contrast
+      - rich-layout

@@ -1151,6 +1151,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "tool_call"
             | "tool_result"
             | "plan_update"
+            | "question_panel"
             | "llm_output_delta"
             | "llm_output"
             | "quota_usage"

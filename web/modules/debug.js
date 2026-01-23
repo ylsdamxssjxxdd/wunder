@@ -88,6 +88,7 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "tool_call",
   "tool_result",
   "plan_update",
+  "question_panel",
   "llm_request",
   "llm_response",
   "knowledge_request",
@@ -2434,6 +2435,15 @@ const handleEvent = (eventType, dataText, options = {}) => {
         timestamp: eventTimestamp,
       });
     }
+    return;
+  }
+
+  if (eventType === "question_panel") {
+    const data = payload.data || payload;
+    appendLog(t("debug.event.questionPanel"), {
+      detail: JSON.stringify(data, null, 2),
+      timestamp: eventTimestamp,
+    });
     return;
   }
 

@@ -246,6 +246,16 @@ impl PromptComposer {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), plan_prompt.trim());
                 }
             }
+            let include_question_panel_prompt = allowed_tool_names
+                .iter()
+                .any(|name| resolve_tool_name(name) == "问询面板");
+            if include_question_panel_prompt {
+                let question_prompt =
+                    read_prompt_template(Path::new("app/prompts/question_panel_prompt.txt"));
+                if !question_prompt.trim().is_empty() {
+                    prompt = format!("{}\n\n{}", prompt.trim_end(), question_prompt.trim());
+                }
+            }
 
             self.insert_cached_prompt(cache_key, prompt.clone(), now_ts());
             self.notify_inflight(&base_key).await;

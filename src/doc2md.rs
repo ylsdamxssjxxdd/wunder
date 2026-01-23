@@ -496,9 +496,29 @@ fn read_pptx_slides(path: &Path) -> Result<Vec<(usize, String)>> {
     Ok(slides)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParagraphAlign {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListKind {
+    Bullet,
+    Numbered,
+}
+
+#[derive(Debug, Clone)]
+struct PreludeParagraph {
+    text: String,
+    align: Option<ParagraphAlign>,
+}
+
 fn parse_docx_xml(xml: &str) -> Result<String> {
     let mut reader = XmlReader::from_str(xml);
-    reader.trim_text(true);
+    reader.trim_text(false);
     let mut buf = Vec::new();
     let mut blocks = Vec::new();
 
@@ -509,10 +529,23 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
 
     let mut current_para = String::new();
     let mut para_style: Option<String> = None;
+    let mut para_align: Option<ParagraphAlign> = None;
 
     let mut current_cell = String::new();
+    let mut current_cell_align: Option<ParagraphAlign> = None;
     let mut current_row: Vec<String> = Vec::new();
+    let mut current_row_alignments: Vec<Option<ParagraphAlign>> = Vec::new();
     let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut table_alignments: Vec<Option<ParagraphAlign>> = Vec::new();
+    let mut table_has_alignment = false;
+
+    let mut prelude: Vec<PreludeParagraph> = Vec::new();
+    let mut seen_title = false;
+
+    let mut list_kind: Option<ListKind> = None;
+    let mut list_lines: Vec<String> = Vec::new();
+    let mut list_index = 1usize;
+    let mut pending_numbered_list_start: Option<usize> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -521,35 +554,55 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                 let local = local_name(name.as_ref());
                 match local {
                     b"p" => {
+                        in_paragraph = true;
+                        para_style = None;
+                        para_align = None;
                         if in_cell {
                             if !current_cell.ends_with('\n') && !current_cell.is_empty() {
                                 current_cell.push('\n');
                             }
                         } else {
-                            in_paragraph = true;
                             current_para.clear();
-                            para_style = None;
                         }
                     }
                     b"tbl" => {
                         in_table = true;
                         table_rows.clear();
+                        table_alignments.clear();
+                        table_has_alignment = false;
                     }
                     b"tr" => {
                         if in_table {
                             current_row = Vec::new();
+                            current_row_alignments = Vec::new();
                         }
                     }
                     b"tc" => {
                         if in_table {
                             in_cell = true;
                             current_cell.clear();
+                            current_cell_align = None;
                         }
                     }
                     b"pStyle" => {
                         if in_paragraph && !in_cell {
                             if let Some(value) = attr_value(&reader, e, b"val") {
                                 para_style = Some(value);
+                            }
+                        }
+                    }
+                    b"jc" => {
+                        if in_paragraph {
+                            if let Some(value) = attr_value(&reader, e, b"val") {
+                                if let Some(align) = parse_paragraph_align(&value) {
+                                    if in_cell {
+                                        if current_cell_align.is_none() {
+                                            current_cell_align = Some(align);
+                                        }
+                                    } else {
+                                        para_align = Some(align);
+                                    }
+                                }
                             }
                         }
                     }
@@ -572,6 +625,21 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                             }
                         }
                     }
+                    b"jc" => {
+                        if in_paragraph {
+                            if let Some(value) = attr_value(&reader, e, b"val") {
+                                if let Some(align) = parse_paragraph_align(&value) {
+                                    if in_cell {
+                                        if current_cell_align.is_none() {
+                                            current_cell_align = Some(align);
+                                        }
+                                    } else {
+                                        para_align = Some(align);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     b"tab" => append_text(&mut current_para, &mut current_cell, in_cell, "\t"),
                     b"br" => append_text(&mut current_para, &mut current_cell, in_cell, "\n"),
                     _ => {}
@@ -590,23 +658,85 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                 match local {
                     b"t" => in_text = false,
                     b"p" => {
-                        if in_cell {
-                            if !current_cell.ends_with('\n') {
-                                current_cell.push('\n');
-                            }
-                        } else if in_paragraph {
-                            let text = normalize_text(&current_para);
-                            if !text.is_empty() {
-                                if let Some(level) = heading_level_from_style(para_style.as_deref())
-                                {
-                                    blocks.push(format!("{} {text}", "#".repeat(level)));
-                                } else {
-                                    blocks.push(text);
+                        if in_paragraph {
+                            if in_cell {
+                                if current_cell_align.is_none() {
+                                    current_cell_align = para_align;
                                 }
+                            } else {
+                                let text = normalize_paragraph_text(&current_para);
+                                if !text.is_empty() {
+                                    let attachment_next = attachment_list_next_index(&text);
+                                    if let Some(level) =
+                                        heading_level_from_style(para_style.as_deref())
+                                    {
+                                        flush_list(
+                                            &mut blocks,
+                                            &mut list_kind,
+                                            &mut list_lines,
+                                            &mut list_index,
+                                        );
+                                        if !seen_title && level == 1 {
+                                            blocks.extend(render_docx_prelude(&prelude));
+                                            prelude.clear();
+                                            seen_title = true;
+                                        }
+                                        let heading_text = strip_heading_numbering(level, &text);
+                                        blocks
+                                            .push(format!("{} {heading_text}", "#".repeat(level)));
+                                        pending_numbered_list_start = None;
+                                    } else if let Some(kind) =
+                                        list_kind_from_style(para_style.as_deref())
+                                    {
+                                        if list_kind != Some(kind) {
+                                            flush_list(
+                                                &mut blocks,
+                                                &mut list_kind,
+                                                &mut list_lines,
+                                                &mut list_index,
+                                            );
+                                            list_kind = Some(kind);
+                                            list_index = match kind {
+                                                ListKind::Numbered => {
+                                                    pending_numbered_list_start.take().unwrap_or(1)
+                                                }
+                                                ListKind::Bullet => {
+                                                    pending_numbered_list_start = None;
+                                                    1
+                                                }
+                                            };
+                                        }
+                                        let marker = match kind {
+                                            ListKind::Bullet => "-".to_string(),
+                                            ListKind::Numbered => {
+                                                let marker = format!("{list_index}.");
+                                                list_index += 1;
+                                                marker
+                                            }
+                                        };
+                                        list_lines.push(format!("{marker} {text}"));
+                                    } else if !seen_title {
+                                        prelude.push(PreludeParagraph {
+                                            text,
+                                            align: para_align,
+                                        });
+                                        pending_numbered_list_start = attachment_next;
+                                    } else {
+                                        flush_list(
+                                            &mut blocks,
+                                            &mut list_kind,
+                                            &mut list_lines,
+                                            &mut list_index,
+                                        );
+                                        blocks.push(text);
+                                        pending_numbered_list_start = attachment_next;
+                                    }
+                                }
+                                current_para.clear();
+                                para_style = None;
+                                para_align = None;
                             }
                             in_paragraph = false;
-                            current_para.clear();
-                            para_style = None;
                         }
                     }
                     b"tc" => {
@@ -614,11 +744,23 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                             in_cell = false;
                             let text = normalize_cell_text(&current_cell);
                             current_row.push(text);
+                            current_row_alignments.push(current_cell_align);
+                            current_cell.clear();
+                            current_cell_align = None;
                         }
                     }
                     b"tr" => {
                         if in_table {
                             if !current_row.is_empty() {
+                                if table_alignments.len() < current_row.len() {
+                                    table_alignments.resize(current_row.len(), None);
+                                }
+                                for (idx, align) in current_row_alignments.iter().enumerate() {
+                                    if table_alignments[idx].is_none() && align.is_some() {
+                                        table_alignments[idx] = *align;
+                                        table_has_alignment = true;
+                                    }
+                                }
                                 table_rows.push(std::mem::take(&mut current_row));
                             }
                         }
@@ -626,7 +768,24 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                     b"tbl" => {
                         if in_table {
                             in_table = false;
-                            let table_md = render_table(&table_rows);
+                            flush_list(
+                                &mut blocks,
+                                &mut list_kind,
+                                &mut list_lines,
+                                &mut list_index,
+                            );
+                            let alignments = if table_has_alignment {
+                                Some(
+                                    table_alignments
+                                        .iter()
+                                        .map(|align| align.unwrap_or(ParagraphAlign::Left))
+                                        .collect::<Vec<_>>(),
+                                )
+                            } else {
+                                None
+                            };
+                            let table_md =
+                                render_table_with_align(&table_rows, alignments.as_deref());
                             if !table_md.is_empty() {
                                 blocks.push(table_md);
                             }
@@ -640,6 +799,18 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
             _ => {}
         }
         buf.clear();
+    }
+
+    flush_list(
+        &mut blocks,
+        &mut list_kind,
+        &mut list_lines,
+        &mut list_index,
+    );
+    if !prelude.is_empty() {
+        let mut labeled = render_docx_prelude(&prelude);
+        labeled.extend(blocks);
+        blocks = labeled;
     }
 
     Ok(blocks.join("\n\n"))
@@ -837,6 +1008,56 @@ fn append_text(current_para: &mut String, current_cell: &mut String, in_cell: bo
     }
 }
 
+fn flush_list(
+    blocks: &mut Vec<String>,
+    list_kind: &mut Option<ListKind>,
+    list_lines: &mut Vec<String>,
+    list_index: &mut usize,
+) {
+    if !list_lines.is_empty() {
+        blocks.push(list_lines.join("\n"));
+        list_lines.clear();
+    }
+    *list_kind = None;
+    *list_index = 1;
+}
+
+fn parse_paragraph_align(value: &str) -> Option<ParagraphAlign> {
+    match value.trim().to_lowercase().as_str() {
+        "left" | "start" => Some(ParagraphAlign::Left),
+        "right" | "end" => Some(ParagraphAlign::Right),
+        "center" => Some(ParagraphAlign::Center),
+        "both" | "justify" | "distribute" => Some(ParagraphAlign::Justify),
+        _ => None,
+    }
+}
+
+fn list_kind_from_style(style: Option<&str>) -> Option<ListKind> {
+    let style = style?.trim().to_lowercase();
+    if style.contains("listbullet") {
+        return Some(ListKind::Bullet);
+    }
+    if style.contains("listnumber") {
+        return Some(ListKind::Numbered);
+    }
+    None
+}
+
+fn render_docx_prelude(items: &[PreludeParagraph]) -> Vec<String> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let lines = label_docx_prelude(items);
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    if prelude_has_hint(items) {
+        vec![lines.join("\n")]
+    } else {
+        lines
+    }
+}
+
 fn normalize_text(text: &str) -> String {
     let mut output = String::new();
     let mut last_space = false;
@@ -864,6 +1085,22 @@ fn normalize_text(text: &str) -> String {
     output.trim().to_string()
 }
 
+fn normalize_paragraph_text(text: &str) -> String {
+    let normalized = normalize_text(text);
+    if !normalized.contains('\n') {
+        return normalized;
+    }
+    let mut lines = Vec::new();
+    for line in normalized.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        lines.push(trimmed.to_string());
+    }
+    lines.join("<br>\n")
+}
+
 fn normalize_cell_text(text: &str) -> String {
     normalize_text(text).replace('\n', "<br>")
 }
@@ -886,7 +1123,328 @@ fn heading_level_from_style(style: Option<&str>) -> Option<usize> {
     None
 }
 
+fn prelude_has_hint(items: &[PreludeParagraph]) -> bool {
+    items.iter().any(|item| looks_like_header_hint(&item.text))
+}
+
+fn label_docx_prelude(items: &[PreludeParagraph]) -> Vec<String> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let has_hint = items.iter().any(|item| looks_like_header_hint(&item.text));
+    let mut output = Vec::new();
+    let mut center_index = 0usize;
+    for item in items {
+        let text = item.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if text.starts_with("签发人") {
+            output.push(normalize_signer_line(text));
+            continue;
+        }
+        if has_hint {
+            if let Some(ParagraphAlign::Center) = item.align {
+                let label = if center_index == 0 {
+                    Some("发文机关标志")
+                } else if center_index == 1 {
+                    Some("发文字号")
+                } else {
+                    None
+                };
+                if let Some(label) = label {
+                    output.push(normalize_label_line(label, text));
+                    center_index += 1;
+                    continue;
+                }
+                center_index += 1;
+            }
+            if is_numeric_token(text) {
+                output.push(normalize_label_line("份号", text));
+                continue;
+            }
+            if looks_like_secret(text) {
+                output.push(normalize_label_line("密级", text));
+                continue;
+            }
+            if looks_like_urgency(text) {
+                output.push(normalize_label_line("紧急程度", text));
+                continue;
+            }
+        }
+        output.push(text.to_string());
+    }
+    output
+}
+
+fn strip_heading_numbering(level: usize, text: &str) -> String {
+    if level < 2 || level > 5 {
+        return text.to_string();
+    }
+    let trimmed = text.trim_start();
+    let stripped = match level {
+        2 => strip_level2_prefix(trimmed),
+        3 => strip_level3_prefix(trimmed),
+        4 => strip_level4_prefix(trimmed),
+        5 => strip_level5_prefix(trimmed),
+        _ => None,
+    };
+    if let Some(rest) = stripped {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            text.to_string()
+        } else {
+            rest.to_string()
+        }
+    } else {
+        text.to_string()
+    }
+}
+
+fn strip_level2_prefix(text: &str) -> Option<&str> {
+    strip_chinese_number_prefix(text, '、')
+        .or_else(|| strip_digit_number_prefix(text, &['.', '、']))
+}
+
+fn strip_level3_prefix(text: &str) -> Option<&str> {
+    strip_paren_chinese_prefix(text)
+}
+
+fn strip_level4_prefix(text: &str) -> Option<&str> {
+    strip_digit_number_prefix(text, &['.', '、'])
+}
+
+fn strip_level5_prefix(text: &str) -> Option<&str> {
+    strip_paren_digit_prefix(text)
+}
+
+fn strip_chinese_number_prefix(text: &str, suffix: char) -> Option<&str> {
+    let mut seen = false;
+    for (idx, ch) in text.char_indices() {
+        if is_chinese_numeral(ch) {
+            seen = true;
+            continue;
+        }
+        if seen && ch == suffix {
+            return Some(&text[idx + ch.len_utf8()..]);
+        }
+        return None;
+    }
+    None
+}
+
+fn strip_digit_number_prefix<'a>(text: &'a str, suffixes: &[char]) -> Option<&'a str> {
+    let mut seen = false;
+    for (idx, ch) in text.char_indices() {
+        if ch.is_ascii_digit() {
+            seen = true;
+            continue;
+        }
+        if seen && suffixes.contains(&ch) {
+            return Some(&text[idx + ch.len_utf8()..]);
+        }
+        return None;
+    }
+    None
+}
+
+fn strip_paren_chinese_prefix(text: &str) -> Option<&str> {
+    let mut chars = text.chars();
+    let open = chars.next()?;
+    if open != '（' && open != '(' {
+        return None;
+    }
+    let mut consumed = open.len_utf8();
+    let mut seen = false;
+    for ch in chars {
+        if is_chinese_numeral(ch) {
+            seen = true;
+            consumed += ch.len_utf8();
+            continue;
+        }
+        if seen && (ch == '）' || ch == ')') {
+            return Some(&text[consumed + ch.len_utf8()..]);
+        }
+        return None;
+    }
+    None
+}
+
+fn strip_paren_digit_prefix(text: &str) -> Option<&str> {
+    let mut chars = text.chars();
+    let open = chars.next()?;
+    if open != '（' && open != '(' {
+        return None;
+    }
+    let mut consumed = open.len_utf8();
+    let mut seen = false;
+    for ch in chars {
+        if ch.is_ascii_digit() {
+            seen = true;
+            consumed += ch.len_utf8();
+            continue;
+        }
+        if seen && (ch == '）' || ch == ')') {
+            return Some(&text[consumed + ch.len_utf8()..]);
+        }
+        return None;
+    }
+    None
+}
+
+fn is_chinese_numeral(ch: char) -> bool {
+    matches!(
+        ch,
+        '〇' | '零'
+            | '一'
+            | '二'
+            | '三'
+            | '四'
+            | '五'
+            | '六'
+            | '七'
+            | '八'
+            | '九'
+            | '十'
+            | '百'
+            | '千'
+    )
+}
+
+fn normalize_label_line(label: &str, text: &str) -> String {
+    if has_label_prefix(text, label) {
+        let rest =
+            text[label.len()..].trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+        if rest.is_empty() {
+            return format!("{label}：");
+        }
+        return format!("{label}：{rest}");
+    }
+    format!("{label}：{text}")
+}
+
+fn has_label_prefix(text: &str, label: &str) -> bool {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with(label) {
+        return false;
+    }
+    let rest = trimmed[label.len()..].trim_start();
+    rest.starts_with('：') || rest.starts_with(':')
+}
+
+fn normalize_signer_line(text: &str) -> String {
+    let trimmed = text.trim();
+    let rest = trimmed
+        .trim_start_matches("签发人")
+        .trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+    if rest.is_empty() {
+        "签发人：".to_string()
+    } else {
+        format!("签发人：{rest}")
+    }
+}
+
+fn looks_like_header_hint(text: &str) -> bool {
+    is_numeric_token(text)
+        || looks_like_secret(text)
+        || looks_like_urgency(text)
+        || text.contains("签发人")
+}
+
+fn is_numeric_token(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn looks_like_secret(text: &str) -> bool {
+    text.contains('★') || text.contains("绝密") || text.contains("机密") || text.contains("秘密")
+}
+
+fn looks_like_urgency(text: &str) -> bool {
+    matches!(text.trim(), "特急" | "加急" | "平急" | "一般")
+        || text.contains("特急")
+        || text.contains("加急")
+}
+
+fn attachment_list_next_index(text: &str) -> Option<usize> {
+    let trimmed = text.trim_start();
+    let rest = trimmed.strip_prefix("附件")?;
+    let rest = rest.trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let mut value = 0usize;
+    let mut consumed = 0usize;
+    for (idx, ch) in rest.char_indices() {
+        if ch.is_ascii_digit() {
+            value = value * 10 + ch.to_digit(10).unwrap_or(0) as usize;
+            consumed = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if consumed > 0 {
+        let mut chars = rest[consumed..].chars();
+        if let Some(ch) = chars.next() {
+            if ch == '.' || ch == '、' || ch == '．' {
+                return Some(value + 1);
+            }
+        }
+        return None;
+    }
+    let (ch_value, ch_consumed) = parse_chinese_numeral_prefix(rest)?;
+    let mut chars = rest[ch_consumed..].chars();
+    let suffix = chars.next()?;
+    if suffix == '、' {
+        return Some(ch_value + 1);
+    }
+    None
+}
+
+fn parse_chinese_numeral_prefix(text: &str) -> Option<(usize, usize)> {
+    let mut value = 0usize;
+    let mut current = 0usize;
+    let mut consumed = 0usize;
+    let mut seen = false;
+    for (idx, ch) in text.char_indices() {
+        let digit = match ch {
+            '零' | '〇' => 0,
+            '一' => 1,
+            '二' => 2,
+            '三' => 3,
+            '四' => 4,
+            '五' => 5,
+            '六' => 6,
+            '七' => 7,
+            '八' => 8,
+            '九' => 9,
+            '十' => 10,
+            _ => break,
+        };
+        seen = true;
+        consumed = idx + ch.len_utf8();
+        if digit == 10 {
+            if current == 0 {
+                current = 1;
+            }
+            value += current * 10;
+            current = 0;
+        } else {
+            current = digit;
+        }
+    }
+    if !seen {
+        return None;
+    }
+    Some((value + current, consumed))
+}
+
 fn render_table(rows: &[Vec<String>]) -> String {
+    render_table_with_align(rows, None)
+}
+
+fn render_table_with_align(rows: &[Vec<String>], alignments: Option<&[ParagraphAlign]>) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -894,6 +1452,7 @@ fn render_table(rows: &[Vec<String>]) -> String {
     if max_cols == 0 {
         return String::new();
     }
+    let use_alignment = alignments.is_some();
     let mut normalized = Vec::new();
     for row in rows {
         let mut cells = row.clone();
@@ -910,8 +1469,18 @@ fn render_table(rows: &[Vec<String>]) -> String {
     }
     out.push('\n');
     out.push('|');
-    for _ in 0..max_cols {
-        out.push_str(" --- |");
+    for idx in 0..max_cols {
+        let marker = if use_alignment {
+            let align = alignments
+                .and_then(|items| items.get(idx).copied())
+                .unwrap_or(ParagraphAlign::Left);
+            table_alignment_marker(align)
+        } else {
+            "---"
+        };
+        out.push(' ');
+        out.push_str(marker);
+        out.push_str(" |");
     }
     out.push('\n');
     for row in normalized.iter().skip(1) {
@@ -929,6 +1498,15 @@ fn render_table(rows: &[Vec<String>]) -> String {
 
 fn sanitize_table_cell(cell: &str) -> String {
     cell.trim().replace('|', "\\|")
+}
+
+fn table_alignment_marker(align: ParagraphAlign) -> &'static str {
+    match align {
+        ParagraphAlign::Center => ":---:",
+        ParagraphAlign::Right => "---:",
+        ParagraphAlign::Left => ":---",
+        ParagraphAlign::Justify => "---",
+    }
 }
 
 fn range_to_markdown(range: &calamine::Range<Data>) -> String {

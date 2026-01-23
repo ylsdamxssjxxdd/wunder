@@ -545,6 +545,9 @@ impl MonitorState {
                     } else if event_type == "plan_update" {
                         record.stage = "plan_update".to_string();
                         record.summary = i18n::t("monitor.summary.plan_update");
+                    } else if event_type == "question_panel" {
+                        record.stage = "question_panel".to_string();
+                        record.summary = i18n::t("monitor.summary.question_panel");
                     } else if event_type == "llm_request" {
                         record.stage = "llm_request".to_string();
                         record.summary = i18n::t("monitor.summary.model_call");

@@ -497,6 +497,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "tool_call"
             | "tool_result"
             | "plan_update"
+            | "question_panel"
             | "llm_output_delta"
             | "llm_output"
             | "quota_usage"
@@ -1669,6 +1670,12 @@ impl Orchestrator {
                             }
                         }
                     };
+                    let question_panel_finished = name == "问询面板" && tool_result.ok;
+                    if question_panel_finished {
+                        answer = i18n::t("response.question_panel_waiting");
+                        stop_reason = Some("question_panel".to_string());
+                        should_finish = true;
+                    }
 
                     let observation = self.build_tool_observation(&name, &tool_result);
                     let tool_call_id = if tool_call_mode == ToolCallMode::FunctionCall {
@@ -1742,6 +1749,19 @@ impl Orchestrator {
                             tool_result.to_event_payload(&name),
                         )
                         .await;
+
+                    if question_panel_finished && !answer.trim().is_empty() {
+                        self.append_chat(
+                            &user_id,
+                            &session_id,
+                            "assistant",
+                            Some(&json!(answer.clone())),
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                    }
 
                     self.ensure_not_cancelled(&session_id)?;
                     if !answer.is_empty() {

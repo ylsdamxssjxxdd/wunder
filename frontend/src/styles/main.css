@@ -3269,6 +3269,134 @@ body {
   color: var(--chat-muted);
 }
 
+.chat-shell .inquiry-panel {
+  margin: 12px 0 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--chat-border);
+  background: rgba(15, 23, 42, 0.45);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+.chat-shell .inquiry-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-shell .inquiry-panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--chat-text);
+}
+
+.chat-shell .inquiry-panel-question {
+  font-size: 13px;
+  color: var(--chat-muted);
+}
+
+.chat-shell .inquiry-panel-routes {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.chat-shell .inquiry-panel-route {
+  text-align: left;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--chat-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-shell .inquiry-panel-route:hover {
+  border-color: rgba(106, 217, 255, 0.45);
+  box-shadow: 0 0 0 4px rgba(106, 217, 255, 0.08);
+}
+
+.chat-shell .inquiry-panel-route.active {
+  border-color: rgba(106, 217, 255, 0.7);
+  background: rgba(106, 217, 255, 0.12);
+}
+
+.chat-shell .inquiry-panel-route.recommended {
+  border-color: rgba(180, 169, 255, 0.6);
+}
+
+.chat-shell .inquiry-route-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-shell .inquiry-route-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chat-shell .inquiry-route-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(180, 169, 255, 0.2);
+  color: var(--chat-text);
+  border: 1px solid rgba(180, 169, 255, 0.45);
+}
+
+.chat-shell .inquiry-route-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--chat-muted);
+}
+
+.chat-shell .inquiry-panel-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chat-shell .inquiry-panel-btn {
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--chat-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.chat-shell .inquiry-panel-btn.secondary:hover {
+  border-color: rgba(148, 163, 184, 0.6);
+  color: var(--chat-muted);
+}
+
+.chat-shell .inquiry-panel-btn.primary {
+  border-color: rgba(106, 217, 255, 0.5);
+  background: rgba(106, 217, 255, 0.16);
+  color: var(--chat-text);
+}
+
+.chat-shell .inquiry-panel-btn.primary:hover:not(:disabled) {
+  border-color: rgba(106, 217, 255, 0.8);
+  box-shadow: 0 0 0 4px rgba(106, 217, 255, 0.12);
+}
+
+.chat-shell .inquiry-panel-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.chat-shell .inquiry-panel-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--chat-muted);
+}
+
 .chat-shell .input-box {
   display: flex;
   align-items: flex-end;

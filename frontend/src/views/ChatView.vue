@@ -319,6 +319,12 @@
             </div>
           </div>
 
+          <InquiryPanel
+            v-if="activeInquiryPanel"
+            :panel="activeInquiryPanel.panel"
+            @select="handleInquirySelect"
+            @dismiss="handleInquiryDismiss"
+          />
           <ChatComposer
             :key="composerKey"
             :loading="chatStore.loading"
@@ -368,6 +374,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt } from '@/api/chat';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
+import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import ThemeToggle from '@/components/chat/ThemeToggle.vue';
@@ -547,6 +554,7 @@ const renderAssistantMarkdown = (message) => {
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];
   if (!content && payloadAttachments.length === 0) return;
+  chatStore.dismissPendingInquiryPanel();
   pendingAutoScroll = true;
   pendingAutoScrollCount = chatStore.messages.length;
   try {
@@ -560,6 +568,53 @@ const handleComposerSend = async ({ content, attachments }) => {
 
 const handleStop = async () => {
   await chatStore.stopStream();
+};
+
+const buildInquiryReply = (panel, routes) => {
+  const header = '【问询面板选择】';
+  const question = panel?.question ? `问题：${panel.question}` : '';
+  const lines = routes.map((route) => {
+    const detail = route.description ? `：${route.description}` : '';
+    return `- ${route.label}${detail}`;
+  });
+  return [header, question, ...lines].filter(Boolean).join('\n');
+};
+
+const activeInquiryPanel = computed(() => {
+  for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
+    const message = chatStore.messages[i];
+    const panel = message?.questionPanel;
+    if (message?.role === 'assistant' && panel?.status === 'pending') {
+      return { message, panel };
+    }
+  }
+  return null;
+});
+
+const handleInquirySelect = async ({ selected }) => {
+  const active = activeInquiryPanel.value;
+  if (!active || !Array.isArray(selected) || selected.length === 0) {
+    return;
+  }
+  const routes = selected
+    .map((index) => active.panel.routes?.[index])
+    .filter((route) => route && route.label);
+  if (!routes.length) {
+    return;
+  }
+  chatStore.resolveInquiryPanel(active.message, {
+    status: 'answered',
+    selected: routes.map((route) => route.label)
+  });
+  pendingAutoScroll = true;
+  pendingAutoScrollCount = chatStore.messages.length;
+  await chatStore.sendMessage(buildInquiryReply(active.panel, routes));
+};
+
+const handleInquiryDismiss = () => {
+  const active = activeInquiryPanel.value;
+  if (!active) return;
+  chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
 };
 
 const handleCopyMessage = async (message) => {

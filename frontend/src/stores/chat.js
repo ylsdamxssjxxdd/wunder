@@ -204,6 +204,7 @@ const buildMessage = (role, content, createdAt) => ({
   reasoningStreaming: false,
   plan: null,
   planVisible: false,
+  questionPanel: null,
   stats: role === 'assistant' ? buildMessageStats() : null
 });
 
@@ -309,6 +310,10 @@ const normalizeSnapshotMessage = (message) => {
     const plan = normalizePlanPayload(message.plan);
     if (plan) {
       base.plan = plan;
+    }
+    const questionPanel = normalizeInquiryPanelState(message.questionPanel);
+    if (questionPanel) {
+      base.questionPanel = questionPanel;
     }
     const stats = normalizeMessageStats(message.stats);
     if (stats) {
@@ -671,6 +676,67 @@ const normalizePlanPayload = (payload) => {
     explanation,
     steps
   };
+};
+
+const normalizeInquiryRoutes = (routes) =>
+  (Array.isArray(routes) ? routes : [])
+    .map((item) => {
+      if (!item) return null;
+      if (typeof item === 'string') {
+        const label = item.trim();
+        if (!label) return null;
+        return { label, description: '', recommended: label.includes('推荐') };
+      }
+      if (typeof item !== 'object') return null;
+      const label = String(item.label ?? item.title ?? item.name ?? '').trim();
+      if (!label) return null;
+      const description = String(item.description ?? item.detail ?? item.desc ?? item.summary ?? '').trim();
+      return {
+        label,
+        description,
+        recommended: Boolean(item.recommended ?? item.preferred) || label.includes('推荐')
+      };
+    })
+    .filter(Boolean);
+
+const normalizeInquiryPanelPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  const question = String(
+    payload.question ?? payload.prompt ?? payload.title ?? payload.header ?? ''
+  ).trim();
+  let normalizedRoutes = normalizeInquiryRoutes(payload.routes);
+  if (!normalizedRoutes.length) {
+    normalizedRoutes = normalizeInquiryRoutes(payload.options);
+  }
+  if (!normalizedRoutes.length) {
+    normalizedRoutes = normalizeInquiryRoutes(payload.choices);
+  }
+  normalizedRoutes = Array.isArray(normalizedRoutes) ? normalizedRoutes.filter(Boolean) : [];
+  if (normalizedRoutes.length === 0) {
+    return null;
+  }
+  return {
+    question: question || '接下来希望从哪个方向推进？',
+    routes: normalizedRoutes,
+    multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true
+  };
+};
+
+const normalizeInquiryPanelStatus = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'answered') return 'answered';
+  if (raw === 'dismissed') return 'dismissed';
+  return 'pending';
+};
+
+const normalizeInquiryPanelState = (panel) => {
+  const normalized = normalizeInquiryPanelPayload(panel);
+  if (!normalized) return null;
+  const status = normalizeInquiryPanelStatus(panel?.status);
+  const selected = Array.isArray(panel?.selected)
+    ? panel.selected.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  return { ...normalized, status, selected };
 };
 
 const hasPlanSteps = (plan) => Array.isArray(plan?.steps) && plan.steps.length > 0;
@@ -1053,6 +1119,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   assistantMessage.plan = normalizedPlan;
   assistantMessage.planVisible =
     Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
+  assistantMessage.questionPanel = normalizeInquiryPanelState(assistantMessage.questionPanel);
   const stats = ensureMessageStats(assistantMessage);
   let outputContent = assistantMessage.content || '';
   let outputReasoning = assistantMessage.reasoning || '';
@@ -1469,6 +1536,20 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         }
         break;
       }
+      case 'question_panel': {
+        const normalized = normalizeInquiryPanelPayload(data);
+        if (normalized) {
+          assistantMessage.questionPanel = {
+            ...normalized,
+            status: 'pending',
+            selected: []
+          };
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem('问询面板', buildDetail(normalized))
+          );
+        }
+        break;
+      }
       case 'llm_output_delta': {
         const round = resolveRound(payload, data);
         if (round !== null) {
@@ -1672,6 +1753,7 @@ const hydrateMessage = (message, workflowState) => {
   const plan = normalizePlanPayload(message.plan);
   hydrated.plan = plan;
   hydrated.planVisible = shouldAutoShowPlan(plan, message);
+  hydrated.questionPanel = normalizeInquiryPanelState(message.questionPanel);
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
     const processor = createWorkflowProcessor(hydrated, workflowState, null);
     message.workflow_events.forEach((event) => {
@@ -1705,6 +1787,26 @@ export const useChatStore = defineStore('chat', {
     },
     scheduleSnapshot(immediate = false) {
       scheduleChatSnapshot(this, immediate);
+    },
+    resolveInquiryPanel(message, patch = {}) {
+      if (!message || message.role !== 'assistant') return;
+      const panel = normalizeInquiryPanelState(message.questionPanel);
+      if (!panel) return;
+      message.questionPanel = {
+        ...panel,
+        status: normalizeInquiryPanelStatus(patch.status ?? panel.status),
+        selected: Array.isArray(patch.selected) ? patch.selected : panel.selected
+      };
+      this.scheduleSnapshot(true);
+    },
+    dismissPendingInquiryPanel() {
+      for (let i = this.messages.length - 1; i >= 0; i -= 1) {
+        const message = this.messages[i];
+        if (message?.role !== 'assistant') continue;
+        if (message?.questionPanel?.status !== 'pending') continue;
+        this.resolveInquiryPanel(message, { status: 'dismissed' });
+        return;
+      }
     },
     async loadSessions() {
       const { data } = await listSessions();

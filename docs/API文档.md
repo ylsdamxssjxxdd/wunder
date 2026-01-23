@@ -69,6 +69,7 @@
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
+- 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -1268,7 +1269,7 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
-- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`quota_usage`、`tool_call`、`tool_result`、`plan_update`、`final` 等事件，其余事件待补齐。
+- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`quota_usage`、`tool_call`、`tool_result`、`plan_update`、`question_panel`、`final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
@@ -1282,6 +1283,7 @@
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果
 - `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
+- `event: question_panel`：问询面板更新（`data.question` 可选，`data.routes` 为路线数组，包含 `label`/`description`/`recommended`/`selected`）
 - `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
 - `event: a2a_task`：A2A 任务创建/识别（task_id/context_id）
 - `event: a2a_status`：A2A 任务状态更新（state/final）
@@ -1290,7 +1292,7 @@
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态；压缩请求使用独立 system 提示词、历史消息合并为单条 user 内容，压缩后摘要以 user 注入）
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
-  - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`max_rounds`（达到最大轮次兜底）、`unknown`（兜底）
+  - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`max_rounds`（达到最大轮次兜底）、`unknown`（兜底）
 - `event: error`：错误信息（包含错误码与建议）
 - SSE 会附带 `id` 行，代表事件序号，可用于客户端排序或去重。
 - 当 SSE 队列满时事件会写入 `stream_events`，流式通道会回放补齐。
