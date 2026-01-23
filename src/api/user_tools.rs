@@ -358,7 +358,8 @@ async fn user_skills_upload(
     )
     .await?;
     let user_id = resolved.user.user_id;
-    if !filename.to_lowercase().ends_with(".zip") {
+    let lower_name = filename.to_lowercase();
+    if !(lower_name.ends_with(".zip") || lower_name.ends_with(".skill")) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.skill_upload_zip_only"),

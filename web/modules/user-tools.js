@@ -1248,7 +1248,8 @@ const uploadUserSkillZip = async (file) => {
     throw new Error(t("common.userIdRequired"));
   }
   const filename = file.name || "";
-  if (!filename.toLowerCase().endsWith(".zip")) {
+  const lowerName = filename.toLowerCase();
+  if (!(lowerName.endsWith(".zip") || lowerName.endsWith(".skill"))) {
     throw new Error(t("skills.upload.zipOnly"));
   }
   const wunderBase = getWunderBase();

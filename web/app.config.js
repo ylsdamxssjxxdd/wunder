@@ -19,7 +19,7 @@ const APP_CONFIG_DEFAULTS = {
       "你好，介绍一下 wunder 的核心能力。",
       "请列出当前可用工具，并说明用途。",
       "用python绘制一个爱心保存到本地png",
-      "广州今天的天气如何？",
+      "请写一篇公文，下方寒假放假的通知",
     ],
     "en-US": [
       "Hi, introduce wunder's core capabilities.",

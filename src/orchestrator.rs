@@ -1538,6 +1538,7 @@ impl Orchestrator {
                     }
                 }, prepared.stream);
 
+                let mut should_finish = false;
                 for call in tool_calls {
                     let mut name = call.name.clone();
                     let args = call.arguments.clone();
@@ -1592,6 +1593,7 @@ impl Orchestrator {
                                 None,
                             );
                         }
+                        should_finish = true;
                         break;
                     }
                     if name == "最终回复" {
@@ -1610,6 +1612,7 @@ impl Orchestrator {
                                 None,
                             );
                         }
+                        should_finish = true;
                         break;
                     }
 
@@ -1745,7 +1748,7 @@ impl Orchestrator {
                         break;
                     }
                 }
-                if !answer.is_empty() {
+                if should_finish || !answer.is_empty() {
                     break;
                 }
             }
@@ -4368,7 +4371,7 @@ fn find_json_end(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn extract_json_values(payload: &str) -> Vec<Value> {
+fn extract_json_segments(payload: &str) -> Vec<(usize, usize, Value)> {
     let bytes = payload.as_bytes();
     let mut values = Vec::new();
     let mut index = 0usize;
@@ -4386,13 +4389,109 @@ fn extract_json_values(payload: &str) -> Vec<Value> {
             continue;
         };
         if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-            values.push(value);
+            values.push((index, end, value));
             index = end;
             continue;
         }
         index += 1;
     }
     values
+}
+
+fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = trimmed.split_whitespace().last().unwrap_or("");
+    let cleaned = clean_tool_call_name(candidate);
+    if cleaned.is_empty() || cleaned.len() > 64 {
+        return None;
+    }
+    if cleaned.contains('{')
+        || cleaned.contains('[')
+        || cleaned.contains('}')
+        || cleaned.contains(']')
+    {
+        return None;
+    }
+    Some(cleaned)
+}
+
+fn clean_tool_call_name(raw: &str) -> String {
+    let mut name = raw.trim().to_string();
+    if name.is_empty() {
+        return name;
+    }
+    if let Some(pos) = name.find('>') {
+        let prefix = name[..pos].to_lowercase();
+        if prefix.contains("tool_call")
+            || prefix.contains("function_call")
+            || prefix.contains("<tool")
+        {
+            name = name[pos + 1..].to_string();
+        }
+    }
+    for sep in [':', '：'] {
+        if let Some(pos) = name.rfind(sep) {
+            let prefix = name[..pos].to_lowercase();
+            if prefix.contains("tool_call")
+                || prefix.contains("function_call")
+                || prefix.contains("tool")
+            {
+                name = name[pos + 1..].to_string();
+            }
+        }
+    }
+    if let Some(pos) = name.find('<') {
+        name = name[..pos].to_string();
+    }
+    let cleaned = name
+        .trim_matches(|ch: char| {
+            matches!(
+                ch,
+                ':' | '：' | '=' | '>' | ')' | '(' | '`' | '"' | '\'' | ',' | ';'
+            )
+        })
+        .trim();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    let lowered = cleaned.to_lowercase();
+    if matches!(lowered.as_str(), "tool" | "tool_call" | "function_call") {
+        return String::new();
+    }
+    cleaned.to_string()
+}
+
+fn parse_prefixed_tool_calls(payload: &str, segments: &[(usize, usize, Value)]) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let mut last_end = 0usize;
+    for (start, end, value) in segments {
+        let prefix = payload.get(last_end..*start).unwrap_or("");
+        let Some(name) = extract_prefixed_tool_name(prefix) else {
+            last_end = *end;
+            continue;
+        };
+        let arguments = match value {
+            Value::Object(map) => {
+                if is_tool_result_map(map) {
+                    last_end = *end;
+                    continue;
+                }
+                Value::Object(map.clone())
+            }
+            Value::Array(items) => Value::Array(items.clone()),
+            other => json!({ "value": other }),
+        };
+        calls.push(ToolCall {
+            id: None,
+            name,
+            arguments,
+        });
+        last_end = *end;
+    }
+    calls
 }
 
 fn has_tool_call_args(map: &serde_json::Map<String, Value>) -> bool {
@@ -4470,7 +4569,7 @@ fn normalize_tool_call_with_id(
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
-    let name = name.trim().to_string();
+    let name = clean_tool_call_name(&name);
     if name.is_empty() {
         return None;
     }
@@ -4543,17 +4642,24 @@ fn normalize_tool_calls(value: Value) -> Vec<ToolCall> {
     calls
 }
 
-fn parse_tool_calls_payload(payload: &str) -> Vec<ToolCall> {
+fn parse_tool_calls_payload(payload: &str, allow_prefixed: bool) -> Vec<ToolCall> {
     let payload = payload.trim();
     if payload.is_empty() {
         return Vec::new();
     }
     if let Ok(value) = serde_json::from_str::<Value>(payload) {
-        return normalize_tool_calls(value);
+        let calls = normalize_tool_calls(value);
+        if !calls.is_empty() {
+            return calls;
+        }
     }
+    let segments = extract_json_segments(payload);
     let mut calls = Vec::new();
-    for value in extract_json_values(payload) {
-        calls.extend(normalize_tool_calls(value));
+    for (_, _, value) in &segments {
+        calls.extend(normalize_tool_calls(value.clone()));
+    }
+    if allow_prefixed && calls.is_empty() && !segments.is_empty() {
+        calls.extend(parse_prefixed_tool_calls(payload, &segments));
     }
     calls
 }
@@ -4593,7 +4699,7 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
 
     if !blocks.is_empty() {
         for (_, payload) in blocks {
-            calls.extend(parse_tool_calls_payload(&payload));
+            calls.extend(parse_tool_calls_payload(&payload, true));
         }
     }
 
@@ -4611,12 +4717,12 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
             let Some(payload) = content.get(start..end) else {
                 continue;
             };
-            calls.extend(parse_tool_calls_payload(payload));
+            calls.extend(parse_tool_calls_payload(payload, true));
         }
     }
 
     if !strict {
-        calls.extend(parse_tool_calls_payload(content));
+        calls.extend(parse_tool_calls_payload(content, false));
     }
     dedupe_tool_calls(calls)
 }
@@ -4689,7 +4795,11 @@ fn collect_tool_calls_from_output(
     if let Some(payload) = tool_calls_payload {
         calls.extend(normalize_tool_calls(payload.clone()));
     }
-    dedupe_tool_calls(calls)
+    let mut calls = dedupe_tool_calls(calls);
+    if calls.len() > 1 {
+        calls.truncate(1);
+    }
+    calls
 }
 
 fn canonicalize_json(value: &Value) -> Value {
@@ -4879,6 +4989,42 @@ mod tests {
             calls[0].arguments.get("content").and_then(Value::as_str),
             Some("ok")
         );
+    }
+
+    #[test]
+    fn test_parse_tool_call_prefixed_name_without_close() {
+        let content =
+            r#"<tool_call>ptc{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "ptc");
+        assert_eq!(
+            calls[0].arguments.get("filename").and_then(Value::as_str),
+            Some("demo.py")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_tool_field_with_tag_prefix() {
+        let content = r#"{"tool":"tool_call>ptc","args":{"filename":"demo.py"}}"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "ptc");
+        assert_eq!(
+            calls[0].arguments.get("filename").and_then(Value::as_str),
+            Some("demo.py")
+        );
+    }
+
+    #[test]
+    fn test_collect_tool_calls_limit_to_one() {
+        let content = concat!(
+            "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}</tool_call>",
+            "<tool_call>{\"name\":\"write_file\",\"arguments\":{\"path\":\"b.txt\",\"content\":\"x\"}}</tool_call>"
+        );
+        let calls = collect_tool_calls_from_output(content, "", None);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
     }
 
     #[test]

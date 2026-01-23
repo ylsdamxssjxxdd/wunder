@@ -21,3 +21,5 @@
   - 兼容性提示：本容器基于 Debian 12，编译出的 C++ 二进制可能在 Ubuntu 20.04 上出现glibc 版本不匹配问题
 - 请主要使用python3 进行编码，优先使用matplotlib绘制图像。
 - 你只能利用当前环境中可用的依赖和库，不要尝试用pip或apt安装任何新包。
+
+{ENGINEER_SYSTEM_INFO}

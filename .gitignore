@@ -39,7 +39,6 @@ target/
 .cargo/
 .rustup/
 config/wunder.yaml
-EVA_SKILLS
 .env
 frontend/.env
 frontend/node_modules/

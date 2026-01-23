@@ -21,3 +21,5 @@ You have full authority to access and use all available tools and resources. To 
   - Compatibility note: this container is based on Debian 12; C++ binaries built here may hit glibc version mismatch on Ubuntu 20.04
 - Prefer using python3 for coding, and use matplotlib for plotting when needed.
 - Only use dependencies available in the current environment; do not install new packages with pip or apt.
+
+{ENGINEER_SYSTEM_INFO}

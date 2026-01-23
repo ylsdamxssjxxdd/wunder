@@ -1,0 +1,30 @@
+meta:
+  template: ../templates/coreoz-template.pptx
+  title: 产品发布简报
+  author: Wunder Bot
+
+slides:
+  - layout: 0
+    title: Wunder 平台产品发布
+    subtitle: 2026 Q1
+
+  - layout: 1
+    title: 议程
+    bullets:
+      - 产品定位
+      - 关键功能
+      - 路线图
+      - 下一步行动
+
+  - layout: 1
+    title: 关键功能
+    placeholders:
+      1:
+        bullets:
+          - 智能体调度与工具编排
+          - 多用户工作区隔离
+          - 模板化 PPT 输出
+
+  - layout: 1
+    title: 下一步
+    body: 统一模板规范并沉淀内容资产

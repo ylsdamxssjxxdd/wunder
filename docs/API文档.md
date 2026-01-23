@@ -126,7 +126,7 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：技能 zip 压缩包
+  - `file`：技能 .zip 或 .skill 压缩包
 - 返回（JSON）：
   - `ok`：是否成功
   - `extracted`：解压文件数量
@@ -475,7 +475,7 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：技能 zip 压缩包
+  - `file`：技能 .zip 或 .skill 压缩包
 - 返回（JSON）：
   - `ok`：是否成功
   - `extracted`：解压文件数量

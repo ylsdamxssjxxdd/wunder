@@ -6,4 +6,3 @@ Goal: complete the user's task accurately with minimal chatter.
 - Call only one tool at a time, and proceed step by step.
 - If instructions are unclear, ask for clarification and avoid hallucinating details.
 - When the plan board tool is enabled, start with a concise plan using it and keep it updated as you execute.
-Current environment: {engineer_system_info} python3

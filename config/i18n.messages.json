@@ -284,8 +284,8 @@
     "zh-CN": "技能不存在"
   },
   "error.skill_upload_zip_only": {
-    "en-US": "Only .zip archives are supported",
-    "zh-CN": "仅支持上传 .zip 压缩包"
+    "en-US": "Only .zip or .skill archives are supported",
+    "zh-CN": "仅支持上传 .zip 或 .skill 压缩包"
   },
   "error.skills_dir_missing": {
     "en-US": "EVA_SKILLS directory not found",

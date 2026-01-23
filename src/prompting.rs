@@ -345,6 +345,14 @@ fn build_system_prompt(
     tool_call_mode: ToolCallMode,
     include_ptc: bool,
 ) -> String {
+    let engineer_system_info = build_engineer_system_info(workdir_display, workspace_tree);
+    let base_prompt = render_template(
+        base_prompt,
+        &HashMap::from([(
+            "ENGINEER_SYSTEM_INFO".to_string(),
+            engineer_system_info.trim().to_string(),
+        )]),
+    );
     if !include_tools_protocol {
         let engineer_info = build_engineer_info(workdir_display, workspace_tree, include_ptc);
         return format!("{}\n\n{}", base_prompt.trim(), engineer_info.trim());
