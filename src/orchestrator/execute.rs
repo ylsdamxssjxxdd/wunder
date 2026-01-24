@@ -83,6 +83,8 @@ impl Orchestrator {
             let user_tool_bindings = self
                 .user_tool_manager
                 .build_bindings(&config, &skills_snapshot, &user_id);
+            let tool_roots =
+                crate::tools::build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings));
             let allowed_tool_names = self.resolve_allowed_tool_names(
                 &config,
                 prepared.tool_names.as_deref().unwrap_or(&[]),
@@ -371,6 +373,8 @@ impl Orchestrator {
                         user_tool_manager: Some(self.user_tool_manager.as_ref()),
                         user_tool_bindings: Some(&user_tool_bindings),
                         user_tool_store: Some(self.user_tool_manager.store()),
+                        allow_roots: Some(tool_roots.allow_roots.clone()),
+                        read_roots: Some(tool_roots.read_roots.clone()),
                         event_emitter: Some(tool_event_emitter.clone()),
                         http: &self.http,
                     };
@@ -587,5 +591,4 @@ impl Orchestrator {
             }
         }
     }
-
 }

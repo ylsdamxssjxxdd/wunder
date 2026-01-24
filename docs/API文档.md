@@ -1473,5 +1473,5 @@
 
 ## 5. 附录：辅助脚本
 
-- `scripts/update_feature_log.py`：写入 `docs/功能迭代.md` 的辅助脚本，默认使用 UTF-8 BOM 避免乱码。
+- `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
 

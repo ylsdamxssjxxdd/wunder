@@ -446,7 +446,6 @@ impl Orchestrator {
             emitter.close();
         });
     }
-
 }
 
 fn parse_stream_event_id(event: &StreamEvent) -> Option<i64> {

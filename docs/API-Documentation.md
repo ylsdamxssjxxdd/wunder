@@ -636,4 +636,4 @@ Example:
 
 ## 5. Appendix: helper scripts
 
-- `scripts/update_feature_log.py`: write to `docs/功能迭代.md`, with UTF-8 BOM to avoid encoding issues.
+- `scripts/update_feature_log.py`: write categorized entries to `docs/功能迭代.md` (supports `--type/--scope`), with UTF-8 BOM to avoid encoding issues.

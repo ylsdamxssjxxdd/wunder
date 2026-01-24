@@ -479,5 +479,4 @@ impl Orchestrator {
             &HashMap::from([("detail".to_string(), detail)]),
         )))
     }
-
 }

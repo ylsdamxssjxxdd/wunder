@@ -67,9 +67,9 @@ mod tool_exec;
 mod types;
 
 pub(crate) use error::OrchestratorError;
+use event_stream::now_ts;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
-use event_stream::now_ts;
 use limiter::RequestLimiter;
 use memory::MemoryQueue;
 use tool_calls::apply_tool_name_map;
@@ -123,5 +123,4 @@ impl Orchestrator {
             http: reqwest::Client::new(),
         }
     }
-
 }

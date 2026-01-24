@@ -625,7 +625,6 @@ impl Orchestrator {
             Some(Duration::from_secs_f64(timeout_s.max(MIN_TOOL_TIMEOUT_S)))
         }
     }
-
 }
 
 fn extract_file_paths(args: &Value) -> Vec<String> {

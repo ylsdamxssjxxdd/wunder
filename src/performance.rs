@@ -4,7 +4,7 @@ use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
 use crate::state::AppState;
-use crate::tools::{execute_tool, ToolContext};
+use crate::tools::{build_tool_roots, execute_tool, ToolContext, ToolRoots};
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
@@ -51,6 +51,7 @@ struct PerformanceContext {
     user_tool_bindings: Arc<UserToolBindings>,
     a2a_store: Arc<A2aStore>,
     http: Arc<reqwest::Client>,
+    tool_roots: ToolRoots,
     user_id: String,
     run_id: String,
 }
@@ -79,6 +80,7 @@ pub async fn run_sample(
         state
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, PERF_USER_ID);
+    let tool_roots = build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings));
 
     let context = PerformanceContext {
         config: Arc::new(config),
@@ -89,6 +91,7 @@ pub async fn run_sample(
         user_tool_bindings: Arc::new(user_tool_bindings),
         a2a_store: Arc::new(A2aStore::new()),
         http: Arc::new(reqwest::Client::new()),
+        tool_roots,
         user_id: PERF_USER_ID.to_string(),
         run_id: Uuid::new_v4().simple().to_string(),
     };
@@ -342,6 +345,8 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         user_tool_manager: None,
         user_tool_bindings: Some(context.user_tool_bindings.as_ref()),
         user_tool_store: None,
+        allow_roots: Some(context.tool_roots.allow_roots.clone()),
+        read_roots: Some(context.tool_roots.read_roots.clone()),
         event_emitter: None,
         http: context.http.as_ref(),
     }

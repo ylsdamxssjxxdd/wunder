@@ -141,5 +141,4 @@ impl Orchestrator {
             .await;
         self.append_memory_prompt(user_id, prompt).await
     }
-
 }

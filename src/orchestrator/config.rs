@@ -10,7 +10,6 @@ impl Orchestrator {
         merge_json(&mut base_value, overrides);
         serde_json::from_value::<Config>(base_value).unwrap_or(base)
     }
-
 }
 
 fn merge_json(base: &mut Value, override_value: &Value) {

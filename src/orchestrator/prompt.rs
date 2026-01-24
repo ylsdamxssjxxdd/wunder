@@ -161,7 +161,6 @@ impl Orchestrator {
             .save_session_system_prompt(user_id, session_id, &prompt, language);
         prompt
     }
-
 }
 
 fn select_preferred_tool_name(

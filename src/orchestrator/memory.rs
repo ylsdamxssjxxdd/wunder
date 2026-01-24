@@ -170,11 +170,7 @@ impl Orchestrator {
             .map(|payload| Value::Object(payload.into_iter().collect::<Map<String, Value>>()))
     }
 
-    pub(super) fn shrink_messages_to_limit(
-        &self,
-        messages: Vec<Value>,
-        limit: i64,
-    ) -> Vec<Value> {
+    pub(super) fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
         let total_tokens = estimate_messages_tokens(&messages);
         if total_tokens <= limit {
             return messages;
@@ -369,12 +365,14 @@ impl Orchestrator {
                 .iter()
                 .any(|prefix| content.trim().starts_with(prefix))
         });
+        let mut artifact_content = String::new();
         if !has_artifact {
             let history_manager = HistoryManager;
-            let artifact_content =
+            artifact_content =
                 history_manager.load_artifact_index_message(&self.workspace, user_id, session_id);
             if !artifact_content.is_empty() {
-                source_messages.push(json!({ "role": "system", "content": artifact_content }));
+                source_messages
+                    .push(json!({ "role": "system", "content": artifact_content.clone() }));
             }
         }
 
@@ -403,18 +401,17 @@ impl Orchestrator {
         }
 
         let compaction_prompt = HistoryManager::load_compaction_prompt();
-        let mut summary_input = vec![
-            json!({ "role": "system", "content": compaction_prompt }),
-            json!({ "role": "user", "content": user_content }),
-        ];
-        summary_input =
-            self.prepare_summary_messages(summary_input, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-        if estimate_messages_tokens(&summary_input) > limit && summary_input.len() > 1 {
-            let system_tokens = estimate_message_tokens(&summary_input[0]);
-            let remaining = (limit - system_tokens).max(1);
-            let tail = trim_messages_to_budget(summary_input.get(1..).unwrap_or(&[]), remaining);
-            summary_input = vec![summary_input[0].clone()];
-            summary_input.extend(tail);
+        let compaction_instruction = if artifact_content.is_empty() {
+            compaction_prompt.clone()
+        } else {
+            format!("{compaction_prompt}\n\n{artifact_content}")
+        };
+        let mut summary_input = messages.clone();
+        let compaction_message = json!({ "role": "user", "content": compaction_instruction });
+        if let Some(index) = current_user_index {
+            summary_input[index] = compaction_message;
+        } else {
+            summary_input.push(compaction_message);
         }
 
         let mut compacted_until_ts: Option<f64> = None;
@@ -457,6 +454,32 @@ impl Orchestrator {
             .min(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
         summary_config.max_output = Some(max_output);
         summary_config.max_rounds = Some(1);
+
+        let summary_limit =
+            HistoryManager::get_auto_compact_limit(&summary_config).unwrap_or(limit);
+        if estimate_messages_tokens(&summary_input) > summary_limit {
+            let per_message_limit = summary_limit
+                .min(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS)
+                .max(1);
+            summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
+            summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
+        }
+        if estimate_messages_tokens(&summary_input) > summary_limit {
+            let mut trimmed = Vec::new();
+            let head_len = if summary_input.first().is_some_and(|message| {
+                message.get("role").and_then(Value::as_str) == Some("system")
+            }) {
+                trimmed.push(summary_input[0].clone());
+                1
+            } else {
+                0
+            };
+            let remaining = (summary_limit - estimate_messages_tokens(&trimmed)).max(1);
+            let tail =
+                trim_messages_to_budget(summary_input.get(head_len..).unwrap_or(&[]), remaining);
+            trimmed.extend(tail);
+            summary_input = trimmed;
+        }
 
         let request_payload = if log_payload {
             let payload_messages = self.sanitize_messages_for_log(summary_input.clone(), None);
@@ -1365,7 +1388,6 @@ impl Orchestrator {
             stem
         }
     }
-
 }
 
 fn is_image_attachment(attachment: &AttachmentPayload, content: &str) -> bool {

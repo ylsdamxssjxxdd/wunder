@@ -83,8 +83,31 @@ pub struct ToolContext<'a> {
     pub user_tool_manager: Option<&'a UserToolManager>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
+    pub allow_roots: Option<Arc<Vec<PathBuf>>>,
+    pub read_roots: Option<Arc<Vec<PathBuf>>>,
     pub event_emitter: Option<ToolEventEmitter>,
     pub http: &'a reqwest::Client,
+}
+
+#[derive(Clone)]
+pub struct ToolRoots {
+    pub allow_roots: Arc<Vec<PathBuf>>,
+    pub read_roots: Arc<Vec<PathBuf>>,
+}
+
+pub fn build_tool_roots(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> ToolRoots {
+    let allow_roots = build_allow_roots(config);
+    let mut read_roots = allow_roots.clone();
+    read_roots.extend(build_skill_roots(skills, user_tool_bindings));
+    let read_roots = dedupe_roots(read_roots);
+    ToolRoots {
+        allow_roots: Arc::new(allow_roots),
+        read_roots: Arc::new(read_roots),
+    }
 }
 
 fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
@@ -1906,10 +1929,10 @@ fn dedupe_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     output
 }
 
-fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+fn build_allow_roots(config: &Config) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let cwd = std::env::current_dir().ok();
-    for raw in &context.config.security.allow_paths {
+    for raw in &config.security.allow_paths {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             continue;
@@ -1927,20 +1950,36 @@ fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
     dedupe_roots(roots)
 }
 
+fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    if let Some(roots) = context.allow_roots.as_ref() {
+        return roots.as_ref().clone();
+    }
+    build_allow_roots(context.config)
+}
+
 fn collect_read_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    if let Some(roots) = context.read_roots.as_ref() {
+        return roots.as_ref().clone();
+    }
     let mut roots = collect_allow_roots(context);
     roots.extend(collect_skill_roots(context));
     dedupe_roots(roots)
 }
 
 fn collect_skill_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = context
-        .skills
+    build_skill_roots(context.skills, context.user_tool_bindings)
+}
+
+fn build_skill_roots(
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = skills
         .list_specs()
         .into_iter()
         .map(|spec| spec.root)
         .collect();
-    if let Some(bindings) = context.user_tool_bindings {
+    if let Some(bindings) = user_tool_bindings {
         for source in bindings.skill_sources.values() {
             roots.push(source.root.clone());
         }
