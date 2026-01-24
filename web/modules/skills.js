@@ -3,6 +3,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
+import { escapeHtml } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260118-07";
 
 const skillsList = document.getElementById("skillsList");
@@ -15,6 +16,8 @@ const skillFileTree = document.getElementById("skillFileTree");
 const skillEditorPath = document.getElementById("skillEditorPath");
 const skillFileSaveBtn = document.getElementById("skillFileSaveBtn");
 const skillFileContent = document.getElementById("skillFileContent");
+const skillEditorBody = document.getElementById("skillEditorBody");
+const skillFileHighlight = document.getElementById("skillFileHighlight");
 
 const viewState = {
   selectedIndex: -1,
@@ -26,7 +29,119 @@ const viewState = {
   fileVersion: 0,
 };
 
-const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\/g, "/");
+const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\\/g, "/");
+
+const HIGHLIGHT_KEYWORDS = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "default",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "finally",
+  "for",
+  "fn",
+  "function",
+  "if",
+  "impl",
+  "import",
+  "in",
+  "interface",
+  "let",
+  "match",
+  "new",
+  "pub",
+  "return",
+  "self",
+  "static",
+  "struct",
+  "switch",
+  "throw",
+  "try",
+  "type",
+  "use",
+  "var",
+  "while",
+  "yield",
+]);
+
+const HIGHLIGHT_TOKEN_REGEX =
+  /(\"(?:\\.|[^\"\\])*\"|\'(?:\\.|[^'\\])*\'|`(?:\\.|[^`\\])*`|\/\/.*?$|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/gm;
+
+let skillHighlightTimer = 0;
+
+const highlightInlineCode = (text) => {
+  const raw = String(text ?? "");
+  if (!raw) {
+    return "&nbsp;";
+  }
+  let result = "";
+  let lastIndex = 0;
+  for (const match of raw.matchAll(HIGHLIGHT_TOKEN_REGEX)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      result += escapeHtml(raw.slice(lastIndex, index));
+    }
+    let className = "";
+    if (token.startsWith("//") || token.startsWith("/*")) {
+      className = "code-token-comment";
+    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
+      className = "code-token-string";
+    } else if (/^\d/.test(token)) {
+      className = "code-token-number";
+    } else if (HIGHLIGHT_KEYWORDS.has(token)) {
+      className = "code-token-keyword";
+    }
+    if (className) {
+      result += `<span class="${className}">${escapeHtml(token)}</span>`;
+    } else {
+      result += escapeHtml(token);
+    }
+    lastIndex = index + token.length;
+  }
+  if (lastIndex < raw.length) {
+    result += escapeHtml(raw.slice(lastIndex));
+  }
+  return result || "&nbsp;";
+};
+
+const updateSkillEditorHighlight = () => {
+  if (!skillFileHighlight || !skillFileContent) {
+    return;
+  }
+  skillFileHighlight.innerHTML = highlightInlineCode(skillFileContent.value);
+  skillFileHighlight.scrollTop = skillFileContent.scrollTop;
+  skillFileHighlight.scrollLeft = skillFileContent.scrollLeft;
+};
+
+const scheduleSkillEditorHighlight = () => {
+  if (!skillFileHighlight) {
+    return;
+  }
+  if (skillHighlightTimer) {
+    cancelAnimationFrame(skillHighlightTimer);
+  }
+  skillHighlightTimer = requestAnimationFrame(() => {
+    skillHighlightTimer = 0;
+    updateSkillEditorHighlight();
+  });
+};
+
+const syncSkillEditorScroll = () => {
+  if (!skillFileHighlight || !skillFileContent) {
+    return;
+  }
+  skillFileHighlight.scrollTop = skillFileContent.scrollTop;
+  skillFileHighlight.scrollLeft = skillFileContent.scrollLeft;
+};
 
 const getActiveSkill = () =>
   Number.isInteger(viewState.selectedIndex)
@@ -68,6 +183,9 @@ const renderSkillDetailHeader = (skill) => {
 };
 
 const setSkillEditorDisabled = (disabled) => {
+  if (skillEditorBody) {
+    skillEditorBody.classList.toggle("is-disabled", disabled);
+  }
   if (skillFileContent) {
     skillFileContent.disabled = disabled;
   }
@@ -84,6 +202,7 @@ const renderSkillEditor = () => {
     skillFileContent.value = viewState.fileContent || "";
   }
   setSkillEditorDisabled(!viewState.activeFile);
+  scheduleSkillEditorHighlight();
 };
 
 const showSkillEditorMessage = (message) => {
@@ -91,6 +210,7 @@ const showSkillEditorMessage = (message) => {
     skillFileContent.value = message;
   }
   setSkillEditorDisabled(true);
+  scheduleSkillEditorHighlight();
 };
 
 const renderSkillFileTree = () => {
@@ -529,7 +649,9 @@ export const initSkillsPanel = () => {
   skillFileSaveBtn?.addEventListener("click", saveSkillFile);
   skillFileContent?.addEventListener("input", () => {
     viewState.fileContent = skillFileContent.value;
+    scheduleSkillEditorHighlight();
   });
+  skillFileContent?.addEventListener("scroll", syncSkillEditorScroll);
   renderSkillDetailHeader(getActiveSkill());
   renderSkillFileTree();
   renderSkillEditor();

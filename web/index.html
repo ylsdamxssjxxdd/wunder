@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260124-01" />
+    <link rel="stylesheet" href="./app.css?v=20260124-04" />
   </head>
   <body>
     <div class="app">
@@ -1642,12 +1642,15 @@
                     </button>
                   </div>
                 </div>
-                <textarea
-                  id="skillFileContent"
-                  class="skill-editor-text"
-                  placeholder="选择文件后可编辑"
-                  data-i18n-placeholder="skills.file.placeholder"
-                ></textarea>
+                <div id="skillEditorBody" class="skill-editor-body">
+                  <pre id="skillFileHighlight" class="skill-editor-highlight"></pre>
+                  <textarea
+                    id="skillFileContent"
+                    class="skill-editor-text"
+                    placeholder="选择文件后可编辑"
+                    data-i18n-placeholder="skills.file.placeholder"
+                  ></textarea>
+                </div>
               </div>
             </div>
           </div>
@@ -4191,6 +4194,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260124-01"></script>
+    <script type="module" src="./app.js?v=20260124-03"></script>
 </body>
 </html>
