@@ -31,6 +31,30 @@ const viewState = {
 
 const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\\/g, "/");
 
+const resolveDefaultSkillFile = (entries) => {
+  if (!Array.isArray(entries)) {
+    return "";
+  }
+  let fallback = "";
+  for (const entry of entries) {
+    if (!entry || entry.kind === "dir") {
+      continue;
+    }
+    const path = String(entry.path || "");
+    if (!path) {
+      continue;
+    }
+    const normalized = normalizeSkillPath(path).toLowerCase();
+    if (normalized === "skill.md") {
+      return path;
+    }
+    if (!fallback && normalized.endsWith("/skill.md")) {
+      fallback = path;
+    }
+  }
+  return fallback;
+};
+
 const HIGHLIGHT_KEYWORDS = new Set([
   "await",
   "break",
@@ -351,6 +375,10 @@ const selectSkill = async (skill, index) => {
     viewState.root = payload.root || "";
     renderSkillDetailHeader(skill);
     renderSkillFileTree();
+    const defaultFile = resolveDefaultSkillFile(viewState.files);
+    if (defaultFile) {
+      void selectSkillFile(defaultFile);
+    }
   } catch (error) {
     if (currentVersion !== viewState.detailVersion) {
       return;

@@ -1,6 +1,7 @@
 import fnmatch
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -24,6 +25,27 @@ MAX_READ_FILES = 5  # 单次最多读取文件数量
 MAX_RANGE_SPAN = 400  # 单个范围最大行数跨度
 PTC_DIR_NAME = "ptc_temp"  # 程序化工具脚本临时目录
 PTC_TIMEOUT_S = 60  # PTC 脚本默认超时时间（秒）
+SHELL_BUILTINS = {"cd", "export", "alias", "set", "source", ".", "ulimit", "unset", "exit"}
+SHELL_META_CHARS = set("|&;<>()$`<>")
+GLOB_CHARS = set("*?[]")
+
+
+def _command_requires_shell(command: str) -> bool:
+    """判断命令是否需要 shell 解释器。"""
+    stripped = command.strip()
+    if not stripped:
+        return False
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", stripped):
+        return True
+    first = stripped.split(maxsplit=1)[0].lower()
+    if first in SHELL_BUILTINS:
+        return True
+    for ch in stripped:
+        if ch in SHELL_META_CHARS or ch in GLOB_CHARS:
+            return True
+    if "~" in stripped:
+        return True
+    return False
 
 
 def _resolve_path_with_base(context: ToolContext, relative_path: str) -> Tuple[Path, Path]:
@@ -347,13 +369,12 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
     # allow_commands 包含 "*" 时视为放开所有命令限制
     allow_all = "*" in allow_commands
     raw_shell = args.get("shell")
-    # shell 默认随 allow_commands 为 * 自动开启，显式传参时按布尔解析
     if raw_shell is None:
-        use_shell = allow_all
+        shell_override = None
     elif isinstance(raw_shell, str):
-        use_shell = raw_shell.strip().lower() in {"1", "true", "yes", "y"}
+        shell_override = raw_shell.strip().lower() in {"1", "true", "yes", "y"}
     else:
-        use_shell = bool(raw_shell)
+        shell_override = bool(raw_shell)
 
     if not content:
         return ToolResult(ok=False, data={}, error=t("tool.exec.command_required"))
@@ -379,6 +400,9 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
         command = raw_line.strip()
         if not command:
             continue
+        use_shell = shell_override
+        if use_shell is None:
+            use_shell = allow_all and _command_requires_shell(command)
         if use_shell:
             if not allow_all:
                 return ToolResult(

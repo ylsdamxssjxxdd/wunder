@@ -1,5 +1,5 @@
 ﻿---
-name: svg-generator
+name: SVG生成
 description: Generate SVG images using native SVG syntax for PPT/论文/海报等场景的矢量图需求，覆盖流程图、示意图、图表或封面插图，并提供模板与脚本辅助。
 ---
 

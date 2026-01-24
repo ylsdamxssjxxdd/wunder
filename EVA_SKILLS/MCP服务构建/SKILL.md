@@ -1,5 +1,5 @@
 ---
-名称: mcp-builder
+名称: MCP服务构建
 描述: 用于创建高质量 MCP（Model Context Protocol）服务器的指南，使 LLM 能通过设计良好的工具与外部服务交互。适用于用 Python（FastMCP）或 Node/TypeScript（MCP SDK）构建 MCP 服务器、对接外部 API 或服务时。
 ---
 

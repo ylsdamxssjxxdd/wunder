@@ -1129,6 +1129,20 @@ def add_table(
         fill_row(row_idx, row, False)
 
 
+def resolve_heading_run_style(
+    level: int, args: argparse.Namespace
+) -> tuple[str, Optional[float]]:
+    if level <= 1:
+        return args.title_font, args.title_size
+    if level == 2:
+        return args.heading1_font, args.heading_size
+    if level == 3:
+        return args.heading2_font, args.heading_size
+    if level == 4:
+        return args.heading3_font, args.heading_size
+    return args.heading4_font, args.heading_size
+
+
 def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> None:
     lines = md_text.splitlines()
     heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
@@ -1307,13 +1321,14 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
                 separator_inserted = True
             heading_level = min(len(prefix), 5)
             paragraph = doc.add_paragraph(style=f"Heading {heading_level}")
+            heading_font, heading_size = resolve_heading_run_style(heading_level, args)
             add_text_with_breaks(
                 paragraph,
                 title,
                 args,
                 bold=None,
-                font_name=None,
-                font_size=None,
+                font_name=heading_font,
+                font_size=heading_size,
             )
             i += 1
             continue

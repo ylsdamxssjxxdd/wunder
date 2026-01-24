@@ -18,8 +18,8 @@ const APP_CONFIG_DEFAULTS = {
     "zh-CN": [
       "你好，介绍一下 wunder 的核心能力。",
       "请列出当前可用工具，并说明用途。",
-      "用python绘制一个爱心保存到本地png",
-      "请写一篇公文，下方寒假放假的通知",
+      "用ptc绘制一个爱心保存到本地png",
+      "请写一篇公文，下发寒假放假的通知，内容随意我只是测试",
     ],
     "en-US": [
       "Hi, introduce wunder's core capabilities.",

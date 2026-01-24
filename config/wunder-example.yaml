@@ -1,4 +1,4 @@
-﻿server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
+server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
   host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
   port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
@@ -90,7 +90,7 @@ skills: # Skills 技能配置
     - ./EVA_SKILLS
     - EVA_SKILLS
   enabled: # 默认启用的技能名称列表
-    - skill-creator
+    - 技能创建器
 
 tools: # 内置工具配置
   builtin:

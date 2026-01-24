@@ -1,5 +1,5 @@
 ---
-name: pptxgenjs-pptx
+name: PPTX生成
 description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更新 .pptx。适用于需要 JavaScript 脚本化生成 PPTX、希望可编程构建幻灯片、或明确要求避免 html2pptx/Playwright 的场景。"
 ---
 

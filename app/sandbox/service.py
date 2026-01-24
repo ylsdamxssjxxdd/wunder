@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import posixpath
 from pathlib import PurePosixPath
 from typing import List
 
 from fastapi import FastAPI, HTTPException
+from concurrent.futures import ThreadPoolExecutor
 
 from app.core.i18n import resolve_language, reset_language, set_language, t
 from app.sandbox.runner import execute_payload
@@ -52,6 +54,20 @@ def _filter_allow_paths(allow_paths: List[str], container_root: PurePosixPath) -
 def create_app() -> FastAPI:
     """创建共享沙盒服务应用实例。"""
     app = FastAPI(title="wunder-shared-sandbox", version="0.1.0")
+
+    @app.on_event("startup")
+    async def configure_executor() -> None:
+        raw = os.getenv("WUNDER_SANDBOX_THREADPOOL_WORKERS", "").strip()
+        if not raw:
+            return
+        try:
+            workers = int(raw)
+        except ValueError:
+            return
+        if workers <= 0:
+            return
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=workers))
 
     @app.get("/health")
     async def health() -> dict:
