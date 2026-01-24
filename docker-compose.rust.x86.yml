@@ -33,9 +33,8 @@ services:
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - RUST_LOG=info
-      - CARGO_HOME=/app/.cargo/amd64
-      - CARGO_TARGET_DIR=/app/target/amd64
-    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
+      - CARGO_TARGET_DIR=/workspaces/target/sandbox
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ]; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else echo "missing wunder-server binary in $$CARGO_TARGET_DIR; start sandbox first" >&2; exit 1; fi']
     depends_on:
       sandbox:
         condition: service_healthy

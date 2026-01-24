@@ -1,5 +1,5 @@
 ﻿flowchart LR
-  Config["配置入口(config/wunder.yaml + data/config/wunder.override.yaml + data/user_tools/<user_id>/config.json)"] --> Catalog["工具清单(/wunder/tools, src/api/core.rs + src/user_tools.rs)"]
-  Catalog --> Orchestrator["编排与注入(src/orchestrator.rs + src/prompting.rs)"]
-  Orchestrator --> Exec["执行器(src/tools.rs + src/skills.rs + src/knowledge.rs + src/mcp.rs)"]
+  Config["配置入口(config/wunder.yaml + data/config/wunder.override.yaml + data/user_tools/<user_id>/config.json)"] --> Catalog["工具清单(/wunder/tools, src/api/core.rs + src/services/user_tools.rs)"]
+  Catalog --> Orchestrator["编排与注入(src/orchestrator + src/services/prompting.rs)"]
+  Orchestrator --> Exec["执行器(src/services/tools.rs + src/services/skills.rs + src/services/knowledge.rs + src/services/mcp.rs)"]
   Exec --> Pool["工具池(内置工具 + Skills + 知识库 + MCP/用户工具)"]

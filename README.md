@@ -1,5 +1,5 @@
 # wunder
-wunder是对eva改装构建的一个面向多用户的智能体调度平台，支持对接大模型 API、MCP 工具与 Skills 流程并提供基础的字面知识库检索功能。通过 FastAPI 暴露统一入口 `/wunder`，可流式返回中间过程与最终回复，并提供调试页面与基础运维接口。
+wunder是对eva改装构建的一个面向多用户的智能体调度平台，支持对接大模型 API、MCP 工具与 Skills 流程并提供基础的字面知识库检索功能。通过 Rust Axum 暴露统一入口 `/wunder`，可流式返回中间过程与最终回复，并提供调试页面与基础运维接口。
 <img width="1000" height="563" alt="wunder" src="https://github.com/user-attachments/assets/4e589030-f1fc-4e0c-91a7-3419eb39a046" />
 
 ## 核心理念
@@ -153,14 +153,16 @@ curl -X GET http://127.0.0.1:18000/wunder/tools ^
 
 ## 9. 项目结构
 ```
-app/                 # FastAPI 入口与核心逻辑
+src/                 # Rust 服务入口与模块
   api/               # 路由与接口
+  core/              # 基础配置与通用工具
+  services/          # 内置工具/LLM/MCP/工作区等
+  ops/               # 监控/性能/评估/压测
+  sandbox/           # 沙盒 client/server
   orchestrator/      # 编排引擎与提示词构建
-  tools/             # 内置工具与 MCP 适配
-  skills/            # Skills 加载与注册
-  memory/            # 工作区与历史管理
-  monitor/           # 监控与会话状态
+  storage/           # 存储实现
 config/              # 配置文件
+prompts/             # 系统/工具/记忆提示词模板
 data/                # 工作区、历史、日志
 docs/                # 设计/API/测试文档
 web/                 # 调试页面静态资源

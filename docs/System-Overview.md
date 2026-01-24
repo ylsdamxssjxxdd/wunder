@@ -41,14 +41,14 @@ flowchart LR
 
 ### 2.2 Module responsibilities
 - API layer (`src/api`): unified `/wunder` entry, A2A `/a2a`, and admin APIs for tools/workspaces/monitor.
-- Orchestrator (`src/orchestrator.rs`): orchestration, tool routing, SSE event streaming.
-- Tool layer (`src/tools.rs`): built-in tool specs and dispatcher.
-- Workspace (`src/workspace.rs`): per-user workspace file management.
-- Monitoring (`src/monitor.rs`): session lifecycle, events, and system snapshots persisted via the storage backend.
-- Throughput testing (`src/throughput.rs`): run concurrency lists, randomize built-in questions, persist reports for replay/export.
-- Capability evaluation (`src/evaluation_runner.rs` + `src/api/evaluation.rs`): run case suites, clean eval temp dir on start, precreate active items; cases live in `config/evaluation/cases`.
-- Config (`src/config.rs` + `src/config_store.rs`): base config + admin overrides; supports `${ENV_VAR:-default}` expansion in YAML strings.
-- Sandbox server (`src/sandbox_server.rs`): run `wunder-server` in sandbox mode to provide `/sandboxes/execute_tool`.
+- Orchestrator (`src/orchestrator/`): orchestration, tool routing, SSE event streaming.
+- Tool layer (`src/services/tools.rs`): built-in tool specs and dispatcher.
+- Workspace (`src/services/workspace.rs`): per-user workspace file management.
+- Monitoring (`src/ops/monitor.rs`): session lifecycle, events, and system snapshots persisted via the storage backend.
+- Throughput testing (`src/ops/throughput.rs`): run concurrency lists, randomize built-in questions, persist reports for replay/export.
+- Capability evaluation (`src/ops/evaluation_runner.rs` + `src/api/evaluation.rs`): run case suites, clean eval temp dir on start, precreate active items; cases live in `config/evaluation/cases`.
+- Config (`src/core/config.rs` + `src/core/config_store.rs`): base config + admin overrides; supports `${ENV_VAR:-default}` expansion in YAML strings.
+- Sandbox server (`src/sandbox/server.rs`): run `wunder-server` in sandbox mode to provide `/sandboxes/execute_tool`.
 
 ## 3. Execution flow (request to answer)
 ```mermaid
@@ -81,7 +81,7 @@ wunder abstracts all capabilities as "tools" and uses prompt injection + tool pr
 ### 4.1 Tool types and sources
 | Tool type | Source | Invocation | Sharing/Governance | Use case |
 | --- | --- | --- | --- | --- |
-| Built-in | `src/tools.rs` | Direct tool name | Admin enable list | File ops, commands, ptc |
+| Built-in | `src/services/tools.rs` | Direct tool name | Admin enable list | File ops, commands, ptc |
 | MCP | `config/wunder.yaml` + overrides + `/wunder/admin/mcp` | `server@tool` | Admin enable + allow_tools | External services (incl. `wunder@excute`/`wunder@doc2md`) |
 | Skills | `skills/`, `EVA_SKILLS/`, user skills | Skill name | Admin/user enable | Codified workflows |
 | Knowledge | `knowledge/` or user knowledge | Knowledge base tool | Admin/user config | Local knowledge retrieval |
@@ -162,8 +162,11 @@ stateDiagram-v2
 ```text
 src/                 # Rust server (Axum)
   api/               # /wunder, /a2a, admin APIs
+  core/              # config/auth/i18n/state helpers
+  services/          # tools/llm/mcp/workspace/memory
+  ops/               # monitor/perf/throughput/evaluation
+  sandbox/           # sandbox client/server
   storage/           # SQLite/PostgreSQL persistence
-  sandbox_server.rs  # sandbox-mode entry
 config/              # base config (wunder.yaml)
 prompts/             # prompt templates
 data/config/         # admin overrides (wunder.override.yaml)

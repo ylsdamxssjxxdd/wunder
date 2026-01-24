@@ -1,5 +1,5 @@
 ﻿flowchart LR
-  Config[Config entry (config/wunder.yaml + data/config/wunder.override.yaml + app/user_tools/store.py)] --> Catalog[Tool catalog (/wunder/tools, app/services/tool_service.py)]
-  Catalog --> Orchestrator[Orchestration & injection (app/orchestrator/engine.py + prompting.py)]
-  Orchestrator --> Exec[Executor (app/orchestrator/tool_executor.py)]
-  Exec --> Pool[Tool pool (app/tools + app/skills + app/knowledge + MCP/user tools)]
+  Config[Config entry (config/wunder.yaml + data/config/wunder.override.yaml + src/services/user_tools.rs)] --> Catalog[Tool catalog (/wunder/tools, src/services/tools.rs)]
+  Catalog --> Orchestrator[Orchestration & injection (src/orchestrator + src/services/prompting.rs)]
+  Orchestrator --> Exec[Executor (src/orchestrator/tool_exec.rs)]
+  Exec --> Pool[Tool pool (src/services/tools.rs + src/services/skills.rs + src/services/knowledge.rs + src/services/mcp.rs + MCP/user tools)]

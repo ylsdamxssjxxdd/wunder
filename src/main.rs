@@ -1,40 +1,22 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
-mod a2a_store;
 mod api;
-mod attachment;
-mod auth;
-mod config;
-mod config_store;
-mod doc2md;
-mod evaluation;
-mod evaluation_runner;
-mod history;
-mod i18n;
-mod knowledge;
-mod llm;
+mod core;
 mod lsp;
-mod mcp;
-mod memory;
-mod monitor;
+mod ops;
 mod orchestrator;
-mod orchestrator_constants;
-mod path_utils;
-mod performance;
-mod prompting;
 mod sandbox;
-mod sandbox_server;
-mod schemas;
-mod shutdown;
-mod skills;
-mod state;
+mod services;
 mod storage;
-mod throughput;
-mod token_utils;
-mod tools;
-mod user_access;
-mod user_store;
-mod user_tools;
-mod workspace;
+
+pub use core::{
+    auth, config, config_store, i18n, path_utils, schemas, shutdown, state, token_utils,
+};
+pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
+pub use orchestrator::constants as orchestrator_constants;
+pub use services::{
+    a2a_store, attachment, doc2md, history, knowledge, llm, mcp, memory, prompting, skills, tools,
+    user_access, user_store, user_tools, workspace,
+};
 
 use axum::body::Body;
 use axum::extract::OriginalUri;
@@ -66,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     let server_mode = resolve_server_mode(&config);
     if server_mode == "sandbox" {
         let addr = bind_address(&config);
-        let app = sandbox_server::build_router()
+        let app = sandbox::server::build_router()
             .layer(TraceLayer::new_for_http())
             .layer(from_fn(panic_guard));
         let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;

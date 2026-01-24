@@ -118,7 +118,7 @@ async fn execute_tool(Json(request): Json<SandboxToolRequest>) -> impl IntoRespo
 async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl IntoResponse {
     let language = i18n::resolve_language([request.language.as_str()]);
     i18n::with_language(language, async move {
-        let _ = request;
+        let _ = (&request.user_id, &request.session_id);
         let response = SandboxReleaseResponse {
             ok: true,
             message: i18n::t("sandbox.message.release_not_required"),
@@ -129,6 +129,18 @@ async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl Int
 }
 
 async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse {
+    // Touch reserved fields to keep payload compatibility without warnings.
+    let _ = (
+        &request.user_id,
+        &request.session_id,
+        &request.image,
+        &request.network,
+        request.readonly_rootfs,
+        request.idle_ttl_s,
+        request.resources.cpu,
+        request.resources.memory_mb,
+        request.resources.pids,
+    );
     let container_root = normalize_container_root(&request.container_root);
     let workspace_root = match normalize_container_path(&request.workspace_root, &container_root) {
         Ok(path) => path,

@@ -1,3 +1,5 @@
+pub mod server;
+
 use crate::config::Config;
 use crate::i18n;
 use crate::user_tools::UserToolBindings;

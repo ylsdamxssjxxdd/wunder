@@ -4,7 +4,7 @@
 
 ### 4.0 Implementation Notes
 
-- Routes are split by core/admin/workspace/user_tools; `app/services` provides shared assembly logic.
+- Routes are split by `src/api` modules (core/admin/workspace/user_tools/a2a) and share unified builders in Rust.
 - Tool list and prompt injection share the same tool spec builder to stay consistent.
 - Startup optimization: MCP, monitor, and orchestrator are lazily initialized; first calls may have cold-start delay.
 - Lightweight entry: use `uvicorn app.asgi:app`; control warmup via `WUNDER_LAZY_WARMUP_S`.

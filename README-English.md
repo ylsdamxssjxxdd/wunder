@@ -1,5 +1,5 @@
 # wunder
-wunder is a multi-user agent orchestration platform rebuilt from eva. It connects LLM APIs, MCP tools, and Skills workflows, and provides a basic lexical knowledge base. It exposes a single FastAPI entry at `/wunder`, streams intermediate progress and final answers, and ships a debug console plus basic admin endpoints.
+wunder is a multi-user agent orchestration platform rebuilt from eva. It connects LLM APIs, MCP tools, and Skills workflows, and provides a basic lexical knowledge base. It exposes a unified Rust Axum entry at `/wunder`, streams intermediate progress and final answers, and ships a debug console plus basic admin endpoints.
 <img width="1000" height="563" alt="wunder" src="https://github.com/user-attachments/assets/4e589030-f1fc-4e0c-91a7-3419eb39a046" />
 
 ## Core Idea
@@ -154,14 +154,16 @@ See `docs/Test-Plan.md` for a full test plan.
 
 ## 9. Project Structure
 ```
-app/                 # FastAPI entry and core logic
+src/                 # Rust server modules
   api/               # routes and APIs
+  core/              # config/auth/i18n/state helpers
+  services/          # tools/llm/mcp/workspace/memory
+  ops/               # monitor/perf/throughput/evaluation
+  sandbox/           # sandbox client/server
   orchestrator/      # orchestration engine and prompt builder
-  tools/             # built-in tools and MCP adapter
-  skills/            # Skills loading and registry
-  memory/            # workspace and history
-  monitor/           # monitoring and session state
+  storage/           # persistence
 config/              # configuration files
+prompts/             # system/tool/memory prompt templates
 data/                # workspaces, history, logs
 docs/                # design/API/test docs
 web/                 # debug console static assets

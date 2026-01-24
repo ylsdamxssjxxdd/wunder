@@ -65,14 +65,13 @@ See `docs/API-Documentation.md`.
 
 ### 5.1 API layer
 
-- FastAPI routing, unified `/wunder` entry.
-- Lightweight ASGI entry (`app/asgi.py`) with lazy warmup.
+- Axum routing, unified `/wunder` entry.
 - Connection lifecycle management, SSE streaming.
-- Unified auth and validation (Pydantic), API/MCP secured by `security.api_key`.
+- Unified auth and validation (serde + guards), API/MCP secured by `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
 - Admin user management supports editing daily quota and observing daily usage/remaining fields.
 - Added `/wunder/temp_dir/*` public temp-file endpoints for upload/download/list/remove from the project root `temp_dir/` folder.
-- Routes split by domain (core/admin/workspace/user_tools), logic in `app/services` for reuse.
+- Routes split by domain in `src/api` (core/admin/workspace/user_tools/a2a).
 
 ### 5.2 Orchestrator
 
@@ -90,8 +89,8 @@ See `docs/API-Documentation.md`.
 ### 5.3 Tool system
 
 - Built-in tools (EVA style): final answer, exec commands, ptc, list/search/read/write/replace/edit files.
-- Tool specs and execution are centralized in `app/tools/catalog.py` for consistency.
-- Tool availability assembled by `app/tools/availability.py` for both `/wunder/tools` and prompt injection.
+- Tool specs and execution are centralized in `src/services/tools.rs` for consistency.
+- Tool availability is assembled by the Rust tool catalog builder for both `/wunder/tools` and prompt injection.
 - Built-in tools run locally or via sandbox (commands/ptc).
 - Built-in tool enable list in config/admin page; only enabled tools are injected.
 - `/wunder/tools` lists built-in/MCP/knowledge/skills; prompt injection uses `tool_names`.
@@ -137,7 +136,7 @@ See `docs/API-Documentation.md`.
 ### 5.6 Prompt & agent design
 
 - Prompts split into system/tool/engineer blocks, assembled by Prompt Builder.
-- Templates in `app/prompts` with language variants (e.g., `app/prompts/en`).
+- Templates in `prompts/` with language variants (e.g., `prompts/en`).
 - Prompt build uses LRU cache; file reads are cached by mtime.
 - System prompt preview is lightweight and skips tool executor init.
 - Skill specs are cached by path mtime and enabled list.
@@ -164,68 +163,38 @@ See `docs/API-Documentation.md`.
 
 ### 5.8 Sandbox service
 
-- Shared sandbox service runs in a separate container but shares the same image and workspace mounts.
-- Exposes `/sandboxes/execute_tool` for command/ptc execution.
-- The sandbox mounts app code (readonly), user workspace (rw), EVA_SKILLS (readonly).
+- Shared sandbox service runs `wunder-server` in `sandbox` mode in a separate container, sharing the same image and workspace mounts.
+- Exposes `/sandboxes/execute_tool` for command/ptc execution; ptc still invokes `python3` inside the container.
+- The sandbox mounts the repo (readonly), user workspace (rw), EVA_SKILLS (readonly).
 - At runtime, `WUNDER_SANDBOX_ENDPOINT` is preferred and the client falls back between common `sandbox`/`127.0.0.1` endpoints to avoid IP issues in intranet docker compose deployments (no need to publish port 9001).
 
 ## 6. Suggested directory structure
 
 ```text
 wunder/
-app/
-    asgi.py
-    api/
-    services/
-    core/
-    mcp/
-    knowledge/
-    orchestrator/
-    llm/
-    monitor/
-    tools/
-    skills/
-    memory/
-    storage/
-    schemas/
-    prompts/
-  web/
-    index.html
-    app.js
-    app.config.js
-    modules/
-      elements.js
-      state.js
-      utils.js
-      log.js
-      api.js
-      tool-detail.js
-      workspace.js
-      tools.js
-      prompt.js
-      debug.js
-      monitor.js
-      mcp.js
-      builtin.js
-      skills.js
-      llm.js
-  config/
-    wunder.yaml
-  workspaces/
-  data/
-    knowledge/
-    user_tools/
-    wunder.db
-    historys/
+  src/                # Rust server modules
+    api/              # /wunder, /a2a, admin APIs
+    core/             # config/auth/i18n/state helpers
+    services/         # tools/llm/mcp/workspace/memory
+    ops/              # monitor/perf/throughput/evaluation
+    sandbox/          # sandbox client/server
+    orchestrator/     # orchestrator engine
+    storage/          # SQLite/PostgreSQL persistence
+  prompts/            # prompt templates
+  web/                # debug frontend
+  frontend/           # user Vue3 frontend
+  config/             # base config (wunder.yaml, i18n, fonts)
+  skills/             # built-in skills
+  EVA_SKILLS/         # skills directory
+  knowledge/          # shared knowledge bases
+  workspaces/         # per-user workspaces
+  data/               # overrides/logs/user tools
   docs/
-    设计方案.md
-    API文档.md
-    功能迭代.md
-    ppt/
-      slides/
   scripts/
-    update_feature_log.py
-  requirements.txt
+  Dockerfile.rust
+  docker-compose.rust.x86.yml
+  docker-compose.rust.arm.yml
+  Cargo.toml
 ```
 
 ## 7. Config specification (base + override)
@@ -237,6 +206,7 @@ Admin override: `data/config/wunder.override.yaml` (override with `WUNDER_CONFIG
 server:
   host: 0.0.0.0
   port: 8000
+  mode: api
   stream_chunk_size: 1024
   max_active_sessions: 30
 
