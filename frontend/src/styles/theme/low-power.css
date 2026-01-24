@@ -1,0 +1,68 @@
+/* Low-power mode defaults for older devices. */
+:root[data-user-theme='dark'][data-performance-mode='low'] .chat-shell {
+  --chat-bg: #16233f;
+  --chat-panel: #1e2d4d;
+  --chat-card: #243657;
+  --chat-border: #2c3e60;
+  --code-bg: #111c35;
+  --code-header: #15233f;
+  --code-border: #2a3b5f;
+  background: var(--chat-bg);
+}
+
+:root[data-user-theme='light'][data-performance-mode='low'] .chat-shell {
+  --chat-bg: #f3f6fb;
+  --chat-panel: #ffffff;
+  --chat-card: #f8fafc;
+  --chat-border: rgba(15, 23, 42, 0.12);
+  --code-bg: #eef2f7;
+  --code-header: #e2e8f0;
+  --code-border: #cbd5f5;
+  background: var(--chat-bg);
+}
+
+:root[data-performance-mode='low'] .chat-shell,
+:root[data-performance-mode='low'] .chat-shell * {
+  box-shadow: none !important;
+}
+
+:root[data-performance-mode='low'] .chat-shell * {
+  transition: none !important;
+}
+
+:root[data-performance-mode='low'] .chat-shell .topbar,
+:root[data-performance-mode='low'] .chat-shell .glass-card,
+:root[data-performance-mode='low'] .chat-shell .chat-panel,
+:root[data-performance-mode='low'] .chat-shell .message-content,
+:root[data-performance-mode='low'] .chat-shell .input-container,
+:root[data-performance-mode='low'] .chat-shell .input-box,
+:root[data-performance-mode='low'] .chat-shell .workspace-list,
+:root[data-performance-mode='low'] .chat-shell .history-item {
+  background: var(--chat-panel);
+  background-image: none;
+}
+
+:root[data-performance-mode='low'] .chat-shell .glass-card.info-panel,
+:root[data-performance-mode='low'] .chat-shell .from-ai .message-content,
+:root[data-performance-mode='low'] .chat-shell .from-user .message-content {
+  background: var(--chat-card);
+  background-image: none;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 960px) {
+  .chat-shell .main-grid {
+    grid-template-columns: 1fr;
+  }
+  .chat-shell .sidebar {
+    max-width: 100%;
+  }
+}

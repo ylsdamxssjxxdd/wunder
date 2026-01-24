@@ -1,0 +1,56 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#ffffff" />
+
+  <text x="120" y="120" font-size="48" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Arial, sans-serif" fill="#0f172a">
+    文档质量评分对比
+  </text>
+  <text x="120" y="165" font-size="22" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Arial, sans-serif" fill="#64748b">
+    评分维度：一致性 / 可读性 / 可维护性
+  </text>
+
+  <g stroke="#e2e8f0" stroke-width="2">
+    <line x1="180" y1="680" x2="1420" y2="680" />
+    <line x1="180" y1="560" x2="1420" y2="560" />
+    <line x1="180" y1="440" x2="1420" y2="440" />
+    <line x1="180" y1="320" x2="1420" y2="320" />
+  </g>
+
+  <g stroke="#0f172a" stroke-width="2">
+    <line x1="180" y1="220" x2="180" y2="720" />
+    <line x1="180" y1="720" x2="1420" y2="720" />
+  </g>
+
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Arial, sans-serif" font-size="18" fill="#475569">
+    <text x="140" y="680">60</text>
+    <text x="140" y="560">70</text>
+    <text x="140" y="440">80</text>
+    <text x="140" y="320">90</text>
+  </g>
+
+  <g>
+    <rect x="320" y="420" width="160" height="300" fill="#93c5fd" />
+    <rect x="560" y="360" width="160" height="360" fill="#60a5fa" />
+    <rect x="800" y="300" width="160" height="420" fill="#3b82f6" />
+    <rect x="1040" y="260" width="160" height="460" fill="#1d4ed8" />
+  </g>
+
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Arial, sans-serif" font-size="20" fill="#0f172a">
+    <text x="400" y="760" text-anchor="middle">基线</text>
+    <text x="640" y="760" text-anchor="middle">试点</text>
+    <text x="880" y="760" text-anchor="middle">推广</text>
+    <text x="1120" y="760" text-anchor="middle">稳定</text>
+  </g>
+
+  <polyline fill="none" stroke="#f97316" stroke-width="4" points="400,520 640,460 880,380 1120,330" />
+  <g fill="#f97316">
+    <circle cx="400" cy="520" r="8" />
+    <circle cx="640" cy="460" r="8" />
+    <circle cx="880" cy="380" r="8" />
+    <circle cx="1120" cy="330" r="8" />
+  </g>
+
+  <g font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Arial, sans-serif" font-size="18" fill="#64748b">
+    <text x="1230" y="280">趋势线（可读性）</text>
+  </g>
+</svg>

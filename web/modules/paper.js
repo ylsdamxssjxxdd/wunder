@@ -1,5 +1,5 @@
-import { elements } from "./elements.js?v=20260118-07";
-import { t } from "./i18n.js?v=20260118-07";
+import { elements } from "./elements.js?v=20260124-01";
+import { t } from "./i18n.js?v=20260124-01";
 
 const MAX_TOC_LEVEL = 3;
 let rendered = false;
@@ -220,3 +220,5 @@ export const initPaperPanel = async () => {
     return false;
   }
 };
+
+

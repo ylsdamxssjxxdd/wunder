@@ -1,4 +1,3 @@
-import { elements } from "./elements.js?v=20260118-07";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
@@ -6,112 +5,292 @@ import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260118-07";
 
-// 拉取技能清单与启用状态
-export const loadSkills = async () => {
-  const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    throw new Error(t("common.requestFailed", { status: response.status }));
-  }
-  const result = await response.json();
-  state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
-  state.skills.skills = Array.isArray(result.skills) ? result.skills : [];
-  renderSkills();
+const skillsList = document.getElementById("skillsList");
+const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");
+const addSkillBtn = document.getElementById("addSkillBtn");
+const skillUploadInput = document.getElementById("skillUploadInput");
+const skillDetailTitle = document.getElementById("skillDetailTitle");
+const skillDetailMeta = document.getElementById("skillDetailMeta");
+const skillFileTree = document.getElementById("skillFileTree");
+const skillEditorPath = document.getElementById("skillEditorPath");
+const skillFileSaveBtn = document.getElementById("skillFileSaveBtn");
+const skillFileContent = document.getElementById("skillFileContent");
+
+const viewState = {
+  selectedIndex: -1,
+  files: [],
+  root: "",
+  activeFile: "",
+  fileContent: "",
+  detailVersion: 0,
+  fileVersion: 0,
 };
 
-// 拉取指定技能的 SKILL.md 内容，供详情弹窗完整展示
-const loadSkillContent = async (skillName) => {
-  if (!skillName) {
-    throw new Error(t("skills.nameRequired"));
-  }
-  const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills/content?name=${encodeURIComponent(skillName)}`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    throw new Error(t("common.requestFailed", { status: response.status }));
-  }
-  const result = await response.json();
-  return String(result.content || "");
-};
+const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\/g, "/");
 
-const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\\/g, "/");
+const getActiveSkill = () =>
+  Number.isInteger(viewState.selectedIndex)
+    ? state.skills.skills[viewState.selectedIndex] || null
+    : null;
 
 const isSkillDeletable = (skill) => {
   const normalized = normalizeSkillPath(skill?.path).toLowerCase();
   return /(^|\/)eva_skills(\/|$)/.test(normalized);
 };
 
-const deleteSkill = async (skill) => {
-  const skillName = String(skill?.name || "").trim();
+const extractErrorMessage = async (response) => {
+  try {
+    const payload = await response.json();
+    return payload?.detail?.message || payload?.message || "";
+  } catch (error) {
+    return "";
+  }
+};
+
+const renderSkillDetailHeader = (skill) => {
+  if (!skillDetailTitle || !skillDetailMeta) {
+    return;
+  }
+  if (!skill) {
+    skillDetailTitle.textContent = t("skills.detail.unselected");
+    skillDetailMeta.textContent = "";
+    return;
+  }
+  skillDetailTitle.textContent = skill.name || t("skills.detail.title");
+  const metaParts = [];
+  if (skill.path) {
+    metaParts.push(skill.path);
+  }
+  if (viewState.root && viewState.root !== skill.path) {
+    metaParts.push(viewState.root);
+  }
+  skillDetailMeta.textContent = metaParts.join(" · ");
+};
+
+const setSkillEditorDisabled = (disabled) => {
+  if (skillFileContent) {
+    skillFileContent.disabled = disabled;
+  }
+  if (skillFileSaveBtn) {
+    skillFileSaveBtn.disabled = disabled;
+  }
+};
+
+const renderSkillEditor = () => {
+  if (skillEditorPath) {
+    skillEditorPath.textContent = viewState.activeFile || t("skills.file.unselected");
+  }
+  if (skillFileContent) {
+    skillFileContent.value = viewState.fileContent || "";
+  }
+  setSkillEditorDisabled(!viewState.activeFile);
+};
+
+const showSkillEditorMessage = (message) => {
+  if (skillFileContent) {
+    skillFileContent.value = message;
+  }
+  setSkillEditorDisabled(true);
+};
+
+const renderSkillFileTree = () => {
+  if (!skillFileTree) {
+    return;
+  }
+  skillFileTree.textContent = "";
+  const skill = getActiveSkill();
+  if (!skill) {
+    skillFileTree.textContent = t("skills.files.unselected");
+    return;
+  }
+  if (!Array.isArray(viewState.files) || viewState.files.length === 0) {
+    skillFileTree.textContent = t("skills.files.empty");
+    return;
+  }
+  viewState.files.forEach((entry) => {
+    const path = String(entry?.path || "");
+    if (!path) {
+      return;
+    }
+    const kind = entry?.kind === "dir" ? "dir" : "file";
+    const item = document.createElement("div");
+    item.className = `skill-tree-item is-${kind}`;
+    if (kind === "file" && path === viewState.activeFile) {
+      item.classList.add("is-active");
+    }
+    const depth = Math.max(0, path.split("/").length - 1);
+    item.style.paddingLeft = `${8 + depth * 14}px`;
+    item.title = path;
+    const icon = document.createElement("i");
+    icon.className = kind === "dir" ? "fa-solid fa-folder" : "fa-regular fa-file-lines";
+    const name = document.createElement("span");
+    name.className = "skill-tree-name";
+    name.textContent = path.split("/").pop() || path;
+    item.append(icon, name);
+    if (kind === "file") {
+      item.addEventListener("click", () => {
+        selectSkillFile(path);
+      });
+    }
+    skillFileTree.appendChild(item);
+  });
+};
+
+const clearSkillDetail = () => {
+  viewState.selectedIndex = -1;
+  viewState.files = [];
+  viewState.root = "";
+  viewState.activeFile = "";
+  viewState.fileContent = "";
+  renderSkillDetailHeader(null);
+  renderSkillFileTree();
+  renderSkillEditor();
+};
+
+const loadSkillFiles = async (skillName) => {
   if (!skillName) {
     throw new Error(t("skills.nameRequired"));
   }
-  if (!window.confirm(t("skills.deleteConfirm", { name: skillName }))) {
-    return null;
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/skills/files?name=${encodeURIComponent(skillName)}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    const detail = await extractErrorMessage(response);
+    throw new Error(detail || t("common.requestFailed", { status: response.status }));
+  }
+  return response.json();
+};
+
+const loadSkillFileContent = async (skillName, filePath) => {
+  if (!skillName) {
+    throw new Error(t("skills.nameRequired"));
+  }
+  if (!filePath) {
+    throw new Error(t("skills.file.selectRequired"));
   }
   const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills?name=${encodeURIComponent(skillName)}`;
-  const response = await fetch(endpoint, { method: "DELETE" });
+  const endpoint = `${wunderBase}/admin/skills/file?name=${encodeURIComponent(
+    skillName
+  )}&path=${encodeURIComponent(filePath)}`;
+  const response = await fetch(endpoint);
   if (!response.ok) {
-    let detail = "";
-    try {
-      const payload = await response.json();
-      detail = payload?.detail?.message || payload?.message || "";
-    } catch (error) {
-      detail = "";
-    }
-    if (response.status === 404) {
-      throw new Error(detail || t("skills.notFound"));
-    }
-    if (detail) {
-      throw new Error(detail);
-    }
-    throw new Error(t("skills.deleteFailed", { status: response.status }));
+    const detail = await extractErrorMessage(response);
+    throw new Error(detail || t("common.requestFailed", { status: response.status }));
   }
-  await loadSkills();
-  syncPromptTools();
-  return skillName;
+  const result = await response.json();
+  return String(result.content || "");
 };
 
-// 打开技能详情弹窗，并按当前技能加载完整内容
-const openSkillDetailModal = async (skill) => {
-  const currentVersion = ++state.skills.detailVersion;
-  elements.skillModalTitle.textContent = skill.name || t("skills.detail.title");
-  elements.skillModalMeta.textContent = skill.path || "";
-  elements.skillModalContent.textContent = t("common.loading");
-  elements.skillModal.classList.add("active");
-  try {
-    const content = await loadSkillContent(skill.name);
-    if (currentVersion !== state.skills.detailVersion) {
-      return;
-    }
-    elements.skillModalContent.textContent = content || t("skills.detail.empty");
-  } catch (error) {
-    if (currentVersion !== state.skills.detailVersion) {
-      return;
-    }
-    elements.skillModalContent.textContent = t("common.loadFailedWithMessage", {
-      message: error.message,
-    });
+const saveSkillFileContent = async (skillName, filePath, content) => {
+  if (!skillName) {
+    throw new Error(t("skills.nameRequired"));
   }
+  if (!filePath) {
+    throw new Error(t("skills.file.selectRequired"));
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/skills/file`;
+  const response = await fetch(endpoint, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: skillName, path: filePath, content }),
+  });
+  if (!response.ok) {
+    const detail = await extractErrorMessage(response);
+    throw new Error(detail || t("common.requestFailed", { status: response.status }));
+  }
+  return response.json();
 };
 
-// 关闭技能详情弹窗，同时保留上次内容供下次复用
-const closeSkillDetailModal = () => {
-  elements.skillModal.classList.remove("active");
-};
-
-// 渲染技能勾选列表
-const renderSkills = () => {
-  elements.skillsList.textContent = "";
-  if (!state.skills.skills.length) {
-    elements.skillsList.textContent = t("skills.list.empty");
+const selectSkill = async (skill, index) => {
+  if (!skill) {
+    clearSkillDetail();
+    renderSkills();
     return;
   }
-  state.skills.skills.forEach((skill) => {
+  viewState.selectedIndex = index;
+  viewState.files = [];
+  viewState.root = "";
+  viewState.activeFile = "";
+  viewState.fileContent = "";
+  renderSkills();
+  renderSkillDetailHeader(skill);
+  renderSkillEditor();
+  if (skillFileTree) {
+    skillFileTree.textContent = t("common.loading");
+  }
+  const currentVersion = ++viewState.detailVersion;
+  try {
+    const payload = await loadSkillFiles(skill.name);
+    if (currentVersion !== viewState.detailVersion) {
+      return;
+    }
+    viewState.files = Array.isArray(payload.entries) ? payload.entries : [];
+    viewState.root = payload.root || "";
+    renderSkillDetailHeader(skill);
+    renderSkillFileTree();
+  } catch (error) {
+    if (currentVersion !== viewState.detailVersion) {
+      return;
+    }
+    if (skillFileTree) {
+      skillFileTree.textContent = t("skills.files.loadFailed", { message: error.message });
+    }
+  }
+};
+
+const selectSkillFile = async (filePath) => {
+  const skill = getActiveSkill();
+  if (!skill) {
+    notify(t("skills.file.selectSkillRequired"), "warn");
+    return;
+  }
+  const normalized = String(filePath || "");
+  if (!normalized) {
+    notify(t("skills.file.selectRequired"), "warn");
+    return;
+  }
+  viewState.activeFile = normalized;
+  viewState.fileContent = "";
+  renderSkillFileTree();
+  if (skillEditorPath) {
+    skillEditorPath.textContent = normalized;
+  }
+  showSkillEditorMessage(t("common.loading"));
+  const currentVersion = ++viewState.fileVersion;
+  try {
+    const content = await loadSkillFileContent(skill.name, normalized);
+    if (currentVersion !== viewState.fileVersion) {
+      return;
+    }
+    viewState.fileContent = content;
+    renderSkillEditor();
+  } catch (error) {
+    if (currentVersion !== viewState.fileVersion) {
+      return;
+    }
+    showSkillEditorMessage(t("skills.file.readFailed", { message: error.message }));
+    notify(t("skills.file.readFailed", { message: error.message }), "error");
+  }
+};
+
+const renderSkills = () => {
+  if (!skillsList) {
+    return;
+  }
+  skillsList.textContent = "";
+  if (!state.skills.skills.length) {
+    skillsList.textContent = t("skills.list.empty");
+    return;
+  }
+  state.skills.skills.forEach((skill, index) => {
     const item = document.createElement("div");
     item.className = "skill-item";
+    if (index === viewState.selectedIndex) {
+      item.classList.add("is-active");
+    }
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = Boolean(skill.enabled);
@@ -131,7 +310,19 @@ const renderSkills = () => {
         });
     });
     const label = document.createElement("label");
-    label.innerHTML = `<strong>${skill.name}</strong><span class="muted">${skill.description} · ${skill.path}</span>`;
+    const title = document.createElement("strong");
+    title.textContent = skill.name || "";
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    const metaParts = [];
+    if (skill.description) {
+      metaParts.push(skill.description);
+    }
+    if (skill.path) {
+      metaParts.push(skill.path);
+    }
+    meta.textContent = metaParts.join(" · ");
+    label.append(title, meta);
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "danger btn-with-icon btn-compact skill-delete-btn";
@@ -164,20 +355,21 @@ const renderSkills = () => {
       if (event.target === checkbox || deleteButton.contains(event.target)) {
         return;
       }
-      openSkillDetailModal(skill);
+      selectSkill(skill, index);
     });
     item.appendChild(checkbox);
     item.appendChild(label);
     item.appendChild(deleteButton);
-    elements.skillsList.appendChild(item);
+    skillsList.appendChild(item);
   });
 };
 
-// 保存技能启用状态与目录配置
 const saveSkills = async () => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills`;
-  const enabled = state.skills.skills.filter((skill) => skill.enabled).map((skill) => skill.name);
+  const enabled = state.skills.skills
+    .filter((skill) => skill.enabled)
+    .map((skill) => skill.name);
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -189,13 +381,42 @@ const saveSkills = async () => {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
+  const activeName = getActiveSkill()?.name || "";
   state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
   state.skills.skills = Array.isArray(result.skills) ? result.skills : [];
+  viewState.selectedIndex = activeName
+    ? state.skills.skills.findIndex((item) => item.name === activeName)
+    : -1;
   renderSkills();
   syncPromptTools();
 };
 
-// 上传技能压缩包并刷新技能列表
+const deleteSkill = async (skill) => {
+  const skillName = String(skill?.name || "").trim();
+  if (!skillName) {
+    throw new Error(t("skills.nameRequired"));
+  }
+  if (!window.confirm(t("skills.deleteConfirm", { name: skillName }))) {
+    return null;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/skills?name=${encodeURIComponent(skillName)}`;
+  const response = await fetch(endpoint, { method: "DELETE" });
+  if (!response.ok) {
+    const detail = await extractErrorMessage(response);
+    if (response.status === 404) {
+      throw new Error(detail || t("skills.notFound"));
+    }
+    if (detail) {
+      throw new Error(detail);
+    }
+    throw new Error(t("skills.deleteFailed", { status: response.status }));
+  }
+  await loadSkills();
+  syncPromptTools();
+  return skillName;
+};
+
 const uploadSkillZip = async (file) => {
   if (!file) {
     return;
@@ -220,22 +441,66 @@ const uploadSkillZip = async (file) => {
   syncPromptTools();
 };
 
-// 初始化技能面板交互
-export const initSkillsPanel = () => {
-  // 技能详情弹窗：支持点击关闭按钮或遮罩层关闭
-  elements.skillModalClose.addEventListener("click", closeSkillDetailModal);
-  elements.skillModalCloseBtn.addEventListener("click", closeSkillDetailModal);
-  elements.skillModal.addEventListener("click", (event) => {
-    if (event.target === elements.skillModal) {
-      closeSkillDetailModal();
+const saveSkillFile = async () => {
+  const skill = getActiveSkill();
+  if (!skill) {
+    notify(t("skills.file.selectSkillRequired"), "warn");
+    return;
+  }
+  if (!viewState.activeFile) {
+    notify(t("skills.file.selectRequired"), "warn");
+    return;
+  }
+  try {
+    const content = skillFileContent ? skillFileContent.value : viewState.fileContent;
+    const result = await saveSkillFileContent(skill.name, viewState.activeFile, content);
+    viewState.fileContent = content;
+    appendLog(t("skills.file.saveSuccess"));
+    notify(t("skills.file.saveSuccess"), "success");
+    if (result?.reloaded) {
+      await loadSkills();
     }
+  } catch (error) {
+    notify(t("skills.file.saveFailed", { message: error.message }), "error");
+  }
+};
+
+// Pull skills list and render left sidebar.
+export const loadSkills = async () => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/skills`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  const previousName = getActiveSkill()?.name || "";
+  state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
+  state.skills.skills = Array.isArray(result.skills) ? result.skills : [];
+  viewState.selectedIndex = previousName
+    ? state.skills.skills.findIndex((item) => item.name === previousName)
+    : -1;
+  renderSkills();
+  if (viewState.selectedIndex < 0) {
+    clearSkillDetail();
+  } else {
+    renderSkillDetailHeader(getActiveSkill());
+    renderSkillFileTree();
+    renderSkillEditor();
+  }
+};
+
+// Initialize skill panel interactions.
+export const initSkillsPanel = () => {
+  addSkillBtn?.addEventListener("click", () => {
+    if (!skillUploadInput) {
+      return;
+    }
+    skillUploadInput.value = "";
+    skillUploadInput.click();
   });
-  elements.addSkillBtn.addEventListener("click", () => {
-    elements.skillUploadInput.value = "";
-    elements.skillUploadInput.click();
-  });
-  elements.skillUploadInput.addEventListener("change", async () => {
-    const file = elements.skillUploadInput.files?.[0];
+  skillUploadInput?.addEventListener("change", async () => {
+    const file = skillUploadInput.files?.[0];
     if (!file) {
       return;
     }
@@ -248,21 +513,24 @@ export const initSkillsPanel = () => {
       notify(t("skills.upload.failed", { message: error.message }), "error");
     }
   });
-  elements.refreshSkillsBtn.addEventListener("click", async () => {
+  refreshSkillsBtn?.addEventListener("click", async () => {
     try {
       await loadSkills();
       notify(t("skills.refresh.success"), "success");
     } catch (error) {
-      elements.skillsList.textContent = t("common.loadFailedWithMessage", {
-        message: error.message,
-      });
+      if (skillsList) {
+        skillsList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
+      }
       notify(t("skills.refresh.failed", { message: error.message }), "error");
     }
   });
+  skillFileSaveBtn?.addEventListener("click", saveSkillFile);
+  skillFileContent?.addEventListener("input", () => {
+    viewState.fileContent = skillFileContent.value;
+  });
+  renderSkillDetailHeader(getActiveSkill());
+  renderSkillFileTree();
+  renderSkillEditor();
 };
-
-
-
-
-
-

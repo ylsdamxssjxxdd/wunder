@@ -7,12 +7,12 @@ use crate::knowledge;
 use crate::llm;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::path_utils::{
-    normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+    is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
-use crate::skills::load_skills;
+use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::throughput::{
     ThroughputConfig, ThroughputReport, ThroughputSnapshot, ThroughputStatusResponse,
@@ -67,6 +67,11 @@ pub fn router() -> Router<Arc<AppState>> {
                 .delete(admin_skills_delete),
         )
         .route("/wunder/admin/skills/content", get(admin_skills_content))
+        .route("/wunder/admin/skills/files", get(admin_skills_files))
+        .route(
+            "/wunder/admin/skills/file",
+            get(admin_skills_file).put(admin_skills_file_update),
+        )
         .route("/wunder/admin/skills/upload", post(admin_skills_upload))
         .route(
             "/wunder/admin/tools",
@@ -868,6 +873,49 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
     })))
 }
 
+fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
+    let mut scan_paths = config.skills.paths.clone();
+    let eva_skills = Path::new("EVA_SKILLS");
+    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
+        scan_paths.push("EVA_SKILLS".to_string());
+    }
+    let mut scan_config = config.clone();
+    scan_config.skills.paths = scan_paths;
+    scan_config.skills.enabled = Vec::new();
+    let registry = load_skills(&scan_config, false, false, false);
+    registry
+        .get(name)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))
+}
+
+fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
+    let rel = Path::new(relative_path);
+    if rel.is_absolute() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.absolute_path_forbidden"),
+        ));
+    }
+    if rel
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.path_out_of_bounds"),
+        ));
+    }
+    let target = root.join(rel);
+    let normalized = normalize_target_path(&target);
+    if !is_within_root(root, &normalized) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.path_out_of_bounds"),
+        ));
+    }
+    Ok(normalized)
+}
+
 async fn admin_skills_content(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SkillContentQuery>,
@@ -914,6 +962,147 @@ async fn admin_skills_content(
         "name": spec.name,
         "path": skill_path.to_string_lossy(),
         "content": content
+    })))
+}
+
+async fn admin_skills_files(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SkillFilesQuery>,
+) -> Result<Json<Value>, Response> {
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, name)?;
+    let root = normalize_existing_path(&spec.root);
+    if !root.exists() || !root.is_dir() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        let rel_text = rel.to_string_lossy().replace('\\', "/");
+        let kind = if entry.file_type().is_dir() {
+            "dir"
+        } else {
+            "file"
+        };
+        entries.push((rel_text, kind.to_string()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let payload = entries
+        .into_iter()
+        .map(|(path, kind)| json!({ "path": path, "kind": kind }))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "name": spec.name,
+        "root": root.to_string_lossy().replace('\\', "/"),
+        "entries": payload
+    })))
+}
+
+async fn admin_skills_file(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SkillFileQuery>,
+) -> Result<Json<Value>, Response> {
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let relative_path = query.path.trim();
+    if relative_path.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.file_path_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, name)?;
+    let root = normalize_existing_path(&spec.root);
+    let target = resolve_skill_file_path(&root, relative_path)?;
+    if !target.exists() || !target.is_file() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    let content = tokio::fs::read_to_string(&target).await.map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t_with_params(
+                "error.skill_file_read_failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            ),
+        )
+    })?;
+    let rel = target.strip_prefix(&root).unwrap_or(&target);
+    let rel_text = rel.to_string_lossy().replace('\\', "/");
+    Ok(Json(json!({
+        "name": spec.name,
+        "path": rel_text,
+        "content": content
+    })))
+}
+
+async fn admin_skills_file_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SkillFileUpdate>,
+) -> Result<Json<Value>, Response> {
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let relative_path = payload.path.trim();
+    if relative_path.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.file_path_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, name)?;
+    let root = normalize_existing_path(&spec.root);
+    let target = resolve_skill_file_path(&root, relative_path)?;
+    if !target.exists() || !target.is_file() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    tokio::fs::write(&target, payload.content.as_bytes())
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let should_reload = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("SKILL.md"))
+        .unwrap_or(false);
+    if should_reload {
+        state.reload_skills(&config).await;
+    }
+    let rel = target.strip_prefix(&root).unwrap_or(&target);
+    let rel_text = rel.to_string_lossy().replace('\\', "/");
+    Ok(Json(json!({
+        "ok": true,
+        "path": rel_text,
+        "reloaded": should_reload
     })))
 }
 
@@ -3482,6 +3671,24 @@ struct SkillDeleteQuery {
 #[derive(Debug, Deserialize)]
 struct SkillContentQuery {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillFilesQuery {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillFileQuery {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillFileUpdate {
+    name: String,
+    path: String,
+    content: String,
 }
 
 #[derive(Debug, Deserialize)]

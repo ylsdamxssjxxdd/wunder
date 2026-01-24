@@ -3977,6 +3977,143 @@ button.danger {
   min-height: 70px;
 }
 
+.skills-layout {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
+  gap: 14px;
+  overflow: hidden;
+}
+
+.skills-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  padding: 12px;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.2);
+}
+
+.skills-sidebar .skills-list {
+  border-color: #cbd5f5;
+  background: #fff;
+}
+
+.skills-detail {
+  display: grid;
+  grid-template-rows: minmax(180px, 1fr) minmax(220px, 1.2fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skills-detail-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+}
+
+.skills-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4c1d95;
+  background: #ede9fe;
+  border: 1px solid #c7d2fe;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.skill-file-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 1px dashed #c7d2fe;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px;
+  overflow: auto;
+  color: #1f2937;
+}
+
+.skill-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.skill-tree-item.is-file {
+  cursor: pointer;
+}
+
+.skill-tree-item.is-file:hover {
+  background: #e0edff;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
+.skill-tree-item.is-active {
+  background: #dbeafe;
+  box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
+.skill-tree-item.is-dir {
+  color: #475569;
+}
+
+.skill-tree-item.is-dir i {
+  color: #6366f1;
+}
+
+.skill-tree-item.is-file i {
+  color: #0ea5e9;
+}
+
+.skill-tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-editor-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
+  border: 1px solid #cbd5f5;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 13px;
+  background: #f8fafc;
+}
+
+.skill-editor-text:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+#skillsPanel .skill-item.is-active {
+  background: #e0edff;
+  box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
 .knowledge-section {
   display: flex;
   flex-direction: column;

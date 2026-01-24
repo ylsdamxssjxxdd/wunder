@@ -280,6 +280,26 @@
 - `DELETE` Query: `name`
 - Note: only skills under `EVA_SKILLS` can be deleted.
 
+### 4.1.5.1 `/wunder/admin/skills/content`
+
+- Method: `GET`
+- Query: `name`
+- Response: `name`, `path`, `content`
+
+### 4.1.5.2 `/wunder/admin/skills/files`
+
+- Method: `GET`
+- Query: `name`
+- Response: `name`, `root`, `entries` (`path`, `kind` as `dir/file`)
+
+### 4.1.5.3 `/wunder/admin/skills/file`
+
+- Method: `GET/PUT`
+- `GET` Query: `name`, `path` (relative to skill root)
+- `GET` Response: `name`, `path`, `content`
+- `PUT` Body: `name`, `path`, `content`
+- `PUT` Response: `ok`, `path`, `reloaded` (true when SKILL.md triggers reload)
+
 ### 4.1.6 `/wunder/admin/llm`
 
 - Method: `GET/POST`

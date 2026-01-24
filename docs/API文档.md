@@ -396,6 +396,45 @@
   - `message`：删除说明
 - 说明：仅允许删除 `EVA_SKILLS` 目录内的技能。
 
+### 4.1.5.1 `/wunder/admin/skills/content`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `path`：SKILL.md 路径
+  - `content`：SKILL.md 内容
+
+### 4.1.5.2 `/wunder/admin/skills/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `root`：技能目录绝对路径
+  - `entries`：目录结构条目（`path` 相对路径，`kind` 为 `dir/file`）
+
+### 4.1.5.3 `/wunder/admin/skills/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+- `GET` 返回（JSON）：
+  - `name`：技能名称
+  - `path`：文件相对路径
+  - `content`：文件内容
+- `PUT` 入参（JSON）：
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否保存成功
+  - `path`：文件相对路径
+  - `reloaded`：是否触发技能刷新（更新 SKILL.md 时为 true）
+
 ### 4.1.6 `/wunder/admin/llm`
 
 - 方法：`GET/POST`
@@ -743,7 +782,7 @@
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
-- 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
+- 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。

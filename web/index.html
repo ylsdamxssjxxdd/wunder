@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260122-03" />
+    <link rel="stylesheet" href="./app.css?v=20260124-01" />
   </head>
   <body>
     <div class="app">
@@ -1603,8 +1603,53 @@
             </div>
           </div>
           <div class="tips" data-i18n="skills.tip">从技能目录读取可用技能，勾选后会注入系统提示词。</div>
-          <div class="skills-panel">
-            <div id="skillsList" class="skills-list"></div>
+          <div class="skills-layout">
+            <div class="skills-sidebar">
+              <div class="skills-section-title" data-i18n="skills.list.title">技能列表</div>
+              <div id="skillsList" class="skills-list"></div>
+            </div>
+            <div class="skills-detail">
+              <div class="skills-detail-pane">
+                <div class="detail-header">
+                  <div>
+                    <div
+                      id="skillDetailTitle"
+                      class="detail-title"
+                      data-i18n="skills.detail.unselected"
+                    >
+                      未选择技能
+                    </div>
+                    <div id="skillDetailMeta" class="muted"></div>
+                  </div>
+                </div>
+                <div class="skills-section-title" data-i18n="skills.detail.structure">
+                  技能目录结构
+                </div>
+                <div id="skillFileTree" class="skill-file-tree"></div>
+              </div>
+              <div class="skills-detail-pane">
+                <div class="detail-header">
+                  <div>
+                    <div class="detail-title" data-i18n="skills.editor.title">文件修改区</div>
+                    <div id="skillEditorPath" class="muted" data-i18n="skills.file.unselected">
+                      未选择文件
+                    </div>
+                  </div>
+                  <div class="detail-actions">
+                    <button id="skillFileSaveBtn" class="btn-with-icon btn-compact">
+                      <i class="fa-solid fa-floppy-disk"></i>
+                      <span data-i18n="common.save">保存</span>
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  id="skillFileContent"
+                  class="skill-editor-text"
+                  placeholder="选择文件后可编辑"
+                  data-i18n-placeholder="skills.file.placeholder"
+                ></textarea>
+              </div>
+            </div>
           </div>
         </section>
         <section id="knowledgePanel" class="panel">
@@ -4146,6 +4191,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260122-03"></script>
+    <script type="module" src="./app.js?v=20260124-01"></script>
 </body>
 </html>

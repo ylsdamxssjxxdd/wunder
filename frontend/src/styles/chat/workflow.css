@@ -1,0 +1,493 @@
+.chat-shell .message-workflow {
+  border: none;
+  background: transparent;
+  padding: 6px 0 0;
+}
+
+.chat-shell .message-workflow summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--chat-muted);
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  font-size: 12px;
+}
+
+.chat-shell .workflow-spacer {
+  flex: 1 1 auto;
+}
+
+.chat-shell .workflow-plan-btn {
+  border: 1px solid rgba(109, 213, 255, 0.4);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--chat-primary);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.chat-shell .workflow-plan-btn:hover {
+  color: var(--chat-text);
+  border-color: rgba(109, 213, 255, 0.6);
+}
+
+.chat-shell .workflow-plan-btn.is-active {
+  color: var(--chat-muted);
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.chat-shell .workflow-plan-icon {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.chat-shell .message-workflow summary::marker {
+  display: none;
+}
+
+.chat-shell .message-workflow summary::before {
+  content: ">";
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.chat-shell .message-workflow[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-shell .workflow-count {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  color: var(--chat-text);
+}
+
+.chat-shell .workflow-content {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding: 0 2px 0 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+}
+
+.chat-shell .workflow-empty {
+  color: var(--chat-muted);
+  font-size: 12px;
+}
+
+.chat-shell .workflow-item {
+  --workflow-border: rgba(255, 255, 255, 0.08);
+  --workflow-bg: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: var(--chat-muted);
+  cursor: pointer;
+  border: 1px solid var(--workflow-border);
+  background: var(--workflow-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chat-shell .workflow-item:last-child {
+  margin-bottom: 0;
+}
+
+.chat-shell .workflow-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px var(--workflow-border);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-default,
+.chat-shell .workflow-item.workflow-item--tool-mcp {
+  --workflow-border: rgba(252, 211, 77, 0.35);
+  --workflow-bg: rgba(253, 230, 138, 0.08);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-builtin {
+  --workflow-border: rgba(147, 197, 253, 0.35);
+  --workflow-bg: rgba(147, 197, 253, 0.08);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-knowledge {
+  --workflow-border: rgba(249, 168, 212, 0.35);
+  --workflow-bg: rgba(249, 168, 212, 0.08);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-skill {
+  --workflow-border: rgba(134, 239, 172, 0.35);
+  --workflow-bg: rgba(134, 239, 172, 0.08);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-user {
+  --workflow-border: rgba(244, 114, 182, 0.35);
+  --workflow-bg: rgba(244, 114, 182, 0.08);
+}
+
+.chat-shell .workflow-item.workflow-item--tool-shared {
+  --workflow-border: rgba(125, 211, 252, 0.35);
+  --workflow-bg: rgba(125, 211, 252, 0.08);
+}
+
+.chat-shell .workflow-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-shell .workflow-title {
+  color: var(--chat-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.chat-shell .workflow-preview {
+  color: var(--chat-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
+.chat-shell .status-indicator {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.chat-shell .status-indicator.loading {
+  border: 2px solid rgba(77, 216, 255, 0.25);
+  border-top-color: var(--chat-primary);
+  animation: spin 1s linear infinite;
+}
+
+.chat-shell .status-indicator.completed {
+  background: transparent;
+  border: none;
+  position: relative;
+}
+
+.chat-shell .status-indicator.completed::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 8px;
+  border-right: 2px solid #34d399;
+  border-bottom: 2px solid #34d399;
+  transform: translate(-50%, -50%) rotate(45deg);
+  top: 50%;
+  left: 50%;
+}
+
+.chat-shell .status-indicator.failed {
+  background: linear-gradient(135deg, #f87171, #ef4444);
+  color: #0a0d19;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-shell .status-indicator.failed::after {
+  content: "!";
+}
+
+.chat-shell .workflow-loading {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+.chat-shell .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--chat-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.workflow-dialog {
+  --chat-text: #f1f5f9;
+  --chat-primary: #6ad9ff;
+  --workflow-surface: rgba(9, 14, 28, 0.96);
+  --workflow-border: rgba(77, 216, 255, 0.28);
+  --workflow-header: rgba(77, 216, 255, 0.12);
+  --workflow-header-accent: rgba(155, 140, 254, 0.12);
+  --el-dialog-bg-color: #111a2f;
+  --el-text-color-primary: #f1f5f9;
+  --el-text-color-regular: #f1f5f9;
+  --el-text-color-secondary: #b3bccb;
+  --el-border-color: rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+}
+
+.workflow-dialog.el-dialog {
+  background: linear-gradient(160deg, rgba(17, 26, 47, 0.98), var(--workflow-surface));
+  border: 1px solid var(--workflow-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(5, 8, 18, 0.55), 0 0 0 1px rgba(77, 216, 255, 0.08) inset;
+}
+
+.workflow-dialog .el-dialog__header {
+  border-bottom: 1px solid rgba(77, 216, 255, 0.25);
+  background: linear-gradient(90deg, var(--workflow-header), var(--workflow-header-accent));
+  padding: 16px 20px 12px;
+  position: relative;
+}
+
+.workflow-dialog .el-dialog__title {
+  color: var(--chat-text);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.workflow-dialog .el-dialog__headerbtn {
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+}
+
+.workflow-dialog .el-dialog__headerbtn .el-dialog__close {
+  color: var(--chat-muted);
+  font-size: 16px;
+}
+
+.workflow-dialog .el-dialog__headerbtn:hover .el-dialog__close {
+  color: var(--chat-text);
+}
+
+.workflow-dialog .el-dialog__body {
+  padding: 16px 20px 20px;
+}
+
+.workflow-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  color: var(--chat-primary, #4dd8ff);
+  margin-bottom: 12px;
+}
+
+.workflow-dialog-title::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--chat-primary, #4dd8ff);
+  box-shadow: 0 0 10px rgba(77, 216, 255, 0.6);
+}
+
+.workflow-dialog-detail {
+  margin: 0;
+  white-space: pre-wrap;
+  background: rgba(11, 17, 35, 0.75);
+  border: 1px solid rgba(77, 216, 255, 0.25);
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: var(--chat-text, #f1f5f9);
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.plan-dialog {
+  --chat-text: #f1f5f9;
+  --chat-primary: #6ad9ff;
+  --plan-surface: rgba(12, 18, 36, 0.6);
+  --plan-card: rgba(15, 23, 42, 0.55);
+  --plan-border: rgba(77, 216, 255, 0.18);
+  --plan-badge-bg: rgba(255, 255, 255, 0.06);
+  --plan-badge-border: rgba(255, 255, 255, 0.12);
+  --plan-header: rgba(77, 216, 255, 0.12);
+  --plan-header-accent: rgba(155, 140, 254, 0.12);
+  --el-dialog-bg-color: #111a2f;
+  --el-text-color-primary: #f1f5f9;
+  --el-text-color-regular: #f1f5f9;
+  --el-text-color-secondary: #b3bccb;
+  --el-border-color: rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+}
+
+.plan-dialog.el-dialog {
+  background: linear-gradient(160deg, rgba(17, 26, 47, 0.98), rgba(9, 14, 28, 0.98));
+  border: 1px solid rgba(77, 216, 255, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(5, 8, 18, 0.55), 0 0 0 1px rgba(77, 216, 255, 0.08) inset;
+}
+
+.plan-dialog .el-dialog__header {
+  border-bottom: 1px solid rgba(77, 216, 255, 0.25);
+  background: linear-gradient(90deg, var(--plan-header), var(--plan-header-accent));
+  padding: 16px 20px 12px;
+  position: relative;
+}
+
+.plan-dialog .el-dialog__title {
+  color: var(--chat-text);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.plan-dialog .el-dialog__headerbtn {
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+}
+
+.plan-dialog .el-dialog__headerbtn .el-dialog__close {
+  color: var(--chat-muted);
+  font-size: 16px;
+}
+
+.plan-dialog .el-dialog__headerbtn:hover .el-dialog__close {
+  color: var(--chat-text);
+}
+
+.plan-dialog .el-dialog__body {
+  padding: 16px 20px 20px;
+}
+
+.plan-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--plan-surface);
+  border: 1px solid var(--plan-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.plan-explanation {
+  font-size: 12px;
+  color: var(--chat-muted);
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(77, 216, 255, 0.22);
+  border-radius: 10px;
+  padding: 10px 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid var(--plan-accent, rgba(148, 163, 184, 0.6));
+  background: var(--plan-card);
+  box-shadow: 0 12px 26px rgba(6, 10, 22, 0.35);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.plan-step:hover {
+  transform: translateY(-1px);
+  border-top-color: rgba(109, 213, 255, 0.4);
+  border-right-color: rgba(109, 213, 255, 0.4);
+  border-bottom-color: rgba(109, 213, 255, 0.4);
+}
+
+.plan-step--pending {
+  --plan-accent: rgba(148, 163, 184, 0.6);
+  border-top-color: rgba(148, 163, 184, 0.4);
+  border-right-color: rgba(148, 163, 184, 0.4);
+  border-bottom-color: rgba(148, 163, 184, 0.4);
+}
+
+.plan-step--in_progress {
+  --plan-accent: rgba(96, 165, 250, 0.8);
+  border-top-color: rgba(96, 165, 250, 0.55);
+  border-right-color: rgba(96, 165, 250, 0.55);
+  border-bottom-color: rgba(96, 165, 250, 0.55);
+}
+
+.plan-step--completed {
+  --plan-accent: rgba(74, 222, 128, 0.8);
+  border-top-color: rgba(74, 222, 128, 0.5);
+  border-right-color: rgba(74, 222, 128, 0.5);
+  border-bottom-color: rgba(74, 222, 128, 0.5);
+}
+
+.plan-index {
+  font-size: 12px;
+  color: var(--chat-text);
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.plan-text {
+  flex: 1 1 auto;
+  color: var(--chat-text);
+  font-size: 13px;
+}
+
+.plan-status {
+  font-size: 11px;
+  color: var(--chat-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--plan-badge-bg);
+  border: 1px solid var(--plan-badge-border);
+}
+
+.plan-step--in_progress .plan-status {
+  color: #bfdbfe;
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(96, 165, 250, 0.45);
+}
+
+.plan-step--completed .plan-status {
+  color: #bbf7d0;
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+.plan-empty {
+  font-size: 12px;
+  color: var(--chat-muted);
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(15, 23, 42, 0.45);
+  text-align: center;
+}
+

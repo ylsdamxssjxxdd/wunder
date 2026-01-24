@@ -34,3 +34,5 @@ export const notify = (message, type = "info", options = {}) => {
     }, 280);
   }, hideDelay);
 };
+
+

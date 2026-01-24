@@ -1,7 +1,10 @@
 ﻿<template>
   <div class="inquiry-panel">
     <div class="inquiry-panel-header">
-      <div class="inquiry-panel-title">问询面板</div>
+      <div class="inquiry-panel-title">
+        问询面板
+        <span class="inquiry-panel-mode">{{ modeLabel }}</span>
+      </div>
       <div class="inquiry-panel-question">{{ panel.question }}</div>
     </div>
     <div class="inquiry-panel-routes">
@@ -35,7 +38,7 @@
         发送选择
       </button>
     </div>
-    <div class="inquiry-panel-hint">也可以直接输入消息继续。</div>
+    <div class="inquiry-panel-hint">{{ modeHint }}，也可以直接输入消息继续。</div>
   </div>
 </template>
 
@@ -54,6 +57,10 @@ const emit = defineEmits(['select', 'dismiss']);
 const selectedIndices = ref([]);
 const isMultiple = computed(() => props.panel?.multiple === true);
 const canSubmit = computed(() => selectedIndices.value.length > 0);
+const modeLabel = computed(() => (isMultiple.value ? '多选' : '单选'));
+const modeHint = computed(() =>
+  isMultiple.value ? '多选，可选择多个选项' : '单选，再次点击已选项可取消'
+);
 
 const resetSelection = () => {
   selectedIndices.value = [];
@@ -61,7 +68,11 @@ const resetSelection = () => {
 
 const toggleSelection = (index) => {
   if (!isMultiple.value) {
-    selectedIndices.value = [index];
+    if (selectedIndices.value.length === 1 && selectedIndices.value[0] === index) {
+      selectedIndices.value = [];
+    } else {
+      selectedIndices.value = [index];
+    }
     return;
   }
   const next = new Set(selectedIndices.value);

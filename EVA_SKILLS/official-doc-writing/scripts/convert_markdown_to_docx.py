@@ -216,25 +216,25 @@ def configure_section(section, args: argparse.Namespace) -> None:
 
 
 def setup_styles(doc: Document, args: argparse.Namespace) -> None:
+    if args.first_line_indent_cm > 0:
+        first_line_indent = Cm(args.first_line_indent_cm)
+    else:
+        first_line_indent = Pt(args.font_size * args.first_line_indent_chars)
+
     normal = doc.styles["Normal"]
     set_style_font(normal, args.font, args.font_size, None, args.digit_font)
     normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     normal.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
     normal.paragraph_format.space_before = Pt(0)
     normal.paragraph_format.space_after = Pt(0)
-    if args.first_line_indent_cm > 0:
-        normal.paragraph_format.first_line_indent = Cm(args.first_line_indent_cm)
-    else:
-        normal.paragraph_format.first_line_indent = Pt(
-            args.font_size * args.first_line_indent_chars
-        )
+    normal.paragraph_format.first_line_indent = first_line_indent
 
     heading_1 = doc.styles["Heading 1"]
     set_style_font(heading_1, args.title_font, args.title_size, False, args.digit_font)
     heading_1.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
     heading_1.paragraph_format.space_before = Pt(0)
     heading_1.paragraph_format.space_after = Pt(0)
-    heading_1.paragraph_format.first_line_indent = Pt(0)
+    heading_1.paragraph_format.first_line_indent = first_line_indent
     heading_1.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     heading_1.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
@@ -243,7 +243,7 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_2.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_2.paragraph_format.space_before = Pt(0)
     heading_2.paragraph_format.space_after = Pt(0)
-    heading_2.paragraph_format.first_line_indent = Pt(0)
+    heading_2.paragraph_format.first_line_indent = first_line_indent
     heading_2.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     heading_2.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
@@ -252,7 +252,7 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_3.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_3.paragraph_format.space_before = Pt(0)
     heading_3.paragraph_format.space_after = Pt(0)
-    heading_3.paragraph_format.first_line_indent = Pt(0)
+    heading_3.paragraph_format.first_line_indent = first_line_indent
     heading_3.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     heading_3.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
@@ -261,7 +261,7 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_4.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_4.paragraph_format.space_before = Pt(0)
     heading_4.paragraph_format.space_after = Pt(0)
-    heading_4.paragraph_format.first_line_indent = Pt(0)
+    heading_4.paragraph_format.first_line_indent = first_line_indent
     heading_4.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     heading_4.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
@@ -270,7 +270,7 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_5.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_5.paragraph_format.space_before = Pt(0)
     heading_5.paragraph_format.space_after = Pt(0)
-    heading_5.paragraph_format.first_line_indent = Pt(0)
+    heading_5.paragraph_format.first_line_indent = first_line_indent
     heading_5.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     heading_5.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
@@ -372,10 +372,17 @@ def to_chinese_number(value: int) -> str:
     return str(value)
 
 
-LEVEL2_NUMBER_RE = re.compile(r"^([一二三四五六七八九十百千]+、|\d+[\.、])")
+LEVEL2_NUMBER_RE = re.compile(r"^[一二三四五六七八九十百千]+、")
 LEVEL3_NUMBER_RE = re.compile(r"^[（(][一二三四五六七八九十百千]+[）)]")
 LEVEL4_NUMBER_RE = re.compile(r"^\d+[\.、]")
 LEVEL5_NUMBER_RE = re.compile(r"^[（(]\d+[）)]")
+HEADING_NUMBER_PREFIXES = [
+    re.compile(r"^[一二三四五六七八九十百千]+[、\.．]\s*"),
+    re.compile(r"^\d+[\.．、]\s*"),
+    re.compile(r"^[（(][一二三四五六七八九十百千]+[）)]\s*"),
+    re.compile(r"^[（(]\d+[）)]\s*"),
+]
+PROMOTE_ORDERED_LIST_KEYWORDS = ("步骤", "流程", "要点", "节点")
 TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 LINE_BREAK_RE = re.compile(r"(\\\\)\\s*$", re.IGNORECASE)
 BR_TAG_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -392,6 +399,76 @@ def has_numbering(level: int, title: str) -> bool:
     if level == 5:
         return bool(LEVEL5_NUMBER_RE.match(title))
     return False
+
+
+def strip_heading_number_prefix(title: str) -> tuple[str, bool]:
+    for pattern in HEADING_NUMBER_PREFIXES:
+        if pattern.match(title):
+            return pattern.sub("", title, count=1).lstrip(), True
+    return title, False
+
+
+def normalize_heading_title(level: int, title: str) -> tuple[str, bool]:
+    title = title.strip()
+    if level > 1 and has_numbering(level, title):
+        return title, True
+    stripped, stripped_any = strip_heading_number_prefix(title)
+    if stripped_any and stripped:
+        return stripped, False
+    return title, False
+
+
+def should_promote_ordered_list(heading_level: int, heading_title: str) -> bool:
+    if heading_level < 2 or heading_level >= 5:
+        return False
+    if not heading_title:
+        return False
+    normalized_title, _ = strip_heading_number_prefix(heading_title)
+    title = normalized_title.strip() or heading_title.strip()
+    return any(keyword in title for keyword in PROMOTE_ORDERED_LIST_KEYWORDS)
+
+
+def promote_ordered_list_headings(md_text: str) -> str:
+    lines = md_text.splitlines()
+    output: list[str] = []
+    in_code_block = False
+    heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
+    ordered_re = re.compile(r"^(\d+[.)、])\s*(.*)$")
+    last_heading_level = 0
+    last_heading_title = ""
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            output.append(line)
+            continue
+        if in_code_block:
+            output.append(line)
+            continue
+
+        heading = heading_re.match(stripped)
+        if heading:
+            prefix, title = heading.groups()
+            last_heading_level = len(prefix)
+            last_heading_title = title.strip()
+            output.append(line)
+            continue
+
+        ordered_match = ordered_re.match(stripped)
+        if ordered_match:
+            indent = line[: len(line) - len(stripped)]
+            if not indent and should_promote_ordered_list(last_heading_level, last_heading_title):
+                item_title = ordered_match.group(2).strip()
+                if item_title:
+                    promoted_level = min(last_heading_level + 1, 5)
+                    output.append(f"{'#' * promoted_level} {item_title}")
+                    continue
+
+        output.append(line)
+
+    return "\n".join(output)
 
 
 def apply_heading_numbering(md_text: str) -> str:
@@ -424,36 +501,50 @@ def apply_heading_numbering(md_text: str) -> str:
             output.append(line)
             continue
 
+        title = title.strip()
         if level == 1:
             title_count += 1
             counters = [0, 0, 0, 0]
-            numbered = title
+            cleaned, _ = strip_heading_number_prefix(title)
+            numbered = cleaned if cleaned else title
         elif level == 2:
             counters[0] += 1
             counters[1:] = [0, 0, 0]
+            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title = normalized_title.strip() or title
             numbered = (
-                title
-                if has_numbering(level, title)
-                else f"{to_chinese_number(counters[0])}、{title}"
+                normalized_title
+                if has_expected
+                else f"{to_chinese_number(counters[0])}、{normalized_title}"
             )
         elif level == 3:
             counters[1] += 1
             counters[2:] = [0, 0]
+            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title = normalized_title.strip() or title
             numbered = (
-                title
-                if has_numbering(level, title)
-                else f"（{to_chinese_number(counters[1])}）{title}"
+                normalized_title
+                if has_expected
+                else f"（{to_chinese_number(counters[1])}）{normalized_title}"
             )
         elif level == 4:
             counters[2] += 1
             counters[3] = 0
+            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title = normalized_title.strip() or title
             numbered = (
-                title if has_numbering(level, title) else f"{counters[2]}.{title}"
+                normalized_title
+                if has_expected
+                else f"{counters[2]}.{normalized_title}"
             )
         else:
             counters[3] += 1
+            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title = normalized_title.strip() or title
             numbered = (
-                title if has_numbering(level, title) else f"（{counters[3]}）{title}"
+                normalized_title
+                if has_expected
+                else f"（{counters[3]}）{normalized_title}"
             )
 
         indent = line[: len(line) - len(stripped)]
@@ -881,9 +972,11 @@ def parse_inline_markdown(text: str, base_style: Optional[InlineStyle] = None) -
         ):
             if not text.startswith(marker, i):
                 continue
-            if not can_toggle_marker(text, i, marker):
+            can_close = any(getattr(state, flag) for flag in toggles)
+            if not can_toggle_marker(text, i, marker) and not can_close:
                 break
-            if text.find(marker, i + len(marker)) == -1:
+            next_index = text.find(marker, i + len(marker))
+            if next_index == -1 and not can_close:
                 break
             flush_buffer()
             for flag in toggles:
@@ -1039,7 +1132,7 @@ def add_table(
 def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> None:
     lines = md_text.splitlines()
     heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
-    ordered_re = re.compile(r"^\d+[.)、]\s+")
+    ordered_re = re.compile(r"^\d+[.)、]\s*")
     bullet_re = re.compile(r"^[-+*]\s+")
     task_re = re.compile(r"^[-+*]\s+\[( |x|X)\]\s+")
     header_keys = ["份号", "密级", "紧急程度", "发文机关标志", "发文字号", "签发人"]
@@ -1370,8 +1463,9 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     raw_text = input_path.read_text(encoding="utf-8-sig")
+    preprocessed_text = promote_ordered_list_headings(raw_text)
     try:
-        normalized_text = apply_heading_numbering(raw_text)
+        normalized_text = apply_heading_numbering(preprocessed_text)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

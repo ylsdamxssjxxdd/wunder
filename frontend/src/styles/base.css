@@ -1,0 +1,90 @@
+:root {
+  --dark-bg: #111c32;
+  --dark-panel: #17233b;
+  --dark-border: #2a3a55;
+  --dark-text: #f1f5f9;
+  --dark-muted: #b3bccb;
+  --accent: #4f7cff;
+  --light-bg: #f4f6fb;
+  --light-panel: #ffffff;
+  --light-border: #e5e7eb;
+  --light-text: #1f2937;
+  --scrollbar-size: 6px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-user-theme='dark'],
+:root[data-user-theme='light'],
+.theme-dark,
+.theme-light {
+  scrollbar-width: thin;
+}
+
+:root[data-user-theme='light'] {
+  scrollbar-color: rgba(15, 23, 42, 0.35) transparent;
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+:root[data-user-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.theme-light {
+  scrollbar-color: rgba(15, 23, 42, 0.35) transparent;
+}
+
+.theme-light ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.theme-light ::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.theme-dark {
+  background: var(--dark-bg);
+  color: var(--dark-text);
+}
+
+.theme-light {
+  background: var(--light-bg);
+  color: var(--light-text);
+}
+
