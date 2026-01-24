@@ -1,5 +1,7 @@
+import asyncio
 import fnmatch
 import json
+import locale
 import os
 import re
 import shlex
@@ -28,6 +30,7 @@ PTC_TIMEOUT_S = 60  # PTC 脚本默认超时时间（秒）
 SHELL_BUILTINS = {"cd", "export", "alias", "set", "source", ".", "ulimit", "unset", "exit"}
 SHELL_META_CHARS = set("|&;<>()$`<>")
 GLOB_CHARS = set("*?[]")
+DEFAULT_TEXT_ENCODING = locale.getpreferredencoding(False)
 
 
 def _command_requires_shell(command: str) -> bool:
@@ -46,6 +49,43 @@ def _command_requires_shell(command: str) -> bool:
     if "~" in stripped:
         return True
     return False
+
+
+async def _run_subprocess_async(
+    command: str,
+    tokens: Optional[List[str]],
+    cwd: Path,
+    timeout_s: int,
+    use_shell: bool,
+) -> Tuple[int, str, str]:
+    if use_shell:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *(tokens or []),
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout_s,
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        stdout_bytes, stderr_bytes = await process.communicate()
+        raise TimeoutError(f"timeout after {timeout_s}s")
+
+    stdout = stdout_bytes.decode(DEFAULT_TEXT_ENCODING)
+    stderr = stderr_bytes.decode(DEFAULT_TEXT_ENCODING)
+    return process.returncode or 0, stdout, stderr
 
 
 def _resolve_path_with_base(context: ToolContext, relative_path: str) -> Tuple[Path, Path]:
@@ -458,6 +498,113 @@ def execute_command(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
             }
         )
         if completed.returncode != 0:
+            return ToolResult(
+                ok=False,
+                data={
+                    "results": command_results,
+                },
+                error=t("tool.exec.failed"),
+            )
+
+    return ToolResult(ok=True, data={"results": command_results})
+
+
+async def execute_command_async(context: ToolContext, args: Dict[str, Any]) -> ToolResult:
+    """Execute command without blocking the event loop."""
+    content = str(args.get("content", "")).strip()
+    timeout_s = int(args.get("timeout_s", 30))
+    workdir = str(args.get("workdir", "")).strip()
+    raw_allow_commands = context.config.get("allow_commands", [])
+    allow_commands = {
+        str(item).strip().lower()
+        for item in raw_allow_commands
+        if str(item).strip()
+    }
+    allow_all = "*" in allow_commands
+    raw_shell = args.get("shell")
+    if raw_shell is None:
+        shell_override = None
+    elif isinstance(raw_shell, str):
+        shell_override = raw_shell.strip().lower() in {"1", "true", "yes", "y"}
+    else:
+        shell_override = bool(raw_shell)
+
+    if not content:
+        return ToolResult(ok=False, data={}, error=t("tool.exec.command_required"))
+
+    try:
+        cwd = _resolve_path(context, workdir or ".")
+    except ValueError as exc:
+        return ToolResult(ok=False, data={}, error=str(exc))
+    if not cwd.exists():
+        return ToolResult(ok=False, data={}, error=t("tool.exec.workdir_not_found"))
+    if not cwd.is_dir():
+        return ToolResult(ok=False, data={}, error=t("tool.exec.workdir_not_dir"))
+
+    def _strip_wrapped_quotes(token: str) -> str:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"\"", "'"}:
+            return token[1:-1]
+        return token
+
+    command_results: List[Dict[str, Any]] = []
+    for raw_line in content.splitlines():
+        command = raw_line.strip()
+        if not command:
+            continue
+        use_shell = shell_override
+        if use_shell is None:
+            use_shell = allow_all and _command_requires_shell(command)
+        if use_shell:
+            if not allow_all:
+                return ToolResult(
+                    ok=False,
+                    data={},
+                    error=t("tool.exec.shell_not_allowed"),
+                )
+            try:
+                returncode, stdout, stderr = await _run_subprocess_async(
+                    command,
+                    None,
+                    cwd,
+                    timeout_s,
+                    True,
+                )
+            except Exception as exc:
+                return ToolResult(
+                    ok=False,
+                    data={},
+                    error=t("tool.exec.command_failed", detail=str(exc)),
+                )
+        else:
+            tokens = shlex.split(command, posix=False)
+            tokens = [_strip_wrapped_quotes(token) for token in tokens]
+            if not tokens:
+                return ToolResult(ok=False, data={}, error=t("tool.exec.parse_failed"))
+            if not allow_all and tokens[0].lower() not in allow_commands:
+                return ToolResult(ok=False, data={}, error=t("tool.exec.not_allowed"))
+            try:
+                returncode, stdout, stderr = await _run_subprocess_async(
+                    command,
+                    tokens,
+                    cwd,
+                    timeout_s,
+                    False,
+                )
+            except Exception as exc:
+                return ToolResult(
+                    ok=False,
+                    data={},
+                    error=t("tool.exec.command_failed", detail=str(exc)),
+                )
+        command_results.append(
+            {
+                "command": command,
+                "returncode": returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+        )
+        if returncode != 0:
             return ToolResult(
                 ok=False,
                 data={

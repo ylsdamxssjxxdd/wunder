@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from concurrent.futures import ThreadPoolExecutor
 
 from app.core.i18n import resolve_language, reset_language, set_language, t
-from app.sandbox.runner import execute_payload
+from app.sandbox.runner import execute_payload_async
 from app.sandbox.schemas import (
     SandboxReleaseRequest,
     SandboxReleaseResponse,
@@ -94,7 +94,7 @@ def create_app() -> FastAPI:
             payload["workspace_root"] = workspace_root.as_posix()
             payload["allow_paths"] = _filter_allow_paths(request.allow_paths, container_root)
 
-            result, debug_events = await asyncio.to_thread(execute_payload, payload)
+            result, debug_events = await execute_payload_async(payload)
             return SandboxToolResponse(
                 ok=result.ok,
                 data=result.data,

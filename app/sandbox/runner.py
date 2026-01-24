@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 
 from app.core.i18n import reset_language, set_language, t
 from app.memory.workspace import WorkspaceContext
+from app.tools import builtin
 from app.tools.catalog import build_sandbox_tool_handlers
 from app.tools.types import ToolContext, ToolResult
 
@@ -80,6 +82,41 @@ def execute_payload(payload: Dict[str, Any]) -> Tuple[ToolResult, List[Dict[str,
     token = set_language(language) if language else None
     try:
         return _execute_tool(payload)
+    finally:
+        if token is not None:
+            reset_language(token)
+
+
+async def execute_payload_async(
+    payload: Dict[str, Any],
+) -> Tuple[ToolResult, List[Dict[str, Any]]]:
+    """Async entrypoint for sandbox tool execution."""
+    language = str(payload.get("language") or "").strip()
+    token = set_language(language) if language else None
+    try:
+        tool_name = str(payload.get("tool", "") or "")
+        args = payload.get("args", {}) or {}
+        context, debug_events = _build_context(payload)
+        func = BUILTIN_TOOL_MAP.get(tool_name)
+        if not func:
+            return (
+                ToolResult(ok=False, data={}, error=t("sandbox.error.unsupported_tool")),
+                debug_events,
+            )
+        if tool_name == "执行命令":
+            result = await builtin.execute_command_async(context, args)
+        else:
+            result = await asyncio.to_thread(func, context, args)
+        return result, debug_events
+    except Exception as exc:  # noqa: BLE001
+        return (
+            ToolResult(
+                ok=False,
+                data={},
+                error=t("sandbox.error.tool_failed", detail=str(exc)),
+            ),
+            debug_events,
+        )
     finally:
         if token is not None:
             reset_language(token)
