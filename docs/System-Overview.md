@@ -5,7 +5,7 @@ wunder is an agent router: for developers, everything is an interface (API/confi
 
 It also provides the A2A standard API at `/a2a` (JSON-RPC + SSE), and publishes AgentCard at `/.well-known/agent-card.json` for cross-system discovery.
 
-The self-hosted MCP endpoint `/wunder/mcp` is implemented by the Rust server (streamable-http). Legacy Python FastAPI code under `app/` is kept for reference and sandbox service only; `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` are the recommended runtime for the Rust server.
+The self-hosted MCP endpoint `/wunder/mcp` is implemented by the Rust server (streamable-http). The sandbox service runs the same Rust binary in `sandbox` mode (`WUNDER_SERVER_MODE=sandbox`); `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` are the recommended runtime for the Rust server.
 With `sandbox.mode=sandbox`, built-in tools like command execution run via the shared sandbox service (`WUNDER_SANDBOX_ENDPOINT`); for docker compose deployments, prefer internal DNS `http://sandbox:9001` and do not publish port 9001.
 Registered users are governed by daily request quotas (default tiers A/B/C), reset at midnight; each model call consumes one unit. Virtual `user_id`s are not quota-limited. Quota usage is surfaced via SSE (`quota_usage`) and UI stats for transparent cost control.
 
@@ -48,7 +48,7 @@ flowchart LR
 - Throughput testing (`src/throughput.rs`): run concurrency lists, randomize built-in questions, persist reports for replay/export.
 - Capability evaluation (`src/evaluation_runner.rs` + `src/api/evaluation.rs`): run case suites, clean eval temp dir on start, precreate active items; cases live in `config/evaluation/cases`.
 - Config (`src/config.rs` + `src/config_store.rs`): base config + admin overrides; supports `${ENV_VAR:-default}` expansion in YAML strings.
-- Legacy Python code lives in `app/` (reference only) and the sandbox service.
+- Sandbox server (`src/sandbox_server.rs`): run `wunder-server` in sandbox mode to provide `/sandboxes/execute_tool`.
 
 ## 3. Execution flow (request to answer)
 ```mermaid
@@ -73,7 +73,7 @@ sequenceDiagram
 ```
 
 Note: for registered users, each model call consumes one quota unit before invocation; if quota is exhausted the request is rejected with a quota error.
-Note: after the final answer, the session is enqueued into long-term memory summarization. The summarization currently uses `app/prompts/memory_summary.txt` as the system prompt, merges history into a single user content, and writes memory/task logs for tracking.
+Note: after the final answer, the session is enqueued into long-term memory summarization. The summarization currently uses `prompts/memory_summary.txt` as the system prompt, merges history into a single user content, and writes memory/task logs for tracking.
 
 ## 4. Tool system (key points)
 wunder abstracts all capabilities as "tools" and uses prompt injection + tool protocol to drive execution.
@@ -163,8 +163,9 @@ stateDiagram-v2
 src/                 # Rust server (Axum)
   api/               # /wunder, /a2a, admin APIs
   storage/           # SQLite/PostgreSQL persistence
-app/                 # legacy Python reference + sandbox service
+  sandbox_server.rs  # sandbox-mode entry
 config/              # base config (wunder.yaml)
+prompts/             # prompt templates
 data/config/         # admin overrides (wunder.override.yaml)
 workspaces/     # per-user workspaces
 skills/              # built-in skills

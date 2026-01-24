@@ -28,6 +28,11 @@ const METRICS = [
     color: "#f97316",
   },
   {
+    key: "tool_access",
+    labelKey: "performance.metric.toolAccess",
+    color: "#14b8a6",
+  },
+  {
     key: "log_write",
     labelKey: "performance.metric.logWrite",
     color: "#a855f7",

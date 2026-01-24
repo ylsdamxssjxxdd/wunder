@@ -58,12 +58,16 @@ services:
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
-      - WUNDER_SANDBOX_THREADPOOL_WORKERS=${WUNDER_SANDBOX_THREADPOOL_WORKERS}
+      - WUNDER_SERVER_MODE=sandbox
+      - WUNDER_HOST=0.0.0.0
+      - WUNDER_PORT=9001
+      - CARGO_HOME=/workspaces/.cargo
+      - CARGO_TARGET_DIR=/workspaces/target/sandbox
     volumes:
       - ./:/app:ro
       - wunder_workspaces:/workspaces
       - ./fonts:/usr/share/fonts/wunder:ro
-    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log --workers ${WUNDER_SANDBOX_WORKERS:-2}
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       interval: 5s
@@ -93,27 +97,27 @@ services:
       retries: 10
     restart: always
 
-  wunder_frontend:
-    image: node:22.14
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
-    platform: linux/amd64
-    container_name: wunder-frontend
-    working_dir: /app
-    restart: no
-    volumes:
-      - ./frontend:/app
-    ports:
-      - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
-    environment:
-      - TZ=Asia/Shanghai
-      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
-      - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
-      - FRONTEND_PORT=${FRONTEND_PORT:-18001}
-      - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
-    # command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
-    command: sh -c "npm install && npm run build"
+  # wunder_frontend:
+  #   image: node:22.14
+  #   privileged: true
+  #   security_opt:
+  #     - seccomp:unconfined
+  #   platform: linux/amd64
+  #   container_name: wunder-frontend
+  #   working_dir: /app
+  #   restart: no
+  #   volumes:
+  #     - ./frontend:/app
+  #   ports:
+  #     - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
+  #   environment:
+  #     - TZ=Asia/Shanghai
+  #     - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
+  #     - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
+  #     - FRONTEND_PORT=${FRONTEND_PORT:-18001}
+  #     - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
+  #   # command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
+  #   command: sh -c "npm install && npm run build"
 
   wunder_nginx:
     image: nginx:latest

@@ -4,7 +4,7 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use tokio::task_local;
 use tracing::error;
@@ -46,10 +46,7 @@ const DEFAULT_I18N_MESSAGES_PATH: &str = "config/i18n.messages.json";
 fn state() -> &'static RwLock<I18nState> {
     I18N_STATE.get_or_init(|| {
         let mut state = I18nState::new();
-        let mut messages = load_messages_from_json().unwrap_or_default();
-        if let Some(fallback) = load_messages_from_python() {
-            merge_messages(&mut messages, fallback);
-        }
+        let messages = load_messages_from_json().unwrap_or_default();
         if !messages.is_empty() {
             state.messages = messages;
         }
@@ -354,115 +351,4 @@ fn parse_json_messages(text: &str) -> Option<HashMap<String, HashMap<String, Str
     } else {
         Some(output)
     }
-}
-
-fn merge_messages(
-    base: &mut HashMap<String, HashMap<String, String>>,
-    extra: HashMap<String, HashMap<String, String>>,
-) {
-    for (key, values) in extra {
-        let entry = base.entry(key).or_default();
-        for (lang, text) in values {
-            entry.entry(lang).or_insert(text);
-        }
-    }
-}
-
-fn load_messages_from_python() -> Option<HashMap<String, HashMap<String, String>>> {
-    let path = Path::new("app/core/i18n.py");
-    if !path.exists() {
-        return None;
-    }
-    let content = std::fs::read_to_string(path).ok()?;
-    parse_messages(&content)
-}
-
-fn parse_messages(text: &str) -> Option<HashMap<String, HashMap<String, String>>> {
-    let mut result: HashMap<String, HashMap<String, String>> = HashMap::new();
-    let mut in_messages = false;
-    let mut current_key: Option<String> = None;
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.starts_with("_MESSAGES") && line.contains('{') {
-            in_messages = true;
-            continue;
-        }
-        if !in_messages {
-            continue;
-        }
-        if line.starts_with('}') {
-            if current_key.is_some() {
-                current_key = None;
-                continue;
-            }
-            break;
-        }
-        if line.starts_with('"') && line.contains("\": {") {
-            if let Some(key) = parse_quoted_key(line) {
-                current_key = Some(key.clone());
-                result.entry(key).or_default();
-            }
-            continue;
-        }
-        if let Some(key) = current_key.clone() {
-            if line.starts_with('"') {
-                if let Some((lang, value)) = parse_lang_entry(line) {
-                    result.entry(key.clone()).or_default().insert(lang, value);
-                }
-            }
-        }
-    }
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-fn parse_quoted_key(line: &str) -> Option<String> {
-    let mut chars = line.chars();
-    if chars.next()? != '"' {
-        return None;
-    }
-    let mut key = String::new();
-    for ch in chars.by_ref() {
-        if ch == '"' {
-            break;
-        }
-        key.push(ch);
-    }
-    if key.is_empty() {
-        None
-    } else {
-        Some(key)
-    }
-}
-
-fn parse_lang_entry(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim().trim_end_matches(',');
-    let mut parts = trimmed.splitn(2, ':');
-    let key_part = parts.next()?.trim();
-    let value_part = parts.next()?.trim();
-    let lang = strip_quotes(key_part)?;
-    let value = strip_quotes(value_part)?;
-    Some((lang, value))
-}
-
-fn strip_quotes(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.len() < 2 {
-        return None;
-    }
-    let quote = trimmed.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let end = trimmed.chars().last()?;
-    if end != quote {
-        return None;
-    }
-    let inner = &trimmed[1..trimmed.len() - 1];
-    Some(inner.to_string())
 }

@@ -22,6 +22,7 @@ mod path_utils;
 mod performance;
 mod prompting;
 mod sandbox;
+mod sandbox_server;
 mod schemas;
 mod shutdown;
 mod skills;
@@ -62,6 +63,20 @@ async fn main() -> anyhow::Result<()> {
     let config_store = ConfigStore::new(ConfigStore::override_path_default());
     let config = config_store.get().await;
     init_tracing(&config);
+    let server_mode = resolve_server_mode(&config);
+    if server_mode == "sandbox" {
+        let addr = bind_address(&config);
+        let app = sandbox_server::build_router()
+            .layer(TraceLayer::new_for_http())
+            .layer(from_fn(panic_guard));
+        let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
+        info!("Sandbox 服务已启动: http://{addr}");
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+        if let Err(err) = server.await {
+            warn!("Sandbox 服务退出异常: {err}");
+        }
+        return Ok(());
+    }
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
     state.lsp_manager.sync_with_config(&config).await;
 
@@ -115,6 +130,19 @@ fn bind_address(config: &Config) -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(config.server.port);
     format!("{host}:{port}")
+}
+
+fn resolve_server_mode(config: &Config) -> String {
+    let env_mode = std::env::var("WUNDER_SERVER_MODE").ok();
+    let raw = env_mode
+        .as_deref()
+        .unwrap_or(config.server.mode.as_str())
+        .trim();
+    if raw.is_empty() {
+        "api".to_string()
+    } else {
+        raw.to_ascii_lowercase()
+    }
 }
 
 fn mount_static<S>(app: Router<S>, dir: &str, route: &str) -> Router<S>

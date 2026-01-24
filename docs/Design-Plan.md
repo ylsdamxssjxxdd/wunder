@@ -2,7 +2,7 @@
 
 ## 1. Goals and scope
 
-- Build a FastAPI-based agent orchestration system that integrates LLMs, MCP, and Skills.
+- Build a Rust (Axum)-based agent orchestration system that integrates LLMs, MCP, and Skills.
 - Expose `/wunder` as a unified entry, accepting user id and question, streaming intermediate progress and final responses.
 - Support multi-user concurrency with persistent workspaces per user id.
 - Registered users are governed by daily request quotas (tiered by access level), reset at midnight; each model call consumes one unit and overages are rejected.
@@ -34,7 +34,7 @@ Web Debug UI / Client
   |
   |  /wunder (SSE/Streaming)
   v
-API Layer (FastAPI)
+API Layer (Axum)
   |
   v
 Prompt Builder

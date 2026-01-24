@@ -58,7 +58,7 @@ impl HistoryManager {
     }
 
     pub fn load_compaction_prompt() -> String {
-        let path = Path::new("app/prompts/compact_prompt.txt");
+        let path = Path::new("prompts/compact_prompt.txt");
         let prompt = read_prompt_template(path).trim().to_string();
         if prompt.is_empty() {
             i18n::t("history.compaction_prompt_fallback")

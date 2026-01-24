@@ -7,6 +7,7 @@
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml`。
 - docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
+- 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
@@ -16,7 +17,7 @@
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
-- 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译，缺失时回退 `app/core/i18n.py`；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
+- 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
 
 ### 4.1 `/wunder` 请求
@@ -471,7 +472,8 @@
   - `security.allow_commands`：允许执行命令前缀列表
   - `security.allow_paths`：允许访问的额外目录列表
   - `security.deny_globs`：拒绝访问的路径通配规则列表
-  - `sandbox.enabled`：是否启用沙盒执行
+  - `sandbox.enabled`：是否启用沙盒执行（由 `sandbox.mode` 推导）
+  - `sandbox.mode`：沙盒模式（local/sandbox）
   - `sandbox.endpoint`：沙盒服务地址
   - `sandbox.image`：沙盒镜像名称
   - `sandbox.container_root`：容器内根目录
@@ -1100,7 +1102,7 @@
 - 返回（JSON）：
   - `concurrency`：并发数
   - `metrics`：指标数组
-    - `key`：指标标识（`prompt_build`/`file_ops`/`command_exec`/`log_write`）
+    - `key`：指标标识（`prompt_build`/`file_ops`/`command_exec`/`tool_access`/`log_write`）
     - `avg_ms`：平均耗时（毫秒，可能为 null）
     - `ok`：是否全部成功
     - `error`：错误信息（可选）
@@ -1108,6 +1110,7 @@
   - `prompt_build`：系统提示词构建耗时。
   - `file_ops`：列出文件/写入/读取/搜索/替换文本组合耗时。
   - `command_exec`：内置工具“执行命令”的耗时。
+  - `tool_access`：用户工具绑定与权限解析的耗时。
   - `log_write`：写入工具日志耗时。
   - 每个并发点会执行两轮采样，返回两轮平均耗时。
   - 用于不同并发下的性能采样，不涉及模型调用。

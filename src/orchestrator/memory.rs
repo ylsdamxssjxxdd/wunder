@@ -1,6 +1,6 @@
 use super::*;
 
-const MEMORY_SUMMARY_PROMPT_PATH: &str = "app/prompts/memory_summary.txt";
+const MEMORY_SUMMARY_PROMPT_PATH: &str = "prompts/memory_summary.txt";
 
 #[derive(Clone)]
 pub(super) struct MemorySummaryTask {

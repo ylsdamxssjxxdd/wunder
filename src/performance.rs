@@ -4,7 +4,9 @@ use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
 use crate::state::AppState;
+use crate::storage::UserAccountRecord;
 use crate::tools::{build_tool_roots, execute_tool, ToolContext, ToolRoots};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
@@ -43,6 +45,7 @@ pub struct PerformanceSampleResponse {
 }
 
 struct PerformanceContext {
+    state: Arc<AppState>,
     config: Arc<Config>,
     orchestrator: Arc<Orchestrator>,
     workspace: Arc<WorkspaceManager>,
@@ -83,6 +86,7 @@ pub async fn run_sample(
     let tool_roots = build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings));
 
     let context = PerformanceContext {
+        state: state.clone(),
         config: Arc::new(config),
         orchestrator: state.orchestrator.clone(),
         workspace: state.workspace.clone(),
@@ -114,6 +118,10 @@ pub async fn run_sample(
     metrics.push(build_metric(
         "command_exec",
         measure_twice(|| measure_command_exec(concurrency, &context, &command)).await,
+    ));
+    metrics.push(build_metric(
+        "tool_access",
+        measure_twice(|| measure_tool_access(concurrency, &context)).await,
     ));
     metrics.push(build_metric(
         "log_write",
@@ -169,6 +177,25 @@ fn merge_summaries(first: MetricSummary, second: MetricSummary) -> MetricSummary
     MetricSummary { avg_ms, ok, error }
 }
 
+fn build_perf_user_record(user_id: &str) -> UserAccountRecord {
+    UserAccountRecord {
+        user_id: user_id.to_string(),
+        username: user_id.to_string(),
+        email: None,
+        password_hash: String::new(),
+        roles: Vec::new(),
+        status: "active".to_string(),
+        access_level: "A".to_string(),
+        daily_quota: 0,
+        daily_quota_used: 0,
+        daily_quota_date: None,
+        is_demo: false,
+        created_at: 0.0,
+        updated_at: 0.0,
+        last_login_at: None,
+    }
+}
+
 async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
     run_concurrent(concurrency, |index| async move {
         let _ = index;
@@ -185,6 +212,26 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
             )
             .await;
         Ok(started.elapsed().as_secs_f64() * 1000.0)
+    })
+    .await
+}
+
+async fn measure_tool_access(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    let user_id = context.user_id.clone();
+    let state = context.state.clone();
+    let user = build_perf_user_record(&user_id);
+    run_concurrent(concurrency, move |_| {
+        let user = user.clone();
+        let state = state.clone();
+        let user_id = user_id.clone();
+        async move {
+            let started = Instant::now();
+            let user_context = build_user_tool_context(state.as_ref(), &user_id).await;
+            let allowed = compute_allowed_tool_names(&user, &user_context, None);
+            let mut names = allowed.into_iter().collect::<Vec<_>>();
+            names.sort();
+            Ok(started.elapsed().as_secs_f64() * 1000.0)
+        }
     })
     .await
 }

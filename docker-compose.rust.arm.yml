@@ -58,12 +58,16 @@ services:
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
-      - WUNDER_SANDBOX_THREADPOOL_WORKERS=${WUNDER_SANDBOX_THREADPOOL_WORKERS}
+      - WUNDER_SERVER_MODE=sandbox
+      - WUNDER_HOST=0.0.0.0
+      - WUNDER_PORT=9001
+      - CARGO_HOME=/workspaces/.cargo
+      - CARGO_TARGET_DIR=/workspaces/target/sandbox
     volumes:
       - ./:/app:ro
       - wunder_workspaces:/workspaces
       - ./fonts:/usr/share/fonts/wunder:ro
-    command: uvicorn app.sandbox.service:app --host 0.0.0.0 --port 9001 --no-access-log --workers ${WUNDER_SANDBOX_WORKERS:-2}
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       interval: 5s

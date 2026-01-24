@@ -69,6 +69,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub stream_chunk_size: usize,
     pub max_active_sessions: usize,
+    #[serde(default = "default_server_mode")]
+    pub mode: String,
 }
 
 impl Default for ServerConfig {
@@ -78,8 +80,13 @@ impl Default for ServerConfig {
             port: 8000,
             stream_chunk_size: 1024,
             max_active_sessions: 30,
+            mode: "api".to_string(),
         }
     }
+}
+
+fn default_server_mode() -> String {
+    "api".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

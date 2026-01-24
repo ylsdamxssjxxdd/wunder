@@ -200,7 +200,7 @@ impl PromptComposer {
             } else {
                 Vec::new()
             };
-            let base_prompt = read_prompt_template(Path::new("app/prompts/system.txt"));
+            let base_prompt = read_prompt_template(Path::new("prompts/system.txt"));
             let workdir_display = workspace.display_path(user_id, workdir);
             let mut prompt = build_system_prompt(
                 &base_prompt,
@@ -241,7 +241,7 @@ impl PromptComposer {
                 .iter()
                 .any(|name| resolve_tool_name(name) == "计划面板");
             if include_plan_prompt {
-                let plan_prompt = read_prompt_template(Path::new("app/prompts/plan_prompt.txt"));
+                let plan_prompt = read_prompt_template(Path::new("prompts/plan_prompt.txt"));
                 if !plan_prompt.trim().is_empty() {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), plan_prompt.trim());
                 }
@@ -251,7 +251,7 @@ impl PromptComposer {
                 .any(|name| resolve_tool_name(name) == "问询面板");
             if include_question_panel_prompt {
                 let question_prompt =
-                    read_prompt_template(Path::new("app/prompts/question_panel_prompt.txt"));
+                    read_prompt_template(Path::new("prompts/question_panel_prompt.txt"));
                 if !question_prompt.trim().is_empty() {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), question_prompt.trim());
                 }
@@ -373,8 +373,8 @@ fn build_system_prompt(
         .collect::<Vec<_>>()
         .join("\n");
     let extra_path = match tool_call_mode {
-        ToolCallMode::FunctionCall => Path::new("app/prompts/extra_prompt_function_call.txt"),
-        ToolCallMode::ToolCall => Path::new("app/prompts/extra_prompt_template.txt"),
+        ToolCallMode::FunctionCall => Path::new("prompts/extra_prompt_function_call.txt"),
+        ToolCallMode::ToolCall => Path::new("prompts/extra_prompt_template.txt"),
     };
     let extra_template = read_prompt_template(extra_path);
     let extra_prompt = render_template(
@@ -391,7 +391,7 @@ fn build_system_prompt(
 }
 
 fn build_engineer_system_info(workdir_display: &str, workspace_tree: &str) -> String {
-    let template_path = Path::new("app/prompts/engineer_system_info.txt");
+    let template_path = Path::new("prompts/engineer_system_info.txt");
     let template = read_prompt_template(template_path);
     let os_name = system_name();
     let date_str = Local::now().format("%Y-%m-%d").to_string();
@@ -407,7 +407,7 @@ fn build_engineer_system_info(workdir_display: &str, workspace_tree: &str) -> St
 }
 
 fn build_engineer_info(workdir_display: &str, workspace_tree: &str, include_ptc: bool) -> String {
-    let template_path = Path::new("app/prompts/engineer_info.txt");
+    let template_path = Path::new("prompts/engineer_info.txt");
     let template = read_prompt_template(template_path);
     let ptc_guidance = if include_ptc {
         i18n::t("prompt.engineer.ptc_guidance")
@@ -464,8 +464,8 @@ fn build_skill_prompt_block(workdir_display: &str, skills: &[SkillSpec]) -> Stri
 }
 
 fn build_a2ui_prompt() -> String {
-    let prompt_path = Path::new("app/prompts/a2ui_prompt.txt");
-    let schema_path = Path::new("app/prompts/a2ui_schema.json");
+    let prompt_path = Path::new("prompts/a2ui_prompt.txt");
+    let schema_path = Path::new("prompts/a2ui_schema.json");
     let template = read_prompt_template(prompt_path);
     let schema_text = std::fs::read_to_string(schema_path).unwrap_or_else(|_| "{}".to_string());
     render_template(
