@@ -764,6 +764,7 @@
 
 - 方法：`GET`
 - 说明：管理端调试前端入口（`web/index.html`），包含幻灯片（系统介绍）与 A2A 服务管理面板；`web/simple-chat` 简易聊天测试页暂时停用。
+- 说明补充：管理端样式入口为 `web/app.css`，样式已拆分为 `web/styles/*.css`。
 
 ### 4.1.24.1 `/wunder/ppt`
 
