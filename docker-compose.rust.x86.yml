@@ -60,7 +60,7 @@ services:
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
-      - CARGO_HOME=/app/.cargo
+      - CARGO_HOME=/app/.cargo/x86
       - CARGO_TARGET_DIR=/app/target/x86
     volumes:
       - ./:/app
