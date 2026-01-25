@@ -523,8 +523,11 @@ impl MonitorState {
                         return;
                     };
                     record.updated_time = now;
-                    if event_type == "token_usage" {
-                        if let Some(total) = data.get("total_tokens").and_then(Value::as_i64) {
+                    if event_type == "context_usage" {
+                        if let Some(total) = parse_i64_value(
+                            data.get("context_tokens")
+                                .or_else(|| data.get("total_tokens")),
+                        ) {
                             record.token_usage = total;
                         }
                     }

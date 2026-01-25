@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod config_store;
+pub mod exec_policy;
 pub mod i18n;
 pub mod path_utils;
 pub mod schemas;

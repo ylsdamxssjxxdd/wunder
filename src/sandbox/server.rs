@@ -482,7 +482,11 @@ struct CommandOutput {
     stderr: String,
 }
 
-async fn run_shell_command(command: &str, cwd: &Path, timeout_s: u64) -> Result<CommandOutput, String> {
+async fn run_shell_command(
+    command: &str,
+    cwd: &Path,
+    timeout_s: u64,
+) -> Result<CommandOutput, String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-lc").arg(command).current_dir(cwd);
     cmd.kill_on_drop(true);
@@ -531,7 +535,8 @@ async fn run_command_output(mut cmd: Command, timeout_s: u64) -> Result<CommandO
             }
         }
     } else {
-        child.wait_with_output()
+        child
+            .wait_with_output()
             .await
             .map_err(|err| err.to_string())?
     };
@@ -735,7 +740,11 @@ fn command_requires_shell(command: &str) -> bool {
     if is_env_assignment(stripped) {
         return true;
     }
-    let first = stripped.split_whitespace().next().unwrap_or("").to_lowercase();
+    let first = stripped
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
     if matches!(
         first.as_str(),
         "cd" | "export" | "alias" | "set" | "source" | "." | "ulimit" | "unset" | "exit"

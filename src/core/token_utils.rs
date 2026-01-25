@@ -53,7 +53,13 @@ pub fn estimate_message_tokens(message: &Value) -> i64 {
         Value::Array(_) | Value::Object(_) => approx_token_count(&reasoning.to_string()),
         _ => 0,
     };
-    content_tokens + reasoning_tokens + MESSAGE_TOKEN_OVERHEAD
+    let tool_calls_tokens = estimate_tool_calls_tokens(message);
+    let tool_call_id_tokens = estimate_tool_call_id_tokens(message);
+    content_tokens
+        + reasoning_tokens
+        + tool_calls_tokens
+        + tool_call_id_tokens
+        + MESSAGE_TOKEN_OVERHEAD
 }
 
 pub fn estimate_messages_tokens(messages: &[Value]) -> i64 {
@@ -83,6 +89,53 @@ pub fn trim_messages_to_budget(messages: &[Value], max_tokens: i64) -> Vec<Value
     }
     selected.reverse();
     selected
+}
+
+fn estimate_tool_calls_tokens(message: &Value) -> i64 {
+    let Some(map) = message.as_object() else {
+        return 0;
+    };
+    for key in [
+        "tool_calls",
+        "toolCalls",
+        "tool_call",
+        "toolCall",
+        "function_call",
+        "functionCall",
+        "function",
+    ] {
+        if let Some(value) = map.get(key) {
+            if value.is_null() {
+                continue;
+            }
+            return estimate_aux_tokens(value);
+        }
+    }
+    0
+}
+
+fn estimate_tool_call_id_tokens(message: &Value) -> i64 {
+    let Some(map) = message.as_object() else {
+        return 0;
+    };
+    for key in ["tool_call_id", "toolCallId", "call_id", "callId"] {
+        if let Some(value) = map.get(key) {
+            if value.is_null() {
+                continue;
+            }
+            return estimate_aux_tokens(value);
+        }
+    }
+    0
+}
+
+fn estimate_aux_tokens(value: &Value) -> i64 {
+    match value {
+        Value::Null => 0,
+        Value::String(text) => approx_token_count(text),
+        Value::Array(_) | Value::Object(_) => approx_token_count(&value.to_string()),
+        _ => approx_token_count(&value.to_string()),
+    }
 }
 
 pub fn estimate_content_tokens(content: &Value) -> i64 {
@@ -139,4 +192,34 @@ fn data_url_regex() -> Option<&'static Regex> {
             }
         })
         .as_ref()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_estimate_message_tokens_counts_tool_calls() {
+        let baseline = estimate_message_tokens(&json!({ "role": "assistant", "content": "" }));
+        let message = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "read_file", "arguments": r#"{"path":"a.txt"}"# }
+            }]
+        });
+        let tokens = estimate_message_tokens(&message);
+        assert!(tokens > baseline);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_counts_tool_call_id() {
+        let baseline = estimate_message_tokens(&json!({ "role": "tool", "content": "ok" }));
+        let message = json!({ "role": "tool", "content": "ok", "tool_call_id": "call_1" });
+        let tokens = estimate_message_tokens(&message);
+        assert!(tokens > baseline);
+    }
 }

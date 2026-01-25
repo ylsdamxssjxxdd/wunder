@@ -9,7 +9,8 @@ mod services;
 mod storage;
 
 pub use core::{
-    auth, config, config_store, i18n, path_utils, schemas, shutdown, state, token_utils,
+    auth, config, config_store, exec_policy, i18n, path_utils, schemas, shutdown, state,
+    token_utils,
 };
 pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;

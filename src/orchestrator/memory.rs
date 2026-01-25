@@ -276,10 +276,7 @@ impl Orchestrator {
             return Ok(messages);
         };
 
-        let history_usage = self
-            .workspace
-            .load_session_token_usage_async(user_id, session_id)
-            .await;
+        let context_tokens = estimate_messages_tokens(&messages);
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -294,11 +291,11 @@ impl Orchestrator {
         } else {
             None
         };
-        let should_compact_by_history = history_threshold
-            .map(|threshold| history_usage >= threshold)
-            .unwrap_or(false);
-        let total_tokens = estimate_messages_tokens(&messages);
-        if !should_compact_by_history && total_tokens <= limit {
+        let (should_compact_by_history, should_compact) =
+            should_compact_by_context(context_tokens, limit, history_threshold);
+        let total_tokens = context_tokens;
+        let history_usage = context_tokens;
+        if !should_compact {
             return Ok(messages);
         }
 
@@ -378,11 +375,6 @@ impl Orchestrator {
 
         let user_content = self.build_compaction_user_content(&source_messages);
         if user_content.trim().is_empty() {
-            if should_compact_by_history && reset_mode != "keep" {
-                self.workspace
-                    .save_session_token_usage_async(user_id, session_id, 0)
-                    .await;
-            }
             emitter
                 .emit(
                     "compaction",
@@ -391,9 +383,11 @@ impl Orchestrator {
                         "status": "skipped",
                         "skip_reason": "no_candidates",
                         "history_usage": history_usage,
+                        "context_tokens": history_usage,
                         "history_threshold": history_threshold,
                         "limit": limit,
                         "total_tokens": total_tokens,
+                        "reset_mode": reset_mode,
                     }),
                 )
                 .await;
@@ -596,17 +590,6 @@ impl Orchestrator {
         }
         let rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
-        if should_compact_by_history && reset_mode != "keep" {
-            if reset_mode == "current" {
-                self.workspace
-                    .save_session_token_usage_async(user_id, session_id, rebuilt_tokens)
-                    .await;
-            } else {
-                self.workspace
-                    .save_session_token_usage_async(user_id, session_id, 0)
-                    .await;
-            }
-        }
 
         emitter
             .emit(
@@ -619,8 +602,11 @@ impl Orchestrator {
                     "total_tokens": total_tokens,
                     "total_tokens_after": rebuilt_tokens,
                     "history_usage": history_usage,
+                    "context_tokens": history_usage,
+                    "context_tokens_after": rebuilt_tokens,
                     "history_threshold": history_threshold,
                     "limit": limit,
+                    "reset_mode": reset_mode,
                 }),
             )
             .await;
@@ -1387,6 +1373,47 @@ impl Orchestrator {
         } else {
             stem
         }
+    }
+}
+
+fn should_compact_by_context(
+    context_tokens: i64,
+    limit: i64,
+    history_threshold: Option<i64>,
+) -> (bool, bool) {
+    let should_compact_by_history = history_threshold
+        .map(|threshold| context_tokens >= threshold)
+        .unwrap_or(false);
+    let should_compact_by_overflow = context_tokens > limit;
+    (
+        should_compact_by_history,
+        should_compact_by_history || should_compact_by_overflow,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_compact_by_context_threshold() {
+        let (by_history, should_compact) = should_compact_by_context(90, 100, Some(80));
+        assert!(by_history);
+        assert!(should_compact);
+    }
+
+    #[test]
+    fn test_should_compact_by_context_overflow_only() {
+        let (by_history, should_compact) = should_compact_by_context(120, 100, None);
+        assert!(!by_history);
+        assert!(should_compact);
+    }
+
+    #[test]
+    fn test_should_compact_by_context_no_compaction() {
+        let (by_history, should_compact) = should_compact_by_context(50, 100, Some(80));
+        assert!(!by_history);
+        assert!(!should_compact);
     }
 }
 

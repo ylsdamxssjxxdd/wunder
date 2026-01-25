@@ -5,10 +5,17 @@ pub(super) enum StreamSignal {
     Done,
 }
 
+struct StreamDeltaSegment {
+    event_id: i64,
+    delta: Option<String>,
+    reasoning_delta: Option<String>,
+    round: Option<i64>,
+}
+
 struct StreamDeltaBuffer {
-    content: String,
-    reasoning: String,
-    last_round: Option<i64>,
+    segments: Vec<StreamDeltaSegment>,
+    total_chars: usize,
+    first_event_id: i64,
     last_event_id: i64,
     last_flush: Instant,
 }
@@ -16,66 +23,94 @@ struct StreamDeltaBuffer {
 impl StreamDeltaBuffer {
     fn new() -> Self {
         Self {
-            content: String::new(),
-            reasoning: String::new(),
-            last_round: None,
+            segments: Vec::new(),
+            total_chars: 0,
+            first_event_id: 0,
             last_event_id: 0,
             last_flush: Instant::now(),
         }
     }
 
     fn push(&mut self, event_id: i64, data: &Value) {
-        if let Some(delta) = data.get("delta").and_then(Value::as_str) {
-            if !delta.is_empty() {
-                self.content.push_str(delta);
-            }
-        }
-        if let Some(delta) = data.get("reasoning_delta").and_then(Value::as_str) {
-            if !delta.is_empty() {
-                self.reasoning.push_str(delta);
-            }
-        }
-        if let Some(round) = data.get("round").and_then(Value::as_i64) {
-            self.last_round = Some(round);
+        let delta = data
+            .get("delta")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let reasoning_delta = data
+            .get("reasoning_delta")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let round = data.get("round").and_then(Value::as_i64);
+        if delta.is_empty() && reasoning_delta.is_empty() && round.is_none() {
+            return;
         }
         if event_id > 0 {
+            if self.first_event_id == 0 {
+                self.first_event_id = event_id;
+            }
             self.last_event_id = event_id;
         }
+        self.total_chars = self
+            .total_chars
+            .saturating_add(delta.len())
+            .saturating_add(reasoning_delta.len());
+        self.segments.push(StreamDeltaSegment {
+            event_id,
+            delta: if delta.is_empty() { None } else { Some(delta) },
+            reasoning_delta: if reasoning_delta.is_empty() {
+                None
+            } else {
+                Some(reasoning_delta)
+            },
+            round,
+        });
     }
 
     fn should_flush(&self) -> bool {
-        if self.content.is_empty() && self.reasoning.is_empty() {
+        if self.segments.is_empty() {
             return false;
         }
-        if self.content.len().saturating_add(self.reasoning.len()) >= STREAM_EVENT_PERSIST_CHARS {
+        if self.total_chars >= STREAM_EVENT_PERSIST_CHARS {
             return true;
         }
         self.last_flush.elapsed().as_millis() as u64 >= STREAM_EVENT_PERSIST_INTERVAL_MS
     }
 
     fn take_payload(&mut self) -> Option<(i64, Value)> {
-        if self.content.is_empty() && self.reasoning.is_empty() {
+        if self.segments.is_empty() {
             return None;
         }
-        let mut payload = serde_json::Map::new();
-        if !self.content.is_empty() {
-            payload.insert(
-                "delta".to_string(),
-                Value::String(std::mem::take(&mut self.content)),
-            );
+        let mut segments = Vec::with_capacity(self.segments.len());
+        for segment in self.segments.drain(..) {
+            let mut item = serde_json::Map::new();
+            item.insert("event_id".to_string(), json!(segment.event_id));
+            if let Some(delta) = segment.delta {
+                item.insert("delta".to_string(), Value::String(delta));
+            }
+            if let Some(reasoning_delta) = segment.reasoning_delta {
+                item.insert(
+                    "reasoning_delta".to_string(),
+                    Value::String(reasoning_delta),
+                );
+            }
+            if let Some(round) = segment.round {
+                item.insert("round".to_string(), json!(round));
+            }
+            segments.push(Value::Object(item));
         }
-        if !self.reasoning.is_empty() {
-            payload.insert(
-                "reasoning_delta".to_string(),
-                Value::String(std::mem::take(&mut self.reasoning)),
-            );
-        }
-        if let Some(round) = self.last_round.take() {
-            payload.insert("round".to_string(), json!(round));
-        }
-        self.last_flush = Instant::now();
         let event_id = self.last_event_id;
+        let mut payload = serde_json::Map::new();
+        payload.insert("segments".to_string(), Value::Array(segments));
+        if self.first_event_id > 0 && self.last_event_id > 0 {
+            payload.insert("event_id_start".to_string(), json!(self.first_event_id));
+            payload.insert("event_id_end".to_string(), json!(self.last_event_id));
+        }
+        self.total_chars = 0;
+        self.first_event_id = 0;
         self.last_event_id = 0;
+        self.last_flush = Instant::now();
         Some((event_id, Value::Object(payload)))
     }
 }
@@ -94,6 +129,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "question_panel"
             | "llm_output_delta"
             | "llm_output"
+            | "context_usage"
             | "quota_usage"
             | "final"
             | "error"
@@ -224,6 +260,27 @@ impl EventEmitter {
         }
     }
 
+    fn persist_event_on_emit(
+        &self,
+        event_id: i64,
+        event_type: &str,
+        data: &Value,
+        timestamp: DateTime<Utc>,
+    ) -> bool {
+        if self.storage.is_none() {
+            return false;
+        }
+        if !should_persist_stream_event(event_type) {
+            return false;
+        }
+        if event_type == "llm_output_delta" {
+            self.buffer_delta(event_id, data);
+            return true;
+        }
+        self.persist_stream_event(event_id, event_type, data.clone(), timestamp);
+        true
+    }
+
     pub(super) async fn emit(&self, event_type: &str, data: Value) -> StreamEvent {
         let timestamp = Utc::now();
         let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
@@ -232,6 +289,7 @@ impl EventEmitter {
         }
         self.monitor
             .record_event(&self.session_id, event_type, &data);
+        let persisted = self.persist_event_on_emit(event_id, event_type, &data, timestamp);
         let payload = enrich_event_payload(data, Some(&self.session_id), timestamp);
         let event = StreamEvent {
             event: event_type.to_string(),
@@ -239,24 +297,30 @@ impl EventEmitter {
             id: Some(event_id.to_string()),
             timestamp: Some(timestamp),
         };
-        self.enqueue_event(&event).await;
+        self.enqueue_event(&event, persisted).await;
         event
     }
 
-    async fn enqueue_event(&self, event: &StreamEvent) {
+    async fn enqueue_event(&self, event: &StreamEvent, persisted: bool) {
         if self.closed.load(AtomicOrdering::SeqCst) {
-            self.record_overflow(event).await;
+            if !persisted {
+                self.record_overflow(event).await;
+            }
             return;
         }
         if let Some(queue) = &self.queue {
             match queue.try_send(StreamSignal::Event(event.clone())) {
                 Ok(_) => return,
                 Err(mpsc::error::TrySendError::Closed(_)) => {
-                    self.record_overflow(event).await;
+                    if !persisted {
+                        self.record_overflow(event).await;
+                    }
                     return;
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    self.record_overflow(event).await;
+                    if !persisted {
+                        self.record_overflow(event).await;
+                    }
                     return;
                 }
             }
@@ -493,7 +557,14 @@ fn load_overflow_events_inner(
         if event_type.is_empty() {
             continue;
         }
-        let data = record.get("data").cloned().unwrap_or(Value::Null);
+        let mut data = record.get("data").cloned().unwrap_or(Value::Null);
+        if event_type == "llm_output_delta" {
+            if let Some(filtered) = filter_delta_segments(&data, after_event_id) {
+                data = filtered;
+            } else {
+                continue;
+            }
+        }
         let timestamp = record
             .get("timestamp")
             .and_then(Value::as_str)
@@ -508,6 +579,85 @@ fn load_overflow_events_inner(
         events.push(event);
     }
     events
+}
+
+fn filter_delta_segments(data: &Value, after_event_id: i64) -> Option<Value> {
+    let Some(obj) = data.as_object() else {
+        return Some(data.clone());
+    };
+    let Some(inner) = obj.get("data") else {
+        return Some(data.clone());
+    };
+    let Some(inner_obj) = inner.as_object() else {
+        return Some(data.clone());
+    };
+    let Some(segments) = inner_obj.get("segments").and_then(Value::as_array) else {
+        return Some(data.clone());
+    };
+
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut last_round = None;
+    let mut first_event_id = None;
+    let mut last_event_id = None;
+
+    for segment in segments {
+        let Some(segment_obj) = segment.as_object() else {
+            continue;
+        };
+        let event_id = segment_obj
+            .get("event_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if event_id <= after_event_id {
+            continue;
+        }
+        if let Some(delta) = segment_obj.get("delta").and_then(Value::as_str) {
+            if !delta.is_empty() {
+                content.push_str(delta);
+            }
+        }
+        if let Some(delta) = segment_obj.get("reasoning_delta").and_then(Value::as_str) {
+            if !delta.is_empty() {
+                reasoning.push_str(delta);
+            }
+        }
+        if let Some(round) = segment_obj.get("round").and_then(Value::as_i64) {
+            last_round = Some(round);
+        }
+        if first_event_id.is_none() {
+            first_event_id = Some(event_id);
+        }
+        last_event_id = Some(event_id);
+    }
+
+    let Some(start_event_id) = first_event_id else {
+        return None;
+    };
+
+    let mut new_inner = serde_json::Map::new();
+    for (key, value) in inner_obj {
+        if key != "segments" {
+            new_inner.insert(key.clone(), value.clone());
+        }
+    }
+    if !content.is_empty() {
+        new_inner.insert("delta".to_string(), Value::String(content));
+    }
+    if !reasoning.is_empty() {
+        new_inner.insert("reasoning_delta".to_string(), Value::String(reasoning));
+    }
+    if let Some(round) = last_round {
+        new_inner.insert("round".to_string(), json!(round));
+    }
+    new_inner.insert("event_id_start".to_string(), json!(start_event_id));
+    if let Some(end_event_id) = last_event_id {
+        new_inner.insert("event_id_end".to_string(), json!(end_event_id));
+    }
+
+    let mut new_obj = obj.clone();
+    new_obj.insert("data".to_string(), Value::Object(new_inner));
+    Some(Value::Object(new_obj))
 }
 
 fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTime<Utc>) -> Value {
@@ -528,4 +678,53 @@ fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTi
 
 pub(super) fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_filter_delta_segments_trims_overlap() {
+        let payload = json!({
+            "session_id": "s1",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "data": {
+                "segments": [
+                    { "event_id": 1, "delta": "a" },
+                    { "event_id": 2, "delta": "b", "reasoning_delta": "x", "round": 1 },
+                    { "event_id": 3, "delta": "c", "reasoning_delta": "y" }
+                ]
+            }
+        });
+        let filtered = filter_delta_segments(&payload, 1).expect("filtered payload");
+        let inner = filtered
+            .get("data")
+            .and_then(Value::as_object)
+            .expect("inner data");
+        assert_eq!(inner.get("delta").and_then(Value::as_str), Some("bc"));
+        assert_eq!(
+            inner.get("reasoning_delta").and_then(Value::as_str),
+            Some("xy")
+        );
+        assert_eq!(inner.get("event_id_start").and_then(Value::as_i64), Some(2));
+        assert_eq!(inner.get("event_id_end").and_then(Value::as_i64), Some(3));
+        assert_eq!(inner.get("round").and_then(Value::as_i64), Some(1));
+    }
+
+    #[test]
+    fn test_filter_delta_segments_skips_fully_seen() {
+        let payload = json!({
+            "session_id": "s1",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "data": {
+                "segments": [
+                    { "event_id": 1, "delta": "a" },
+                    { "event_id": 2, "delta": "b" }
+                ]
+            }
+        });
+        assert!(filter_delta_segments(&payload, 2).is_none());
+    }
 }

@@ -31,6 +31,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant};
@@ -44,6 +45,9 @@ const MCP_USER_ID: &str = "wunder";
 const MCP_INSTRUCTIONS: &str = "调用 wunder 智能体执行任务或解析文档并返回结果。";
 const MCP_EXECUTE_DESCRIPTION: &str = "执行 wunder 智能体任务并返回最终回复。";
 const MCP_DOC2MD_DESCRIPTION: &str = "解析文档并返回 Markdown 文本。";
+
+const MCP_TOOL_CACHE_TTL_S: f64 = 30.0;
+const MCP_TOOL_CACHE_MAX_ENTRIES: usize = 128;
 
 /// 构建 MCP 服务路由：挂载 /wunder/mcp 的 Streamable HTTP 服务。
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
@@ -395,16 +399,127 @@ struct NoopClientHandler;
 
 impl ClientHandler for NoopClientHandler {}
 
+#[derive(Clone)]
+struct McpToolCacheEntry {
+    specs: Vec<ToolSpec>,
+    timestamp: f64,
+}
+
+fn mcp_tool_cache() -> &'static Mutex<HashMap<String, McpToolCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, McpToolCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_mcp_tool_cache_key(server: &McpServerConfig) -> String {
+    let mut allow = server.allow_tools.clone();
+    allow.sort();
+    let allow_key = allow.join(",");
+
+    let mut headers = server
+        .headers
+        .iter()
+        .map(|(key, value)| format!("{}={}", key.to_lowercase(), value))
+        .collect::<Vec<_>>();
+    headers.sort();
+    let headers_key = headers.join(";");
+
+    let auth_key = server
+        .auth
+        .as_ref()
+        .and_then(|value| serde_json::to_string(value).ok())
+        .unwrap_or_default();
+    let transport = server.transport.clone().unwrap_or_default();
+    format!(
+        "name={};endpoint={};transport={};allow={};headers={};auth={}",
+        server.name.trim(),
+        server.endpoint.trim(),
+        transport,
+        allow_key,
+        headers_key,
+        auth_key
+    )
+}
+
+fn get_cached_mcp_tool_specs(key: &str) -> Option<Vec<ToolSpec>> {
+    if MCP_TOOL_CACHE_TTL_S <= 0.0 {
+        return None;
+    }
+    let now = now_ts();
+    let mut cache = mcp_tool_cache().lock();
+    if let Some(entry) = cache.get(key) {
+        if now - entry.timestamp <= MCP_TOOL_CACHE_TTL_S {
+            return Some(entry.specs.clone());
+        }
+    }
+    cache.remove(key);
+    None
+}
+
+fn store_mcp_tool_specs(key: String, specs: Vec<ToolSpec>) {
+    if MCP_TOOL_CACHE_TTL_S <= 0.0 {
+        return;
+    }
+    let now = now_ts();
+    let mut cache = mcp_tool_cache().lock();
+    cache.insert(
+        key,
+        McpToolCacheEntry {
+            specs,
+            timestamp: now,
+        },
+    );
+    evict_mcp_tool_cache(&mut cache, now);
+}
+
+fn evict_mcp_tool_cache(cache: &mut HashMap<String, McpToolCacheEntry>, now: f64) {
+    let mut expired = Vec::new();
+    for (key, entry) in cache.iter() {
+        if now - entry.timestamp > MCP_TOOL_CACHE_TTL_S {
+            expired.push(key.clone());
+        }
+    }
+    for key in expired {
+        cache.remove(&key);
+    }
+    if MCP_TOOL_CACHE_MAX_ENTRIES == 0 || cache.len() <= MCP_TOOL_CACHE_MAX_ENTRIES {
+        return;
+    }
+    let mut items = cache
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry.timestamp))
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let overflow = cache.len().saturating_sub(MCP_TOOL_CACHE_MAX_ENTRIES);
+    for (key, _) in items.into_iter().take(overflow) {
+        cache.remove(&key);
+    }
+}
+
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
 /// 查询 MCP 工具列表，转换为 Wunder ToolSpec。
 pub async fn fetch_tools(config: &Config, server: &McpServerConfig) -> Result<Vec<ToolSpec>> {
-    let transport = normalize_transport(server.transport.as_deref());
-    if transport == "sse" {
-        return fetch_tools_sse(config, server).await;
+    let cache_key = build_mcp_tool_cache_key(server);
+    if let Some(cached) = get_cached_mcp_tool_specs(&cache_key) {
+        return Ok(cached);
     }
-    let transport = build_transport(config, server)?;
-    let service = serve_client(NoopClientHandler::default(), transport).await?;
-    let tools = service.list_all_tools().await?;
-    Ok(collect_tool_specs(server, tools))
+
+    let transport = normalize_transport(server.transport.as_deref());
+    let specs = if transport == "sse" {
+        fetch_tools_sse(config, server).await?
+    } else {
+        let transport = build_transport(config, server)?;
+        let service = serve_client(NoopClientHandler::default(), transport).await?;
+        let tools = service.list_all_tools().await?;
+        collect_tool_specs(server, tools)
+    };
+    store_mcp_tool_specs(cache_key, specs.clone());
+    Ok(specs)
 }
 
 fn collect_tool_specs(server: &McpServerConfig, tools: Vec<Tool>) -> Vec<ToolSpec> {

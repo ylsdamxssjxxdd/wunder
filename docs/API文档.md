@@ -472,6 +472,7 @@
   - `security.allow_commands`：允许执行命令前缀列表
   - `security.allow_paths`：允许访问的额外目录列表
   - `security.deny_globs`：拒绝访问的路径通配规则列表
+  - `security.exec_policy_mode`（allow/audit/enforce）用于高风险命令审计/拦截。
   - `sandbox.enabled`：是否启用沙盒执行（由 `sandbox.mode` 推导）
   - `sandbox.mode`：沙盒模式（local/sandbox）
   - `sandbox.endpoint`：沙盒服务地址
@@ -1312,19 +1313,21 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
-- 当前 Rust 版会输出 `progress`、`llm_output_delta`、`llm_output`、`quota_usage`、`tool_call`、`tool_result`、`plan_update`、`question_panel`、`final` 等事件，其余事件待补齐。
+- 当前 Rust 版会输出 `progress`, `llm_output_delta`, `llm_output`, `context_usage`, `quota_usage`, `tool_call`, `tool_result`, `plan_update`, `question_panel`, `final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
 - `event: knowledge_request`：知识库检索模型请求体（调试用）
 - `event: llm_output_delta`：模型流式增量片段（调试用，`data.delta` 为正文增量，`data.reasoning_delta` 为思考增量，需按顺序拼接）
+  - 说明：断线续传回放时可能携带 event_id_start/event_id_end 用于标记合并范围。
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
 - `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
+- `event: context_usage`：上下文占用量统计（data.context_tokens/message_count/round）
 - `event: quota_usage`：额度消耗统计（每次模型调用都会触发；`data.consumed` 为本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，`data.round` 为轮次）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
-- `event: tool_result`：工具执行结果
+- `event: tool_result`：工具执行结果（data.meta.duration_ms/truncated/output_chars/exit_code/policy）
 - `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
 - `event: question_panel`：问询面板更新（`data.question` 可选，`data.routes` 为路线数组，包含 `label`/`description`/`recommended`/`selected`）
 - `event: a2a_request`：A2A 委派请求摘要（endpoint/method/request_id）
@@ -1374,6 +1377,7 @@
 - 工具结果以 `tool_response: ` 前缀的 user 消息回填给模型，用于下一轮判断（`tool_call` 模式）。
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式对模型可用；`tool_call` 模式下注入系统提示词。
 - 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
+- 高风险命令在 `security.exec_policy_mode=enforce` 时需显式审批（tool args 支持 `approved=true`/`approval_key`），审批结果会在会话内短 TTL 缓存。
 - 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
 - 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
@@ -1477,4 +1481,6 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
+
+
 

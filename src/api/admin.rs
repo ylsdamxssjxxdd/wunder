@@ -1717,6 +1717,11 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
 
 fn build_system_settings_payload(config: &Config) -> Value {
     let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
+    let exec_policy_mode = config
+        .security
+        .exec_policy_mode
+        .clone()
+        .unwrap_or_else(|| "allow".to_string());
     json!({
         "server": {
             "max_active_sessions": config.server.max_active_sessions,
@@ -1727,6 +1732,7 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "allow_commands": config.security.allow_commands.clone(),
             "allow_paths": config.security.allow_paths.clone(),
             "deny_globs": config.security.deny_globs.clone(),
+            "exec_policy_mode": exec_policy_mode,
         },
         "sandbox": {
             "enabled": sandbox_enabled,
@@ -1789,6 +1795,17 @@ async fn admin_system_update(
             }
         }
     }
+    if let Some(security) = payload.security.as_ref() {
+        if let Some(mode) = security.exec_policy_mode.as_ref() {
+            let cleaned = mode.trim().to_lowercase();
+            if !cleaned.is_empty() && !matches!(cleaned.as_str(), "allow" | "audit" | "enforce") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.exec_policy_mode_invalid"),
+                ));
+            }
+        }
+    }
     let updated = state
         .config_store
         .update(|config| {
@@ -1817,6 +1834,14 @@ async fn admin_system_update(
                 }
                 if let Some(deny_globs) = security.deny_globs {
                     config.security.deny_globs = normalize_string_list(deny_globs);
+                }
+                if let Some(exec_policy_mode) = security.exec_policy_mode {
+                    let cleaned = exec_policy_mode.trim().to_lowercase();
+                    if cleaned.is_empty() {
+                        config.security.exec_policy_mode = None;
+                    } else {
+                        config.security.exec_policy_mode = Some(cleaned);
+                    }
                 }
             }
             if let Some(sandbox) = payload.sandbox {
@@ -3874,6 +3899,8 @@ struct SystemSecurityUpdateRequest {
     allow_paths: Option<Vec<String>>,
     #[serde(default)]
     deny_globs: Option<Vec<String>>,
+    #[serde(default)]
+    exec_policy_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

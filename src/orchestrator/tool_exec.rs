@@ -8,6 +8,7 @@ pub(super) struct ToolResultPayload {
     pub(super) error: String,
     pub(super) sandbox: bool,
     pub(super) timestamp: DateTime<Utc>,
+    pub(super) meta: Option<Value>,
 }
 
 impl ToolResultPayload {
@@ -23,12 +24,14 @@ impl ToolResultPayload {
                     .unwrap_or("")
                     .to_string();
                 let sandbox = map.get("sandbox").and_then(Value::as_bool).unwrap_or(false);
+                let meta = map.get("meta").cloned().filter(|value| !value.is_null());
                 return Self {
                     ok,
                     data,
                     error,
                     sandbox,
                     timestamp,
+                    meta,
                 };
             }
         }
@@ -44,6 +47,7 @@ impl ToolResultPayload {
             error: String::new(),
             sandbox: false,
             timestamp,
+            meta: None,
         }
     }
 
@@ -58,7 +62,14 @@ impl ToolResultPayload {
             error: message,
             sandbox: false,
             timestamp: Utc::now(),
+            meta: None,
         }
+    }
+
+    pub(super) fn insert_meta(&mut self, key: &str, value: Value) {
+        let mut meta = merge_tool_result_meta(self.meta.take());
+        meta.insert(key.to_string(), value);
+        self.meta = Some(Value::Object(meta));
     }
 
     fn to_observation_payload(&self, tool_name: &str) -> Value {
@@ -76,6 +87,11 @@ impl ToolResultPayload {
         if self.sandbox {
             if let Value::Object(ref mut map) = payload {
                 map.insert("sandbox".to_string(), Value::Bool(true));
+            }
+        }
+        if let Some(meta) = &self.meta {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("meta".to_string(), meta.clone());
             }
         }
         payload
@@ -171,6 +187,9 @@ impl Orchestrator {
             "data": result.data,
             "timestamp": timestamp,
         });
+        if let Some(meta) = &result.meta {
+            payload["meta"] = meta.clone();
+        }
         if !include_payload {
             payload["__omit_payload"] = Value::Bool(true);
         }
@@ -178,6 +197,42 @@ impl Orchestrator {
             payload["sandbox"] = Value::Bool(true);
         }
         let _ = self.workspace.append_tool_log(user_id, &payload);
+    }
+
+    pub(super) fn finalize_tool_result(
+        &self,
+        mut result: ToolResultPayload,
+        started_at: Instant,
+    ) -> ToolResultPayload {
+        let duration_ms = started_at.elapsed().as_millis() as i64;
+        let mut truncated = truncate_tool_result_data(
+            &mut result.data,
+            TOOL_RESULT_MAX_CHARS,
+            TOOL_RESULT_TRUNCATION_SUFFIX,
+        );
+        if result.error.len() > TOOL_RESULT_MAX_CHARS {
+            result.error = truncate_tool_result_string(
+                &result.error,
+                TOOL_RESULT_MAX_CHARS,
+                TOOL_RESULT_TRUNCATION_SUFFIX,
+            );
+            truncated = true;
+        }
+        let output_chars = estimate_tool_result_chars(&result.data);
+        let exit_code = extract_exit_code(&result.data);
+        let mut meta = merge_tool_result_meta(result.meta.take());
+        meta.insert("duration_ms".to_string(), json!(duration_ms));
+        meta.insert("truncated".to_string(), json!(truncated));
+        meta.insert("output_chars".to_string(), json!(output_chars));
+        if let Some(exit_code) = exit_code {
+            meta.insert("exit_code".to_string(), json!(exit_code));
+        }
+        if meta.is_empty() {
+            result.meta = None;
+        } else {
+            result.meta = Some(Value::Object(meta));
+        }
+        result
     }
 
     pub(super) fn append_artifact_logs(
@@ -706,5 +761,158 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
         Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
         Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
         _ => None,
+    }
+}
+
+fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
+    match meta {
+        Some(Value::Object(map)) => map,
+        Some(Value::Null) | None => Map::new(),
+        Some(other) => {
+            let mut map = Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    }
+}
+
+fn truncate_tool_result_string(value: &str, max_chars: usize, suffix: &str) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let value_len = value.chars().count();
+    if value_len <= max_chars {
+        return value.to_string();
+    }
+    let suffix_len = suffix.chars().count();
+    if max_chars <= suffix_len {
+        return suffix.chars().take(max_chars).collect();
+    }
+    let keep_len = max_chars - suffix_len;
+    let mut output: String = value.chars().take(keep_len).collect();
+    output.push_str(suffix);
+    output
+}
+
+fn truncate_tool_result_data(value: &mut Value, max_chars: usize, suffix: &str) -> bool {
+    match value {
+        Value::String(text) => {
+            let len = text.chars().count();
+            if len > max_chars {
+                *text = truncate_tool_result_string(text, max_chars, suffix);
+                true
+            } else {
+                false
+            }
+        }
+        Value::Array(items) => {
+            let mut truncated = false;
+            for item in items.iter_mut() {
+                if truncate_tool_result_data(item, max_chars, suffix) {
+                    truncated = true;
+                }
+            }
+            truncated
+        }
+        Value::Object(map) => {
+            let mut truncated = false;
+            for value in map.values_mut() {
+                if truncate_tool_result_data(value, max_chars, suffix) {
+                    truncated = true;
+                }
+            }
+            truncated
+        }
+        _ => false,
+    }
+}
+
+fn estimate_tool_result_chars(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.chars().count(),
+        Value::Number(num) => num.to_string().chars().count(),
+        Value::Bool(flag) => {
+            if *flag {
+                4
+            } else {
+                5
+            }
+        }
+        Value::Null => 4,
+        Value::Array(items) => items.iter().map(estimate_tool_result_chars).sum(),
+        Value::Object(map) => map
+            .iter()
+            .map(|(key, value)| key.chars().count() + estimate_tool_result_chars(value))
+            .sum(),
+    }
+}
+
+fn parse_exit_code(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(num) => num.as_i64().or_else(|| num.as_u64().map(|val| val as i64)),
+        Value::String(text) => text.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn extract_exit_code(value: &Value) -> Option<i64> {
+    let obj = value.as_object()?;
+    for key in [
+        "exit_code",
+        "exitCode",
+        "returncode",
+        "return_code",
+        "status_code",
+    ] {
+        if let Some(code) = obj.get(key).and_then(parse_exit_code) {
+            return Some(code);
+        }
+    }
+    if let Some(Value::Array(items)) = obj.get("results") {
+        for item in items {
+            let Some(result) = item.as_object() else {
+                continue;
+            };
+            for key in [
+                "exit_code",
+                "exitCode",
+                "returncode",
+                "return_code",
+                "status_code",
+            ] {
+                if let Some(code) = result.get(key).and_then(parse_exit_code) {
+                    return Some(code);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_tool_result_string() {
+        let max_chars = TOOL_RESULT_TRUNCATION_SUFFIX.len() + 2;
+        let input = "a".repeat(max_chars + 5);
+        let value = truncate_tool_result_string(&input, max_chars, TOOL_RESULT_TRUNCATION_SUFFIX);
+        assert!(value.starts_with("a"));
+        assert!(value.ends_with(TOOL_RESULT_TRUNCATION_SUFFIX));
+        assert_eq!(value.chars().count(), max_chars);
+    }
+
+    #[test]
+    fn test_truncate_tool_result_data() {
+        let max_chars = TOOL_RESULT_TRUNCATION_SUFFIX.len() + 2;
+        let stdout = "0".repeat(max_chars + 5);
+        let mut value = json!({ "stdout": stdout });
+        let truncated =
+            truncate_tool_result_data(&mut value, max_chars, TOOL_RESULT_TRUNCATION_SUFFIX);
+        assert!(truncated);
+        let stdout = value.get("stdout").and_then(Value::as_str).unwrap_or("");
+        assert!(stdout.ends_with(TOOL_RESULT_TRUNCATION_SUFFIX));
+        assert_eq!(stdout.chars().count(), max_chars);
     }
 }

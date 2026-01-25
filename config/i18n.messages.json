@@ -123,6 +123,10 @@
     "en-US": "Parsed result is empty",
     "zh-CN": "解析结果为空"
   },
+  "error.exec_policy_mode_invalid": {
+    "en-US": "exec_policy_mode must be allow/audit/enforce",
+    "zh-CN": "exec_policy_mode 仅支持 allow/audit/enforce"
+  },
   "error.file_extension_missing": {
     "en-US": "File extension is missing",
     "zh-CN": "文件缺少扩展名"

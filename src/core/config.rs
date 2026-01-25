@@ -52,6 +52,8 @@ pub struct SecurityConfig {
     pub allow_paths: Vec<String>,
     #[serde(default)]
     pub deny_globs: Vec<String>,
+    #[serde(default)]
+    pub exec_policy_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

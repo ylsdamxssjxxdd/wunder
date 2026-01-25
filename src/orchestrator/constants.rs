@@ -23,3 +23,7 @@ pub const STREAM_EVENT_PERSIST_CHARS: usize = 160;
 pub const DEFAULT_LLM_TIMEOUT_S: u64 = 120;
 pub const DEFAULT_TOOL_TIMEOUT_S: f64 = 120.0;
 pub const MIN_TOOL_TIMEOUT_S: f64 = 1.0;
+
+pub const DEFAULT_TOOL_PARALLELISM: usize = 4;
+pub const TOOL_RESULT_MAX_CHARS: usize = 8000;
+pub const TOOL_RESULT_TRUNCATION_SUFFIX: &str = "...(truncated)";

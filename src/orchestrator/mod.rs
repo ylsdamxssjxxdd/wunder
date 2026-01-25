@@ -13,10 +13,11 @@ use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
     COMPACTION_HISTORY_RATIO, COMPACTION_META_TYPE, COMPACTION_MIN_OBSERVATION_TOKENS,
     COMPACTION_SUMMARY_MAX_OUTPUT, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_S,
-    DEFAULT_TOOL_TIMEOUT_S, MIN_TOOL_TIMEOUT_S, OBSERVATION_PREFIX, SESSION_LOCK_HEARTBEAT_S,
-    SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S, STREAM_EVENT_CLEANUP_INTERVAL_S,
-    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_PERSIST_CHARS, STREAM_EVENT_PERSIST_INTERVAL_MS,
-    STREAM_EVENT_POLL_INTERVAL_S, STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_TTL_S,
+    DEFAULT_TOOL_PARALLELISM, DEFAULT_TOOL_TIMEOUT_S, MIN_TOOL_TIMEOUT_S, OBSERVATION_PREFIX,
+    SESSION_LOCK_HEARTBEAT_S, SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S,
+    STREAM_EVENT_CLEANUP_INTERVAL_S, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_PERSIST_CHARS,
+    STREAM_EVENT_PERSIST_INTERVAL_MS, STREAM_EVENT_POLL_INTERVAL_S, STREAM_EVENT_QUEUE_SIZE,
+    STREAM_EVENT_TTL_S, TOOL_RESULT_MAX_CHARS, TOOL_RESULT_TRUNCATION_SUFFIX,
 };
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::{read_prompt_template, PromptComposer};
@@ -53,8 +54,9 @@ use tokio::task::JoinHandle;
 use tracing::{error, warn};
 use uuid::Uuid;
 
-pub mod constants;
 mod config;
+pub mod constants;
+mod context;
 mod error;
 mod event_stream;
 mod execute;
@@ -67,6 +69,7 @@ mod tool_calls;
 mod tool_exec;
 mod types;
 
+use context::ContextManager;
 pub(crate) use error::OrchestratorError;
 use event_stream::now_ts;
 use event_stream::EventEmitter;

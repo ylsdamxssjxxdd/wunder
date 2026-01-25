@@ -529,11 +529,13 @@ pub(super) fn collect_tool_calls_from_output(
     if let Some(payload) = tool_calls_payload {
         calls.extend(normalize_tool_calls(payload.clone()));
     }
-    let mut calls = dedupe_tool_calls(calls);
-    if calls.len() > 1 {
-        calls.truncate(1);
-    }
+    let calls = dedupe_tool_calls(calls);
     calls
+}
+
+pub(super) fn collect_tool_calls_from_payload(payload: &Value) -> Vec<ToolCall> {
+    let calls = normalize_tool_calls(payload.clone());
+    dedupe_tool_calls(calls)
 }
 
 fn canonicalize_json(value: &Value) -> Value {
@@ -657,14 +659,15 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_tool_calls_limit_to_one() {
+    fn test_collect_tool_calls_multiple() {
         let content = concat!(
             "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}</tool_call>",
             "<tool_call>{\"name\":\"write_file\",\"arguments\":{\"path\":\"b.txt\",\"content\":\"x\"}}</tool_call>"
         );
         let calls = collect_tool_calls_from_output(content, "", None);
-        assert_eq!(calls.len(), 1);
+        assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[1].name, "write_file");
     }
 
     #[test]

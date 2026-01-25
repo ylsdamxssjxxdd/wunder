@@ -1,4 +1,21 @@
+use super::tool_calls::ToolCall;
 use super::*;
+
+struct PlannedToolCall {
+    call: ToolCall,
+    name: String,
+}
+
+struct ToolExecutionOutcome {
+    call: ToolCall,
+    name: String,
+    result: ToolResultPayload,
+}
+
+enum TerminalTool {
+    A2ui,
+    Final,
+}
 
 impl Orchestrator {
     pub(super) async fn execute_request(
@@ -121,6 +138,7 @@ impl Orchestrator {
             system_prompt = self.append_memory_prompt(&user_id, system_prompt).await;
 
             let history_manager = HistoryManager;
+            let context_manager = ContextManager;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
             let history_messages = history_manager
                 .load_history_messages_async(
@@ -155,6 +173,7 @@ impl Orchestrator {
 
             for round in 1..=max_rounds {
                 self.ensure_not_cancelled(&session_id)?;
+                messages = context_manager.normalize_messages(messages);
                 messages = self
                     .maybe_compact_messages(
                         &config,
@@ -168,6 +187,21 @@ impl Orchestrator {
                 )
                 .await?;
                 self.ensure_not_cancelled(&session_id)?;
+                messages = context_manager.normalize_messages(messages);
+                let context_tokens = context_manager.estimate_context_tokens(&messages);
+                self.workspace
+                    .save_session_token_usage_async(&user_id, &session_id, context_tokens)
+                    .await;
+                emitter
+                    .emit(
+                        "context_usage",
+                        json!({
+                            "round": round,
+                            "context_tokens": context_tokens,
+                            "message_count": messages.len(),
+                        }),
+                    )
+                    .await;
 
                 last_request_messages = Some(self.sanitize_messages_for_log(
                     messages.clone(),
@@ -206,9 +240,6 @@ impl Orchestrator {
                     .await?;
                 last_response = Some((content.clone(), reasoning.clone()));
                 last_usage = Some(usage.clone());
-                self.workspace
-                    .save_session_token_usage_async(&user_id, &session_id, usage.total as i64)
-                    .await;
 
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
@@ -220,7 +251,8 @@ impl Orchestrator {
                 } else {
                     tool_calls
                 };
-                if tool_calls.is_empty() {
+                let planned_calls = build_planned_tool_calls(tool_calls);
+                if planned_calls.is_empty() {
                     if prepared.skip_tool_calls {
                         answer = content.trim().to_string();
                     } else {
@@ -284,240 +316,260 @@ impl Orchestrator {
                     }
                 }, prepared.stream);
 
+                let tool_context = ToolContext {
+                    user_id: &user_id,
+                    session_id: &session_id,
+                    workspace: self.workspace.clone(),
+                    lsp_manager: self.lsp_manager.clone(),
+                    config: &config,
+                    a2a_store: &self.a2a_store,
+                    skills: &skills_snapshot,
+                    user_tool_manager: Some(self.user_tool_manager.as_ref()),
+                    user_tool_bindings: Some(&user_tool_bindings),
+                    user_tool_store: Some(self.user_tool_manager.store()),
+                    allow_roots: Some(tool_roots.allow_roots.clone()),
+                    read_roots: Some(tool_roots.read_roots.clone()),
+                    event_emitter: Some(tool_event_emitter.clone()),
+                    http: &self.http,
+                };
+
+                let final_tool_name = resolve_tool_name("final_response");
+                let question_panel_name = resolve_tool_name("question_panel");
+                let read_tool_name = resolve_tool_name("read_file");
+
+                let mut exec_calls: Vec<PlannedToolCall> = Vec::new();
+                let mut terminal_call: Option<(TerminalTool, PlannedToolCall)> = None;
+                let mut stop_after_index: Option<usize> = None;
+                for planned in planned_calls {
+                    if planned.name == "a2ui" {
+                        terminal_call = Some((TerminalTool::A2ui, planned));
+                        break;
+                    }
+                    if planned.name == final_tool_name {
+                        terminal_call = Some((TerminalTool::Final, planned));
+                        break;
+                    }
+                    if planned.name == question_panel_name {
+                        exec_calls.push(planned);
+                        stop_after_index = Some(exec_calls.len().saturating_sub(1));
+                        break;
+                    }
+                    exec_calls.push(planned);
+                }
+
+                self.ensure_not_cancelled(&session_id)?;
+
+                for planned in &exec_calls {
+                    let args = &planned.call.arguments;
+                    let safe_args = if args.is_object() { args.clone() } else { json!({ "raw": args }) };
+                    let event_args = if allowed_tool_names.contains(&planned.name) {
+                        args.clone()
+                    } else {
+                        safe_args
+                    };
+                    emitter
+                        .emit("tool_call", json!({ "tool": planned.name, "args": event_args }))
+                        .await;
+                }
+
                 let mut should_finish = false;
-                for call in tool_calls {
-                    let mut name = call.name.clone();
-                    let args = call.arguments.clone();
-                    if name.trim().is_empty() {
-                        continue;
-                    }
-                    name = resolve_tool_name(&name);
-
-                    self.ensure_not_cancelled(&session_id)?;
-                    if name == "a2ui" {
-                        let (uid, messages_payload, content) =
-                            self.resolve_a2ui_tool_payload(&args, &user_id, &session_id);
-                        if let Some(messages_payload) = messages_payload.as_ref() {
-                            emitter
-                                .emit(
-                                    "a2ui",
-                                    json!({
-                                        "uid": uid,
-                                        "messages": messages_payload,
-                                        "content": content
-                                    }),
-                                )
-                                .await;
-                        }
-                        a2ui_uid = if uid.trim().is_empty() { None } else { Some(uid.clone()) };
-                        a2ui_messages = messages_payload;
-                        answer = if content.trim().is_empty() {
-                            i18n::t("response.a2ui_fallback")
-                        } else {
-                            content
-                        };
-                        stop_reason = Some("a2ui".to_string());
-                        self.log_a2ui_tool_call(
-                            &user_id,
+                if !exec_calls.is_empty() {
+                    let outcomes = self
+                        .execute_tool_calls_parallel(
+                            exec_calls,
+                            &tool_context,
+                            &allowed_tool_names,
                             &session_id,
-                            &name,
-                            &args,
-                            &uid,
-                            &a2ui_messages,
-                            &answer,
-                            log_payload,
-                        );
-                        if !answer.trim().is_empty() {
-                            self.append_chat(
-                                &user_id,
-                                &session_id,
-                                "assistant",
-                                Some(&json!(answer.clone())),
-                                None,
-                                None,
-                                None,
-                                None,
-                            );
-                        }
-                        should_finish = true;
-                        break;
-                    }
-                    if name == "最终回复" {
-                        answer = self.resolve_final_answer_from_tool(&args);
-                        stop_reason = Some("final_tool".to_string());
-                        self.log_final_tool_call(&user_id, &session_id, &name, &args, log_payload);
-                        if !answer.trim().is_empty() {
-                            self.append_chat(
-                                &user_id,
-                                &session_id,
-                                "assistant",
-                                Some(&json!(answer.clone())),
-                                None,
-                                None,
-                                None,
-                                None,
-                            );
-                        }
-                        should_finish = true;
-                        break;
-                    }
-
-                    let tool_context = ToolContext {
-                        user_id: &user_id,
-                        session_id: &session_id,
-                        workspace: self.workspace.clone(),
-                        lsp_manager: self.lsp_manager.clone(),
-                        config: &config,
-                        a2a_store: &self.a2a_store,
-                        skills: &skills_snapshot,
-                        user_tool_manager: Some(self.user_tool_manager.as_ref()),
-                        user_tool_bindings: Some(&user_tool_bindings),
-                        user_tool_store: Some(self.user_tool_manager.store()),
-                        allow_roots: Some(tool_roots.allow_roots.clone()),
-                        read_roots: Some(tool_roots.read_roots.clone()),
-                        event_emitter: Some(tool_event_emitter.clone()),
-                        http: &self.http,
-                    };
-
-                    let tool_timeout = self.resolve_tool_timeout(&config, &name, &args);
-                    let tool_result = if !allowed_tool_names.contains(&name) {
-                        let safe_args = if args.is_object() { args.clone() } else { json!({ "raw": args }) };
-                        emitter
-                            .emit("tool_call", json!({ "tool": name, "args": safe_args }))
-                            .await;
-                        ToolResultPayload::error(
-                            i18n::t("error.tool_disabled_or_unavailable"),
-                            json!({ "tool": name }),
                         )
-                    } else {
-                        emitter
-                            .emit("tool_call", json!({ "tool": name, "args": args }))
-                            .await;
-                        let result = tokio::select! {
-                            res = self.execute_tool_with_timeout(&tool_context, &name, &args, tool_timeout) => res,
-                            err = self.wait_for_cancelled(&session_id) => {
-                                return Err(err);
-                            }
-                        };
-                        match result {
-                            Ok(value) => ToolResultPayload::from_value(value),
-                            Err(err) => {
-                                let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                    i18n::t_with_params(
-                                        "error.tool_execution_failed",
-                                        &HashMap::from([(
-                                            "name".to_string(),
-                                            format!("{name} timeout"),
-                                        )]),
-                                    )
-                                } else {
-                                    err.to_string()
-                                };
-                                ToolResultPayload::error(message, json!({ "tool": name }))
-                            }
+                        .await?;
+                    for (index, outcome) in outcomes.into_iter().enumerate() {
+                        let ToolExecutionOutcome { call, name, result } = outcome;
+                        let ToolCall { id, arguments, .. } = call;
+                        let args = arguments;
+                        let question_panel_finished = name == question_panel_name && result.ok;
+                        if question_panel_finished {
+                            answer = i18n::t("response.question_panel_waiting");
+                            stop_reason = Some("question_panel".to_string());
+                            should_finish = true;
                         }
-                    };
-                    let question_panel_finished = name == "问询面板" && tool_result.ok;
-                    if question_panel_finished {
-                        answer = i18n::t("response.question_panel_waiting");
-                        stop_reason = Some("question_panel".to_string());
-                        should_finish = true;
-                    }
 
-                    let observation = self.build_tool_observation(&name, &tool_result);
-                    let tool_call_id = if tool_call_mode == ToolCallMode::FunctionCall {
-                        call.id
-                            .as_ref()
-                            .map(|value| value.trim())
-                            .filter(|value| !value.is_empty())
-                            .map(|value| value.to_string())
-                    } else {
-                        None
-                    };
-                    if tool_call_mode == ToolCallMode::FunctionCall {
-                        if let Some(tool_call_id) = tool_call_id.as_ref() {
-                            messages.push(json!({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": observation.clone(),
-                            }));
+                        let observation = self.build_tool_observation(&name, &result);
+                        let tool_call_id = if tool_call_mode == ToolCallMode::FunctionCall {
+                            id.as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(ToString::to_string)
+                        } else {
+                            None
+                        };
+                        if tool_call_mode == ToolCallMode::FunctionCall {
+                            if let Some(tool_call_id) = tool_call_id.as_ref() {
+                                messages.push(json!({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": observation.clone(),
+                                }));
+                            } else {
+                                messages.push(json!({
+                                    "role": "user",
+                                    "content": format!("{OBSERVATION_PREFIX}{observation}"),
+                                }));
+                            }
                         } else {
                             messages.push(json!({
                                 "role": "user",
                                 "content": format!("{OBSERVATION_PREFIX}{observation}"),
                             }));
                         }
-                    } else {
-                        messages.push(json!({
-                            "role": "user",
-                            "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                        }));
-                    }
-                    self.append_chat(
-                        &user_id,
-                        &session_id,
-                        "tool",
-                        Some(&json!(observation)),
-                        None,
-                        None,
-                        None,
-                        tool_call_id.as_deref(),
-                    );
-
-                    self.append_tool_log(
-                        &user_id,
-                        &session_id,
-                        &name,
-                        &args,
-                        &tool_result,
-                        log_payload,
-                    );
-                    self.append_artifact_logs(
-                        &user_id,
-                        &session_id,
-                        &name,
-                        &args,
-                        &tool_result,
-                    );
-                    if name == "读取文件" {
-                        self.append_skill_usage_logs(
-                            &user_id,
-                            &session_id,
-                            &args,
-                            &skills_snapshot,
-                            Some(&user_tool_bindings),
-                            log_payload,
-                        );
-                    }
-
-                    emitter
-                        .emit(
-                            "tool_result",
-                            tool_result.to_event_payload(&name),
-                        )
-                        .await;
-
-                    if question_panel_finished && !answer.trim().is_empty() {
                         self.append_chat(
                             &user_id,
                             &session_id,
-                            "assistant",
-                            Some(&json!(answer.clone())),
+                            "tool",
+                            Some(&json!(observation)),
                             None,
                             None,
                             None,
-                            None,
+                            tool_call_id.as_deref(),
                         );
-                    }
 
-                    self.ensure_not_cancelled(&session_id)?;
-                    if !answer.is_empty() {
-                        break;
+                        self.append_tool_log(
+                            &user_id,
+                            &session_id,
+                            &name,
+                            &args,
+                            &result,
+                            log_payload,
+                        );
+                        self.append_artifact_logs(
+                            &user_id,
+                            &session_id,
+                            &name,
+                            &args,
+                            &result,
+                        );
+                        if name == read_tool_name {
+                            self.append_skill_usage_logs(
+                                &user_id,
+                                &session_id,
+                                &args,
+                                &skills_snapshot,
+                                Some(&user_tool_bindings),
+                                log_payload,
+                            );
+                        }
+
+                        emitter
+                            .emit(
+                                "tool_result",
+                                result.to_event_payload(&name),
+                            )
+                            .await;
+
+                        if question_panel_finished && !answer.trim().is_empty() {
+                            self.append_chat(
+                                &user_id,
+                                &session_id,
+                                "assistant",
+                                Some(&json!(answer.clone())),
+                                None,
+                                None,
+                                None,
+                                None,
+                            );
+                        }
+
+                        self.ensure_not_cancelled(&session_id)?;
+                        if !answer.is_empty() {
+                            break;
+                        }
+                        if stop_after_index.map(|stop| stop == index).unwrap_or(false) {
+                            should_finish = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !should_finish && answer.is_empty() {
+                    if let Some((terminal_kind, terminal)) = terminal_call {
+                        let name = terminal.name.clone();
+                        let args = terminal.call.arguments.clone();
+                        match terminal_kind {
+                            TerminalTool::A2ui => {
+                                let (uid, messages_payload, content) =
+                                    self.resolve_a2ui_tool_payload(&args, &user_id, &session_id);
+                                if let Some(messages_payload) = messages_payload.as_ref() {
+                                    emitter
+                                        .emit(
+                                            "a2ui",
+                                            json!({
+                                                "uid": uid,
+                                                "messages": messages_payload,
+                                                "content": content
+                                            }),
+                                        )
+                                        .await;
+                                }
+                                a2ui_uid = if uid.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(uid.clone())
+                                };
+                                a2ui_messages = messages_payload;
+                                answer = if content.trim().is_empty() {
+                                    i18n::t("response.a2ui_fallback")
+                                } else {
+                                    content
+                                };
+                                stop_reason = Some("a2ui".to_string());
+                                self.log_a2ui_tool_call(
+                                    &user_id,
+                                    &session_id,
+                                    &name,
+                                    &args,
+                                    &uid,
+                                    &a2ui_messages,
+                                    &answer,
+                                    log_payload,
+                                );
+                                if !answer.trim().is_empty() {
+                                    self.append_chat(
+                                        &user_id,
+                                        &session_id,
+                                        "assistant",
+                                        Some(&json!(answer.clone())),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    );
+                                }
+                                should_finish = true;
+                            }
+                            TerminalTool::Final => {
+                                answer = self.resolve_final_answer_from_tool(&args);
+                                stop_reason = Some("final_tool".to_string());
+                                self.log_final_tool_call(&user_id, &session_id, &name, &args, log_payload);
+                                if !answer.trim().is_empty() {
+                                    self.append_chat(
+                                        &user_id,
+                                        &session_id,
+                                        "assistant",
+                                        Some(&json!(answer.clone())),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    );
+                                }
+                                should_finish = true;
+                            }
+                        }
                     }
                 }
                 if should_finish || !answer.is_empty() {
                     break;
                 }
+
             }
 
             if answer.is_empty() {
@@ -591,4 +643,141 @@ impl Orchestrator {
             }
         }
     }
+
+    async fn execute_tool_calls_parallel(
+        &self,
+        calls: Vec<PlannedToolCall>,
+        tool_context: &ToolContext<'_>,
+        allowed_tool_names: &HashSet<String>,
+        session_id: &str,
+    ) -> Result<Vec<ToolExecutionOutcome>, OrchestratorError> {
+        if calls.is_empty() {
+            return Ok(Vec::new());
+        }
+        let parallelism = resolve_tool_parallelism(calls.len());
+        let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
+            let orchestrator = self;
+            let tool_context = tool_context;
+            let allowed_tool_names = allowed_tool_names;
+            async move {
+                let PlannedToolCall { call, name } = planned;
+                let args = call.arguments.clone();
+                let policy_decision = crate::exec_policy::evaluate_tool_call(
+                    tool_context.config,
+                    &name,
+                    &args,
+                    Some(tool_context.session_id),
+                    Some(tool_context.user_id),
+                );
+                let policy_meta = policy_decision.as_ref().map(|decision| decision.to_value());
+                let started_at = Instant::now();
+                let tool_timeout =
+                    orchestrator.resolve_tool_timeout(tool_context.config, &name, &args);
+                let mut result = if !allowed_tool_names.contains(&name) {
+                    ToolResultPayload::error(
+                        i18n::t("error.tool_disabled_or_unavailable"),
+                        json!({ "tool": name.clone() }),
+                    )
+                } else if let Some(decision) = policy_decision.as_ref() {
+                    if !decision.allowed {
+                        let mut denied = ToolResultPayload::error(
+                            i18n::t("tool.exec.not_allowed"),
+                            json!({ "tool": name.clone() }),
+                        );
+                        if let Some(meta) = policy_meta.clone() {
+                            denied.insert_meta("policy", meta);
+                        }
+                        denied
+                    } else {
+                        let result = tokio::select! {
+                            res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                            err = orchestrator.wait_for_cancelled(session_id) => {
+                                return Err(err);
+                            }
+                        };
+                        let mut executed = match result {
+                            Ok(value) => ToolResultPayload::from_value(value),
+                            Err(err) => {
+                                let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                    i18n::t_with_params(
+                                        "error.tool_execution_failed",
+                                        &HashMap::from([(
+                                            "name".to_string(),
+                                            format!("{name} timeout"),
+                                        )]),
+                                    )
+                                } else {
+                                    err.to_string()
+                                };
+                                ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                            }
+                        };
+                        if let Some(meta) = policy_meta.clone() {
+                            executed.insert_meta("policy", meta);
+                        }
+                        executed
+                    }
+                } else {
+                    let result = tokio::select! {
+                        res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                        err = orchestrator.wait_for_cancelled(session_id) => {
+                            return Err(err);
+                        }
+                    };
+                    match result {
+                        Ok(value) => ToolResultPayload::from_value(value),
+                        Err(err) => {
+                            let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                i18n::t_with_params(
+                                    "error.tool_execution_failed",
+                                    &HashMap::from([(
+                                        "name".to_string(),
+                                        format!("{name} timeout"),
+                                    )]),
+                                )
+                            } else {
+                                err.to_string()
+                            };
+                            ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                        }
+                    }
+                };
+                result = orchestrator.finalize_tool_result(result, started_at);
+                Ok(ToolExecutionOutcome { call, name, result })
+            }
+        }))
+        .buffered(parallelism);
+
+        let mut outcomes = Vec::new();
+        while let Some(outcome) = stream.next().await {
+            outcomes.push(outcome?);
+        }
+        Ok(outcomes)
+    }
+}
+
+fn build_planned_tool_calls(calls: Vec<ToolCall>) -> Vec<PlannedToolCall> {
+    calls
+        .into_iter()
+        .filter_map(|mut call| {
+            let name = call.name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let resolved = resolve_tool_name(name);
+            if resolved.trim().is_empty() {
+                return None;
+            }
+            call.name = resolved.clone();
+            Some(PlannedToolCall {
+                call,
+                name: resolved,
+            })
+        })
+        .collect()
+}
+
+fn resolve_tool_parallelism(total: usize) -> usize {
+    let desired = DEFAULT_TOOL_PARALLELISM.max(1);
+    total.max(1).min(desired)
 }
