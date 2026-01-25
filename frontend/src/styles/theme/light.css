@@ -315,6 +315,19 @@
   color: var(--chat-text);
 }
 
+:root[data-user-theme='light'] .chat-shell .input-icon-btn:hover:not(:disabled) {
+  color: var(--chat-primary);
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+}
+
+:root[data-user-theme='light'] .chat-shell .send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.35);
+  filter: brightness(1.02);
+}
+
 :root[data-user-theme='light'] .chat-shell .upload-preview {
   background: #ffffff;
   border-color: rgba(15, 23, 42, 0.12);
