@@ -7,6 +7,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -34,6 +35,9 @@ DEFAULT_SVG_DPI = 300
 DEFAULT_SVG_WIDTH_PX = 0
 DEFAULT_IMAGE_SPACE_PT = 6.0
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+CITATION_RE = re.compile(r"\[(\d{1,3})\]")
+REFERENCE_LINE_RE = re.compile(r"^\[\d{1,3}\]\s+")
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 URL_PREFIXES = ("http://", "https://", "data:", "file:")
 
 
@@ -196,16 +200,13 @@ def resolve_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def find_pandoc(explicit: str) -> Path:
-    if explicit:
-        path = Path(explicit).resolve()
-        if path.exists():
-            return path
+def resolve_pandoc_path(explicit: str) -> Optional[Path]:
+    if not explicit:
+        return None
+    path = Path(explicit).resolve()
+    if not path.exists():
         raise PandocNotFoundError(f"pandoc not found: {path}")
-    found = shutil.which("pandoc")
-    if not found:
-        raise PandocNotFoundError("pandoc not found in PATH.")
-    return Path(found).resolve()
+    return path
 
 
 def split_link_target(raw: str) -> tuple[str, str]:
@@ -476,6 +477,13 @@ def set_style_font(
         style.font.bold = bold
 
 
+def set_style_fonts(style, east_asia_font: str, ascii_font: str, font_size: Optional[float]) -> None:
+    style.font.name = ascii_font
+    ensure_rfonts(style.element, east_asia_font, ascii_font)
+    if font_size is not None:
+        style.font.size = Pt(font_size)
+
+
 def set_run_font(
     run,
     font_name: str,
@@ -485,6 +493,21 @@ def set_run_font(
 ) -> None:
     run.font.name = font_name
     ensure_rfonts(run._element, font_name, digit_font)
+    if font_size is not None:
+        run.font.size = Pt(font_size)
+    if bold is not None:
+        run.font.bold = bold
+
+
+def set_run_fonts(
+    run,
+    east_asia_font: str,
+    ascii_font: str,
+    font_size: Optional[float],
+    bold: Optional[bool],
+) -> None:
+    run.font.name = ascii_font
+    ensure_rfonts(run._element, east_asia_font, ascii_font)
     if font_size is not None:
         run.font.size = Pt(font_size)
     if bold is not None:
@@ -790,6 +813,35 @@ def promote_ordered_list_headings(md_text: str) -> str:
     return "\n".join(output)
 
 
+def normalize_reference_entries(md_text: str) -> str:
+    lines = md_text.splitlines()
+    output: list[str] = []
+    in_refs = False
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        heading = HEADING_RE.match(stripped)
+        if heading:
+            title = heading.group(2).strip()
+            if "参考文献" in title or title.lower() == "references":
+                in_refs = True
+            else:
+                in_refs = False
+            output.append(line)
+            continue
+
+        if in_refs and REFERENCE_LINE_RE.match(stripped):
+            output.append(line)
+            next_line = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+            if next_line and not HEADING_RE.match(next_line):
+                output.append("")
+            continue
+
+        output.append(line)
+
+    return "\n".join(output)
+
+
 def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
     lines = md_text.splitlines()
     counters = [0, 0, 0, 0]
@@ -905,6 +957,32 @@ def add_red_separator(doc: Document) -> None:
     bottom.set(qn("w:color"), "FF0000")
     p_bdr.append(bottom)
     p_pr.append(p_bdr)
+
+
+def apply_code_block_box(paragraph) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+
+    shd = p_pr.find(qn("w:shd"))
+    if shd is None:
+        shd = OxmlElement("w:shd")
+        p_pr.append(shd)
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), "F7F7F7")
+
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is None:
+        p_bdr = OxmlElement("w:pBdr")
+        p_pr.append(p_bdr)
+    for side in ("top", "left", "bottom", "right"):
+        node = p_bdr.find(qn(f"w:{side}"))
+        if node is None:
+            node = OxmlElement(f"w:{side}")
+            p_bdr.append(node)
+        node.set(qn("w:val"), "single")
+        node.set(qn("w:sz"), "4")
+        node.set(qn("w:space"), "2")
+        node.set(qn("w:color"), "D9D9D9")
 
 
 def add_right_paragraph(doc: Document, text: str, args: argparse.Namespace) -> None:
@@ -1066,34 +1144,31 @@ def add_code_block(doc: Document, lines: list[str], args: argparse.Namespace) ->
         return
     paragraph = doc.add_paragraph()
     paragraph.paragraph_format.first_line_indent = Pt(0)
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(0)
-    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    paragraph.paragraph_format.space_before = Pt(6)
+    paragraph.paragraph_format.space_after = Pt(6)
+    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    paragraph.paragraph_format.line_spacing = 1.0
+    paragraph.paragraph_format.left_indent = Cm(0.5)
+    apply_code_block_box(paragraph)
+    code_font_size = max(8.0, args.font_size - 2.0)
     for index, line in enumerate(lines):
         if index > 0:
             run = paragraph.add_run("")
-            apply_run_format(
+            set_run_fonts(
                 run,
-                args,
-                bold=None,
-                italic=None,
-                strike=None,
-                font_name=args.code_font,
-                font_size=args.font_size,
-                code=True,
+                args.font,
+                args.digit_font,
+                code_font_size,
+                None,
             )
             run.add_break()
         run = paragraph.add_run(line)
-        apply_run_format(
+        set_run_fonts(
             run,
-            args,
-            bold=None,
-            italic=None,
-            strike=None,
-            font_name=args.code_font,
-            font_size=args.font_size,
-            code=True,
+            args.font,
+            args.digit_font,
+            code_font_size,
+            None,
         )
 
 
@@ -1441,6 +1516,7 @@ def add_table(
         column.width = Cm(col_width)
 
     set_table_cell_margins(table, top_cm=0.1, bottom_cm=0.1, left_cm=0.2, right_cm=0.2)
+    table_font_size = max(8.0, args.font_size - 2.0)
 
     def fill_row(row_index: int, data: list[str], bold: bool) -> None:
         for col_index in range(col_count):
@@ -1448,16 +1524,26 @@ def add_table(
             cell = table.cell(row_index, col_index)
             cell.text = ""
             cell.width = Cm(col_width)
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             paragraph = cell.paragraphs[0]
             paragraph.paragraph_format.first_line_indent = Pt(0)
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.space_after = Pt(0)
             paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
             paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
-            if col_index < len(alignments):
-                paragraph.alignment = alignments[col_index]
-            add_text_with_breaks(paragraph, text, args, bold)
+            paragraph.alignment = (
+                WD_ALIGN_PARAGRAPH.CENTER
+                if row_index == 0
+                else WD_ALIGN_PARAGRAPH.LEFT
+            )
+            add_text_with_breaks(
+                paragraph,
+                text,
+                args,
+                bold,
+                font_name=args.font,
+                font_size=table_font_size,
+            )
 
     fill_row(0, header, True)
     for row_idx, row in enumerate(rows, start=1):
@@ -1824,6 +1910,7 @@ def apply_style_fonts(doc: Document, args: argparse.Namespace) -> None:
         "Subtitle Char": (args.heading1_font, args.heading_size),
         "Body Text Char": (args.font, args.font_size),
         "Default Paragraph Font": (args.font, args.font_size),
+        "Verbatim Char": (args.digit_font, max(8.0, args.font_size - 2.0)),
     }
     for style_name, (font, size) in style_map.items():
         if style_name not in doc.styles:
@@ -1836,9 +1923,16 @@ def apply_style_fonts(doc: Document, args: argparse.Namespace) -> None:
         style = doc.styles[style_name]
         set_style_font(style, font, size, None, args.digit_font)
 
+    code_style = "Source Code"
+    if code_style in doc.styles:
+        code_size = max(8.0, args.font_size - 2.0)
+        style = doc.styles[code_style]
+        set_style_fonts(style, args.font, args.digit_font, code_size)
+
 
 def normalize_tables(doc: Document, args: argparse.Namespace) -> None:
     table_style = "Table Grid" if "Table Grid" in doc.styles else ""
+    table_font_size = max(8.0, args.font_size - 2.0)
     for table in doc.tables:
         if table_style:
             table.style = table_style
@@ -1848,45 +1942,214 @@ def normalize_tables(doc: Document, args: argparse.Namespace) -> None:
             table.allow_autofit = False
         set_table_layout_fixed(table)
         set_table_cell_margins(table, top_cm=0.1, bottom_cm=0.1, left_cm=0.2, right_cm=0.2)
+        for row_index, row in enumerate(table.rows):
+            for cell in row.cells:
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                for paragraph in cell.paragraphs:
+                    paragraph.paragraph_format.first_line_indent = Pt(0)
+                    paragraph.paragraph_format.space_before = Pt(0)
+                    paragraph.paragraph_format.space_after = Pt(0)
+                    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+                    paragraph.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+                    paragraph.alignment = (
+                        WD_ALIGN_PARAGRAPH.CENTER
+                        if row_index == 0
+                        else WD_ALIGN_PARAGRAPH.LEFT
+                    )
+                    for run in paragraph.runs:
+                        set_run_font(
+                            run,
+                            args.font,
+                            table_font_size,
+                            run.font.bold,
+                            args.digit_font,
+                        )
+
+
+def normalize_code_blocks(doc: Document, args: argparse.Namespace) -> None:
+    code_style = "Source Code"
+    if code_style not in doc.styles:
+        return
+    code_size = max(8.0, args.font_size - 2.0)
+    style = doc.styles[code_style]
+    style.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    style.paragraph_format.line_spacing = 1.0
+    style.paragraph_format.space_before = Pt(6)
+    style.paragraph_format.space_after = Pt(6)
+    style.paragraph_format.first_line_indent = Pt(0)
+    style.paragraph_format.left_indent = Cm(0.5)
+
+    for paragraph in doc.paragraphs:
+        if not paragraph.style or paragraph.style.name != code_style:
+            continue
+        paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        paragraph.paragraph_format.line_spacing = 1.0
+        paragraph.paragraph_format.space_before = Pt(6)
+        paragraph.paragraph_format.space_after = Pt(6)
+        paragraph.paragraph_format.first_line_indent = Pt(0)
+        paragraph.paragraph_format.left_indent = Cm(0.5)
+        apply_code_block_box(paragraph)
+        for run in paragraph.runs:
+            set_run_fonts(run, args.font, args.digit_font, code_size, run.font.bold)
+
+
+def copy_run_format(target_run, source_run) -> None:
+    source_rpr = source_run._element.rPr
+    if source_rpr is not None:
+        new_rpr = deepcopy(source_rpr)
+        target_rpr = target_run._element.rPr
+        if target_rpr is not None:
+            target_run._element.remove(target_rpr)
+        target_run._element.insert(0, new_rpr)
+    if source_run.style is not None:
+        target_run.style = source_run.style
+
+
+def superscript_citations_in_paragraph(paragraph) -> None:
+    runs = list(paragraph.runs)
+    if not runs:
+        return
+    full_text = "".join(run.text for run in runs)
+    if not full_text or not CITATION_RE.search(full_text):
+        return
+
+    segments = []
+    offset = 0
+    for run in runs:
+        text = run.text
+        if text:
+            segments.append((run, offset, offset + len(text)))
+        offset += len(text)
+    if not segments:
+        return
+
+    matches = list(CITATION_RE.finditer(full_text))
+    if not matches:
+        return
+
+    for run in runs:
+        paragraph._p.remove(run._element)
+
+    segment_index = 0
+
+    def advance_segment(pos: int) -> tuple[Optional[object], int]:
+        nonlocal segment_index
+        while segment_index < len(segments) and pos >= segments[segment_index][2]:
+            segment_index += 1
+        if segment_index >= len(segments):
+            return None, pos
+        return segments[segment_index][0], pos
+
+    def emit_text(start: int, end: int, superscript: bool) -> None:
+        nonlocal segment_index
+        pos = start
+        while pos < end:
+            run, _ = advance_segment(pos)
+            if run is None:
+                break
+            run_start, run_end = segments[segment_index][1], segments[segment_index][2]
+            chunk_end = min(run_end, end)
+            chunk_text = full_text[pos:chunk_end]
+            if chunk_text:
+                new_run = paragraph.add_run(chunk_text)
+                copy_run_format(new_run, run)
+                if superscript:
+                    new_run.font.superscript = True
+            pos = chunk_end
+
+    cursor = 0
+    for match in matches:
+        if match.start() > cursor:
+            emit_text(cursor, match.start(), False)
+        emit_text(match.start(), match.end(), True)
+        cursor = match.end()
+    if cursor < len(full_text):
+        emit_text(cursor, len(full_text), False)
+
+
+def superscript_citations(doc: Document) -> None:
+    references_started = False
+    skip_styles = {"Source Code"}
+
+    def is_reference_entry(text: str) -> bool:
+        stripped = text.strip()
+        if not REFERENCE_LINE_RE.match(stripped):
+            return False
+        lowered = stripped.lower()
+        if "http" in lowered or "arxiv" in lowered or "doi" in lowered:
+            return True
+        if re.search(r"\b(19|20)\d{2}\b", stripped):
+            return True
+        return len(stripped) > 40
+
+    for paragraph in doc.paragraphs:
+        text = paragraph.text.strip()
+        if "参考文献" in text or text == "References":
+            references_started = True
+            continue
+        if references_started:
+            continue
+        if text.startswith("[") and len(CITATION_RE.findall(text)) >= 2:
+            continue
+        if is_reference_entry(text):
+            continue
+        if paragraph.style and paragraph.style.name in skip_styles:
+            continue
+        superscript_citations_in_paragraph(paragraph)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    if paragraph.style and paragraph.style.name in skip_styles:
+                        continue
+                    if is_reference_entry(paragraph.text):
+                        continue
+                    superscript_citations_in_paragraph(paragraph)
 
 
 def postprocess_docx(path: Path, args: argparse.Namespace, space_pt: float) -> None:
     doc = Document(path)
     apply_style_fonts(doc, args)
     normalize_tables(doc, args)
+    normalize_code_blocks(doc, args)
     normalize_image_paragraphs(doc, space_pt)
+    superscript_citations(doc)
     doc.save(path)
 
 
 def run_pandoc(
-    pandoc: Path,
+    pandoc: Optional[Path],
     input_path: Path,
     output_path: Path,
     reference_doc: Path,
     resource_path: str,
 ) -> None:
     try:
-        subprocess.run(
-            [
-                str(pandoc),
-                str(input_path),
-                "-o",
-                str(output_path),
-                "--from",
-                "markdown+pipe_tables+table_captions+link_attributes",
-                "--resource-path",
-                resource_path,
-                "--reference-doc",
-                str(reference_doc),
-            ],
-            check=True,
+        import pypandoc
+    except ModuleNotFoundError as exc:
+        raise PandocNotFoundError("pypandoc not installed. Run: pip install pypandoc") from exc
+
+    if pandoc is not None:
+        os.environ["PYPANDOC_PANDOC"] = str(pandoc)
+
+    extra_args = ["--quiet", "--reference-doc", str(reference_doc)]
+    if resource_path:
+        extra_args.extend(["--resource-path", resource_path])
+    try:
+        pypandoc.convert_file(
+            str(input_path),
+            "docx",
+            format="markdown+pipe_tables+table_captions+link_attributes",
+            outputfile=str(output_path),
+            extra_args=extra_args,
         )
-    except FileNotFoundError as exc:
+    except OSError as exc:
         raise PandocNotFoundError(
             "pandoc not found. Provide --pandoc or add pandoc to PATH."
         ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise PandocFailedError(f"pandoc failed with exit code {exc.returncode}") from exc
+    except RuntimeError as exc:
+        raise PandocFailedError(str(exc)) from exc
 
 
 def main() -> int:
@@ -1906,13 +2169,14 @@ def main() -> int:
             preprocessed_text,
             args.force_heading_numbering,
         )
+        normalized_text = normalize_reference_entries(normalized_text)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     if args.use_pandoc:
         try:
-            pandoc = find_pandoc(args.pandoc)
+            pandoc = resolve_pandoc_path(args.pandoc)
             repo_root = resolve_repo_root()
             extra_roots = [Path(p).resolve() for p in args.resource_path if p.strip()]
             default_roots = [repo_root / "docs", repo_root / "web" / "docs"]
@@ -1955,7 +2219,10 @@ def main() -> int:
                 run_pandoc(pandoc, normalized_md, output_path, reference_doc, resource_path)
                 postprocess_docx(output_path, args, DEFAULT_IMAGE_SPACE_PT)
         except PandocNotFoundError:
-            print("pandoc not found; run without --use-pandoc to use fallback.", file=sys.stderr)
+            print(
+                "pandoc/pypandoc not found; run without --use-pandoc to use fallback.",
+                file=sys.stderr,
+            )
             return 1
         except FileNotFoundError as exc:
             print(str(exc), file=sys.stderr)
@@ -1970,6 +2237,7 @@ def main() -> int:
         try:
             doc = create_base_document(args)
             markdown_to_docx(normalized_text, doc, args)
+            superscript_citations(doc)
             doc.save(output_path)
         except PermissionError:
             print(f"Output file is locked: {output_path}", file=sys.stderr)

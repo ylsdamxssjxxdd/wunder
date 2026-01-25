@@ -68,6 +68,12 @@
 | 事项B | 内容B |
 ```
 
+## 引用上标
+- 文内引用使用 `[数字]` 形式，例如 `...实现开放式探索[21]`。
+- 多个引用请写成连续形式，例如 `[2][3][5]`，不要写成 `[2,3]`。
+- 参考文献列表统一放在 `## 参考文献` 标题之后，保持行首 `[数字]` 格式；转换器会自动将正文中的 `[数字]` 转为上标，并跳过参考文献列表。
+- 参考文献每条占一行即可，脚本会自动补充段落间距，无需手工插入空行。
+
 ## 最小示例
 ```
 # 关于开展年度检查的通知
@@ -101,7 +107,7 @@ python scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pa
 ```
 
 说明：
-- 需要本机安装 `pandoc`（Windows/Linux 均可，脚本会自动识别 PATH）。
+- 需要安装 `pypandoc`，并确保 `pandoc` 可用（Windows/Linux 均可，PATH 或 `--pandoc` 均可）。
 - Markdown 中的 SVG 会自动高分辨率转 PNG 并嵌入（默认 300 DPI）。
 - 脚本会自动执行图片段落修正，避免固定行距导致的遮挡。
 - 其他参数可运行 `python scripts/convert_markdown_to_docx.py --help` 查看。
