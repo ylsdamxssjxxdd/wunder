@@ -2762,6 +2762,10 @@
   font-size: 12px;
 }
 
+.debug-actions #debugStabilityToggleBtn {
+  margin-right: auto;
+}
+
 #debugStabilityToggleBtn.is-active {
   background: #3a7afe;
 }
