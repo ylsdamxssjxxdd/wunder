@@ -363,6 +363,27 @@
         <el-button class="system-prompt-footer-btn" @click="closePromptPreview">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="imagePreviewVisible"
+      class="image-preview-dialog"
+      width="auto"
+      top="6vh"
+      :show-close="false"
+      :close-on-click-modal="true"
+      append-to-body
+      @closed="closeImagePreview"
+    >
+      <template #header>
+        <div class="image-preview-header">
+          <div class="image-preview-title">{{ imagePreviewTitle || '图片预览' }}</div>
+          <button class="icon-btn" type="button" @click="closeImagePreview">×</button>
+        </div>
+      </template>
+      <div class="image-preview-body">
+        <img v-if="imagePreviewUrl" :src="imagePreviewUrl" class="image-preview-img" :alt="imagePreviewTitle" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -415,6 +436,9 @@ const messagesContainerRef = ref(null);
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
 const promptPreviewContent = ref('');
+const imagePreviewVisible = ref(false);
+const imagePreviewUrl = ref('');
+const imagePreviewTitle = ref('');
 const promptToolSummary = ref(null);
 const toolSummaryLoading = ref(false);
 const toolSummaryError = ref('');
@@ -795,6 +819,20 @@ const handleInquiryDismiss = () => {
   chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
 };
 
+const openImagePreview = (src, title = '') => {
+  if (!src) return;
+  imagePreviewUrl.value = src;
+  const trimmedTitle = String(title || '').trim();
+  imagePreviewTitle.value = trimmedTitle || '图片预览';
+  imagePreviewVisible.value = true;
+};
+
+const closeImagePreview = () => {
+  imagePreviewVisible.value = false;
+  imagePreviewUrl.value = '';
+  imagePreviewTitle.value = '';
+};
+
 const handleCopyMessage = async (message) => {
   const content = String(message?.content || '').trim();
   if (!content) {
@@ -830,6 +868,16 @@ const handleMessageClick = async (event) => {
       event.preventDefault();
       await downloadWorkspaceResource(publicPath);
     }
+    return;
+  }
+  const previewImage = target.closest('img.ai-resource-preview');
+  if (previewImage) {
+    const card = previewImage.closest('.ai-resource-card');
+    if (card?.dataset?.workspaceState !== 'ready') return;
+    const src = previewImage.getAttribute('src') || '';
+    if (!src) return;
+    const title = card?.querySelector('.ai-resource-name')?.textContent || '';
+    openImagePreview(src, title);
     return;
   }
   const copyButton = target.closest('.ai-code-copy');

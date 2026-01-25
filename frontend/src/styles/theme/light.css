@@ -473,6 +473,24 @@
   outline: none;
 }
 
+:root[data-user-theme='light'] .image-preview-dialog {
+  --el-dialog-bg-color: #ffffff;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:root[data-user-theme='light'] .image-preview-dialog.el-dialog {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .image-preview-img {
+  background: #f8fafc;
+}
+
 :root[data-user-theme='light'] .workflow-dialog {
   --chat-text: #0f172a;
   --chat-primary: #3b82f6;
