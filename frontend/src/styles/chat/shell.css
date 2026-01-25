@@ -883,6 +883,11 @@
   background: #111a2f;
 }
 
+.workspace-preview.is-svg,
+.workspace-preview.is-svg iframe {
+  background: #ffffff;
+}
+
 .workspace-editor-text {
   width: 100%;
   min-height: 45vh;

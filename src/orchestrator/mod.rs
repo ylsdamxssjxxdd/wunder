@@ -81,7 +81,7 @@ use tool_calls::collect_tool_calls_from_output;
 use tool_calls::compile_regex;
 use tool_calls::strip_tool_calls;
 use tool_exec::ToolResultPayload;
-use types::PreparedRequest;
+use types::{PreparedRequest, RoundInfo};
 
 #[derive(Clone)]
 pub struct Orchestrator {

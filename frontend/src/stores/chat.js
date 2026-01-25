@@ -20,7 +20,10 @@ const buildMessageStats = () => ({
   usage: null,
   prefill_duration_s: null,
   decode_duration_s: null,
-  quotaConsumed: 0
+  quotaConsumed: 0,
+  interaction_start_ms: null,
+  interaction_end_ms: null,
+  interaction_duration_s: null
 });
 
 const normalizeStatsCount = (value) => {
@@ -40,6 +43,18 @@ const normalizeDurationValue = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const resolveInteractionDuration = (startMs, endMs) => {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return null;
+  }
+  return (endMs - startMs) / 1000;
+};
+
+const normalizeInteractionTimestamp = (value) => {
+  const millis = resolveTimestampMs(value);
+  return Number.isFinite(millis) ? millis : null;
 };
 
 const normalizeUsagePayload = (payload) => {
@@ -73,6 +88,20 @@ const normalizeMessageStats = (stats) => {
   if (!stats || typeof stats !== 'object') {
     return null;
   }
+  const interactionStartMs = normalizeInteractionTimestamp(
+    stats.interaction_start_ms ?? stats.interactionStartMs ?? stats.interaction_start ?? stats.started_at
+  );
+  const interactionEndMs = normalizeInteractionTimestamp(
+    stats.interaction_end_ms ?? stats.interactionEndMs ?? stats.interaction_end ?? stats.ended_at
+  );
+  const interactionDuration = normalizeDurationValue(
+    stats.interaction_duration_s ??
+      stats.interactionDurationS ??
+      stats.interactionDuration ??
+      stats.duration_s ??
+      stats.elapsed_s
+  );
+  const rangedDuration = resolveInteractionDuration(interactionStartMs, interactionEndMs);
   return {
     toolCalls: normalizeStatsCount(stats.toolCalls),
     usage: normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage),
@@ -84,7 +113,10 @@ const normalizeMessageStats = (stats) => {
     ),
     quotaConsumed: normalizeQuotaConsumed(
       stats.quotaConsumed ?? stats.quota_consumed ?? stats.quota
-    )
+    ),
+    interaction_start_ms: interactionStartMs,
+    interaction_end_ms: interactionEndMs,
+    interaction_duration_s: rangedDuration ?? interactionDuration
   };
 };
 
@@ -152,6 +184,24 @@ const mergeMessageStats = (base, incoming) => {
   if (!left && !right) return null;
   if (!left) return right;
   if (!right) return left;
+  const startMs =
+    left.interaction_start_ms === null || left.interaction_start_ms === undefined
+      ? right.interaction_start_ms
+      : right.interaction_start_ms === null || right.interaction_start_ms === undefined
+        ? left.interaction_start_ms
+        : Math.min(left.interaction_start_ms, right.interaction_start_ms);
+  const endMs =
+    left.interaction_end_ms === null || left.interaction_end_ms === undefined
+      ? right.interaction_end_ms
+      : right.interaction_end_ms === null || right.interaction_end_ms === undefined
+        ? left.interaction_end_ms
+        : Math.max(left.interaction_end_ms, right.interaction_end_ms);
+  const rangedDuration = resolveInteractionDuration(startMs, endMs);
+  const duration =
+    rangedDuration ??
+    normalizeDurationValue(
+      right.interaction_duration_s ?? left.interaction_duration_s
+    );
   return {
     toolCalls: Math.max(left.toolCalls, right.toolCalls),
     usage: right.usage || left.usage,
@@ -163,7 +213,10 @@ const mergeMessageStats = (base, incoming) => {
       right.decode_duration_s === null || right.decode_duration_s === undefined
         ? left.decode_duration_s
         : right.decode_duration_s,
-    quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed)
+    quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
+    interaction_start_ms: startMs,
+    interaction_end_ms: endMs,
+    interaction_duration_s: duration
   };
 };
 
@@ -1121,6 +1174,51 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
   assistantMessage.questionPanel = normalizeInquiryPanelState(assistantMessage.questionPanel);
   const stats = ensureMessageStats(assistantMessage);
+  const refreshInteractionDuration = () => {
+    if (!stats) return;
+    const duration = resolveInteractionDuration(
+      stats.interaction_start_ms,
+      stats.interaction_end_ms
+    );
+    if (duration !== null) {
+      stats.interaction_duration_s = duration;
+    }
+  };
+  const applyInteractionTimestamp = (timestamp) => {
+    if (!stats) return;
+    const millis = resolveTimestampMs(timestamp);
+    if (!Number.isFinite(millis)) {
+      return;
+    }
+    if (!Number.isFinite(stats.interaction_start_ms)) {
+      stats.interaction_start_ms = millis;
+    } else {
+      stats.interaction_start_ms = Math.min(stats.interaction_start_ms, millis);
+    }
+    if (!Number.isFinite(stats.interaction_end_ms)) {
+      stats.interaction_end_ms = millis;
+    } else {
+      stats.interaction_end_ms = Math.max(stats.interaction_end_ms, millis);
+    }
+    refreshInteractionDuration();
+  };
+  const ensureInteractionStart = () => {
+    if (!stats) return;
+    if (!Number.isFinite(stats.interaction_start_ms)) {
+      stats.interaction_start_ms = Date.now();
+    }
+  };
+  const finalizeInteractionDuration = () => {
+    if (!stats) return;
+    ensureInteractionStart();
+    const now = Date.now();
+    if (!Number.isFinite(stats.interaction_end_ms)) {
+      stats.interaction_end_ms = now;
+    } else {
+      stats.interaction_end_ms = Math.max(stats.interaction_end_ms, now);
+    }
+    refreshInteractionDuration();
+  };
   let outputContent = assistantMessage.content || '';
   let outputReasoning = assistantMessage.reasoning || '';
   const existingOutput = assistantMessage.workflowItems?.find((item) => item.title === '模型输出');
@@ -1146,10 +1244,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
-  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration) => {
+  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options = {}) => {
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
-    if (normalizedUsage) {
+    if (normalizedUsage && options.updateUsage !== false) {
       stats.usage = normalizedUsage;
     }
     const prefill = normalizeDurationValue(prefillDuration);
@@ -1355,6 +1453,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     }
   };
 
+  ensureInteractionStart();
+
   const clearVisibleOutput = () => {
     resetStreamPending();
     assistantMessage.content = '';
@@ -1399,6 +1499,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     const payload = safeJsonParse(raw);
     const data = payload?.data ?? payload;
     const eventType = resolveEventType(eventName, payload);
+    applyInteractionTimestamp(payload?.timestamp ?? data?.timestamp);
 
     // 基于事件类型生成工作流条目并更新回复内容
     switch (eventType) {
@@ -1730,6 +1831,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
         status: 'completed'
       });
     }
+    finalizeInteractionDuration();
     notifySnapshot();
   };
 
@@ -1901,6 +2003,7 @@ export const useChatStore = defineStore('chat', {
       }
       const userMessage = buildMessage('user', content);
       this.messages.push(userMessage);
+      const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
       const authStore = useAuthStore();
       // 共享工具需要用户勾选后才允许注入，默认不启用
       const sharedSelection = Array.from(
@@ -1924,6 +2027,9 @@ export const useChatStore = defineStore('chat', {
         stream_event_id: 0,
         stream_round: null
       };
+      if (assistantMessageRaw.stats) {
+        assistantMessageRaw.stats.interaction_start_ms = requestStartMs;
+      }
       this.messages.push(assistantMessageRaw);
       const assistantMessage = this.messages[this.messages.length - 1];
       this.scheduleSnapshot(true);

@@ -267,6 +267,7 @@ impl Orchestrator {
         llm_config: &LlmModelConfig,
         user_id: &str,
         session_id: &str,
+        round_info: RoundInfo,
         messages: Vec<Value>,
         emitter: &EventEmitter,
         current_question: &str,
@@ -320,12 +321,15 @@ impl Orchestrator {
         } else {
             i18n::t("compaction.reason.context_too_long")
         };
-        emitter
-            .emit(
-                "progress",
-                json!({ "stage": "compacting", "summary": summary_text }),
-            )
-            .await;
+        let compaction_round = RoundInfo {
+            user_round: round_info.user_round,
+            model_round: None,
+        };
+        let mut compacting_payload = json!({ "stage": "compacting", "summary": summary_text });
+        if let Value::Object(ref mut map) = compacting_payload {
+            compaction_round.insert_into(map);
+        }
+        emitter.emit("progress", compacting_payload).await;
 
         let system_message = messages
             .first()
@@ -413,6 +417,24 @@ impl Orchestrator {
         let mut current_question_ts: Option<f64> = None;
         let mut skipped_question = false;
         let question_text = current_question.trim();
+        let current_user_signature = current_user_message
+            .as_ref()
+            .map(|message| {
+                self.extract_memory_summary_text(message.get("content").unwrap_or(&Value::Null))
+            })
+            .unwrap_or_default();
+        let mut question_candidates: Vec<String> = Vec::new();
+        if !question_text.is_empty() {
+            question_candidates.push(question_text.to_string());
+        }
+        let current_user_signature = current_user_signature.trim();
+        if !current_user_signature.is_empty()
+            && !question_candidates
+                .iter()
+                .any(|candidate| candidate == current_user_signature)
+        {
+            question_candidates.push(current_user_signature.to_string());
+        }
         let history = self
             .workspace
             .load_history_async(user_id, session_id, config.workspace.max_history_items)
@@ -421,10 +443,16 @@ impl Orchestrator {
         let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
         let mut boundary_item: Option<Value> = None;
         for item in history_items.iter().rev() {
-            if !skipped_question && !question_text.is_empty() {
+            if !skipped_question && !question_candidates.is_empty() {
                 let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-                let content = item.get("content").and_then(Value::as_str).unwrap_or("");
-                if role == "user" && content.trim() == question_text {
+                let content =
+                    self.extract_memory_summary_text(item.get("content").unwrap_or(&Value::Null));
+                if role == "user"
+                    && !content.is_empty()
+                    && question_candidates
+                        .iter()
+                        .any(|candidate| candidate == content.trim())
+                {
                     skipped_question = true;
                     current_question_ts = HistoryManager::get_item_timestamp(item);
                     continue;
@@ -475,7 +503,7 @@ impl Orchestrator {
             summary_input = trimmed;
         }
 
-        let request_payload = if log_payload {
+        let mut request_payload = if log_payload {
             let payload_messages = self.sanitize_messages_for_log(summary_input.clone(), None);
             let payload = build_llm_client(&summary_config, self.http.clone())
                 .build_request_payload(&self.build_chat_messages(&payload_messages), false);
@@ -495,6 +523,9 @@ impl Orchestrator {
                 "purpose": "compaction_summary",
             })
         };
+        if let Value::Object(ref mut map) = request_payload {
+            compaction_round.insert_into(map);
+        }
         emitter.emit("llm_request", request_payload).await;
 
         let mut summary_fallback = false;
@@ -506,7 +537,7 @@ impl Orchestrator {
                 emitter,
                 session_id,
                 false,
-                0,
+                compaction_round,
                 false,
                 true,
                 log_payload,
@@ -524,17 +555,44 @@ impl Orchestrator {
                 i18n::t("compaction.summary_fallback")
             }
         };
-        let summary_text = HistoryManager::format_compaction_summary(&summary_text);
-        emitter
-            .emit(
-                "llm_response",
-                json!({
-                    "content": summary_text,
-                    "reasoning": "",
-                    "purpose": "compaction_summary",
-                }),
-            )
-            .await;
+        let mut summary_text = HistoryManager::format_compaction_summary(&summary_text);
+        let mut base_messages: Vec<Value> = Vec::new();
+        if let Some(system_message) = system_message.clone() {
+            base_messages.push(system_message);
+        }
+        if let Some(current_user_message) = current_user_message.clone() {
+            base_messages.push(current_user_message);
+        } else if !question_text.is_empty() {
+            base_messages.push(json!({ "role": "user", "content": question_text }));
+        }
+        let base_tokens = estimate_messages_tokens(&base_messages);
+        for _ in 0..3 {
+            let summary_message = json!({ "role": "user", "content": summary_text });
+            let total_tokens = base_tokens + estimate_message_tokens(&summary_message);
+            if total_tokens <= limit {
+                break;
+            }
+            let overflow = total_tokens - limit;
+            let summary_tokens = approx_token_count(&summary_text);
+            if summary_tokens <= 1 {
+                break;
+            }
+            let target_tokens = (summary_tokens - overflow).max(1);
+            let trimmed = trim_text_to_tokens(&summary_text, target_tokens, "...(truncated)");
+            if trimmed == summary_text {
+                break;
+            }
+            summary_text = trimmed;
+        }
+        let mut response_payload = json!({
+            "content": summary_text,
+            "reasoning": "",
+            "purpose": "compaction_summary",
+        });
+        if let Value::Object(ref mut map) = response_payload {
+            compaction_round.insert_into(map);
+        }
+        emitter.emit("llm_response", response_payload).await;
 
         let mut meta = serde_json::Map::new();
         meta.insert(
@@ -559,22 +617,37 @@ impl Orchestrator {
             None,
         );
 
-        if skipped_question && !question_text.is_empty() {
+        if skipped_question {
             let should_reappend = compacted_until_ts.is_none()
                 || current_question_ts.is_none()
                 || current_question_ts <= compacted_until_ts;
             if should_reappend {
-                let question_value = Value::String(question_text.to_string());
-                self.append_chat(
-                    user_id,
-                    session_id,
-                    "user",
-                    Some(&question_value),
-                    None,
-                    None,
-                    None,
-                    None,
-                );
+                if let Some(current_user_message) = current_user_message.as_ref() {
+                    if let Some(content) = current_user_message.get("content") {
+                        self.append_chat(
+                            user_id,
+                            session_id,
+                            "user",
+                            Some(content),
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                } else if !question_text.is_empty() {
+                    let question_value = Value::String(question_text.to_string());
+                    self.append_chat(
+                        user_id,
+                        session_id,
+                        "user",
+                        Some(&question_value),
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
             }
         }
 
@@ -591,25 +664,24 @@ impl Orchestrator {
         let rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
 
-        emitter
-            .emit(
-                "compaction",
-                json!({
-                    "reason": if should_compact_by_history { "history" } else { "overflow" },
-                    "status": if summary_fallback { "fallback" } else { "done" },
-                    "summary_fallback": summary_fallback,
-                    "summary_tokens": approx_token_count(&summary_text),
-                    "total_tokens": total_tokens,
-                    "total_tokens_after": rebuilt_tokens,
-                    "history_usage": history_usage,
-                    "context_tokens": history_usage,
-                    "context_tokens_after": rebuilt_tokens,
-                    "history_threshold": history_threshold,
-                    "limit": limit,
-                    "reset_mode": reset_mode,
-                }),
-            )
-            .await;
+        let mut compaction_payload = json!({
+            "reason": if should_compact_by_history { "history" } else { "overflow" },
+            "status": if summary_fallback { "fallback" } else { "done" },
+            "summary_fallback": summary_fallback,
+            "summary_tokens": approx_token_count(&summary_text),
+            "total_tokens": total_tokens,
+            "total_tokens_after": rebuilt_tokens,
+            "history_usage": history_usage,
+            "context_tokens": history_usage,
+            "context_tokens_after": rebuilt_tokens,
+            "history_threshold": history_threshold,
+            "limit": limit,
+            "reset_mode": reset_mode,
+        });
+        if let Value::Object(ref mut map) = compaction_payload {
+            compaction_round.insert_into(map);
+        }
+        emitter.emit("compaction", compaction_payload).await;
 
         Ok(rebuilt)
     }
@@ -939,7 +1011,7 @@ impl Orchestrator {
                 &emitter,
                 &task.session_id,
                 false,
-                1,
+                RoundInfo::default(),
                 false,
                 false,
                 log_payload,
@@ -1384,7 +1456,7 @@ fn should_compact_by_context(
     let should_compact_by_history = history_threshold
         .map(|threshold| context_tokens >= threshold)
         .unwrap_or(false);
-    let should_compact_by_overflow = context_tokens > limit;
+    let should_compact_by_overflow = context_tokens >= limit;
     (
         should_compact_by_history,
         should_compact_by_history || should_compact_by_overflow,

@@ -39,7 +39,9 @@ impl Orchestrator {
                 .await
                 .map_err(|err| OrchestratorError::internal(err.to_string()))?;
             if !ok {
-                return Err(OrchestratorError::user_busy(i18n::t("error.user_session_busy")));
+                return Err(OrchestratorError::user_busy(i18n::t(
+                    "error.user_session_busy",
+                )));
             }
             acquired = true;
 
@@ -53,14 +55,10 @@ impl Orchestrator {
                 {
                     Ok(Ok(_)) => {}
                     Ok(Err(err)) => {
-                        warn!(
-                            "failed to clear stream events for session {session_id}: {err}"
-                        );
+                        warn!("failed to clear stream events for session {session_id}: {err}");
                     }
                     Err(err) => {
-                        warn!(
-                            "failed to clear stream events for session {session_id}: {err}"
-                        );
+                        warn!("failed to clear stream events for session {session_id}: {err}");
                     }
                 }
             }
@@ -70,23 +68,28 @@ impl Orchestrator {
             let heartbeat_session = session_id.clone();
             heartbeat_task = Some(tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(SESSION_LOCK_HEARTBEAT_S)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(
+                        SESSION_LOCK_HEARTBEAT_S,
+                    ))
+                    .await;
                     heartbeat_limiter.touch(&heartbeat_session).await;
                 }
             }));
 
-            self.monitor.register(&session_id, &user_id, &question);
-            emitter
-                .emit(
-                    "progress",
-                    json!({
-                        "stage": "start",
-                        "summary": i18n::t("monitor.summary.received")
-                    }),
-                )
-                .await;
+            let user_round = self.monitor.register(&session_id, &user_id, &question);
+            let request_round = RoundInfo::user_only(user_round);
+            let mut start_payload = json!({
+                "stage": "start",
+                "summary": i18n::t("monitor.summary.received")
+            });
+            if let Value::Object(ref mut map) = start_payload {
+                request_round.insert_into(map);
+            }
+            emitter.emit("progress", start_payload).await;
 
-            let config = self.resolve_config(prepared.config_overrides.as_ref()).await;
+            let config = self
+                .resolve_config(prepared.config_overrides.as_ref())
+                .await;
             let log_payload =
                 is_debug_log_level(&config.observability.log_level) || prepared.debug_payload;
             let (_llm_name, llm_config) =
@@ -97,11 +100,14 @@ impl Orchestrator {
                 self.skills.clone()
             };
             let skills_snapshot = skills.read().await.clone();
-            let user_tool_bindings = self
-                .user_tool_manager
-                .build_bindings(&config, &skills_snapshot, &user_id);
-            let tool_roots =
-                crate::tools::build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings));
+            let user_tool_bindings =
+                self.user_tool_manager
+                    .build_bindings(&config, &skills_snapshot, &user_id);
+            let tool_roots = crate::tools::build_tool_roots(
+                &config,
+                &skills_snapshot,
+                Some(&user_tool_bindings),
+            );
             let allowed_tool_names = self.resolve_allowed_tool_names(
                 &config,
                 prepared.tool_names.as_deref().unwrap_or(&[]),
@@ -109,18 +115,17 @@ impl Orchestrator {
                 Some(&user_tool_bindings),
             );
             let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
-            let function_tooling = if tool_call_mode == ToolCallMode::FunctionCall
-                && !prepared.skip_tool_calls
-            {
-                self.build_function_tooling(
-                    &config,
-                    &skills_snapshot,
-                    &allowed_tool_names,
-                    Some(&user_tool_bindings),
-                )
-            } else {
-                None
-            };
+            let function_tooling =
+                if tool_call_mode == ToolCallMode::FunctionCall && !prepared.skip_tool_calls {
+                    self.build_function_tooling(
+                        &config,
+                        &skills_snapshot,
+                        &allowed_tool_names,
+                        Some(&user_tool_bindings),
+                    )
+                } else {
+                    None
+                };
 
             let mut system_prompt = self
                 .resolve_session_prompt(
@@ -163,15 +168,22 @@ impl Orchestrator {
             );
 
             let max_rounds = llm_config.max_rounds.unwrap_or(1).max(1) as i64;
-            let mut last_usage: Option<TokenUsage> = None;
+            let mut round_usage = TokenUsage {
+                input: 0,
+                output: 0,
+                total: 0,
+            };
             let mut answer = String::new();
             let mut stop_reason: Option<String> = None;
             let mut a2ui_uid: Option<String> = None;
             let mut a2ui_messages: Option<Value> = None;
             let mut last_response: Option<(String, String)> = None;
             let mut last_request_messages: Option<Vec<Value>> = None;
+            let mut last_round_info = request_round;
 
-            for round in 1..=max_rounds {
+            for model_round in 1..=max_rounds {
+                let round_info = RoundInfo::new(user_round, model_round);
+                last_round_info = round_info;
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 messages = self
@@ -179,45 +191,43 @@ impl Orchestrator {
                         &config,
                         &llm_config,
                         &user_id,
-                    &session_id,
-                    messages,
-                    &emitter,
-                    &question,
-                    log_payload,
-                )
-                .await?;
+                        &session_id,
+                        round_info,
+                        messages,
+                        &emitter,
+                        &question,
+                        log_payload,
+                    )
+                    .await?;
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 let context_tokens = context_manager.estimate_context_tokens(&messages);
                 self.workspace
-                    .save_session_token_usage_async(&user_id, &session_id, context_tokens)
+                    .save_session_context_tokens_async(&user_id, &session_id, context_tokens)
                     .await;
-                emitter
-                    .emit(
-                        "context_usage",
-                        json!({
-                            "round": round,
-                            "context_tokens": context_tokens,
-                            "message_count": messages.len(),
-                        }),
-                    )
-                    .await;
+                let mut context_payload = json!({
+                    "context_tokens": context_tokens,
+                    "message_count": messages.len(),
+                });
+                if let Value::Object(ref mut map) = context_payload {
+                    round_info.insert_into(map);
+                }
+                emitter.emit("context_usage", context_payload).await;
 
-                last_request_messages = Some(self.sanitize_messages_for_log(
-                    messages.clone(),
-                    prepared.attachments.as_deref(),
-                ));
+                last_request_messages =
+                    Some(self.sanitize_messages_for_log(
+                        messages.clone(),
+                        prepared.attachments.as_deref(),
+                    ));
 
-                emitter
-                    .emit(
-                        "progress",
-                        json!({
-                            "stage": "llm_call",
-                            "summary": i18n::t("monitor.summary.model_call"),
-                            "round": round
-                        }),
-                    )
-                    .await;
+                let mut llm_call_payload = json!({
+                    "stage": "llm_call",
+                    "summary": i18n::t("monitor.summary.model_call"),
+                });
+                if let Value::Object(ref mut map) = llm_call_payload {
+                    round_info.insert_into(map);
+                }
+                emitter.emit("progress", llm_call_payload).await;
 
                 let tools_payload = function_tooling
                     .as_ref()
@@ -230,7 +240,7 @@ impl Orchestrator {
                         &emitter,
                         &session_id,
                         prepared.stream,
-                        round,
+                        round_info,
                         true,
                         true,
                         log_payload,
@@ -239,12 +249,16 @@ impl Orchestrator {
                     )
                     .await?;
                 last_response = Some((content.clone(), reasoning.clone()));
-                last_usage = Some(usage.clone());
+                accumulate_usage(&mut round_usage, &usage);
 
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
                 } else {
-                    collect_tool_calls_from_output(&content, &reasoning, tool_calls_payload.as_ref())
+                    collect_tool_calls_from_output(
+                        &content,
+                        &reasoning,
+                        tool_calls_payload.as_ref(),
+                    )
                 };
                 let tool_calls = if let Some(tooling) = function_tooling.as_ref() {
                     apply_tool_name_map(tool_calls, &tooling.name_map)
@@ -259,7 +273,11 @@ impl Orchestrator {
                         answer = self.resolve_final_answer(&content);
                     }
                     stop_reason = Some("model_response".to_string());
-                    let assistant_content = if answer.is_empty() { content.clone() } else { answer.clone() };
+                    let assistant_content = if answer.is_empty() {
+                        content.clone()
+                    } else {
+                        answer.clone()
+                    };
                     if !assistant_content.trim().is_empty() {
                         self.append_chat(
                             &user_id,
@@ -305,16 +323,23 @@ impl Orchestrator {
                     );
                 }
 
-                let tool_event_emitter = ToolEventEmitter::new({
-                    let emitter = emitter.clone();
-                    move |event_type, data| {
+                let tool_event_emitter = ToolEventEmitter::new(
+                    {
                         let emitter = emitter.clone();
-                        let event_name = event_type.to_string();
-                        tokio::spawn(async move {
-                            emitter.emit(&event_name, data).await;
-                        });
-                    }
-                }, prepared.stream);
+                        let round_info = round_info;
+                        move |event_type, mut data| {
+                            let emitter = emitter.clone();
+                            let event_name = event_type.to_string();
+                            if let Value::Object(ref mut map) = data {
+                                round_info.insert_into(map);
+                            }
+                            tokio::spawn(async move {
+                                emitter.emit(&event_name, data).await;
+                            });
+                        }
+                    },
+                    prepared.stream,
+                );
 
                 let tool_context = ToolContext {
                     user_id: &user_id,
@@ -361,15 +386,21 @@ impl Orchestrator {
 
                 for planned in &exec_calls {
                     let args = &planned.call.arguments;
-                    let safe_args = if args.is_object() { args.clone() } else { json!({ "raw": args }) };
+                    let safe_args = if args.is_object() {
+                        args.clone()
+                    } else {
+                        json!({ "raw": args })
+                    };
                     let event_args = if allowed_tool_names.contains(&planned.name) {
                         args.clone()
                     } else {
                         safe_args
                     };
-                    emitter
-                        .emit("tool_call", json!({ "tool": planned.name, "args": event_args }))
-                        .await;
+                    let mut tool_payload = json!({ "tool": planned.name, "args": event_args });
+                    if let Value::Object(ref mut map) = tool_payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("tool_call", tool_payload).await;
                 }
 
                 let mut should_finish = false;
@@ -440,13 +471,7 @@ impl Orchestrator {
                             &result,
                             log_payload,
                         );
-                        self.append_artifact_logs(
-                            &user_id,
-                            &session_id,
-                            &name,
-                            &args,
-                            &result,
-                        );
+                        self.append_artifact_logs(&user_id, &session_id, &name, &args, &result);
                         if name == read_tool_name {
                             self.append_skill_usage_logs(
                                 &user_id,
@@ -458,12 +483,11 @@ impl Orchestrator {
                             );
                         }
 
-                        emitter
-                            .emit(
-                                "tool_result",
-                                result.to_event_payload(&name),
-                            )
-                            .await;
+                        let mut tool_result_payload = result.to_event_payload(&name);
+                        if let Value::Object(ref mut map) = tool_result_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("tool_result", tool_result_payload).await;
 
                         if question_panel_finished && !answer.trim().is_empty() {
                             self.append_chat(
@@ -498,16 +522,15 @@ impl Orchestrator {
                                 let (uid, messages_payload, content) =
                                     self.resolve_a2ui_tool_payload(&args, &user_id, &session_id);
                                 if let Some(messages_payload) = messages_payload.as_ref() {
-                                    emitter
-                                        .emit(
-                                            "a2ui",
-                                            json!({
-                                                "uid": uid,
-                                                "messages": messages_payload,
-                                                "content": content
-                                            }),
-                                        )
-                                        .await;
+                                    let mut a2ui_payload = json!({
+                                        "uid": uid,
+                                        "messages": messages_payload,
+                                        "content": content
+                                    });
+                                    if let Value::Object(ref mut map) = a2ui_payload {
+                                        round_info.insert_into(map);
+                                    }
+                                    emitter.emit("a2ui", a2ui_payload).await;
                                 }
                                 a2ui_uid = if uid.trim().is_empty() {
                                     None
@@ -548,7 +571,13 @@ impl Orchestrator {
                             TerminalTool::Final => {
                                 answer = self.resolve_final_answer_from_tool(&args);
                                 stop_reason = Some("final_tool".to_string());
-                                self.log_final_tool_call(&user_id, &session_id, &name, &args, log_payload);
+                                self.log_final_tool_call(
+                                    &user_id,
+                                    &session_id,
+                                    &name,
+                                    &args,
+                                    log_payload,
+                                );
                                 if !answer.trim().is_empty() {
                                     self.append_chat(
                                         &user_id,
@@ -569,7 +598,6 @@ impl Orchestrator {
                 if should_finish || !answer.is_empty() {
                     break;
                 }
-
             }
 
             if answer.is_empty() {
@@ -591,24 +619,47 @@ impl Orchestrator {
                 .await;
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
+            round_usage.total =
+                round_usage
+                    .total
+                    .max(round_usage.input.saturating_add(round_usage.output));
+            let has_round_usage =
+                round_usage.total > 0 || round_usage.input > 0 || round_usage.output > 0;
+            if has_round_usage {
+                let mut usage_payload = json!({
+                    "input_tokens": round_usage.input,
+                    "output_tokens": round_usage.output,
+                    "total_tokens": round_usage.total,
+                });
+                if let Value::Object(ref mut map) = usage_payload {
+                    request_round.insert_into(map);
+                }
+                emitter.emit("round_usage", usage_payload).await;
+            }
+
+            let response_usage = if has_round_usage {
+                Some(round_usage.clone())
+            } else {
+                None
+            };
             let response = WunderResponse {
                 session_id: session_id.clone(),
                 answer: answer.clone(),
-                usage: last_usage.clone(),
+                usage: response_usage.clone(),
                 stop_reason: Some(stop_reason.clone()),
                 uid: a2ui_uid.clone(),
                 a2ui: a2ui_messages.clone(),
             };
-            emitter
-                .emit(
-                    "final",
-                    json!({
-                        "answer": answer,
-                        "usage": last_usage.clone().unwrap_or(TokenUsage { input: 0, output: 0, total: 0 }),
-                        "stop_reason": stop_reason
-                    }),
-                )
-                .await;
+            let mut final_payload = json!({
+                "answer": answer,
+                "usage": response_usage.clone().unwrap_or(TokenUsage { input: 0, output: 0, total: 0 }),
+                "round_usage": round_usage,
+                "stop_reason": stop_reason
+            });
+            if let Value::Object(ref mut map) = final_payload {
+                last_round_info.insert_into(map);
+            }
+            emitter.emit("final", final_payload).await;
             self.monitor.mark_finished(&session_id);
             Ok(response)
         }
@@ -780,4 +831,11 @@ fn build_planned_tool_calls(calls: Vec<ToolCall>) -> Vec<PlannedToolCall> {
 fn resolve_tool_parallelism(total: usize) -> usize {
     let desired = DEFAULT_TOOL_PARALLELISM.max(1);
     total.max(1).min(desired)
+}
+
+fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
+    let total = usage.total.max(usage.input.saturating_add(usage.output));
+    target.input = target.input.saturating_add(usage.input);
+    target.output = target.output.saturating_add(usage.output);
+    target.total = target.total.saturating_add(total);
 }

@@ -2164,9 +2164,12 @@ async fn admin_monitor_tool_usage(
         let elapsed_s = session_info
             .and_then(|value| value.get("elapsed_s").and_then(Value::as_f64))
             .unwrap_or(0.0);
-        let token_usage = session_info
-            .and_then(|value| value.get("token_usage").and_then(Value::as_i64))
+        let context_tokens = session_info
+            .and_then(|value| value.get("context_tokens").and_then(Value::as_i64))
             .unwrap_or(0);
+        let context_tokens_peak = session_info
+            .and_then(|value| value.get("context_tokens_peak").and_then(Value::as_i64))
+            .unwrap_or(context_tokens);
         let prefill_tokens =
             session_info.and_then(|value| value.get("prefill_tokens").and_then(Value::as_i64));
         let prefill_duration_s =
@@ -2193,7 +2196,8 @@ async fn admin_monitor_tool_usage(
             "start_time": start_time,
             "updated_time": updated_time,
             "elapsed_s": elapsed_s,
-            "token_usage": token_usage,
+            "context_tokens": context_tokens,
+            "context_tokens_peak": context_tokens_peak,
             "prefill_tokens": prefill_tokens,
             "prefill_duration_s": prefill_duration_s,
             "prefill_speed_tps": prefill_speed_tps,
@@ -2597,7 +2601,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         active_sessions: i64,
         history_sessions: i64,
         total_sessions: i64,
-        token_usage: i64,
+        context_tokens: i64,
         chat_records: i64,
         tool_calls: i64,
     }
@@ -2619,8 +2623,9 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         }
         let entry = summary.entry(user_id.to_string()).or_default();
         entry.total_sessions += 1;
-        entry.token_usage += session
-            .get("token_usage")
+        entry.context_tokens += session
+            .get("context_tokens_peak")
+            .or_else(|| session.get("context_tokens"))
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let status = session.get("status").and_then(Value::as_str).unwrap_or("");
@@ -2647,7 +2652,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "total_sessions": stats.total_sessions,
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
-                "token_usage": stats.token_usage
+                "context_tokens": stats.context_tokens
             })
         })
         .collect::<Vec<_>>();

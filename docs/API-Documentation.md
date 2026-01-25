@@ -546,14 +546,15 @@
 ## 4.2 Streaming (SSE)
 
 - Content type: `text/event-stream`
+- Round fields: `data.user_round` (user turn), `data.model_round` (model turn).
 - `event: progress`: progress summary
 - `event: llm_request`: model request payload (debug)
 - `event: knowledge_request`: knowledge request payload (debug)
 - `event: llm_output_delta`: stream delta (`data.delta`, `data.reasoning_delta`)
 - `event: llm_stream_retry`: retry info
 - `event: llm_output`: final aggregated output
-- `event: token_usage`: token usage per round
-- `event: quota_usage`: quota consumption per model call (`daily_quota/used/remaining/date`, `consumed`, `round`)
+- `event: token_usage`: token usage per model round (includes `user_round/model_round`)
+- `event: quota_usage`: quota consumption per model call (`daily_quota/used/remaining/date`, `consumed`, includes `user_round/model_round`)
 - `event: tool_call`: tool call info
 - `event: tool_output_delta`: tool output streaming chunk (`data.tool`/`data.command`/`data.stream`/`data.delta`; currently only for local built-in `execute_command`, not sandboxed)
 - `event: tool_result`: tool execution result

@@ -405,6 +405,29 @@
   border-radius: 4px;
 }
 
+:root[data-user-theme='light'] .system-prompt-footer-btn {
+  background: #f1f5f9;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+:root[data-user-theme='light'] .system-prompt-footer-btn:hover {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
+:root[data-user-theme='light'] .system-prompt-footer-btn:focus-visible {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  outline: none;
+}
+
 :root[data-user-theme='light'] .workflow-dialog {
   --chat-text: #0f172a;
   --chat-primary: #3b82f6;

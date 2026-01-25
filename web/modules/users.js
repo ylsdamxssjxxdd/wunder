@@ -188,7 +188,7 @@ const normalizeUserStats = (item) => ({
   total_sessions: Number(item?.total_sessions) || 0,
   chat_records: Number(item?.chat_records) || 0,
   tool_calls: Number(item?.tool_calls) || 0,
-  token_usage: Number(item?.token_usage) || 0,
+  context_tokens: Number(item?.context_tokens) || 0,
 });
 
 // 汇总全部用户统计，便于展示全局视角
@@ -200,7 +200,7 @@ const resolveAllUserStats = () => {
     total_sessions: 0,
     chat_records: 0,
     tool_calls: 0,
-    token_usage: 0,
+    context_tokens: 0,
   };
   if (!Array.isArray(state.users.list)) {
     return summary;
@@ -212,8 +212,8 @@ const resolveAllUserStats = () => {
     summary.total_sessions += Number(item?.total_sessions) || 0;
     summary.chat_records += Number(item?.chat_records) || 0;
     summary.tool_calls += Number(item?.tool_calls) || 0;
-    // 累加所有用户的 token_usage，展示总占用 Token
-    summary.token_usage += Number(item?.token_usage) || 0;
+    // 累加所有用户的上下文占用
+    summary.context_tokens += Number(item?.context_tokens) || 0;
   });
   return summary;
 };
@@ -229,7 +229,7 @@ const renderUserDetailHeader = () => {
       records: allStats.chat_records,
       tools: allStats.tool_calls,
       active: allStats.active_sessions,
-      tokens: formatTokenCount(allStats.token_usage),
+      tokens: formatTokenCount(allStats.context_tokens),
     });
     return;
   }
@@ -242,7 +242,7 @@ const renderUserDetailHeader = () => {
       records: allStats.chat_records,
       tools: allStats.tool_calls,
       active: allStats.active_sessions,
-      tokens: formatTokenCount(allStats.token_usage),
+      tokens: formatTokenCount(allStats.context_tokens),
     });
     return;
   }
@@ -252,7 +252,7 @@ const renderUserDetailHeader = () => {
     records: user.chat_records,
     tools: user.tool_calls,
     active: user.active_sessions,
-    tokens: formatTokenCount(user.token_usage),
+    tokens: formatTokenCount(user.context_tokens),
   });
 };
 
@@ -311,7 +311,7 @@ const renderUserStats = () => {
     sessionCell.textContent = `${user.total_sessions}`;
 
     const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(user.token_usage);
+    tokenCell.textContent = formatTokenCount(user.context_tokens);
 
     const activeCell = document.createElement("td");
     activeCell.textContent = `${user.active_sessions}`;
@@ -361,7 +361,7 @@ const renderUserStats = () => {
       total_sessions: allStats.total_sessions,
       tool_calls: allStats.tool_calls,
       active_sessions: allStats.active_sessions,
-      token_usage: allStats.token_usage,
+      context_tokens: allStats.context_tokens,
     },
     { isAll: true }
   );

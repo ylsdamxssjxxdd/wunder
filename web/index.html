@@ -3654,17 +3654,15 @@
           <div class="form-row">
             <label for="userAccountSettingsRolesInput" data-i18n="userAccounts.modal.settings.roles.label">用户权限</label>
             <div class="form-row-inline">
-              <input
-                id="userAccountSettingsRolesInput"
-                type="text"
-                placeholder="user,admin"
-                data-i18n-placeholder="userAccounts.modal.settings.roles.placeholder"
-              />
+              <select id="userAccountSettingsRolesInput">
+                <option value="user" data-i18n="userAccounts.role.user">user</option>
+                <option value="admin" data-i18n="userAccounts.role.admin">admin</option>
+              </select>
               <button id="userAccountSettingsRolesSave" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
               </button>
             </div>
-            <div class="muted" data-i18n="userAccounts.modal.settings.roles.hint">逗号分隔权限标识</div>
+            <div class="muted" data-i18n="userAccounts.modal.settings.roles.hint">user / admin</div>
           </div>
           <div class="form-row">
             <label for="userAccountToolDefault" data-i18n="userAccounts.modal.tool.default">
@@ -3901,27 +3899,6 @@
           <div class="form-row">
             <label data-i18n="monitor.detail.events">事件详情</label>
             <div id="monitorDetailEvents" class="log log-collapsible"></div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="monitor.detail.speed">模型速度</label>
-            <table class="monitor-kv-table">
-              <tbody>
-                <tr>
-                  <th data-i18n="monitor.detail.prefillSpeed">预填充速度</th>
-                  <td>
-                    <strong id="monitorDetailPrefillSpeed">-</strong>
-                    <div id="monitorDetailPrefillMeta" class="monitor-subtext"></div>
-                  </td>
-                </tr>
-                <tr>
-                  <th data-i18n="monitor.detail.decodeSpeed">解码速度</th>
-                  <td>
-                    <strong id="monitorDetailDecodeSpeed">-</strong>
-                    <div id="monitorDetailDecodeMeta" class="monitor-subtext"></div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         </div>
         <div class="modal-actions">

@@ -468,8 +468,10 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "llm_output_delta",
   "llm_output",
   "llm_stream_retry",
+  "context_usage",
   // Token 用量事件在刷新后也需要保留，避免调试日志丢失
   "token_usage",
+  "round_usage",
   "a2ui",
   "final",
   "error",
@@ -772,6 +774,9 @@ const createDebugStats = () => ({
   tokenInput: 0,
   tokenOutput: 0,
   tokenTotal: 0,
+  contextTokens: 0,
+  contextTokensPeak: 0,
+  hasContextUsage: false,
   prefillTokens: 0,
   prefillDuration: 0,
   decodeTokens: 0,
@@ -820,6 +825,9 @@ const resetLlmRoundMetrics = () => {
   debugStats.prefillDuration = 0;
   debugStats.decodeTokens = 0;
   debugStats.decodeDuration = 0;
+  debugStats.contextTokens = 0;
+  debugStats.contextTokensPeak = 0;
+  debugStats.hasContextUsage = false;
   debugStats.llmRounds = {};
   debugStats.firstRound = null;
   debugStats.latestRound = null;
@@ -848,7 +856,11 @@ const parseOptionalNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const resolveRoundNumber = (value) => parseOptionalNumber(value);
+const resolveModelRoundNumber = (data) =>
+  parseOptionalNumber(data?.model_round ?? data?.modelRound ?? data?.round);
+
+const resolveUserRoundNumber = (data) =>
+  parseOptionalNumber(data?.user_round ?? data?.userRound);
 
 const parseUsageTokens = (usage) => {
   if (!usage || typeof usage !== "object") {
@@ -897,6 +909,8 @@ const recomputeSpeedSummary = () => {
   let latestOutputMs = null;
   let earliestOutputRound = null;
   let outputTokensTotal = 0;
+  let decodeDurationTotal = 0;
+  let hasDecodeDuration = false;
   roundIds.forEach((round) => {
     const metrics = debugStats.llmRounds[String(round)];
     if (!metrics) {
@@ -920,6 +934,20 @@ const recomputeSpeedSummary = () => {
     }
     if (Number.isFinite(metrics.outputTokens) && metrics.outputTokens > 0) {
       outputTokensTotal += metrics.outputTokens;
+    }
+    const decodeDuration = parseOptionalNumber(metrics.decodeDuration);
+    if (decodeDuration !== null && decodeDuration > 0) {
+      decodeDurationTotal += decodeDuration;
+      hasDecodeDuration = true;
+      return;
+    }
+    const observedDecode = resolveRoundDuration(
+      metrics.firstOutputMs,
+      metrics.lastOutputMs
+    );
+    if (observedDecode !== null && observedDecode > 0) {
+      decodeDurationTotal += observedDecode;
+      hasDecodeDuration = true;
     }
   });
   const firstRound = Number.isFinite(earliestOutputRound)
@@ -965,9 +993,13 @@ const recomputeSpeedSummary = () => {
   }
   const decodeTokens =
     outputTokensTotal > 0 ? outputTokensTotal : parseOptionalNumber(decodeMetrics?.outputTokens);
-  let decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
-  if (decodeDuration !== null && decodeDuration <= 0) {
-    decodeDuration = null;
+  let decodeDuration =
+    hasDecodeDuration && decodeDurationTotal > 0 ? decodeDurationTotal : null;
+  if (decodeDuration === null) {
+    decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
+    if (decodeDuration !== null && decodeDuration <= 0) {
+      decodeDuration = null;
+    }
   }
   if (decodeDuration === null) {
     decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
@@ -1000,7 +1032,7 @@ const updateLlmRoundMetrics = (eventType, payload, timestamp) => {
     return;
   }
   const data = payload?.data || payload;
-  let round = resolveRoundNumber(data?.round);
+  let round = resolveModelRoundNumber(data);
   if (
     Number.isFinite(round) &&
     Number.isFinite(debugStats.lastRoundSeen) &&
@@ -1202,8 +1234,21 @@ const renderDebugStats = () => {
     return;
   }
   const sessionId = String(state.runtime.debugSessionId || "").trim();
-  const tokenText = debugStats.hasTokenUsage
+  const contextCurrent = formatStatNumber(debugStats.contextTokens, "0");
+  const contextPeak = formatStatNumber(
+    Number.isFinite(debugStats.contextTokensPeak) && debugStats.contextTokensPeak > 0
+      ? debugStats.contextTokensPeak
+      : debugStats.contextTokens,
+    contextCurrent
+  );
+  const tokenText = debugStats.hasContextUsage
     ? t("debug.stats.tokenUsage", {
+        current: contextCurrent,
+        peak: contextPeak,
+      })
+    : "-";
+  const billingText = debugStats.hasTokenUsage
+    ? t("debug.stats.tokenBilling", {
         total: formatStatNumber(debugStats.tokenTotal, "0"),
         input: formatStatNumber(debugStats.tokenInput, "0"),
         output: formatStatNumber(debugStats.tokenOutput, "0"),
@@ -1243,6 +1288,7 @@ const renderDebugStats = () => {
     { label: t("debug.stats.sessionId"), value: sessionId || "-" },
     { label: t("debug.stats.duration"), value: durationText },
     { label: t("debug.stats.tokenUsageLabel"), value: tokenText },
+    { label: t("debug.stats.tokenBillingLabel"), value: billingText },
     { label: t("debug.stats.prefillSpeed"), value: prefillSpeedText },
     { label: t("debug.stats.decodeSpeed"), value: decodeSpeedText },
     { label: t("debug.stats.llmRequests"), value: formatStatNumber(debugStats.llmRequests, "0") },
@@ -1333,6 +1379,42 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   if (Number.isFinite(totalTokens)) {
     debugStats.tokenTotal = Math.max(debugStats.tokenTotal, totalTokens);
   }
+};
+
+const applyContextUsageSnapshot = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+  const currentTokens = parseOptionalNumber(
+    payload.context_tokens ??
+      payload.contextTokens ??
+      payload.total_tokens ??
+      payload.total ??
+      payload.context_tokens_current ??
+      payload.contextTokensCurrent
+  );
+  const peakTokens = parseOptionalNumber(
+    payload.context_tokens_peak ?? payload.contextTokensPeak
+  );
+  const hasCurrent = Number.isFinite(currentTokens) && currentTokens > 0;
+  const hasPeak = Number.isFinite(peakTokens) && peakTokens > 0;
+  if (!hasCurrent && !hasPeak) {
+    return;
+  }
+  if (hasCurrent) {
+    debugStats.contextTokens = currentTokens;
+  }
+  if (hasPeak) {
+    debugStats.contextTokensPeak = peakTokens;
+  }
+  if (
+    Number.isFinite(debugStats.contextTokens) &&
+    (!Number.isFinite(debugStats.contextTokensPeak) ||
+      debugStats.contextTokens > debugStats.contextTokensPeak)
+  ) {
+    debugStats.contextTokensPeak = debugStats.contextTokens;
+  }
+  debugStats.hasContextUsage = true;
 };
 
 // 生成附件唯一标识，便于删除操作定位
@@ -1742,17 +1824,20 @@ const resetModelOutputState = (options = {}) => {
       rounds: [],
       selectedRound: null,
       userSelectedRound: false,
+      roundIndex: new Map(),
     };
   }
   const outputState = state.runtime.llmOutput;
   if (resetRound) {
     outputState.globalRound = 0;
     outputState.currentRound = null;
+    outputState.roundIndex = new Map();
   }
   if (resetContent) {
     outputState.rounds = [];
     outputState.selectedRound = null;
     outputState.userSelectedRound = false;
+    outputState.roundIndex = new Map();
     resetModelOutputBuffer();
     const outputText = resolveModelOutputText();
     if (outputText) {
@@ -1767,9 +1852,21 @@ const resetModelOutputState = (options = {}) => {
 };
 
 // 重置指定轮次的输出内容，避免流式重连时重复拼接
-const resetRoundOutput = (roundId) => {
+const resetRoundOutput = (roundId, options = {}) => {
   const outputState = getModelOutputState();
-  const targetRound = Number.isFinite(roundId) ? roundId : outputState.currentRound;
+  let targetRound = Number.isFinite(roundId) ? roundId : null;
+  if (options.modelRound !== undefined || options.userRound !== undefined) {
+    const roundKey = buildRoundKey(options.modelRound, options.userRound);
+    if (roundKey) {
+      const mapped = ensureRoundIndex(outputState).get(roundKey);
+      if (Number.isFinite(mapped)) {
+        targetRound = mapped;
+      }
+    }
+  }
+  if (!Number.isFinite(targetRound)) {
+    targetRound = outputState.currentRound;
+  }
   if (!Number.isFinite(targetRound)) {
     return;
   }
@@ -1810,6 +1907,7 @@ const getModelOutputState = () => {
       rounds: [],
       selectedRound: null,
       userSelectedRound: false,
+      roundIndex: new Map(),
     };
   }
   if (!Number.isFinite(state.runtime.llmOutput.globalRound)) {
@@ -1827,17 +1925,55 @@ const getModelOutputState = () => {
   if (typeof state.runtime.llmOutput.userSelectedRound !== "boolean") {
     state.runtime.llmOutput.userSelectedRound = false;
   }
+  if (!(state.runtime.llmOutput.roundIndex instanceof Map)) {
+    state.runtime.llmOutput.roundIndex = new Map();
+  }
   return state.runtime.llmOutput;
+};
+
+const ensureRoundIndex = (outputState) => {
+  if (!outputState) {
+    return new Map();
+  }
+  if (!(outputState.roundIndex instanceof Map)) {
+    outputState.roundIndex = new Map();
+  }
+  return outputState.roundIndex;
+};
+
+const buildRoundKey = (modelRound, userRound) => {
+  if (!Number.isFinite(modelRound)) {
+    return null;
+  }
+  if (Number.isFinite(userRound)) {
+    return `u:${userRound}|m:${modelRound}`;
+  }
+  return `m:${modelRound}`;
+};
+
+const allocateRoundId = (outputState) => {
+  outputState.globalRound = (Number.isFinite(outputState.globalRound) ? outputState.globalRound : 0) + 1;
+  return outputState.globalRound;
 };
 
 // 统一推进模型轮次，并准备对应的轮次容器
 const advanceModelRound = (timestamp, options = {}) => {
   const autoSelect = options.autoSelect !== false;
   const outputState = getModelOutputState();
-  outputState.globalRound = (Number.isFinite(outputState.globalRound) ? outputState.globalRound : 0) + 1;
-  outputState.currentRound = outputState.globalRound;
-  ensureRoundEntry(outputState, outputState.currentRound, timestamp, { autoSelect });
-  return outputState.currentRound;
+  const roundId = allocateRoundId(outputState);
+  const modelRound = Number.isFinite(options.modelRound) ? options.modelRound : roundId;
+  const userRound = Number.isFinite(options.userRound) ? options.userRound : null;
+  outputState.currentRound = roundId;
+  ensureRoundEntry(outputState, roundId, timestamp, {
+    autoSelect,
+    modelRound,
+    userRound,
+  });
+  const roundKey = buildRoundKey(modelRound, userRound);
+  if (roundKey) {
+    ensureRoundIndex(outputState).set(roundKey, roundId);
+  }
+  return roundId;
 };
 
 // 重置模型输出缓冲，避免清空后仍写入旧数据
@@ -1924,14 +2060,36 @@ const updateRoundTail = (entry, text) => {
   entry.lastChar = tailSource.slice(-1);
 };
 
+const resolveEntryModelRound = (entry) =>
+  Number.isFinite(entry?.modelRound) ? entry.modelRound : entry?.id;
+
+const resolveEntryUserRound = (entry) =>
+  Number.isFinite(entry?.userRound) ? entry.userRound : null;
+
+const resolveEntryTotalRound = (entry) =>
+  Number.isFinite(entry?.id) ? entry.id : null;
+
 // 组装下拉框展示文案
 const buildRoundLabel = (entry) => {
   if (!entry) {
     return "";
   }
+  const totalRound = resolveEntryTotalRound(entry);
+  const modelRound = resolveEntryModelRound(entry);
+  const userRound = resolveEntryUserRound(entry);
+  const userValue = Number.isFinite(userRound) ? userRound : "-";
   return entry.timeText
-    ? t("debug.round.labelWithTime", { id: entry.id, time: entry.timeText })
-    : t("debug.round.label", { id: entry.id });
+    ? t("debug.round.labelWithTime", {
+        total: totalRound ?? "-",
+        user: userValue,
+        model: modelRound ?? "-",
+        time: entry.timeText,
+      })
+    : t("debug.round.label", {
+        total: totalRound ?? "-",
+        user: userValue,
+        model: modelRound ?? "-",
+      });
 };
 
 // 获取轮次输出文本，切换轮次时用于重建可视区域
@@ -1987,8 +2145,10 @@ const findRoundEntry = (outputState, roundId) => {
 };
 
 // 创建新的轮次输出容器
-const buildRoundEntry = (roundId, timestamp) => ({
+const buildRoundEntry = (roundId, timestamp, meta = {}) => ({
   id: roundId,
+  modelRound: Number.isFinite(meta.modelRound) ? meta.modelRound : roundId,
+  userRound: Number.isFinite(meta.userRound) ? meta.userRound : null,
   timeText: timestamp ? formatEventTime(timestamp) : "",
   chunks: [],
   contentChunks: [],
@@ -2370,13 +2530,18 @@ const recordA2uiMessages = (payload, timestamp) => {
     updateModelOutputPreviewButton(outputState);
     return null;
   }
-  let roundId = resolveOutputRoundId(outputState, payload?.round);
+  const modelRound = resolveModelRoundNumber(payload);
+  const userRound = resolveUserRoundNumber(payload);
+  let roundId = resolveOutputRoundId(outputState, modelRound, userRound, {
+    allowAdvance: true,
+  });
   let entry = null;
-  if (!Number.isFinite(roundId)) {
-    roundId = advanceModelRound(timestamp);
-    entry = findRoundEntry(outputState, roundId);
-  } else {
-    entry = ensureRoundEntry(outputState, roundId, timestamp, { autoSelect: false });
+  if (Number.isFinite(roundId)) {
+    entry = ensureRoundEntry(outputState, roundId, timestamp, {
+      autoSelect: false,
+      modelRound: Number.isFinite(modelRound) ? modelRound : roundId,
+      userRound,
+    });
   }
   if (!entry) {
     return null;
@@ -2446,9 +2611,20 @@ const ensureRoundEntry = (outputState, roundId, timestamp, options = {}) => {
   let entry = findRoundEntry(outputState, roundId);
   let needsRender = false;
   if (!entry) {
-    entry = buildRoundEntry(roundId, timestamp);
+    entry = buildRoundEntry(roundId, timestamp, {
+      modelRound: options.modelRound,
+      userRound: options.userRound,
+    });
     outputState.rounds.push(entry);
     needsRender = true;
+  }
+  if (Number.isFinite(options.modelRound)) {
+    if (!Number.isFinite(entry.modelRound) || entry.modelRound === entry.id) {
+      entry.modelRound = options.modelRound;
+    }
+  }
+  if (Number.isFinite(options.userRound) && !Number.isFinite(entry.userRound)) {
+    entry.userRound = options.userRound;
   }
   if (timestamp && !entry.timeText) {
     entry.timeText = formatEventTime(timestamp);
@@ -2485,12 +2661,24 @@ const ensureRoundHeader = (outputState, entry, timestamp) => {
     entry.timeText = formatEventTime(timestamp);
     renderRoundSelectOptions(outputState);
   }
-  const timeText = entry.timeText ? `[${entry.timeText}] ` : "";
-  appendRoundText(
-    outputState,
-    entry,
-    t("debug.round.title", { time: timeText, id: entry.id }) + "\n"
-  );
+  const timeText = entry.timeText ? `[${entry.timeText}]` : "";
+  const totalRound = resolveEntryTotalRound(entry);
+  const modelRound = resolveEntryModelRound(entry);
+  const userRound = resolveEntryUserRound(entry);
+  const userValue = Number.isFinite(userRound) ? userRound : "-";
+  const title = timeText
+    ? t("debug.round.titleWithTime", {
+        total: totalRound ?? "-",
+        user: userValue,
+        model: modelRound ?? "-",
+        time: timeText,
+      })
+    : t("debug.round.title", {
+        total: totalRound ?? "-",
+        user: userValue,
+        model: modelRound ?? "-",
+      });
+  appendRoundText(outputState, entry, `${title}\n`);
   entry.headerWritten = true;
   entry.section = null;
 };
@@ -2533,17 +2721,27 @@ const appendRoundText = (outputState, entry, text, options = {}) => {
 };
 
 // 解析事件携带的轮次编号，确保能与当前轮次保持同步
-const resolveOutputRoundId = (outputState, dataRound) => {
-  const fallbackRound = Number.isFinite(dataRound) ? dataRound : null;
+const resolveOutputRoundId = (outputState, modelRound, userRound, options = {}) => {
+  const roundKey = buildRoundKey(modelRound, userRound);
+  if (roundKey) {
+    const index = ensureRoundIndex(outputState);
+    const existing = index.get(roundKey);
+    if (Number.isFinite(existing)) {
+      outputState.currentRound = existing;
+      return existing;
+    }
+    const roundId = allocateRoundId(outputState);
+    index.set(roundKey, roundId);
+    outputState.currentRound = roundId;
+    return roundId;
+  }
   if (Number.isFinite(outputState.currentRound)) {
     return outputState.currentRound;
   }
-  if (Number.isFinite(fallbackRound)) {
-    outputState.currentRound = fallbackRound;
-    if (!Number.isFinite(outputState.globalRound) || outputState.globalRound < fallbackRound) {
-      outputState.globalRound = fallbackRound;
-    }
-    return fallbackRound;
+  if (options.allowAdvance) {
+    const roundId = allocateRoundId(outputState);
+    outputState.currentRound = roundId;
+    return roundId;
   }
   return null;
 };
@@ -2571,11 +2769,19 @@ const appendModelOutputDelta = (data, timestamp) => {
     return;
   }
   const outputState = getModelOutputState();
-  const displayRound = resolveOutputRoundId(outputState, data?.round);
+  const modelRound = resolveModelRoundNumber(data);
+  const userRound = resolveUserRoundNumber(data);
+  const displayRound = resolveOutputRoundId(outputState, modelRound, userRound, {
+    allowAdvance: true,
+  });
   if (!Number.isFinite(displayRound)) {
     return;
   }
-  const entry = ensureRoundEntry(outputState, displayRound, timestamp, { autoSelect: true });
+  const entry = ensureRoundEntry(outputState, displayRound, timestamp, {
+    autoSelect: true,
+    modelRound: Number.isFinite(modelRound) ? modelRound : displayRound,
+    userRound,
+  });
   ensureRoundHeader(outputState, entry, timestamp);
   if (reasoningDelta) {
     ensureRoundSection(outputState, entry, t("debug.output.thoughtSection"));
@@ -2713,16 +2919,28 @@ const handleEvent = (eventType, dataText, options = {}) => {
     }
     const showStageBadge = stage && !["received", "llm_call", "compacting"].includes(stage);
     if (stage === "llm_call") {
-      const roundNumber = advanceModelRound(eventTimestamp, { autoSelect: false });
+      const modelRound = resolveModelRoundNumber(data);
+      const userRound = resolveUserRoundNumber(data);
+      const outputState = getModelOutputState();
+      const roundId = resolveOutputRoundId(outputState, modelRound, userRound, {
+        allowAdvance: true,
+      });
+      let roundNumber = modelRound;
+      if (!Number.isFinite(roundNumber)) {
+        roundNumber = Number.isFinite(roundId) ? roundId : roundNumber;
+      }
+      if (Number.isFinite(roundId)) {
+        ensureRoundEntry(outputState, roundId, eventTimestamp, {
+          autoSelect: false,
+          modelRound: Number.isFinite(roundNumber) ? roundNumber : roundId,
+          userRound,
+        });
+      }
       summary = t("debug.event.llmCall", { round: roundNumber });
-      if (Number.isFinite(data?.round)) {
-        if (data.round !== roundNumber) {
-          detailData = { ...data, request_round: data.round, round: roundNumber };
-        } else {
-          detailData = { ...data };
-        }
-      } else {
-        detailData = { ...data, round: roundNumber };
+      if (Number.isFinite(modelRound)) {
+        detailData = { ...data };
+      } else if (Number.isFinite(roundNumber)) {
+        detailData = { ...data, model_round: roundNumber };
       }
       renderDebugStats();
     }
@@ -2893,7 +3111,10 @@ const handleEvent = (eventType, dataText, options = {}) => {
       summary = t("debug.streamRetry.failedSimple");
     }
     if (data?.reset_output === true) {
-      resetRoundOutput(data?.round);
+      resetRoundOutput(null, {
+        modelRound: resolveModelRoundNumber(data),
+        userRound: resolveUserRoundNumber(data),
+      });
     }
     appendLog(summary, {
       detail: JSON.stringify(data, null, 2),
@@ -2907,11 +3128,19 @@ const handleEvent = (eventType, dataText, options = {}) => {
     renderDebugStats();
     attachResponseToRequest(data, { timestamp: eventTimestamp });
     const outputState = getModelOutputState();
-    const displayRound = resolveOutputRoundId(outputState, data?.round);
+    const modelRound = resolveModelRoundNumber(data);
+    const userRound = resolveUserRoundNumber(data);
+    const displayRound = resolveOutputRoundId(outputState, modelRound, userRound, {
+      allowAdvance: true,
+    });
     if (!Number.isFinite(displayRound)) {
       return;
     }
-    const entry = ensureRoundEntry(outputState, displayRound, eventTimestamp, { autoSelect: true });
+    const entry = ensureRoundEntry(outputState, displayRound, eventTimestamp, {
+      autoSelect: true,
+      modelRound: Number.isFinite(modelRound) ? modelRound : displayRound,
+      userRound,
+    });
     ensureRoundHeader(outputState, entry, eventTimestamp);
     const content = data?.content ? String(data.content) : "";
     const reasoning = data?.reasoning ? String(data.reasoning) : "";
@@ -2963,6 +3192,29 @@ const handleEvent = (eventType, dataText, options = {}) => {
       scheduleModelOutputScroll();
     }
     refreshModelOutputPreview();
+    return;
+  }
+
+  if (eventType === "context_usage") {
+    const data = payload.data || payload;
+    applyContextUsageSnapshot(data);
+    renderDebugStats();
+    const contextTokens = parseOptionalNumber(
+      data?.context_tokens ?? data?.contextTokens ?? data?.total_tokens ?? data?.total
+    );
+    const summary = Number.isFinite(contextTokens)
+      ? `context_usage: ${contextTokens}`
+      : "context_usage";
+    appendLog(summary, { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
+    return;
+  }
+
+  if (eventType === "round_usage") {
+    const data = payload.data || payload;
+    applyTokenUsageSnapshot(data, { override: true });
+    renderDebugStats();
+    const summary = data?.total_tokens ? `round_usage: ${data.total_tokens}` : "round_usage";
+    appendLog(summary, { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
     return;
   }
 

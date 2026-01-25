@@ -989,7 +989,9 @@ const renderThroughputSessions = () => {
     const statusCell = document.createElement("td");
     statusCell.appendChild(buildStatusBadge(session.status || ""));
     const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(session.token_usage);
+    tokenCell.textContent = formatTokenCount(
+      session?.context_tokens_peak ?? session?.context_tokens ?? session?.token_usage
+    );
     const elapsedCell = document.createElement("td");
     elapsedCell.textContent = formatDuration(session.elapsed_s);
     const stageCell = document.createElement("td");

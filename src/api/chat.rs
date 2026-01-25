@@ -1085,7 +1085,7 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
     for event in events {
         let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
         let data = event.get("data").cloned().unwrap_or(Value::Null);
-        let data_round = data.get("round").and_then(Value::as_i64);
+        let data_round = data.get("user_round").and_then(Value::as_i64);
         if event_type == "round_start" {
             let round = data_round
                 .or_else(|| current_round.map(|value| value + 1))
@@ -1134,7 +1134,7 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
             if events.is_empty() {
                 None
             } else {
-                Some(json!({ "round": round, "events": events }))
+                Some(json!({ "user_round": round, "events": events }))
             }
         })
         .collect()
@@ -1155,6 +1155,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "llm_output_delta"
             | "llm_output"
             | "quota_usage"
+            | "round_usage"
             | "final"
             | "error"
     )

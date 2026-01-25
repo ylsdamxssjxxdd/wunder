@@ -202,11 +202,11 @@
       <div class="workspace-preview-title">{{ preview.entry?.name || '文件预览' }}</div>
       <div class="workspace-preview-meta">{{ previewMeta }}</div>
       <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
-      <div class="workspace-preview" :class="{ embed: preview.embed }">
+      <div class="workspace-preview" :class="{ embed: preview.embed, 'is-svg': preview.type === 'svg' }">
         <div v-if="preview.loading" class="workspace-empty">预览加载中...</div>
         <template v-else>
           <img v-if="preview.embed && preview.type === 'image'" :src="preview.url" />
-          <iframe v-else-if="preview.embed && preview.type === 'pdf'" :src="preview.url" />
+          <iframe v-else-if="preview.embed && (preview.type === 'pdf' || preview.type === 'svg')" :src="preview.url" />
           <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
         </template>
       </div>
@@ -273,6 +273,15 @@ const TEXT_EXTENSIONS = new Set([
   'sql'
 ]);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const IMAGE_MIME_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  svg: 'image/svg+xml'
+};
 const PDF_EXTENSIONS = new Set(['pdf']);
 const OFFICE_WORD_EXTENSIONS = new Set(['doc', 'docx']);
 const OFFICE_EXCEL_EXTENSIONS = new Set(['xls', 'xlsx']);
@@ -1575,12 +1584,44 @@ const openPreview = async (entry) => {
   }
 
   try {
+    if (extension === 'svg') {
+      try {
+        const response = await fetchWunderWorkspaceContent({
+          path: entry.path,
+          include_content: true,
+          max_bytes: MAX_TEXT_PREVIEW_SIZE
+        });
+        const payload = response.data || {};
+        if (payload.truncated) {
+          state.preview.hint = '内容已截断，建议下载查看完整文件。';
+          state.preview.content = '暂无预览';
+          return;
+        }
+        const text = typeof payload.content === 'string' ? payload.content : '';
+        if (text) {
+          const blob = new Blob([text], { type: IMAGE_MIME_TYPES.svg });
+          state.preview.embed = true;
+          state.preview.type = 'svg';
+          state.preview.url = URL.createObjectURL(blob);
+          return;
+        }
+      } catch (error) {
+        // Fall back to download when content preview fails.
+      }
+    }
     if (IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension)) {
       const response = await downloadWunderWorkspaceFile({ path: entry.path });
-      const blob = response.data;
+      let blob = response.data;
       if (IMAGE_EXTENSIONS.has(extension)) {
+        const expectedMime = IMAGE_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
         state.preview.embed = true;
-        state.preview.type = 'image';
+        state.preview.type = extension === 'svg' ? 'svg' : 'image';
         state.preview.url = URL.createObjectURL(blob);
       } else {
         state.preview.embed = true;

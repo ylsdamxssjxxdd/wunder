@@ -1264,7 +1264,7 @@
   - Query：`limit`（消息条数，可选）
   - 返回：`data`（会话信息 + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
-  - 返回：`data.id`、`data.rounds`（round/events）
+  - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
@@ -1313,6 +1313,7 @@
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
+- 轮次字段说明：`data.user_round` 为用户轮次，`data.model_round` 为模型轮次。
 - 当前 Rust 版会输出 `progress`, `llm_output_delta`, `llm_output`, `context_usage`, `quota_usage`, `tool_call`, `tool_result`, `plan_update`, `question_panel`, `final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
@@ -1321,9 +1322,9 @@
   - 说明：断线续传回放时可能携带 event_id_start/event_id_end 用于标记合并范围。
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
-- `event: token_usage`：单轮 token 统计（input_tokens/output_tokens/total_tokens）
-- `event: context_usage`：上下文占用量统计（data.context_tokens/message_count/round）
-- `event: quota_usage`：额度消耗统计（每次模型调用都会触发；`data.consumed` 为本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，`data.round` 为轮次）
+- `event: token_usage`：单轮模型 token 统计（input_tokens/output_tokens/total_tokens；含 `user_round/model_round`）
+- `event: context_usage`：上下文占用量统计（data.context_tokens/message_count，含 `user_round/model_round`）
+- `event: quota_usage`：额度消耗统计（每次模型调用都会触发；`data.consumed` 为本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，含 `user_round/model_round`）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。

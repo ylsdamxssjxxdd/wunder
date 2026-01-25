@@ -844,6 +844,14 @@ const normalizeDurationSeconds = (value) => {
 };
 
 const resolveDurationSeconds = (stats) => {
+  const interaction = normalizeDurationSeconds(
+    stats?.interaction_duration_s ??
+      stats?.interactionDurationS ??
+      stats?.interactionDuration ??
+      stats?.duration_s ??
+      stats?.elapsed_s
+  );
+  if (interaction !== null) return interaction;
   const prefill = normalizeDurationSeconds(stats?.prefill_duration_s);
   const decode = normalizeDurationSeconds(stats?.decode_duration_s);
   if (prefill === null && decode === null) return null;

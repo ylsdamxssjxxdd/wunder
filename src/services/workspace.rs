@@ -299,7 +299,7 @@ impl WorkspaceManager {
         text.replace(&public_root, &user_root)
     }
 
-    fn session_token_usage_key(&self, user_id: &str, session_id: &str) -> String {
+    fn session_context_tokens_key(&self, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
             .trim()
@@ -317,7 +317,7 @@ impl WorkspaceManager {
         } else {
             safe_session
         };
-        format!("session_token_usage:{safe_user}:{safe_session}")
+        format!("session_context_tokens:{safe_user}:{safe_session}")
     }
 
     fn maybe_schedule_retention_cleanup(&self) {
@@ -647,7 +647,7 @@ impl WorkspaceManager {
         .map_err(|err| anyhow!("workspace load session prompt cancelled: {err}"))?
     }
 
-    pub async fn load_session_token_usage_async(
+    pub async fn load_session_context_tokens_async(
         self: &Arc<Self>,
         user_id: &str,
         session_id: &str,
@@ -656,13 +656,13 @@ impl WorkspaceManager {
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
-            workspace.load_session_token_usage(&user_id, &session_id)
+            workspace.load_session_context_tokens(&user_id, &session_id)
         })
         .await
         .unwrap_or(0)
     }
 
-    pub async fn save_session_token_usage_async(
+    pub async fn save_session_context_tokens_async(
         self: &Arc<Self>,
         user_id: &str,
         session_id: &str,
@@ -672,7 +672,7 @@ impl WorkspaceManager {
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
         let _ = tokio::task::spawn_blocking(move || {
-            workspace.save_session_token_usage(&user_id, &session_id, total_tokens);
+            workspace.save_session_context_tokens(&user_id, &session_id, total_tokens);
         })
         .await;
     }
@@ -739,8 +739,8 @@ impl WorkspaceManager {
             .get_session_system_prompt(user_id, session_id, language)
     }
 
-    pub fn load_session_token_usage(&self, user_id: &str, session_id: &str) -> i64 {
-        let key = self.session_token_usage_key(user_id, session_id);
+    pub fn load_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_tokens_key(user_id, session_id);
         let Ok(value) = self.storage.get_meta(&key) else {
             return 0;
         };
@@ -749,14 +749,14 @@ impl WorkspaceManager {
             .unwrap_or(0)
     }
 
-    pub fn save_session_token_usage(&self, user_id: &str, session_id: &str, total_tokens: i64) {
-        let key = self.session_token_usage_key(user_id, session_id);
+    pub fn save_session_context_tokens(&self, user_id: &str, session_id: &str, total_tokens: i64) {
+        let key = self.session_context_tokens_key(user_id, session_id);
         let value = total_tokens.max(0).to_string();
         let _ = self.storage.set_meta(&key, &value);
     }
 
-    pub fn delete_session_token_usage(&self, user_id: &str, session_id: &str) -> i64 {
-        let key = self.session_token_usage_key(user_id, session_id);
+    pub fn delete_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_tokens_key(user_id, session_id);
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
@@ -870,7 +870,7 @@ impl WorkspaceManager {
             .storage
             .delete_stream_events_by_session(cleaned_session);
         let _ = self.storage.release_session_lock(cleaned_session);
-        let _ = self.delete_session_token_usage(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
     }
 
     pub fn purge_user_data(&self, user_id: &str) -> PurgeResult {
@@ -909,7 +909,7 @@ impl WorkspaceManager {
         }
         let _ = self
             .storage
-            .delete_meta_prefix(&format!("session_token_usage:{safe_id}:"));
+            .delete_meta_prefix(&format!("session_context_tokens:{safe_id}:"));
         let _ = self.storage.delete_session_locks_by_user(cleaned);
         let _ = self.storage.delete_stream_events_by_user(cleaned);
         PurgeResult {

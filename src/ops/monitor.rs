@@ -171,8 +171,9 @@ struct SessionRecord {
     updated_time: f64,
     cancel_requested: bool,
     ended_time: Option<f64>,
-    rounds: i64,
-    token_usage: i64,
+    user_rounds: i64,
+    context_tokens: i64,
+    context_tokens_peak: i64,
     events: VecDeque<MonitorEvent>,
     dirty: bool,
     last_persisted: f64,
@@ -191,8 +192,9 @@ impl SessionRecord {
             updated_time: now,
             cancel_requested: false,
             ended_time: None,
-            rounds: 1,
-            token_usage: 0,
+            user_rounds: 1,
+            context_tokens: 0,
+            context_tokens_peak: 0,
             events: VecDeque::new(),
             dirty: true,
             last_persisted: 0.0,
@@ -216,7 +218,9 @@ impl SessionRecord {
             "updated_time": format_ts(self.updated_time),
             "elapsed_s": round2(self.elapsed_s()),
             "cancel_requested": self.cancel_requested,
-            "token_usage": self.token_usage,
+            "user_rounds": self.user_rounds,
+            "context_tokens": self.context_tokens,
+            "context_tokens_peak": self.context_tokens_peak,
         })
     }
 
@@ -232,8 +236,10 @@ impl SessionRecord {
             "updated_time": self.updated_time,
             "ended_time": self.ended_time,
             "cancel_requested": self.cancel_requested,
-            "rounds": self.rounds,
-            "token_usage": self.token_usage,
+            "user_rounds": self.user_rounds,
+            "rounds": self.user_rounds,
+            "context_tokens": self.context_tokens,
+            "context_tokens_peak": self.context_tokens_peak,
             "events": self
                 .events
                 .iter()
@@ -285,9 +291,18 @@ impl SessionRecord {
             .get("cancel_requested")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let rounds = payload.get("rounds").and_then(Value::as_i64).unwrap_or(1);
-        let token_usage = payload
-            .get("token_usage")
+        let user_rounds = payload
+            .get("user_rounds")
+            .or_else(|| payload.get("rounds"))
+            .and_then(Value::as_i64)
+            .unwrap_or(1);
+        let context_tokens = payload
+            .get("context_tokens")
+            .or_else(|| payload.get("token_usage"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let context_tokens_peak = payload
+            .get("context_tokens_peak")
             .and_then(Value::as_i64)
             .unwrap_or(0);
         let mut events = VecDeque::new();
@@ -309,8 +324,9 @@ impl SessionRecord {
             updated_time,
             cancel_requested,
             ended_time,
-            rounds,
-            token_usage,
+            user_rounds,
+            context_tokens,
+            context_tokens_peak: context_tokens_peak.max(context_tokens),
             events,
             dirty: false,
             last_persisted: updated_time,
@@ -494,21 +510,22 @@ impl MonitorState {
         )
     }
 
-    pub fn register(&self, session_id: &str, user_id: &str, question: &str) {
+    pub fn register(&self, session_id: &str, user_id: &str, question: &str) -> i64 {
         self.run_guarded(
             "monitor.register",
-            || (),
+            || 1,
             || {
                 let now = now_ts();
                 let mut sessions = self.sessions.lock();
-                let to_persist =
+                let (to_persist, user_round) =
                     self.register_locked(&mut sessions, session_id, user_id, question, now, false);
                 drop(sessions);
                 if let Some(record) = to_persist {
                     self.save_record(&record);
                 }
+                user_round
             },
-        );
+        )
     }
 
     pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
@@ -528,7 +545,10 @@ impl MonitorState {
                             data.get("context_tokens")
                                 .or_else(|| data.get("total_tokens")),
                         ) {
-                            record.token_usage = total;
+                            record.context_tokens = total;
+                            if total > record.context_tokens_peak {
+                                record.context_tokens_peak = total;
+                            }
                         }
                     }
                     if event_type == "progress" {
@@ -991,7 +1011,7 @@ impl MonitorState {
                 let mut finished_sessions = 0;
                 let mut error_sessions = 0;
                 let mut cancelled_sessions = 0;
-                let mut token_usage_total: i64 = 0;
+                let mut context_tokens_total: i64 = 0;
                 let mut elapsed_total = 0.0;
                 let mut elapsed_count = 0.0;
                 let mut prefill_tokens_total = 0.0;
@@ -1007,7 +1027,8 @@ impl MonitorState {
                         continue;
                     }
                     total_sessions += 1;
-                    token_usage_total += record.token_usage;
+                    let context_peak = record.context_tokens_peak.max(record.context_tokens);
+                    context_tokens_total += context_peak;
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                     {
@@ -1059,8 +1080,10 @@ impl MonitorState {
                 } else {
                     None
                 };
-                let avg_token_usage = if history_sessions > 0 {
-                    Some(round2(token_usage_total as f64 / history_sessions as f64))
+                let avg_context_tokens = if history_sessions > 0 {
+                    Some(round2(
+                        context_tokens_total as f64 / history_sessions as f64,
+                    ))
                 } else {
                     None
                 };
@@ -1071,7 +1094,7 @@ impl MonitorState {
                     "error_sessions": error_sessions,
                     "cancelled_sessions": cancelled_sessions,
                     "total_sessions": total_sessions,
-                    "avg_token_usage": avg_token_usage,
+                    "avg_context_tokens": avg_context_tokens,
                     "avg_elapsed_s": avg_elapsed,
                     "avg_prefill_speed_tps": avg_prefill_speed,
                     "avg_decode_speed_tps": avg_decode_speed,
@@ -1165,7 +1188,7 @@ impl MonitorState {
             "error_sessions": 0,
             "cancelled_sessions": 0,
             "total_sessions": 0,
-            "avg_token_usage": Value::Null,
+            "avg_context_tokens": Value::Null,
             "avg_elapsed_s": 0.0,
             "avg_prefill_speed_tps": Value::Null,
             "avg_decode_speed_tps": Value::Null,
@@ -1293,16 +1316,16 @@ impl MonitorState {
         question: &str,
         now: f64,
         append_received: bool,
-    ) -> Option<SessionRecord> {
+    ) -> (Option<SessionRecord>, i64) {
         if session_id.trim().is_empty() {
-            return None;
+            return (None, 1);
         }
         {
             let mut forced = self.forced_cancelled.lock();
             forced.remove(session_id);
         }
         if let Some(record) = sessions.get_mut(session_id) {
-            record.rounds += 1;
+            record.user_rounds += 1;
             record.question = question.to_string();
             record.status = Self::STATUS_RUNNING.to_string();
             record.stage = "received".to_string();
@@ -1311,21 +1334,21 @@ impl MonitorState {
             record.updated_time = now;
             record.ended_time = None;
             record.cancel_requested = false;
-            record.token_usage = 0;
+            record.context_tokens = 0;
             let summary = record.summary.clone();
-            let rounds = record.rounds;
+            let user_round = record.user_rounds;
             self.append_event(
                 record,
                 "round_start",
                 &json!({
                     "summary": summary,
-                    "round": rounds,
+                    "user_round": user_round,
                     "question": question
                 }),
                 now,
             );
             record.dirty = true;
-            return self.maybe_persist_record(record, now, false);
+            return (self.maybe_persist_record(record, now, false), user_round);
         }
         let mut record = SessionRecord::new(
             session_id.to_string(),
@@ -1339,13 +1362,13 @@ impl MonitorState {
             "round_start"
         };
         let summary = record.summary.clone();
-        let rounds = record.rounds;
+        let user_round = record.user_rounds;
         self.append_event(
             &mut record,
             event_type,
             &json!({
                 "summary": summary,
-                "round": rounds,
+                "user_round": user_round,
                 "question": question
             }),
             now,
@@ -1353,7 +1376,7 @@ impl MonitorState {
         record.dirty = true;
         let to_persist = self.maybe_persist_record(&mut record, now, false);
         sessions.insert(session_id.to_string(), record);
-        to_persist
+        (to_persist, user_round)
     }
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
@@ -1551,7 +1574,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
             event_type,
             "llm_request" | "llm_output_delta" | "llm_output" | "token_usage"
         ) {
-            if let Some(round_value) = parse_round(&event.data) {
+            if let Some(round_value) = parse_model_round(&event.data) {
                 if let Some(last_round) = last_round_number {
                     if round_value < last_round {
                         reset_request(
@@ -1572,7 +1595,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
 
         match event_type {
             "llm_request" => {
-                let round = parse_round(&event.data).unwrap_or_else(|| {
+                let round = parse_model_round(&event.data).unwrap_or_else(|| {
                     implicit_round += 1;
                     implicit_round
                 });
@@ -1586,7 +1609,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                 }
             }
             "llm_output_delta" | "llm_output" => {
-                let round = parse_round(&event.data).or(last_round_seen);
+                let round = parse_model_round(&event.data).or(last_round_seen);
                 if let Some(round) = round {
                     last_round_seen = Some(round);
                     let entry = rounds.entry(round).or_default();
@@ -1617,7 +1640,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                 }
             }
             "token_usage" => {
-                let round = parse_round(&event.data).or(last_round_seen);
+                let round = parse_model_round(&event.data).or(last_round_seen);
                 if let Some(round) = round {
                     last_round_seen = Some(round);
                     let entry = rounds.entry(round).or_default();
@@ -1649,6 +1672,8 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     let mut earliest_output_round: Option<i64> = None;
     let mut latest_output_ts: Option<f64> = None;
     let mut output_tokens_total: i64 = 0;
+    let mut decode_duration_total = 0.0;
+    let mut has_decode_duration = false;
     for (round, metrics) in rounds.iter() {
         if let Some(start_ts) = metrics.start_ts {
             earliest_start_ts = Some(match earliest_start_ts {
@@ -1675,6 +1700,26 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
         if let Some(tokens) = metrics.output_tokens {
             if tokens > 0 {
                 output_tokens_total = output_tokens_total.saturating_add(tokens);
+            }
+        }
+        let decode_duration = metrics.decode_duration_s.and_then(|value| {
+            let duration = value.max(0.0);
+            if duration > 0.0 {
+                Some(duration)
+            } else {
+                None
+            }
+        });
+        if let Some(duration) = decode_duration {
+            decode_duration_total += duration;
+            has_decode_duration = true;
+        } else if let (Some(first_output_ts), Some(last_output_ts)) =
+            (metrics.first_output_ts, metrics.last_output_ts)
+        {
+            let duration = (last_output_ts - first_output_ts).max(0.0);
+            if duration > 0.0 {
+                decode_duration_total += duration;
+                has_decode_duration = true;
             }
         }
     }
@@ -1729,16 +1774,20 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
     } else {
         decode_metrics.and_then(|metrics| metrics.output_tokens)
     };
-    let mut decode_duration_s = match (earliest_output_ts, latest_output_ts) {
-        (Some(start), Some(end)) => {
-            let duration = (end - start).max(0.0);
-            if duration > 0.0 {
-                Some(duration)
-            } else {
-                None
+    let mut decode_duration_s = if has_decode_duration && decode_duration_total > 0.0 {
+        Some(decode_duration_total)
+    } else {
+        match (earliest_output_ts, latest_output_ts) {
+            (Some(start), Some(end)) => {
+                let duration = (end - start).max(0.0);
+                if duration > 0.0 {
+                    Some(duration)
+                } else {
+                    None
+                }
             }
+            _ => None,
         }
-        _ => None,
     };
     if decode_duration_s.is_none() {
         decode_duration_s = decode_metrics
@@ -1790,8 +1839,8 @@ fn parse_f64_value(value: Option<&Value>) -> Option<f64> {
         .or_else(|| value.and_then(Value::as_u64).map(|value| value as f64))
 }
 
-fn parse_round(data: &Value) -> Option<i64> {
-    parse_i64_value(data.get("round"))
+fn parse_model_round(data: &Value) -> Option<i64> {
+    parse_i64_value(data.get("model_round"))
 }
 
 fn parse_usage_tokens(data: &Value) -> (Option<i64>, Option<i64>) {

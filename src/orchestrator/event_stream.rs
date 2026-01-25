@@ -9,7 +9,8 @@ struct StreamDeltaSegment {
     event_id: i64,
     delta: Option<String>,
     reasoning_delta: Option<String>,
-    round: Option<i64>,
+    model_round: Option<i64>,
+    user_round: Option<i64>,
 }
 
 struct StreamDeltaBuffer {
@@ -42,8 +43,13 @@ impl StreamDeltaBuffer {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        let round = data.get("round").and_then(Value::as_i64);
-        if delta.is_empty() && reasoning_delta.is_empty() && round.is_none() {
+        let model_round = data.get("model_round").and_then(Value::as_i64);
+        let user_round = data.get("user_round").and_then(Value::as_i64);
+        if delta.is_empty()
+            && reasoning_delta.is_empty()
+            && model_round.is_none()
+            && user_round.is_none()
+        {
             return;
         }
         if event_id > 0 {
@@ -64,7 +70,8 @@ impl StreamDeltaBuffer {
             } else {
                 Some(reasoning_delta)
             },
-            round,
+            model_round,
+            user_round,
         });
     }
 
@@ -95,8 +102,11 @@ impl StreamDeltaBuffer {
                     Value::String(reasoning_delta),
                 );
             }
-            if let Some(round) = segment.round {
-                item.insert("round".to_string(), json!(round));
+            if let Some(model_round) = segment.model_round {
+                item.insert("model_round".to_string(), json!(model_round));
+            }
+            if let Some(user_round) = segment.user_round {
+                item.insert("user_round".to_string(), json!(user_round));
             }
             segments.push(Value::Object(item));
         }
@@ -131,6 +141,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "llm_output"
             | "context_usage"
             | "quota_usage"
+            | "round_usage"
             | "final"
             | "error"
     )
@@ -597,7 +608,8 @@ fn filter_delta_segments(data: &Value, after_event_id: i64) -> Option<Value> {
 
     let mut content = String::new();
     let mut reasoning = String::new();
-    let mut last_round = None;
+    let mut last_model_round = None;
+    let mut last_user_round = None;
     let mut first_event_id = None;
     let mut last_event_id = None;
 
@@ -622,8 +634,11 @@ fn filter_delta_segments(data: &Value, after_event_id: i64) -> Option<Value> {
                 reasoning.push_str(delta);
             }
         }
-        if let Some(round) = segment_obj.get("round").and_then(Value::as_i64) {
-            last_round = Some(round);
+        if let Some(model_round) = segment_obj.get("model_round").and_then(Value::as_i64) {
+            last_model_round = Some(model_round);
+        }
+        if let Some(user_round) = segment_obj.get("user_round").and_then(Value::as_i64) {
+            last_user_round = Some(user_round);
         }
         if first_event_id.is_none() {
             first_event_id = Some(event_id);
@@ -647,8 +662,11 @@ fn filter_delta_segments(data: &Value, after_event_id: i64) -> Option<Value> {
     if !reasoning.is_empty() {
         new_inner.insert("reasoning_delta".to_string(), Value::String(reasoning));
     }
-    if let Some(round) = last_round {
-        new_inner.insert("round".to_string(), json!(round));
+    if let Some(model_round) = last_model_round {
+        new_inner.insert("model_round".to_string(), json!(model_round));
+    }
+    if let Some(user_round) = last_user_round {
+        new_inner.insert("user_round".to_string(), json!(user_round));
     }
     new_inner.insert("event_id_start".to_string(), json!(start_event_id));
     if let Some(end_event_id) = last_event_id {
@@ -693,7 +711,7 @@ mod tests {
             "data": {
                 "segments": [
                     { "event_id": 1, "delta": "a" },
-                    { "event_id": 2, "delta": "b", "reasoning_delta": "x", "round": 1 },
+                    { "event_id": 2, "delta": "b", "reasoning_delta": "x", "model_round": 1, "user_round": 3 },
                     { "event_id": 3, "delta": "c", "reasoning_delta": "y" }
                 ]
             }
@@ -710,7 +728,8 @@ mod tests {
         );
         assert_eq!(inner.get("event_id_start").and_then(Value::as_i64), Some(2));
         assert_eq!(inner.get("event_id_end").and_then(Value::as_i64), Some(3));
-        assert_eq!(inner.get("round").and_then(Value::as_i64), Some(1));
+        assert_eq!(inner.get("model_round").and_then(Value::as_i64), Some(1));
+        assert_eq!(inner.get("user_round").and_then(Value::as_i64), Some(3));
     }
 
     #[test]

@@ -1,7 +1,10 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import argparse
+import os
 import re
+import shutil
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -26,6 +29,12 @@ DEFAULT_HEADING4_FONT = "仿宋GB2312"
 DEFAULT_DIGIT_FONT = "Times New Roman"
 DEFAULT_PAGE_NUMBER_FONT = "宋体"
 DEFAULT_CODE_FONT = "Courier New"
+DEFAULT_IMAGE_WIDTH = "15.6cm"
+DEFAULT_SVG_DPI = 300
+DEFAULT_SVG_WIDTH_PX = 0
+DEFAULT_IMAGE_SPACE_PT = 6.0
+IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+URL_PREFIXES = ("http://", "https://", "data:", "file:")
 
 
 class PandocNotFoundError(RuntimeError):
@@ -140,9 +149,301 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--use-pandoc",
         action="store_true",
-        help="Use pandoc for conversion (default: internal converter).",
+        help="Use pandoc for conversion (enables image embedding).",
+    )
+    parser.add_argument(
+        "--pandoc",
+        default="",
+        help="Path to pandoc executable (default: find in PATH).",
+    )
+    parser.add_argument(
+        "--image-width",
+        default=DEFAULT_IMAGE_WIDTH,
+        help="Default image width for pandoc (set empty to disable).",
+    )
+    parser.add_argument(
+        "--svg-dpi",
+        type=int,
+        default=DEFAULT_SVG_DPI,
+        help="SVG render DPI when converting to PNG.",
+    )
+    parser.add_argument(
+        "--svg-width-px",
+        type=int,
+        default=DEFAULT_SVG_WIDTH_PX,
+        help="SVG render width in px (override image width).",
+    )
+    parser.add_argument(
+        "--allow-missing-images",
+        action="store_true",
+        help="Allow missing images in pandoc conversion.",
+    )
+    parser.add_argument(
+        "--resource-path",
+        action="append",
+        default=[],
+        help="Extra pandoc resource path roots (repeatable).",
+    )
+    parser.add_argument(
+        "--force-heading-numbering",
+        action="store_true",
+        help="Always apply auto heading numbering even if Markdown already has numbers.",
     )
     return parser.parse_args()
+
+
+def resolve_repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def find_pandoc(explicit: str) -> Path:
+    if explicit:
+        path = Path(explicit).resolve()
+        if path.exists():
+            return path
+        raise PandocNotFoundError(f"pandoc not found: {path}")
+    found = shutil.which("pandoc")
+    if not found:
+        raise PandocNotFoundError("pandoc not found in PATH.")
+    return Path(found).resolve()
+
+
+def split_link_target(raw: str) -> tuple[str, str]:
+    raw = raw.strip()
+    if not raw:
+        return "", ""
+    if raw.startswith("<"):
+        end = raw.find(">")
+        if end != -1:
+            path = raw[1:end].strip()
+            rest = raw[end + 1 :].strip()
+            return path, rest
+    parts = raw.split()
+    path = parts[0]
+    rest = " ".join(parts[1:])
+    return path, rest
+
+
+def is_remote_path(path: str) -> bool:
+    if not path:
+        return True
+    if path.startswith(URL_PREFIXES):
+        return True
+    if path.startswith(("/", "\\")):
+        return True
+    if len(path) >= 2 and path[1] == ":":
+        return True
+    return False
+
+
+def parse_length_to_inches(value: str) -> Optional[float]:
+    value = value.strip().lower()
+    try:
+        if value.endswith("cm"):
+            return float(value[:-2]) / 2.54
+        if value.endswith("mm"):
+            return float(value[:-2]) / 25.4
+        if value.endswith("in"):
+            return float(value[:-2])
+        if value.endswith("px"):
+            return float(value[:-2]) / 96.0
+        if value.replace(".", "", 1).isdigit():
+            return float(value) / 96.0
+    except ValueError:
+        return None
+    return None
+
+
+def resolve_svg_width_px(image_width: str, svg_width_px: int, svg_dpi: int) -> int:
+    if svg_width_px > 0:
+        return svg_width_px
+    if image_width:
+        inches = parse_length_to_inches(image_width)
+        if inches is not None:
+            return max(600, int(inches * svg_dpi))
+    return 1800
+
+
+def read_png_width(path: Path) -> Optional[int]:
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(24)
+        if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        return struct.unpack(">I", header[16:20])[0]
+    except OSError:
+        return None
+
+
+def find_svg_converter() -> tuple[str, Optional[str]]:
+    try:
+        import cairosvg  # noqa: F401
+
+        return ("cairosvg", None)
+    except Exception:
+        pass
+    for name in ("resvg", "rsvg-convert", "inkscape", "magick"):
+        path = shutil.which(name)
+        if path:
+            return (name, path)
+    return ("", None)
+
+
+def convert_svg_to_png(
+    svg_path: Path,
+    png_path: Path,
+    width_px: int,
+    dpi: int,
+) -> None:
+    engine, engine_path = find_svg_converter()
+    if not engine:
+        raise FileNotFoundError(
+            "No SVG converter found. Install one of: cairosvg, resvg, rsvg-convert, inkscape, ImageMagick."
+        )
+    if engine == "cairosvg":
+        import cairosvg
+
+        cairosvg.svg2png(
+            url=str(svg_path),
+            write_to=str(png_path),
+            output_width=width_px,
+            dpi=dpi,
+        )
+        return
+    if engine == "resvg":
+        subprocess.run(
+            [
+                engine_path,
+                str(svg_path),
+                str(png_path),
+                "-w",
+                str(width_px),
+            ],
+            check=True,
+        )
+        return
+    if engine == "rsvg-convert":
+        subprocess.run(
+            [
+                engine_path,
+                "-w",
+                str(width_px),
+                "-o",
+                str(png_path),
+                str(svg_path),
+            ],
+            check=True,
+        )
+        return
+    if engine == "inkscape":
+        subprocess.run(
+            [
+                engine_path,
+                str(svg_path),
+                "--export-type=png",
+                f"--export-filename={png_path}",
+                f"--export-width={width_px}",
+            ],
+            check=True,
+        )
+        return
+    if engine == "magick":
+        subprocess.run(
+            [
+                engine_path,
+                "-density",
+                str(dpi),
+                str(svg_path),
+                "-background",
+                "white",
+                "-resize",
+                f"{width_px}x",
+                str(png_path),
+            ],
+            check=True,
+        )
+        return
+
+
+def build_temp_markdown(
+    text: str,
+    base_dir: Path,
+    image_width: str,
+    svg_dpi: int,
+    svg_width_px: int,
+    resource_roots: list[Path],
+    allow_missing_images: bool,
+) -> tuple[str, list[Path]]:
+    missing: list[str] = []
+    resource_dirs: list[Path] = []
+
+    def add_resource_dir(path: Path) -> None:
+        if path not in resource_dirs:
+            resource_dirs.append(path)
+
+    def resolve_image_path(path: str) -> Optional[Path]:
+        candidates = [base_dir] + resource_roots
+        for root in candidates:
+            candidate = (root / path).resolve()
+            if candidate.exists():
+                add_resource_dir(root)
+                return candidate
+        return None
+
+    desired_svg_width = resolve_svg_width_px(image_width, svg_width_px, svg_dpi)
+
+    def ensure_png(svg_file: Path) -> Path:
+        png_path = svg_file.with_suffix(".png")
+        if png_path.exists():
+            png_width = read_png_width(png_path)
+            svg_mtime = svg_file.stat().st_mtime
+            png_mtime = png_path.stat().st_mtime
+            if png_width and png_width >= desired_svg_width and png_mtime >= svg_mtime:
+                return png_path
+        convert_svg_to_png(svg_file, png_path, desired_svg_width, svg_dpi)
+        return png_path
+
+    def replace(match: re.Match) -> str:
+        alt = match.group(1)
+        target = match.group(2).strip()
+        if not target:
+            return match.group(0)
+        path, _ = split_link_target(target)
+        if not path:
+            return match.group(0)
+        if is_remote_path(path):
+            return match.group(0)
+
+        resolved = resolve_image_path(path)
+        new_path = path
+        if path.lower().endswith(".svg"):
+            png_relative = path[:-4] + ".png"
+            resolved_png = resolve_image_path(png_relative)
+            if resolved_png is not None:
+                add_resource_dir(resolved_png.parent)
+                new_path = os.path.relpath(resolved_png, base_dir).replace(os.sep, "/")
+            else:
+                if resolved is None:
+                    if not allow_missing_images:
+                        missing.append(path)
+                    return match.group(0)
+                png_path = ensure_png(resolved)
+                add_resource_dir(png_path.parent)
+                new_path = os.path.relpath(png_path, base_dir).replace(os.sep, "/")
+        elif resolved is None:
+            if not allow_missing_images:
+                missing.append(path)
+
+        if image_width:
+            return f"![{alt}]({new_path}){{width={image_width}}}"
+        return f"![{alt}]({new_path})"
+
+    text = IMAGE_RE.sub(replace, text)
+    if missing:
+        missing_list = ", ".join(missing)
+        raise FileNotFoundError(f"Missing images: {missing_list}")
+
+    return text, resource_dirs
 
 
 def ensure_rfonts(element, east_asia_font: str, ascii_font: str) -> None:
@@ -154,6 +455,10 @@ def ensure_rfonts(element, east_asia_font: str, ascii_font: str) -> None:
     r_fonts.set(qn("w:eastAsia"), east_asia_font)
     r_fonts.set(qn("w:ascii"), ascii_font)
     r_fonts.set(qn("w:hAnsi"), ascii_font)
+    for attr in list(r_fonts.attrib):
+        local = attr.split("}")[-1]
+        if local.endswith("Theme") or local in ("csTheme", "cstheme"):
+            r_fonts.attrib.pop(attr, None)
 
 
 def set_style_font(
@@ -387,6 +692,14 @@ TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 LINE_BREAK_RE = re.compile(r"(\\\\)\\s*$", re.IGNORECASE)
 BR_TAG_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 ASCII_WORD_RE = re.compile(r"[A-Za-z0-9]")
+EXPLICIT_HEADING_NUMBER_RE = re.compile(
+    r"^(?:"
+    r"[一二三四五六七八九十百千]+[、\s]+"
+    r"|\d{1,2}(?:[\.．]\d{1,2})*[、\.．]?\s+"
+    r"|[（(][一二三四五六七八九十百千]+[）)]\s*"
+    r"|[（(]\d{1,2}[）)]\s*"
+    r")"
+)
 
 
 def has_numbering(level: int, title: str) -> bool:
@@ -408,9 +721,15 @@ def strip_heading_number_prefix(title: str) -> tuple[str, bool]:
     return title, False
 
 
-def normalize_heading_title(level: int, title: str) -> tuple[str, bool]:
+def normalize_heading_title(
+    level: int,
+    title: str,
+    force_heading_numbering: bool,
+) -> tuple[str, bool]:
     title = title.strip()
     if level > 1 and has_numbering(level, title):
+        return title, True
+    if level > 1 and not force_heading_numbering and EXPLICIT_HEADING_NUMBER_RE.match(title):
         return title, True
     stripped, stripped_any = strip_heading_number_prefix(title)
     if stripped_any and stripped:
@@ -471,7 +790,7 @@ def promote_ordered_list_headings(md_text: str) -> str:
     return "\n".join(output)
 
 
-def apply_heading_numbering(md_text: str) -> str:
+def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
     lines = md_text.splitlines()
     counters = [0, 0, 0, 0]
     output = []
@@ -510,7 +829,11 @@ def apply_heading_numbering(md_text: str) -> str:
         elif level == 2:
             counters[0] += 1
             counters[1:] = [0, 0, 0]
-            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title, has_expected = normalize_heading_title(
+                level,
+                title,
+                force_heading_numbering,
+            )
             normalized_title = normalized_title.strip() or title
             numbered = (
                 normalized_title
@@ -520,7 +843,11 @@ def apply_heading_numbering(md_text: str) -> str:
         elif level == 3:
             counters[1] += 1
             counters[2:] = [0, 0]
-            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title, has_expected = normalize_heading_title(
+                level,
+                title,
+                force_heading_numbering,
+            )
             normalized_title = normalized_title.strip() or title
             numbered = (
                 normalized_title
@@ -530,7 +857,11 @@ def apply_heading_numbering(md_text: str) -> str:
         elif level == 4:
             counters[2] += 1
             counters[3] = 0
-            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title, has_expected = normalize_heading_title(
+                level,
+                title,
+                force_heading_numbering,
+            )
             normalized_title = normalized_title.strip() or title
             numbered = (
                 normalized_title
@@ -539,7 +870,11 @@ def apply_heading_numbering(md_text: str) -> str:
             )
         else:
             counters[3] += 1
-            normalized_title, has_expected = normalize_heading_title(level, title)
+            normalized_title, has_expected = normalize_heading_title(
+                level,
+                title,
+                force_heading_numbering,
+            )
             normalized_title = normalized_title.strip() or title
             numbered = (
                 normalized_title
@@ -1446,14 +1781,101 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     flush_paragraph()
 
 
-def run_pandoc(input_path: Path, output_path: Path, reference_doc: Path) -> None:
+def normalize_image_paragraphs(doc: Document, space_pt: float) -> int:
+    count = 0
+    for paragraph in doc.paragraphs:
+        if not paragraph._p.xpath(".//w:drawing"):
+            continue
+        fmt = paragraph.paragraph_format
+        fmt.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+        fmt.line_spacing = 1.0
+        fmt.space_before = Pt(space_pt)
+        fmt.space_after = Pt(space_pt)
+        fmt.first_line_indent = Pt(0)
+        fmt.left_indent = None
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        count += 1
+    return count
+
+
+def apply_style_fonts(doc: Document, args: argparse.Namespace) -> None:
+    style_map = {
+        "Normal": (args.font, args.font_size),
+        "Body Text": (args.font, args.font_size),
+        "Heading 1": (args.title_font, args.title_size),
+        "Heading 2": (args.heading1_font, args.heading_size),
+        "Heading 3": (args.heading2_font, args.heading_size),
+        "Heading 4": (args.heading3_font, args.heading_size),
+        "Heading 5": (args.heading4_font, args.heading_size),
+        "Title": (args.title_font, args.title_size),
+        "Subtitle": (args.heading1_font, args.heading_size),
+        "List Bullet": (args.font, args.font_size),
+        "List Number": (args.font, args.font_size),
+        "Table Grid": (args.font, args.font_size),
+        "Normal Table": (args.font, args.font_size),
+    }
+    char_style_map = {
+        "Heading 1 Char": (args.title_font, args.title_size),
+        "Heading 2 Char": (args.heading1_font, args.heading_size),
+        "Heading 3 Char": (args.heading2_font, args.heading_size),
+        "Heading 4 Char": (args.heading3_font, args.heading_size),
+        "Heading 5 Char": (args.heading4_font, args.heading_size),
+        "Title Char": (args.title_font, args.title_size),
+        "Subtitle Char": (args.heading1_font, args.heading_size),
+        "Body Text Char": (args.font, args.font_size),
+        "Default Paragraph Font": (args.font, args.font_size),
+    }
+    for style_name, (font, size) in style_map.items():
+        if style_name not in doc.styles:
+            continue
+        style = doc.styles[style_name]
+        set_style_font(style, font, size, None, args.digit_font)
+    for style_name, (font, size) in char_style_map.items():
+        if style_name not in doc.styles:
+            continue
+        style = doc.styles[style_name]
+        set_style_font(style, font, size, None, args.digit_font)
+
+
+def normalize_tables(doc: Document, args: argparse.Namespace) -> None:
+    table_style = "Table Grid" if "Table Grid" in doc.styles else ""
+    for table in doc.tables:
+        if table_style:
+            table.style = table_style
+        table.alignment = WD_TABLE_ALIGNMENT.LEFT
+        table.autofit = False
+        if hasattr(table, "allow_autofit"):
+            table.allow_autofit = False
+        set_table_layout_fixed(table)
+        set_table_cell_margins(table, top_cm=0.1, bottom_cm=0.1, left_cm=0.2, right_cm=0.2)
+
+
+def postprocess_docx(path: Path, args: argparse.Namespace, space_pt: float) -> None:
+    doc = Document(path)
+    apply_style_fonts(doc, args)
+    normalize_tables(doc, args)
+    normalize_image_paragraphs(doc, space_pt)
+    doc.save(path)
+
+
+def run_pandoc(
+    pandoc: Path,
+    input_path: Path,
+    output_path: Path,
+    reference_doc: Path,
+    resource_path: str,
+) -> None:
     try:
         subprocess.run(
             [
-                "pandoc",
+                str(pandoc),
                 str(input_path),
                 "-o",
                 str(output_path),
+                "--from",
+                "markdown+pipe_tables+table_captions+link_attributes",
+                "--resource-path",
+                resource_path,
                 "--reference-doc",
                 str(reference_doc),
             ],
@@ -1461,7 +1883,7 @@ def run_pandoc(input_path: Path, output_path: Path, reference_doc: Path) -> None
         )
     except FileNotFoundError as exc:
         raise PandocNotFoundError(
-            "pandoc not found in PATH. Run inside the Wunder container or install pandoc."
+            "pandoc not found. Provide --pandoc or add pandoc to PATH."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise PandocFailedError(f"pandoc failed with exit code {exc.returncode}") from exc
@@ -1480,30 +1902,66 @@ def main() -> int:
     raw_text = input_path.read_text(encoding="utf-8-sig")
     preprocessed_text = promote_ordered_list_headings(raw_text)
     try:
-        normalized_text = apply_heading_numbering(preprocessed_text)
+        normalized_text = apply_heading_numbering(
+            preprocessed_text,
+            args.force_heading_numbering,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     if args.use_pandoc:
         try:
+            pandoc = find_pandoc(args.pandoc)
+            repo_root = resolve_repo_root()
+            extra_roots = [Path(p).resolve() for p in args.resource_path if p.strip()]
+            default_roots = [repo_root / "docs", repo_root / "web" / "docs"]
+            resource_roots = [root for root in default_roots + extra_roots if root.exists()]
+
             with TemporaryDirectory() as temp_dir:
                 temp_dir_path = Path(temp_dir)
+                base_dir = input_path.parent
+                temp_text, resource_dirs = build_temp_markdown(
+                    text=normalized_text,
+                    base_dir=base_dir,
+                    image_width=args.image_width,
+                    svg_dpi=args.svg_dpi,
+                    svg_width_px=args.svg_width_px,
+                    resource_roots=resource_roots,
+                    allow_missing_images=args.allow_missing_images,
+                )
                 normalized_md = temp_dir_path / "normalized.md"
-                normalized_md.write_text(normalized_text, encoding="utf-8")
+                normalized_md.write_text(temp_text, encoding="utf-8")
 
                 if args.reference_doc:
                     reference_doc = Path(args.reference_doc).resolve()
                     if not reference_doc.exists():
                         print(f"Reference docx not found: {reference_doc}", file=sys.stderr)
                         return 1
-                    run_pandoc(normalized_md, output_path, reference_doc)
                 else:
                     reference_doc = temp_dir_path / "reference.docx"
                     build_reference_docx(reference_doc, args)
-                    run_pandoc(normalized_md, output_path, reference_doc)
+
+                resource_dirs.insert(0, base_dir)
+                deduped_dirs: list[Path] = []
+                seen_dirs: set[Path] = set()
+                for item in resource_dirs:
+                    if item in seen_dirs:
+                        continue
+                    seen_dirs.add(item)
+                    deduped_dirs.append(item)
+                resource_path = os.pathsep.join(str(p) for p in deduped_dirs)
+
+                run_pandoc(pandoc, normalized_md, output_path, reference_doc, resource_path)
+                postprocess_docx(output_path, args, DEFAULT_IMAGE_SPACE_PT)
         except PandocNotFoundError:
             print("pandoc not found; run without --use-pandoc to use fallback.", file=sys.stderr)
+            return 1
+        except FileNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except subprocess.CalledProcessError as exc:
+            print(str(exc), file=sys.stderr)
             return 1
         except PandocFailedError as exc:
             print(str(exc), file=sys.stderr)

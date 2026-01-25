@@ -1651,9 +1651,18 @@ fn build_task_metadata(record: &Value) -> Option<Value> {
             map.insert("stage".to_string(), Value::String(stage.to_string()));
         }
     }
-    if let Some(token_usage) = record.get("token_usage") {
-        if !token_usage.is_null() {
-            map.insert("tokenUsage".to_string(), token_usage.clone());
+    let context_tokens = record
+        .get("context_tokens")
+        .or_else(|| record.get("token_usage"));
+    if let Some(value) = context_tokens {
+        if !value.is_null() {
+            map.insert("contextTokens".to_string(), value.clone());
+        }
+    }
+    let context_tokens_peak = record.get("context_tokens_peak").or(context_tokens);
+    if let Some(value) = context_tokens_peak {
+        if !value.is_null() {
+            map.insert("contextTokensPeak".to_string(), value.clone());
         }
     }
     if record.get("cancel_requested").and_then(Value::as_bool) == Some(true) {

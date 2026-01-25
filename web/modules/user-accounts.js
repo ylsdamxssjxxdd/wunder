@@ -434,6 +434,13 @@ let settingsTarget = null;
 let toolGroupsCache = [];
 let toolSaveTimer = null;
 
+const resolveRoleSelection = (roles) => {
+  if (Array.isArray(roles) && (roles.includes("admin") || roles.includes("super_admin"))) {
+    return "admin";
+  }
+  return "user";
+};
+
 const syncSettingsTarget = (user) => {
   settingsTarget = user;
   if (!user) {
@@ -443,7 +450,7 @@ const syncSettingsTarget = (user) => {
   elements.userAccountQuotaInput.value = Number.isFinite(user.daily_quota) ? user.daily_quota : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
   elements.userAccountSettingsPasswordInput.value = "";
-  elements.userAccountSettingsRolesInput.value = user.roles.length ? user.roles.join(",") : "";
+  elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);
 };
 
 const refreshSettingsTarget = () => {
@@ -503,10 +510,8 @@ const saveRoles = async () => {
   if (!settingsTarget?.id) {
     return;
   }
-  const roles = String(elements.userAccountSettingsRolesInput.value || "")
-    .split(/[,\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const role = String(elements.userAccountSettingsRolesInput.value || "").trim();
+  const roles = role ? [role] : [];
   const ok = await updateUserAccount(settingsTarget.id, { roles });
   if (ok) {
     refreshSettingsTarget();

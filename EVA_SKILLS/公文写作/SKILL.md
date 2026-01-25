@@ -94,7 +94,20 @@ XX单位
 python scripts/convert_markdown_to_docx.py draft.md --output draft.docx
 ```
 
-常用参数：
+## 一键生成含图 DOCX（推荐）
+将 Markdown 与图片放好后，直接执行一次脚本即可生成“嵌图 + 版式修正”的 DOCX：
+```
+python scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pandoc
+```
+
+说明：
+- 需要本机安装 `pandoc`（Windows/Linux 均可，脚本会自动识别 PATH）。
+- Markdown 中的 SVG 会自动高分辨率转 PNG 并嵌入（默认 300 DPI）。
+- 脚本会自动执行图片段落修正，避免固定行距导致的遮挡。
+- 其他参数可运行 `python scripts/convert_markdown_to_docx.py --help` 查看。
+
+## 常用参数（内置转换脚本）
+以下参数用于 `convert_markdown_to_docx.py`：
 - `--font`：正文字体（默认 `仿宋GB2312`）
 - `--font-size`：正文字号（默认 `16`）
 - `--title-font`：标题字体（默认 `方正小标宋简体`）
@@ -112,6 +125,12 @@ python scripts/convert_markdown_to_docx.py draft.md --output draft.docx
 - `--page-number-font`：页码字体（默认 `宋体`）
 - `--page-number-size`：页码字号（默认 `14`）
 - `--use-pandoc`：使用 pandoc 转换（默认内置转换器）
+- `--pandoc`：pandoc 可执行文件路径（默认自动从 PATH 查找）
+- `--image-width`：图片默认宽度（默认 `15.6cm`，可留空关闭）
+- `--svg-dpi`：SVG 转 PNG 的 DPI（默认 `300`）
+- `--svg-width-px`：SVG 转 PNG 的宽度（像素，优先级高于 `--image-width`）
+- `--allow-missing-images`：允许图片缺失（pandoc 将跳过缺失图片）
+- `--resource-path`：额外资源路径根目录（可重复传入）
 - `--reference-doc`：自定义参考模板 `.docx`
 
 ## 注意事项

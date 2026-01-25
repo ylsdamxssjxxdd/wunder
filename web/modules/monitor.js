@@ -505,12 +505,33 @@ const formatDurationPrecise = (seconds) => {
   return formatDuration(value);
 };
 
+const formatDurationSeconds = (seconds) => {
+  if (!Number.isFinite(seconds)) {
+    return "-";
+  }
+  const value = Math.max(0, Number(seconds));
+  return `${value.toFixed(2)}s`;
+};
+
 const parseMetricNumber = (value) => {
   if (value === null || value === undefined) {
     return null;
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveSessionContextTokens = (session) => {
+  const peak = parseMetricNumber(session?.context_tokens_peak);
+  if (Number.isFinite(peak)) {
+    return peak;
+  }
+  const current = parseMetricNumber(session?.context_tokens);
+  if (Number.isFinite(current)) {
+    return current;
+  }
+  const legacy = parseMetricNumber(session?.token_usage);
+  return Number.isFinite(legacy) ? legacy : null;
 };
 
 const buildSpeedMeta = (tokens, duration, options = {}) => {
@@ -545,7 +566,7 @@ const recordTokenDeltas = (sessions) => {
     if (!sessionId) {
       return;
     }
-    const current = Number(session?.token_usage) || 0;
+    const current = resolveSessionContextTokens(session) || 0;
     const previous = Number(usageMap[sessionId]) || 0;
     const delta = current - previous;
     if (delta > 0) {
@@ -1092,7 +1113,7 @@ const renderServiceMetrics = (service) => {
   elements.metricServiceCancelled.textContent = `${service.cancelled_sessions ?? 0}`;
   elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   if (elements.metricServiceTokenAvg) {
-    const avgTokens = parseMetricNumber(service.avg_token_usage);
+    const avgTokens = parseMetricNumber(service.avg_context_tokens);
     elements.metricServiceTokenAvg.textContent = formatTokenCount(avgTokens);
   }
   elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
@@ -1135,7 +1156,7 @@ const normalizeUserDashboardStats = (item) => ({
   total_sessions: Number(item?.total_sessions) || 0,
   chat_records: Number(item?.chat_records) || 0,
   tool_calls: Number(item?.tool_calls) || 0,
-  token_usage: Number(item?.token_usage) || 0,
+  context_tokens: Number(item?.context_tokens) || 0,
 });
 
 const resolveUserDashboardSummary = () => {
@@ -1156,7 +1177,7 @@ const resolveUserDashboardSummary = () => {
     total_sessions: 0,
     chat_records: 0,
     tool_calls: 0,
-    token_usage: 0,
+    context_tokens: 0,
   };
   if (!Array.isArray(state.users.list)) {
     return { summary, hasData: false };
@@ -1168,7 +1189,7 @@ const resolveUserDashboardSummary = () => {
     summary.total_sessions += Number(item?.total_sessions) || 0;
     summary.chat_records += Number(item?.chat_records) || 0;
     summary.tool_calls += Number(item?.tool_calls) || 0;
-    summary.token_usage += Number(item?.token_usage) || 0;
+    summary.context_tokens += Number(item?.context_tokens) || 0;
   });
   state.users.summary = summary;
   state.users.summaryUpdatedAt = state.users.updatedAt;
@@ -1194,7 +1215,7 @@ const renderUserDashboardMetrics = (summary, hasData) => {
   elements.metricUserRecords.textContent = `${summary.chat_records}`;
   elements.metricUserTools.textContent = `${summary.tool_calls}`;
   elements.metricUserActive.textContent = `${summary.active_sessions}`;
-  elements.metricUserTokens.textContent = formatTokenCount(summary.token_usage);
+  elements.metricUserTokens.textContent = formatTokenCount(summary.context_tokens);
 };
 
 const shouldRefreshUserDashboard = (options = {}) => {
@@ -1245,12 +1266,227 @@ const refreshUserDashboardSummary = async (options = {}) => {
 
 // 计算所有会话累计 token 数量
 const resolveTotalTokens = (sessions) =>
-  (sessions || []).reduce((sum, session) => sum + (Number(session?.token_usage) || 0), 0);
+  (sessions || []).reduce((sum, session) => sum + (resolveSessionContextTokens(session) || 0), 0);
 
 // 解析监控时间字段，避免格式异常导致筛选失败
 const parseMonitorTimestamp = (value) => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveMonitorDetailTimeRange = (session, events) => {
+  let startMs = null;
+  let endMs = null;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const ts = parseMonitorTimestamp(event?.timestamp);
+    if (!Number.isFinite(ts)) {
+      return;
+    }
+    startMs = startMs === null ? ts : Math.min(startMs, ts);
+    endMs = endMs === null ? ts : Math.max(endMs, ts);
+  });
+  const fallbackStart = parseMonitorTimestamp(session?.start_time);
+  if (startMs === null && Number.isFinite(fallbackStart)) {
+    startMs = fallbackStart;
+  }
+  const fallbackEnd = parseMonitorTimestamp(session?.updated_time || session?.start_time);
+  if (endMs === null && Number.isFinite(fallbackEnd)) {
+    endMs = fallbackEnd;
+  }
+  if (startMs !== null && endMs !== null && endMs < startMs) {
+    const swapped = startMs;
+    startMs = endMs;
+    endMs = swapped;
+  }
+  return { startMs, endMs };
+};
+
+const resolveMonitorDetailElapsedSeconds = (session, events) => {
+  const { startMs, endMs } = resolveMonitorDetailTimeRange(session, events);
+  if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+    return Math.max(0, (endMs - startMs) / 1000);
+  }
+  const fallback = parseMetricNumber(session?.elapsed_s);
+  return Number.isFinite(fallback) ? fallback : null;
+};
+
+const normalizeMonitorDetailCount = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const resolveMonitorDetailToolCalls = (session, events) => {
+  let calls = 0;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (event?.type === "tool_call") {
+      calls += 1;
+    }
+  });
+  if (calls <= 0) {
+    const fallback = parseMetricNumber(session?.tool_calls);
+    if (Number.isFinite(fallback)) {
+      calls = Math.max(0, Math.round(fallback));
+    }
+  }
+  return calls;
+};
+
+const resolveMonitorDetailQuota = (session, events) => {
+  let consumed = 0;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (event?.type !== "quota_usage") {
+      return;
+    }
+    const data = event?.data;
+    const rawIncrement =
+      data && typeof data === "object" ? data.consumed ?? data.count ?? data.used : null;
+    const increment = normalizeMonitorDetailCount(rawIncrement);
+    consumed += increment > 0 ? increment : 1;
+  });
+  if (consumed <= 0) {
+    const fallback = parseMetricNumber(
+      session?.quota_consumed ?? session?.quotaConsumed ?? session?.quota
+    );
+    if (Number.isFinite(fallback)) {
+      consumed = Math.max(0, Math.round(fallback));
+    }
+  }
+  return consumed;
+};
+
+const resolveUsageTotals = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const source =
+    payload.usage && typeof payload.usage === "object" ? payload.usage : payload;
+  const input = parseMetricNumber(source.input_tokens ?? source.input);
+  const output = parseMetricNumber(source.output_tokens ?? source.output);
+  let total = parseMetricNumber(source.total_tokens ?? source.total);
+  if (!Number.isFinite(total)) {
+    if (Number.isFinite(input) || Number.isFinite(output)) {
+      total = (input || 0) + (output || 0);
+    }
+  }
+  if (!Number.isFinite(total) || total <= 0) {
+    return null;
+  }
+  return { input, output, total };
+};
+
+const resolveMonitorDetailBillingUsage = (session, events) => {
+  let usage = null;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (event?.type === "round_usage") {
+      const next = resolveUsageTotals(event?.data);
+      if (next) {
+        usage = next;
+      }
+      return;
+    }
+    if (event?.type === "final" && !usage) {
+      const next = resolveUsageTotals(event?.data);
+      if (next) {
+        usage = next;
+      }
+    }
+  });
+  if (!usage) {
+    usage =
+      resolveUsageTotals(session?.round_usage) ||
+      resolveUsageTotals(session?.usage) ||
+      null;
+  }
+  return usage;
+};
+
+const buildMonitorDetailSpeedSummary = (
+  labelKey,
+  speed,
+  tokens,
+  duration,
+  options = {}
+) => {
+  if (!Number.isFinite(speed) || speed <= 0) {
+    return "";
+  }
+  const speedText = formatTokenRate(speed, { lowerBound: options.lowerBound });
+  if (!speedText || speedText === "-") {
+    return "";
+  }
+  let summary = t(labelKey, { speed: speedText });
+  const meta = buildSpeedMeta(tokens, duration, {
+    cached: options.lowerBound,
+    variant: options.variant,
+  });
+  if (meta) {
+    summary = `${summary} (${meta})`;
+  }
+  return summary;
+};
+
+const buildMonitorDetailMeta = (session, events) => {
+  const metaParts = [];
+  metaParts.push(session?.user_id || "-");
+  metaParts.push(getSessionStatusLabel(session?.status));
+  const elapsedSeconds = resolveMonitorDetailElapsedSeconds(session, events);
+  if (Number.isFinite(elapsedSeconds)) {
+    metaParts.push(
+      t("monitor.session.elapsed", { elapsed: formatDurationSeconds(elapsedSeconds) })
+    );
+  }
+  const toolCalls = resolveMonitorDetailToolCalls(session, events);
+  if (toolCalls > 0) {
+    metaParts.push(t("monitor.tool.calls", { count: formatHeatmapCount(toolCalls) }));
+  }
+  const quotaConsumed = resolveMonitorDetailQuota(session, events);
+  if (quotaConsumed > 0) {
+    metaParts.push(
+      t("monitor.session.quota", { count: formatHeatmapCount(quotaConsumed) })
+    );
+  }
+  const contextTokens = resolveSessionContextTokens(session);
+  if (Number.isFinite(contextTokens) && contextTokens > 0) {
+    const tokenText = formatTokenCount(contextTokens);
+    if (tokenText && tokenText !== "-") {
+      metaParts.push(t("monitor.session.contextTokens", { token: tokenText }));
+    }
+  }
+  const billingUsage = resolveMonitorDetailBillingUsage(session, events);
+  if (billingUsage?.total > 0) {
+    const tokenText = formatTokenCount(billingUsage.total);
+    if (tokenText && tokenText !== "-") {
+      metaParts.push(t("monitor.session.billingTokens", { token: tokenText }));
+    }
+  }
+  const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+  const prefillTokens = parseMetricNumber(session?.prefill_tokens);
+  const prefillDuration = parseMetricNumber(session?.prefill_duration_s);
+  const prefillLowerBound = Boolean(session?.prefill_speed_lower_bound);
+  const prefillSummary = buildMonitorDetailSpeedSummary(
+    "monitor.session.prefillSpeed",
+    prefillSpeed,
+    prefillTokens,
+    prefillDuration,
+    { lowerBound: prefillLowerBound }
+  );
+  if (prefillSummary) {
+    metaParts.push(prefillSummary);
+  }
+  const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+  const decodeTokens = parseMetricNumber(session?.decode_tokens);
+  const decodeDuration = parseMetricNumber(session?.decode_duration_s);
+  const decodeSummary = buildMonitorDetailSpeedSummary(
+    "monitor.session.decodeSpeed",
+    decodeSpeed,
+    decodeTokens,
+    decodeDuration,
+    { variant: "output" }
+  );
+  if (decodeSummary) {
+    metaParts.push(decodeSummary);
+  }
+  return metaParts.filter(Boolean).join(" · ");
 };
 
 // 获取会话的可比较时间戳
@@ -1702,7 +1938,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const statusCell = document.createElement("td");
     statusCell.appendChild(buildStatusBadge(session.status || ""));
     const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(session.token_usage);
+    tokenCell.textContent = formatTokenCount(resolveSessionContextTokens(session));
     const elapsedCell = document.createElement("td");
     elapsedCell.textContent = formatDuration(session.elapsed_s);
     const stageCell = document.createElement("td");
@@ -1874,9 +2110,9 @@ const renderMonitorStatusList = (sessions) => {
     meta.textContent = metaParts.join(" · ");
 
     const detailParts = [];
-    const tokenText = formatTokenCount(session?.token_usage);
+    const tokenText = formatTokenCount(resolveSessionContextTokens(session));
     if (tokenText && tokenText !== "-") {
-      detailParts.push(t("monitor.session.token", { token: tokenText }));
+      detailParts.push(t("monitor.session.contextTokens", { token: tokenText }));
     }
     const elapsedText = formatDuration(session?.elapsed_s);
     if (elapsedText && elapsedText !== "-") {
@@ -1965,7 +2201,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
       detailParts.push(
         t("monitor.tool.calls", { count: formatHeatmapCount(session?.tool_calls) })
       );
-      const tokenText = formatTokenCount(session?.token_usage);
+      const tokenText = formatTokenCount(resolveSessionContextTokens(session));
       if (tokenText && tokenText !== "-") {
         detailParts.push(`Token ${tokenText}`);
       }
@@ -2520,38 +2756,9 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
     elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
       sessionId: session.session_id || "-",
     });
-    elements.monitorDetailMeta.textContent = `${session.user_id || "-"} · ${getSessionStatusLabel(
-      session.status
-    )} · ${formatDuration(session.elapsed_s)}`;
-    elements.monitorDetailQuestion.textContent = session.question || "";
-    const prefillSpeed = parseMetricNumber(session.prefill_speed_tps);
-    const prefillTokens = parseMetricNumber(session.prefill_tokens);
-    const prefillDuration = parseMetricNumber(session.prefill_duration_s);
-    const prefillLowerBound = Boolean(session.prefill_speed_lower_bound);
-    if (elements.monitorDetailPrefillSpeed) {
-      elements.monitorDetailPrefillSpeed.textContent = formatTokenRate(prefillSpeed, {
-        lowerBound: prefillLowerBound,
-      });
-    }
-    if (elements.monitorDetailPrefillMeta) {
-      elements.monitorDetailPrefillMeta.textContent = buildSpeedMeta(
-        prefillTokens,
-        prefillDuration,
-        { cached: prefillLowerBound }
-      );
-    }
-    const decodeSpeed = parseMetricNumber(session.decode_speed_tps);
-    const decodeTokens = parseMetricNumber(session.decode_tokens);
-    const decodeDuration = parseMetricNumber(session.decode_duration_s);
-    if (elements.monitorDetailDecodeSpeed) {
-      elements.monitorDetailDecodeSpeed.textContent = formatTokenRate(decodeSpeed);
-    }
-    if (elements.monitorDetailDecodeMeta) {
-      elements.monitorDetailDecodeMeta.textContent = buildSpeedMeta(decodeTokens, decodeDuration, {
-        variant: "output",
-      });
-    }
     const events = Array.isArray(result.events) ? result.events : [];
+    elements.monitorDetailMeta.textContent = buildMonitorDetailMeta(session, events);
+    elements.monitorDetailQuestion.textContent = session.question || "";
     state.monitor.detail = {
       session,
       events,

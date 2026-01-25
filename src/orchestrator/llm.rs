@@ -38,7 +38,7 @@ impl Orchestrator {
         &self,
         user_id: &str,
         emitter: &EventEmitter,
-        round_index: i64,
+        round_info: RoundInfo,
         emit_quota_events: bool,
     ) -> Result<(), OrchestratorError> {
         let today = UserStore::today_string();
@@ -53,19 +53,17 @@ impl Orchestrator {
             return Err(OrchestratorError::user_quota_exceeded(status));
         }
         if emit_quota_events {
-            emitter
-                .emit(
-                    "quota_usage",
-                    json!({
-                        "round": round_index,
-                        "consumed": 1,
-                        "daily_quota": status.daily_quota,
-                        "used": status.used,
-                        "remaining": status.remaining,
-                        "date": status.date,
-                    }),
-                )
-                .await;
+            let mut payload = json!({
+                "consumed": 1,
+                "daily_quota": status.daily_quota,
+                "used": status.used,
+                "remaining": status.remaining,
+                "date": status.date,
+            });
+            if let Value::Object(ref mut map) = payload {
+                round_info.insert_into(map);
+            }
+            emitter.emit("quota_usage", payload).await;
         }
         Ok(())
     }
@@ -243,7 +241,7 @@ impl Orchestrator {
         emitter: &EventEmitter,
         session_id: &str,
         stream: bool,
-        round_index: i64,
+        round_info: RoundInfo,
         emit_events: bool,
         emit_quota_events: bool,
         log_payload: bool,
@@ -257,23 +255,21 @@ impl Orchestrator {
                 let content = i18n::t("error.llm_not_configured");
                 let usage = self.estimate_token_usage(messages, &content, "");
                 if emit_events {
-                    emitter
-                        .emit(
-                            "llm_output",
-                            json!({ "content": content, "reasoning": "", "round": round_index, "usage": usage }),
-                        )
-                        .await;
-                    emitter
-                        .emit(
-                            "token_usage",
-                            json!({
-                                "round": round_index,
-                                "input_tokens": usage.input,
-                                "output_tokens": usage.output,
-                                "total_tokens": usage.total,
-                            }),
-                        )
-                        .await;
+                    let mut output_payload =
+                        json!({ "content": content, "reasoning": "", "usage": usage });
+                    if let Value::Object(ref mut map) = output_payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("llm_output", output_payload).await;
+                    let mut usage_payload = json!({
+                        "input_tokens": usage.input,
+                        "output_tokens": usage.output,
+                        "total_tokens": usage.total,
+                    });
+                    if let Value::Object(ref mut map) = usage_payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("token_usage", usage_payload).await;
                 }
                 return Ok((content, String::new(), usage, None));
             }
@@ -284,7 +280,7 @@ impl Orchestrator {
             )));
         }
 
-        self.consume_user_quota(user_id, emitter, round_index, emit_quota_events)
+        self.consume_user_quota(user_id, emitter, round_info, emit_quota_events)
             .await?;
 
         let client = build_llm_client(&effective_config, self.http.clone());
@@ -292,7 +288,7 @@ impl Orchestrator {
         let will_stream = stream;
 
         if emit_events {
-            let request_payload = if log_payload {
+            let mut request_payload = if log_payload {
                 let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
                 let payload_chat = self.build_chat_messages(&payload_messages);
                 let payload =
@@ -301,7 +297,6 @@ impl Orchestrator {
                     "provider": effective_config.provider,
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
-                    "round": round_index,
                     "stream": will_stream,
                     "payload": payload,
                 })
@@ -310,11 +305,13 @@ impl Orchestrator {
                     "provider": effective_config.provider,
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
-                    "round": round_index,
                     "stream": will_stream,
                     "payload_omitted": true,
                 })
             };
+            if let Value::Object(ref mut map) = request_payload {
+                round_info.insert_into(map);
+            }
             emitter.emit("llm_request", request_payload).await;
         }
 
@@ -329,6 +326,7 @@ impl Orchestrator {
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
+                let round_info = round_info;
                 let on_delta = move |delta: String, reasoning_delta: String| {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
@@ -347,7 +345,7 @@ impl Orchestrator {
                                     Value::String(reasoning_delta),
                                 );
                             }
-                            payload.insert("round".to_string(), json!(round_index));
+                            round_info.insert_into(&mut payload);
                             emitter
                                 .emit("llm_output_delta", Value::Object(payload))
                                 .await;
@@ -416,33 +414,29 @@ impl Orchestrator {
                     };
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
-                        emitter
-                            .emit(
-                                "llm_output",
-                                json!({
-                                    "content": content,
-                                    "reasoning": reasoning,
-                                    "round": round_index,
-                                    "usage": usage,
-                                    "tool_calls": tool_calls_snapshot,
-                                    "prefill_duration_s": prefill_duration_s,
-                                    "decode_duration_s": decode_duration_s,
-                                }),
-                            )
-                            .await;
-                        emitter
-                            .emit(
-                                "token_usage",
-                                json!({
-                                    "round": round_index,
-                                    "input_tokens": usage.input,
-                                    "output_tokens": usage.output,
-                                    "total_tokens": usage.total,
-                                    "prefill_duration_s": prefill_duration_s,
-                                    "decode_duration_s": decode_duration_s,
-                                }),
-                            )
-                            .await;
+                        let mut output_payload = json!({
+                            "content": content,
+                            "reasoning": reasoning,
+                            "usage": usage,
+                            "tool_calls": tool_calls_snapshot,
+                            "prefill_duration_s": prefill_duration_s,
+                            "decode_duration_s": decode_duration_s,
+                        });
+                        if let Value::Object(ref mut map) = output_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("llm_output", output_payload).await;
+                        let mut usage_payload = json!({
+                            "input_tokens": usage.input,
+                            "output_tokens": usage.output,
+                            "total_tokens": usage.total,
+                            "prefill_duration_s": prefill_duration_s,
+                            "decode_duration_s": decode_duration_s,
+                        });
+                        if let Value::Object(ref mut map) = usage_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("token_usage", usage_payload).await;
                     }
                     return Ok((content, reasoning, usage, tool_calls));
                 }
@@ -456,18 +450,16 @@ impl Orchestrator {
             }
             if emit_events && will_stream {
                 let delay_s = (attempt as f64).min(3.0);
-                emitter
-                    .emit(
-                        "llm_stream_retry",
-                        json!({
-                            "attempt": attempt,
-                            "max_attempts": max_attempts,
-                            "delay_s": delay_s,
-                            "will_retry": true,
-                            "round": round_index,
-                        }),
-                    )
-                    .await;
+                let mut retry_payload = json!({
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "delay_s": delay_s,
+                    "will_retry": true,
+                });
+                if let Value::Object(ref mut map) = retry_payload {
+                    round_info.insert_into(map);
+                }
+                emitter.emit("llm_stream_retry", retry_payload).await;
                 self.sleep_or_cancel(session_id, Duration::from_secs_f64(delay_s))
                     .await?;
             }

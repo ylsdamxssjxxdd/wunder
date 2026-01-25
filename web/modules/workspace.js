@@ -31,6 +31,15 @@ const TEXT_EXTENSIONS = new Set([
   "sql",
 ]);
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"]);
+const IMAGE_MIME_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  bmp: "image/bmp",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+};
 const PDF_EXTENSIONS = new Set(["pdf"]);
 const OFFICE_EXTENSIONS = new Set(["doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
 const OFFICE_WORD_EXTENSIONS = new Set(["doc", "docx"]);
@@ -978,11 +987,12 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     return;
   }
   if (entry.type === "file") {
-    if (preferEditor) {
+    const canEdit = isWorkspaceTextEditable(entry);
+    if (preferEditor && canEdit) {
       openWorkspaceEditor(entry);
       return;
     }
-    if (isWorkspaceTextEditable(entry)) {
+    if (canEdit) {
       openWorkspaceEditor(entry);
     } else {
       openWorkspacePreview(entry);
@@ -1442,7 +1452,15 @@ const renderImagePreview = async (entry, url) => {
     if (!response.ok) {
       throw new Error(t("common.requestFailed", { status: response.status }));
     }
-    const blob = await response.blob();
+    const extension = getWorkspaceExtension(entry);
+    const expectedMime = IMAGE_MIME_TYPES[extension] || "";
+    let blob = await response.blob();
+    if (
+      expectedMime &&
+      (!blob.type || blob.type === "application/octet-stream" || blob.type !== expectedMime)
+    ) {
+      blob = blob.slice(0, blob.size, expectedMime);
+    }
     if (state.workspace.previewEntry?.path !== entry.path) {
       return;
     }
