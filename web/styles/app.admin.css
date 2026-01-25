@@ -2761,3 +2761,7 @@
 .debug-stability-status {
   font-size: 12px;
 }
+
+#debugStabilityToggleBtn.is-active {
+  background: #3a7afe;
+}
