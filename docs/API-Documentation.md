@@ -590,8 +590,8 @@ Example payload:
 - `tool_call_mode=function_call`: model returns OpenAI-style `tool_calls/function_call`, tool results are returned as role="tool" messages with tool_call_id.
 - JSON: `{"name":"tool","arguments":{...}}`.
 - Tool results are returned as a user message prefixed with `tool_response: ` (`tool_call` mode).
-- Command execution controlled by `security.allow_commands`.
-- `workdir` sets working dir; `shell` enabled only when allow_commands is `*` (default on), pass `shell=false` to disable.
+- Command allowlist controlled by `security.allow_commands`.
+- `workdir` sets working dir (relative to workspace only).
 - File tools are restricted to workspace unless in `security.allow_paths`.
 - MCP tool name format: `server@tool`; Skills: enabled skill names.
 

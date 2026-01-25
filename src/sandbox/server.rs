@@ -247,7 +247,6 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
     }
 
     let allow_all = context.allow_commands.contains("*");
-    let shell_override = parse_shell_override(args.get("shell"));
     let mut results = Vec::new();
 
     for raw_line in content.lines() {
@@ -255,43 +254,22 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
         if command.is_empty() {
             continue;
         }
-        let use_shell = match shell_override {
-            Some(value) => value,
-            None => allow_all && command_requires_shell(command),
-        };
-        if use_shell && !allow_all {
-            return ToolResult {
-                ok: false,
-                data: json!({}),
-                error: i18n::t("tool.exec.shell_not_allowed"),
-            };
+        if !allow_all {
+            let lower = command.to_lowercase();
+            if !context
+                .allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return ToolResult {
+                    ok: false,
+                    data: json!({}),
+                    error: i18n::t("tool.exec.not_allowed"),
+                };
+            }
         }
 
-        let output = if use_shell {
-            run_shell_command(command, &cwd, timeout_s).await
-        } else {
-            match split_command(command) {
-                Ok(tokens) => {
-                    if tokens.is_empty() {
-                        return ToolResult {
-                            ok: false,
-                            data: json!({}),
-                            error: i18n::t("tool.exec.parse_failed"),
-                        };
-                    }
-                    let head = tokens[0].to_lowercase();
-                    if !allow_all && !context.allow_commands.contains(&head) {
-                        return ToolResult {
-                            ok: false,
-                            data: json!({}),
-                            error: i18n::t("tool.exec.not_allowed"),
-                        };
-                    }
-                    run_tokens_command(&tokens, &cwd, timeout_s).await
-                }
-                Err(message) => Err(message),
-            }
-        };
+        let output = run_shell_command(command, &cwd, timeout_s).await;
 
         let output = match output {
             Ok(output) => output,
@@ -489,23 +467,6 @@ async fn run_shell_command(
 ) -> Result<CommandOutput, String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-lc").arg(command).current_dir(cwd);
-    cmd.kill_on_drop(true);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    run_command_output(cmd, timeout_s).await
-}
-
-async fn run_tokens_command(
-    tokens: &[String],
-    cwd: &Path,
-    timeout_s: u64,
-) -> Result<CommandOutput, String> {
-    let mut iter = tokens.iter();
-    let Some(program) = iter.next() else {
-        return Err(i18n::t("tool.exec.parse_failed"));
-    };
-    let mut cmd = Command::new(program);
-    cmd.args(iter);
-    cmd.current_dir(cwd);
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     run_command_output(cmd, timeout_s).await
@@ -711,78 +672,6 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<u64> {
         Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
         _ => None,
     }
-}
-
-fn parse_shell_override(value: Option<&Value>) -> Option<bool> {
-    let Some(value) = value else {
-        return None;
-    };
-    match value {
-        Value::Bool(flag) => Some(*flag),
-        Value::Number(num) => Some(num.as_i64().unwrap_or(0) != 0),
-        Value::String(text) => {
-            let lower = text.trim().to_ascii_lowercase();
-            Some(matches!(lower.as_str(), "1" | "true" | "yes" | "y"))
-        }
-        _ => Some(false),
-    }
-}
-
-fn split_command(command: &str) -> Result<Vec<String>, String> {
-    shell_words::split(command).map_err(|_| i18n::t("tool.exec.parse_failed"))
-}
-
-fn command_requires_shell(command: &str) -> bool {
-    let stripped = command.trim();
-    if stripped.is_empty() {
-        return false;
-    }
-    if is_env_assignment(stripped) {
-        return true;
-    }
-    let first = stripped
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-    if matches!(
-        first.as_str(),
-        "cd" | "export" | "alias" | "set" | "source" | "." | "ulimit" | "unset" | "exit"
-    ) {
-        return true;
-    }
-    for ch in stripped.chars() {
-        if matches!(ch, '|' | '&' | ';' | '<' | '>' | '(' | ')' | '$' | '`')
-            || matches!(ch, '*' | '?' | '[' | ']')
-        {
-            return true;
-        }
-    }
-    if stripped.contains('~') {
-        return true;
-    }
-    false
-}
-
-fn is_env_assignment(text: &str) -> bool {
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_ascii_alphabetic() && first != '_' {
-        return false;
-    }
-    let mut seen_eq = false;
-    for ch in chars {
-        if ch == '=' {
-            seen_eq = true;
-            break;
-        }
-        if !(ch.is_ascii_alphanumeric() || ch == '_') {
-            return false;
-        }
-    }
-    seen_eq
 }
 
 fn default_container_root() -> String {

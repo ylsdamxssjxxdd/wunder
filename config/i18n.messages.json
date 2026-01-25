@@ -1236,24 +1236,20 @@
     "zh-CN": "调用 LSP 获取定义、引用、悬停信息、符号、实现或调用层级。"
   },
   "tool.spec.exec.args.content": {
-    "en-US": "CLI command.",
-    "zh-CN": "CLI 命令。"
-  },
-  "tool.spec.exec.args.shell": {
-    "en-US": "Optional. Execute via shell.",
-    "zh-CN": "可选，使用 shell 执行。"
+    "en-US": "CLI command. Content has no path restrictions.",
+    "zh-CN": "CLI 命令，content 不限制路径格式。"
   },
   "tool.spec.exec.args.timeout": {
     "en-US": "Optional. Command timeout in seconds (default 30).",
     "zh-CN": "可选，命令超时秒数，默认 30 秒。"
   },
   "tool.spec.exec.args.workdir": {
-    "en-US": "Optional. Working directory under the workspace or an allowed path.",
-    "zh-CN": "可选，工作目录，相对工作区或白名单目录的绝对路径。"
+    "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
+    "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands on the system when needed to complete the task. Defaults to the workspace root; use workdir for subdirectories or allowed paths. Use shell=true when you need cd/&& or other shell syntax, or pass shell=false to disable.",
-    "zh-CN": "请求在系统上执行 CLI 命令。当需要进行系统操作或运行特定命令以完成用户任务的任一步骤时使用。默认在工作区根目录执行，可通过 workdir 指定子目录或白名单目录。需要 cd/&& 等 shell 语法时设置 shell=true，可显式传 shell=false 关闭。"
+    "en-US": "Run CLI commands when needed to complete the task. Defaults to the workspace root; workdir must stay within the current workspace (relative path only). Command content has no path restrictions.",
+    "zh-CN": "请求执行 CLI 命令。默认在工作区根目录执行；workdir 只能在当前工作目录以内（相对路径），不允许绝对路径；content 不限制路径格式。"
   },
   "tool.spec.final.args.content": {
     "en-US": "Final response content.",

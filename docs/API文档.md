@@ -1378,9 +1378,9 @@
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
 - 工具结果以 `tool_response: ` 前缀的 user 消息回填给模型，用于下一轮判断（`tool_call` 模式）。
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式对模型可用；`tool_call` 模式下注入系统提示词。
-- 命令执行是否受限由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
+- 命令执行白名单由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 高风险命令在 `security.exec_policy_mode=enforce` 时需显式审批（tool args 支持 `approved=true`/`approval_key`），审批结果会在会话内短 TTL 缓存。
-- 执行命令支持 `workdir` 指定工作目录（工作区或白名单目录），`shell` 仅在 allow_commands 为 `*` 时启用且默认开启，可显式传 `shell=false` 关闭，`timeout_s` 可选。
+- 执行命令支持 `workdir` 指定工作目录（仅工作区内相对路径），`timeout_s` 可选。
 - 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
 - MCP 工具调用形式为 `server@tool`，技能工具按管理员启用的名称暴露。

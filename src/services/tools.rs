@@ -229,8 +229,7 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 "properties": {
                     "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
                     "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
-                    "timeout_s": {"type": "integer", "description": t("tool.spec.exec.args.timeout")},
-                    "shell": {"type": "boolean", "description": t("tool.spec.exec.args.shell")}
+                    "timeout_s": {"type": "integer", "description": t("tool.spec.exec.args.timeout")}
                 },
                 "required": ["content"]
             }),
