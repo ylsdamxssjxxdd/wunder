@@ -1151,7 +1151,7 @@ const abortSendStream = () => {
   }
 };
 
-const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) => {
+const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
   const toolOutputItemMap = new Map();
@@ -1166,6 +1166,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
     streaming: false,
     reasoningStreaming: false
   };
+  const finalizeWithNow = options.finalizeWithNow !== false;
   // 思考内容需要同步到消息头部展示
   assistantMessage.reasoning = assistantMessage.reasoning || '';
   assistantMessage.reasoningStreaming = normalizeFlag(assistantMessage.reasoningStreaming);
@@ -1211,6 +1212,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot) =>
   };
   const finalizeInteractionDuration = () => {
     if (!stats) return;
+    if (!finalizeWithNow) {
+      refreshInteractionDuration();
+      return;
+    }
     ensureInteractionStart();
     const now = Date.now();
     if (!Number.isFinite(stats.interaction_end_ms)) {
@@ -1858,7 +1863,12 @@ const hydrateMessage = (message, workflowState) => {
   hydrated.planVisible = shouldAutoShowPlan(plan, message);
   hydrated.questionPanel = normalizeInquiryPanelState(message.questionPanel);
   if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
-    const processor = createWorkflowProcessor(hydrated, workflowState, null);
+    const processor = createWorkflowProcessor(
+      hydrated,
+      workflowState,
+      null,
+      { finalizeWithNow: false }
+    );
     message.workflow_events.forEach((event) => {
       processor.handleEvent(event?.event || '', event?.raw || '');
     });

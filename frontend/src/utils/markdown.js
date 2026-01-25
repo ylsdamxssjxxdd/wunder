@@ -339,10 +339,9 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   const safeName = escapeHtml(displayName);
   const safePath = escapeHtml(publicPath);
   const safeKind = kind === 'image' ? 'image' : 'file';
-  const meta =
-    title && fallback && title !== fallback
-      ? `<div class="ai-resource-meta">${escapeHtml(fallback)}</div>`
-      : '';
+  const metaText = title && fallback && title !== fallback ? escapeHtml(fallback) : '';
+  const metaInline = metaText ? `<span class="ai-resource-meta-inline">${metaText}</span>` : '';
+  const metaBlock = metaText ? `<div class="ai-resource-meta">${metaText}</div>` : '';
   const fileExt = extractFileExtension(fallback || displayName);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
   const fileBody = `
@@ -362,10 +361,13 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   return `
     <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}">
       <div class="ai-resource-header">
-        <span class="ai-resource-name">${safeName}</span>
+        <div class="ai-resource-title">
+          <span class="ai-resource-name">${safeName}</span>
+          ${safeKind === 'image' ? metaInline : ''}
+        </div>
         <button class="ai-resource-btn" type="button" data-workspace-action="download">下载</button>
       </div>
-      ${meta}
+      ${safeKind === 'image' ? '' : metaBlock}
       ${safeKind === 'image' ? imageBody : fileBody}
     </div>
   `;

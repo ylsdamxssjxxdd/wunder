@@ -743,8 +743,8 @@
 }
 
 .chat-shell .markdown-body .ai-resource-card.ai-resource-image .ai-resource-name {
-  white-space: normal;
-  word-break: break-all;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .chat-shell .markdown-body .ai-resource-card.ai-resource-image .ai-resource-body {
@@ -756,6 +756,21 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.chat-shell .markdown-body .ai-resource-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-shell .markdown-body .ai-resource-meta-inline {
+  font-size: 12px;
+  color: var(--chat-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chat-shell .markdown-body .ai-resource-name {
