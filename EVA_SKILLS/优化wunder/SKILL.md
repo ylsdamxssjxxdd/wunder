@@ -47,6 +47,7 @@
 ## 常见故障排查
 - `payload_omitted: true`：未开启 `debug_payload` 或 payload 被截断。
 - 中文变成 `????`：检查请求链路与日志展示编码；用 ASCII 对照用例定位问题源头。
+- 若请求/日志出现乱码，当前样本不可用于结论；先修复编码再重跑，避免误判模型行为。
 - `不允许使用绝对路径`：改用相对路径或确保路径位于允许范围。
 - `No such file or directory`：脚本未复制到工作目录或路径写错。
 - `max_rounds` 终止：拆分任务或减少无关步骤。
@@ -56,6 +57,7 @@
 - 调试时必须设置 `debug_payload: true`，否则无法拿到完整请求体。
 - `debug_payload` 或 DEBUG 会记录完整上下文，注意敏感信息。
 - Windows 控制台乱码时设置 `PYTHONIOENCODING=utf-8`，或使用 ASCII 测试文本。
+- 输出报告时避免引用乱码内容，必要时用 ASCII 对照样本替换验证。
 - 避免在 `frontend/` 目录做大范围搜索。
 
 ## 实战示例

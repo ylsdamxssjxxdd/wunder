@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/auth';
 import { consumeSseStream } from '@/utils/sse';
 import { loadSharedToolSelection } from '@/utils/toolSelection';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
+import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 const buildMessageStats = () => ({
   toolCalls: 0,
@@ -1034,7 +1035,7 @@ const attachWorkflowEvents = (messages, rounds) => {
   }
   const roundMap = new Map();
   rounds.forEach((round) => {
-    const roundIndex = Number(round?.round);
+    const roundIndex = Number(round?.user_round ?? round?.round);
     if (!Number.isFinite(roundIndex)) return;
     const events = Array.isArray(round?.events) ? round.events : [];
     if (events.length) {
@@ -2093,6 +2094,7 @@ export const useChatStore = defineStore('chat', {
           messages: this.messages
         });
         this.scheduleSnapshot(true);
+        emitWorkspaceRefresh({ sessionId: this.activeSessionId, reason: 'message-finished' });
       }
     },
     async stopStream() {
@@ -2155,6 +2157,7 @@ export const useChatStore = defineStore('chat', {
           resumeController = null;
         }
         this.scheduleSnapshot(true);
+        emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });
       }
     }
   }

@@ -248,6 +248,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -296,6 +297,7 @@ const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
+const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
 
 const listRef = ref(null);
 const uploadInputRef = ref(null);
@@ -479,6 +481,9 @@ const previewMeta = computed(() => {
 });
 
 let searchTimer = null;
+let autoRefreshTimer = null;
+let autoRefreshPending = false;
+let stopWorkspaceRefreshListener = null;
 
 const normalizeWorkspacePath = (path) => {
   if (!path) return '';
@@ -722,6 +727,9 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     return false;
   } finally {
     state.loading = false;
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
   }
 };
 
@@ -747,6 +755,9 @@ const loadWorkspaceSearch = async () => {
     return false;
   } finally {
     state.loading = false;
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
   }
 };
 
@@ -755,6 +766,21 @@ const reloadWorkspaceView = async () => {
     return loadWorkspaceSearch();
   }
   return loadWorkspace({ resetSearch: true });
+};
+
+const scheduleWorkspaceAutoRefresh = () => {
+  autoRefreshPending = true;
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setTimeout(async () => {
+    autoRefreshTimer = null;
+    if (!autoRefreshPending) return;
+    if (state.loading) {
+      scheduleWorkspaceAutoRefresh();
+      return;
+    }
+    autoRefreshPending = false;
+    await reloadWorkspaceView();
+  }, WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS);
 };
 
 const hydrateExpandedEntries = async () => {
@@ -1729,6 +1755,7 @@ const handleGlobalScroll = () => {
 
 onMounted(async () => {
   await loadWorkspace();
+  stopWorkspaceRefreshListener = onWorkspaceRefresh(() => scheduleWorkspaceAutoRefresh());
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('scroll', handleGlobalScroll, true);
   window.addEventListener('resize', closeContextMenu);
@@ -1738,6 +1765,14 @@ onBeforeUnmount(() => {
   clearPreviewUrl();
   if (searchTimer) {
     clearTimeout(searchTimer);
+  }
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+  if (stopWorkspaceRefreshListener) {
+    stopWorkspaceRefreshListener();
+    stopWorkspaceRefreshListener = null;
   }
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('scroll', handleGlobalScroll, true);

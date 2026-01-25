@@ -388,6 +388,7 @@ import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
 import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails } from '@/utils/toolSummary';
@@ -555,6 +556,7 @@ const renderAssistantMarkdown = (message) => {
 
 const workspaceResourceCache = new Map();
 let workspaceResourceHydrationFrame = null;
+let stopWorkspaceRefreshListener = null;
 
 const isAdminUser = (user) =>
   Array.isArray(user?.roles) && user.roles.some((role) => role === 'admin' || role === 'super_admin');
@@ -663,6 +665,30 @@ const hydrateWorkspaceResources = () => {
   cards.forEach((card) => {
     hydrateWorkspaceResourceCard(card);
   });
+};
+
+const resetWorkspaceResourceCards = () => {
+  const container = messagesContainerRef.value;
+  if (!container) return;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    const kind = card.dataset?.workspaceKind || 'image';
+    if (kind !== 'image') return;
+    const state = card.dataset?.workspaceState || '';
+    if (state === 'ready') return;
+    card.dataset.workspaceState = '';
+    card.classList.remove('is-error');
+    card.classList.remove('is-ready');
+    const status = card.querySelector('.ai-resource-status');
+    if (status) {
+      status.textContent = '图片加载中...';
+    }
+  });
+};
+
+const handleWorkspaceRefresh = () => {
+  resetWorkspaceResourceCards();
+  scheduleWorkspaceResourceHydration();
 };
 
 const scheduleWorkspaceResourceHydration = () => {
@@ -1078,6 +1104,7 @@ onMounted(async () => {
   await init();
   loadToolSummary();
   scheduleWorkspaceResourceHydration();
+  stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
   window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('visibilitychange', flushChatSnapshot);
 });
@@ -1085,6 +1112,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('visibilitychange', flushChatSnapshot);
+  if (stopWorkspaceRefreshListener) {
+    stopWorkspaceRefreshListener();
+    stopWorkspaceRefreshListener = null;
+  }
   clearWorkspaceResourceCache();
 });
 
