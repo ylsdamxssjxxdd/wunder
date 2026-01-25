@@ -71,6 +71,7 @@
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
+- 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 

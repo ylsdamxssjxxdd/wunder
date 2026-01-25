@@ -104,6 +104,37 @@
   gap: 6px;
 }
 
+.chat-shell .topbar-compact-actions {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.chat-shell .topbar-panel-btn {
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(77, 216, 255, 0.35);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--chat-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.chat-shell .topbar-panel-btn:hover {
+  border-color: rgba(77, 216, 255, 0.65);
+  color: var(--chat-primary);
+  box-shadow: 0 0 0 6px rgba(77, 216, 255, 0.1);
+}
+
+.chat-shell .topbar-panel-text {
+  white-space: nowrap;
+}
 .chat-shell .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -793,6 +824,14 @@
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 
+.workspace-dialog .icon-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+}
+
 .workspace-dialog .el-dialog__header {
   border-bottom: 1px solid rgba(77, 216, 255, 0.2);
 }
@@ -806,6 +845,25 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.compact-panel-dialog .el-dialog__body {
+  padding: 12px;
+}
+
+.compact-panel-dialog .panel-dialog-body {
+  min-height: 60vh;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.compact-panel-dialog .panel-dialog-body .workspace-panel,
+.compact-panel-dialog .panel-dialog-body .history-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 .workspace-dialog .workspace-btn {
@@ -990,21 +1048,15 @@
 @media (max-width: 960px) {
   .chat-shell .main-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(240px, 40vh) 1fr;
+    grid-template-rows: 1fr;
   }
 
   .chat-shell .sidebar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
-    min-width: 0;
-    max-width: 100%;
+    display: none;
   }
 
-  .chat-shell .glass-card.info-panel,
-  .chat-shell .glass-card.history-panel {
-    height: 100%;
-    min-height: 0;
+  .chat-shell .topbar-compact-actions {
+    display: inline-flex;
   }
 }
 

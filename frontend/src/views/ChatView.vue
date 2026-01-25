@@ -12,6 +12,33 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <div v-if="isCompactLayout" class="topbar-compact-actions">
+            <button
+              class="topbar-panel-btn"
+              type="button"
+              title="临时文件区"
+              aria-label="临时文件区"
+              @click="openWorkspaceDialog"
+            >
+              <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
+              </svg>
+              <span class="topbar-panel-text">临时文件</span>
+            </button>
+            <button
+              class="topbar-panel-btn"
+              type="button"
+              title="历史记录"
+              aria-label="历史记录"
+              @click="openHistoryDialog"
+            >
+              <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v6l4 2" />
+              </svg>
+              <span class="topbar-panel-text">历史记录</span>
+            </button>
+          </div>
           <button
             class="new-chat-btn"
             type="button"
@@ -70,7 +97,7 @@
       </header>
 
       <div class="main-grid">
-        <aside class="sidebar">
+        <aside v-if="!isCompactLayout" class="sidebar">
           <div class="glass-card info-panel">
             <WorkspacePanel />
           </div>
@@ -384,6 +411,93 @@
         <img v-if="imagePreviewUrl" :src="imagePreviewUrl" class="image-preview-img" :alt="imagePreviewTitle" />
       </div>
     </el-dialog>
+
+    <el-dialog
+      v-model="workspaceDialogVisible"
+      class="workspace-dialog compact-panel-dialog"
+      width="90vw"
+      top="6vh"
+      :show-close="false"
+      :append-to-body="false"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="image-preview-header">
+          <div class="image-preview-title">临时文件区</div>
+          <button class="icon-btn" type="button" @click="workspaceDialogVisible = false">×</button>
+        </div>
+      </template>
+      <div class="panel-dialog-body">
+        <WorkspacePanel />
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="historyDialogVisible"
+      class="workspace-dialog compact-panel-dialog"
+      width="90vw"
+      top="6vh"
+      :show-close="false"
+      :append-to-body="false"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="image-preview-header">
+          <div class="image-preview-title">历史记录</div>
+          <button class="icon-btn" type="button" @click="historyDialogVisible = false">×</button>
+        </div>
+      </template>
+      <div class="panel-dialog-body">
+        <div class="history-panel">
+          <div class="panel-header">
+            <span class="history-title">历史记录</span>
+          </div>
+          <div
+            ref="historyListRef"
+            :class="['history-container', { virtual: historyVirtual }]"
+            @scroll="handleHistoryScroll"
+          >
+            <div
+              v-if="historyPaddingTop"
+              class="history-spacer"
+              :style="{ height: `${historyPaddingTop}px` }"
+            ></div>
+            <div
+              v-for="session in historySessions"
+              :key="session.id"
+              :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '']"
+              @click="handleSelectSession(session.id)"
+            >
+              <div class="history-info">
+                <div class="history-title-text">{{ formatTitle(session.title) }}</div>
+                <span class="history-time">{{ formatTime(session.updated_at) }}</span>
+              </div>
+              <button
+                class="history-delete-btn"
+                type="button"
+                title="删除会话"
+                aria-label="删除会话"
+                @click.stop="handleDeleteSession(session.id)"
+              >
+                <svg class="history-delete-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16" />
+                  <path d="M9 7V5h6v2" />
+                  <path d="M7 7l1 12h8l1-12" />
+                  <path d="M10 11v5M14 11v5" />
+                </svg>
+              </button>
+            </div>
+            <div
+              v-if="historyPaddingBottom"
+              class="history-spacer"
+              :style="{ height: `${historyPaddingBottom}px` }"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -439,6 +553,9 @@ const promptPreviewContent = ref('');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
+const workspaceDialogVisible = ref(false);
+const historyDialogVisible = ref(false);
+const isCompactLayout = ref(false);
 const promptToolSummary = ref(null);
 const toolSummaryLoading = ref(false);
 const toolSummaryError = ref('');
@@ -534,6 +651,9 @@ const handleCreateSession = () => {
 
 const handleSelectSession = async (sessionId) => {
   await chatStore.loadSessionDetail(sessionId);
+  if (isCompactLayout.value) {
+    historyDialogVisible.value = false;
+  }
 };
 
 const handleDeleteSession = async (sessionId) => {
@@ -1057,6 +1177,29 @@ const formatTitle = (title) => {
   return text.length > 20 ? `${text.slice(0, 20)}...` : text;
 };
 
+const updateCompactLayout = () => {
+  if (typeof window === 'undefined') return;
+  if (window.matchMedia) {
+    isCompactLayout.value = window.matchMedia('(max-width: 960px)').matches;
+    return;
+  }
+  isCompactLayout.value = window.innerWidth <= 960;
+};
+
+const openWorkspaceDialog = () => {
+  workspaceDialogVisible.value = true;
+};
+
+const openHistoryDialog = async () => {
+  historyDialogVisible.value = true;
+  historyScrollTop.value = 0;
+  await nextTick();
+  const container = historyListRef.value;
+  if (container) {
+    container.scrollTop = 0;
+  }
+};
+
 const formatDuration = (seconds) => {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
   const value = Number(seconds);
@@ -1153,11 +1296,14 @@ onMounted(async () => {
   loadToolSummary();
   scheduleWorkspaceResourceHydration();
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
+  updateCompactLayout();
+  window.addEventListener('resize', updateCompactLayout);
   window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('visibilitychange', flushChatSnapshot);
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateCompactLayout);
   window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('visibilitychange', flushChatSnapshot);
   if (stopWorkspaceRefreshListener) {
@@ -1218,6 +1364,16 @@ watch(
     if (value === oldValue) return;
     await init();
     loadToolSummary();
+  }
+);
+
+watch(
+  () => isCompactLayout.value,
+  (value) => {
+    if (!value) {
+      workspaceDialogVisible.value = false;
+      historyDialogVisible.value = false;
+    }
   }
 );
 

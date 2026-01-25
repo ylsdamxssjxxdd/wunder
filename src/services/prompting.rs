@@ -436,7 +436,6 @@ fn build_skill_prompt_block(workdir_display: &str, skills: &[SkillSpec]) -> Stri
     lines.push(i18n::t("prompt.skills.rule2"));
     lines.push(i18n::t("prompt.skills.rule3"));
     lines.push(i18n::t("prompt.skills.rule4"));
-    lines.push(i18n::t("prompt.skills.rule5"));
     lines.push(i18n::t_with_params(
         "prompt.skills.rule6",
         &HashMap::from([("workdir".to_string(), workdir_display.to_string())]),

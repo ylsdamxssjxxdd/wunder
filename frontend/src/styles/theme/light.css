@@ -33,6 +33,7 @@
 :root[data-user-theme='light'] .chat-shell .topbar-user,
 :root[data-user-theme='light'] .chat-shell .logout-btn,
 :root[data-user-theme='light'] .chat-shell .topbar-icon-btn,
+:root[data-user-theme='light'] .chat-shell .topbar-panel-btn,
 :root[data-user-theme='light'] .chat-shell .tools-btn {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.14);
@@ -45,7 +46,8 @@
   box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
 }
 
-:root[data-user-theme='light'] .chat-shell .topbar-icon-btn:hover {
+:root[data-user-theme='light'] .chat-shell .topbar-icon-btn:hover,
+:root[data-user-theme='light'] .chat-shell .topbar-panel-btn:hover {
   border-color: rgba(59, 130, 246, 0.55);
   color: var(--chat-primary);
   box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);

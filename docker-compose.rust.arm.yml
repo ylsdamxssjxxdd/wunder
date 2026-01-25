@@ -34,7 +34,7 @@ services:
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - RUST_LOG=info
       - CARGO_TARGET_DIR=/app/target/arm
-    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ]; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else echo "missing wunder-server binary in $$CARGO_TARGET_DIR; start sandbox first" >&2; exit 1; fi']
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; echo "wunder-server missing or stale, waiting for sandbox build..." >&2; while true; do if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; sleep 1; done']
     depends_on:
       sandbox:
         condition: service_started

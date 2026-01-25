@@ -628,28 +628,28 @@
     "zh-CN": "[已挂载技能]"
   },
   "prompt.skills.rule1": {
-    "en-US": "1) Skills are optional playbooks; use them only when the task matches their YAML frontmatter.",
-    "zh-CN": "1) 技能是可选流程手册，仅在任务匹配其 YAML 前置信息时使用。"
+    "en-US": "1) If the user's request can be solved by a skill, prefer calling `技能调用`.",
+    "zh-CN": "1) 用户的需求能用相关技能解决的，尽量使用调用`技能调用`"
   },
   "prompt.skills.rule2": {
-    "en-US": "2) Use the SKILL.md paths listed below. Read them via `读取文件` before applying a skill.",
-    "zh-CN": "2) 使用下方列出的 SKILL.md 路径，先用`读取文件`阅读后再使用技能。"
+    "en-US": "2) Use the skill name with `技能调用` to fetch the full SKILL.md, read it, then use the skill.",
+    "zh-CN": "2) 使用技能名通过 `技能调用` 工具获取完整 SKILL.md，阅读后再使用技能。"
   },
   "prompt.skills.rule3": {
     "en-US": "3) Follow the skill steps strictly. Do not invent missing steps. Prefer bundled scripts/templates/assets.",
-    "zh-CN": "3) 严格遵循技能流程，不要编造缺失步骤。优先使用随附脚本/模板/资产。"
+    "zh-CN": "3) 严格遵循技能流程，不要编造缺失步骤。优先使用技能随附脚本/模板/资产。"
   },
   "prompt.skills.rule4": {
-    "en-US": "4) Bundled scripts/templates/assets are located in the same directory as SKILL.md by default.",
-    "zh-CN": "4) 特别注意，随附的脚本/模板/资产默认与 SKILL.md 位于同一目录下。"
+    "en-US": "4) Bundled scripts/templates/assets are in the same directory as SKILL.md by default. Use `执行命令` to run skill scripts and write outputs back to the working directory. Use absolute paths for scripts/assets to avoid missing files.",
+    "zh-CN": "4) 特别注意，随附的脚本/模板/资产默认与 SKILL.md 位于同一目录下。使用 `执行命令` 运行相关技能脚本，并将输出写回工作目录。注意脚本等使用绝对路径，否则可能找不到文件。"
   },
   "prompt.skills.rule5": {
     "en-US": "5) Only claim a skill is used after completing its steps.",
     "zh-CN": "5) 只有在实际执行了技能步骤后，才可以声明已使用该技能。"
   },
   "prompt.skills.rule6": {
-    "en-US": "6) Run skill scripts via `执行命令`, and write outputs back to the working directory. If you create a skill, save it in the working directory as well. Use relative paths for tool calls; absolute paths are unnecessary, except that SKILL.md paths must be absolute.",
-    "zh-CN": "6) 使用 `执行命令` 运行相关技能脚本，并将输出写回工作目录。若需创建技能，也将技能保存到工作目录。注意技能的 SKILL.md 和附属的文件路径需要使用绝对路径。"
+    "en-US": "5) If you need to create a skill, save it in your working directory. Fetch SKILL.md via `技能调用`.",
+    "zh-CN": "5) 若需创建技能，请保存到你的工作目录。SKILL.md 通过 `技能调用` 工具获取。"
   },
   "response.a2ui_fallback": {
     "en-US": "A2UI UI has been generated and rendered.",
@@ -914,6 +914,22 @@
   "tool.read.not_found": {
     "en-US": "File not found.",
     "zh-CN": "文件不存在。"
+  },
+  "tool.skill_call.name_required": {
+    "en-US": "Skill name is required.",
+    "zh-CN": "技能名称不能为空。"
+  },
+  "tool.skill_call.not_found": {
+    "en-US": "Skill not found: {name}.",
+    "zh-CN": "未找到技能：{name}。"
+  },
+  "tool.skill_call.ambiguous": {
+    "en-US": "Skill name is ambiguous: {name}. Candidates: {candidates}.",
+    "zh-CN": "技能名称存在歧义：{name}。候选：{candidates}。"
+  },
+  "tool.skill_call.read_failed": {
+    "en-US": "Failed to read skill file: {detail}.",
+    "zh-CN": "读取技能文件失败：{detail}。"
   },
   "tool.read.range_out_of_file": {
     "en-US": "(range {start}-{end} out of file size {total})",
@@ -1342,6 +1358,14 @@
   "tool.spec.read.description": {
     "en-US": "Read file contents from specified paths, with batch and line-range support.",
     "zh-CN": "读取指定路径的文件内容，支持批量读取并指定行号范围。"
+  },
+  "tool.spec.skill_call.args.name": {
+    "en-US": "Skill name to load.",
+    "zh-CN": "要加载的技能名称。"
+  },
+  "tool.spec.skill_call.description": {
+    "en-US": "Return full SKILL.md and directory tree for the specified skill name.",
+    "zh-CN": "根据技能名称返回完整 SKILL.md 及技能目录结构。"
   },
   "tool.spec.replace.args.expected_replacements": {
     "en-US": "Expected number of replacements (default 1).",

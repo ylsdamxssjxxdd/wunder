@@ -10,7 +10,7 @@ use crate::path_utils::{
 };
 use crate::sandbox;
 use crate::schemas::ToolSpec;
-use crate::skills::{execute_skill, SkillRegistry};
+use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::user_tools::{
     UserToolAlias, UserToolBindings, UserToolKind, UserToolManager, UserToolStore,
 };
@@ -298,6 +298,17 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "技能调用".to_string(),
+            description: t("tool.spec.skill_call.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": t("tool.spec.skill_call.args.name")}
+                },
+                "required": ["name"]
+            }),
+        },
+        ToolSpec {
             name: "写入文件".to_string(),
             description: t("tool.spec.write.description"),
             input_schema: json!({
@@ -389,6 +400,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("list_files".to_string(), "列出文件".to_string());
     map.insert("search_content".to_string(), "搜索内容".to_string());
     map.insert("read_file".to_string(), "读取文件".to_string());
+    map.insert("skill_call".to_string(), "技能调用".to_string());
+    map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
     map.insert("replace_text".to_string(), "替换文本".to_string());
     map.insert("edit_file".to_string(), "编辑文件".to_string());
@@ -688,6 +701,7 @@ pub async fn execute_builtin_tool(
         "列出文件" => list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,
         "读取文件" => read_files(context, args).await,
+        "技能调用" => execute_skill_call(context, args).await,
         "写入文件" => write_file(context, args).await,
         "替换文本" => replace_text(context, args).await,
         "编辑文件" => edit_file(context, args).await,
@@ -2153,6 +2167,125 @@ fn read_files_inner(
         "content": result,
         "meta": { "files": summaries }
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillCallArgs {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    skill_name: Option<String>,
+}
+
+async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SkillCallArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let raw_name = payload
+        .name
+        .or(payload.skill_name)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if raw_name.is_empty() {
+        return Err(anyhow!(i18n::t("tool.skill_call.name_required")));
+    }
+
+    let mut selected: Option<SkillSpec> = context.skills.get(&raw_name);
+    if selected.is_none() {
+        if let Some(bindings) = context.user_tool_bindings {
+            if let Some(spec) = bindings
+                .skill_specs
+                .iter()
+                .find(|spec| spec.name == raw_name)
+            {
+                selected = Some(spec.clone());
+            } else {
+                let suffix = format!("@{raw_name}");
+                let matches: Vec<SkillSpec> = bindings
+                    .skill_specs
+                    .iter()
+                    .filter(|spec| spec.name.ends_with(&suffix))
+                    .cloned()
+                    .collect();
+                if matches.len() == 1 {
+                    selected = Some(matches[0].clone());
+                } else if matches.len() > 1 {
+                    let candidates = matches
+                        .iter()
+                        .map(|spec| spec.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(anyhow!(i18n::t_with_params(
+                        "tool.skill_call.ambiguous",
+                        &HashMap::from([
+                            ("name".to_string(), raw_name.clone()),
+                            ("candidates".to_string(), candidates),
+                        ]),
+                    )));
+                }
+            }
+        }
+    }
+
+    let Some(spec) = selected else {
+        return Err(anyhow!(i18n::t_with_params(
+            "tool.skill_call.not_found",
+            &HashMap::from([("name".to_string(), raw_name)]),
+        )));
+    };
+
+    let content = std::fs::read_to_string(&spec.path).map_err(|err| {
+        anyhow!(i18n::t_with_params(
+            "tool.skill_call.read_failed",
+            &HashMap::from([("detail".to_string(), err.to_string())]),
+        ))
+    })?;
+    let tree = build_skill_tree(&spec.root);
+    let path = absolute_path_string_from_text(&spec.path);
+    let root = absolute_path_string(&spec.root);
+    Ok(json!({
+        "name": spec.name,
+        "description": spec.description,
+        "path": path,
+        "root": root,
+        "skill_md": content,
+        "tree": tree
+    }))
+}
+
+fn build_skill_tree(root: &Path) -> Vec<String> {
+    let mut items = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|item| item.ok())
+    {
+        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path());
+        let mut display = rel.to_string_lossy().replace('\\', "/");
+        if entry.file_type().is_dir() {
+            display.push('/');
+        }
+        items.push(display);
+    }
+    items
+}
+
+fn absolute_path_string(path: &Path) -> String {
+    let normalized = normalize_existing_path(path);
+    let mut text = normalized.to_string_lossy().to_string();
+    if cfg!(windows) {
+        if let Some(stripped) = text.strip_prefix(r"\\?\") {
+            text = stripped.to_string();
+        }
+    }
+    text.replace('\\', "/")
+}
+
+fn absolute_path_string_from_text(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        return String::new();
+    }
+    absolute_path_string(&PathBuf::from(raw))
 }
 
 fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
