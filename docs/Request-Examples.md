@@ -1,32 +1,36 @@
 # Request Samples
 
-This document provides Python request samples for the `/wunder` API, including the simplest call and a full streaming flow.
+This document provides Python request samples for the `/wunder` API, including a minimal call and a full streaming flow.
 
 ## 0. Dependencies & assumptions
 
 - Python dependency: `pip install requests`
-- Example base URL: `http://127.0.0.1:18000/wunder` (adjust for your deployment)
+- Example base URL: `http://127.0.0.1:18000` (adjust for your deployment)
+- API key: `X-API-Key` header is required for `/wunder` and most admin endpoints
 
 ## 1. Minimal /wunder request (non-stream)
 
 ```python
 import requests
 
-# /wunder entry, default local dev port
-BASE_URL = "http://127.0.0.1:18000/wunder"
+BASE_HOST = "http://127.0.0.1:18000"
+BASE_URL = f"{BASE_HOST}/wunder"
+API_KEY = "YOUR_KEY"
 
-# Minimal payload: user_id and question are required
 payload = {
     "user_id": "u001",
     "question": "Hello",
-    "stream": False,  # disable streaming, return full answer
+    "stream": False,
 }
 
-# Send request and check HTTP status
-resp = requests.post(BASE_URL, json=payload, timeout=60)
+headers = {
+    "X-API-Key": API_KEY,
+    "Content-Type": "application/json",
+}
+
+resp = requests.post(BASE_URL, json=payload, headers=headers, timeout=60)
 resp.raise_for_status()
 
-# Parse JSON response with session_id and answer
 data = resp.json()
 print(data["session_id"])
 print(data["answer"])
@@ -38,13 +42,19 @@ print(data["answer"])
 import json
 import requests
 
-# Shared base to avoid hardcoding
 BASE_HOST = "http://127.0.0.1:18000"
+API_KEY = "YOUR_KEY"
 TOOLS_URL = f"{BASE_HOST}/wunder/tools"
 WUNDER_URL = f"{BASE_HOST}/wunder"
 
-# 1) Fetch available tools from the server
-tools_resp = requests.get(TOOLS_URL, timeout=30)
+headers = {
+    "X-API-Key": API_KEY,
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+}
+
+# 1) Fetch available tools (use ?user_id=... to include user tools)
+tools_resp = requests.get(f"{TOOLS_URL}?user_id=u001", headers={"X-API-Key": API_KEY}, timeout=30)
 tools_resp.raise_for_status()
 tools_payload = tools_resp.json()
 
@@ -63,6 +73,8 @@ _append_tools(tool_names_raw, tools_payload.get("builtin_tools", []))
 _append_tools(tool_names_raw, tools_payload.get("mcp_tools", []))
 _append_tools(tool_names_raw, tools_payload.get("skills", []))
 _append_tools(tool_names_raw, tools_payload.get("knowledge_tools", []))
+_append_tools(tool_names_raw, tools_payload.get("user_tools", []))
+_append_tools(tool_names_raw, tools_payload.get("shared_tools", []))
 
 seen = set()
 tool_names = []
@@ -78,10 +90,11 @@ payload = {
     "question": "Please complete the task using available tools and explain the process.",
     "tool_names": tool_names,
     "stream": True,
+    "debug_payload": True,
 }
 
 # 4) Receive SSE stream and parse events
-with requests.post(WUNDER_URL, json=payload, stream=True, timeout=120) as resp:
+with requests.post(WUNDER_URL, json=payload, headers=headers, stream=True, timeout=120) as resp:
     resp.raise_for_status()
     current_event = None
     for line in resp.iter_lines(decode_unicode=True):
@@ -92,7 +105,6 @@ with requests.post(WUNDER_URL, json=payload, stream=True, timeout=120) as resp:
             continue
         if not line.startswith("data:"):
             continue
-        # data line is JSON, containing type/session_id/data/timestamp
         event = json.loads(line.split(":", 1)[1].strip())
         event_type = current_event or event.get("type")
         event_data = event.get("data", {})
@@ -100,3 +112,7 @@ with requests.post(WUNDER_URL, json=payload, stream=True, timeout=120) as resp:
         if event_type == "final":
             break
 ```
+
+Notes:
+- `debug_payload` is supported only on `/wunder`; `/wunder/chat` omits full request bodies.
+- The SSE stream emits multiple event types; see `docs/API-Documentation.md` for details.

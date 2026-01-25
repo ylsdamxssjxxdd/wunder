@@ -97,13 +97,13 @@ XX单位
 
 基础用法：
 ```
-python scripts/convert_markdown_to_docx.py draft.md --output draft.docx
+python3 scripts/convert_markdown_to_docx.py draft.md --output draft.docx
 ```
 
 ## 一键生成含图 DOCX（推荐）
 将 Markdown 与图片放好后，直接执行一次脚本即可生成“嵌图 + 版式修正”的 DOCX：
 ```
-python scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pandoc
+python3 scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pandoc
 ```
 
 说明：

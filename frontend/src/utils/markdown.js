@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
 // 统一的 Markdown 渲染器：禁用原始 HTML，启用自动换行与链接识别
 const markdown = new MarkdownIt({
@@ -19,6 +20,39 @@ markdown.renderer.rules.table_open = (tokens, idx, options, env, slf) =>
   `<div class="ai-rich-table">${defaultTableOpenRenderer(tokens, idx, options, env, slf)}`;
 markdown.renderer.rules.table_close = (tokens, idx, options, env, slf) =>
   `${defaultTableCloseRenderer(tokens, idx, options, env, slf)}</div>`;
+
+const defaultImageRenderer =
+  markdown.renderer.rules.image ||
+  ((tokens, idx, options, env, slf) => slf.renderToken(tokens, idx, options, env, slf));
+const defaultLinkOpenRenderer =
+  markdown.renderer.rules.link_open ||
+  ((tokens, idx, options, env, slf) => slf.renderToken(tokens, idx, options, env, slf));
+
+markdown.renderer.rules.image = (tokens, idx, options, env, slf) => {
+  const token = tokens[idx];
+  const src = token.attrGet('src') || '';
+  const resource = parseWorkspaceResourceUrl(src);
+  if (!resource) {
+    return defaultImageRenderer(tokens, idx, options, env, slf);
+  }
+  const alt = token.content || token.attrGet('alt') || resource.filename || 'image';
+  const kind = isImagePath(resource.filename || resource.relativePath) ? 'image' : 'file';
+  return buildWorkspaceResourceCard(resource.publicPath, alt, resource.filename, kind);
+};
+
+markdown.renderer.rules.link_open = (tokens, idx, options, env, slf) => {
+  const token = tokens[idx];
+  const href = token.attrGet('href') || '';
+  const resource = parseWorkspaceResourceUrl(href);
+  if (resource) {
+    const existingClass = token.attrGet('class');
+    token.attrSet('class', existingClass ? `${existingClass} ai-resource-link` : 'ai-resource-link');
+    token.attrSet('data-workspace-path', resource.publicPath);
+    token.attrSet('data-workspace-link', 'true');
+    token.attrSet('href', '#');
+  }
+  return defaultLinkOpenRenderer(tokens, idx, options, env, slf);
+};
 
 const TABLE_LANG_HINTS = new Set(['table', 'tables', 'tab', 'markdown', 'md', 'grid', 'pipe', 'csv']);
 const CODE_LANG_ALIASES = new Map([
@@ -296,6 +330,68 @@ markdown.renderer.rules.fence = (tokens, idx, options, env, slf) => {
 export function renderMarkdown(content = '') {
   if (!content) return '';
   return markdown.render(String(content));
+}
+
+function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') {
+  const title = decodeResourceLabel(label);
+  const fallback = decodeResourceLabel(filename);
+  const displayName = title || fallback || 'resource';
+  const safeName = escapeHtml(displayName);
+  const safePath = escapeHtml(publicPath);
+  const safeKind = kind === 'image' ? 'image' : 'file';
+  const meta =
+    title && fallback && title !== fallback
+      ? `<div class="ai-resource-meta">${escapeHtml(fallback)}</div>`
+      : '';
+  const fileExt = extractFileExtension(fallback || displayName);
+  const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
+  const fileBody = `
+    <div class="ai-resource-body ai-resource-file">
+      <div class="ai-resource-file-icon">${escapeHtml(fileBadge)}</div>
+      <div class="ai-resource-file-info">
+        <div class="ai-resource-file-label">文件可下载</div>
+      </div>
+    </div>
+  `;
+  const imageBody = `
+    <div class="ai-resource-body">
+      <div class="ai-resource-status">图片加载中...</div>
+      <img class="ai-resource-preview" alt="${safeName}" loading="lazy" />
+    </div>
+  `;
+  return `
+    <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}">
+      <div class="ai-resource-header">
+        <span class="ai-resource-name">${safeName}</span>
+        <button class="ai-resource-btn" type="button" data-workspace-action="download">下载</button>
+      </div>
+      ${meta}
+      ${safeKind === 'image' ? imageBody : fileBody}
+    </div>
+  `;
+}
+
+function decodeResourceLabel(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (!/%[0-9a-fA-F]{2}/.test(text)) return text;
+  try {
+    return decodeURIComponent(text);
+  } catch (error) {
+    return text;
+  }
+}
+
+function extractFileExtension(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const base = raw.split('?')[0].split('#')[0];
+  const name = base.split('/').pop() || '';
+  const dotIndex = name.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex >= name.length - 1) return '';
+  const ext = name.slice(dotIndex + 1).toLowerCase();
+  if (!ext || ext.length > 8) return '';
+  return ext;
 }
 
 function renderCodeBlock(content = '', info = '') {

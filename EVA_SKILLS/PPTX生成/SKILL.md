@@ -12,9 +12,9 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 ## 工作流
 
 1. 先确定版式与风格（配色、字体、间距、页尺寸）。
-2. 复制 `scripts/pptxgenjs-starter.js` 到工作目录并重命名为 `build.js`。
+2. 复制技能包内的 `scripts/pptxgenjs-starter.js`（注意文件名）到工作目录并重命名为 `build.js`。
 3. 按需实现幻灯片，所有尺寸与位置用英寸。
-4. 运行 `node build.js` 生成 PPTX。
+4. 运行 `node build.js` 生成 PPTX，并用 `列出文件` 确认输出文件存在。
 5. 打开 PPTX 检查并微调间距、对齐与字号。
 
 ## 布局与格式规则

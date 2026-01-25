@@ -260,8 +260,14 @@ cloud-deploy/
 用法：
 
 ```bash
-scripts/init_skill.py <skill-name> --path <output-directory>
+python3 scripts/init_skill.py <skill-name> --path <output-directory>
 ```
+
+技能命名规则：
+- `skill-name` 必须是小写英文 + 连字符（如 `meeting-minutes`），并与目录名一致。
+- `SKILL.md` 的 frontmatter `名称` 可使用中文显示名。
+- 必须使用 `--path` 参数，不要省略或用位置参数替代。
+- 不要用中文作为 `skill-name` 参数，中文只写入 `SKILL.md` 的 `名称`。
 
 脚本会：
 
@@ -318,13 +324,13 @@ YAML frontmatter 中不要包含其他字段。
 技能完成后必须打包为可分发的 .skill 文件。打包前会自动校验技能：
 
 ```bash
-scripts/package_skill.py <path/to/skill-folder>
+python3 scripts/package_skill.py <path/to/skill-folder>
 ```
 
 可指定输出目录：
 
 ```bash
-scripts/package_skill.py <path/to/skill-folder> ./dist
+python3 scripts/package_skill.py <path/to/skill-folder> ./dist
 ```
 
 打包脚本将：
@@ -339,6 +345,12 @@ scripts/package_skill.py <path/to/skill-folder> ./dist
 2. **打包** 技能（若校验通过），生成 .skill 文件（如 `my-skill.skill`），包含全部文件并保持目录结构。该文件为 zip 格式，扩展名为 .skill。
 
 若校验失败，将输出错误并停止打包。修复后重新运行打包命令。
+
+#### 最短执行清单（建议）
+
+1. 初始化：`python3 scripts/init_skill.py meeting-minutes --path skills/meeting-minutes`
+2. 编辑：完善 `skills/meeting-minutes/meeting-minutes/SKILL.md`（中文 frontmatter）
+3. 打包：`python3 scripts/package_skill.py skills/meeting-minutes/meeting-minutes ./dist`
 
 ### 步骤 6：迭代
 

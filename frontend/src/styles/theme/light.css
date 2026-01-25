@@ -268,6 +268,38 @@
   background: rgba(15, 23, 42, 0.02);
 }
 
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-resource-card {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-resource-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--chat-text);
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-resource-btn:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #1d4ed8;
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-resource-preview {
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body .ai-resource-file-icon {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+:root[data-user-theme='light'] .chat-shell .markdown-body a.ai-resource-link {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+
 :root[data-user-theme='light'] .chat-shell .input-container {
   background: rgba(15, 23, 42, 0.04);
 }

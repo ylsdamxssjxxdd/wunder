@@ -372,6 +372,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt } from '@/api/chat';
+import { downloadWunderWorkspaceFile } from '@/api/workspace';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
@@ -386,6 +387,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
+import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails } from '@/utils/toolSummary';
@@ -551,6 +553,154 @@ const renderAssistantMarkdown = (message) => {
   return html;
 };
 
+const workspaceResourceCache = new Map();
+let workspaceResourceHydrationFrame = null;
+
+const isAdminUser = (user) =>
+  Array.isArray(user?.roles) && user.roles.some((role) => role === 'admin' || role === 'super_admin');
+
+const resolveWorkspaceResource = (publicPath) => {
+  const parsed = parseWorkspaceResourceUrl(publicPath);
+  if (!parsed) return null;
+  const user = authStore.user;
+  if (!user) return null;
+  const currentId = String(user.id || '').trim();
+  if (!currentId || parsed.userId === currentId) {
+    return { ...parsed, requestUserId: null, allowed: true };
+  }
+  if (isAdminUser(user)) {
+    return { ...parsed, requestUserId: parsed.userId, allowed: true };
+  }
+  return { ...parsed, requestUserId: null, allowed: false };
+};
+
+const getFilenameFromHeaders = (headers, fallback) => {
+  const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
+  if (!disposition) return fallback;
+  const utf8Match = /filename\\*=UTF-8''([^;]+)/i.exec(disposition);
+  if (utf8Match) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match ? match[1] : fallback;
+};
+
+const saveBlobUrl = (url, filename) => {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || 'download';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+const fetchWorkspaceResource = async (resource) => {
+  const cached = workspaceResourceCache.get(resource.publicPath);
+  if (cached?.objectUrl) return cached;
+  if (cached?.promise) return cached.promise;
+  const params = { path: resource.relativePath };
+  if (resource.requestUserId) {
+    params.user_id = resource.requestUserId;
+  }
+  const promise = downloadWunderWorkspaceFile(params)
+    .then((response) => {
+      const filename = getFilenameFromHeaders(response.headers, resource.filename || 'download');
+      const objectUrl = URL.createObjectURL(response.data);
+      const entry = { objectUrl, filename };
+      workspaceResourceCache.set(resource.publicPath, entry);
+      return entry;
+    })
+    .catch((error) => {
+      workspaceResourceCache.delete(resource.publicPath);
+      throw error;
+    });
+  workspaceResourceCache.set(resource.publicPath, { promise });
+  return promise;
+};
+
+const hydrateWorkspaceResourceCard = async (card) => {
+  if (!card || card.dataset.workspaceState) return;
+  const kind = card.dataset.workspaceKind || 'image';
+  if (kind !== 'image') {
+    card.dataset.workspaceState = 'ready';
+    return;
+  }
+  const publicPath = card.dataset.workspacePath || '';
+  const status = card.querySelector('.ai-resource-status');
+  const preview = card.querySelector('.ai-resource-preview');
+  if (!publicPath || !preview) return;
+  const resource = resolveWorkspaceResource(publicPath);
+  if (!resource) {
+    if (status) status.textContent = '资源不可用';
+    card.dataset.workspaceState = 'error';
+    card.classList.add('is-error');
+    return;
+  }
+  if (!resource.allowed) {
+    if (status) status.textContent = '当前用户无权限访问该资源';
+    card.dataset.workspaceState = 'forbidden';
+    card.classList.add('is-error');
+    return;
+  }
+  card.dataset.workspaceState = 'loading';
+  try {
+    const entry = await fetchWorkspaceResource(resource);
+    preview.src = entry.objectUrl;
+    card.dataset.workspaceState = 'ready';
+    card.classList.add('is-ready');
+    if (status) status.textContent = '';
+  } catch (error) {
+    if (status) status.textContent = '图片加载失败';
+    card.dataset.workspaceState = 'error';
+    card.classList.add('is-error');
+  }
+};
+
+const hydrateWorkspaceResources = () => {
+  const container = messagesContainerRef.value;
+  if (!container || !authStore.user) return;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    hydrateWorkspaceResourceCard(card);
+  });
+};
+
+const scheduleWorkspaceResourceHydration = () => {
+  if (workspaceResourceHydrationFrame) return;
+  workspaceResourceHydrationFrame = requestAnimationFrame(() => {
+    workspaceResourceHydrationFrame = null;
+    hydrateWorkspaceResources();
+  });
+};
+
+const clearWorkspaceResourceCache = () => {
+  if (workspaceResourceHydrationFrame) {
+    cancelAnimationFrame(workspaceResourceHydrationFrame);
+    workspaceResourceHydrationFrame = null;
+  }
+  workspaceResourceCache.forEach((entry) => {
+    if (entry?.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  });
+  workspaceResourceCache.clear();
+};
+
+const downloadWorkspaceResource = async (publicPath) => {
+  const resource = resolveWorkspaceResource(publicPath);
+  if (!resource) return;
+  if (!resource.allowed) {
+    ElMessage.warning('当前用户无权限访问该资源');
+    return;
+  }
+  try {
+    const entry = await fetchWorkspaceResource(resource);
+    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+  } catch (error) {
+    ElMessage.error('资源下载失败');
+  }
+};
+
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];
   if (!content && payloadAttachments.length === 0) return;
@@ -636,6 +786,26 @@ const handleCopyMessage = async (message) => {
 const handleMessageClick = async (event) => {
   const target = event?.target;
   if (!(target instanceof Element)) return;
+  const resourceButton = target.closest('[data-workspace-action]');
+  if (resourceButton) {
+    const action = resourceButton.getAttribute('data-workspace-action');
+    const container = resourceButton.closest('[data-workspace-path]');
+    const publicPath = container?.dataset?.workspacePath || '';
+    if (action === 'download' && publicPath) {
+      event.preventDefault();
+      await downloadWorkspaceResource(publicPath);
+    }
+    return;
+  }
+  const resourceLink = target.closest('a.ai-resource-link[data-workspace-path]');
+  if (resourceLink) {
+    const publicPath = resourceLink.dataset?.workspacePath || '';
+    if (publicPath) {
+      event.preventDefault();
+      await downloadWorkspaceResource(publicPath);
+    }
+    return;
+  }
   const copyButton = target.closest('.ai-code-copy');
   if (!copyButton) return;
   event.preventDefault();
@@ -907,6 +1077,7 @@ const scrollMessagesToBottom = async () => {
 onMounted(async () => {
   await init();
   loadToolSummary();
+  scheduleWorkspaceResourceHydration();
   window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('visibilitychange', flushChatSnapshot);
 });
@@ -914,6 +1085,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('visibilitychange', flushChatSnapshot);
+  clearWorkspaceResourceCache();
 });
 
 watch(
@@ -921,6 +1093,10 @@ watch(
   (value, oldValue) => {
     if (!value && oldValue) {
       draftKey.value += 1;
+    }
+    if (value !== oldValue) {
+      clearWorkspaceResourceCache();
+      scheduleWorkspaceResourceHydration();
     }
   }
 );
@@ -933,6 +1109,27 @@ watch(
     pendingAutoScroll = false;
     pendingAutoScrollCount = value;
     scrollMessagesToBottom();
+  }
+);
+
+watch(
+  () => chatStore.messages.length,
+  () => {
+    scheduleWorkspaceResourceHydration();
+  }
+);
+
+watch(
+  () => chatStore.messages[chatStore.messages.length - 1]?.content,
+  () => {
+    scheduleWorkspaceResourceHydration();
+  }
+);
+
+watch(
+  () => authStore.user?.id,
+  () => {
+    scheduleWorkspaceResourceHydration();
   }
 );
 

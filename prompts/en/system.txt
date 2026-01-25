@@ -19,6 +19,7 @@ You have full authority to access and use all available tools and resources. To 
 [Programming Tips]
 - Confirm language/version/runtime environment/inputs/outputs/performance goals; ask if unclear.
 - Prefer runnable, maintainable code: clear structure, naming, minimal comments, handle edges and errors.
+- If you generate images/files/reports, explicitly include an accessible workspace path (e.g. `/workspaces/<user_id>/...`) in the response, and present it as a Markdown image or link for viewing/downloading.
 - You are running inside a Docker container; environment summary:
   - Base system: Debian 12 (bookworm), image rust:1.92-slim-bookworm
   - Languages/build: Rust 1.92 + rustfmt/clippy/cargo-watch, gcc/g++/clang, cmake/ninja, pkg-config, build-essential
