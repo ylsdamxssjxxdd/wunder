@@ -28,6 +28,50 @@ const APP_CONFIG_DEFAULTS = {
       "What's the weather in Guangzhou today?",
     ],
   },
+
+  // 长对话稳定性测试预设
+  debugStabilityPresets: {
+    "zh-CN": [
+      {
+        id: "long-dialogue-file",
+        name: "长对话稳定性（文件链路）",
+        stream: true,
+        toolNames: ["最终回复", "列出文件", "读取文件", "写入文件", "搜索内容", "替换文本", "编辑文件"],
+        steps: [
+          "你现在是稳定性测试助手，请简短回答 'ready'，并声明将持续执行任务；不要使用问询面板或 a2ui。",
+          "列出当前工作区根目录文件，说明是否为空。",
+          "创建文件 health_check.txt，内容为 ok-{{timestamp}}，然后读取并回复内容。",
+          "创建 a1.txt 到 a5.txt 五个小文件，内容分别为 file-1 到 file-5，并统计文件总数。",
+          "搜索包含 'file-' 的文件并返回路径列表。",
+          "将 a1.txt 到 a5.txt 的内容改为 ok-file-1 到 ok-file-5（可用替换或重写）。",
+          "删除 a1.txt 到 a5.txt，并再次列出当前工作区文件。",
+          "用三句话总结你刚才完成的操作。",
+          "再次读取 health_check.txt 并确认内容未变化。",
+          "最后输出一句话：stable-run-complete。"
+        ],
+      },
+    ],
+    "en-US": [
+      {
+        id: "long-dialogue-file",
+        name: "Long Conversation Stability (file workflow)",
+        stream: true,
+        toolNames: ["最终回复", "列出文件", "读取文件", "写入文件", "搜索内容", "替换文本", "编辑文件"],
+        steps: [
+          "You are a stability test agent. Reply with 'ready' and confirm you will keep executing tasks; do not use question panel or a2ui.",
+          "List files in the workspace root and say whether it is empty.",
+          "Create health_check.txt with content ok-{{timestamp}}, then read and echo the content.",
+          "Create five small files a1.txt to a5.txt with content file-1 to file-5, and report the total file count.",
+          "Search for files containing 'file-' and return the path list.",
+          "Update a1.txt to a5.txt to ok-file-1 through ok-file-5 (replace or rewrite).",
+          "Delete a1.txt to a5.txt and list the workspace files again.",
+          "Summarize what you did in three sentences.",
+          "Read health_check.txt again and confirm the content has not changed.",
+          "Finally output one line: stable-run-complete."
+        ],
+      },
+    ],
+  },
   // 默认首屏面板
   defaultPanel: "monitor",
   // 监控轮询间隔（毫秒）

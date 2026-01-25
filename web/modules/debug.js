@@ -82,6 +82,379 @@ const resolveQuestionPresets = () => {
   }
   return [];
 };
+
+const resolveStabilityPresets = () => {
+  const raw = APP_CONFIG.debugStabilityPresets;
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+  if (raw && typeof raw === "object") {
+    const language = getCurrentLanguage();
+    if (Array.isArray(raw[language])) {
+      return raw[language];
+    }
+    if (Array.isArray(raw["zh-CN"])) {
+      return raw["zh-CN"];
+    }
+    if (Array.isArray(raw["en-US"])) {
+      return raw["en-US"];
+    }
+  }
+  return [];
+};
+
+const normalizeStabilityPreset = (preset, index) => {
+  if (!preset || typeof preset !== "object") {
+    return null;
+  }
+  const steps = Array.isArray(preset.steps)
+    ? preset.steps.map((step) => String(step || "").trim()).filter(Boolean)
+    : [];
+  if (!steps.length) {
+    return null;
+  }
+  const id = String(preset.id || preset.name || `stability-${index + 1}`).trim();
+  const name = String(preset.name || preset.label || preset.id || `preset-${index + 1}`).trim();
+  const rawTools = preset.toolNames ?? preset.tool_names ?? [];
+  const toolNames = Array.isArray(rawTools)
+    ? rawTools.map((tool) => String(tool || "").trim()).filter(Boolean)
+    : [];
+  return {
+    id: id || `stability-${index + 1}`,
+    name: name || `preset-${index + 1}`,
+    steps,
+    toolNames,
+    stream: preset.stream !== false,
+  };
+};
+
+const getStabilityPresets = () =>
+  resolveStabilityPresets()
+    .map((preset, index) => normalizeStabilityPreset(preset, index))
+    .filter(Boolean);
+
+const stabilityRunner = {
+  running: false,
+  cancelled: false,
+  startedAt: 0,
+  currentIndex: -1,
+  lastStepMs: 0,
+  preset: null,
+};
+
+const resetStabilityRunner = () => {
+  stabilityRunner.running = false;
+  stabilityRunner.cancelled = false;
+  stabilityRunner.startedAt = 0;
+  stabilityRunner.currentIndex = -1;
+  stabilityRunner.lastStepMs = 0;
+  stabilityRunner.preset = null;
+};
+
+const formatStabilityTimestamp = () => {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(
+    now.getHours()
+  )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+};
+
+const applyStabilityTemplate = (text, context) => {
+  const raw = String(text ?? "");
+  return raw
+    .replace(/\{\{timestamp\}\}/g, context.timestamp || "")
+    .replace(/\{\{user_id\}\}/g, context.userId || "")
+    .replace(/\{\{session_id\}\}/g, context.sessionId || "");
+};
+
+const updateStabilityStatus = (text) => {
+  if (!elements.debugStabilityStatus) {
+    return;
+  }
+  elements.debugStabilityStatus.textContent = text || "";
+};
+
+const setStabilityControls = (running) => {
+  if (elements.debugStabilityRun) {
+    elements.debugStabilityRun.disabled = running;
+  }
+  if (elements.debugStabilityStop) {
+    elements.debugStabilityStop.disabled = !running;
+  }
+  if (elements.debugStabilityPreset) {
+    elements.debugStabilityPreset.disabled = running;
+  }
+  if (elements.debugStabilityStream) {
+    elements.debugStabilityStream.disabled = running;
+  }
+  if (elements.debugStabilityNewSession) {
+    elements.debugStabilityNewSession.disabled = running;
+  }
+  if (elements.debugStabilityUseTools) {
+    elements.debugStabilityUseTools.disabled = running;
+  }
+  if (elements.question) {
+    elements.question.disabled = running;
+  }
+  if (elements.sendBtn) {
+    elements.sendBtn.disabled = running;
+  }
+};
+
+const setStabilityPanelOpen = (open) => {
+  if (!elements.debugStabilityPanel || !elements.debugStabilityToggleBtn) {
+    return;
+  }
+  elements.debugStabilityPanel.classList.toggle("is-hidden", !open);
+  elements.debugStabilityToggleBtn.classList.toggle("is-active", open);
+  elements.debugStabilityToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+};
+
+const toggleStabilityPanel = () => {
+  if (!elements.debugStabilityPanel) {
+    return;
+  }
+  const shouldOpen = elements.debugStabilityPanel.classList.contains("is-hidden");
+  setStabilityPanelOpen(shouldOpen);
+};
+
+const renderStabilityPresetOptions = () => {
+  if (!elements.debugStabilityPreset) {
+    return null;
+  }
+  const presets = getStabilityPresets();
+  const previous = elements.debugStabilityPreset.value;
+  elements.debugStabilityPreset.innerHTML = "";
+  if (!presets.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = t("debug.stability.noPreset");
+    elements.debugStabilityPreset.appendChild(option);
+    elements.debugStabilityPreset.disabled = true;
+    updateStabilityStatus(t("debug.stability.noPreset"));
+    renderStabilitySteps(null);
+    return null;
+  }
+  elements.debugStabilityPreset.disabled = false;
+  presets.forEach((preset) => {
+    const option = document.createElement("option");
+    option.value = preset.id;
+    option.textContent = preset.name;
+    elements.debugStabilityPreset.appendChild(option);
+  });
+  const selected = presets.find((preset) => preset.id === previous) || presets[0];
+  elements.debugStabilityPreset.value = selected.id;
+  renderStabilitySteps(selected, stabilityRunner.currentIndex);
+  updateStabilityStatus(t("debug.stability.ready"));
+  return selected;
+};
+
+const resolveSelectedStabilityPreset = () => {
+  const presets = getStabilityPresets();
+  if (!presets.length) {
+    return null;
+  }
+  const selectedId = String(elements.debugStabilityPreset?.value || "").trim();
+  return presets.find((preset) => preset.id === selectedId) || presets[0];
+};
+
+const renderStabilitySteps = (preset, activeIndex = -1) => {
+  if (!elements.debugStabilitySteps) {
+    return;
+  }
+  elements.debugStabilitySteps.innerHTML = "";
+  if (!preset || !Array.isArray(preset.steps)) {
+    elements.debugStabilitySteps.textContent = t("debug.stability.noPreset");
+    return;
+  }
+  const list = document.createElement("ol");
+  list.className = "debug-stability-step-list";
+  const completedIndex = activeIndex >= preset.steps.length ? preset.steps.length : activeIndex;
+  preset.steps.forEach((step, index) => {
+    const item = document.createElement("li");
+    item.textContent = step;
+    if (index < completedIndex) {
+      item.classList.add("is-done");
+    }
+    if (index === activeIndex) {
+      item.classList.add("is-active");
+    }
+    list.appendChild(item);
+  });
+  elements.debugStabilitySteps.appendChild(list);
+};
+
+const buildStabilityPayload = (question, options = {}) => {
+  const payload = {
+    user_id: elements.userId?.value.trim() || "",
+    question: String(question || "").trim(),
+    session_id: options.sessionId || elements.sessionId?.value.trim() || null,
+    stream: options.stream !== false,
+    debug_payload: true,
+  };
+  const modelName = String(elements.debugModelName?.value || "").trim();
+  if (modelName) {
+    payload.model_name = modelName;
+  }
+  const toolNames =
+    Array.isArray(options.toolNames) && options.toolNames.length
+      ? options.toolNames
+      : getSelectedToolNames();
+  if (toolNames.length) {
+    payload.tool_names = toolNames;
+  }
+  return payload;
+};
+
+const buildStabilityStatusText = (current, total, lastStepMs) => {
+  const elapsedText = formatDurationSeconds(stabilityRunner.startedAt, Date.now());
+  const lastText =
+    Number.isFinite(lastStepMs) && lastStepMs > 0
+      ? `${(lastStepMs / 1000).toFixed(2)}s`
+      : "-";
+  return t("debug.stability.progress", {
+    current,
+    total,
+    elapsed: elapsedText,
+    last: lastText,
+  });
+};
+
+const runStabilitySequence = async () => {
+  if (stabilityRunner.running) {
+    return;
+  }
+  const preset = resolveSelectedStabilityPreset();
+  if (!preset) {
+    updateStabilityStatus(t("debug.stability.noPreset"));
+    return;
+  }
+  const userId = elements.userId?.value.trim() || "";
+  if (!userId) {
+    updateStabilityStatus(t("debug.stability.userIdEmpty"));
+    appendLog(t("debug.stability.userIdEmpty"));
+    notify(t("debug.stability.userIdEmpty"), "warn");
+    return;
+  }
+
+  try {
+    await ensureToolSelectionLoaded();
+  } catch (error) {
+    appendLog(t("debug.tools.loadFailed", { message: error.message }));
+    applyPromptToolError(error.message);
+  }
+
+  const shouldNewSession = Boolean(elements.debugStabilityNewSession?.checked);
+  if (shouldNewSession) {
+    await handleNewSession();
+  }
+
+  let sessionId = String(elements.sessionId?.value || "").trim();
+  if (!sessionId) {
+    sessionId = `stability_${formatStabilityTimestamp()}`;
+    updateSessionId(sessionId);
+  }
+  syncDebugInputs();
+
+  stabilityRunner.running = true;
+  stabilityRunner.cancelled = false;
+  stabilityRunner.startedAt = Date.now();
+  stabilityRunner.currentIndex = -1;
+  stabilityRunner.lastStepMs = 0;
+  stabilityRunner.preset = preset;
+  setStabilityControls(true);
+  renderStabilitySteps(preset, -1);
+
+  const usePresetTools = Boolean(elements.debugStabilityUseTools?.checked);
+  const toolNames =
+    usePresetTools && preset.toolNames.length ? preset.toolNames : getSelectedToolNames();
+  const streamEnabled =
+    elements.debugStabilityStream?.checked ?? (preset.stream !== false);
+  const total = preset.steps.length;
+  const context = { userId, sessionId };
+
+  for (let index = 0; index < total; index += 1) {
+    if (stabilityRunner.cancelled) {
+      break;
+    }
+    const stepTimestamp = formatStabilityTimestamp();
+    const question = applyStabilityTemplate(preset.steps[index], {
+      ...context,
+      timestamp: stepTimestamp,
+    });
+    stabilityRunner.currentIndex = index;
+    if (elements.question) {
+      elements.question.value = question;
+    }
+    syncDebugInputs();
+    renderStabilitySteps(preset, index);
+    updateStabilityStatus(buildStabilityStatusText(index + 1, total, stabilityRunner.lastStepMs));
+    appendLog(t("debug.stability.stepStart", { current: index + 1, total, question }));
+
+    const payload = buildStabilityPayload(question, {
+      sessionId,
+      stream: streamEnabled,
+      toolNames,
+    });
+    const endpoint = getWunderBase();
+    const stepStart = Date.now();
+    try {
+      markRequestStart();
+      renderDebugStats();
+      if (payload.stream) {
+        await sendStreamRequest(endpoint, payload);
+      } else {
+        updateDebugLogWaiting(true);
+        await sendNonStreamRequest(endpoint, payload);
+        updateDebugLogWaiting();
+      }
+    } catch (error) {
+      appendLog(
+        t("debug.stability.stepFailed", {
+          current: index + 1,
+          total,
+          message: error.message,
+        })
+      );
+      stabilityRunner.cancelled = true;
+      break;
+    } finally {
+      updateDebugLogWaiting();
+    }
+    stabilityRunner.lastStepMs = Date.now() - stepStart;
+    appendLog(
+      t("debug.stability.stepDone", {
+        current: index + 1,
+        total,
+        elapsed: `${(stabilityRunner.lastStepMs / 1000).toFixed(2)}s`,
+      })
+    );
+    updateStabilityStatus(buildStabilityStatusText(index + 1, total, stabilityRunner.lastStepMs));
+  }
+
+  const cancelled = stabilityRunner.cancelled;
+  resetStabilityRunner();
+  setStabilityControls(false);
+  if (cancelled) {
+    updateStabilityStatus(t("debug.stability.cancelled"));
+  } else {
+    renderStabilitySteps(preset, preset.steps.length);
+    updateStabilityStatus(t("debug.stability.finished"));
+  }
+};
+
+const handleStabilityStop = async () => {
+  if (!stabilityRunner.running) {
+    return;
+  }
+  stabilityRunner.cancelled = true;
+  if (state.runtime.debugStreaming) {
+    await handleStop();
+    await waitForStreamStop();
+  }
+  updateStabilityStatus(t("debug.stability.cancelled"));
+};
+
 const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "progress",
   "compaction",
@@ -3314,6 +3687,28 @@ export const initDebugPanel = () => {
         }
       }
     });
+  }
+
+  if (elements.debugStabilityPanel && elements.debugStabilityToggleBtn) {
+    const isOpen = !elements.debugStabilityPanel.classList.contains("is-hidden");
+    setStabilityPanelOpen(isOpen);
+    elements.debugStabilityToggleBtn.addEventListener("click", toggleStabilityPanel);
+  }
+
+  renderStabilityPresetOptions();
+  setStabilityControls(false);
+  if (elements.debugStabilityPreset) {
+    elements.debugStabilityPreset.addEventListener("change", () => {
+      const preset = resolveSelectedStabilityPreset();
+      renderStabilitySteps(preset, stabilityRunner.currentIndex);
+      updateStabilityStatus(t("debug.stability.ready"));
+    });
+  }
+  if (elements.debugStabilityRun) {
+    elements.debugStabilityRun.addEventListener("click", runStabilitySequence);
+  }
+  if (elements.debugStabilityStop) {
+    elements.debugStabilityStop.addEventListener("click", handleStabilityStop);
   }
 
   if (elements.debugNewSessionBtn) {

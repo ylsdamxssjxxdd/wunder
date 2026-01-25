@@ -2695,3 +2695,69 @@
   font-size: 18px;
 }
 
+/* Debug stability runner */
+.debug-stability {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug-stability-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-stability-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.debug-stability-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.debug-stability-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.debug-stability-steps {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.debug-stability-step-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #1f2937;
+}
+
+.debug-stability-step-list li.is-active {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.debug-stability-step-list li.is-done {
+  color: #10b981;
+}
+
+.debug-stability-status {
+  font-size: 12px;
+}

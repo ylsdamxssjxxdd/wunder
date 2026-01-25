@@ -968,6 +968,43 @@
                   暂未附加文件或图片
                 </div>
               </div>
+
+              <div id="debugStabilityPanel" class="form-row debug-stability is-hidden">
+                <div class="debug-stability-header">
+                  <label data-i18n="debug.stability.title">长对话稳定性</label>
+                  <div class="debug-stability-actions">
+                    <button id="debugStabilityRun" class="btn-with-icon" type="button">
+                      <i class="fa-solid fa-play"></i>
+                      <span data-i18n="debug.stability.run">运行</span>
+                    </button>
+                    <button id="debugStabilityStop" class="secondary btn-with-icon" type="button">
+                      <i class="fa-solid fa-stop"></i>
+                      <span data-i18n="debug.stability.stop">停止</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="debug-stability-controls">
+                  <div class="header-input">
+                    <label for="debugStabilityPreset" data-i18n="debug.stability.preset">预设</label>
+                    <select id="debugStabilityPreset"></select>
+                  </div>
+                  <label class="debug-stability-toggle">
+                    <input id="debugStabilityStream" type="checkbox" checked />
+                    <span data-i18n="debug.stability.stream">流式</span>
+                  </label>
+                  <label class="debug-stability-toggle">
+                    <input id="debugStabilityNewSession" type="checkbox" checked />
+                    <span data-i18n="debug.stability.newSession">新会话</span>
+                  </label>
+                  <label class="debug-stability-toggle">
+                    <input id="debugStabilityUseTools" type="checkbox" checked />
+                    <span data-i18n="debug.stability.toolLock">锁定工具集</span>
+                  </label>
+                </div>
+                <div id="debugStabilitySteps" class="debug-stability-steps"></div>
+                <div id="debugStabilityStatus" class="debug-stability-status muted" data-i18n="debug.stability.ready">准备就绪</div>
+              </div>
+
               <!-- 问题输入区域 -->
               <div class="form-row question-row">
                 <label for="question" data-i18n="debug.label.question">question</label>
@@ -979,6 +1016,19 @@
               </div>
               <!-- 操作按钮：发送、停止 -->
               <div class="actions debug-actions">
+                <button
+                  id="debugStabilityToggleBtn"
+                  class="secondary btn-with-icon icon-only"
+                  type="button"
+                  title="长对话稳定性测试"
+                  aria-label="长对话稳定性测试"
+                  aria-expanded="false"
+                  aria-controls="debugStabilityPanel"
+                  data-i18n-title="debug.stability.title"
+                  data-i18n-aria-label="debug.stability.title"
+                >
+                  <i class="fa-solid fa-shield-halved"></i>
+                </button>
                 <button
                   id="debugNewSessionBtn"
                   class="secondary btn-with-icon icon-only"
