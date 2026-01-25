@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600">
+<rect width="1200" height="600" fill="#f8fafc" />
+<text x="80" y="50" font-size="28" font-family="Microsoft YaHei, sans-serif" fill="#0f172a">报表汇总（分组汇总）</text>
+<rect x="80" y="80" width="333" height="440" fill="#3b82f6" rx="6" />
+<text x="246.5" y="544" text-anchor="middle" font-size="16" font-family="Microsoft YaHei, sans-serif" fill="#334155">渠道A</text>
+<text x="246.5" y="72" text-anchor="middle" font-size="14" font-family="Microsoft YaHei, sans-serif" fill="#1e293b">400</text>
+<rect x="433" y="212" width="333" height="308" fill="#3b82f6" rx="6" />
+<text x="599.5" y="544" text-anchor="middle" font-size="16" font-family="Microsoft YaHei, sans-serif" fill="#334155">渠道B</text>
+<text x="599.5" y="204" text-anchor="middle" font-size="14" font-family="Microsoft YaHei, sans-serif" fill="#1e293b">280</text>
+<rect x="786" y="350" width="333" height="170" fill="#3b82f6" rx="6" />
+<text x="952.5" y="544" text-anchor="middle" font-size="16" font-family="Microsoft YaHei, sans-serif" fill="#334155">渠道C</text>
+<text x="952.5" y="342" text-anchor="middle" font-size="14" font-family="Microsoft YaHei, sans-serif" fill="#1e293b">155</text>
+</svg>

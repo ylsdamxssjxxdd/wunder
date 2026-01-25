@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "date": "2026-01-24",
+    "host": "张三",
+    "attendees": "李四、王五、赵六",
+    "location": "会议室 1",
+    "title": "季度 OKR 对齐",
+    "goal": "统一目标与关键里程碑"
+  },
+  "sections": {
+    "topics": [
+      "1. Q1 OKR 对齐",
+      "2. 关键项目进度"
+    ],
+    "discussion": [
+      "- 需要在 2 月中旬前完成需求冻结",
+      "- 数据指标口径需统一"
+    ],
+    "decisions": [
+      "- OKR 以提升稳定性与交付质量为核心",
+      "- 关键项目采用双周检查机制"
+    ],
+    "risks": [
+      "- 指标口径未统一可能影响验收"
+    ],
+    "dependencies": [
+      "- 需产品团队确认业务范围"
+    ]
+  },
+  "action_items": [
+    {
+      "description": "整理需求清单",
+      "owner": "李四",
+      "due": "2026-01-28",
+      "priority": "P1",
+      "status": "进行中",
+      "note": ""
+    },
+    {
+      "description": "输出接口草案",
+      "owner": "王五",
+      "due": "2026-01-30",
+      "priority": "P1",
+      "status": "",
+      "note": ""
+    },
+    {
+      "description": "复盘上月事故并输出改进清单",
+      "owner": "赵六",
+      "due": "2026-02-05",
+      "priority": "",
+      "status": "",
+      "note": ""
+    }
+  ],
+  "milestones": [
+    {
+      "date": "2026-01-30",
+      "item": "接口评审"
+    },
+    {
+      "date": "2026-02-10",
+      "item": "需求冻结完成"
+    },
+    {
+      "date": "2026-02-15",
+      "item": "第一次里程碑检查"
+    }
+  ]
+}

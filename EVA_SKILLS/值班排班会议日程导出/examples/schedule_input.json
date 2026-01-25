@@ -1,0 +1,55 @@
+﻿{
+  "title": "值班与会议日程",
+  "timezone": "Asia/Shanghai",
+  "range": {"start": "2026-02-01", "end": "2026-02-07"},
+  "shifts": [
+    {
+      "date": "2026-02-01",
+      "start": "09:00",
+      "end": "18:00",
+      "role": "日班",
+      "person": "王一",
+      "location": "A机房",
+      "notes": "主班"
+    },
+    {
+      "date": "2026-02-02",
+      "start": "18:00",
+      "end": "22:00",
+      "role": "晚班",
+      "person": "李二",
+      "location": "A机房",
+      "notes": "备班"
+    },
+    {
+      "date": "2026-02-03",
+      "start": "09:00",
+      "end": "18:00",
+      "role": "日班",
+      "person": "赵三",
+      "location": "B机房",
+      "notes": "主班"
+    }
+  ],
+  "meetings": [
+    {
+      "date": "2026-02-03",
+      "start": "10:00",
+      "end": "11:00",
+      "title": "周会",
+      "organizer": "张三",
+      "attendees": ["王一", "李二", "赵三"],
+      "location": "会议室 1"
+    },
+    {
+      "date": "2026-02-05",
+      "start": "15:00",
+      "end": "16:30",
+      "title": "项目里程碑评审",
+      "organizer": "王五",
+      "attendees": ["赵三", "刘四"],
+      "location": "会议室 2",
+      "notes": "带上进度看板"
+    }
+  ]
+}

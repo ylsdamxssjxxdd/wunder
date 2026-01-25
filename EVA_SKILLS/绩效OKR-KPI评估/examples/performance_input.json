@@ -1,0 +1,31 @@
+﻿{
+  "employee": "张三",
+  "period": "2026 Q1",
+  "role": "后端工程师",
+  "section_weights": {"okr": 0.6, "kpi": 0.3, "behavior": 0.1},
+  "okr": [
+    {
+      "objective": "提升稳定性",
+      "weight": 0.6,
+      "key_results": [
+        {"name": "故障数降低到 <=2", "weight": 0.6, "score": 0.9},
+        {"name": "核心服务可用性 99.95%", "weight": 0.4, "score": 0.85}
+      ]
+    },
+    {
+      "objective": "优化交付效率",
+      "weight": 0.4,
+      "key_results": [
+        {"name": "需求交付准时率 >=95%", "weight": 0.5, "score": 0.88},
+        {"name": "自动化发布占比 >=70%", "weight": 0.5, "score": 0.8}
+      ]
+    }
+  ],
+  "kpi": [
+    {"name": "交付准时率", "weight": 0.5, "target": "95%", "actual": "96%", "score": 0.9},
+    {"name": "缺陷密度", "weight": 0.5, "target": "<=0.3", "actual": "0.25", "score": 0.88}
+  ],
+  "behavior": [
+    {"name": "协作与沟通", "weight": 1.0, "score": 0.95, "evidence": "跨团队推进发布流程"}
+  ]
+}
