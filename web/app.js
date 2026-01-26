@@ -70,7 +70,7 @@ import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260110-06";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
-import { initApiDocsPanel } from "./modules/api-docs.js?v=20260110-01";
+import { initApiDocsPanel } from "./modules/api-docs.js?v=20260126-01";
 import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";

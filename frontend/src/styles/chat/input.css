@@ -296,6 +296,12 @@
   padding: 10px;
 }
 
+.chat-shell .input-box.dragover {
+  border-color: rgba(var(--chat-primary-rgb), 0.65);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 4px rgba(var(--chat-primary-rgb), 0.18);
+}
+
 .chat-shell textarea {
   flex: 1;
   background: transparent;

@@ -1,0 +1,1068 @@
+{
+  "meta": {
+    "title": "Wunder 接口清单",
+    "updated": "2026-01-26",
+    "source": "docs/API文档.md"
+  },
+  "groups": [
+    {
+      "id": "core",
+      "title": "核心对话",
+      "description": "主对话入口与系统提示词相关接口。",
+      "endpoints": [
+        {
+          "id": "wunder",
+          "title": "主对话入口",
+          "method": "POST",
+          "path": "/wunder",
+          "summary": "智能体调度入口，支持流式与非流式输出。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "question",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "用户问题内容。"
+              },
+              {
+                "name": "tool_names",
+                "type": "string[]",
+                "required": false,
+                "location": "body",
+                "desc": "启用的工具名称列表（内置/MCP/技能等）。"
+              },
+              {
+                "name": "skip_tool_calls",
+                "type": "boolean",
+                "required": false,
+                "location": "body",
+                "desc": "是否忽略模型输出中的工具调用并直接结束。"
+              },
+              {
+                "name": "stream",
+                "type": "boolean",
+                "required": false,
+                "location": "body",
+                "desc": "是否流式返回，默认 true。"
+              },
+              {
+                "name": "debug_payload",
+                "type": "boolean",
+                "required": false,
+                "location": "body",
+                "desc": "是否保留模型请求体用于调试。"
+              },
+              {
+                "name": "session_id",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "会话标识，用于继续对话。"
+              },
+              {
+                "name": "model_name",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "模型配置名称，不传使用默认配置。"
+              },
+              {
+                "name": "config_overrides",
+                "type": "object",
+                "required": false,
+                "location": "body",
+                "desc": "临时覆盖配置的对象。"
+              },
+              {
+                "name": "attachments",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "附件列表（文件为 Markdown，图片为 data URL）。"
+              }
+            ],
+            "notes": [
+              "同一 user_id 同时只允许一个进行中会话，重复请求返回 429。",
+              "注册用户存在每日额度限制，超额返回 429（detail.code=USER_QUOTA_EXCEEDED）。",
+              "tool_names 显式包含 a2ui 时，系统会输出 A2UI 消息并返回 uid/a2ui 字段。"
+            ],
+            "example": "{\n  \"user_id\": \"{userId}\",\n  \"question\": \"你好\",\n  \"tool_names\": [\"read_file\", \"write_file\"],\n  \"stream\": true\n}"
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "session_id",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "会话标识，用于继续对话。"
+              },
+              {
+                "name": "answer",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "最终回复内容。"
+              },
+              {
+                "name": "usage",
+                "type": "object",
+                "required": false,
+                "location": "body",
+                "desc": "Token 占用统计（可选）。"
+              },
+              {
+                "name": "stop_reason",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "停止原因（可选）。"
+              },
+              {
+                "name": "uid",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "A2UI Surface 标识（可选）。"
+              },
+              {
+                "name": "a2ui",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "A2UI 消息数组（可选）。"
+              }
+            ],
+            "example": "{\n  \"session_id\": \"u_1234_20251224\",\n  \"answer\": \"你好！我是 wunder。\",\n  \"usage\": {\n    \"context_tokens\": 1234,\n    \"input_tokens\": 120,\n    \"output_tokens\": 256\n  }\n}"
+          },
+          "stream": {
+            "events": [
+              {
+                "name": "progress",
+                "desc": "阶段性摘要"
+              },
+              {
+                "name": "llm_output_delta",
+                "desc": "模型输出增量"
+              },
+              {
+                "name": "tool_call",
+                "desc": "工具调用信息"
+              },
+              {
+                "name": "tool_output_delta",
+                "desc": "工具输出增量"
+              },
+              {
+                "name": "tool_result",
+                "desc": "工具执行结果"
+              },
+              {
+                "name": "plan_update",
+                "desc": "计划看板更新"
+              },
+              {
+                "name": "question_panel",
+                "desc": "问询面板更新"
+              },
+              {
+                "name": "final",
+                "desc": "最终回复"
+              },
+              {
+                "name": "error",
+                "desc": "错误信息"
+              }
+            ],
+            "notes": [
+              "SSE 响应类型为 text/event-stream，事件类型可通过 event/data/id 行读取。",
+              "更多事件详见 docs/API文档.md。"
+            ],
+            "example": "{\n  \"type\": \"progress\",\n  \"timestamp\": \"2025-12-24T08:30:00Z\",\n  \"session_id\": \"u_1234_20251224\",\n  \"data\": {\n    \"stage\": \"plan\",\n    \"summary\": \"已完成需求拆解，准备执行工具调用。\"\n  }\n}"
+          },
+          "samples": [
+            {
+              "title": "SSE 流式 curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{base}\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\",\"question\":\"你好\",\"stream\":true}'"
+            },
+            {
+              "title": "非流式 curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{base}\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\",\"question\":\"你好\",\"stream\":false}'"
+            }
+          ]
+        },
+        {
+          "id": "system-prompt",
+          "title": "系统提示词预览",
+          "method": "POST",
+          "path": "/wunder/system_prompt",
+          "summary": "构建当前系统提示词，常用于预览工具注入结果。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "session_id",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "会话标识（可选）。"
+              },
+              {
+                "name": "tool_names",
+                "type": "string[]",
+                "required": false,
+                "location": "body",
+                "desc": "启用的工具名称列表。"
+              },
+              {
+                "name": "config_overrides",
+                "type": "object",
+                "required": false,
+                "location": "body",
+                "desc": "临时覆盖配置对象。"
+              }
+            ],
+            "example": "{\n  \"user_id\": \"{userId}\",\n  \"tool_names\": [\"read_file\"]\n}"
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "prompt",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "系统提示词内容。"
+              },
+              {
+                "name": "build_time_ms",
+                "type": "number",
+                "required": true,
+                "location": "body",
+                "desc": "构建耗时（毫秒）。"
+              }
+            ],
+            "example": "{\n  \"prompt\": \"You are a helpful assistant...\",\n  \"build_time_ms\": 28\n}"
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{base}/system_prompt\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\"}'"
+            }
+          ]
+        },
+        {
+          "id": "tools",
+          "title": "工具清单",
+          "method": "GET",
+          "path": "/wunder/tools",
+          "summary": "获取可用工具清单与附加提示词。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "query",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": false,
+                "location": "query",
+                "desc": "用户唯一标识（可选，用于返回自建/共享工具）。"
+              }
+            ],
+            "notes": [
+              "自建/共享工具名称统一为 user_id@工具名（MCP 为 user_id@server@tool）。",
+              "内置工具提供英文别名，可用于 tool_names 选择。"
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "builtin_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "内置工具列表（name/description/input_schema）。"
+              },
+              {
+                "name": "mcp_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "MCP 工具列表。"
+              },
+              {
+                "name": "a2a_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "A2A 服务工具列表。"
+              },
+              {
+                "name": "skills",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "技能列表。"
+              },
+              {
+                "name": "knowledge_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "知识库工具列表。"
+              },
+              {
+                "name": "user_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "自建工具列表。"
+              },
+              {
+                "name": "shared_tools",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "共享工具列表。"
+              },
+              {
+                "name": "extra_prompt",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "附加提示词文本（可选）。"
+              }
+            ]
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl \"{base}/tools?user_id={userId}\" -H \"X-API-Key: <your-key>\""
+            }
+          ]
+        },
+        {
+          "id": "i18n",
+          "title": "语言配置",
+          "method": "GET",
+          "path": "/wunder/i18n",
+          "summary": "获取语言配置、别名与默认语言。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "query",
+          "response": {
+            "fields": [
+              {
+                "name": "default_language",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "默认语言。"
+              },
+              {
+                "name": "supported_languages",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "支持语言列表。"
+              },
+              {
+                "name": "aliases",
+                "type": "object",
+                "required": true,
+                "location": "body",
+                "desc": "语言别名映射。"
+              }
+            ]
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl \"{base}/i18n\" -H \"X-API-Key: <your-key>\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "documents",
+      "title": "工具与文档",
+      "description": "附件解析与文档转换。",
+      "endpoints": [
+        {
+          "id": "attachments-convert",
+          "title": "附件解析",
+          "method": "POST",
+          "path": "/wunder/attachments/convert",
+          "summary": "调试面板附件解析接口，需鉴权。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "multipart/form-data",
+          "request": {
+            "fields": [
+              {
+                "name": "file",
+                "type": "file",
+                "required": true,
+                "location": "multipart",
+                "desc": "待解析文件。"
+              }
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "ok",
+                "type": "boolean",
+                "required": true,
+                "location": "body",
+                "desc": "是否成功。"
+              },
+              {
+                "name": "name",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "文件名。"
+              },
+              {
+                "name": "content",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "解析后的 Markdown 文本。"
+              },
+              {
+                "name": "converter",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "转换器类型（doc2md/text/html/code/pdf）。"
+              },
+              {
+                "name": "warnings",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "转换警告列表。"
+              }
+            ]
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{base}/attachments/convert\" -H \"X-API-Key: <your-key>\" -F \"file=@demo.pdf\""
+            }
+          ]
+        },
+        {
+          "id": "doc2md-convert",
+          "title": "文档转 Markdown",
+          "method": "POST",
+          "path": "/wunder/doc2md/convert",
+          "summary": "文档转换为 Markdown，无需鉴权。",
+          "scope": "公开",
+          "auth": "无",
+          "contentType": "multipart/form-data",
+          "request": {
+            "fields": [
+              {
+                "name": "file",
+                "type": "file",
+                "required": true,
+                "location": "multipart",
+                "desc": "待解析文件。"
+              }
+            ],
+            "notes": [
+              "支持 .txt/.md/.docx/.pdf/.pptx/.xlsx 等扩展名，默认 200MB。"
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "ok",
+                "type": "boolean",
+                "required": true,
+                "location": "body",
+                "desc": "是否成功。"
+              },
+              {
+                "name": "name",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "文件名。"
+              },
+              {
+                "name": "content",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "解析后的 Markdown 文本。"
+              },
+              {
+                "name": "converter",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "转换器类型。"
+              },
+              {
+                "name": "warnings",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "转换警告列表。"
+              }
+            ]
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{base}/doc2md/convert\" -F \"file=@demo.docx\""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "user-tools",
+      "title": "用户工具",
+      "description": "用户侧 MCP、技能与知识库配置。",
+      "endpoints": [
+        {
+          "id": "user-tools-mcp",
+          "title": "用户 MCP 服务",
+          "method": "GET/POST",
+          "path": "/wunder/user_tools/mcp",
+          "summary": "读取或保存用户 MCP 服务配置。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json（GET 使用 query）",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "query/body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "servers",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "MCP 服务列表（POST 保存）。"
+              }
+            ],
+            "notes": [
+              "GET 通过 query 传 user_id，POST 通过 JSON body 传 user_id 与 servers。"
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "servers",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "MCP 服务列表（name/endpoint/allow_tools/shared_tools/enabled 等）。"
+              }
+            ]
+          }
+        },
+        {
+          "id": "user-tools-skills",
+          "title": "用户技能配置",
+          "method": "GET/POST",
+          "path": "/wunder/user_tools/skills",
+          "summary": "读取或保存用户技能启用/共享状态。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json（GET 使用 query）",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "query/body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "enabled",
+                "type": "string[]",
+                "required": false,
+                "location": "body",
+                "desc": "启用技能名列表（POST 保存）。"
+              },
+              {
+                "name": "shared",
+                "type": "string[]",
+                "required": false,
+                "location": "body",
+                "desc": "共享技能名列表（POST 保存）。"
+              }
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "已启用技能名列表。"
+              },
+              {
+                "name": "shared",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "已共享技能名列表。"
+              },
+              {
+                "name": "skills",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "技能列表（name/description/path/input_schema/enabled/shared）。"
+              }
+            ]
+          }
+        },
+        {
+          "id": "user-tools-knowledge",
+          "title": "知识库配置",
+          "method": "GET/POST",
+          "path": "/wunder/user_tools/knowledge",
+          "summary": "读取或保存用户知识库配置。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json（GET 使用 query）",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "query/body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "knowledge.bases",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "知识库列表（name/description/root/enabled/shared）。"
+              }
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "knowledge.bases",
+                "type": "array",
+                "required": true,
+                "location": "body",
+                "desc": "知识库列表。"
+              }
+            ]
+          }
+        },
+        {
+          "id": "user-tools-extra-prompt",
+          "title": "附加提示词",
+          "method": "POST",
+          "path": "/wunder/user_tools/extra_prompt",
+          "summary": "保存用户附加提示词文本。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "extra_prompt",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "附加提示词文本。"
+              }
+            ]
+          },
+          "response": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "用户唯一标识。"
+              },
+              {
+                "name": "extra_prompt",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "附加提示词文本。"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "工作区",
+      "description": "工作区文件与目录操作。",
+      "endpoints": [
+        {
+          "id": "workspace-list",
+          "title": "工作区目录",
+          "method": "GET",
+          "path": "/wunder/workspace",
+          "summary": "列出用户工作区目录结构。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "query",
+          "request": {
+            "fields": [
+              {
+                "name": "user_id",
+                "type": "string",
+                "required": false,
+                "location": "query",
+                "desc": "用户唯一标识（可选，管理员可指定）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回工作区文件列表与元数据。"
+          }
+        },
+        {
+          "id": "workspace-file",
+          "title": "工作区文件读写",
+          "method": "GET/PUT/DELETE",
+          "path": "/wunder/workspace/file",
+          "summary": "读取、保存或删除工作区文件。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json（GET/DELETE 使用 query）",
+          "request": {
+            "fields": [
+              {
+                "name": "path",
+                "type": "string",
+                "required": true,
+                "location": "query/body",
+                "desc": "文件路径（相对工作区）。"
+              },
+              {
+                "name": "content",
+                "type": "string",
+                "required": false,
+                "location": "body",
+                "desc": "文件内容（PUT 保存）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "GET 返回文件内容，PUT/DELETE 返回操作结果。"
+          }
+        },
+        {
+          "id": "workspace-upload",
+          "title": "上传文件",
+          "method": "POST",
+          "path": "/wunder/workspace/upload",
+          "summary": "上传文件到工作区指定路径。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "multipart/form-data",
+          "request": {
+            "fields": [
+              {
+                "name": "file",
+                "type": "file",
+                "required": true,
+                "location": "multipart",
+                "desc": "待上传文件。"
+              },
+              {
+                "name": "path",
+                "type": "string",
+                "required": false,
+                "location": "multipart",
+                "desc": "目标子目录（可选）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回上传结果与文件信息。"
+          }
+        },
+        {
+          "id": "workspace-download",
+          "title": "下载文件/目录",
+          "method": "POST",
+          "path": "/wunder/workspace/download",
+          "summary": "下载工作区文件或目录（目录返回压缩包）。",
+          "scope": "管理员/用户",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "path",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "文件或目录路径。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回文件流或压缩包。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "admin",
+      "title": "管理接口",
+      "description": "管理端配置与监控接口。",
+      "endpoints": [
+        {
+          "id": "admin-mcp",
+          "title": "管理端 MCP 配置",
+          "method": "GET/POST",
+          "path": "/wunder/admin/mcp",
+          "summary": "读取或保存 MCP 服务配置。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "servers",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "MCP 服务列表（POST 保存）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回 MCP 服务列表。"
+          }
+        },
+        {
+          "id": "admin-mcp-tools-call",
+          "title": "测试 MCP 工具",
+          "method": "POST",
+          "path": "/wunder/admin/mcp/tools/call",
+          "summary": "测试调用指定 MCP 工具。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "server",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "服务名称。"
+              },
+              {
+                "name": "tool",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "工具名称。"
+              },
+              {
+                "name": "args",
+                "type": "object",
+                "required": false,
+                "location": "body",
+                "desc": "工具参数（可选）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回工具调用结果与提示信息。"
+          }
+        },
+        {
+          "id": "admin-a2a",
+          "title": "管理端 A2A 配置",
+          "method": "GET/POST",
+          "path": "/wunder/admin/a2a",
+          "summary": "读取或保存 A2A 服务配置。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "services",
+                "type": "array",
+                "required": false,
+                "location": "body",
+                "desc": "A2A 服务列表（POST 保存）。"
+              }
+            ]
+          },
+          "response": {
+            "description": "返回 A2A 服务列表。"
+          }
+        },
+        {
+          "id": "admin-llm",
+          "title": "模型配置",
+          "method": "GET/POST",
+          "path": "/wunder/admin/llm",
+          "summary": "读取或保存模型配置。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "description": "POST 传入 llm.default 与 llm.models 配置映射。",
+            "notes": [
+              "字段较多，请参考 docs/API文档.md。"
+            ]
+          },
+          "response": {
+            "description": "返回 llm 配置与默认模型。"
+          }
+        },
+        {
+          "id": "admin-monitor",
+          "title": "系统监控数据",
+          "method": "GET",
+          "path": "/wunder/admin/monitor",
+          "summary": "获取系统监控与资源状态信息。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "query",
+          "response": {
+            "description": "返回监控指标、资源信息与队列统计。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a2a",
+      "title": "A2A 接入",
+      "description": "A2A 标准 JSON-RPC 接口与 AgentCard。",
+      "endpoints": [
+        {
+          "id": "a2a-jsonrpc",
+          "title": "A2A JSON-RPC",
+          "method": "POST",
+          "path": "/a2a",
+          "summary": "A2A 标准方法入口，支持流式任务。",
+          "scope": "管理员",
+          "auth": "X-API-Key 或 Authorization: Bearer <key>",
+          "contentType": "application/json",
+          "request": {
+            "fields": [
+              {
+                "name": "jsonrpc",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "固定 2.0。"
+              },
+              {
+                "name": "id",
+                "type": "string/number",
+                "required": true,
+                "location": "body",
+                "desc": "请求 ID。"
+              },
+              {
+                "name": "method",
+                "type": "string",
+                "required": true,
+                "location": "body",
+                "desc": "A2A 方法名。"
+              },
+              {
+                "name": "params",
+                "type": "object",
+                "required": true,
+                "location": "body",
+                "desc": "方法参数对象。"
+              }
+            ],
+            "notes": [
+              "SendStreamingMessage 返回 text/event-stream。"
+            ]
+          },
+          "response": {
+            "description": "返回 JSON-RPC 结果或 SSE 流式事件。"
+          },
+          "samples": [
+            {
+              "title": "curl",
+              "lang": "bash",
+              "code": "curl -X POST \"{origin}/a2a\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"SendMessage\",\"params\":{}}'"
+            }
+          ]
+        },
+        {
+          "id": "agent-card",
+          "title": "AgentCard 发现",
+          "method": "GET",
+          "path": "/.well-known/agent-card.json",
+          "summary": "公开 AgentCard 发现入口。",
+          "scope": "公开",
+          "auth": "无",
+          "contentType": "query",
+          "response": {
+            "description": "返回 AgentCard 元数据。"
+          }
+        }
+      ]
+    }
+  ]
+}

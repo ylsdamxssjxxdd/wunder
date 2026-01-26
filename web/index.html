@@ -2637,7 +2637,7 @@
             </div>
           </div>
         </section>
-        <section id="apiDocsPanel" class="panel">
+        <section id="apiDocsPanel" class="panel" data-api-docs-src="/docs/api-docs.json?v=20260126-01">
           <div class="list-header">
             <h1 data-i18n="panel.apiDocs">接口</h1>
           </div>
@@ -2671,199 +2671,21 @@
                   同一 user_id 同时只允许一个进行中会话，重复请求会返回 429。
                 </div>
               </div>
-              <div class="api-docs-card">
+              <div class="api-docs-card api-docs-list-card">
                 <div class="api-docs-card-title">
-                  <i class="fa-solid fa-bolt"></i>
-                  <span data-i18n="apiDocs.card.quickstart">快速调用</span>
+                  <i class="fa-solid fa-list"></i>
+                  <span data-i18n="apiDocs.card.list">接口列表</span>
                 </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.stream">SSE 流式</div>
-                  <pre class="api-docs-code"><code id="apiDocsCurlStream"></code></pre>
-                </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.json">非流式 JSON</div>
-                  <pre class="api-docs-code"><code id="apiDocsCurlJson"></code></pre>
-                </div>
+                <div id="apiDocsEndpointList" class="api-docs-endpoint-list api-docs-endpoint-groups"></div>
               </div>
             </div>
             <div class="api-docs-main">
-              <div class="api-docs-card">
+              <div class="api-docs-card api-docs-detail-card">
                 <div class="api-docs-card-title">
-                  <i class="fa-solid fa-comments"></i>
-                  <span data-i18n="apiDocs.card.core">/wunder 核心接口</span>
+                  <i class="fa-solid fa-circle-info"></i>
+                  <span data-i18n="apiDocs.card.detail">接口详情</span>
                 </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.request">请求参数</div>
-                  <table class="api-docs-table">
-                    <thead>
-                      <tr>
-                        <th data-i18n="apiDocs.table.field">字段</th>
-                        <th data-i18n="apiDocs.table.type">类型</th>
-                        <th data-i18n="apiDocs.table.required">必填</th>
-                        <th data-i18n="apiDocs.table.desc">说明</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><code>user_id</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge is-required" data-i18n="apiDocs.required">必填</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.userId">用户唯一标识。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>question</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge is-required" data-i18n="apiDocs.required">必填</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.question">用户问题内容。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>stream</code></td>
-                        <td>boolean</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.stream">是否流式返回，默认 true。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>tool_names</code></td>
-                        <td>string[]</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td>
-                          <span data-i18n="apiDocs.fieldDesc.toolNames">启用的工具名称列表（内置/MCP/技能等）。</span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td><code>session_id</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.sessionId">会话标识，用于继续对话。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>model_name</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.modelName">模型配置名称，不传使用默认配置。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>attachments</code></td>
-                        <td>array</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.attachments">附件列表（文件为 Markdown，图片为 data URL）。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>config_overrides</code></td>
-                        <td>object</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.configOverrides">临时覆盖配置的对象。</span></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.requestExample">请求体示例</div>
-                  <pre class="api-docs-code"><code id="apiDocsRequestExample"></code></pre>
-                </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.response">非流式响应字段</div>
-                  <table class="api-docs-table">
-                    <thead>
-                      <tr>
-                        <th data-i18n="apiDocs.table.field">字段</th>
-                        <th data-i18n="apiDocs.table.type">类型</th>
-                        <th data-i18n="apiDocs.table.required">必填</th>
-                        <th data-i18n="apiDocs.table.desc">说明</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td><code>session_id</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge is-required" data-i18n="apiDocs.required">必填</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.sessionId">会话标识，用于继续对话。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>answer</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge is-required" data-i18n="apiDocs.required">必填</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.answer">最终回复内容。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>usage</code></td>
-                        <td>object</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.usage">Token 占用统计（可选）。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>stop_reason</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.stopReason">停止原因（可选）。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>uid</code></td>
-                        <td>string</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.uid">A2UI Surface 标识（可选）。</span></td>
-                      </tr>
-                      <tr>
-                        <td><code>a2ui</code></td>
-                        <td>array</td>
-                        <td><span class="api-docs-badge" data-i18n="apiDocs.optional">可选</span></td>
-                        <td><span data-i18n="apiDocs.fieldDesc.a2ui">A2UI 消息数组（可选）。</span></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div class="api-docs-section">
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.events">流式事件</div>
-                  <ul class="api-docs-list">
-                    <li>
-                      <code>progress</code>
-                      <span data-i18n="apiDocs.event.progress">阶段性摘要</span>
-                    </li>
-                    <li>
-                      <code>llm_output_delta</code>
-                      <span data-i18n="apiDocs.event.llmOutputDelta">模型输出增量</span>
-                    </li>
-                    <li>
-                      <code>tool_call</code>
-                      <span data-i18n="apiDocs.event.toolCall">工具调用信息</span>
-                    </li>
-                    <li>
-                      <code>tool_output_delta</code>
-                      <span data-i18n="apiDocs.event.toolOutputDelta">工具输出增量</span>
-                    </li>
-                    <li>
-                      <code>tool_result</code>
-                      <span data-i18n="apiDocs.event.toolResult">工具执行结果</span>
-                    </li>
-                    <li>
-                      <code>a2ui</code>
-                      <span data-i18n="apiDocs.event.a2ui">A2UI 渲染消息</span>
-                    </li>
-                    <li>
-                      <code>final</code>
-                      <span data-i18n="apiDocs.event.final">最终回复</span>
-                    </li>
-                    <li>
-                      <code>error</code>
-                      <span data-i18n="apiDocs.event.error">错误信息</span>
-                    </li>
-                  </ul>
-                  <div class="api-docs-note" data-i18n="apiDocs.note.sseFormat">
-                    SSE 响应类型为 text/event-stream，事件类型可通过 event/data/id 行读取。
-                  </div>
-                  <div class="api-docs-note" data-i18n="apiDocs.event.more">
-                    更多事件详见 docs/API文档.md。
-                  </div>
-                  <div class="api-docs-section-title" data-i18n="apiDocs.section.eventExample">事件 payload 示例</div>
-                  <pre class="api-docs-code"><code id="apiDocsEventExample"></code></pre>
-                </div>
-              </div>
-              <div class="api-docs-card">
-                <div class="api-docs-card-title">
-                  <i class="fa-solid fa-list-ul"></i>
-                  <span data-i18n="apiDocs.card.endpoints">接口速查</span>
-                </div>
-                <div id="apiDocsEndpointGroups" class="api-docs-endpoint-groups"></div>
+                <div id="apiDocsDetail" class="api-docs-detail"></div>
               </div>
             </div>
           </div>

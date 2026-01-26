@@ -508,8 +508,7 @@
 }
 
 .api-docs-main {
-  overflow: auto;
-  padding-right: 4px;
+  overflow: hidden;
 }
 
 .api-docs-card {
@@ -659,6 +658,111 @@
   color: #92400e;
 }
 
+.api-docs-list-card,
+.api-docs-detail-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.api-docs-endpoint-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.api-docs-detail {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.api-docs-detail.is-empty {
+  justify-content: center;
+}
+
+.api-docs-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.api-docs-detail-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.api-docs-detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.api-docs-detail-path {
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+  color: #475569;
+}
+
+.api-docs-detail-summary {
+  font-size: 12px;
+  color: #475569;
+}
+
+.api-docs-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px 16px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.api-docs-detail-meta-row {
+  display: flex;
+  gap: 6px;
+}
+
+.api-docs-detail-meta-label {
+  color: #64748b;
+  min-width: 72px;
+}
+
+.api-docs-detail-meta-value {
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.api-docs-text {
+  font-size: 12px;
+  color: #475569;
+}
+
+.api-docs-empty-state {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  padding: 12px;
+}
+
+.api-docs-empty-inline {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.api-docs-sample-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
 .api-docs-endpoint-groups {
   display: flex;
   flex-direction: column;
@@ -731,6 +835,26 @@
   background: #fff;
   border-radius: 8px;
   padding: 8px 10px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.api-docs-endpoint:hover {
+  border-color: #cbd5f5;
+  box-shadow: 0 2px 8px rgba(30, 64, 175, 0.08);
+}
+
+.api-docs-endpoint:focus-visible {
+  outline: 2px solid #3a7afe;
+  outline-offset: 2px;
+}
+
+.api-docs-endpoint.is-active {
+  border-color: #3a7afe;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(58, 122, 254, 0.4);
 }
 
 .api-docs-method {
@@ -1007,6 +1131,12 @@
 
   .api-docs-side,
   .api-docs-main {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .api-docs-detail,
+  .api-docs-endpoint-list {
     overflow: visible;
     padding-right: 0;
   }

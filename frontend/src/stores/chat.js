@@ -793,6 +793,14 @@ const normalizeInquiryPanelState = (panel) => {
   return { ...normalized, status, selected };
 };
 
+const isQuestionPanelToolName = (name) => {
+  const raw = String(name || '').trim();
+  if (!raw) return false;
+  if (raw === '问询面板') return true;
+  const lower = raw.toLowerCase();
+  return lower === 'question_panel' || lower === 'ask_panel';
+};
+
 const hasPlanSteps = (plan) => Array.isArray(plan?.steps) && plan.steps.length > 0;
 const isMessageRunning = (message) =>
   normalizeFlag(message?.stream_incomplete) || normalizeFlag(message?.workflowStreaming);
@@ -1501,6 +1509,22 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return outputItemId;
   };
 
+  const applyQuestionPanelPayload = (payload, options = {}) => {
+    const normalized = normalizeInquiryPanelPayload(payload);
+    if (!normalized) return false;
+    assistantMessage.questionPanel = {
+      ...normalized,
+      status: 'pending',
+      selected: []
+    };
+    if (options.appendWorkflow !== false) {
+      assistantMessage.workflowItems.push(
+        buildWorkflowItem('问询面板', buildDetail(normalized))
+      );
+    }
+    return true;
+  };
+
   const handleEvent = (eventName, raw) => {
     const payload = safeJsonParse(raw);
     const data = payload?.data ?? payload;
@@ -1629,6 +1653,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             }
           )
         );
+        if (!assistantMessage.questionPanel && isQuestionPanelToolName(toolName)) {
+          const panelPayload = data?.data ?? data?.result ?? data?.output ?? null;
+          applyQuestionPanelPayload(panelPayload);
+        }
         break;
       }
       case 'plan_update': {
@@ -1644,17 +1672,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'question_panel': {
-        const normalized = normalizeInquiryPanelPayload(data);
-        if (normalized) {
-          assistantMessage.questionPanel = {
-            ...normalized,
-            status: 'pending',
-            selected: []
-          };
-          assistantMessage.workflowItems.push(
-            buildWorkflowItem('问询面板', buildDetail(normalized))
-          );
-        }
+        const appendWorkflow = !assistantMessage.questionPanel;
+        applyQuestionPanelPayload(data, { appendWorkflow });
         break;
       }
       case 'llm_output_delta': {

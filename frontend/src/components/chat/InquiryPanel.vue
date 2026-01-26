@@ -25,20 +25,7 @@
         <div v-if="route.description" class="inquiry-route-desc">{{ route.description }}</div>
       </button>
     </div>
-    <div class="inquiry-panel-actions">
-      <button class="inquiry-panel-btn secondary" type="button" @click="dismissPanel">
-        暂不选择
-      </button>
-      <button
-        class="inquiry-panel-btn primary"
-        type="button"
-        :disabled="!canSubmit"
-        @click="submitSelection"
-      >
-        发送选择
-      </button>
-    </div>
-    <div class="inquiry-panel-hint">{{ modeHint }}，也可以直接输入消息继续。</div>
+    <div class="inquiry-panel-hint">{{ modeHint }}，选择后点击发送，也可以直接输入消息继续。</div>
   </div>
 </template>
 
@@ -52,18 +39,22 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['select', 'dismiss']);
+const emit = defineEmits(['update:selected']);
 
 const selectedIndices = ref([]);
 const isMultiple = computed(() => props.panel?.multiple === true);
-const canSubmit = computed(() => selectedIndices.value.length > 0);
 const modeLabel = computed(() => (isMultiple.value ? '多选' : '单选'));
 const modeHint = computed(() =>
   isMultiple.value ? '多选，可选择多个选项' : '单选，再次点击已选项可取消'
 );
 
+const emitSelection = () => {
+  emit('update:selected', selectedIndices.value.slice());
+};
+
 const resetSelection = () => {
   selectedIndices.value = [];
+  emitSelection();
 };
 
 const toggleSelection = (index) => {
@@ -73,6 +64,7 @@ const toggleSelection = (index) => {
     } else {
       selectedIndices.value = [index];
     }
+    emitSelection();
     return;
   }
   const next = new Set(selectedIndices.value);
@@ -82,16 +74,7 @@ const toggleSelection = (index) => {
     next.add(index);
   }
   selectedIndices.value = Array.from(next);
-};
-
-const submitSelection = () => {
-  if (!canSubmit.value) return;
-  const selected = selectedIndices.value.slice();
-  emit('select', { selected });
-};
-
-const dismissPanel = () => {
-  emit('dismiss');
+  emitSelection();
 };
 
 watch(

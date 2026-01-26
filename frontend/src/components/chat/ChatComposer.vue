@@ -35,11 +35,18 @@
       </div>
     </div>
 
-    <div class="input-box">
+    <div
+      class="input-box"
+      :class="{ dragover: dragActive }"
+      @dragenter="handleDragEnter"
+      @dragover="handleDragOver"
+      @dragleave="handleDragLeave"
+      @drop="handleDrop"
+    >
       <textarea
         v-model="inputText"
         ref="inputRef"
-        placeholder="输入消息..."
+        :placeholder="inputPlaceholder"
         rows="1"
         @input="resizeInput"
         @keydown.enter.exact.prevent="handleSend"
@@ -98,6 +105,14 @@ const props = defineProps({
   demoMode: {
     type: Boolean,
     default: false
+  },
+  inquiryActive: {
+    type: Boolean,
+    default: false
+  },
+  inquirySelection: {
+    type: Array,
+    default: () => []
   }
 });
 
@@ -108,6 +123,8 @@ const inputRef = ref(null);
 const uploadInputRef = ref(null);
 const attachments = ref([]);
 const attachmentBusy = ref(0);
+const dragActive = ref(false);
+const dragCounter = ref(0);
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 const DOC_EXTENSIONS = [
@@ -144,10 +161,20 @@ const uploadAccept = ['image/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
+const hasInquirySelection = computed(
+  () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
+);
+const inputPlaceholder = computed(() =>
+  props.inquiryActive ? '选择选项或输入文本后点击发送' : '输入消息...'
+);
 const canSendOrStop = computed(() => {
   if (props.loading) return true;
   if (attachmentBusy.value > 0) return false;
-  return Boolean(inputText.value.trim()) || attachments.value.length > 0;
+  return (
+    Boolean(inputText.value.trim()) ||
+    attachments.value.length > 0 ||
+    hasInquirySelection.value
+  );
 });
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -213,6 +240,46 @@ const triggerUpload = () => {
   if (!uploadInputRef.value) return;
   uploadInputRef.value.value = '';
   uploadInputRef.value.click();
+};
+
+const hasFileDrag = (event) => Array.from(event?.dataTransfer?.types || []).includes('Files');
+
+const handleDragEnter = (event) => {
+  if (!hasFileDrag(event)) return;
+  event.preventDefault();
+  dragCounter.value += 1;
+  dragActive.value = true;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+};
+
+const handleDragOver = (event) => {
+  if (!hasFileDrag(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+};
+
+const handleDragLeave = (event) => {
+  if (!hasFileDrag(event)) return;
+  dragCounter.value = Math.max(0, dragCounter.value - 1);
+  if (dragCounter.value === 0) {
+    dragActive.value = false;
+  }
+};
+
+const handleDrop = async (event) => {
+  if (!hasFileDrag(event)) return;
+  event.preventDefault();
+  dragCounter.value = 0;
+  dragActive.value = false;
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (!files.length) return;
+  for (const file of files) {
+    await handleAttachmentSelection(file);
+  }
 };
 
 // 附件处理遵循 Wunder 调试面板：图片走 data URL，文件先转 Markdown
@@ -294,7 +361,7 @@ const handleSend = async () => {
   }
   const content = inputText.value.trim();
   const payloadAttachments = buildAttachmentPayload();
-  if (!content && payloadAttachments.length === 0) return;
+  if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   emit('send', { content, attachments: payloadAttachments });
   inputText.value = '';
   resetInputHeight();

@@ -349,13 +349,14 @@
           <InquiryPanel
             v-if="activeInquiryPanel"
             :panel="activeInquiryPanel.panel"
-            @select="handleInquirySelect"
-            @dismiss="handleInquiryDismiss"
+            @update:selected="handleInquirySelection"
           />
           <ChatComposer
             :key="composerKey"
             :loading="chatStore.loading"
             :demo-mode="demoMode"
+            :inquiry-active="Boolean(activeInquiryPanel)"
+            :inquiry-selection="inquirySelection"
             @send="handleComposerSend"
             @stop="handleStop"
           />
@@ -540,6 +541,7 @@ const draftKey = ref(0);
 const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
 );
+const inquirySelection = ref([]);
 const userToolsVisible = ref(false);
 const sharedToolsVisible = ref(false);
 const extraPromptVisible = ref(false);
@@ -873,16 +875,36 @@ const downloadWorkspaceResource = async (publicPath) => {
 
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];
-  if (!content && payloadAttachments.length === 0) return;
-  chatStore.dismissPendingInquiryPanel();
+  const trimmedContent = String(content || '').trim();
+  const active = activeInquiryPanel.value;
+  const selectedRoutes = resolveInquirySelectionRoutes(active?.panel, inquirySelection.value);
+  const hasSelection = selectedRoutes.length > 0;
+  if (!trimmedContent && payloadAttachments.length === 0 && !hasSelection) return;
+
+  let finalContent = trimmedContent;
+  if (active) {
+    if (hasSelection) {
+      chatStore.resolveInquiryPanel(active.message, {
+        status: 'answered',
+        selected: selectedRoutes.map((route) => route.label)
+      });
+      const selectionText = buildInquiryReply(active.panel, selectedRoutes);
+      finalContent = trimmedContent ? `${selectionText}\n\n用户补充：${trimmedContent}` : selectionText;
+    } else {
+      chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
+    }
+  }
+
   pendingAutoScroll = true;
   pendingAutoScrollCount = chatStore.messages.length;
   try {
-    await chatStore.sendMessage(content, { attachments: payloadAttachments });
+    await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
   } catch (error) {
     pendingAutoScroll = false;
     pendingAutoScrollCount = 0;
     throw error;
+  } finally {
+    inquirySelection.value = [];
   }
 };
 
@@ -900,6 +922,15 @@ const buildInquiryReply = (panel, routes) => {
   return [header, question, ...lines].filter(Boolean).join('\n');
 };
 
+const resolveInquirySelectionRoutes = (panel, selected) => {
+  if (!panel || !Array.isArray(selected) || selected.length === 0) {
+    return [];
+  }
+  return selected
+    .map((index) => panel.routes?.[index])
+    .filter((route) => route && route.label);
+};
+
 const activeInquiryPanel = computed(() => {
   for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
     const message = chatStore.messages[i];
@@ -908,35 +939,12 @@ const activeInquiryPanel = computed(() => {
     if (panel?.status === 'pending') {
       return { message, panel };
     }
-    break;
   }
   return null;
 });
 
-const handleInquirySelect = async ({ selected }) => {
-  const active = activeInquiryPanel.value;
-  if (!active || !Array.isArray(selected) || selected.length === 0) {
-    return;
-  }
-  const routes = selected
-    .map((index) => active.panel.routes?.[index])
-    .filter((route) => route && route.label);
-  if (!routes.length) {
-    return;
-  }
-  chatStore.resolveInquiryPanel(active.message, {
-    status: 'answered',
-    selected: routes.map((route) => route.label)
-  });
-  pendingAutoScroll = true;
-  pendingAutoScrollCount = chatStore.messages.length;
-  await chatStore.sendMessage(buildInquiryReply(active.panel, routes));
-};
-
-const handleInquiryDismiss = () => {
-  const active = activeInquiryPanel.value;
-  if (!active) return;
-  chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
+const handleInquirySelection = (selected) => {
+  inquirySelection.value = Array.isArray(selected) ? selected : [];
 };
 
 const openImagePreview = (src, title = '') => {
@@ -1341,6 +1349,15 @@ watch(
   () => chatStore.messages.length,
   () => {
     scheduleWorkspaceResourceHydration();
+  }
+);
+
+watch(
+  () => activeInquiryPanel.value,
+  (value) => {
+    if (!value) {
+      inquirySelection.value = [];
+    }
   }
 );
 
