@@ -475,6 +475,7 @@ def set_style_font(
         style.font.size = Pt(font_size)
     if bold is not None:
         style.font.bold = bold
+    style.font.color.rgb = RGBColor(0, 0, 0)
 
 
 def set_style_fonts(style, east_asia_font: str, ascii_font: str, font_size: Optional[float]) -> None:
@@ -482,6 +483,7 @@ def set_style_fonts(style, east_asia_font: str, ascii_font: str, font_size: Opti
     ensure_rfonts(style.element, east_asia_font, ascii_font)
     if font_size is not None:
         style.font.size = Pt(font_size)
+    style.font.color.rgb = RGBColor(0, 0, 0)
 
 
 def set_run_font(
