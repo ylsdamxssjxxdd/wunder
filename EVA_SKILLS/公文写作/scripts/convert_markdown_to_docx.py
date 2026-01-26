@@ -578,7 +578,8 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_2.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
     heading_3 = doc.styles["Heading 3"]
-    set_style_font(heading_3, args.heading2_font, args.heading_size, False, args.digit_font)
+    set_style_font(heading_3, args.heading2_font, args.heading_size, True, args.digit_font)
+    heading_3.font.italic = False
     heading_3.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_3.paragraph_format.space_before = Pt(0)
     heading_3.paragraph_format.space_after = Pt(0)
@@ -587,7 +588,8 @@ def setup_styles(doc: Document, args: argparse.Namespace) -> None:
     heading_3.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
 
     heading_4 = doc.styles["Heading 4"]
-    set_style_font(heading_4, args.heading3_font, args.heading_size, False, args.digit_font)
+    set_style_font(heading_4, args.heading3_font, args.heading_size, True, args.digit_font)
+    heading_4.font.italic = False
     heading_4.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
     heading_4.paragraph_format.space_before = Pt(0)
     heading_4.paragraph_format.space_after = Pt(0)
@@ -1919,11 +1921,17 @@ def apply_style_fonts(doc: Document, args: argparse.Namespace) -> None:
             continue
         style = doc.styles[style_name]
         set_style_font(style, font, size, None, args.digit_font)
+        if style_name in ("Heading 3", "Heading 4"):
+            style.font.bold = True
+            style.font.italic = False
     for style_name, (font, size) in char_style_map.items():
         if style_name not in doc.styles:
             continue
         style = doc.styles[style_name]
         set_style_font(style, font, size, None, args.digit_font)
+        if style_name in ("Heading 3 Char", "Heading 4 Char"):
+            style.font.bold = True
+            style.font.italic = False
 
     code_style = "Source Code"
     if code_style in doc.styles:

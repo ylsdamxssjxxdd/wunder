@@ -28,6 +28,7 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 ### 2.1 Update configuration
 Copy the example config: `config/wunder-example.yaml` -> `config/wunder.yaml`
 Copy env example: `.env.example` -> `.env` and set `WUNDER_API_KEY`, `WUNDER_POSTGRES_DSN`, `WUNDER_SANDBOX_ENDPOINT`, etc.
+Frontend API base: set `VITE_API_BASE` or `VITE_API_BASE_URL` in the repo root `.env` and restart the frontend.
 
 ### 2.2 Start the service
 x86
