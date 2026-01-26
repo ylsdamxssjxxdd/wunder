@@ -1,19 +1,16 @@
-const path = require('path');
 const pptxgen = require('pptxgenjs');
 
 const SLIDE_W = 10;
 const SLIDE_H = 5.625;
 const MARGIN_X = 0.6;
 
-const COLORS = {
-  title: '111111',
-  body: '333333',
-  accent: '2F5597'
-};
+const TITLE_COLOR = '111111'; // EDIT_TITLE_COLOR
+const BODY_COLOR = '333333'; // EDIT_BODY_COLOR
+const ACCENT_COLOR = '2F5597'; // EDIT_ACCENT_COLOR
 
-const TITLE_FONT = 'SimHei';
-const BODY_FONT = 'Arial';
-const OUTPUT_FILE = 'output.pptx'; // EDIT_ME: set output file name
+const TITLE_FONT = 'SimHei'; // EDIT_TITLE_FONT
+const BODY_FONT = 'Arial'; // EDIT_BODY_FONT
+const OUTPUT_FILE = 'output.pptx'; // EDIT_OUTPUT_FILE
 
 // CONTENT_START
 const SLIDES = [
@@ -37,7 +34,7 @@ function addTitle(slide, text) {
     fontFace: TITLE_FONT,
     fontSize: 30,
     bold: true,
-    color: COLORS.title
+    color: TITLE_COLOR
   });
 }
 
@@ -56,7 +53,7 @@ function addBullets(slide, bullets) {
     h: SLIDE_H - 2.2,
     fontFace: BODY_FONT,
     fontSize: 18,
-    color: COLORS.body,
+    color: BODY_COLOR,
     bullet: { type: 'bullet' },
     lineSpacingMultiple: 1.2
   });
@@ -74,8 +71,7 @@ async function build() {
     addBullets(slide, item.bullets || []);
   });
 
-  const outPath = path.join(__dirname, OUTPUT_FILE);
-  await pptx.writeFile({ fileName: outPath });
+  await pptx.writeFile({ fileName: OUTPUT_FILE });
 }
 
 build().catch((err) => {

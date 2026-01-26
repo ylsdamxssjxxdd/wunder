@@ -13,7 +13,8 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 
 1. 先确定版式与风格（配色、字体、间距、页尺寸）。
 2. 复制技能包内的 `scripts/pptxgenjs-starter.js`（注意文件名）到工作目录并重命名为 `build.js`。
-3. 打开 `build.js`，修改 `OUTPUT_FILE` 与 `SLIDES`（位于 `CONTENT_START/END` 标记之间）。
+3. 先用 `读取文件` 查看 `build.js`，仅修改 `OUTPUT_FILE`、`SLIDES` 与样式常量，避免改动 import/require 行。
+   - 修改 `SLIDES` 时请使用 `// CONTENT_START` 与 `// CONTENT_END` 之间的完整块作为 `old_string`，不要凭印象替换。
    - 若用户指定文件名，优先改 `OUTPUT_FILE`，避免额外重命名步骤。
    - 使用 `替换文本` 时必须检查 `replaced > 0`；若为 0，请先 `读取文件` 再改用 `编辑文件` 精确修改。
 4. 运行 `node build.js` 生成 PPTX，并用 `列出文件` 确认输出文件存在。
@@ -22,7 +23,14 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 ## 脚本约定
 
 - `OUTPUT_FILE` 控制输出文件名（默认 `output.pptx`）。
+- 脚本直接写入 `OUTPUT_FILE`，请在 `build.js` 所在目录运行 `node build.js`。
 - `SLIDES` 为数组，每一项包含 `title` 与 `bullets`（字符串数组）。
+- 字体与颜色通过常量行配置：`TITLE_FONT`、`BODY_FONT`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`。
+- 修改样式时优先用 `替换文本` 精确替换上述常量行，避免按行号编辑。
+
+## 失败处理
+
+- 若执行 `node build.js` 提示 `pptxgen is not defined`，请恢复首行 `const pptxgen = require('pptxgenjs');`，不要改用其他 require 路径。
 - 建议仅替换 `CONTENT_START/END` 之间的块，避免影响脚本结构。
 
 ## 布局与格式规则
