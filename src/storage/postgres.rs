@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
 
-const SESSION_LOCK_ADVISORY_KEY: i64 = 742815;
+const DEFAULT_POOL_SIZE: usize = 64;
 
 pub struct PostgresStorage {
     pool: Pool,
@@ -111,19 +111,24 @@ impl PgTx<'_> {
 }
 
 impl PostgresStorage {
-    pub fn new(dsn: String, connect_timeout_s: u64) -> Result<Self> {
+    pub fn new(dsn: String, connect_timeout_s: u64, pool_size: usize) -> Result<Self> {
         let cleaned = dsn.trim().to_string();
         if cleaned.is_empty() {
             return Err(anyhow!("postgres dsn is empty"));
         }
         let timeout = Duration::from_secs(connect_timeout_s.max(1));
+        let pool_size = if pool_size == 0 {
+            DEFAULT_POOL_SIZE
+        } else {
+            pool_size
+        };
         let mut config = cleaned.parse::<tokio_postgres::Config>()?;
         config.connect_timeout(timeout);
         let manager_config = ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         };
         let manager = Manager::from_config(config, NoTls, manager_config);
-        let pool = Pool::builder(manager).max_size(16).build()?;
+        let pool = Pool::builder(manager).max_size(pool_size).build()?;
         let fallback_runtime = tokio::runtime::Runtime::new()
             .map_err(|err| anyhow!("create tokio runtime for postgres: {err}"))?;
         Ok(Self {
@@ -258,6 +263,77 @@ impl PostgresStorage {
         }
         Ok(())
     }
+
+    fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE monitor_sessions ALTER COLUMN updated_time SET DEFAULT 0",
+            &[],
+        )?;
+        Ok(())
+    }
+
+    fn ensure_performance_indexes(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let statements = [
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_tool_time \
+                 ON tool_logs (tool, created_time DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_logs_tool_time \
+                 ON tool_logs (tool, created_time DESC)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_logs_time \
+                 ON tool_logs USING brin (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_tool_logs_time \
+                 ON tool_logs USING brin (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_history_time \
+                 ON chat_history USING brin (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_chat_history_time \
+                 ON chat_history USING brin (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time \
+                 ON artifact_logs USING brin (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time \
+                 ON artifact_logs USING brin (created_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_monitor_sessions_updated \
+                 ON monitor_sessions (updated_time)",
+                "CREATE INDEX IF NOT EXISTS idx_monitor_sessions_updated \
+                 ON monitor_sessions (updated_time)",
+            ),
+            (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_monitor_sessions_user \
+                 ON monitor_sessions (user_id)",
+                "CREATE INDEX IF NOT EXISTS idx_monitor_sessions_user \
+                 ON monitor_sessions (user_id)",
+            ),
+        ];
+
+        for (concurrent, fallback) in statements {
+            if conn.execute(concurrent, &[]).is_err() {
+                conn.execute(fallback, &[])?;
+            }
+        }
+
+        if conn
+            .execute(
+                "DROP INDEX CONCURRENTLY IF EXISTS idx_user_accounts_username",
+                &[],
+            )
+            .is_err()
+        {
+            conn.execute("DROP INDEX IF EXISTS idx_user_accounts_username", &[])?;
+        }
+
+        Ok(())
+    }
 }
 
 impl StorageBackend for PostgresStorage {
@@ -332,7 +408,7 @@ impl StorageBackend for PostgresStorage {
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT,
                   status TEXT,
-                  updated_time DOUBLE PRECISION,
+                  updated_time DOUBLE PRECISION NOT NULL DEFAULT 0,
                   payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_monitor_sessions_status
@@ -444,8 +520,6 @@ impl StorageBackend for PostgresStorage {
                   updated_at DOUBLE PRECISION NOT NULL,
                   last_login_at DOUBLE PRECISION
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_username
-                  ON user_accounts (username);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_email
                   ON user_accounts (email);
                 CREATE TABLE IF NOT EXISTS user_tokens (
@@ -481,7 +555,9 @@ impl StorageBackend for PostgresStorage {
             );
             match result {
                 Ok(_) => {
+                    self.ensure_monitor_defaults(&mut conn)?;
                     self.ensure_user_account_quota_columns(&mut conn)?;
+                    self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
                 }
@@ -1126,15 +1202,6 @@ impl StorageBackend for PostgresStorage {
 
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        let locked: bool = tx
-            .query_one(
-                "SELECT pg_try_advisory_xact_lock($1)",
-                &[&SESSION_LOCK_ADVISORY_KEY],
-            )?
-            .get(0);
-        if !locked {
-            return Ok(SessionLockStatus::SystemBusy);
-        }
         tx.execute("DELETE FROM session_locks WHERE expires_at <= $1", &[&now])?;
         let existing = tx.query_opt(
             "SELECT session_id FROM session_locks WHERE user_id = $1 LIMIT 1",
@@ -1144,33 +1211,37 @@ impl StorageBackend for PostgresStorage {
             tx.commit()?;
             return Ok(SessionLockStatus::UserBusy);
         }
-        let total: i64 = tx
-            .query_one("SELECT COUNT(*) FROM session_locks", &[])?
-            .get(0);
-        if total >= max_sessions {
-            tx.commit()?;
-            return Ok(SessionLockStatus::SystemBusy);
-        }
         let inserted = tx.execute(
             "INSERT INTO session_locks (session_id, user_id, created_time, updated_time, expires_at) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT DO NOTHING",
             &[&cleaned_session, &cleaned_user, &now, &now, &expires_at],
         )?;
-        if inserted > 0 {
+        if inserted == 0 {
+            let user_lock = tx.query_opt(
+                "SELECT session_id FROM session_locks WHERE user_id = $1 LIMIT 1",
+                &[&cleaned_user],
+            )?;
             tx.commit()?;
-            return Ok(SessionLockStatus::Acquired);
+            return Ok(if user_lock.is_some() {
+                SessionLockStatus::UserBusy
+            } else {
+                SessionLockStatus::SystemBusy
+            });
         }
-        let user_lock = tx.query_opt(
-            "SELECT session_id FROM session_locks WHERE user_id = $1 LIMIT 1",
-            &[&cleaned_user],
-        )?;
+        let total: i64 = tx
+            .query_one("SELECT COUNT(*) FROM session_locks", &[])?
+            .get(0);
+        if total > max_sessions {
+            tx.execute(
+                "DELETE FROM session_locks WHERE session_id = $1",
+                &[&cleaned_session],
+            )?;
+            tx.commit()?;
+            return Ok(SessionLockStatus::SystemBusy);
+        }
         tx.commit()?;
-        Ok(if user_lock.is_some() {
-            SessionLockStatus::UserBusy
-        } else {
-            SessionLockStatus::SystemBusy
-        })
+        Ok(SessionLockStatus::Acquired)
     }
 
     fn touch_session_lock(&self, _session_id: &str, _ttl_s: f64) -> Result<()> {
@@ -1957,7 +2028,7 @@ impl StorageBackend for PostgresStorage {
         )?;
         results.insert("artifact_logs".to_string(), artifact as i64);
         let monitor = conn.execute(
-            "DELETE FROM monitor_sessions WHERE COALESCE(updated_time, 0) < $1",
+            "DELETE FROM monitor_sessions WHERE updated_time < $1",
             &[&cutoff],
         )?;
         results.insert("monitor_sessions".to_string(), monitor as i64);

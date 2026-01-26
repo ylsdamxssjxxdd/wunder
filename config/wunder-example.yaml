@@ -126,6 +126,7 @@ storage: # 存储配置
   postgres:
     dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@127.0.0.1:5432/wunder} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
     connect_timeout_s: 5 # PostgreSQL 连接超时（秒）
+    pool_size: ${WUNDER_POSTGRES_POOL_SIZE:-64} # PostgreSQL 连接池大小（并发高时可上调）
 
 observability: # 可观测性配置
   log_level: INFO # 日志级别（DEBUG/INFO/WARNING/ERROR）

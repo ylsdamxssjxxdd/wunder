@@ -13,7 +13,7 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 
 1. 先确定版式与风格（配色、字体、间距、页尺寸）。
 2. 复制技能包内的 `scripts/pptxgenjs-starter.js`（注意文件名）到工作目录并重命名为 `build.js`。
-3. 先用 `读取文件` 查看 `build.js`，仅修改 `OUTPUT_FILE`、`SLIDES` 与样式常量，避免改动 import/require 行。
+3. 先用 `读取文件` 查看 `build.js`，仅修改 `OUTPUT_FILE`、`SLIDES`、`TEMPLATE_NAME` 与样式常量，避免改动 import/require 行。
    - 修改 `SLIDES` 时请使用 `// CONTENT_START` 与 `// CONTENT_END` 之间的完整块作为 `old_string`，不要凭印象替换。
    - 若用户指定文件名，优先改 `OUTPUT_FILE`，避免额外重命名步骤。
    - 使用 `替换文本` 时必须检查 `replaced > 0`；若为 0，请先 `读取文件` 再改用 `编辑文件` 精确修改。
@@ -25,7 +25,8 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 - `OUTPUT_FILE` 控制输出文件名（默认 `output.pptx`）。
 - 脚本直接写入 `OUTPUT_FILE`，请在 `build.js` 所在目录运行 `node build.js`。
 - `SLIDES` 为数组，每一项包含 `title` 与 `bullets`（字符串数组）。
-- 字体与颜色通过常量行配置：`TITLE_FONT`、`BODY_FONT`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`。
+- 模板通过 `TEMPLATE_NAME` 选择：`report`（汇报默认）、`lecture`（授课）、`education`（教育）、`defense`（答辩）、`simple`（通用极简）。
+- 字体与颜色通过常量行配置：`TITLE_FONT`、`BODY_FONT`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`、`BG_COLOR`、`CARD_COLOR`、`MUTED_COLOR`。
 - 修改样式时优先用 `替换文本` 精确替换上述常量行，避免按行号编辑。
 
 ## 失败处理
@@ -39,7 +40,7 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 - 默认设置 `pptx.layout = 'LAYOUT_16x9'`，除非明确需要自定义尺寸。
 - 16:9 标准尺寸为 10 x 5.625 英寸，注意四边留白。
 - 标题使用黑体（脚本默认 SimHei）。
-- 绘制顺序：先背景，再内容块，再文本。
+- 绘制顺序：先背景，再内容块，再文本（模板已预置背景/卡片形状，尽量保留以提升观感）。
 - 文本框保持在边距内，避免裁切。
 
 ## 资源

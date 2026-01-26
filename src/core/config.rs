@@ -347,6 +347,8 @@ pub struct PostgresConfig {
     pub dsn: String,
     #[serde(default)]
     pub connect_timeout_s: u64,
+    #[serde(default, deserialize_with = "deserialize_usize_from_any")]
+    pub pool_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -463,6 +465,57 @@ where
     }
 
     deserializer.deserialize_any(U16Visitor)
+}
+
+fn deserialize_usize_from_any<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UsizeVisitor;
+
+    impl Visitor<'_> for UsizeVisitor {
+        type Value = usize;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("usize or string")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value as usize)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(E::custom("invalid usize value"));
+            }
+            Ok(value as usize)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            value
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| E::custom("invalid usize string"))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+
+    deserializer.deserialize_any(UsizeVisitor)
 }
 
 pub fn load_config() -> Config {

@@ -281,6 +281,7 @@ pub fn build_storage(config: &StorageConfig) -> Result<Arc<dyn StorageBackend>> 
         "postgres" | "postgresql" | "pg" | "auto" => Ok(Arc::new(PostgresStorage::new(
             config.postgres.dsn.clone(),
             config.postgres.connect_timeout_s,
+            config.postgres.pool_size,
         )?)),
         other => Err(anyhow!("未知存储后端: {other}")),
     }

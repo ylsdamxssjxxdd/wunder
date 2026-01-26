@@ -193,14 +193,14 @@
           },
           "samples": [
             {
-              "title": "SSE 流式 curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{base}\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\",\"question\":\"你好\",\"stream\":true}'"
+              "title": "Python（SSE 流式）",
+              "lang": "python",
+              "code": "import requests\n\npayload = {\n    \"user_id\": \"{userId}\",\n    \"question\": \"你好\",\n    \"stream\": True,\n}\n\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"X-API-Key\": \"<your-key>\",\n}\n\nwith requests.post(\"{base}\", json=payload, headers=headers, stream=True) as response:\n    response.raise_for_status()\n    for line in response.iter_lines(decode_unicode=True):\n        if line:\n            print(line)"
             },
             {
-              "title": "非流式 curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{base}\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\",\"question\":\"你好\",\"stream\":false}'"
+              "title": "Python（非流式）",
+              "lang": "python",
+              "code": "import requests\n\npayload = {\n    \"user_id\": \"{userId}\",\n    \"question\": \"你好\",\n    \"stream\": False,\n}\n\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"X-API-Key\": \"<your-key>\",\n}\n\nresponse = requests.post(\"{base}\", json=payload, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
             }
           ]
         },
@@ -267,9 +267,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{base}/system_prompt\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"user_id\":\"{userId}\"}'"
+              "title": "Python",
+              "lang": "python",
+              "code": "import requests\n\npayload = {\n    \"user_id\": \"{userId}\",\n    \"tool_names\": [\"read_file\"],\n}\n\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"X-API-Key\": \"<your-key>\",\n}\n\nresponse = requests.post(\"{base}/system_prompt\", json=payload, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
             }
           ]
         },
@@ -359,9 +359,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl \"{base}/tools?user_id={userId}\" -H \"X-API-Key: <your-key>\""
+              "title": "Python",
+              "lang": "python",
+              "code": "import requests\n\nheaders = {\"X-API-Key\": \"<your-key>\"}\nparams = {\"user_id\": \"{userId}\"}\n\nresponse = requests.get(\"{base}/tools\", params=params, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
             }
           ]
         },
@@ -401,9 +401,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl \"{base}/i18n\" -H \"X-API-Key: <your-key>\""
+              "title": "Python",
+              "lang": "python",
+              "code": "import requests\n\nheaders = {\"X-API-Key\": \"<your-key>\"}\n\nresponse = requests.get(\"{base}/i18n\", headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
             }
           ]
         }
@@ -475,9 +475,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{base}/attachments/convert\" -H \"X-API-Key: <your-key>\" -F \"file=@demo.pdf\""
+              "title": "Python（文件上传）",
+              "lang": "python",
+              "code": "import requests\n\nheaders = {\"X-API-Key\": \"<your-key>\"}\nwith open(\"demo.pdf\", \"rb\") as file:\n    files = {\"file\": file}\n    response = requests.post(\"{base}/attachments/convert\", files=files, headers=headers)\n    response.raise_for_status()\n    print(response.json())"
             }
           ]
         },
@@ -545,9 +545,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{base}/doc2md/convert\" -F \"file=@demo.docx\""
+              "title": "Python（文件上传）",
+              "lang": "python",
+              "code": "import requests\n\nwith open(\"demo.docx\", \"rb\") as file:\n    files = {\"file\": file}\n    response = requests.post(\"{base}/doc2md/convert\", files=files)\n    response.raise_for_status()\n    print(response.json())"
             }
           ]
         }
@@ -805,7 +805,24 @@
           },
           "response": {
             "description": "GET 返回文件内容，PUT/DELETE 返回操作结果。"
-          }
+          },
+          "samples": [
+            {
+              "title": "Python（读取文件）",
+              "lang": "python",
+              "code": "import requests\n\nheaders = {\"X-API-Key\": \"<your-key>\"}\nparams = {\"user_id\": \"{userId}\", \"path\": \"notes/hello.md\"}\n\nresponse = requests.get(\"{base}/workspace/file\", params=params, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
+            },
+            {
+              "title": "Python（写入文件）",
+              "lang": "python",
+              "code": "import requests\n\npayload = {\n    \"user_id\": \"{userId}\",\n    \"path\": \"notes/hello.md\",\n    \"content\": \"# Hello from wunder\",\n}\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"X-API-Key\": \"<your-key>\",\n}\n\nresponse = requests.put(\"{base}/workspace/file\", json=payload, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
+            },
+            {
+              "title": "Python（删除文件）",
+              "lang": "python",
+              "code": "import requests\n\nheaders = {\"X-API-Key\": \"<your-key>\"}\nparams = {\"user_id\": \"{userId}\", \"path\": \"notes/hello.md\"}\n\nresponse = requests.delete(\"{base}/workspace/file\", params=params, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
+            }
+          ]
         },
         {
           "id": "workspace-upload",
@@ -1043,9 +1060,9 @@
           },
           "samples": [
             {
-              "title": "curl",
-              "lang": "bash",
-              "code": "curl -X POST \"{origin}/a2a\" -H \"Content-Type: application/json\" -H \"X-API-Key: <your-key>\" -d '{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"SendMessage\",\"params\":{}}'"
+              "title": "Python（JSON-RPC）",
+              "lang": "python",
+              "code": "import requests\n\npayload = {\n    \"jsonrpc\": \"2.0\",\n    \"id\": \"1\",\n    \"method\": \"SendMessage\",\n    \"params\": {},\n}\n\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"X-API-Key\": \"<your-key>\",\n}\n\nresponse = requests.post(\"{origin}/a2a\", json=payload, headers=headers)\nresponse.raise_for_status()\nprint(response.json())"
             }
           ]
         },

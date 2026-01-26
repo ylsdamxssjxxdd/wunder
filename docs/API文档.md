@@ -1398,6 +1398,7 @@
 - 系统日志、对话历史、工具日志、产物索引、监控记录、会话锁与溢出事件统一写入数据库（优先 PostgreSQL，可选 SQLite）。
 - 存储后端由 `storage.backend` 控制：`auto`（默认，优先 PostgreSQL，不可用则自动降级 SQLite）、`postgres`、`sqlite`。
 - SQLite 使用 `storage.db_path`，PostgreSQL 使用 `storage.postgres.dsn`（支持 `${VAR:-default}` 环境变量占位符）。
+- PostgreSQL 连接池大小由 `storage.postgres.pool_size` 控制（默认 64，可通过 `WUNDER_POSTGRES_POOL_SIZE` 覆盖）。
 - 旧版 `data/historys/` 已停用，不再作为主存储。
 
 ### 4.6 沙盒服务 API
