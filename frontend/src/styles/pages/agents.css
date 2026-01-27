@@ -34,9 +34,12 @@
 
 .agent-card--create {
   border-style: dashed;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
+  text-align: center;
   color: var(--portal-muted);
+  cursor: pointer;
+  gap: 8px;
 }
 
 .agent-card-head {
@@ -57,14 +60,16 @@
   margin-top: 4px;
 }
 
-.agent-card-level {
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  background: rgba(106, 217, 255, 0.18);
-  border: 1px solid rgba(106, 217, 255, 0.4);
-  color: var(--portal-primary);
+.agent-card-plus {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  border: 1px dashed rgba(148, 163, 184, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--portal-muted);
 }
 
 .agent-card-meta {
@@ -126,6 +131,46 @@
   font-size: 12px;
   color: var(--portal-muted);
   margin-top: 6px;
+}
+
+.agent-tool-picker {
+  border-radius: 14px;
+  border: 1px solid var(--portal-border);
+  background: rgba(15, 23, 42, 0.35);
+  padding: 12px;
+}
+
+:root[data-user-theme='light'] .agent-tool-picker {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.agent-tool-loading {
+  font-size: 12px;
+  color: var(--portal-muted);
+  padding: 4px 2px;
+}
+
+.agent-tool-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-tool-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--portal-text);
+  margin-bottom: 6px;
+}
+
+.agent-tool-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.agent-tool-options .el-checkbox {
+  margin-right: 0;
 }
 
 .agent-card .user-tools-btn {

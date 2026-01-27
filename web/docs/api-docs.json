@@ -278,7 +278,7 @@
           "title": "工具清单",
           "method": "GET",
           "path": "/wunder/tools",
-          "summary": "获取可用工具清单与附加提示词。",
+          "summary": "获取可用工具清单。",
           "scope": "管理员/用户",
           "auth": "X-API-Key 或 Authorization: Bearer <key>",
           "contentType": "query",
@@ -347,13 +347,6 @@
                 "required": true,
                 "location": "body",
                 "desc": "共享工具列表。"
-              },
-              {
-                "name": "extra_prompt",
-                "type": "string",
-                "required": false,
-                "location": "body",
-                "desc": "附加提示词文本（可选）。"
               }
             ]
           },
@@ -695,52 +688,6 @@
                 "required": true,
                 "location": "body",
                 "desc": "知识库列表。"
-              }
-            ]
-          }
-        },
-        {
-          "id": "user-tools-extra-prompt",
-          "title": "附加提示词",
-          "method": "POST",
-          "path": "/wunder/user_tools/extra_prompt",
-          "summary": "保存用户附加提示词文本。",
-          "scope": "管理员/用户",
-          "auth": "X-API-Key 或 Authorization: Bearer <key>",
-          "contentType": "application/json",
-          "request": {
-            "fields": [
-              {
-                "name": "user_id",
-                "type": "string",
-                "required": true,
-                "location": "body",
-                "desc": "用户唯一标识。"
-              },
-              {
-                "name": "extra_prompt",
-                "type": "string",
-                "required": true,
-                "location": "body",
-                "desc": "附加提示词文本。"
-              }
-            ]
-          },
-          "response": {
-            "fields": [
-              {
-                "name": "user_id",
-                "type": "string",
-                "required": true,
-                "location": "body",
-                "desc": "用户唯一标识。"
-              },
-              {
-                "name": "extra_prompt",
-                "type": "string",
-                "required": true,
-                "location": "body",
-                "desc": "附加提示词文本。"
               }
             ]
           }

@@ -6,10 +6,10 @@
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml`。
-- MCP 服务容器：`wunder-mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `PERSONNEL_DB_*` 配置。
-- MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理运行时与人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，环境变量优先级更高。
-- 多数据库支持：可使用 `PERSONNEL_DB_TARGETS`（JSON）或 `PERSONNEL_DB_TARGETS_PATH` 配置多个数据库（MySQL/PostgreSQL），工具入参通过 `db_key` 选择目标，默认 key 由 `PERSONNEL_DB_DEFAULT` 指定。
-- 单库类型切换：设置 `PERSONNEL_DB_TYPE=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
+- MCP 服务容器：`wunder-mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
+- MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
+- 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
+- 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
@@ -62,7 +62,7 @@
 
 - 方法：`GET`
 - 入参（Query）：
-  - `user_id`：字符串，可选，用户唯一标识（传入后返回自建/共享工具与附加提示词）
+- `user_id`：字符串，可选，用户唯一标识（传入后返回自建/共享工具）
 - 返回（JSON）：
   - `builtin_tools`：内置工具列表（name/description/input_schema）
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
@@ -71,7 +71,6 @@
   - `knowledge_tools`：字面知识库工具列表（name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
-  - `extra_prompt`：附加提示词文本（与用户自建工具配置关联）
   - `shared_tools_selected`：共享工具勾选列表（可选）
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
@@ -217,7 +216,6 @@
   - `knowledge_tools`：知识库工具列表（name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
-  - `extra_prompt`：附加提示词文本
   - `shared_tools_selected`：共享工具勾选列表（字符串数组）
 - 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
 
@@ -238,17 +236,7 @@
   - `user_id`：用户唯一标识
   - `shared_tools`：共享工具勾选列表
 
-### 4.1.2.13 `/wunder/user_tools/extra_prompt`
-
-- 方法：`POST`
-- 入参（JSON）：
-  - `user_id`：用户唯一标识
-  - `extra_prompt`：附加提示词文本
-- 返回（JSON）：
-  - `user_id`：用户唯一标识
-  - `extra_prompt`：附加提示词文本
-
-### 4.1.2.14 `/wunder/doc2md/convert`
+### 4.1.2.13 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -263,7 +251,7 @@
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
 
-### 4.1.2.15 `/wunder/attachments/convert`
+### 4.1.2.14 `/wunder/attachments/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -276,7 +264,7 @@
   - `warnings`：转换警告列表
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
-### 4.1.2.13 `/wunder/temp_dir/download`
+### 4.1.2.15 `/wunder/temp_dir/download`
 
 - 方法：`GET`
 - 鉴权：无
@@ -284,7 +272,7 @@
 - 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
 - 返回：文件流（`Content-Disposition: attachment`）
 
-### 4.1.2.14 `/wunder/temp_dir/upload`
+### 4.1.2.16 `/wunder/temp_dir/upload`
 
 - 方法：`POST`
 - 鉴权：无
@@ -298,7 +286,7 @@
   - `ok`：是否成功
   - `files`：上传后的文件名列表
 
-### 4.1.2.15 `/wunder/temp_dir/list`
+### 4.1.2.17 `/wunder/temp_dir/list`
 
 - 方法：`GET`
 - 鉴权：无
@@ -307,7 +295,7 @@
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
 
-### 4.1.2.16 `/wunder/temp_dir/remove`
+### 4.1.2.18 `/wunder/temp_dir/remove`
 
 - 方法：`POST`
 - 鉴权：无
@@ -320,7 +308,7 @@
   - `removed`：已删除文件名列表
   - `missing`：未找到的文件名列表
 
-### 4.1.2.17 `/wunder/mcp`
+### 4.1.2.19 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
@@ -337,7 +325,7 @@
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.18 `/wunder/i18n`
+### 4.1.2.20 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -1335,18 +1323,19 @@
 - `GET /wunder/agents`：智能体列表
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/status/icon/created_at/updated_at）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`access_level`（可选）、`status`（可选）、`icon`（可选）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`status`（可选）、`icon`（可选）
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`access_level`/`status`/`icon`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`status`/`icon`（可选）
   - 返回：`data`（同智能体详情）
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户权限等级与管理员覆盖过滤。
+  - 智能体等级由用户等级自动决定，无需传入。
 
 ### 4.1.57 `/wunder/admin/user_accounts/*`
 

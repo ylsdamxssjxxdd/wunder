@@ -2,17 +2,9 @@
 """
 FastMCP server entrypoint for the wunder MCP service.
 
-Environment variables (single DB or default target):
+Database configuration:
   MCP_CONFIG_PATH (optional JSON config file, default: mcp_server/mcp_config.json)
-  PERSONNEL_DB_HOST / MYSQL_HOST (default: 127.0.0.1)
-  PERSONNEL_DB_PORT / MYSQL_PORT (default: 3306)
-  PERSONNEL_DB_USER / MYSQL_USER (default: root)
-  PERSONNEL_DB_PASSWORD / MYSQL_PASSWORD (default: "")
-  PERSONNEL_DB_NAME / MYSQL_DATABASE / MYSQL_DB (required if not provided in tool input)
-  PERSONNEL_DB_TYPE (mysql | postgres, default: mysql)
-  PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE (PostgreSQL alternatives)
-  PERSONNEL_DB_TARGETS / PERSONNEL_DB_TARGETS_PATH (JSON map for multi-db targets)
-  PERSONNEL_DB_DEFAULT (default db_key when using PERSONNEL_DB_TARGETS)
+  Database settings are read from mcp_config.json (single DB or database.targets).
 
 Optional MCP runtime:
   MCP_TRANSPORT (stdio | sse | streamable-http, default: stdio)

@@ -86,8 +86,6 @@ pub struct AvailableToolsResponse {
     pub user_tools: Vec<ToolSpec>,
     pub shared_tools: Vec<SharedToolSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_tools_selected: Option<Vec<String>>,
 }
 

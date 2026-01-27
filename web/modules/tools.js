@@ -128,7 +128,6 @@ const ensureToolSelectionState = () => {
 export const ensureUserToolsState = () => {
   if (!state.userTools || typeof state.userTools !== "object") {
     state.userTools = {
-      extraPrompt: "",
       modal: { activeTab: "mcp" },
       mcp: {
         servers: [],
@@ -154,9 +153,6 @@ export const ensureUserToolsState = () => {
       },
     };
     return;
-  }
-  if (typeof state.userTools.extraPrompt !== "string") {
-    state.userTools.extraPrompt = "";
   }
   if (!state.userTools.modal || typeof state.userTools.modal !== "object") {
     state.userTools.modal = { activeTab: "mcp" };
@@ -367,7 +363,6 @@ export const loadAvailableTools = async () => {
   const knowledge = Array.isArray(result.knowledge_tools) ? result.knowledge_tools : [];
   const userTools = Array.isArray(result.user_tools) ? result.user_tools : [];
   const sharedTools = Array.isArray(result.shared_tools) ? result.shared_tools : [];
-  const extraPrompt = typeof result.extra_prompt === "string" ? result.extra_prompt : "";
   const allNames = [
     ...builtin,
     ...mcp,
@@ -438,14 +433,6 @@ export const loadAvailableTools = async () => {
   state.toolSelection.sharedTools = sharedTools;
   state.toolSelection.loaded = true;
   persistToolSelection();
-  const isEditingExtraPrompt =
-    elements.promptExtraPrompt && document.activeElement === elements.promptExtraPrompt;
-  if (!isEditingExtraPrompt) {
-    state.userTools.extraPrompt = extraPrompt;
-    if (elements.promptExtraPrompt) {
-      elements.promptExtraPrompt.value = extraPrompt;
-    }
-  }
   renderPromptTools();
   state.runtime.promptNeedsRefresh = true;
   schedulePromptReload();

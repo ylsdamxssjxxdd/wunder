@@ -433,8 +433,6 @@ export const elements = {
   promptUserTools: document.getElementById("promptUserTools"),
   promptSharedTools: document.getElementById("promptSharedTools"),
   promptUserToolAdd: document.getElementById("promptUserToolAdd"),
-  promptExtraPrompt: document.getElementById("promptExtraPrompt"),
-  promptExtraPromptStatus: document.getElementById("promptExtraPromptStatus"),
   mcpServerList: document.getElementById("mcpServerList"),
   mcpRefreshAllBtn: document.getElementById("mcpRefreshAllBtn"),
   mcpImportBtn: document.getElementById("mcpImportBtn"),

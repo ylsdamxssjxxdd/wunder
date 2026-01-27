@@ -3,7 +3,6 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import {
   ensureToolSelectionLoaded,
-  schedulePromptReload,
   syncPromptTools,
   ensureUserToolsState,
 } from "./tools.js?v=20251227-13";
@@ -23,7 +22,6 @@ const SAVE_DEBOUNCE_MS = 600;
 
 let mcpSaveTimer = null;
 let skillsSaveTimer = null;
-let extraPromptSaveTimer = null;
 let userKnowledgeEditingIndex = -1;
 
 const updateUserKnowledgeEditorHighlight = () => {
@@ -110,18 +108,11 @@ const clearSaveTimer = (timer) => {
 const clearSaveTimers = () => {
   mcpSaveTimer = clearSaveTimer(mcpSaveTimer);
   skillsSaveTimer = clearSaveTimer(skillsSaveTimer);
-  extraPromptSaveTimer = clearSaveTimer(extraPromptSaveTimer);
 };
 
 const updateModalStatus = (message) => {
   if (elements.userToolSaveStatus) {
     elements.userToolSaveStatus.textContent = message || "";
-  }
-};
-
-const updateExtraPromptStatus = (message) => {
-  if (elements.promptExtraPromptStatus) {
-    elements.promptExtraPromptStatus.textContent = message || "";
   }
 };
 
@@ -175,7 +166,6 @@ export const resetUserToolsState = () => {
   ensureUserToolsState();
   clearSaveTimers();
   userKnowledgeEditingIndex = -1;
-  state.userTools.extraPrompt = "";
   state.userTools.modal.activeTab = "mcp";
   state.userTools.mcp = {
     servers: [],
@@ -201,12 +191,6 @@ export const resetUserToolsState = () => {
     fileContent: "",
     loaded: false,
   };
-  if (elements.promptExtraPrompt) {
-    elements.promptExtraPrompt.value = "";
-  }
-  if (elements.promptExtraPromptStatus) {
-    elements.promptExtraPromptStatus.textContent = "";
-  }
   if (elements.userToolSaveStatus) {
     elements.userToolSaveStatus.textContent = "";
   }
@@ -1939,48 +1923,6 @@ const deleteUserKnowledgeBase = async () => {
   }
 };
 
-// 附加提示词：输入即保存并触发提示词刷新
-const saveExtraPrompt = async () => {
-  const userId = getUserId();
-  if (!userId) {
-    updateExtraPromptStatus(t("common.userIdRequired"));
-    return;
-  }
-  updateExtraPromptStatus(t("userTools.saving"));
-  const payload = {
-    user_id: userId,
-    extra_prompt: state.userTools.extraPrompt || "",
-  };
-  try {
-    const wunderBase = getWunderBase();
-    const endpoint = `${wunderBase}/user_tools/extra_prompt`;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(t("common.requestFailed", { status: response.status }));
-    }
-    updateExtraPromptStatus(t("userTools.autoSaved"));
-    state.runtime.promptNeedsRefresh = true;
-    schedulePromptReload();
-  } catch (error) {
-    updateExtraPromptStatus(t("userTools.saveFailed", { message: error.message }));
-    notify(t("userTools.extraPrompt.saveFailed", { message: error.message }), "error");
-  }
-};
-
-const scheduleExtraPromptSave = () => {
-  if (extraPromptSaveTimer) {
-    clearTimeout(extraPromptSaveTimer);
-  }
-  extraPromptSaveTimer = setTimeout(() => {
-    extraPromptSaveTimer = null;
-    saveExtraPrompt();
-  }, SAVE_DEBOUNCE_MS);
-};
-
 // 初始化自建工具弹窗交互
 export const initUserTools = () => {
   ensureUserToolsState();
@@ -2154,11 +2096,6 @@ export const initUserTools = () => {
   });
   elements.userKnowledgeFileContent?.addEventListener("scroll", syncUserKnowledgeEditorScroll);
   window.addEventListener("resize", updateUserKnowledgeEditorHighlight);
-
-  elements.promptExtraPrompt.addEventListener("input", () => {
-    state.userTools.extraPrompt = elements.promptExtraPrompt.value;
-    scheduleExtraPromptSave();
-  });
 
   ensureToolSelectionLoaded().catch(() => {});
 };

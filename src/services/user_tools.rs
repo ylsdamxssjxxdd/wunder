@@ -58,7 +58,6 @@ pub struct UserKnowledgeBase {
 #[derive(Debug, Clone, Default)]
 pub struct UserToolsPayload {
     pub user_id: String,
-    pub extra_prompt: String,
     pub mcp_servers: Vec<UserMcpServer>,
     pub skills: UserSkillConfig,
     pub knowledge_bases: Vec<UserKnowledgeBase>,
@@ -94,7 +93,6 @@ pub struct UserToolBindings {
     pub skill_sources: HashMap<String, UserSkillSource>,
     pub mcp_servers: HashMap<String, HashMap<String, McpServerConfig>>,
     pub shared_tools_enabled: HashSet<String>,
-    pub extra_prompt: String,
     pub user_version: f64,
     pub shared_version: f64,
 }
@@ -241,17 +239,6 @@ impl UserToolStore {
         self.save_payload(user_id, payload)
     }
 
-    /// 更新用户额外提示词。
-    pub fn update_extra_prompt(
-        &self,
-        user_id: &str,
-        extra_prompt: String,
-    ) -> Result<UserToolsPayload> {
-        let mut payload = self.load_user_tools(user_id);
-        payload.extra_prompt = extra_prompt;
-        self.save_payload(user_id, payload)
-    }
-
     /// 更新用户共享工具选择列表。
     pub fn update_shared_tools(
         &self,
@@ -380,11 +367,6 @@ impl UserToolStore {
             .unwrap_or(fallback_user_id)
             .trim()
             .to_string();
-        let extra_prompt = value
-            .get("extra_prompt")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
         let mcp_servers = normalize_mcp_servers(parse_mcp_servers(&value));
         let skills = normalize_skill_config(
             parse_name_list(value.get("skills").and_then(|item| item.get("enabled"))),
@@ -394,7 +376,6 @@ impl UserToolStore {
         let shared_tools = normalize_name_list(parse_name_list(value.get("shared_tools")));
         UserToolsPayload {
             user_id,
-            extra_prompt,
             mcp_servers,
             skills,
             knowledge_bases,
@@ -413,7 +394,6 @@ impl UserToolStore {
         std::fs::create_dir_all(&folder)?;
         let data = json!({
             "user_id": user_id,
-            "extra_prompt": payload.extra_prompt,
             "mcp": { "servers": payload.mcp_servers.iter().map(user_mcp_server_to_value).collect::<Vec<_>>() },
             "skills": { "enabled": payload.skills.enabled, "shared": payload.skills.shared },
             "knowledge": { "bases": payload.knowledge_bases.iter().map(user_knowledge_base_to_value).collect::<Vec<_>>() },
@@ -866,7 +846,6 @@ impl UserToolManager {
             skill_sources,
             mcp_servers,
             shared_tools_enabled,
-            extra_prompt: user_payload.extra_prompt.clone(),
             user_version: user_payload.version,
             shared_version: self.store.shared_version(),
         }

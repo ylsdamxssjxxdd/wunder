@@ -321,7 +321,8 @@ fn load_messages_from_json() -> Option<HashMap<String, HashMap<String, String>>>
         return None;
     }
     let content = std::fs::read_to_string(path).ok()?;
-    parse_json_messages(&content)
+    let content = content.trim_start_matches('\u{FEFF}');
+    parse_json_messages(content)
 }
 
 fn parse_json_messages(text: &str) -> Option<HashMap<String, HashMap<String, String>>> {

@@ -227,12 +227,6 @@ impl PromptComposer {
             if !skill_block.is_empty() {
                 prompt = format!("{}\n\n{}", prompt.trim_end(), skill_block.trim());
             }
-            if let Some(bindings) = user_tool_bindings {
-                let extra = bindings.extra_prompt.trim();
-                if !extra.is_empty() {
-                    prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
-                }
-            }
             if let Some(extra) = agent_prompt
                 .map(str::trim)
                 .filter(|value| !value.is_empty())

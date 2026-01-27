@@ -28,15 +28,10 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 
 ## 2. MCP 配置文件
 
-默认读取 `mcp_server/mcp_config.json`，可用 `MCP_CONFIG_PATH` 指定路径。环境变量优先级高于配置文件。
+默认读取 `mcp_server/mcp_config.json`，可用 `MCP_CONFIG_PATH` 指定路径。数据库配置仅使用该配置文件；运行参数通过 `MCP_TRANSPORT/MCP_HOST/MCP_PORT` 环境变量配置。
 
 ```json
 {
-  "mcp": {
-    "transport": "streamable-http",
-    "host": "0.0.0.0",
-    "port": 9010
-  },
   "database": {
     "db_type": "mysql",
     "host": "127.0.0.1",
@@ -50,8 +45,7 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 }
 ```
 
-如需多库配置，可在 `database.targets` 中放入与 `PERSONNEL_DB_TARGETS` 同结构的对象，并可为每个目标增加 `description` 说明用途。
-如果多库配置走环境变量/文件，仍可在 `mcp_config.json` 的 `database.targets` 中补充 `description`，系统会自动合并说明。
+如需多库配置，可在 `database.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
 也可以使用 `database.target_descriptions`（或 `database.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
 
 ## 3. MCP 连接示例
@@ -84,10 +78,10 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 ## 5. 宿主机 / 容器网络常见配置
 
 - **MySQL/Postgres 在同一 compose 网络**：
-  - `PERSONNEL_DB_HOST` 可直接填容器服务名（如 `postgres`/`mysql`）。
+  - 在 `mcp_config.json` 的 `database.host` 或 `database.targets.*.host` 中填写容器服务名（如 `postgres`/`mysql`）。
 - **数据库在宿主机**：
-  - Windows/Mac：`host.docker.internal` 可直接用。
-  - Linux：建议在 compose 增加 `extra_hosts: ["host.docker.internal:host-gateway"]`，或直接用宿主机 IP（如 `172.17.0.1`）。
+  - Windows/Mac：`host.docker.internal` 可直接用（配置到 `database.host`）。
+  - Linux：建议直接用宿主机 IP（如 `172.17.0.1`）。
 - **数据库在远程服务器**：直接填外网/内网 IP + 端口，并确保安全组放行。
 
 ## 6. 安全建议

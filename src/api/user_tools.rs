@@ -73,7 +73,6 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/user_tools/shared_tools",
             post(user_shared_tools_update),
         )
-        .route("/wunder/user_tools/extra_prompt", post(user_extra_prompt))
 }
 
 async fn user_mcp_get(
@@ -714,25 +713,6 @@ async fn user_shared_tools_update(
     })))
 }
 
-async fn user_extra_prompt(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<UserExtraPromptRequest>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id;
-    let updated = state
-        .user_tool_store
-        .update_extra_prompt(&user_id, payload.extra_prompt.clone())
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({
-        "data": {
-            "user_id": user_id,
-            "extra_prompt": updated.extra_prompt
-        }
-    })))
-}
-
 fn build_user_tools_summary(
     user_id: &str,
     allowed: &HashSet<String>,
@@ -934,11 +914,6 @@ fn build_user_tools_summary(
         }
     }
 
-    let extra_prompt = if context.bindings.extra_prompt.trim().is_empty() {
-        None
-    } else {
-        Some(context.bindings.extra_prompt.clone())
-    };
     let shared_tool_names: HashSet<String> =
         shared_tools.iter().map(|tool| tool.name.clone()).collect();
     let mut shared_tools_selected = context
@@ -958,7 +933,6 @@ fn build_user_tools_summary(
         knowledge_tools,
         user_tools,
         shared_tools,
-        extra_prompt,
         shared_tools_selected: Some(shared_tools_selected),
     }
 }
@@ -1295,13 +1269,6 @@ struct UserKnowledgeFileUpdate {
     base: String,
     path: String,
     content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserExtraPromptRequest {
-    #[serde(default)]
-    user_id: Option<String>,
-    extra_prompt: String,
 }
 
 #[derive(Debug, Deserialize)]

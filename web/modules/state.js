@@ -105,7 +105,6 @@ export const state = {
     loaded: false,
   },
   userTools: {
-    extraPrompt: "",
     modal: {
       activeTab: "mcp",
     },

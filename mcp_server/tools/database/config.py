@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from ...common.config import get_config_section, get_section_value
-from ...common.env import env_first, parse_int
+from ...common.env import parse_int
 
 DEFAULT_DB_KEY = "default"
 
@@ -159,19 +157,10 @@ def _parse_target_config(key: str, raw: Any) -> DbConfig:
 
 def _load_db_targets_raw() -> dict[str, Any] | None:
     def merge_descriptions(raw_targets: dict[str, Any]) -> dict[str, Any]:
-        config = _get_db_section()
-        config_targets = get_section_value(config, "targets")
         description_map = _get_target_description_map()
-        if not isinstance(config_targets, dict):
-            config_targets = {}
         merged: dict[str, Any] = {}
         for key, value in raw_targets.items():
-            description = None
-            config_value = config_targets.get(key)
-            if isinstance(config_value, dict):
-                description = config_value.get("description") or config_value.get("desc")
-            if not description:
-                description = description_map.get(key)
+            description = description_map.get(key)
             if isinstance(value, str):
                 if description:
                     merged[key] = {"dsn": value, "description": description}
@@ -186,26 +175,13 @@ def _load_db_targets_raw() -> dict[str, Any] | None:
             merged[key] = value
         return merged
 
-    raw = env_first("PERSONNEL_DB_TARGETS")
-    if raw:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("PERSONNEL_DB_TARGETS must be a JSON object")
-        return merge_descriptions(parsed)
-    path = env_first("PERSONNEL_DB_TARGETS_PATH")
-    if path:
-        content = Path(path).read_text(encoding="utf-8")
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise ValueError("PERSONNEL_DB_TARGETS_PATH must point to a JSON object")
-        return merge_descriptions(parsed)
     config = _get_db_section()
     targets = get_section_value(config, "targets")
     if targets is None:
         return None
     if not isinstance(targets, dict):
         raise ValueError("database.targets must be a JSON object")
-    return targets
+    return merge_descriptions(targets)
 
 
 def load_db_targets() -> dict[str, DbConfig] | None:
@@ -217,76 +193,26 @@ def load_db_targets() -> dict[str, DbConfig] | None:
 
 def _single_db_config(database_override: str | None) -> DbConfig:
     config = _get_db_section()
-    engine_raw = env_first(
-        "PERSONNEL_DB_TYPE",
-        default=get_section_value(config, "db_type", "type", "engine") or "mysql",
-    )
+    engine_raw = get_section_value(config, "db_type", "type", "engine") or "mysql"
     engine = _normalize_engine(engine_raw or "mysql")
-    host_keys = [
-        "PERSONNEL_DB_HOST",
-        "PGHOST" if engine == "postgres" else "MYSQL_HOST",
-        "POSTGRES_HOST" if engine == "postgres" else None,
-    ]
-    host = env_first(
-        *[key for key in host_keys if key],
-        default=get_section_value(config, "host") or "127.0.0.1",
-    )
+    host = get_section_value(config, "host") or "127.0.0.1"
     port_default = 5432 if engine == "postgres" else 3306
-    port_keys = [
-        "PERSONNEL_DB_PORT",
-        "PGPORT" if engine == "postgres" else "MYSQL_PORT",
-        "POSTGRES_PORT" if engine == "postgres" else None,
-    ]
     port = parse_int(
-        env_first(
-            *[key for key in port_keys if key],
-            default=str(get_section_value(config, "port") or ""),
-        ),
+        str(get_section_value(config, "port") or ""),
         port_default,
     )
     user_default = "postgres" if engine == "postgres" else "root"
-    user_keys = [
-        "PERSONNEL_DB_USER",
-        "PGUSER" if engine == "postgres" else "MYSQL_USER",
-        "POSTGRES_USER" if engine == "postgres" else None,
-    ]
-    user = env_first(
-        *[key for key in user_keys if key],
-        default=get_section_value(config, "user") or user_default,
-    )
+    user = get_section_value(config, "user") or user_default
 
-    password_keys = [
-        "PERSONNEL_DB_PASSWORD",
-        "PGPASSWORD" if engine == "postgres" else "MYSQL_PASSWORD",
-        "POSTGRES_PASSWORD" if engine == "postgres" else None,
-    ]
-    password = env_first(
-        *[key for key in password_keys if key],
-        default=get_section_value(config, "password") or "",
-    )
+    password = get_section_value(config, "password") or ""
 
-    database_keys = [
-        "PERSONNEL_DB_NAME",
-        "PGDATABASE" if engine == "postgres" else "MYSQL_DATABASE",
-        "POSTGRES_DB" if engine == "postgres" else "MYSQL_DB",
-    ]
-    database = database_override or env_first(
-        *[key for key in database_keys if key],
-        default=get_section_value(config, "database") or "",
-    )
+    database = database_override or get_section_value(config, "database") or ""
     if not database:
         raise ValueError(
-            "Database name is required. Set PERSONNEL_DB_NAME or pass database in tool input."
+            "Database name is required. Set database in mcp_config.json or pass database in tool input."
         )
-    timeout_keys = [
-        "PERSONNEL_DB_CONNECT_TIMEOUT",
-        "PGCONNECT_TIMEOUT" if engine == "postgres" else "MYSQL_CONNECT_TIMEOUT",
-    ]
     connect_timeout = parse_int(
-        env_first(
-            *[key for key in timeout_keys if key],
-            default=str(get_section_value(config, "connect_timeout") or ""),
-        ),
+        str(get_section_value(config, "connect_timeout") or ""),
         5,
     )
     description = get_section_value(config, "description", "desc")
@@ -304,13 +230,7 @@ def _single_db_config(database_override: str | None) -> DbConfig:
 
 def get_default_db_key() -> str:
     config = _get_db_section()
-    return (
-        env_first(
-            "PERSONNEL_DB_DEFAULT",
-            default=get_section_value(config, "default_key") or DEFAULT_DB_KEY,
-        )
-        or DEFAULT_DB_KEY
-    )
+    return get_section_value(config, "default_key") or DEFAULT_DB_KEY
 
 
 def get_db_config(database_override: str | None, db_key: str | None) -> DbConfig:
@@ -327,7 +247,7 @@ def get_db_config(database_override: str | None, db_key: str | None) -> DbConfig
             return replace(selected, database=database_override)
         return selected
     if db_key:
-        raise ValueError("db_key provided but PERSONNEL_DB_TARGETS is not configured.")
+        raise ValueError("db_key provided but database.targets is not configured.")
     return _single_db_config(database_override)
 
 
@@ -366,7 +286,7 @@ def summarize_db_targets(db_key: str | None) -> dict[str, Any]:
     cfg = _single_db_config(None)
     if db_key and db_key != default_key:
         raise ValueError(
-            f"Only '{default_key}' is available without PERSONNEL_DB_TARGETS."
+            f"Only '{default_key}' is available without database.targets."
         )
     summaries = [
         {

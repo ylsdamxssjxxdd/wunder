@@ -1,3 +1,23 @@
+.tool-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.4fr);
+  gap: 18px;
+}
+
+.tool-manager-column {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.tool-manager-section {
+  margin-bottom: 0;
+}
+
+.tool-manager-column--right .user-tools-page {
+  min-height: 420px;
+}
+
 .tool-catalog-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -25,15 +45,6 @@
 .tool-catalog-title {
   font-size: 15px;
   font-weight: 700;
-}
-
-.tool-catalog-level {
-  font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(106, 217, 255, 0.18);
-  border: 1px solid rgba(106, 217, 255, 0.4);
-  color: var(--portal-primary);
 }
 
 .tool-catalog-meta {
@@ -74,6 +85,16 @@
   background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(9, 14, 28, 0.96));
   padding: 16px;
   box-shadow: 0 18px 40px rgba(5, 8, 18, 0.3);
+}
+
+@media (max-width: 1100px) {
+  .tool-manager-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-manager-column--right .user-tools-page {
+    min-height: auto;
+  }
 }
 
 :root[data-user-theme='light'] .user-tools-page {

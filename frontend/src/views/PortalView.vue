@@ -2,118 +2,177 @@
   <div class="portal-shell">
     <UserTopbar
       title="功能广场"
-      subtitle="选择你要使用的能力模块"
+      subtitle="智能体应用入口"
       show-search
+      search-placeholder="搜索智能体应用"
       v-model:search="searchQuery"
-    />
+    >
+      <template #actions>
+        <button class="portal-action-btn" type="button" @click="openCreateDialog">新建智能体应用</button>
+      </template>
+    </UserTopbar>
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
           <div class="portal-hero">
             <div class="portal-hero-title">欢迎回来，{{ userName }}</div>
-            <div class="portal-hero-sub">从这里开始新的任务或查看你的使用概况。</div>
+            <div class="portal-hero-sub">从这里进入或创建你的智能体应用。</div>
           </div>
 
           <section class="portal-section">
             <div class="portal-section-header">
               <div>
-                <div class="portal-section-title">我的智能体</div>
-                <div class="portal-section-desc">快速进入你创建的智能体</div>
+                <div class="portal-section-title">我的智能体应用</div>
+                <div class="portal-section-desc">创建、进入并管理你的智能体应用</div>
               </div>
-              <div class="portal-section-meta">共 {{ agents.length }} 个</div>
+              <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
             </div>
             <div class="agent-grid portal-agent-grid">
+              <button class="agent-card agent-card--create" type="button" @click="openCreateDialog">
+                <div class="agent-card-plus">+</div>
+                <div class="agent-card-title">新建智能体应用</div>
+                <div class="agent-card-desc">快速组装你的专属能力</div>
+              </button>
               <div v-if="agentLoading" class="agent-empty">加载中...</div>
-              <div v-else-if="!agents.length" class="agent-empty">
-                还没有智能体，去创建一个吧。
+              <div v-else-if="!filteredAgents.length" class="agent-empty">
+                {{ normalizedQuery ? '没有匹配的智能体应用，请尝试其他关键词。' : '还没有智能体应用，点击 + 创建一个吧。' }}
               </div>
-              <RouterLink
+              <div
                 v-else
-                v-for="agent in agents"
+                v-for="agent in filteredAgents"
                 :key="agent.id"
                 class="agent-card agent-card--compact"
-                :to="`${basePath}/chat?agent_id=${encodeURIComponent(agent.id)}`"
               >
                 <div class="agent-card-head">
                   <div>
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
                   </div>
-                  <span class="agent-card-level">等级 {{ agent.access_level || '-' }}</span>
                 </div>
                 <div class="agent-card-meta">
                   <span>工具 {{ agent.tool_names?.length || 0 }}</span>
                   <span>更新 {{ formatTime(agent.updated_at) }}</span>
                 </div>
                 <div class="agent-card-actions">
-                  <span class="agent-card-link">进入</span>
+                  <button class="user-tools-btn" type="button" @click="enterAgent(agent)">进入</button>
+                  <button class="user-tools-btn secondary" type="button" @click="openEditDialog(agent)">
+                    编辑
+                  </button>
+                  <button class="user-tools-btn danger" type="button" @click="confirmDelete(agent)">
+                    删除
+                  </button>
                 </div>
-              </RouterLink>
-              <RouterLink
-                v-if="agents.length"
-                class="agent-card agent-card--create"
-                :to="`${basePath}/agents`"
-              >
-                <div class="agent-card-title">新建智能体</div>
-                <div class="agent-card-desc">组装你的专属能力</div>
-              </RouterLink>
-            </div>
-          </section>
-
-          <section v-if="filteredEntries.length" class="portal-section portal-section--flat">
-            <div class="portal-section-header">
-              <div>
-                <div class="portal-section-title">页面入口</div>
-                <div class="portal-section-desc">内部功能与外链入口统一展示</div>
               </div>
-              <div class="portal-section-meta">共 {{ filteredEntries.length }} 项</div>
-            </div>
-            <div class="portal-grid">
-              <PortalCard
-                v-for="item in filteredEntries"
-                :key="item.entryKey"
-                :module="item"
-                :base-path="basePath"
-              />
             </div>
           </section>
-
-          <div v-else class="portal-empty">
-            {{ normalizedQuery ? '没有找到匹配的功能，请尝试其他关键词。' : '暂无可用入口。' }}
-          </div>
         </div>
       </section>
     </main>
+
+    <el-dialog
+      v-model="dialogVisible"
+      class="user-tools-dialog agent-editor-dialog"
+      width="820px"
+      top="6vh"
+      :show-close="false"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="user-tools-header">
+          <div class="user-tools-title">{{ dialogTitle }}</div>
+          <button class="icon-btn" type="button" @click="dialogVisible = false">×</button>
+        </div>
+      </template>
+      <div class="agent-editor-body">
+        <el-form :model="form" label-position="top">
+          <el-form-item label="智能体名称">
+            <el-input v-model="form.name" placeholder="例如：产品分析助手" />
+          </el-form-item>
+          <el-form-item label="描述">
+            <el-input v-model="form.description" placeholder="一句话描述智能体用途" />
+          </el-form-item>
+          <el-form-item label="挂载工具与技能">
+            <div class="agent-tool-picker">
+              <div v-if="toolLoading" class="agent-tool-loading">加载工具中...</div>
+              <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
+                <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
+                  <div class="agent-tool-group-title">{{ group.label }}</div>
+                  <div class="agent-tool-options">
+                    <el-checkbox
+                      v-for="option in group.options"
+                      :key="option.value"
+                      :label="option.value"
+                    >
+                      <span :title="option.description || option.label">{{ option.label }}</span>
+                    </el-checkbox>
+                  </div>
+                </div>
+              </el-checkbox-group>
+              <div v-if="sharedToolsNotice" class="agent-editor-hint">
+                共享工具需要在工具管理中勾选后才能出现在这里。
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item label="智能体提示词（追加）">
+            <el-input
+              v-model="form.system_prompt"
+              type="textarea"
+              :rows="8"
+              placeholder="输入需要追加到基础系统提示词后的内容"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveAgent">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
-import PortalCard from '@/components/portal/PortalCard.vue';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
-import { externalLinkGroups } from '@/config/external-links';
-import { portalEntries } from '@/config/portal';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 
+const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const searchQuery = ref('');
+const dialogVisible = ref(false);
+const saving = ref(false);
+const editingId = ref('');
+const toolCatalog = ref(null);
+const toolLoading = ref(false);
+
+const form = reactive({
+  name: '',
+  description: '',
+  tool_names: [],
+  system_prompt: ''
+});
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
 const userName = computed(() => authStore.user?.username || '访客');
 
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
-const matchesQuery = (item, query) => {
+const matchesQuery = (agent, query) => {
   if (!query) return true;
   const source = [
-    item.title,
-    item.description,
-    ...(item.tags || [])
+    agent?.name,
+    agent?.description,
+    ...(agent?.tool_names || [])
   ]
     .filter(Boolean)
     .join(' ')
@@ -121,40 +180,163 @@ const matchesQuery = (item, query) => {
   return source.includes(query);
 };
 
-const internalEntries = computed(() =>
-  portalEntries.map((item) => ({
-    ...item,
-    entryKey: `internal-${item.id}`
-  }))
-);
-
-const externalEntries = computed(() =>
-  externalLinkGroups.flatMap((group) =>
-    (group.items || []).map((item) => ({
-      ...item,
-      entryKey: `external-${group.id}-${item.id}`,
-      tags: [...(item.tags || []), group.title].filter(Boolean)
-    }))
-  )
-);
-
-const allEntries = computed(() => [...internalEntries.value, ...externalEntries.value]);
-
-const filteredEntries = computed(() => {
-  const query = normalizedQuery.value;
-  if (!query) return allEntries.value;
-  return allEntries.value.filter((item) => matchesQuery(item, query));
-});
-
 onMounted(() => {
   if (!authStore.user) {
     authStore.loadProfile();
   }
   agentStore.loadAgents();
+  loadCatalog();
 });
 
 const agents = computed(() => agentStore.agents || []);
 const agentLoading = computed(() => agentStore.loading);
+const filteredAgents = computed(() => {
+  const query = normalizedQuery.value;
+  if (!query) return agents.value;
+  return agents.value.filter((agent) => matchesQuery(agent, query));
+});
+
+const dialogTitle = computed(() => (editingId.value ? '编辑智能体应用' : '新建智能体应用'));
+
+const normalizeOptions = (list) =>
+  (Array.isArray(list) ? list : []).map((item) => ({
+    label: item.name,
+    value: item.name,
+    description: item.description
+  }));
+
+const toolGroups = computed(() => {
+  const payload = toolCatalog.value || {};
+  const sharedSelected = new Set(
+    Array.isArray(payload.shared_tools_selected) ? payload.shared_tools_selected : []
+  );
+  const sharedTools = (Array.isArray(payload.shared_tools) ? payload.shared_tools : []).filter(
+    (tool) => sharedSelected.has(tool.name)
+  );
+  return [
+    { label: '内置工具', options: normalizeOptions(payload.builtin_tools) },
+    { label: 'MCP 工具', options: normalizeOptions(payload.mcp_tools) },
+    { label: 'A2A 工具', options: normalizeOptions(payload.a2a_tools) },
+    { label: '技能', options: normalizeOptions(payload.skills) },
+    { label: '知识库', options: normalizeOptions(payload.knowledge_tools) },
+    { label: '我的工具', options: normalizeOptions(payload.user_tools) },
+    { label: '共享工具', options: normalizeOptions(sharedTools) }
+  ].filter((group) => group.options.length > 0);
+});
+
+const allToolValues = computed(() => {
+  const values = new Set();
+  toolGroups.value.forEach((group) => {
+    group.options.forEach((option) => values.add(option.value));
+  });
+  return Array.from(values);
+});
+
+const sharedToolsNotice = computed(() => {
+  const payload = toolCatalog.value || {};
+  const shared = Array.isArray(payload.shared_tools) ? payload.shared_tools : [];
+  const selected = Array.isArray(payload.shared_tools_selected) ? payload.shared_tools_selected : [];
+  return shared.length > 0 && selected.length === 0;
+});
+
+const applyDefaultTools = () => {
+  form.tool_names = allToolValues.value.length ? [...allToolValues.value] : [];
+};
+
+const resetForm = () => {
+  form.name = '';
+  form.description = '';
+  form.system_prompt = '';
+  applyDefaultTools();
+  editingId.value = '';
+};
+
+const loadCatalog = async () => {
+  toolLoading.value = true;
+  try {
+    const { data } = await fetchUserToolsCatalog();
+    toolCatalog.value = data?.data || null;
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '工具清单加载失败');
+  } finally {
+    toolLoading.value = false;
+  }
+};
+
+const openCreateDialog = async () => {
+  if (!toolCatalog.value) {
+    await loadCatalog();
+  }
+  resetForm();
+  dialogVisible.value = true;
+};
+
+const openEditDialog = async (agent) => {
+  if (!agent) return;
+  if (!toolCatalog.value) {
+    await loadCatalog();
+  }
+  form.name = agent.name || '';
+  form.description = agent.description || '';
+  form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+  form.system_prompt = agent.system_prompt || '';
+  editingId.value = agent.id;
+  dialogVisible.value = true;
+};
+
+const saveAgent = async () => {
+  const name = String(form.name || '').trim();
+  if (!name) {
+    ElMessage.warning('请填写智能体名称');
+    return;
+  }
+  saving.value = true;
+  try {
+    const payload = {
+      name,
+      description: form.description || '',
+      tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      system_prompt: form.system_prompt || ''
+    };
+    if (editingId.value) {
+      await agentStore.updateAgent(editingId.value, payload);
+      ElMessage.success('智能体已更新');
+    } else {
+      await agentStore.createAgent(payload);
+      ElMessage.success('智能体已创建');
+    }
+    dialogVisible.value = false;
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '保存失败');
+  } finally {
+    saving.value = false;
+  }
+};
+
+const confirmDelete = async (agent) => {
+  if (!agent) return;
+  try {
+    await ElMessageBox.confirm(`确认删除智能体应用 ${agent.name} 吗？`, '提示', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    });
+  } catch (error) {
+    return;
+  }
+  try {
+    await agentStore.deleteAgent(agent.id);
+    ElMessage.success('已删除');
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '删除失败');
+  }
+};
+
+const enterAgent = (agent) => {
+  const agentId = agent?.id;
+  if (!agentId) return;
+  router.push(`${basePath.value}/chat?agent_id=${encodeURIComponent(agentId)}`);
+};
 
 const formatTime = (value) => {
   if (!value) return '-';

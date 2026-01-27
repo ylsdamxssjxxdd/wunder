@@ -55,7 +55,6 @@
   - `knowledge_tools`: knowledge list (name/description/input_schema)
   - `user_tools`: custom tools list
   - `shared_tools`: shared tools list (name/description/input_schema/owner_id)
-  - `extra_prompt`: extra prompt text
 - Notes:
   - Custom/shared tools are named as `user_id@tool` (MCP: `user_id@server@tool`).
 
@@ -161,15 +160,7 @@
   - `ok`, `message`, `path`, `converter`, `warnings`
 - Note: this endpoint currently stores Markdown files only. For non-Markdown files, call `/wunder/doc2md/convert` first and upload the converted Markdown.
 
-### 4.1.2.10 `/wunder/user_tools/extra_prompt`
-
-- Method: `POST`
-- Body:
-  - `user_id`, `extra_prompt`
-- Response:
-  - `user_id`, `extra_prompt`
-
-### 4.1.2.11 `/wunder/doc2md/convert`
+### 4.1.2.10 `/wunder/doc2md/convert`
 
 - Method: `POST`
 - Body (multipart/form-data):
@@ -178,7 +169,7 @@
   - `ok`, `name`, `content`, `converter`, `warnings`
 - Note: no auth required; supports doc2md extensions. Internal attachment conversion uses the same logic.
 
-### 4.1.2.12 `/wunder/attachments/convert`
+### 4.1.2.11 `/wunder/attachments/convert`
 
 - Method: `POST`
 - Body (multipart/form-data):
@@ -187,7 +178,7 @@
   - `ok`, `name`, `content`, `converter`, `warnings`
 - Note: debug UI only (auth required); conversion logic matches `/wunder/doc2md/convert`.
 
-### 4.1.2.13 `/wunder/temp_dir/download`
+### 4.1.2.12 `/wunder/temp_dir/download`
 
 - Method: `GET`
 - Auth: none
@@ -195,7 +186,7 @@
 - Note: downloads files from the project root `temp_dir/` folder.
 - Response: file stream (`Content-Disposition: attachment`)
 
-### 4.1.2.14 `/wunder/temp_dir/upload`
+### 4.1.2.13 `/wunder/temp_dir/upload`
 
 - Method: `POST`
 - Auth: none
@@ -209,7 +200,7 @@
   - `ok`
   - `files`
 
-### 4.1.2.15 `/wunder/temp_dir/list`
+### 4.1.2.14 `/wunder/temp_dir/list`
 
 - Method: `GET`
 - Auth: none
@@ -218,7 +209,7 @@
   - `ok`
   - `files` (`name`/`size`/`updated_time`)
 
-### 4.1.2.16 `/wunder/temp_dir/remove`
+### 4.1.2.15 `/wunder/temp_dir/remove`
 
 - Method: `POST`
 - Auth: none
@@ -231,7 +222,7 @@
   - `removed`
   - `missing`
 
-### 4.1.2.17 `/wunder/mcp`
+### 4.1.2.16 `/wunder/mcp`
 
 - Type: MCP service (streamable-http)
 - Auth: `X-API-Key` or `Authorization: Bearer <key>`
@@ -246,7 +237,7 @@
 - Endpoint config: `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - Timeout: `config.mcp.timeout_s`
 
-### 4.1.2.18 `/wunder/i18n`
+### 4.1.2.17 `/wunder/i18n`
 
 - Method: `GET`
 - Response:

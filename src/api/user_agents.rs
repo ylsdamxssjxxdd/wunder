@@ -102,8 +102,7 @@ async fn create_agent(
         let allowed = compute_allowed_tool_names(&resolved.user, &context);
         tool_names = filter_allowed_tools(&tool_names, &allowed);
     }
-    let access_level =
-        normalize_agent_level(payload.access_level.as_deref(), &resolved.user.access_level);
+    let access_level = normalize_access_level(&resolved.user.access_level);
     let status = normalize_agent_status(payload.status.as_deref());
     let now = now_ts();
     let record = crate::storage::UserAgentRecord {
@@ -167,10 +166,7 @@ async fn update_agent(
         }
         record.tool_names = normalized;
     }
-    if let Some(access_level) = payload.access_level {
-        record.access_level =
-            normalize_agent_level(Some(&access_level), &resolved.user.access_level);
-    }
+    record.access_level = normalize_access_level(&resolved.user.access_level);
     if let Some(status) = payload.status {
         record.status = normalize_agent_status(Some(&status));
     }
@@ -242,16 +238,6 @@ fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec<Str
         .collect()
 }
 
-fn normalize_agent_level(requested: Option<&str>, user_level: &str) -> String {
-    let user_level = normalize_access_level(user_level);
-    let desired = normalize_access_level(requested.unwrap_or(&user_level));
-    if access_level_rank(&desired) > access_level_rank(&user_level) {
-        user_level
-    } else {
-        desired
-    }
-}
-
 fn normalize_agent_status(raw: Option<&str>) -> String {
     let status = raw.unwrap_or("active").trim();
     if status.is_empty() {
@@ -267,14 +253,6 @@ fn normalize_access_level(raw: &str) -> String {
         level
     } else {
         "A".to_string()
-    }
-}
-
-fn access_level_rank(level: &str) -> i32 {
-    match level.trim().to_uppercase().as_str() {
-        "C" => 1,
-        "B" => 2,
-        _ => 3,
     }
 }
 
@@ -306,8 +284,6 @@ struct AgentCreateRequest {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
-    access_level: Option<String>,
-    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     icon: Option<String>,
@@ -323,8 +299,6 @@ struct AgentUpdateRequest {
     system_prompt: Option<String>,
     #[serde(default)]
     tool_names: Option<Vec<String>>,
-    #[serde(default)]
-    access_level: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]

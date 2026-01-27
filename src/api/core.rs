@@ -268,12 +268,8 @@ async fn wunder_tools(
 
     let mut user_tools = Vec::new();
     let mut shared_tools = Vec::new();
-    let mut extra_prompt = None;
     if !user_id.is_empty() {
         let payload = state.user_tool_store.load_user_tools(user_id);
-        if !payload.extra_prompt.trim().is_empty() {
-            extra_prompt = Some(payload.extra_prompt.clone());
-        }
         let mut used_names = blocked_names.clone();
 
         {
@@ -359,7 +355,6 @@ async fn wunder_tools(
         knowledge_tools,
         user_tools,
         shared_tools,
-        extra_prompt,
         shared_tools_selected: None,
     };
     Ok(Json(response))
