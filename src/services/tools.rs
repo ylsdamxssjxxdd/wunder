@@ -1,5 +1,6 @@
 // 内置工具定义与执行入口，保持工具名称与协议一致。
 use crate::a2a_store::{A2aStore, A2aTask};
+use crate::command_utils;
 use crate::config::{is_debug_log_level, A2aServiceConfig, Config, KnowledgeBaseConfig};
 use crate::i18n;
 use crate::knowledge;
@@ -30,7 +31,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 use tokio::time::sleep;
 use tracing::warn;
 use url::Url;
@@ -1364,11 +1364,24 @@ async fn run_command_streaming(
     let chunk_size = resolve_stream_chunk_size(context.config);
     let tool_name = "执行命令".to_string();
     let command_text = command.to_string();
-    let mut cmd = Command::new("bash");
-    cmd.arg("-lc").arg(command).current_dir(cwd);
+    let (mut cmd, used_direct) =
+        if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
+            (cmd, true)
+        } else {
+            (command_utils::build_shell_command(command, cwd), false)
+        };
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
+            let mut cmd = command_utils::build_shell_command(command, cwd);
+            cmd.kill_on_drop(true);
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            cmd.spawn()?
+        }
+        Err(err) => return Err(anyhow!(err)),
+    };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 

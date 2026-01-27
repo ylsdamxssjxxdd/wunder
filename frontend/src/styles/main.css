@@ -3,6 +3,8 @@
 @import "./pages/auth.css";
 @import "./pages/chat-legacy.css";
 @import "./pages/workspace.css";
+@import "./pages/portal.css";
+@import "./pages/profile.css";
 @import "./pages/admin.css";
 @import "./chat/shell.css";
 @import "./chat/history.css";

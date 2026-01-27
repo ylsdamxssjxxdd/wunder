@@ -1738,7 +1738,6 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "enabled": sandbox_enabled,
             "mode": config.sandbox.mode.clone(),
             "endpoint": config.sandbox.endpoint.clone(),
-            "image": config.sandbox.image.clone(),
             "container_root": config.sandbox.container_root.clone(),
             "network": config.sandbox.network.clone(),
             "readonly_rootfs": config.sandbox.readonly_rootfs,
@@ -1854,9 +1853,6 @@ async fn admin_system_update(
                 }
                 if let Some(endpoint) = sandbox.endpoint {
                     config.sandbox.endpoint = endpoint.trim().to_string();
-                }
-                if let Some(image) = sandbox.image {
-                    config.sandbox.image = image.trim().to_string();
                 }
                 if let Some(container_root) = sandbox.container_root {
                     config.sandbox.container_root = container_root.trim().to_string();
@@ -3914,8 +3910,6 @@ struct SystemSandboxUpdateRequest {
     enabled: Option<bool>,
     #[serde(default)]
     endpoint: Option<String>,
-    #[serde(default)]
-    image: Option<String>,
     #[serde(default)]
     container_root: Option<String>,
     #[serde(default)]

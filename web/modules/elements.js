@@ -228,7 +228,6 @@ export const elements = {
   settingsStreamChunkSize: document.getElementById("settingsStreamChunkSize"),
   settingsSandboxEnabled: document.getElementById("settingsSandboxEnabled"),
   settingsSandboxEndpoint: document.getElementById("settingsSandboxEndpoint"),
-  settingsSandboxImage: document.getElementById("settingsSandboxImage"),
   settingsSandboxContainerRoot: document.getElementById("settingsSandboxContainerRoot"),
   settingsSandboxNetwork: document.getElementById("settingsSandboxNetwork"),
   settingsSandboxReadonly: document.getElementById("settingsSandboxReadonly"),

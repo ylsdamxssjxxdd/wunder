@@ -138,7 +138,6 @@ observability: # 可观测性配置
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）
-  image: wunder-x86 # 沙盒容器镜像名称
   endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
   container_root: /workspaces # 容器内项目根目录
   network: bridge # 容器网络模式（bridge/host）

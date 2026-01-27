@@ -356,8 +356,6 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub mode: String,
     #[serde(default)]
-    pub image: String,
-    #[serde(default)]
     pub endpoint: String,
     #[serde(default)]
     pub container_root: String,

@@ -321,7 +321,6 @@ pub async fn execute_tool(
         "deny_globs": deny_globs,
         "allow_commands": allow_commands,
         "container_root": config.sandbox.container_root,
-        "image": config.sandbox.image,
         "network": config.sandbox.network,
         "readonly_rootfs": config.sandbox.readonly_rootfs,
         "idle_ttl_s": config.sandbox.idle_ttl_s,

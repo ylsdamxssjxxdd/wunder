@@ -14,6 +14,7 @@
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
+- 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -477,7 +478,6 @@
   - `sandbox.enabled`：是否启用沙盒执行（由 `sandbox.mode` 推导）
   - `sandbox.mode`：沙盒模式（local/sandbox）
   - `sandbox.endpoint`：沙盒服务地址
-  - `sandbox.image`：沙盒镜像名称
   - `sandbox.container_root`：容器内根目录
   - `sandbox.network`：网络模式
   - `sandbox.readonly_rootfs`：只读根文件系统开关
@@ -1422,7 +1422,6 @@
   - `deny_globs`：字符串数组，拒绝访问的通配规则
   - `allow_commands`：字符串数组，允许执行的命令白名单
   - `container_root`：字符串，容器内项目根路径
-  - `image`：字符串，沙盒镜像
   - `network`：字符串，容器网络模式
   - `readonly_rootfs`：布尔，是否只读根文件系统
   - `idle_ttl_s`：整数，空闲回收秒数

@@ -87,11 +87,16 @@
           </button>
           <ThemeToggle />
           <div class="topbar-user">
-            <div class="user-meta">
+            <button
+              class="user-meta user-meta-btn"
+              type="button"
+              aria-label="进入我的概况"
+              @click="handleOpenProfile"
+            >
               <div class="user-name">{{ currentUser?.username || '访客' }}</div>
               <div class="user-level">等级 {{ currentUser?.access_level || '-' }}</div>
-            </div>
-            <button class="logout-btn" @click="handleLogout">退出</button>
+            </button>
+            <button class="logout-btn" type="button" @click="handleLogout">退出</button>
           </div>
         </div>
       </header>
@@ -514,7 +519,7 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
-import ThemeToggle from '@/components/chat/ThemeToggle.vue';
+import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import UserExtraPromptModal from '@/components/user-tools/UserExtraPromptModal.vue';
 import UserSharedToolsModal from '@/components/user-tools/UserSharedToolsModal.vue';
@@ -651,6 +656,11 @@ const handleCreateSession = () => {
   draftKey.value += 1;
 };
 
+const handleOpenProfile = () => {
+  const base = demoMode.value ? '/demo' : '/app';
+  router.push(`${base}/profile`);
+};
+
 const handleSelectSession = async (sessionId) => {
   await chatStore.loadSessionDetail(sessionId);
   if (isCompactLayout.value) {
@@ -766,6 +776,18 @@ const fetchWorkspaceResource = async (resource) => {
   return promise;
 };
 
+const isWorkspaceResourceMissing = (error) => {
+  const status = error?.response?.status;
+  if (status === 404 || status === 410) return true;
+  const raw =
+    error?.response?.data?.detail ??
+    error?.response?.data?.message ??
+    error?.message ??
+    '';
+  const message = typeof raw === 'string' ? raw : String(raw || '');
+  return /not found|no such|不存在|找不到|已删除|已移除|removed/i.test(message);
+};
+
 const hydrateWorkspaceResourceCard = async (card) => {
   if (!card || card.dataset.workspaceState) return;
   const kind = card.dataset.workspaceKind || 'image';
@@ -798,7 +820,9 @@ const hydrateWorkspaceResourceCard = async (card) => {
     card.classList.add('is-ready');
     if (status) status.textContent = '';
   } catch (error) {
-    if (status) status.textContent = '图片加载失败';
+    if (status) {
+      status.textContent = isWorkspaceResourceMissing(error) ? '该文件已被移除' : '图片加载失败';
+    }
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
   }
@@ -869,7 +893,7 @@ const downloadWorkspaceResource = async (publicPath) => {
     const entry = await fetchWorkspaceResource(resource);
     saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
-    ElMessage.error('资源下载失败');
+    ElMessage.error(isWorkspaceResourceMissing(error) ? '该文件已被移除' : '资源下载失败');
   }
 };
 

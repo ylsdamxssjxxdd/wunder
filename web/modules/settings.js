@@ -36,7 +36,6 @@ const securitySettings = {
 const sandboxSettings = {
   enabled: null,
   endpoint: "",
-  image: "",
   containerRoot: "",
   network: "",
   readonlyRootfs: null,
@@ -247,9 +246,6 @@ const applySandboxSettings = (options = {}) => {
   if (elements.settingsSandboxEndpoint) {
     elements.settingsSandboxEndpoint.value = options.endpoint || "";
   }
-  if (elements.settingsSandboxImage) {
-    elements.settingsSandboxImage.value = options.image || "";
-  }
   if (elements.settingsSandboxContainerRoot) {
     elements.settingsSandboxContainerRoot.value = options.containerRoot || "";
   }
@@ -422,7 +418,6 @@ const applySystemSettings = (payload = {}) => {
   const sandbox = payload.sandbox || {};
   sandboxSettings.enabled = typeof sandbox.enabled === "boolean" ? sandbox.enabled : true;
   sandboxSettings.endpoint = String(sandbox.endpoint || "").trim();
-  sandboxSettings.image = String(sandbox.image || "").trim();
   sandboxSettings.containerRoot = String(sandbox.container_root || "").trim();
   sandboxSettings.network = String(sandbox.network || "").trim();
   sandboxSettings.readonlyRootfs = sandbox.readonly_rootfs === true;
@@ -587,7 +582,6 @@ const buildSystemUpdatePayload = () => {
   if (
     elements.settingsSandboxEnabled ||
     elements.settingsSandboxEndpoint ||
-    elements.settingsSandboxImage ||
     elements.settingsSandboxContainerRoot ||
     elements.settingsSandboxNetwork ||
     elements.settingsSandboxReadonly ||
@@ -603,9 +597,6 @@ const buildSystemUpdatePayload = () => {
     }
     if (elements.settingsSandboxEndpoint) {
       sandbox.endpoint = String(elements.settingsSandboxEndpoint.value || "").trim();
-    }
-    if (elements.settingsSandboxImage) {
-      sandbox.image = String(elements.settingsSandboxImage.value || "").trim();
     }
     if (elements.settingsSandboxContainerRoot) {
       sandbox.container_root = String(elements.settingsSandboxContainerRoot.value || "").trim();

@@ -5,8 +5,10 @@ import AdminLayout from '@/layouts/AdminLayout.vue';
 import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
 import ChatView from '@/views/ChatView.vue';
+import PortalView from '@/views/PortalView.vue';
 import WorkspaceView from '@/views/WorkspaceView.vue';
 import SettingsView from '@/views/SettingsView.vue';
+import ProfileView from '@/views/ProfileView.vue';
 import AdminLoginView from '@/views/AdminLoginView.vue';
 import AdminUsersView from '@/views/AdminUsersView.vue';
 import AdminAgentsView from '@/views/AdminAgentsView.vue';
@@ -18,6 +20,14 @@ const routes = [
   {
     path: '/',
     redirect: '/app/chat'
+  },
+  {
+    path: '/home',
+    redirect: '/app/home'
+  },
+  {
+    path: '/portal',
+    redirect: '/home'
   },
   {
     path: '/login',
@@ -33,10 +43,13 @@ const routes = [
     path: '/app',
     component: UserLayout,
     meta: { requiresAuth: true },
+    redirect: '/app/chat',
     children: [
+      { path: 'home', name: 'home', component: PortalView },
       { path: 'chat', name: 'chat', component: ChatView },
       { path: 'workspace', name: 'workspace', component: WorkspaceView },
-      { path: 'settings', name: 'settings', component: SettingsView }
+      { path: 'settings', name: 'settings', component: SettingsView },
+      { path: 'profile', name: 'profile', component: ProfileView }
     ]
   },
   {
@@ -45,9 +58,11 @@ const routes = [
     meta: { demo: true },
     redirect: '/demo/chat',
     children: [
+      { path: 'home', name: 'demo-home', component: PortalView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: ChatView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: WorkspaceView, meta: { demo: true } },
-      { path: 'settings', name: 'demo-settings', component: SettingsView, meta: { demo: true } }
+      { path: 'settings', name: 'demo-settings', component: SettingsView, meta: { demo: true } },
+      { path: 'profile', name: 'demo-profile', component: ProfileView, meta: { demo: true } }
     ]
   },
   {

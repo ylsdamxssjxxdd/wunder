@@ -134,10 +134,7 @@
 :root[data-user-theme='light'] .chat-shell .theme-toggle {
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.12);
-}
-
-:root[data-user-theme='light'] .chat-shell .theme-toggle-switch {
-  --el-switch-off-color: rgba(15, 23, 42, 0.2);
+  color: var(--chat-text);
 }
 
 :root[data-user-theme='light'] .chat-shell .glass-card {

@@ -1145,7 +1145,6 @@ impl MonitorState {
                     "idle_ttl_s": self.sandbox_config.idle_ttl_s,
                     "timeout_s": self.sandbox_config.timeout_s,
                     "endpoint": self.sandbox_config.endpoint,
-                    "image": self.sandbox_config.image,
                     "resources": {
                         "cpu": self.sandbox_config.resources.cpu,
                         "memory_mb": self.sandbox_config.resources.memory_mb,
@@ -1203,7 +1202,6 @@ impl MonitorState {
             "idle_ttl_s": self.sandbox_config.idle_ttl_s,
             "timeout_s": self.sandbox_config.timeout_s,
             "endpoint": self.sandbox_config.endpoint,
-            "image": self.sandbox_config.image,
             "resources": {
                 "cpu": self.sandbox_config.resources.cpu,
                 "memory_mb": self.sandbox_config.resources.memory_mb,
