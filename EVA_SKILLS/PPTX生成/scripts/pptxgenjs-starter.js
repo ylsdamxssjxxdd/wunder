@@ -2,16 +2,19 @@ const pptxgen = require('pptxgenjs');
 
 const SLIDE_W = 10;
 const SLIDE_H = 5.625;
+const HEADER_H = 0.35; // EDIT_HEADER_HEIGHT
 
-const TITLE_COLOR = '111111'; // EDIT_TITLE_COLOR
+const TITLE_COLOR = 'FFFFFF'; // EDIT_TITLE_COLOR
 const BODY_COLOR = '333333'; // EDIT_BODY_COLOR
 const ACCENT_COLOR = '2F5597'; // EDIT_ACCENT_COLOR
 const BG_COLOR = 'F7F9FC'; // EDIT_BG_COLOR
 const CARD_COLOR = 'FFFFFF'; // EDIT_CARD_COLOR
 const MUTED_COLOR = 'E6EEF7'; // EDIT_MUTED_COLOR
 
-const TITLE_FONT = 'SimHei'; // EDIT_TITLE_FONT
-const BODY_FONT = 'Arial'; // EDIT_BODY_FONT
+const FONT_CN = 'SimHei'; // EDIT_FONT_CN
+const FONT_EN = 'Times New Roman'; // EDIT_FONT_EN
+const TITLE_FONT_SIZE = 24; // EDIT_TITLE_SIZE
+const BODY_FONT_SIZE = 18; // EDIT_BODY_SIZE
 const TEMPLATE_NAME = 'report'; // EDIT_TEMPLATE_NAME: report/lecture/education/defense/simple
 const OUTPUT_FILE = 'output.pptx'; // EDIT_OUTPUT_FILE
 
@@ -23,13 +26,38 @@ const SLIDES = [
   },
   {
     title: 'Slide Title 2',
-    bullets: ['Bullet 1', 'Bullet 2', 'Bullet 3']
+    bullets: ['Bullet 1', 'Bullet 2', 'Bullet 3'],
+    chart: {
+      type: 'bar',
+      data: [
+        {
+          name: 'Series A',
+          labels: ['Q1', 'Q2', 'Q3', 'Q4'],
+          values: [12, 19, 8, 15]
+        },
+        {
+          name: 'Series B',
+          labels: ['Q1', 'Q2', 'Q3', 'Q4'],
+          values: [10, 14, 11, 18]
+        }
+      ],
+      options: {
+        showLegend: true,
+        legendPos: 'r',
+        dataLabelPosition: 'outEnd'
+      },
+      caption: 'Sample chart with two series'
+    }
   }
 ];
 // CONTENT_END
 
 const RECT_SHAPE =
   pptxgen.ShapeType && pptxgen.ShapeType.rect ? pptxgen.ShapeType.rect : 'rect';
+
+const CONTENT_TOP = HEADER_H + 0.35;
+const CONTENT_BOTTOM = 0.45;
+const CONTENT_H = SLIDE_H - CONTENT_TOP - CONTENT_BOTTOM;
 
 const TEMPLATES = {
   report: {
@@ -66,54 +94,54 @@ const TEMPLATES = {
 
 const LAYOUTS = {
   report: {
-    titleX: 1.0,
-    titleY: 1.25,
-    titleW: 7.6,
-    titleH: 0.6,
-    bodyX: 1.0,
-    bodyY: 2.0,
-    bodyW: 7.6,
-    bodyH: 2.6
+    titleX: 0.7,
+    titleY: 0,
+    titleW: 8.6,
+    titleH: HEADER_H,
+    bodyX: 0.7,
+    bodyY: CONTENT_TOP,
+    bodyW: 8.6,
+    bodyH: CONTENT_H
   },
   lecture: {
-    titleX: 1.6,
-    titleY: 0.85,
-    titleW: 7.4,
-    titleH: 0.6,
-    bodyX: 1.6,
-    bodyY: 1.7,
-    bodyW: 7.2,
-    bodyH: 3.1
+    titleX: 1.4,
+    titleY: 0,
+    titleW: 8.1,
+    titleH: HEADER_H,
+    bodyX: 1.4,
+    bodyY: CONTENT_TOP,
+    bodyW: 8.1,
+    bodyH: CONTENT_H
   },
   education: {
-    titleX: 0.9,
-    titleY: 1.25,
-    titleW: 8.2,
-    titleH: 0.6,
-    bodyX: 0.9,
-    bodyY: 2.0,
-    bodyW: 8.2,
-    bodyH: 2.7
+    titleX: 0.7,
+    titleY: 0,
+    titleW: 8.6,
+    titleH: HEADER_H,
+    bodyX: 0.7,
+    bodyY: CONTENT_TOP,
+    bodyW: 8.6,
+    bodyH: CONTENT_H
   },
   defense: {
-    titleX: 0.9,
-    titleY: 0.75,
-    titleW: 8.2,
-    titleH: 0.6,
-    bodyX: 0.9,
-    bodyY: 1.6,
-    bodyW: 8.2,
-    bodyH: 3.0
+    titleX: 0.7,
+    titleY: 0,
+    titleW: 8.6,
+    titleH: HEADER_H,
+    bodyX: 0.7,
+    bodyY: CONTENT_TOP,
+    bodyW: 8.6,
+    bodyH: CONTENT_H
   },
   simple: {
-    titleX: 0.9,
-    titleY: 0.9,
-    titleW: 8.2,
-    titleH: 0.6,
-    bodyX: 0.9,
-    bodyY: 1.8,
-    bodyW: 8.2,
-    bodyH: 3.0
+    titleX: 0.7,
+    titleY: 0,
+    titleW: 8.6,
+    titleH: HEADER_H,
+    bodyX: 0.7,
+    bodyY: CONTENT_TOP,
+    bodyW: 8.6,
+    bodyH: CONTENT_H
   }
 };
 
@@ -135,49 +163,77 @@ function addRect(slide, x, y, w, h, fillColor, lineColor) {
   });
 }
 
+function isCjkChar(char) {
+  return /[\u2E80-\u2FFF\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(
+    char
+  );
+}
+
+function containsCjk(text) {
+  if (!text) {
+    return false;
+  }
+  return /[\u2E80-\u2FFF\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(
+    text
+  );
+}
+
+function resolveRunFont(char, fallbackFont) {
+  if (isCjkChar(char)) {
+    return FONT_CN;
+  }
+  if (/\s/.test(char)) {
+    return fallbackFont || FONT_EN;
+  }
+  return FONT_EN;
+}
+
+function buildTextRuns(text) {
+  if (!text) {
+    return [];
+  }
+  const runs = [];
+  let currentFont = null;
+  let buffer = '';
+  for (const char of text) {
+    const font = resolveRunFont(char, currentFont);
+    if (currentFont && font !== currentFont) {
+      runs.push({ text: buffer, options: { fontFace: currentFont } });
+      buffer = '';
+    }
+    currentFont = font;
+    buffer += char;
+  }
+  if (buffer) {
+    runs.push({ text: buffer, options: { fontFace: currentFont || FONT_EN } });
+  }
+  return runs;
+}
+
 function addBackground(slide, templateName, theme) {
   addRect(slide, 0, 0, SLIDE_W, SLIDE_H, theme.bg);
-  if (templateName === 'report') {
-    addRect(slide, 0, 0, SLIDE_W, 0.75, theme.accent);
-    addRect(slide, 0.6, 1.05, 8.8, 4.0, theme.card, theme.muted);
-    addRect(slide, 0.6, 1.05, 0.12, 4.0, theme.accent);
-    return;
-  }
+  addRect(slide, 0, 0, SLIDE_W, HEADER_H, theme.accent);
   if (templateName === 'lecture') {
     addRect(slide, 0, 0, 1.2, SLIDE_H, theme.accent);
-    addRect(slide, 1.2, 0, 8.8, 0.65, theme.muted);
-    addRect(slide, 1.6, 1.1, 7.8, 3.9, theme.card, theme.muted);
     return;
   }
-  if (templateName === 'education') {
-    addRect(slide, 0, 0, 2.4, 0.9, theme.accent);
-    addRect(slide, 2.4, 0, 7.6, 0.9, theme.muted);
-    addRect(slide, 0.6, 1.2, 8.8, 3.9, theme.card, theme.muted);
-    addRect(slide, 0, 5.15, SLIDE_W, 0.35, theme.muted);
+  if (templateName === 'simple') {
+    addRect(slide, 0, 0, 0.15, SLIDE_H, theme.accent);
     return;
   }
-  if (templateName === 'defense') {
-    addRect(slide, 0, 0.15, SLIDE_W, 0.06, theme.accent);
-    addRect(slide, 9.35, 0, 0.65, 0.65, theme.accent);
-    addRect(slide, 0.7, 1.1, 8.6, 3.6, theme.card, theme.muted);
-    addRect(slide, 0, 5.1, SLIDE_W, 0.4, theme.muted);
-    return;
-  }
-  addRect(slide, 0, 0, 0.15, SLIDE_H, theme.accent);
-  addRect(slide, 0.7, 0.9, 8.6, 3.9, theme.card, theme.muted);
-  addRect(slide, 0.7, 0.85, 8.6, 0.05, theme.muted);
 }
 
 function addTitle(slide, text, layout) {
-  slide.addText(text, {
+  const runs = buildTextRuns(text || '');
+  slide.addText(runs.length ? runs : text || '', {
     x: layout.titleX,
     y: layout.titleY,
     w: layout.titleW,
     h: layout.titleH,
-    fontFace: TITLE_FONT,
-    fontSize: 30,
+    fontSize: TITLE_FONT_SIZE,
     bold: true,
-    color: TITLE_COLOR
+    color: TITLE_COLOR,
+    valign: 'middle'
   });
 }
 
@@ -189,17 +245,77 @@ function addBullets(slide, bullets, layout) {
   if (!lines) {
     return;
   }
-  slide.addText(lines, {
+  const runs = buildTextRuns(lines);
+  slide.addText(runs.length ? runs : lines, {
     x: layout.bodyX,
     y: layout.bodyY,
     w: layout.bodyW,
     h: layout.bodyH,
-    fontFace: BODY_FONT,
-    fontSize: 18,
+    fontSize: BODY_FONT_SIZE,
     color: BODY_COLOR,
     bullet: { type: 'bullet' },
     lineSpacingMultiple: 1.2
   });
+}
+
+function resolveChartType(pptx, type) {
+  if (pptx.ChartType && type && pptx.ChartType[type]) {
+    return pptx.ChartType[type];
+  }
+  return pptx.ChartType ? pptx.ChartType.bar : 'bar';
+}
+
+function addChart(slide, chart, pptx, layout, theme) {
+  if (!chart || !Array.isArray(chart.data) || chart.data.length === 0) {
+    return;
+  }
+  const chartHasCjk =
+    containsCjk(chart.caption) ||
+    chart.data.some((series) => {
+      if (containsCjk(series.name)) {
+        return true;
+      }
+      if (Array.isArray(series.labels)) {
+        return series.labels.some((label) =>
+          Array.isArray(label)
+            ? label.some((value) => containsCjk(value))
+            : containsCjk(label)
+        );
+      }
+      return false;
+    });
+  const chartFont = chartHasCjk ? FONT_CN : FONT_EN;
+  const showLegendDefault = chart.data.length > 1;
+  const baseOptions = {
+    x: layout.bodyX,
+    y: layout.bodyY,
+    w: layout.bodyW,
+    h: layout.bodyH,
+    chartColors: chart.colors || [theme.accent, '6FBF73', 'A7D8AB'],
+    showLegend: showLegendDefault,
+    legendPos: 'r',
+    catAxisLabelColor: BODY_COLOR,
+    valAxisLabelColor: BODY_COLOR,
+    catAxisLabelFontFace: chartFont,
+    valAxisLabelFontFace: chartFont,
+    legendFontFace: chartFont,
+    dataLabelColor: BODY_COLOR,
+    dataLabelFontFace: chartFont,
+    dataLabelFontSize: 11
+  };
+  const options = Object.assign(baseOptions, chart.options || {});
+  slide.addChart(resolveChartType(pptx, chart.type), chart.data, options);
+  if (chart.caption) {
+    const captionRuns = buildTextRuns(chart.caption);
+    slide.addText(captionRuns.length ? captionRuns : chart.caption, {
+      x: options.x,
+      y: options.y + options.h + 0.08,
+      w: options.w,
+      h: 0.3,
+      fontSize: 12,
+      color: BODY_COLOR
+    });
+  }
 }
 
 async function build() {
@@ -214,9 +330,31 @@ async function build() {
 
   SLIDES.forEach((item) => {
     const slide = pptx.addSlide();
+    const hasBullets =
+      Array.isArray(item.bullets) && item.bullets.filter(Boolean).length > 0;
+    const hasChart = !!(
+      item.chart &&
+      Array.isArray(item.chart.data) &&
+      item.chart.data.length > 0
+    );
     addBackground(slide, templateKey, theme);
     addTitle(slide, item.title || '', layout);
+    if (hasBullets && hasChart) {
+      const gap = 0.15;
+      const bulletHeight = Math.max(0.9, layout.bodyH * 0.4);
+      const bulletLayout = Object.assign({}, layout, { bodyH: bulletHeight });
+      const chartLayout = {
+        bodyX: layout.bodyX,
+        bodyY: layout.bodyY + bulletHeight + gap,
+        bodyW: layout.bodyW,
+        bodyH: layout.bodyH - bulletHeight - gap
+      };
+      addBullets(slide, item.bullets || [], bulletLayout);
+      addChart(slide, item.chart, pptx, chartLayout, theme);
+      return;
+    }
     addBullets(slide, item.bullets || [], layout);
+    addChart(slide, item.chart, pptx, layout, theme);
   });
 
   await pptx.writeFile({ fileName: OUTPUT_FILE });

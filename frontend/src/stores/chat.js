@@ -844,6 +844,32 @@ const normalizeInquiryPanelState = (panel) => {
   return { ...normalized, status, selected };
 };
 
+const dismissStaleInquiryPanels = (messages = []) => {
+  if (!Array.isArray(messages)) return false;
+  let hasUserAfter = false;
+  let updated = false;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message) continue;
+    if (message.role === 'user') {
+      hasUserAfter = true;
+      continue;
+    }
+    if (message.role !== 'assistant') {
+      continue;
+    }
+    const panel = normalizeInquiryPanelState(message.questionPanel);
+    if (!panel) continue;
+    if (panel.status === 'pending' && (hasUserAfter || !isMessageRunning(message))) {
+      message.questionPanel = { ...panel, status: 'dismissed' };
+      updated = true;
+      continue;
+    }
+    message.questionPanel = panel;
+  }
+  return updated;
+};
+
 const isQuestionPanelToolName = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return false;
@@ -2069,6 +2095,7 @@ export const useChatStore = defineStore('chat', {
         hydrateMessage(message, workflowState)
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
+      dismissStaleInquiryPanels(messages);
       this.messages = ensureGreetingMessage(messages, { createdAt: sessionCreatedAt });
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]

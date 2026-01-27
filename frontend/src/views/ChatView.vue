@@ -743,6 +743,26 @@ const getFilenameFromHeaders = (headers, fallback) => {
   return match ? match[1] : fallback;
 };
 
+const getFileExtension = (filename) => {
+  const base = String(filename || '').split('?')[0].split('#')[0];
+  const parts = base.split('.');
+  if (parts.length < 2) return '';
+  return parts.pop()?.toLowerCase() || '';
+};
+
+const normalizeWorkspaceImageBlob = (blob, filename, contentType) => {
+  if (!(blob instanceof Blob)) return blob;
+  const extension = getFileExtension(filename);
+  if (extension !== 'svg') return blob;
+  const expectedType = 'image/svg+xml';
+  if (blob.type === expectedType) return blob;
+  const headerType = String(contentType || '').toLowerCase();
+  if (headerType.includes('image/svg')) {
+    return blob.slice(0, blob.size, expectedType);
+  }
+  return blob.slice(0, blob.size, expectedType);
+};
+
 const saveBlobUrl = (url, filename) => {
   const link = document.createElement('a');
   link.href = url;
@@ -763,7 +783,9 @@ const fetchWorkspaceResource = async (resource) => {
   const promise = downloadWunderWorkspaceFile(params)
     .then((response) => {
       const filename = getFilenameFromHeaders(response.headers, resource.filename || 'download');
-      const objectUrl = URL.createObjectURL(response.data);
+      const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'];
+      const blob = normalizeWorkspaceImageBlob(response.data, filename, contentType);
+      const objectUrl = URL.createObjectURL(blob);
       const entry = { objectUrl, filename };
       workspaceResourceCache.set(resource.publicPath, entry);
       return entry;

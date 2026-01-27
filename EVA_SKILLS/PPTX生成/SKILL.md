@@ -24,9 +24,15 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 
 - `OUTPUT_FILE` 控制输出文件名（默认 `output.pptx`）。
 - 脚本直接写入 `OUTPUT_FILE`，请在 `build.js` 所在目录运行 `node build.js`。
-- `SLIDES` 为数组，每一项包含 `title` 与 `bullets`（字符串数组）。
+- `SLIDES` 为数组，每一项包含 `title` 与 `bullets`（字符串数组），可选 `chart` 对象用于图表。
+- `chart.type` 示例：`bar`/`line`/`pie`（对应 PptxGenJS ChartType）。
+- `chart.data` 为 `{ name, labels, values }` 数组。
+- `chart.options` 透传给 `slide.addChart` 的选项（可覆盖位置/图例等）。
+- `chart.colors` 可选颜色数组。
+- `chart.caption` 可选图表说明文字。
+- 同时包含 bullets 与 chart 时脚本自动上下分区，避免重叠。
 - 模板通过 `TEMPLATE_NAME` 选择：`report`（汇报默认）、`lecture`（授课）、`education`（教育）、`defense`（答辩）、`simple`（通用极简）。
-- 字体与颜色通过常量行配置：`TITLE_FONT`、`BODY_FONT`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`、`BG_COLOR`、`CARD_COLOR`、`MUTED_COLOR`。
+- 字体与颜色通过常量行配置：`FONT_CN`、`FONT_EN`、`TITLE_FONT_SIZE`、`BODY_FONT_SIZE`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`、`BG_COLOR`、`CARD_COLOR`、`MUTED_COLOR`、`HEADER_H`。
 - 修改样式时优先用 `替换文本` 精确替换上述常量行，避免按行号编辑。
 
 ## 失败处理
@@ -39,8 +45,10 @@ description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更�
 - 颜色使用不带 `#` 的十六进制（示例：`FF6F61`）。
 - 默认设置 `pptx.layout = 'LAYOUT_16x9'`，除非明确需要自定义尺寸。
 - 16:9 标准尺寸为 10 x 5.625 英寸，注意四边留白。
-- 标题使用黑体（脚本默认 SimHei）。
-- 绘制顺序：先背景，再内容块，再文本（模板已预置背景/卡片形状，尽量保留以提升观感）。
+- 中文默认使用 `FONT_CN`（黑体），英文默认使用 `FONT_EN`（Times New Roman）。
+- 标题位于顶部标题条（高度由 `HEADER_H` 控制），必要时调整 `TITLE_COLOR` 与 `TITLE_FONT_SIZE` 保证对比度。
+- 模板默认使用全幅内容区，不再额外绘制内嵌卡片，以避免挤压可用空间。
+- 绘制顺序：先背景，再内容块，再文本，避免遮挡与裁切。
 - 文本框保持在边距内，避免裁切。
 
 ## 资源

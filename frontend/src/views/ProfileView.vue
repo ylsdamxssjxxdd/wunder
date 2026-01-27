@@ -4,37 +4,54 @@
     <main class="profile-content">
       <section class="profile-hero">
         <div class="profile-card profile-identity">
-          <div class="profile-avatar">{{ userInitials }}</div>
-          <div class="profile-info">
-            <div class="profile-name">{{ userName }}</div>
-            <div class="profile-id">ID：{{ userId }}</div>
-            <div class="profile-tags">
-              <span class="profile-tag">等级 {{ userLevel }}</span>
-              <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
+          <div class="profile-identity-main">
+            <div class="profile-avatar">{{ userInitials }}</div>
+            <div class="profile-info">
+              <div class="profile-name">{{ userName }}</div>
+              <div class="profile-id">ID：{{ userId }}</div>
+              <div class="profile-tags">
+                <span class="profile-tag">等级 {{ userLevel }}</span>
+                <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
+              </div>
             </div>
           </div>
-          <div class="profile-identity-actions">
-            <router-link :to="`${basePath}/chat`" class="profile-action-btn primary">
-              进入聊天
-            </router-link>
-          </div>
-        </div>
-        <div class="profile-card profile-stats">
-          <div class="profile-stat">
-            <div class="profile-stat-label">会话数量</div>
-            <div class="profile-stat-value">{{ sessionCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">近 7 天会话</div>
-            <div class="profile-stat-value">{{ recentSessionCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">当前会话消息</div>
-            <div class="profile-stat-value">{{ conversationMessageCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">最近活跃</div>
-            <div class="profile-stat-value">{{ lastActiveTime }}</div>
+          <div class="profile-identity-stats">
+            <div class="profile-stat">
+              <div class="profile-stat-label">会话数量</div>
+              <div class="profile-stat-value">{{ sessionCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">近 7 天会话</div>
+              <div class="profile-stat-value">{{ recentSessionCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">当前会话消息</div>
+              <div class="profile-stat-value">{{ conversationMessageCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">最近活跃</div>
+              <div class="profile-stat-value">{{ lastActiveTime }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">用户消息</div>
+              <div class="profile-stat-value">{{ userMessageCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">助手消息</div>
+              <div class="profile-stat-value">{{ assistantMessageCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">工具调用</div>
+              <div class="profile-stat-value">{{ toolCallCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">上下文占用</div>
+              <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">累计 Token</div>
+              <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
+            </div>
           </div>
         </div>
       </section>
@@ -43,46 +60,15 @@
         <div class="profile-section-header">
           <div>
             <div class="profile-section-title">对话统计</div>
-            <div class="profile-section-desc">基于已加载会话与消息的统计信息</div>
+            <div class="profile-section-desc">基于已加载会话与消息的图表统计</div>
           </div>
         </div>
-        <div class="profile-stats-layout">
-          <div class="profile-quota-panel">
-            <div class="profile-stat profile-quota-card">
-              <div class="profile-stat-label">今日额度</div>
-              <div class="profile-quota-ring" :class="{ 'is-empty': !quotaAvailable }" :style="quotaRingStyle">
-                <div class="profile-quota-center">
-                  <div class="profile-quota-value">{{ quotaPercentText }}</div>
-                  <div class="profile-quota-meta">已用</div>
-                </div>
-              </div>
-              <div class="profile-quota-summary">
-                {{ quotaUsedText }} / {{ quotaTotalText }}
-              </div>
-            </div>
-          </div>
-          <div class="profile-metrics-panel">
-            <div class="profile-metrics-grid">
-              <div class="profile-stat">
-                <div class="profile-stat-label">用户消息</div>
-                <div class="profile-stat-value">{{ userMessageCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">助手消息</div>
-                <div class="profile-stat-value">{{ assistantMessageCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">工具调用</div>
-                <div class="profile-stat-value">{{ toolCallCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">上下文占用</div>
-                <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">累计 Token</div>
-                <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
-              </div>
+        <div class="profile-charts">
+          <div class="profile-chart-quota">
+            <div class="profile-chart-label">今日额度</div>
+            <div class="profile-quota-ring" :class="{ 'is-empty': !quotaAvailable }" :style="quotaRingStyle"></div>
+            <div class="profile-chart-summary">
+              {{ quotaUsedText }} / {{ quotaTotalText }}
             </div>
           </div>
         </div>
@@ -105,8 +91,6 @@ const authStore = useAuthStore();
 const chatStore = useChatStore();
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
-const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
-
 const userName = computed(() => authStore.user?.username || '访客');
 const userId = computed(() => authStore.user?.id || '-');
 const userLevel = computed(() => authStore.user?.access_level || '-');
@@ -191,10 +175,6 @@ const quotaUsedText = computed(() =>
 
 const quotaTotalText = computed(() =>
   Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
-);
-
-const quotaPercentText = computed(() =>
-  quotaAvailable.value ? `${Math.round(quotaPercent.value * 100)}%` : '-'
 );
 
 const contextTokensLatest = computed(() => {
