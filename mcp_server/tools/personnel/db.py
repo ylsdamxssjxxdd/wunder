@@ -1,153 +1,16 @@
-#!/usr/bin/env python3
-"""
-Sample FastMCP server that exposes a personnel MySQL database.
-
-Features:
-- Return database schema (tables + columns)
-- Execute SQL and return results
-
-Environment variables (choose either PERSONNEL_DB_* or MYSQL_*):
-  PERSONNEL_DB_HOST / MYSQL_HOST (default: 127.0.0.1)
-  PERSONNEL_DB_PORT / MYSQL_PORT (default: 3306)
-  PERSONNEL_DB_USER / MYSQL_USER (default: root)
-  PERSONNEL_DB_PASSWORD / MYSQL_PASSWORD (default: "")
-  PERSONNEL_DB_NAME / MYSQL_DATABASE / MYSQL_DB (required if not provided in tool input)
-
-Optional MCP runtime:
-  MCP_TRANSPORT (stdio | sse | streamable-http, default: stdio)
-  MCP_HOST (default: 127.0.0.1)
-  MCP_PORT (default: 8000)
-
-Dependencies:
-  pip install fastmcp pymysql
-"""
-
 from __future__ import annotations
 
-import asyncio
 import base64
-import os
-import time
-from dataclasses import dataclass
 from datetime import date, datetime, time as time_type, timedelta
 from decimal import Decimal
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Sequence
 
-from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field
+from .config import DbConfig
 
 READ_ONLY_PREFIXES = ("select", "show", "describe", "explain", "with")
-MAX_TABLE_FILTERS = 50
 
 
-@dataclass(frozen=True)
-class DbConfig:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
-    connect_timeout: int
-
-
-class SchemaInput(BaseModel):
-    """Input for personnel_get_schema."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    database: str | None = Field(
-        default=None,
-        description="Database name. If omitted, uses PERSONNEL_DB_NAME/MYSQL_DATABASE.",
-        min_length=1,
-        max_length=128,
-    )
-    tables: list[str] | None = Field(
-        default=None,
-        description="Optional table whitelist to reduce schema size.",
-        max_items=MAX_TABLE_FILTERS,
-    )
-
-
-class QueryInput(BaseModel):
-    """Input for personnel_query."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    sql: str = Field(
-        ...,
-        description="SQL statement to execute.",
-        min_length=1,
-        max_length=10000,
-    )
-    params: list[str | int | float | bool | None] | None = Field(
-        default=None,
-        description="Optional parameters for the SQL statement.",
-    )
-    database: str | None = Field(
-        default=None,
-        description="Database name. If omitted, uses PERSONNEL_DB_NAME/MYSQL_DATABASE.",
-        min_length=1,
-        max_length=128,
-    )
-    max_rows: int = Field(
-        default=200,
-        description="Max rows to return for result sets.",
-        ge=1,
-        le=5000,
-    )
-    allow_write: bool = Field(
-        default=False,
-        description="Allow non read-only SQL when true.",
-    )
-
-
-def _env_first(*keys: str, default: str | None = None) -> str | None:
-    for key in keys:
-        value = os.getenv(key)
-        if value:
-            return value
-    return default
-
-
-def _parse_int(value: str | None, fallback: int) -> int:
-    if not value:
-        return fallback
-    try:
-        return int(value)
-    except ValueError:
-        return fallback
-
-
-def _get_db_config(database_override: str | None) -> DbConfig:
-    host = _env_first("PERSONNEL_DB_HOST", "MYSQL_HOST", default="127.0.0.1")
-    port = _parse_int(_env_first("PERSONNEL_DB_PORT", "MYSQL_PORT"), 3306)
-    user = _env_first("PERSONNEL_DB_USER", "MYSQL_USER", default="root")
-    password = _env_first("PERSONNEL_DB_PASSWORD", "MYSQL_PASSWORD", default="")
-    database = database_override or _env_first(
-        "PERSONNEL_DB_NAME",
-        "MYSQL_DATABASE",
-        "MYSQL_DB",
-        default="",
-    )
-    if not database:
-        raise ValueError(
-            "Database name is required. Set PERSONNEL_DB_NAME or pass database in tool input."
-        )
-    connect_timeout = _parse_int(
-        _env_first("PERSONNEL_DB_CONNECT_TIMEOUT", "MYSQL_CONNECT_TIMEOUT"),
-        5,
-    )
-    return DbConfig(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        connect_timeout=connect_timeout,
-    )
-
-
-def _open_connection(cfg: DbConfig):
+def open_connection(cfg: DbConfig):
     try:
         import pymysql
     except ImportError as exc:  # pragma: no cover
@@ -163,6 +26,10 @@ def _open_connection(cfg: DbConfig):
         autocommit=True,
         connect_timeout=cfg.connect_timeout,
     )
+
+
+def _quote_identifier(name: str) -> str:
+    return f"`{name}`"
 
 
 def _strip_sql_comments(sql: str) -> str:
@@ -216,8 +83,8 @@ def _normalize_row(row: Sequence[Any], columns: Sequence[str]) -> dict[str, Any]
     return {col: _normalize_value(val) for col, val in zip(columns, row)}
 
 
-def _fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]:
-    connection = _open_connection(cfg)
+def fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]:
+    connection = open_connection(cfg)
     try:
         with connection.cursor() as cursor:
             filtered_tables = [t for t in (tables or []) if t]
@@ -293,7 +160,151 @@ def _fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any
         connection.close()
 
 
-def _execute_sql_sync(
+def list_tables_sync(cfg: DbConfig, pattern: str | None, limit: int) -> dict[str, Any]:
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            query = (
+                "SELECT TABLE_NAME, TABLE_COMMENT, ENGINE, TABLE_ROWS "
+                "FROM information_schema.tables "
+                "WHERE table_schema = %s"
+            )
+            params: list[Any] = [cfg.database]
+            if pattern:
+                query += " AND TABLE_NAME LIKE %s"
+                params.append(pattern)
+            query += " ORDER BY TABLE_NAME LIMIT %s"
+            params.append(limit)
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        tables = [
+            {
+                "name": row[0],
+                "comment": row[1],
+                "engine": row[2],
+                "rows_estimate": _normalize_value(row[3]),
+            }
+            for row in rows
+        ]
+        return {
+            "ok": True,
+            "database": cfg.database,
+            "count": len(tables),
+            "tables": tables,
+        }
+    finally:
+        connection.close()
+
+
+def describe_table_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            query = (
+                "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, "
+                "COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT "
+                "FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s "
+                "ORDER BY ORDINAL_POSITION"
+            )
+            cursor.execute(query, (cfg.database, table))
+            rows = cursor.fetchall()
+
+        columns = [
+            {
+                "name": row[0],
+                "type": row[1],
+                "nullable": row[2] == "YES",
+                "key": row[3],
+                "default": _normalize_value(row[4]),
+                "extra": row[5],
+                "comment": row[6],
+            }
+            for row in rows
+        ]
+        if not columns:
+            return {
+                "ok": False,
+                "error": f"Table '{table}' not found.",
+                "database": cfg.database,
+                "table": table,
+            }
+        return {
+            "ok": True,
+            "database": cfg.database,
+            "table": table,
+            "columns": columns,
+        }
+    finally:
+        connection.close()
+
+
+def preview_rows_sync(
+    cfg: DbConfig,
+    table: str,
+    columns: list[str] | None,
+    limit: int,
+    order_by: str | None,
+    order_desc: bool,
+) -> dict[str, Any]:
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            column_sql = "*"
+            if columns:
+                column_sql = ", ".join(_quote_identifier(col) for col in columns)
+            sql = f"SELECT {column_sql} FROM {_quote_identifier(table)}"
+            if order_by:
+                direction = "DESC" if order_desc else "ASC"
+                sql += f" ORDER BY {_quote_identifier(order_by)} {direction}"
+            sql += " LIMIT %s"
+            cursor.execute(sql, (limit,))
+            rows = cursor.fetchall()
+            columns_out = [col[0] for col in cursor.description] if cursor.description else []
+
+        result_rows = [_normalize_row(row, columns_out) for row in rows]
+        return {
+            "ok": True,
+            "database": cfg.database,
+            "table": table,
+            "columns": columns_out,
+            "rows": result_rows,
+            "row_count": len(result_rows),
+        }
+    finally:
+        connection.close()
+
+
+def count_rows_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            sql = f"SELECT COUNT(*) AS total FROM {_quote_identifier(table)}"
+            cursor.execute(sql)
+            row = cursor.fetchone()
+        count_value = row[0] if row else 0
+        return {
+            "ok": True,
+            "database": cfg.database,
+            "table": table,
+            "count": _normalize_value(count_value),
+        }
+    finally:
+        connection.close()
+
+
+def ping_db_sync(cfg: DbConfig) -> None:
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    finally:
+        connection.close()
+
+
+def execute_sql_sync(
     cfg: DbConfig,
     sql: str,
     params: list[str | int | float | bool | None] | None,
@@ -308,7 +319,7 @@ def _execute_sql_sync(
             "error": "Only read-only SQL is allowed. Set allow_write=true to override.",
         }
 
-    connection = _open_connection(cfg)
+    connection = open_connection(cfg)
     try:
         with connection.cursor() as cursor:
             cursor.execute(sql, params or ())
@@ -337,73 +348,3 @@ def _execute_sql_sync(
             }
     finally:
         connection.close()
-
-
-async def _run_in_thread(func, *args, **kwargs):
-    return await asyncio.to_thread(func, *args, **kwargs)
-
-
-MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").lower()
-MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
-MCP_PORT = _parse_int(os.getenv("MCP_PORT"), 8000)
-
-mcp = FastMCP("personnel_mcp", host=MCP_HOST, port=MCP_PORT)
-
-
-@mcp.tool(
-    name="personnel_get_schema",
-    annotations={
-        "title": "Get Personnel DB Schema",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    },
-)
-async def personnel_get_schema(params: SchemaInput) -> dict[str, Any]:
-    """Return tables and columns from the personnel database schema."""
-    try:
-        cfg = _get_db_config(params.database)
-        return await _run_in_thread(_fetch_schema_sync, cfg, params.tables)
-    except Exception as exc:  # pragma: no cover
-        return {"ok": False, "error": str(exc)}
-
-
-@mcp.tool(
-    name="personnel_query",
-    annotations={
-        "title": "Query Personnel Database",
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": False,
-        "openWorldHint": False,
-    },
-)
-async def personnel_query(params: QueryInput) -> dict[str, Any]:
-    """Execute SQL against the personnel database and return results."""
-    start = time.perf_counter()
-    try:
-        cfg = _get_db_config(params.database)
-        result = await _run_in_thread(
-            _execute_sql_sync,
-            cfg,
-            params.sql,
-            params.params,
-            params.max_rows,
-            params.allow_write,
-        )
-        result["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 2)
-        return result
-    except Exception as exc:  # pragma: no cover
-        return {"ok": False, "error": str(exc)}
-
-
-def _validate_transport(value: str) -> Literal["stdio", "sse", "streamable-http"]:
-    if value not in ("stdio", "sse", "streamable-http"):
-        raise ValueError("MCP_TRANSPORT must be stdio, sse, or streamable-http.")
-    return value  # type: ignore[return-value]
-
-
-if __name__ == "__main__":
-    transport = _validate_transport(MCP_TRANSPORT)
-    mcp.run(transport=transport)

@@ -74,6 +74,33 @@ services:
       retries: 20
     restart: always
 
+  wunder-mcp:
+    image: wunder-x86
+    platform: linux/amd64
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    working_dir: /app
+    volumes:
+      - ./:/app
+    ports:
+      - "${MCP_PORT:-9010}:${MCP_PORT:-9010}"
+    environment:
+      - TZ=Asia/Shanghai
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=${MCP_PORT:-9010}
+      - PERSONNEL_DB_HOST=${PERSONNEL_DB_HOST:-host.docker.internal}
+      - PERSONNEL_DB_PORT=${PERSONNEL_DB_PORT:-3306}
+      - PERSONNEL_DB_USER=${PERSONNEL_DB_USER:-root}
+      - PERSONNEL_DB_PASSWORD=${PERSONNEL_DB_PASSWORD:-}
+      - PERSONNEL_DB_NAME=${PERSONNEL_DB_NAME:-personnel}
+      - PERSONNEL_DB_DEFAULT=${PERSONNEL_DB_DEFAULT:-default}
+      - PERSONNEL_DB_TARGETS=${PERSONNEL_DB_TARGETS:-}
+      - PERSONNEL_DB_TARGETS_PATH=${PERSONNEL_DB_TARGETS_PATH:-}
+    command: ["bash", "-lc", "python3 -m mcp_server.main"]
+    restart: always
+
   postgres:
     image: postgres:16
     privileged: true
