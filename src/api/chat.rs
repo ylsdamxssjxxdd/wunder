@@ -1154,6 +1154,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "question_panel"
             | "llm_output_delta"
             | "llm_output"
+            | "context_usage"
             | "quota_usage"
             | "round_usage"
             | "final"

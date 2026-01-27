@@ -22,6 +22,8 @@ const buildMessageStats = () => ({
   prefill_duration_s: null,
   decode_duration_s: null,
   quotaConsumed: 0,
+  quotaSnapshot: null,
+  contextTokens: null,
   interaction_start_ms: null,
   interaction_end_ms: null,
   interaction_duration_s: null
@@ -33,12 +35,41 @@ const normalizeStatsCount = (value) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
+const parseOptionalCount = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
 const normalizeQuotaConsumed = (value) => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return normalizeStatsCount(value.consumed ?? value.used ?? value.count ?? 0);
   }
   return normalizeStatsCount(value);
 };
+
+const normalizeQuotaSnapshot = (value) => {
+  if (!value || typeof value !== 'object') return null;
+  const daily = parseOptionalCount(
+    value.daily_quota ?? value.dailyQuota ?? value.daily ?? value.quota ?? value.total
+  );
+  const used = parseOptionalCount(
+    value.used ?? value.consumed ?? value.count ?? value.usage
+  );
+  const remaining = parseOptionalCount(
+    value.remaining ?? value.left ?? value.quota_remaining ?? value.remain
+  );
+  const date = value.date ?? value.quota_date ?? value.quotaDate ?? '';
+  if (daily === null && used === null && remaining === null && !date) return null;
+  return {
+    daily,
+    used,
+    remaining,
+    date: date ? String(date) : ''
+  };
+};
+
+const normalizeContextTokens = (value) => parseOptionalCount(value);
 
 const normalizeDurationValue = (value) => {
   if (value === null || value === undefined) return null;
@@ -89,6 +120,17 @@ const normalizeMessageStats = (stats) => {
   if (!stats || typeof stats !== 'object') {
     return null;
   }
+  const quotaSnapshot = normalizeQuotaSnapshot(
+    stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
+  );
+  const contextTokens = normalizeContextTokens(
+    stats.contextTokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      stats.contextUsage ??
+      stats.context_usage?.context_tokens ??
+      stats.context_usage?.contextTokens
+  );
   const interactionStartMs = normalizeInteractionTimestamp(
     stats.interaction_start_ms ?? stats.interactionStartMs ?? stats.interaction_start ?? stats.started_at
   );
@@ -115,6 +157,8 @@ const normalizeMessageStats = (stats) => {
     quotaConsumed: normalizeQuotaConsumed(
       stats.quotaConsumed ?? stats.quota_consumed ?? stats.quota
     ),
+    quotaSnapshot,
+    contextTokens,
     interaction_start_ms: interactionStartMs,
     interaction_end_ms: interactionEndMs,
     interaction_duration_s: rangedDuration ?? interactionDuration
@@ -203,6 +247,11 @@ const mergeMessageStats = (base, incoming) => {
     normalizeDurationValue(
       right.interaction_duration_s ?? left.interaction_duration_s
     );
+  const quotaSnapshot = right.quotaSnapshot || left.quotaSnapshot;
+  const contextTokens =
+    right.contextTokens === null || right.contextTokens === undefined
+      ? left.contextTokens
+      : right.contextTokens;
   return {
     toolCalls: Math.max(left.toolCalls, right.toolCalls),
     usage: right.usage || left.usage,
@@ -215,6 +264,8 @@ const mergeMessageStats = (base, incoming) => {
         ? left.decode_duration_s
         : right.decode_duration_s,
     quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
+    quotaSnapshot,
+    contextTokens,
     interaction_start_ms: startMs,
     interaction_end_ms: endMs,
     interaction_duration_s: duration
@@ -1281,6 +1332,25 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const increment = normalizeStatsCount(rawIncrement);
     const delta = increment > 0 ? increment : 1;
     stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + delta;
+    const snapshot = normalizeQuotaSnapshot(payload);
+    if (snapshot) {
+      stats.quotaSnapshot = snapshot;
+    }
+  };
+
+  const updateContextUsage = (payload) => {
+    if (!stats) return;
+    const contextTokens = normalizeContextTokens(
+      payload?.context_tokens ??
+        payload?.contextTokens ??
+        payload?.context ??
+        payload?.contextUsage ??
+        payload?.context_usage?.context_tokens ??
+        payload?.context_usage?.contextTokens
+    );
+    if (contextTokens !== null) {
+      stats.contextTokens = contextTokens;
+    }
   };
 
   const registerToolItem = (toolName, itemId) => {
@@ -1788,6 +1858,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.prefill_duration_s ?? payload?.prefill_duration_s,
           data?.decode_duration_s ?? payload?.decode_duration_s
         );
+        break;
+      }
+      case 'context_usage': {
+        updateContextUsage(data ?? payload ?? {});
         break;
       }
       case 'quota_usage': {

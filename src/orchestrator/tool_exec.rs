@@ -207,14 +207,16 @@ impl Orchestrator {
         let duration_ms = started_at.elapsed().as_millis() as i64;
         let mut truncated = truncate_tool_result_data(
             &mut result.data,
-            TOOL_RESULT_MAX_CHARS,
-            TOOL_RESULT_TRUNCATION_SUFFIX,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
         );
         if result.error.len() > TOOL_RESULT_MAX_CHARS {
             result.error = truncate_tool_result_string(
                 &result.error,
-                TOOL_RESULT_MAX_CHARS,
-                TOOL_RESULT_TRUNCATION_SUFFIX,
+                TOOL_RESULT_HEAD_CHARS,
+                TOOL_RESULT_TAIL_CHARS,
+                TOOL_RESULT_TRUNCATION_MARKER,
             );
             truncated = true;
         }
@@ -776,30 +778,37 @@ fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
     }
 }
 
-fn truncate_tool_result_string(value: &str, max_chars: usize, suffix: &str) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
+fn truncate_tool_result_string(
+    value: &str,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+) -> String {
     let value_len = value.chars().count();
-    if value_len <= max_chars {
+    if value_len <= head_chars + tail_chars {
         return value.to_string();
     }
-    let suffix_len = suffix.chars().count();
-    if max_chars <= suffix_len {
-        return suffix.chars().take(max_chars).collect();
+    let head_chars = head_chars.min(value_len);
+    let tail_chars = tail_chars.min(value_len.saturating_sub(head_chars));
+    let mut output = String::new();
+    output.extend(value.chars().take(head_chars));
+    output.push_str(marker);
+    if tail_chars > 0 {
+        output.extend(value.chars().skip(value_len - tail_chars).take(tail_chars));
     }
-    let keep_len = max_chars - suffix_len;
-    let mut output: String = value.chars().take(keep_len).collect();
-    output.push_str(suffix);
     output
 }
 
-fn truncate_tool_result_data(value: &mut Value, max_chars: usize, suffix: &str) -> bool {
+fn truncate_tool_result_data(
+    value: &mut Value,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+) -> bool {
     match value {
         Value::String(text) => {
-            let len = text.chars().count();
-            if len > max_chars {
-                *text = truncate_tool_result_string(text, max_chars, suffix);
+            if text.chars().count() > head_chars + tail_chars {
+                *text = truncate_tool_result_string(text, head_chars, tail_chars, marker);
                 true
             } else {
                 false
@@ -808,7 +817,7 @@ fn truncate_tool_result_data(value: &mut Value, max_chars: usize, suffix: &str) 
         Value::Array(items) => {
             let mut truncated = false;
             for item in items.iter_mut() {
-                if truncate_tool_result_data(item, max_chars, suffix) {
+                if truncate_tool_result_data(item, head_chars, tail_chars, marker) {
                     truncated = true;
                 }
             }
@@ -817,7 +826,7 @@ fn truncate_tool_result_data(value: &mut Value, max_chars: usize, suffix: &str) 
         Value::Object(map) => {
             let mut truncated = false;
             for value in map.values_mut() {
-                if truncate_tool_result_data(value, max_chars, suffix) {
+                if truncate_tool_result_data(value, head_chars, tail_chars, marker) {
                     truncated = true;
                 }
             }
@@ -895,24 +904,40 @@ mod tests {
 
     #[test]
     fn test_truncate_tool_result_string() {
-        let max_chars = TOOL_RESULT_TRUNCATION_SUFFIX.len() + 2;
-        let input = "a".repeat(max_chars + 5);
-        let value = truncate_tool_result_string(&input, max_chars, TOOL_RESULT_TRUNCATION_SUFFIX);
-        assert!(value.starts_with("a"));
-        assert!(value.ends_with(TOOL_RESULT_TRUNCATION_SUFFIX));
-        assert_eq!(value.chars().count(), max_chars);
+        let head_chars = 2;
+        let tail_chars = 3;
+        let input = "abcdefghijklmnopqrstuvwxyz";
+        let value = truncate_tool_result_string(
+            &input,
+            head_chars,
+            tail_chars,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert!(value.starts_with("ab"));
+        assert!(value.ends_with("xyz"));
+        assert!(value.contains(TOOL_RESULT_TRUNCATION_MARKER));
+        assert_eq!(
+            value.chars().count(),
+            head_chars + tail_chars + TOOL_RESULT_TRUNCATION_MARKER.chars().count()
+        );
     }
 
     #[test]
     fn test_truncate_tool_result_data() {
-        let max_chars = TOOL_RESULT_TRUNCATION_SUFFIX.len() + 2;
-        let stdout = "0".repeat(max_chars + 5);
+        let head_chars = 1;
+        let tail_chars = 2;
+        let stdout = "0123456789";
         let mut value = json!({ "stdout": stdout });
-        let truncated =
-            truncate_tool_result_data(&mut value, max_chars, TOOL_RESULT_TRUNCATION_SUFFIX);
+        let truncated = truncate_tool_result_data(
+            &mut value,
+            head_chars,
+            tail_chars,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
         assert!(truncated);
         let stdout = value.get("stdout").and_then(Value::as_str).unwrap_or("");
-        assert!(stdout.ends_with(TOOL_RESULT_TRUNCATION_SUFFIX));
-        assert_eq!(stdout.chars().count(), max_chars);
+        assert!(stdout.starts_with("0"));
+        assert!(stdout.ends_with("89"));
+        assert!(stdout.contains(TOOL_RESULT_TRUNCATION_MARKER));
     }
 }

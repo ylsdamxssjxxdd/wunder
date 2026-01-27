@@ -39,65 +39,52 @@
         </div>
       </section>
 
-      <section class="profile-section">
+      <section class="profile-section profile-metrics-section">
         <div class="profile-section-header">
           <div>
             <div class="profile-section-title">对话统计</div>
             <div class="profile-section-desc">基于已加载会话与消息的统计信息</div>
           </div>
         </div>
-        <div class="profile-stat-grid">
-          <div class="profile-stat">
-            <div class="profile-stat-label">用户消息</div>
-            <div class="profile-stat-value">{{ userMessageCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">助手消息</div>
-            <div class="profile-stat-value">{{ assistantMessageCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">工具调用</div>
-            <div class="profile-stat-value">{{ toolCallCount }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">累计 Token</div>
-            <div class="profile-stat-value">{{ formatNumber(tokenUsageTotal) }}</div>
-          </div>
-          <div class="profile-stat">
-            <div class="profile-stat-label">平均响应</div>
-            <div class="profile-stat-value">{{ formatDuration(averageDuration) }}</div>
-          </div>
-        </div>
-      </section>
-
-      <section class="profile-section">
-        <div class="profile-section-header">
-          <div>
-            <div class="profile-section-title">最近会话</div>
-            <div class="profile-section-desc">快速返回最近使用的对话</div>
-          </div>
-          <button class="profile-refresh-btn" type="button" @click="loadSessions">
-            刷新
-          </button>
-        </div>
-        <div class="profile-session-list">
-          <div v-if="sessionsLoading" class="profile-empty">正在加载会话...</div>
-          <div v-else-if="sessionError" class="profile-empty">{{ sessionError }}</div>
-          <div v-else-if="recentSessions.length === 0" class="profile-empty">
-            暂无会话记录，去创建新的聊天吧。
-          </div>
-          <button
-            v-for="session in recentSessions"
-            :key="session.id"
-            class="profile-session-card"
-            type="button"
-            @click="openSession(session)"
-          >
-            <div class="profile-session-title">{{ formatTitle(session.title) }}</div>
-            <div class="profile-session-meta">
-              更新于 {{ formatTime(session.updated_at || session.created_at) }}
+        <div class="profile-stats-layout">
+          <div class="profile-quota-panel">
+            <div class="profile-stat profile-quota-card">
+              <div class="profile-stat-label">今日额度</div>
+              <div class="profile-quota-ring" :class="{ 'is-empty': !quotaAvailable }" :style="quotaRingStyle">
+                <div class="profile-quota-center">
+                  <div class="profile-quota-value">{{ quotaPercentText }}</div>
+                  <div class="profile-quota-meta">已用</div>
+                </div>
+              </div>
+              <div class="profile-quota-summary">
+                {{ quotaUsedText }} / {{ quotaTotalText }}
+              </div>
             </div>
-          </button>
+          </div>
+          <div class="profile-metrics-panel">
+            <div class="profile-metrics-grid">
+              <div class="profile-stat">
+                <div class="profile-stat-label">用户消息</div>
+                <div class="profile-stat-value">{{ userMessageCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">助手消息</div>
+                <div class="profile-stat-value">{{ assistantMessageCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">工具调用</div>
+                <div class="profile-stat-value">{{ toolCallCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">上下文占用</div>
+                <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">累计 Token</div>
+                <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -105,9 +92,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useAuthStore } from '@/stores/auth';
@@ -115,12 +101,8 @@ import { useChatStore } from '@/stores/chat';
 import { isDemoMode } from '@/utils/demo';
 
 const route = useRoute();
-const router = useRouter();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
-
-const sessionsLoading = ref(false);
-const sessionError = ref('');
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
@@ -137,6 +119,9 @@ const userInitials = computed(() => {
 const conversationMessages = computed(() =>
   chatStore.messages.filter((message) => message && !message.isGreeting)
 );
+const assistantMessages = computed(() =>
+  conversationMessages.value.filter((message) => message.role === 'assistant')
+);
 const sessionCount = computed(() => chatStore.sessions.length);
 const conversationMessageCount = computed(() => conversationMessages.value.length);
 const userMessageCount = computed(() =>
@@ -146,24 +131,79 @@ const assistantMessageCount = computed(() =>
   conversationMessages.value.filter((message) => message.role === 'assistant').length
 );
 const toolCallCount = computed(() =>
-  conversationMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0)
+  assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0)
 );
 const tokenUsageTotal = computed(() =>
-  conversationMessages.value.reduce((sum, message) => {
+  assistantMessages.value.reduce((sum, message) => {
     const total = message?.stats?.usage?.total ?? 0;
     return sum + (Number.isFinite(total) ? total : 0);
   }, 0)
 );
-const averageDuration = computed(() => {
-  const durations = conversationMessages.value
-    .filter((message) => message.role === 'assistant')
-    .map((message) => message?.stats?.interaction_duration_s)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  if (!durations.length) return null;
-  const total = durations.reduce((sum, value) => sum + value, 0);
-  return total / durations.length;
+const latestQuotaSnapshot = computed(() => {
+  for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
+    const snapshot = assistantMessages.value[i]?.stats?.quotaSnapshot;
+    if (snapshot) return snapshot;
+  }
+  return null;
 });
-const recentSessions = computed(() => chatStore.sessions.slice(0, 6));
+
+const quotaTotal = computed(() => {
+  const snapshot = latestQuotaSnapshot.value;
+  if (!snapshot) return null;
+  const daily = snapshot.daily;
+  if (Number.isFinite(daily)) return daily;
+  const used = snapshot.used;
+  const remaining = snapshot.remaining;
+  if (Number.isFinite(used) && Number.isFinite(remaining)) {
+    return used + remaining;
+  }
+  return null;
+});
+
+const quotaUsed = computed(() => {
+  const snapshot = latestQuotaSnapshot.value;
+  if (!snapshot) return null;
+  const used = snapshot.used;
+  if (Number.isFinite(used)) return used;
+  const total = quotaTotal.value;
+  const remaining = snapshot.remaining;
+  if (Number.isFinite(total) && Number.isFinite(remaining)) {
+    return Math.max(total - remaining, 0);
+  }
+  return null;
+});
+
+const quotaAvailable = computed(() => Number.isFinite(quotaTotal.value) && quotaTotal.value > 0);
+
+const quotaPercent = computed(() => {
+  if (!quotaAvailable.value) return 0;
+  const used = quotaUsed.value ?? 0;
+  return Math.min(Math.max(used / quotaTotal.value, 0), 1);
+});
+
+const quotaRingStyle = computed(() => ({
+  '--quota-angle': `${(quotaPercent.value * 360).toFixed(1)}deg`
+}));
+
+const quotaUsedText = computed(() =>
+  Number.isFinite(quotaUsed.value) ? formatNumber(quotaUsed.value) : '-'
+);
+
+const quotaTotalText = computed(() =>
+  Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
+);
+
+const quotaPercentText = computed(() =>
+  quotaAvailable.value ? `${Math.round(quotaPercent.value * 100)}%` : '-'
+);
+
+const contextTokensLatest = computed(() => {
+  for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
+    const value = assistantMessages.value[i]?.stats?.contextTokens;
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+});
 
 const recentSessionCount = computed(() => {
   const now = Date.now();
@@ -178,8 +218,8 @@ const recentSessionCount = computed(() => {
 });
 
 const lastActiveTime = computed(() => {
-  if (recentSessions.value.length === 0) return '-';
-  const latest = recentSessions.value[0];
+  const latest = chatStore.sessions[0];
+  if (!latest) return '-';
   return formatTime(latest.updated_at || latest.created_at);
 });
 
@@ -195,42 +235,37 @@ const formatTime = (value) => {
   )}:${pad(parsed.getMinutes())}`;
 };
 
-const formatTitle = (title) => {
-  const text = String(title || '').trim();
-  if (!text) return '未命名会话';
-  return text.length > 20 ? `${text.slice(0, 20)}...` : text;
-};
-
 const formatNumber = (value) => {
   if (!Number.isFinite(value)) return '-';
   return new Intl.NumberFormat('zh-CN').format(value);
 };
 
-const formatDuration = (value) => {
+const formatK = (value) => {
   if (!Number.isFinite(value) || value <= 0) return '-';
-  if (value < 1) return `${Math.round(value * 1000)}ms`;
-  return `${value.toFixed(1)}s`;
+  return `${(value / 1000).toFixed(1)}k`;
 };
 
-const loadSessions = async () => {
-  sessionsLoading.value = true;
-  sessionError.value = '';
+const ensureStatsSession = async () => {
+  if (conversationMessages.value.length > 0) return;
+  const persisted = chatStore.getPersistedState?.() || {};
+  const targetId =
+    chatStore.activeSessionId ||
+    persisted.activeSessionId ||
+    chatStore.sessions[0]?.id;
+  if (!targetId) return;
   try {
-    await chatStore.loadSessions();
+    await chatStore.loadSessionDetail(targetId);
   } catch (error) {
-    sessionError.value = error?.response?.data?.detail || '会话加载失败';
-  } finally {
-    sessionsLoading.value = false;
+    // ignore to avoid blocking stats rendering
   }
 };
 
-const openSession = async (session) => {
-  if (!session?.id) return;
+const loadSessions = async () => {
   try {
-    await chatStore.loadSessionDetail(session.id);
-    router.push(`${basePath.value}/chat`);
+    await chatStore.loadSessions();
+    await ensureStatsSession();
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail || '打开会话失败');
+    // ignore load failures; stats will render as empty
   }
 };
 
