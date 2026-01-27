@@ -24,6 +24,8 @@ pub struct WunderRequest {
     #[serde(default)]
     pub config_overrides: Option<Value>,
     #[serde(default)]
+    pub agent_prompt: Option<String>,
+    #[serde(default)]
     pub attachments: Option<Vec<AttachmentPayload>>,
 }
 
@@ -70,6 +72,8 @@ pub struct WunderPromptRequest {
     pub language: Option<String>,
     #[serde(default)]
     pub config_overrides: Option<Value>,
+    #[serde(default)]
+    pub agent_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +87,8 @@ pub struct AvailableToolsResponse {
     pub shared_tools: Vec<SharedToolSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_tools_selected: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

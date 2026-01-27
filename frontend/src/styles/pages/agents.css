@@ -1,0 +1,152 @@
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.portal-agent-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.agent-card {
+  border-radius: 18px;
+  border: 1px solid var(--portal-border);
+  background: var(--portal-card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  min-height: 150px;
+}
+
+.agent-card:hover {
+  border-color: rgba(106, 217, 255, 0.5);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.2);
+  transform: translateY(-2px);
+}
+
+.agent-card--compact {
+  min-height: 140px;
+}
+
+.agent-card--create {
+  border-style: dashed;
+  align-items: flex-start;
+  justify-content: center;
+  color: var(--portal-muted);
+}
+
+.agent-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-card-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.agent-card-desc {
+  color: var(--portal-muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.agent-card-level {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(106, 217, 255, 0.18);
+  border: 1px solid rgba(106, 217, 255, 0.4);
+  color: var(--portal-primary);
+}
+
+.agent-card-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.agent-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  align-items: center;
+}
+
+.agent-card-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-primary);
+}
+
+.agent-empty {
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px dashed var(--portal-border);
+  color: var(--portal-muted);
+  text-align: center;
+}
+
+.portal-action-btn {
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(106, 217, 255, 0.4);
+  background: rgba(106, 217, 255, 0.12);
+  color: var(--portal-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.portal-action-btn:hover {
+  border-color: rgba(106, 217, 255, 0.7);
+  box-shadow: 0 0 0 6px rgba(106, 217, 255, 0.12);
+}
+
+.agent-editor-dialog .el-dialog__body {
+  padding: 16px 20px 12px;
+}
+
+.agent-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-editor-hint {
+  font-size: 12px;
+  color: var(--portal-muted);
+  margin-top: 6px;
+}
+
+.agent-card .user-tools-btn {
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(106, 217, 255, 0.35);
+  background: rgba(106, 217, 255, 0.12);
+  color: var(--portal-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.agent-card .user-tools-btn.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.agent-card .user-tools-btn.danger {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fee2e2;
+}

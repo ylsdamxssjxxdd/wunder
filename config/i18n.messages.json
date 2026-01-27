@@ -39,6 +39,10 @@
     "en-US": "API key is not configured",
     "zh-CN": "API key 未配置"
   },
+  "error.agent_not_found": {
+    "en-US": "Agent not found",
+    "zh-CN": "智能体不存在"
+  },
   "error.max_active_sessions_invalid": {
     "en-US": "Max active sessions must be greater than 0",
     "zh-CN": "最大活动会话数必须大于0"

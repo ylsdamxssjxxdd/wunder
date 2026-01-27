@@ -16,6 +16,7 @@ export const sendMessage = (id, payload) => api.post(`/chat/sessions/${id}/messa
 export const fetchSessionSystemPrompt = (id, payload) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);
 export const fetchRealtimeSystemPrompt = (payload) => api.post('/chat/system-prompt', payload);
+export const updateSessionTools = (id, payload) => api.post(`/chat/sessions/${id}/tools`, payload);
 export const convertChatAttachment = (file) => {
   const formData = new FormData();
   formData.append('file', file);

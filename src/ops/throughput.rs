@@ -1010,6 +1010,7 @@ async fn run_request(
         model_name,
         language: None,
         config_overrides,
+        agent_prompt: None,
         attachments: None,
     };
     let started = Instant::now();

@@ -1,0 +1,18 @@
+{
+  "mcp": {
+    "transport": "stdio",
+    "host": "127.0.0.1",
+    "port": 8000
+  },
+  "database": {
+    "default_key": "default",
+    "db_type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "personnel",
+    "description": "人员与组织信息库",
+    "connect_timeout": 5
+  }
+}

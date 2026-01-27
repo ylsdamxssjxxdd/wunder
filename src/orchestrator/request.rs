@@ -50,6 +50,7 @@ impl Orchestrator {
             skip_tool_calls: request.skip_tool_calls,
             model_name: request.model_name.clone(),
             config_overrides: request.config_overrides.clone(),
+            agent_prompt: request.agent_prompt.clone(),
             stream: request.stream,
             debug_payload: request.debug_payload,
             attachments,
@@ -124,6 +125,7 @@ impl Orchestrator {
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
         config_overrides: Option<&Value>,
+        agent_prompt: Option<&str>,
     ) -> String {
         let allowed_tool_names =
             self.resolve_allowed_tool_names(config, tool_names, skills, user_tool_bindings);
@@ -137,6 +139,7 @@ impl Orchestrator {
                 skills,
                 user_tool_bindings,
                 user_id,
+                agent_prompt,
             )
             .await;
         self.append_memory_prompt(user_id, prompt).await

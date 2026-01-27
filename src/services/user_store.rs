@@ -1,4 +1,7 @@
-use crate::storage::{ChatSessionRecord, StorageBackend, UserAccountRecord, UserTokenRecord};
+use crate::storage::{
+    ChatSessionRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
+    UserTokenRecord, UserToolAccessRecord,
+};
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
     rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
@@ -346,12 +349,31 @@ impl UserStore {
         Ok(UserSession { user, token })
     }
 
-    pub fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>> {
+    pub fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {
         self.storage.get_user_tool_access(user_id)
     }
 
-    pub fn set_user_tool_access(&self, user_id: &str, allowed: Option<&Vec<String>>) -> Result<()> {
-        self.storage.set_user_tool_access(user_id, allowed)
+    pub fn set_user_tool_access(
+        &self,
+        user_id: &str,
+        allowed: Option<&Vec<String>>,
+        blocked: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.storage.set_user_tool_access(user_id, allowed, blocked)
+    }
+
+    pub fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>> {
+        self.storage.get_user_agent_access(user_id)
+    }
+
+    pub fn set_user_agent_access(
+        &self,
+        user_id: &str,
+        allowed_agent_ids: Option<&Vec<String>>,
+        blocked_agent_ids: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.storage
+            .set_user_agent_access(user_id, allowed_agent_ids, blocked_agent_ids)
     }
 
     pub fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
@@ -399,6 +421,22 @@ impl UserStore {
 
     pub fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.storage.delete_chat_session(user_id, session_id)
+    }
+
+    pub fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()> {
+        self.storage.upsert_user_agent(record)
+    }
+
+    pub fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.storage.get_user_agent(user_id, agent_id)
+    }
+
+    pub fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.storage.list_user_agents(user_id)
+    }
+
+    pub fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64> {
+        self.storage.delete_user_agent(user_id, agent_id)
     }
 }
 

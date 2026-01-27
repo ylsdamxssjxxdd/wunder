@@ -209,6 +209,7 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
                 Some(context.user_tool_bindings.as_ref()),
                 &context.user_id,
                 None,
+                None,
             )
             .await;
         Ok(started.elapsed().as_secs_f64() * 1000.0)
@@ -227,7 +228,7 @@ async fn measure_tool_access(concurrency: usize, context: &PerformanceContext) -
         async move {
             let started = Instant::now();
             let user_context = build_user_tool_context(state.as_ref(), &user_id).await;
-            let allowed = compute_allowed_tool_names(&user, &user_context, None);
+            let allowed = compute_allowed_tool_names(&user, &user_context);
             let mut names = allowed.into_iter().collect::<Vec<_>>();
             names.sort();
             Ok(started.elapsed().as_secs_f64() * 1000.0)

@@ -138,6 +138,7 @@ impl Orchestrator {
                     &user_id,
                     &session_id,
                     Some(&prepared.language),
+                    prepared.agent_prompt.as_deref(),
                 )
                 .await;
             system_prompt = self.append_memory_prompt(&user_id, system_prompt).await;

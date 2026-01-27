@@ -209,6 +209,7 @@ impl ServerHandler for WunderMcpServer {
                 model_name: None,
                 language: Some(i18n::get_default_language()),
                 config_overrides: None,
+                agent_prompt: None,
                 attachments: None,
             })
             .await

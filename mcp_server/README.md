@@ -1,0 +1,105 @@
+﻿# MCP Server (FastMCP)
+
+本目录用于运行独立的 MCP 服务（当前内置数据库工具，后续可扩展更多工具），支持 MySQL/PostgreSQL，支持多目标数据库配置。
+
+## 1. 运行方式
+
+### 本地运行
+
+```bash
+# 推荐以 streamable-http 方式对外提供服务
+set MCP_TRANSPORT=streamable-http
+set MCP_HOST=0.0.0.0
+set MCP_PORT=9010
+python -m mcp_server.main
+```
+
+### Docker Compose
+
+`docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` 已内置 `wunder-mcp` 服务，默认端口 `9010`。
+
+```bash
+# 在项目根目录
+set MCP_PORT=9010
+set MCP_HOST=0.0.0.0
+# 启动
+docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
+```
+
+## 2. MCP 配置文件
+
+默认读取 `mcp_server/mcp_config.json`，可用 `MCP_CONFIG_PATH` 指定路径。环境变量优先级高于配置文件。
+
+```json
+{
+  "mcp": {
+    "transport": "streamable-http",
+    "host": "0.0.0.0",
+    "port": 9010
+  },
+  "database": {
+    "db_type": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "personnel",
+    "description": "人员与组织信息库",
+    "connect_timeout": 5
+  }
+}
+```
+
+如需多库配置，可在 `database.targets` 中放入与 `PERSONNEL_DB_TARGETS` 同结构的对象，并可为每个目标增加 `description` 说明用途。
+如果多库配置走环境变量/文件，仍可在 `mcp_config.json` 的 `database.targets` 中补充 `description`，系统会自动合并说明。
+也可以使用 `database.target_descriptions`（或 `database.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
+
+## 3. MCP 连接示例
+
+```json
+{
+  "mcpServers": {
+    "wunder-mcp": {
+      "type": "streamable-http",
+      "description": "Wunder MCP 服务（当前内置数据库工具）。",
+      "isActive": false,
+      "name": "wunder-mcp",
+      "baseUrl": "http://127.0.0.1:9010/mcp",
+      "headers": {}
+    }
+  }
+}
+```
+
+> 如通过网关或反向代理加鉴权，请在 `headers` 中补充对应的认证头。当前仅保留两个数据库工具：`db_get_schema`、`db_query`。
+
+## 4. 服务器部署时的 IP / 端口配置要点
+
+- **MCP_HOST 只决定监听地址**：生产部署一般设置 `0.0.0.0`。
+- **对外访问地址 = 服务器 IP / 域名 + MCP_PORT**：
+  - 例如 `http://<server-ip>:9010/mcp`。
+- **防火墙/安全组**：需要放行 `MCP_PORT` 对外访问。
+- **Docker 端口映射**：当前 compose 使用同端口映射（`host:container` 相同）。如需只改外部端口，需要修改 compose 的 `ports`。
+
+## 5. 宿主机 / 容器网络常见配置
+
+- **MySQL/Postgres 在同一 compose 网络**：
+  - `PERSONNEL_DB_HOST` 可直接填容器服务名（如 `postgres`/`mysql`）。
+- **数据库在宿主机**：
+  - Windows/Mac：`host.docker.internal` 可直接用。
+  - Linux：建议在 compose 增加 `extra_hosts: ["host.docker.internal:host-gateway"]`，或直接用宿主机 IP（如 `172.17.0.1`）。
+- **数据库在远程服务器**：直接填外网/内网 IP + 端口，并确保安全组放行。
+
+## 6. 安全建议
+
+- MCP 服务默认无鉴权，建议仅内网使用或通过网关反向代理加鉴权。
+- `db_query` 仅允许只读 SQL 查询。
+
+## 7. 目录结构
+
+- `main.py`：FastMCP 服务入口。
+- `runtime.py`：运行时配置读取（MCP_HOST/MCP_PORT/MCP_TRANSPORT）。
+- `tools/`：每类 MCP 工具一个子目录。
+  - `tools/database/`：数据库工具实现（`db_get_schema`/`db_query`）。
+- 新增工具后在 `tools/__init__.py` 注册即可生效。
+- `common/`：通用工具方法。

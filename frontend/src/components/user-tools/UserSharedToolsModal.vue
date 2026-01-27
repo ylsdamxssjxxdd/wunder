@@ -79,9 +79,7 @@
 import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
-import { fetchUserToolsSummary } from '@/api/userTools';
-import { useAuthStore } from '@/stores/auth';
-import { loadSharedToolSelection, saveSharedToolSelection } from '@/utils/toolSelection';
+import { fetchUserToolsCatalog, saveUserSharedTools } from '@/api/userTools';
 
 const props = defineProps({
   modelValue: {
@@ -102,9 +100,6 @@ const selectedSet = ref(new Set());
 const loading = ref(false);
 const statusMessage = ref('');
 const loadVersion = ref(0);
-
-const authStore = useAuthStore();
-const userId = computed(() => authStore.user?.id || '');
 
 const normalizeTool = (tool) => {
   if (!tool) return null;
@@ -150,21 +145,30 @@ const toggleSelection = (name, checked) => {
     next.delete(name);
   }
   selectedSet.value = next;
-  saveSharedToolSelection(userId.value, next);
+  saveSharedToolSelection();
   updateStatus();
 };
 
 const selectAll = () => {
   const next = new Set(sharedTools.value.map((tool) => tool.name));
   selectedSet.value = next;
-  saveSharedToolSelection(userId.value, next);
+  saveSharedToolSelection();
   updateStatus();
 };
 
 const clearAll = () => {
   selectedSet.value = new Set();
-  saveSharedToolSelection(userId.value, selectedSet.value);
+  saveSharedToolSelection();
   updateStatus();
+};
+
+const saveSharedToolSelection = async () => {
+  try {
+    const payload = Array.from(selectedSet.value);
+    await saveUserSharedTools({ shared_tools: payload });
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '共享工具保存失败');
+  }
 };
 
 const loadSharedTools = async () => {
@@ -173,7 +177,7 @@ const loadSharedTools = async () => {
   statusMessage.value = '正在加载...';
   const currentVersion = ++loadVersion.value;
   try {
-    const { data } = await fetchUserToolsSummary();
+    const { data } = await fetchUserToolsCatalog();
     if (currentVersion !== loadVersion.value) {
       return;
     }
@@ -181,10 +185,11 @@ const loadSharedTools = async () => {
     const list = Array.isArray(payload.shared_tools) ? payload.shared_tools : [];
     sharedTools.value = list.map(normalizeTool).filter(Boolean);
     const available = new Set(sharedTools.value.map((tool) => tool.name));
-    const cached = loadSharedToolSelection(userId.value);
-    const next = new Set([...cached].filter((name) => available.has(name)));
+    const selected = Array.isArray(payload.shared_tools_selected)
+      ? payload.shared_tools_selected.map((name) => String(name).trim())
+      : [];
+    const next = new Set(selected.filter((name) => available.has(name)));
     selectedSet.value = next;
-    saveSharedToolSelection(userId.value, next);
     updateStatus();
   } catch (error) {
     if (currentVersion !== loadVersion.value) {

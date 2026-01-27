@@ -816,6 +816,7 @@ async fn run_case(
         model_name: ctx.model_name.clone(),
         language: Some(ctx.language.clone()),
         config_overrides: ctx.config_overrides.clone(),
+        agent_prompt: None,
         attachments: None,
     };
 

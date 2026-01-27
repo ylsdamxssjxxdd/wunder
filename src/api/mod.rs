@@ -8,6 +8,7 @@ pub mod core;
 pub mod doc2md;
 pub mod evaluation;
 pub mod temp_dir;
+pub mod user_agents;
 pub mod user_context;
 pub mod user_tools;
 pub mod workspace;
@@ -27,6 +28,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(admin::router())
         .merge(evaluation::router())
         .merge(user_tools::router())
+        .merge(user_agents::router())
         .merge(a2a::router())
         .merge(crate::mcp::router(state.clone()))
         .with_state(state)

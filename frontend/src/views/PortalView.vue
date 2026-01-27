@@ -14,6 +14,52 @@
             <div class="portal-hero-sub">从这里开始新的任务或查看你的使用概况。</div>
           </div>
 
+          <section class="portal-section">
+            <div class="portal-section-header">
+              <div>
+                <div class="portal-section-title">我的智能体</div>
+                <div class="portal-section-desc">快速进入你创建的智能体</div>
+              </div>
+              <div class="portal-section-meta">共 {{ agents.length }} 个</div>
+            </div>
+            <div class="agent-grid portal-agent-grid">
+              <div v-if="agentLoading" class="agent-empty">加载中...</div>
+              <div v-else-if="!agents.length" class="agent-empty">
+                还没有智能体，去创建一个吧。
+              </div>
+              <RouterLink
+                v-else
+                v-for="agent in agents"
+                :key="agent.id"
+                class="agent-card agent-card--compact"
+                :to="`${basePath}/chat?agent_id=${encodeURIComponent(agent.id)}`"
+              >
+                <div class="agent-card-head">
+                  <div>
+                    <div class="agent-card-title">{{ agent.name }}</div>
+                    <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
+                  </div>
+                  <span class="agent-card-level">等级 {{ agent.access_level || '-' }}</span>
+                </div>
+                <div class="agent-card-meta">
+                  <span>工具 {{ agent.tool_names?.length || 0 }}</span>
+                  <span>更新 {{ formatTime(agent.updated_at) }}</span>
+                </div>
+                <div class="agent-card-actions">
+                  <span class="agent-card-link">进入</span>
+                </div>
+              </RouterLink>
+              <RouterLink
+                v-if="agents.length"
+                class="agent-card agent-card--create"
+                :to="`${basePath}/agents`"
+              >
+                <div class="agent-card-title">新建智能体</div>
+                <div class="agent-card-desc">组装你的专属能力</div>
+              </RouterLink>
+            </div>
+          </section>
+
           <section v-if="filteredEntries.length" class="portal-section portal-section--flat">
             <div class="portal-section-header">
               <div>
@@ -43,16 +89,18 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 
 import PortalCard from '@/components/portal/PortalCard.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { externalLinkGroups } from '@/config/external-links';
 import { portalEntries } from '@/config/portal';
+import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 
 const route = useRoute();
 const authStore = useAuthStore();
+const agentStore = useAgentStore();
 const searchQuery = ref('');
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
@@ -102,5 +150,19 @@ onMounted(() => {
   if (!authStore.user) {
     authStore.loadProfile();
   }
+  agentStore.loadAgents();
 });
+
+const agents = computed(() => agentStore.agents || []);
+const agentLoading = computed(() => agentStore.loading);
+
+const formatTime = (value) => {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+};
 </script>

@@ -49,6 +49,37 @@ pub struct UserTokenRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct UserToolAccessRecord {
+    pub user_id: String,
+    pub allowed_tools: Option<Vec<String>>,
+    pub blocked_tools: Vec<String>,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserAgentRecord {
+    pub agent_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub tool_names: Vec<String>,
+    pub access_level: String,
+    pub status: String,
+    pub icon: Option<String>,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserAgentAccessRecord {
+    pub user_id: String,
+    pub allowed_agent_ids: Option<Vec<String>>,
+    pub blocked_agent_ids: Vec<String>,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct ChatSessionRecord {
     pub session_id: String,
     pub user_id: String,
@@ -56,6 +87,8 @@ pub struct ChatSessionRecord {
     pub created_at: f64,
     pub updated_at: f64,
     pub last_message_at: f64,
+    pub agent_id: Option<String>,
+    pub tool_overrides: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,12 +289,24 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 
-    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>>;
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>>;
     fn set_user_tool_access(
         &self,
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
+        blocked_tools: Option<&Vec<String>>,
     ) -> Result<()>;
+    fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>>;
+    fn set_user_agent_access(
+        &self,
+        user_id: &str,
+        allowed_agent_ids: Option<&Vec<String>>,
+        blocked_agent_ids: Option<&Vec<String>>,
+    ) -> Result<()>;
+    fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()>;
+    fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>>;
+    fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
+    fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64>;
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
 }

@@ -62,6 +62,7 @@ pub struct UserToolsPayload {
     pub mcp_servers: Vec<UserMcpServer>,
     pub skills: UserSkillConfig,
     pub knowledge_bases: Vec<UserKnowledgeBase>,
+    pub shared_tools: Vec<String>,
     pub version: f64,
 }
 
@@ -92,6 +93,7 @@ pub struct UserToolBindings {
     pub skill_specs: Vec<SkillSpec>,
     pub skill_sources: HashMap<String, UserSkillSource>,
     pub mcp_servers: HashMap<String, HashMap<String, McpServerConfig>>,
+    pub shared_tools_enabled: HashSet<String>,
     pub extra_prompt: String,
     pub user_version: f64,
     pub shared_version: f64,
@@ -250,6 +252,17 @@ impl UserToolStore {
         self.save_payload(user_id, payload)
     }
 
+    /// 更新用户共享工具选择列表。
+    pub fn update_shared_tools(
+        &self,
+        user_id: &str,
+        shared_tools: Vec<String>,
+    ) -> Result<UserToolsPayload> {
+        let mut payload = self.load_user_tools(user_id);
+        payload.shared_tools = normalize_name_list(shared_tools);
+        self.save_payload(user_id, payload)
+    }
+
     /// 列出所有共享配置（排除当前用户）。
     pub fn list_shared_payloads(&self, exclude_user_id: &str) -> Vec<UserToolsPayload> {
         let now = now_ts();
@@ -378,12 +391,14 @@ impl UserToolStore {
             parse_name_list(value.get("skills").and_then(|item| item.get("shared"))),
         );
         let knowledge_bases = normalize_knowledge_bases(parse_knowledge_bases(&value));
+        let shared_tools = normalize_name_list(parse_name_list(value.get("shared_tools")));
         UserToolsPayload {
             user_id,
             extra_prompt,
             mcp_servers,
             skills,
             knowledge_bases,
+            shared_tools,
             version: 0.0,
         }
     }
@@ -402,6 +417,7 @@ impl UserToolStore {
             "mcp": { "servers": payload.mcp_servers.iter().map(user_mcp_server_to_value).collect::<Vec<_>>() },
             "skills": { "enabled": payload.skills.enabled, "shared": payload.skills.shared },
             "knowledge": { "bases": payload.knowledge_bases.iter().map(user_knowledge_base_to_value).collect::<Vec<_>>() },
+            "shared_tools": payload.shared_tools,
         });
         let path = self.config_path(&safe_id);
         std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
@@ -486,6 +502,45 @@ impl UserToolManager {
         user_id: &str,
     ) -> UserToolBindings {
         let user_payload = self.store.load_user_tools(user_id);
+        let shared_tools_enabled: HashSet<String> = user_payload
+            .shared_tools
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
+        self.build_bindings_with_shared_filter(
+            config,
+            skills,
+            user_id,
+            &user_payload,
+            Some(&shared_tools_enabled),
+        )
+    }
+
+    pub fn build_bindings_for_catalog(
+        &self,
+        config: &Config,
+        skills: &SkillRegistry,
+        user_id: &str,
+    ) -> UserToolBindings {
+        let user_payload = self.store.load_user_tools(user_id);
+        self.build_bindings_with_shared_filter(config, skills, user_id, &user_payload, None)
+    }
+
+    fn build_bindings_with_shared_filter(
+        &self,
+        config: &Config,
+        skills: &SkillRegistry,
+        user_id: &str,
+        user_payload: &UserToolsPayload,
+        shared_tools_filter: Option<&HashSet<String>>,
+    ) -> UserToolBindings {
+        let shared_tools_enabled: HashSet<String> = user_payload
+            .shared_tools
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
         let shared_payloads = self.store.list_shared_payloads(user_id);
 
         let builtin_names: HashSet<String> = config
@@ -544,6 +599,7 @@ impl UserToolManager {
                 blocked_names.insert(alias);
             };
 
+            let shared_tools_filter = shared_tools_filter.cloned();
             let mut collect_mcp_tools =
                 |owner_id: &str, servers: &[UserMcpServer], shared_only: bool| {
                     for server in servers {
@@ -607,6 +663,13 @@ impl UserToolManager {
                             let alias_name = self
                                 .store
                                 .build_alias_name(owner_id, &format!("{server_name}@{tool_name}"));
+                            if shared_only {
+                                if let Some(filter) = shared_tools_filter.as_ref() {
+                                    if !filter.contains(&alias_name) {
+                                        continue;
+                                    }
+                                }
+                            }
                             append_alias(
                                 alias_name.clone(),
                                 ToolSpec {
@@ -650,6 +713,7 @@ impl UserToolManager {
                     .or_insert(UserSkillSource { root, names });
             };
 
+            let shared_tools_filter = shared_tools_filter.cloned();
             let mut collect_skill_tools = |owner_id: &str, names: &[String], shared_only: bool| {
                 if names.is_empty() {
                     return;
@@ -677,6 +741,13 @@ impl UserToolManager {
                         continue;
                     }
                     let alias_name = self.store.build_alias_name(owner_id, &spec.name);
+                    if shared_only {
+                        if let Some(filter) = shared_tools_filter.as_ref() {
+                            if !filter.contains(&alias_name) {
+                                continue;
+                            }
+                        }
+                    }
                     if blocked_names.contains(&alias_name) || alias_map.contains_key(&alias_name) {
                         continue;
                     }
@@ -733,6 +804,7 @@ impl UserToolManager {
                 blocked_names.insert(alias);
             };
 
+            let shared_tools_filter = shared_tools_filter.cloned();
             let mut collect_knowledge_tools =
                 |owner_id: &str, bases: &[UserKnowledgeBase], shared_only: bool| {
                     for base in bases {
@@ -755,6 +827,13 @@ impl UserToolManager {
                             base.description.clone()
                         };
                         let alias_name = self.store.build_alias_name(owner_id, base_name);
+                        if shared_only {
+                            if let Some(filter) = shared_tools_filter.as_ref() {
+                                if !filter.contains(&alias_name) {
+                                    continue;
+                                }
+                            }
+                        }
                         append_alias(
                             alias_name.clone(),
                             ToolSpec {
@@ -786,7 +865,8 @@ impl UserToolManager {
             skill_specs,
             skill_sources,
             mcp_servers,
-            extra_prompt: user_payload.extra_prompt,
+            shared_tools_enabled,
+            extra_prompt: user_payload.extra_prompt.clone(),
             user_version: user_payload.version,
             shared_version: self.store.shared_version(),
         }

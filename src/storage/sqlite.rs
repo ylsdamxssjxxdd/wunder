@@ -1,8 +1,8 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserQuotaStatus,
-    UserTokenRecord,
+    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -151,6 +151,45 @@ impl SqliteStorage {
             conn.execute(
                 "UPDATE user_accounts SET daily_quota = CASE UPPER(access_level) \
                  WHEN 'B' THEN 1000 WHEN 'C' THEN 100 ELSE 10000 END",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn ensure_user_tool_access_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(user_tool_access)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows {
+            if let Ok(name) = name {
+                columns.insert(name);
+            }
+        }
+        if !columns.contains("blocked_tools") {
+            conn.execute(
+                "ALTER TABLE user_tool_access ADD COLUMN blocked_tools TEXT",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn ensure_chat_session_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(chat_sessions)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows {
+            if let Ok(name) = name {
+                columns.insert(name);
+            }
+        }
+        if !columns.contains("agent_id") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", [])?;
+        }
+        if !columns.contains("tool_overrides") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN tool_overrides TEXT",
                 [],
             )?;
         }
@@ -344,6 +383,7 @@ impl StorageBackend for SqliteStorage {
             CREATE TABLE IF NOT EXISTS user_tool_access (
               user_id TEXT PRIMARY KEY,
               allowed_tools TEXT,
+              blocked_tools TEXT,
               updated_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -351,6 +391,8 @@ impl StorageBackend for SqliteStorage {
               user_id TEXT NOT NULL,
               title TEXT,
               status TEXT,
+              agent_id TEXT,
+              tool_overrides TEXT,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
               last_message_at REAL NOT NULL
@@ -359,9 +401,32 @@ impl StorageBackend for SqliteStorage {
               ON chat_sessions (user_id);
             CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
               ON chat_sessions (user_id, updated_at);
+            CREATE TABLE IF NOT EXISTS user_agents (
+              agent_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              description TEXT,
+              system_prompt TEXT,
+              tool_names TEXT,
+              access_level TEXT NOT NULL,
+              status TEXT NOT NULL,
+              icon TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_agents_user
+              ON user_agents (user_id, updated_at);
+            CREATE TABLE IF NOT EXISTS user_agent_access (
+              user_id TEXT PRIMARY KEY,
+              allowed_agent_ids TEXT,
+              blocked_agent_ids TEXT,
+              updated_at REAL NOT NULL
+            );
             "#,
         )?;
         self.ensure_user_account_quota_columns(&conn)?;
+        self.ensure_user_tool_access_columns(&conn)?;
+        self.ensure_chat_session_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -2226,12 +2291,18 @@ impl StorageBackend for SqliteStorage {
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
         conn.execute(
-            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, title = excluded.title, \
              status = excluded.status, created_at = excluded.created_at, updated_at = excluded.updated_at, \
-             last_message_at = excluded.last_message_at",
+             last_message_at = excluded.last_message_at, agent_id = excluded.agent_id, \
+             tool_overrides = excluded.tool_overrides",
             params![
                 record.session_id,
                 record.user_id,
@@ -2239,7 +2310,9 @@ impl StorageBackend for SqliteStorage {
                 "active",
                 record.created_at,
                 record.updated_at,
-                record.last_message_at
+                record.last_message_at,
+                record.agent_id,
+                tool_overrides
             ],
         )?;
         Ok(())
@@ -2259,10 +2332,11 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
                  FROM chat_sessions WHERE user_id = ? AND session_id = ?",
                 params![cleaned_user, cleaned_session],
                 |row| {
+                    let tool_overrides: Option<String> = row.get(7)?;
                     Ok(ChatSessionRecord {
                         session_id: row.get(0)?,
                         user_id: row.get(1)?,
@@ -2270,6 +2344,8 @@ impl StorageBackend for SqliteStorage {
                         created_at: row.get(3)?,
                         updated_at: row.get(4)?,
                         last_message_at: row.get(5)?,
+                        agent_id: row.get(6)?,
+                        tool_overrides: Self::parse_string_list(tool_overrides),
                     })
                 },
             )
@@ -2295,7 +2371,7 @@ impl StorageBackend for SqliteStorage {
             |row| row.get(0),
         )?;
         let mut sql = String::from(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
              FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC",
         );
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
@@ -2307,6 +2383,7 @@ impl StorageBackend for SqliteStorage {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(params_list.iter()), |row| {
+                let tool_overrides: Option<String> = row.get(7)?;
                 Ok(ChatSessionRecord {
                     session_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -2314,6 +2391,8 @@ impl StorageBackend for SqliteStorage {
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
                     last_message_at: row.get(5)?,
+                    agent_id: row.get(6)?,
+                    tool_overrides: Self::parse_string_list(tool_overrides),
                 })
             })?
             .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
@@ -2377,30 +2456,36 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
-    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>> {
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
             return Ok(None);
         }
         let conn = self.open()?;
-        let row: Option<String> = conn
+        let row: Option<(Option<String>, Option<String>, f64)> = conn
             .query_row(
-                "SELECT allowed_tools FROM user_tool_access WHERE user_id = ?",
+                "SELECT allowed_tools, blocked_tools, updated_at FROM user_tool_access WHERE user_id = ?",
                 params![cleaned],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
         let Some(raw) = row else {
             return Ok(None);
         };
-        Ok(Some(Self::parse_string_list(Some(raw))))
+        Ok(Some(UserToolAccessRecord {
+            user_id: cleaned.to_string(),
+            allowed_tools: raw.0.map(|value| Self::parse_string_list(Some(value))),
+            blocked_tools: Self::parse_string_list(raw.1),
+            updated_at: raw.2,
+        }))
     }
 
     fn set_user_tool_access(
         &self,
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
+        blocked_tools: Option<&Vec<String>>,
     ) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
@@ -2408,13 +2493,18 @@ impl StorageBackend for SqliteStorage {
             return Ok(());
         }
         let conn = self.open()?;
-        if let Some(list) = allowed_tools {
-            let payload = Self::string_list_to_json(list);
+        if allowed_tools.is_some() || blocked_tools.is_some() {
+            let payload = allowed_tools
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let blocked_payload = blocked_tools
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
             let now = Self::now_ts();
             conn.execute(
-                "INSERT INTO user_tool_access (user_id, allowed_tools, updated_at) VALUES (?, ?, ?) \
-                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = excluded.allowed_tools, updated_at = excluded.updated_at",
-                params![cleaned, payload, now],
+                "INSERT INTO user_tool_access (user_id, allowed_tools, blocked_tools, updated_at) VALUES (?, ?, ?, ?) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = excluded.allowed_tools, blocked_tools = excluded.blocked_tools, updated_at = excluded.updated_at",
+                params![cleaned, payload, blocked_payload, now],
             )?;
         } else {
             conn.execute(
@@ -2423,6 +2513,177 @@ impl StorageBackend for SqliteStorage {
             )?;
         }
         Ok(())
+    }
+
+    fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row: Option<(Option<String>, Option<String>, f64)> = conn
+            .query_row(
+                "SELECT allowed_agent_ids, blocked_agent_ids, updated_at FROM user_agent_access WHERE user_id = ?",
+                params![cleaned],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some(raw) = row else {
+            return Ok(None);
+        };
+        Ok(Some(UserAgentAccessRecord {
+            user_id: cleaned.to_string(),
+            allowed_agent_ids: raw.0.map(|value| Self::parse_string_list(Some(value))),
+            blocked_agent_ids: Self::parse_string_list(raw.1),
+            updated_at: raw.2,
+        }))
+    }
+
+    fn set_user_agent_access(
+        &self,
+        user_id: &str,
+        allowed_agent_ids: Option<&Vec<String>>,
+        blocked_agent_ids: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        if allowed_agent_ids.is_some() || blocked_agent_ids.is_some() {
+            let allowed_payload = allowed_agent_ids
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let blocked_payload = blocked_agent_ids
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let now = Self::now_ts();
+            conn.execute(
+                "INSERT INTO user_agent_access (user_id, allowed_agent_ids, blocked_agent_ids, updated_at) VALUES (?, ?, ?, ?) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_agent_ids = excluded.allowed_agent_ids, blocked_agent_ids = excluded.blocked_agent_ids, updated_at = excluded.updated_at",
+                params![cleaned, allowed_payload, blocked_payload, now],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM user_agent_access WHERE user_id = ?",
+                params![cleaned],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let tool_names = if record.tool_names.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_names))
+        };
+        conn.execute(
+            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, name = excluded.name, description = excluded.description, \
+             system_prompt = excluded.system_prompt, tool_names = excluded.tool_names, access_level = excluded.access_level, \
+             status = excluded.status, icon = excluded.icon, updated_at = excluded.updated_at",
+            params![
+                record.agent_id,
+                record.user_id,
+                record.name,
+                record.description,
+                record.system_prompt,
+                tool_names,
+                record.access_level,
+                record.status,
+                record.icon,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        if cleaned_user.is_empty() || cleaned_agent.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+                 FROM user_agents WHERE user_id = ? AND agent_id = ?",
+                params![cleaned_user, cleaned_agent],
+                |row| {
+                    let tool_names: Option<String> = row.get(5)?;
+                    Ok(UserAgentRecord {
+                        agent_id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        name: row.get(2)?,
+                        description: row.get(3)?,
+                        system_prompt: row.get(4)?,
+                        tool_names: Self::parse_string_list(tool_names),
+                        access_level: row.get(6)?,
+                        status: row.get(7)?,
+                        icon: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+             FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![cleaned_user], |row| {
+                let tool_names: Option<String> = row.get(5)?;
+                Ok(UserAgentRecord {
+                    agent_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    system_prompt: row.get(4)?,
+                    tool_names: Self::parse_string_list(tool_names),
+                    access_level: row.get(6)?,
+                    status: row.get(7)?,
+                    icon: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        if cleaned_user.is_empty() || cleaned_agent.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM user_agents WHERE user_id = ? AND agent_id = ?",
+            params![cleaned_user, cleaned_agent],
+        )?;
+        Ok(affected as i64)
     }
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>> {

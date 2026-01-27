@@ -1,7 +1,7 @@
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserQuotaStatus,
-    UserTokenRecord,
+    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -258,6 +258,47 @@ impl PostgresStorage {
             conn.execute(
                 "UPDATE user_accounts SET daily_quota = CASE UPPER(access_level) \
                  WHEN 'B' THEN 1000 WHEN 'C' THEN 100 ELSE 10000 END",
+                &[],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn ensure_user_tool_access_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_tool_access'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("blocked_tools") {
+            conn.execute(
+                "ALTER TABLE user_tool_access ADD COLUMN blocked_tools TEXT",
+                &[],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn ensure_chat_session_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'chat_sessions'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("agent_id") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", &[])?;
+        }
+        if !columns.contains("tool_overrides") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN tool_overrides TEXT",
                 &[],
             )?;
         }
@@ -536,6 +577,7 @@ impl StorageBackend for PostgresStorage {
                 CREATE TABLE IF NOT EXISTS user_tool_access (
                   user_id TEXT PRIMARY KEY,
                   allowed_tools TEXT,
+                  blocked_tools TEXT,
                   updated_at DOUBLE PRECISION NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -543,6 +585,8 @@ impl StorageBackend for PostgresStorage {
                   user_id TEXT NOT NULL,
                   title TEXT,
                   status TEXT,
+                  agent_id TEXT,
+                  tool_overrides TEXT,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL,
                   last_message_at DOUBLE PRECISION NOT NULL
@@ -551,12 +595,35 @@ impl StorageBackend for PostgresStorage {
                   ON chat_sessions (user_id);
                 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
                   ON chat_sessions (user_id, updated_at);
+                CREATE TABLE IF NOT EXISTS user_agents (
+                  agent_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  name TEXT NOT NULL,
+                  description TEXT,
+                  system_prompt TEXT,
+                  tool_names TEXT,
+                  access_level TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  icon TEXT,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_agents_user
+                  ON user_agents (user_id, updated_at);
+                CREATE TABLE IF NOT EXISTS user_agent_access (
+                  user_id TEXT PRIMARY KEY,
+                  allowed_agent_ids TEXT,
+                  blocked_agent_ids TEXT,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
                 "#,
             );
             match result {
                 Ok(_) => {
                     self.ensure_monitor_defaults(&mut conn)?;
                     self.ensure_user_account_quota_columns(&mut conn)?;
+                    self.ensure_user_tool_access_columns(&mut conn)?;
+                    self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
@@ -2313,11 +2380,17 @@ impl StorageBackend for PostgresStorage {
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
         conn.execute(
-            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT(session_id) DO UPDATE SET user_id = EXCLUDED.user_id, title = EXCLUDED.title, status = EXCLUDED.status, \
-             created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_message_at = EXCLUDED.last_message_at",
+             created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_message_at = EXCLUDED.last_message_at, \
+             agent_id = EXCLUDED.agent_id, tool_overrides = EXCLUDED.tool_overrides",
             &[
                 &record.session_id,
                 &record.user_id,
@@ -2326,6 +2399,8 @@ impl StorageBackend for PostgresStorage {
                 &record.created_at,
                 &record.updated_at,
                 &record.last_message_at,
+                &record.agent_id,
+                &tool_overrides,
             ],
         )?;
         Ok(())
@@ -2344,7 +2419,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
              FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
@@ -2355,6 +2430,8 @@ impl StorageBackend for PostgresStorage {
             created_at: row.get(3),
             updated_at: row.get(4),
             last_message_at: row.get(5),
+            agent_id: row.get(6),
+            tool_overrides: Self::parse_string_list(row.get(7)),
         }))
     }
 
@@ -2378,13 +2455,13 @@ impl StorageBackend for PostgresStorage {
             .get(0);
         let rows = if limit > 0 {
             conn.query(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
                  FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
                 &[&cleaned_user, &limit, &offset.max(0)],
             )?
         } else {
             conn.query(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at \
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
                  FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC",
                 &[&cleaned_user],
             )?
@@ -2398,6 +2475,8 @@ impl StorageBackend for PostgresStorage {
                 created_at: row.get(3),
                 updated_at: row.get(4),
                 last_message_at: row.get(5),
+                agent_id: row.get(6),
+                tool_overrides: Self::parse_string_list(row.get(7)),
             });
         }
         Ok((output, total))
@@ -2460,7 +2539,7 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
-    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<Vec<String>>> {
+    fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
@@ -2468,20 +2547,28 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT allowed_tools FROM user_tool_access WHERE user_id = $1",
+            "SELECT allowed_tools, blocked_tools, updated_at FROM user_tool_access WHERE user_id = $1",
             &[&cleaned],
         )?;
         let Some(row) = row else {
             return Ok(None);
         };
-        let raw: Option<String> = row.get(0);
-        Ok(Some(Self::parse_string_list(raw)))
+        let allowed: Option<String> = row.get(0);
+        let blocked: Option<String> = row.get(1);
+        let updated_at: f64 = row.get(2);
+        Ok(Some(UserToolAccessRecord {
+            user_id: cleaned.to_string(),
+            allowed_tools: allowed.map(|value| Self::parse_string_list(Some(value))),
+            blocked_tools: Self::parse_string_list(blocked),
+            updated_at,
+        }))
     }
 
     fn set_user_tool_access(
         &self,
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
+        blocked_tools: Option<&Vec<String>>,
     ) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
@@ -2489,13 +2576,18 @@ impl StorageBackend for PostgresStorage {
             return Ok(());
         }
         let mut conn = self.conn()?;
-        if let Some(list) = allowed_tools {
-            let payload = Self::string_list_to_json(list);
+        if allowed_tools.is_some() || blocked_tools.is_some() {
+            let payload = allowed_tools
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let blocked_payload = blocked_tools
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
             let now = Self::now_ts();
             conn.execute(
-                "INSERT INTO user_tool_access (user_id, allowed_tools, updated_at) VALUES ($1, $2, $3) \
-                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = EXCLUDED.allowed_tools, updated_at = EXCLUDED.updated_at",
-                &[&cleaned, &payload, &now],
+                "INSERT INTO user_tool_access (user_id, allowed_tools, blocked_tools, updated_at) VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = EXCLUDED.allowed_tools, blocked_tools = EXCLUDED.blocked_tools, updated_at = EXCLUDED.updated_at",
+                &[&cleaned, &payload, &blocked_payload, &now],
             )?;
         } else {
             conn.execute(
@@ -2504,6 +2596,170 @@ impl StorageBackend for PostgresStorage {
             )?;
         }
         Ok(())
+    }
+
+    fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT allowed_agent_ids, blocked_agent_ids, updated_at FROM user_agent_access WHERE user_id = $1",
+            &[&cleaned],
+        )?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let allowed: Option<String> = row.get(0);
+        let blocked: Option<String> = row.get(1);
+        let updated_at: f64 = row.get(2);
+        Ok(Some(UserAgentAccessRecord {
+            user_id: cleaned.to_string(),
+            allowed_agent_ids: allowed.map(|value| Self::parse_string_list(Some(value))),
+            blocked_agent_ids: Self::parse_string_list(blocked),
+            updated_at,
+        }))
+    }
+
+    fn set_user_agent_access(
+        &self,
+        user_id: &str,
+        allowed_agent_ids: Option<&Vec<String>>,
+        blocked_agent_ids: Option<&Vec<String>>,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        if allowed_agent_ids.is_some() || blocked_agent_ids.is_some() {
+            let allowed_payload = allowed_agent_ids
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let blocked_payload = blocked_agent_ids
+                .map(|value| Self::string_list_to_json(value))
+                .unwrap_or_else(|| "[]".to_string());
+            let now = Self::now_ts();
+            conn.execute(
+                "INSERT INTO user_agent_access (user_id, allowed_agent_ids, blocked_agent_ids, updated_at) VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_agent_ids = EXCLUDED.allowed_agent_ids, blocked_agent_ids = EXCLUDED.blocked_agent_ids, updated_at = EXCLUDED.updated_at",
+                &[&cleaned, &allowed_payload, &blocked_payload, &now],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM user_agent_access WHERE user_id = $1",
+                &[&cleaned],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let tool_names = if record.tool_names.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_names))
+        };
+        conn.execute(
+            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, name = EXCLUDED.name, description = EXCLUDED.description, \
+             system_prompt = EXCLUDED.system_prompt, tool_names = EXCLUDED.tool_names, access_level = EXCLUDED.access_level, \
+             status = EXCLUDED.status, icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.agent_id,
+                &record.user_id,
+                &record.name,
+                &record.description,
+                &record.system_prompt,
+                &tool_names,
+                &record.access_level,
+                &record.status,
+                &record.icon,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        if cleaned_user.is_empty() || cleaned_agent.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+             FROM user_agents WHERE user_id = $1 AND agent_id = $2",
+            &[&cleaned_user, &cleaned_agent],
+        )?;
+        Ok(row.map(|row| UserAgentRecord {
+            agent_id: row.get(0),
+            user_id: row.get(1),
+            name: row.get(2),
+            description: row.get(3),
+            system_prompt: row.get(4),
+            tool_names: Self::parse_string_list(row.get(5)),
+            access_level: row.get(6),
+            status: row.get(7),
+            icon: row.get(8),
+            created_at: row.get(9),
+            updated_at: row.get(10),
+        }))
+    }
+
+    fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+             FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
+            &[&cleaned_user],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(UserAgentRecord {
+                agent_id: row.get(0),
+                user_id: row.get(1),
+                name: row.get(2),
+                description: row.get(3),
+                system_prompt: row.get(4),
+                tool_names: Self::parse_string_list(row.get(5)),
+                access_level: row.get(6),
+                status: row.get(7),
+                icon: row.get(8),
+                created_at: row.get(9),
+                updated_at: row.get(10),
+            });
+        }
+        Ok(output)
+    }
+
+    fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        if cleaned_user.is_empty() || cleaned_agent.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM user_agents WHERE user_id = $1 AND agent_id = $2",
+            &[&cleaned_user, &cleaned_agent],
+        )?;
+        Ok(affected as i64)
     }
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>> {

@@ -42,6 +42,7 @@
       </button>
     </div>
     <div class="user-topbar-actions">
+      <slot name="actions" />
       <ThemeToggle />
       <router-link
         :to="profilePath"
@@ -103,6 +104,8 @@ const profilePath = computed(() => `${basePath.value}/profile`);
 
 const navItems = computed(() => [
   { label: '广场', path: `${basePath.value}/home` },
+  { label: '智能体', path: `${basePath.value}/agents` },
+  { label: '工具管理', path: `${basePath.value}/tools` },
   { label: '聊天', path: `${basePath.value}/chat` }
 ]);
 

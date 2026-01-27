@@ -117,6 +117,7 @@ async fn wunder_system_prompt(
             Some(&user_tool_bindings),
             &request.user_id,
             request.config_overrides.as_ref(),
+            request.agent_prompt.as_deref(),
         )
         .await;
     let elapsed = Utc::now() - start;
@@ -359,6 +360,7 @@ async fn wunder_tools(
         user_tools,
         shared_tools,
         extra_prompt,
+        shared_tools_selected: None,
     };
     Ok(Json(response))
 }

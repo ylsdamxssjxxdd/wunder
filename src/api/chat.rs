@@ -9,7 +9,7 @@ use crate::orchestrator_constants::{
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::state::AppState;
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use anyhow::Error;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
+const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -43,6 +44,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/sessions/{session_id}/events",
             get(get_session_events),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/tools",
+            post(update_session_tools),
         )
         .route(
             "/wunder/chat/sessions/{session_id}/messages",
@@ -83,6 +88,8 @@ struct SessionListQuery {
 struct CreateSessionRequest {
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,8 +97,6 @@ struct SendMessageRequest {
     content: String,
     #[serde(default)]
     stream: Option<bool>,
-    #[serde(default)]
-    selected_shared_tools: Option<Vec<String>>,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
 }
@@ -109,7 +114,9 @@ struct ChatAttachment {
 #[derive(Debug, Deserialize)]
 struct SystemPromptRequest {
     #[serde(default)]
-    selected_shared_tools: Option<Vec<String>>,
+    agent_id: Option<String>,
+    #[serde(default)]
+    tool_overrides: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +129,12 @@ struct SessionDetailQuery {
 struct ResumeQuery {
     #[serde(default)]
     after_event_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionToolsUpdateRequest {
+    #[serde(default)]
+    tool_overrides: Vec<String>,
 }
 
 async fn create_session(
@@ -137,6 +150,17 @@ async fn create_session(
         .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string())
         .trim()
         .to_string();
+    let agent_id = payload
+        .agent_id
+        .as_deref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
+    let tool_overrides = agent_record
+        .as_ref()
+        .map(|record| record.tool_names.clone())
+        .unwrap_or_default();
     let record = crate::storage::ChatSessionRecord {
         session_id: session_id.clone(),
         user_id: resolved.user.user_id.clone(),
@@ -148,6 +172,8 @@ async fn create_session(
         created_at: now,
         updated_at: now,
         last_message_at: now,
+        agent_id,
+        tool_overrides,
     };
     state
         .user_store
@@ -246,6 +272,8 @@ async fn get_session(
             "created_at": format_ts(record.created_at),
             "updated_at": format_ts(record.updated_at),
             "last_message_at": format_ts(record.last_message_at),
+            "agent_id": record.agent_id,
+            "tool_overrides": record.tool_overrides,
             "messages": messages
         }
     })))
@@ -264,16 +292,11 @@ async fn get_session_events(
             i18n::t("error.content_required"),
         ));
     }
-    let record = state
+    let _record = state
         .user_store
         .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.is_none() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    }
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let rounds = state
         .monitor
         .get_record(&session_id)
@@ -300,16 +323,11 @@ async fn delete_session(
             i18n::t("error.content_required"),
         ));
     }
-    let record = state
+    let _record = state
         .user_store
         .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.is_none() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    }
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     state
         .workspace
         .purge_session_data(&resolved.user.user_id, &session_id);
@@ -356,6 +374,8 @@ async fn send_message(
         created_at: now,
         updated_at: now,
         last_message_at: now,
+        agent_id: None,
+        tool_overrides: Vec::new(),
     });
     state
         .user_store
@@ -363,12 +383,16 @@ async fn send_message(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
-    let allowed = compute_allowed_tool_names(
-        &resolved.user,
-        &user_context,
-        payload.selected_shared_tools.as_deref(),
-    );
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
+    allowed = apply_tool_overrides(allowed, &overrides);
     let tool_names = finalize_tool_names(allowed);
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     if should_auto_title(&record.title) {
         if let Some(title) = build_session_title(&content) {
@@ -417,6 +441,7 @@ async fn send_message(
         model_name: None,
         language: Some(i18n::get_language()),
         config_overrides: None,
+        agent_prompt,
         attachments,
     };
 
@@ -470,16 +495,11 @@ async fn resume_session(
             i18n::t("error.content_required"),
         ));
     }
-    let record = state
+    let _record = state
         .user_store
         .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.is_none() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    }
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
 
     if let Some(after_event_id) = query.after_event_id {
         let workspace = state.workspace.clone();
@@ -623,16 +643,11 @@ async fn cancel_session(
             i18n::t("error.content_required"),
         ));
     }
-    let record = state
+    let _record = state
         .user_store
         .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.is_none() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    }
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let cancelled = state.monitor.cancel(&session_id);
     Ok(Json(json!({ "data": { "cancelled": cancelled } })))
 }
@@ -644,12 +659,19 @@ async fn system_prompt(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
-    let allowed = compute_allowed_tool_names(
-        &resolved.user,
-        &user_context,
-        payload.selected_shared_tools.as_deref(),
-    );
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, payload.agent_id.as_deref(), false).await?;
+    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let overrides = payload
+        .tool_overrides
+        .map(normalize_tool_overrides)
+        .unwrap_or_else(|| resolve_agent_tool_defaults(agent_record.as_ref()));
+    allowed = apply_tool_overrides(allowed, &overrides);
     let tool_names = finalize_tool_names(allowed);
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -659,6 +681,7 @@ async fn system_prompt(
             Some(&user_context.bindings),
             &resolved.user.user_id,
             None,
+            agent_prompt.as_deref(),
         )
         .await;
     Ok(Json(json!({ "data": { "prompt": prompt } })))
@@ -681,13 +704,8 @@ async fn session_system_prompt(
     let record = state
         .user_store
         .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if record.is_none() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    }
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let stored_prompt = state
         .workspace
         .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
@@ -697,12 +715,27 @@ async fn session_system_prompt(
         return Ok(Json(json!({ "data": { "prompt": prompt } })));
     }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
-    let allowed = compute_allowed_tool_names(
+    let agent_record = fetch_agent_record(
+        &state,
         &resolved.user,
-        &user_context,
-        payload.selected_shared_tools.as_deref(),
-    );
+        record.agent_id.as_deref().or(payload.agent_id.as_deref()),
+        true,
+    )
+    .await?;
+    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let overrides = if !record.tool_overrides.is_empty() {
+        normalize_tool_overrides(record.tool_overrides.clone())
+    } else if let Some(overrides) = payload.tool_overrides.as_ref() {
+        normalize_tool_overrides(overrides.clone())
+    } else {
+        resolve_agent_tool_defaults(agent_record.as_ref())
+    };
+    allowed = apply_tool_overrides(allowed, &overrides);
     let tool_names = finalize_tool_names(allowed);
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -712,9 +745,78 @@ async fn session_system_prompt(
             Some(&user_context.bindings),
             &resolved.user.user_id,
             None,
+            agent_prompt.as_deref(),
         )
         .await;
     Ok(Json(json!({ "data": { "prompt": prompt } })))
+}
+
+async fn update_session_tools(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SessionToolsUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut record = record
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
+    let allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let overrides =
+        filter_tool_overrides(normalize_tool_overrides(payload.tool_overrides), &allowed);
+    record.tool_overrides = overrides;
+    record.updated_at = now_ts();
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let mut effective_allowed = compute_allowed_tool_names(&resolved.user, &user_context);
+    let effective_overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
+    effective_allowed = apply_tool_overrides(effective_allowed, &effective_overrides);
+    let tool_names = finalize_tool_names(effective_allowed);
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let prompt = state
+        .orchestrator
+        .build_system_prompt(
+            &user_context.config,
+            &tool_names,
+            &user_context.skills,
+            Some(&user_context.bindings),
+            &resolved.user.user_id,
+            None,
+            agent_prompt.as_deref(),
+        )
+        .await;
+    let _ = state.workspace.save_session_system_prompt(
+        &resolved.user.user_id,
+        &session_id,
+        &prompt,
+        None,
+    );
+
+    Ok(Json(json!({
+        "data": {
+            "id": session_id,
+            "tool_overrides": record.tool_overrides,
+        }
+    })))
 }
 
 async fn chat_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Response> {
@@ -1002,6 +1104,8 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
         "last_message_at": format_ts(record.last_message_at),
+        "agent_id": record.agent_id,
+        "tool_overrides": record.tool_overrides,
     })
 }
 
@@ -1023,6 +1127,111 @@ fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
     let mut list = allowed.drain().collect::<Vec<_>>();
     list.sort();
     list
+}
+
+async fn fetch_agent_record(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    agent_id: Option<&str>,
+    allow_missing: bool,
+) -> Result<Option<crate::storage::UserAgentRecord>, Response> {
+    let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let record = state
+        .user_store
+        .get_user_agent(&user.user_id, agent_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(record) = record else {
+        if allow_missing {
+            return Ok(None);
+        }
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.agent_not_found"),
+        ));
+    };
+    let access = state
+        .user_store
+        .get_user_agent_access(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !is_agent_allowed(user, access.as_ref(), &record) {
+        if allow_missing {
+            return Ok(None);
+        }
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.agent_not_found"),
+        ));
+    }
+    Ok(Some(record))
+}
+
+fn resolve_session_tool_overrides(
+    record: &crate::storage::ChatSessionRecord,
+    agent: Option<&crate::storage::UserAgentRecord>,
+) -> Vec<String> {
+    if !record.tool_overrides.is_empty() {
+        normalize_tool_overrides(record.tool_overrides.clone())
+    } else {
+        resolve_agent_tool_defaults(agent)
+    }
+}
+
+fn resolve_agent_tool_defaults(agent: Option<&crate::storage::UserAgentRecord>) -> Vec<String> {
+    agent
+        .map(|record| record.tool_names.clone())
+        .unwrap_or_default()
+}
+
+fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    let mut has_none = false;
+    for raw in values {
+        let name = raw.trim().to_string();
+        if name.is_empty() || seen.contains(&name) {
+            continue;
+        }
+        if name == TOOL_OVERRIDE_NONE {
+            has_none = true;
+        }
+        seen.insert(name.clone());
+        output.push(name);
+    }
+    if has_none {
+        vec![TOOL_OVERRIDE_NONE.to_string()]
+    } else {
+        output
+    }
+}
+
+fn filter_tool_overrides(values: Vec<String>, allowed: &HashSet<String>) -> Vec<String> {
+    if values.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
+        return vec![TOOL_OVERRIDE_NONE.to_string()];
+    }
+    values
+        .into_iter()
+        .filter(|name| allowed.contains(name))
+        .collect()
+}
+
+fn apply_tool_overrides(allowed: HashSet<String>, overrides: &[String]) -> HashSet<String> {
+    if overrides.is_empty() {
+        return allowed;
+    }
+    if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
+        return HashSet::new();
+    }
+    let override_set: HashSet<String> = overrides
+        .iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
+    allowed
+        .intersection(&override_set)
+        .cloned()
+        .collect::<HashSet<_>>()
 }
 
 fn should_auto_title(title: &str) -> bool {

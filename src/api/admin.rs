@@ -160,6 +160,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_user_accounts_tool_access_get).put(admin_user_accounts_tool_access_update),
         )
         .route(
+            "/wunder/admin/user_accounts/{user_id}/agent_access",
+            get(admin_user_accounts_agent_access_get).put(admin_user_accounts_agent_access_update),
+        )
+        .route(
             "/wunder/admin/users/throughput/cleanup",
             post(admin_users_cleanup_throughput),
         )
@@ -2506,7 +2510,16 @@ async fn admin_user_accounts_tool_access_get(
         .user_store
         .get_user_tool_access(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "allowed_tools": allowed } })))
+    let allowed_tools = allowed
+        .as_ref()
+        .and_then(|record| record.allowed_tools.clone());
+    let blocked_tools = allowed
+        .as_ref()
+        .map(|record| record.blocked_tools.clone())
+        .unwrap_or_default();
+    Ok(Json(json!({
+        "data": { "allowed_tools": allowed_tools, "blocked_tools": blocked_tools }
+    })))
 }
 
 async fn admin_user_accounts_tool_access_update(
@@ -2533,11 +2546,86 @@ async fn admin_user_accounts_tool_access_update(
         ));
     }
     let allowed = payload.allowed_tools.map(normalize_tool_access_list);
+    let blocked = payload.blocked_tools.map(normalize_tool_access_list);
     state
         .user_store
-        .set_user_tool_access(cleaned, allowed.as_ref())
+        .set_user_tool_access(cleaned, allowed.as_ref(), blocked.as_ref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "allowed_tools": allowed } })))
+    Ok(Json(json!({
+        "data": { "allowed_tools": allowed, "blocked_tools": blocked }
+    })))
+}
+
+async fn admin_user_accounts_agent_access_get(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let user_exists = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    if !user_exists {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.user_not_found"),
+        ));
+    }
+    let access = state
+        .user_store
+        .get_user_agent_access(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let allowed_agent_ids = access
+        .as_ref()
+        .and_then(|record| record.allowed_agent_ids.clone());
+    let blocked_agent_ids = access
+        .as_ref()
+        .map(|record| record.blocked_agent_ids.clone())
+        .unwrap_or_default();
+    Ok(Json(json!({
+        "data": { "allowed_agent_ids": allowed_agent_ids, "blocked_agent_ids": blocked_agent_ids }
+    })))
+}
+
+async fn admin_user_accounts_agent_access_update(
+    State(state): State<Arc<AppState>>,
+    AxumPath(user_id): AxumPath<String>,
+    Json(payload): Json<UserAccountAgentAccessRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let user_exists = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    if !user_exists {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.user_not_found"),
+        ));
+    }
+    let allowed = payload.allowed_agent_ids.map(normalize_tool_access_list);
+    let blocked = payload.blocked_agent_ids.map(normalize_tool_access_list);
+    state
+        .user_store
+        .set_user_agent_access(cleaned, allowed.as_ref(), blocked.as_ref())
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": { "allowed_agent_ids": allowed, "blocked_agent_ids": blocked }
+    })))
 }
 
 async fn admin_user_accounts_delete(
@@ -2572,7 +2660,8 @@ async fn admin_user_accounts_delete(
         .user_store
         .delete_user(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let _ = state.user_store.set_user_tool_access(cleaned, None);
+    let _ = state.user_store.set_user_tool_access(cleaned, None, None);
+    let _ = state.user_store.set_user_agent_access(cleaned, None, None);
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
     let purge_result = state.workspace.purge_user_data(cleaned);
     let tool_root = state.user_tool_store.get_user_dir(cleaned);
@@ -3839,6 +3928,16 @@ struct UserAccountPasswordResetRequest {
 struct UserAccountToolAccessRequest {
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
+    #[serde(default)]
+    blocked_tools: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountAgentAccessRequest {
+    #[serde(default)]
+    allowed_agent_ids: Option<Vec<String>>,
+    #[serde(default)]
+    blocked_agent_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]

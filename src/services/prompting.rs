@@ -108,6 +108,7 @@ impl PromptComposer {
         tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
+        agent_prompt: Option<&str>,
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
         let language = i18n::get_language();
@@ -122,9 +123,10 @@ impl PromptComposer {
             .map(|item| item.shared_version)
             .unwrap_or(0.0);
         let overrides_key = build_overrides_key(overrides);
+        let agent_prompt_key = build_prompt_key(agent_prompt);
         let workdir_key = workdir.to_string_lossy();
         let base_key = format!(
-            "{user_id}|{config_version}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{language}"
+            "{user_id}|{config_version}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
         );
         let workspace_version = workspace.get_tree_cache_version(user_id);
         let cache_key = format!("{base_key}|{workspace_version}");
@@ -230,6 +232,12 @@ impl PromptComposer {
                 if !extra.is_empty() {
                     prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
                 }
+            }
+            if let Some(extra) = agent_prompt
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                prompt = format!("{}\n\n{}", prompt.trim_end(), extra);
             }
             if tool_call_mode == ToolCallMode::ToolCall && allowed_tool_names.contains("a2ui") {
                 let a2ui_prompt = build_a2ui_prompt();
@@ -478,6 +486,17 @@ fn build_overrides_key(overrides: Option<&Value>) -> String {
         return String::new();
     };
     serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn build_prompt_key(prompt: Option<&str>) -> String {
+    let text = prompt.unwrap_or("").trim();
+    if text.is_empty() {
+        return String::new();
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    text.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 fn render_tool_spec(spec: &ToolSpec) -> String {

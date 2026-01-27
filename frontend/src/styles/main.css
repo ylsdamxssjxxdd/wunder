@@ -5,6 +5,8 @@
 @import "./pages/workspace.css";
 @import "./pages/portal.css";
 @import "./pages/profile.css";
+@import "./pages/agents.css";
+@import "./pages/tools.css";
 @import "./pages/admin.css";
 @import "./chat/shell.css";
 @import "./chat/history.css";

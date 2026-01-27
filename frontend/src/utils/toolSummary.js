@@ -60,6 +60,7 @@ export const collectAbilityNames = (payload = {}) => {
   const toolGroups = [
     payload.builtin_tools || payload.builtinTools,
     payload.mcp_tools || payload.mcpTools,
+    payload.a2a_tools || payload.a2aTools,
     payload.knowledge_tools || payload.knowledgeTools,
     payload.user_tools || payload.userTools,
     payload.shared_tools || payload.sharedTools
@@ -76,6 +77,7 @@ export const collectAbilityDetails = (payload = {}) => {
   const toolGroups = [
     payload.builtin_tools || payload.builtinTools,
     payload.mcp_tools || payload.mcpTools,
+    payload.a2a_tools || payload.a2aTools,
     payload.knowledge_tools || payload.knowledgeTools,
     payload.user_tools || payload.userTools,
     payload.shared_tools || payload.sharedTools

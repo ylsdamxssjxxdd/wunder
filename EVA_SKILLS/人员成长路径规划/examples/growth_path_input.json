@@ -1,0 +1,55 @@
+﻿{
+  "person": {
+    "name": "张三",
+    "current_role": "后端工程师",
+    "target_role": "资深后端工程师",
+    "level": "P4",
+    "experience_years": 4,
+    "department": "平台研发"
+  },
+  "goal": {
+    "direction": "平台稳定性与架构",
+    "timeframe_months": 12,
+    "target_level": "P5"
+  },
+  "experience": {
+    "projects": [
+      {
+        "name": "支付服务重构",
+        "role": "负责人",
+        "impact": "可用性 99.95%",
+        "skills": ["系统设计", "稳定性"]
+      },
+      {
+        "name": "核心链路压测",
+        "role": "主导",
+        "impact": "峰值 TPS 提升 35%",
+        "skills": ["性能优化", "容量规划"]
+      }
+    ],
+    "achievements": ["推进故障响应 SOP 落地", "完善告警分级与降噪机制"]
+  },
+  "skills": [
+    {"name": "系统设计", "current": 3, "target": 5},
+    {"name": "性能优化", "current": 2.5, "target": 4.5},
+    {"name": "稳定性工程", "current": 3, "target": 5},
+    {"name": "跨团队协作", "current": 4, "target": 5},
+    {"name": "影响力", "current": 2, "target": 4}
+  ],
+  "milestones": {
+    "short_term": ["1-3个月：完成稳定性专项培训", "4-6个月：主导一次架构评审"],
+    "mid_term": ["7-9个月：牵头关键服务重构"],
+    "long_term": ["10-12个月：完成晋升评审准备"]
+  },
+  "actions": {
+    "learning": ["系统设计课程", "SRE 实践训练营"],
+    "projects": ["核心链路压测与优化", "故障演练与复盘机制建设"],
+    "mentors": ["匹配架构方向导师"],
+    "habits": ["每月输出技术复盘与分享"]
+  },
+  "data_sources": [
+    {"type": "knowledge_base", "name": "岗位能力模型", "query": "资深后端工程师 能力模型"},
+    {"type": "db", "name": "绩效记录", "query": "hr_perf WHERE employee_id=..."}
+  ],
+  "notes": "目标岗位以平台稳定性方向为主。"
+}

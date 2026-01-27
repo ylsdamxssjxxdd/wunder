@@ -661,6 +661,7 @@ impl A2aService {
             },
             language: Some(i18n::get_language()),
             config_overrides: None,
+            agent_prompt: None,
             attachments: None,
         };
 
@@ -745,6 +746,7 @@ impl A2aService {
             },
             language: Some(i18n::get_language()),
             config_overrides: None,
+            agent_prompt: None,
             attachments: None,
         };
 

@@ -35,4 +35,6 @@ export const uploadUserKnowledgeFile = (base, file) => {
 };
 
 export const fetchUserToolsSummary = () => api.get('/user_tools/tools');
+export const fetchUserToolsCatalog = () => api.get('/user_tools/catalog');
+export const saveUserSharedTools = (payload) => api.post('/user_tools/shared_tools', payload);
 export const saveUserExtraPrompt = (payload) => api.post('/user_tools/extra_prompt', payload);

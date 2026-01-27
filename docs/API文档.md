@@ -7,7 +7,9 @@
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml`。
 - MCP 服务容器：`wunder-mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `PERSONNEL_DB_*` 配置。
-- 多数据库支持：可使用 `PERSONNEL_DB_TARGETS`（JSON）或 `PERSONNEL_DB_TARGETS_PATH` 配置多个数据库，工具入参通过 `db_key` 选择目标，默认 key 由 `PERSONNEL_DB_DEFAULT` 指定。
+- MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理运行时与人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，环境变量优先级更高。
+- 多数据库支持：可使用 `PERSONNEL_DB_TARGETS`（JSON）或 `PERSONNEL_DB_TARGETS_PATH` 配置多个数据库（MySQL/PostgreSQL），工具入参通过 `db_key` 选择目标，默认 key 由 `PERSONNEL_DB_DEFAULT` 指定。
+- 单库类型切换：设置 `PERSONNEL_DB_TYPE=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
@@ -51,6 +53,7 @@
   - `session_id`：字符串，可选，会话标识
   - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称（内置工具支持英文别名）
   - `config_overrides`：对象，可选，用于临时覆盖配置
+  - `agent_prompt`：字符串，可选，智能体追加提示词
 - 返回（JSON）：
   - `prompt`：字符串，当前系统提示词
   - `build_time_ms`：数字，系统提示词构建耗时（毫秒）
@@ -69,6 +72,7 @@
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
   - `extra_prompt`：附加提示词文本（与用户自建工具配置关联）
+  - `shared_tools_selected`：共享工具勾选列表（可选）
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
@@ -202,7 +206,39 @@
   - `warnings`：转换警告列表
 - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
 
-### 4.1.2.10 `/wunder/user_tools/extra_prompt`
+### 4.1.2.10 `/wunder/user_tools/tools`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `builtin_tools`：内置工具列表（name/description/input_schema）
+  - `mcp_tools`：MCP 工具列表（name/description/input_schema）
+  - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
+  - `skills`：技能列表（name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（name/description/input_schema）
+  - `user_tools`：自建工具列表（name/description/input_schema）
+  - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
+  - `extra_prompt`：附加提示词文本
+  - `shared_tools_selected`：共享工具勾选列表（字符串数组）
+- 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
+
+### 4.1.2.11 `/wunder/user_tools/catalog`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - 字段同 `/wunder/user_tools/tools`
+- 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
+
+### 4.1.2.12 `/wunder/user_tools/shared_tools`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识（可选）
+  - `shared_tools`：共享工具勾选列表（字符串数组）
+- 返回（JSON）：
+  - `user_id`：用户唯一标识
+  - `shared_tools`：共享工具勾选列表
+
+### 4.1.2.13 `/wunder/user_tools/extra_prompt`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -212,7 +248,7 @@
   - `user_id`：用户唯一标识
   - `extra_prompt`：附加提示词文本
 
-### 4.1.2.11 `/wunder/doc2md/convert`
+### 4.1.2.14 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -227,7 +263,7 @@
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
 
-### 4.1.2.12 `/wunder/attachments/convert`
+### 4.1.2.15 `/wunder/attachments/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -1258,8 +1294,8 @@
 ### 4.1.55 `/wunder/chat/*`
 
 - `POST /wunder/chat/sessions`：创建会话
-  - 入参（JSON）：`title`（可选）
-  - 返回：`data`（id/title/created_at/updated_at/last_message_at）
+  - 入参（JSON）：`title`（可选）、`agent_id`（可选）
+  - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides）
 - `GET /wunder/chat/sessions`：会话列表
   - Query：`page`/`page_size` 或 `offset`/`limit`
   - 返回：`data.total`、`data.items`
@@ -1271,7 +1307,7 @@
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
-  - 入参（JSON）：`content`、`stream`（默认 true）、`selected_shared_tools`（可选）、`attachments`（可选）
+  - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
@@ -1279,19 +1315,40 @@
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
 - `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
   - 返回：`data.cancelled`
+- `POST /wunder/chat/sessions/{session_id}/tools`：设置会话工具覆盖
+  - 入参（JSON）：`tool_overrides`（字符串数组，空数组表示恢复默认；传入 `__no_tools__` 表示禁用全部工具）
+  - 返回：`data.id`、`data.tool_overrides`
 - `POST /wunder/chat/system-prompt`：系统提示词预览
-  - 入参（JSON）：`selected_shared_tools`（可选）
+  - 入参（JSON）：`agent_id`（可选）、`tool_overrides`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/sessions/{session_id}/system-prompt`：会话系统提示词预览（校验会话归属）
   - 会话已保存提示词时直接返回该版本，不受工具勾选或工作区变化影响
-  - 未保存时才按 `selected_shared_tools` 构建当前提示词预览
-  - 入参（JSON）：`selected_shared_tools`（可选）
+  - 未保存时才按 `agent_id/tool_overrides` 构建当前提示词预览
+  - 入参（JSON）：`agent_id`（可选）、`tool_overrides`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/attachments/convert`：附件转换
   - 入参：`multipart/form-data`，`file`
   - 返回：`data`（转换结果/消息/告警）
 
-### 4.1.56 `/wunder/admin/user_accounts/*`
+### 4.1.56 `/wunder/agents`
+
+- `GET /wunder/agents`：智能体列表
+  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/status/icon/created_at/updated_at）
+- `POST /wunder/agents`：创建智能体
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`access_level`（可选）、`status`（可选）、`icon`（可选）
+  - 返回：`data`（同智能体详情）
+- `GET /wunder/agents/{agent_id}`：智能体详情
+  - 返回：`data`（同智能体详情）
+- `PUT /wunder/agents/{agent_id}`：更新智能体
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`access_level`/`status`/`icon`（可选）
+  - 返回：`data`（同智能体详情）
+- `DELETE /wunder/agents/{agent_id}`：删除智能体
+  - 返回：`data.id`
+- 说明：
+  - 智能体提示词会追加到基础系统提示词末尾。
+  - `tool_names` 会按用户权限等级与管理员覆盖过滤。
+
+### 4.1.57 `/wunder/admin/user_accounts/*`
 
 - `GET /wunder/admin/user_accounts`
   - Query：`keyword`、`offset`、`limit`
@@ -1308,10 +1365,15 @@
   - 入参（JSON）：`password`
   - 返回：`data.ok`
 - `GET /wunder/admin/user_accounts/{user_id}/tool_access`
-  - 返回：`data.allowed_tools`（null 表示使用默认策略）
+  - 返回：`data.allowed_tools`（null 表示使用默认策略）、`data.blocked_tools`
 - `PUT /wunder/admin/user_accounts/{user_id}/tool_access`
-  - 入参（JSON）：`allowed_tools`（null 或字符串数组）
-  - 返回：`data.allowed_tools`
+  - 入参（JSON）：`allowed_tools`（null 或字符串数组）、`blocked_tools`（可选字符串数组）
+  - 返回：`data.allowed_tools`、`data.blocked_tools`
+- `GET /wunder/admin/user_accounts/{user_id}/agent_access`
+  - 返回：`data.allowed_agent_ids`（null 表示使用默认策略）、`data.blocked_agent_ids`
+- `PUT /wunder/admin/user_accounts/{user_id}/agent_access`
+  - 入参（JSON）：`allowed_agent_ids`（null 或字符串数组）、`blocked_agent_ids`（可选字符串数组）
+  - 返回：`data.allowed_agent_ids`、`data.blocked_agent_ids`
 
 ### 4.2 流式响应（SSE）
 

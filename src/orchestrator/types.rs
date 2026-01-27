@@ -9,6 +9,7 @@ pub(super) struct PreparedRequest {
     pub(super) skip_tool_calls: bool,
     pub(super) model_name: Option<String>,
     pub(super) config_overrides: Option<Value>,
+    pub(super) agent_prompt: Option<String>,
     pub(super) stream: bool,
     pub(super) debug_payload: bool,
     pub(super) attachments: Option<Vec<AttachmentPayload>>,

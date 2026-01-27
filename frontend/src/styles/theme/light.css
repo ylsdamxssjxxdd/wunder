@@ -472,6 +472,35 @@
   outline: none;
 }
 
+:root[data-user-theme='light'] .session-tools-dialog {
+  --chat-text: #0f172a;
+  --chat-muted: #64748b;
+  --chat-border: rgba(15, 23, 42, 0.12);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:root[data-user-theme='light'] .session-tools-dialog.el-dialog {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+:root[data-user-theme='light'] .session-tools-groups {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .session-tools-item {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
 :root[data-user-theme='light'] .image-preview-dialog {
   --el-dialog-bg-color: #ffffff;
   --el-text-color-primary: #0f172a;

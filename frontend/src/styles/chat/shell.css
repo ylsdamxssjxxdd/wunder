@@ -278,6 +278,26 @@
   box-shadow: 0 0 0 6px rgba(77, 216, 255, 0.12);
 }
 
+.chat-shell .agent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(77, 216, 255, 0.35);
+  background: rgba(77, 216, 255, 0.12);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-shell .agent-pill-label {
+  color: var(--chat-muted);
+}
+
+.chat-shell .agent-pill-name {
+  color: var(--chat-text);
+}
+
 .chat-shell .main-grid {
   display: grid;
   grid-template-columns: 320px 1fr;

@@ -103,6 +103,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
+        agent_prompt: Option<&str>,
     ) -> String {
         let workdir = self
             .workspace
@@ -121,6 +122,7 @@ impl Orchestrator {
                 tool_call_mode,
                 skills,
                 user_tool_bindings,
+                agent_prompt,
             )
             .await
     }
@@ -136,6 +138,7 @@ impl Orchestrator {
         user_id: &str,
         session_id: &str,
         language: Option<&str>,
+        agent_prompt: Option<&str>,
     ) -> String {
         let stored = self
             .workspace
@@ -154,6 +157,7 @@ impl Orchestrator {
                 skills,
                 user_tool_bindings,
                 user_id,
+                agent_prompt,
             )
             .await;
         let _ = self

@@ -11,7 +11,10 @@ use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, UserToolContext};
+use crate::user_access::{
+    build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
+    UserToolContext,
+};
 use crate::user_tools::{UserKnowledgeBase, UserMcpServer};
 use axum::extract::{Multipart, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -65,6 +68,11 @@ pub fn router() -> Router<Arc<AppState>> {
             post(user_knowledge_upload),
         )
         .route("/wunder/user_tools/tools", get(user_tools_summary))
+        .route("/wunder/user_tools/catalog", get(user_tools_catalog))
+        .route(
+            "/wunder/user_tools/shared_tools",
+            post(user_shared_tools_update),
+        )
         .route("/wunder/user_tools/extra_prompt", post(user_extra_prompt))
 }
 
@@ -670,9 +678,40 @@ async fn user_tools_summary(
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context(&state, &user_id).await;
-    let allowed = compute_allowed_tool_names(&resolved.user, &context, None);
+    let allowed = compute_allowed_tool_names(&resolved.user, &context);
     let summary = build_user_tools_summary(&user_id, &allowed, &context);
     Ok(Json(json!({ "data": summary })))
+}
+
+async fn user_tools_catalog(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let context = build_user_tool_context_for_catalog(&state, &user_id).await;
+    let allowed = compute_allowed_tool_names(&resolved.user, &context);
+    let summary = build_user_tools_summary(&user_id, &allowed, &context);
+    Ok(Json(json!({ "data": summary })))
+}
+
+async fn user_shared_tools_update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserSharedToolsUpdate>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let updated = state
+        .user_tool_store
+        .update_shared_tools(&user_id, payload.shared_tools)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "user_id": user_id,
+            "shared_tools": updated.shared_tools
+        }
+    })))
 }
 
 async fn user_extra_prompt(
@@ -900,6 +939,16 @@ fn build_user_tools_summary(
     } else {
         Some(context.bindings.extra_prompt.clone())
     };
+    let shared_tool_names: HashSet<String> =
+        shared_tools.iter().map(|tool| tool.name.clone()).collect();
+    let mut shared_tools_selected = context
+        .bindings
+        .shared_tools_enabled
+        .iter()
+        .filter(|name| shared_tool_names.contains(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    shared_tools_selected.sort();
 
     AvailableToolsResponse {
         builtin_tools,
@@ -910,6 +959,7 @@ fn build_user_tools_summary(
         user_tools,
         shared_tools,
         extra_prompt,
+        shared_tools_selected: Some(shared_tools_selected),
     }
 }
 
@@ -1252,6 +1302,14 @@ struct UserExtraPromptRequest {
     #[serde(default)]
     user_id: Option<String>,
     extra_prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserSharedToolsUpdate {
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    shared_tools: Vec<String>,
 }
 
 fn default_true() -> bool {

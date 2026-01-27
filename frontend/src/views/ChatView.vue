@@ -49,42 +49,18 @@
             新建会话
           </button>
           <button
-            class="topbar-icon-btn"
+            class="tools-btn"
             type="button"
-            title="自建工具"
-            aria-label="自建工具"
-            @click="userToolsVisible = true"
+            title="调整工具"
+            aria-label="调整工具"
+            @click="openSessionTools"
           >
-            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="7" width="18" height="12" rx="2" />
-              <path d="M9 7V5h6v2" />
-              <path d="M3 13h18" />
-            </svg>
+            调整工具
           </button>
-          <button
-            class="topbar-icon-btn"
-            type="button"
-            title="共享工具"
-            aria-label="共享工具"
-            @click="sharedToolsVisible = true"
-          >
-            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="7" cy="12" r="3" />
-              <circle cx="17" cy="12" r="3" />
-              <path d="M10 12h4" />
-            </svg>
-          </button>
-          <button
-            class="topbar-icon-btn"
-            type="button"
-            title="额外提示设置"
-            aria-label="额外提示设置"
-            @click="extraPromptVisible = true"
-          >
-            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3l2.2 4.5L19 9l-4.8 1.5L12 15l-2.2-4.5L5 9l4.8-1.5L12 3z" />
-            </svg>
-          </button>
+          <div v-if="activeAgentLabel" class="agent-pill">
+            <span class="agent-pill-label">当前智能体</span>
+            <span class="agent-pill-name">{{ activeAgentLabel }}</span>
+          </div>
           <ThemeToggle />
           <div class="topbar-user">
             <button
@@ -369,10 +345,6 @@
       </div>
     </div>
 
-    <UserToolsModal v-model="userToolsVisible" />
-    <UserSharedToolsModal v-model="sharedToolsVisible" />
-    <UserExtraPromptModal v-model="extraPromptVisible" />
-
     <el-dialog
       v-model="promptPreviewVisible"
       class="system-prompt-dialog"
@@ -394,6 +366,80 @@
       </div>
       <template #footer>
         <el-button class="system-prompt-footer-btn" @click="closePromptPreview">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="sessionToolsVisible"
+      class="session-tools-dialog"
+      width="780px"
+      top="8vh"
+      :show-close="false"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="system-prompt-header">
+          <div class="system-prompt-title">会话工具调整</div>
+          <button class="icon-btn" type="button" @click="closeSessionTools">×</button>
+        </div>
+      </template>
+      <div class="session-tools-body">
+        <div class="session-tools-bar">
+          <div class="session-tools-meta">
+            可用 {{ availableToolCount }} 项，已选 {{ sessionToolSelectionCount }} 项
+          </div>
+          <el-input
+            v-model="sessionToolSearch"
+            size="small"
+            placeholder="搜索工具/技能"
+            clearable
+          />
+        </div>
+        <div class="session-tools-controls">
+          <el-switch
+            v-model="sessionToolsDisabled"
+            active-text="禁用全部工具"
+            inactive-text="正常挂载工具"
+          />
+          <el-button size="small" @click="resetSessionTools">恢复默认</el-button>
+        </div>
+        <div v-if="sessionToolsDisabled" class="session-tools-muted">
+          当前会话将禁用所有工具调用。
+        </div>
+        <div v-else class="session-tools-groups">
+          <div v-if="!filteredToolGroups.length" class="session-tools-empty">
+            暂无匹配工具
+          </div>
+          <div v-for="group in filteredToolGroups" :key="group.label" class="session-tools-group">
+            <div class="session-tools-group-title">{{ group.label }}</div>
+            <div class="session-tools-items">
+              <label
+                v-for="tool in group.items"
+                :key="tool.name"
+                class="session-tools-item"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isSessionToolSelected(tool.name)"
+                  @change="toggleSessionTool(tool.name, $event.target.checked)"
+                />
+                <div class="session-tools-item-info">
+                  <div class="session-tools-item-name">{{ tool.name }}</div>
+                  <div class="session-tools-item-desc">
+                    {{ tool.description || '暂无描述' }}
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="closeSessionTools">取消</el-button>
+        <el-button type="primary" :loading="sessionToolsSaving" @click="saveSessionTools">
+          应用
+        </el-button>
       </template>
     </el-dialog>
 
@@ -521,9 +567,7 @@ import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
-import UserExtraPromptModal from '@/components/user-tools/UserExtraPromptModal.vue';
-import UserSharedToolsModal from '@/components/user-tools/UserSharedToolsModal.vue';
-import UserToolsModal from '@/components/user-tools/UserToolsModal.vue';
+import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
@@ -532,13 +576,13 @@ import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
-import { collectAbilityDetails } from '@/utils/toolSummary';
-import { loadSharedToolSelection } from '@/utils/toolSelection';
+import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
+const agentStore = useAgentStore();
 const currentUser = computed(() => authStore.user);
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
@@ -547,9 +591,6 @@ const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
 );
 const inquirySelection = ref([]);
-const userToolsVisible = ref(false);
-const sharedToolsVisible = ref(false);
-const extraPromptVisible = ref(false);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
 const messagesContainerRef = ref(null);
@@ -566,6 +607,11 @@ const isCompactLayout = ref(false);
 const promptToolSummary = ref(null);
 const toolSummaryLoading = ref(false);
 const toolSummaryError = ref('');
+const sessionToolsVisible = ref(false);
+const sessionToolsSaving = ref(false);
+const sessionToolSearch = ref('');
+const sessionToolSelection = ref(new Set());
+const sessionToolsDisabled = ref(false);
 const abilityTooltipRef = ref(null);
 const abilityTooltipVisible = ref(false);
 const abilityTooltipOptions = {
@@ -580,15 +626,147 @@ const abilityTooltipOptions = {
     }
   ]
 };
+const TOOL_OVERRIDE_NONE = '__no_tools__';
+
+const normalizeToolItemName = (item) => {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  return item.name || item.tool_name || item.toolName || item.id || '';
+};
+
+const normalizeToolItem = (item) => {
+  if (!item) return null;
+  if (typeof item === 'string') {
+    const name = item.trim();
+    return name ? { name, description: '' } : null;
+  }
+  const name = String(item.name || '').trim();
+  if (!name) return null;
+  return {
+    name,
+    description: String(item.description || '').trim()
+  };
+};
+
+const buildAllowedToolSet = (summary) => {
+  const names = collectAbilityNames(summary || {});
+  return new Set([...(names.tools || []), ...(names.skills || [])]);
+};
+
+const filterSummaryByNames = (summary, allowedSet) => {
+  if (!summary) return null;
+  const filterList = (list) =>
+    Array.isArray(list)
+      ? list.filter((item) => {
+          const name = String(normalizeToolItemName(item)).trim();
+          return name && allowedSet.has(name);
+        })
+      : [];
+  return {
+    ...summary,
+    builtin_tools: filterList(summary.builtin_tools),
+    mcp_tools: filterList(summary.mcp_tools),
+    a2a_tools: filterList(summary.a2a_tools),
+    skills: filterList(summary.skills),
+    knowledge_tools: filterList(summary.knowledge_tools),
+    user_tools: filterList(summary.user_tools),
+    shared_tools: filterList(summary.shared_tools)
+  };
+};
+
+function applyToolOverridesToSummary(summary, overrides = [], agentDefaults = []) {
+  if (!summary) return null;
+  const allowedSet = buildAllowedToolSet(summary);
+  const defaultSet = new Set();
+  if (Array.isArray(agentDefaults) && agentDefaults.length > 0) {
+    agentDefaults.forEach((name) => {
+      if (allowedSet.has(name)) {
+        defaultSet.add(name);
+      }
+    });
+  } else {
+    allowedSet.forEach((name) => defaultSet.add(name));
+  }
+  let effectiveSet = new Set();
+  if (Array.isArray(overrides) && overrides.includes(TOOL_OVERRIDE_NONE)) {
+    effectiveSet = new Set();
+  } else if (Array.isArray(overrides) && overrides.length > 0) {
+    overrides.forEach((name) => {
+      if (allowedSet.has(name)) {
+        effectiveSet.add(name);
+      }
+    });
+  } else {
+    effectiveSet = defaultSet;
+  }
+  return filterSummaryByNames(summary, effectiveSet);
+}
+
+const activeSession = computed(
+  () => chatStore.sessions.find((item) => item.id === chatStore.activeSessionId) || null
+);
+const routeAgentId = computed(() => String(route.query.agent_id || '').trim());
+const activeAgentId = computed(
+  () => activeSession.value?.agent_id || routeAgentId.value || ''
+);
+const activeAgent = computed(() =>
+  activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
+);
+const activeAgentLabel = computed(
+  () => activeAgent.value?.name || activeAgentId.value || ''
+);
+const effectiveToolSummary = computed(() =>
+  applyToolOverridesToSummary(
+    promptToolSummary.value,
+    activeSession.value?.tool_overrides || [],
+    activeAgent.value?.tool_names || []
+  )
+);
 const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || '暂无系统提示词';
-  return renderSystemPromptHighlight(content, promptToolSummary.value || {});
+  return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
 });
 // 能力悬浮提示使用的工具/技能明细
-const abilitySummary = computed(() => collectAbilityDetails(promptToolSummary.value || {}));
+const abilitySummary = computed(() => collectAbilityDetails(effectiveToolSummary.value || {}));
 const hasAbilitySummary = computed(
   () => abilitySummary.value.tools.length > 0 || abilitySummary.value.skills.length > 0
 );
+const availableToolCount = computed(() => buildAllowedToolSet(promptToolSummary.value).size);
+const sessionToolSelectionCount = computed(() =>
+  sessionToolsDisabled.value ? 0 : sessionToolSelection.value.size
+);
+const sessionToolGroups = computed(() => {
+  const summary = promptToolSummary.value || {};
+  const buildGroup = (label, list) => ({
+    label,
+    items: (Array.isArray(list) ? list : []).map(normalizeToolItem).filter(Boolean)
+  });
+  return [
+    buildGroup('内置工具', summary.builtin_tools),
+    buildGroup('MCP 工具', summary.mcp_tools),
+    buildGroup('A2A 工具', summary.a2a_tools),
+    buildGroup('知识库工具', summary.knowledge_tools),
+    buildGroup('我的工具', summary.user_tools),
+    buildGroup('共享工具', summary.shared_tools),
+    buildGroup('技能', summary.skills)
+  ].filter((group) => group.items.length > 0);
+});
+const filteredToolGroups = computed(() => {
+  const keyword = sessionToolSearch.value.trim().toLowerCase();
+  if (!keyword) {
+    return sessionToolGroups.value;
+  }
+  return sessionToolGroups.value
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        const name = String(item.name || '').toLowerCase();
+        const desc = String(item.description || '').toLowerCase();
+        return name.includes(keyword) || desc.includes(keyword);
+      })
+    }))
+    .filter((group) => group.items.length > 0);
+});
 
 const HISTORY_ROW_HEIGHT = 52;
 const HISTORY_OVERSCAN = 6;
@@ -631,6 +809,15 @@ const init = async () => {
   }
   const persisted = chatStore.getPersistedState();
   await chatStore.loadSessions();
+  if (routeAgentId.value) {
+    try {
+      await chatStore.createSession({ agent_id: routeAgentId.value });
+      router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
+    } catch (error) {
+      // ignore agent session failure
+    }
+    return;
+  }
   if (persisted?.draft) {
     chatStore.openDraftSession();
     return;
@@ -1154,16 +1341,22 @@ const openPromptPreview = async () => {
   promptPreviewContent.value = '';
   const toolSummaryPromise = loadToolSummary();
   try {
-    const selectedShared = Array.from(loadSharedToolSelection(authStore.user?.id).values());
+    const overrides =
+      activeSession.value?.tool_overrides && activeSession.value.tool_overrides.length > 0
+        ? activeSession.value.tool_overrides
+        : undefined;
+    const agentId = activeSession.value?.agent_id || routeAgentId.value || undefined;
+    const requestPayload = {
+      ...(agentId ? { agent_id: agentId } : {}),
+      ...(overrides ? { tool_overrides: overrides } : {})
+    };
     const promptRequest = chatStore.activeSessionId
-      ? fetchSessionSystemPrompt(chatStore.activeSessionId, {
-          selected_shared_tools: selectedShared
-        })
-      : fetchRealtimeSystemPrompt({ selected_shared_tools: selectedShared });
+      ? fetchSessionSystemPrompt(chatStore.activeSessionId, requestPayload)
+      : fetchRealtimeSystemPrompt(requestPayload);
     const promptResult = await promptRequest;
     await toolSummaryPromise;
-    const payload = promptResult?.data?.data || {};
-    promptPreviewContent.value = payload.prompt || '';
+    const responsePayload = promptResult?.data?.data || {};
+    promptPreviewContent.value = responsePayload.prompt || '';
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || '系统提示词加载失败');
     promptPreviewContent.value = '';
@@ -1174,6 +1367,101 @@ const openPromptPreview = async () => {
 
 const closePromptPreview = () => {
   promptPreviewVisible.value = false;
+};
+
+const buildDefaultToolSet = () => {
+  const allowedSet = buildAllowedToolSet(promptToolSummary.value);
+  const defaultSet = new Set();
+  const agentTools = activeAgent.value?.tool_names || [];
+  if (agentTools.length > 0) {
+    agentTools.forEach((name) => {
+      if (allowedSet.has(name)) {
+        defaultSet.add(name);
+      }
+    });
+  } else {
+    allowedSet.forEach((name) => defaultSet.add(name));
+  }
+  return { allowedSet, defaultSet };
+};
+
+const openSessionTools = async () => {
+  if (!chatStore.activeSessionId) {
+    await chatStore.createSession(routeAgentId.value ? { agent_id: routeAgentId.value } : {});
+  }
+  await loadToolSummary();
+  if (activeAgentId.value && !activeAgent.value) {
+    await agentStore.getAgent(activeAgentId.value);
+  }
+  const { allowedSet, defaultSet } = buildDefaultToolSet();
+  const overrides = activeSession.value?.tool_overrides || [];
+  if (overrides.includes(TOOL_OVERRIDE_NONE)) {
+    sessionToolsDisabled.value = true;
+    sessionToolSelection.value = new Set(defaultSet);
+  } else if (overrides.length > 0) {
+    sessionToolsDisabled.value = false;
+    sessionToolSelection.value = new Set(
+      overrides.filter((name) => allowedSet.has(name))
+    );
+  } else {
+    sessionToolsDisabled.value = false;
+    sessionToolSelection.value = new Set(defaultSet);
+  }
+  sessionToolSearch.value = '';
+  sessionToolsVisible.value = true;
+};
+
+const closeSessionTools = () => {
+  sessionToolsVisible.value = false;
+};
+
+const isSessionToolSelected = (name) => sessionToolSelection.value.has(name);
+
+const toggleSessionTool = (name, checked) => {
+  if (sessionToolsDisabled.value) return;
+  const next = new Set(sessionToolSelection.value);
+  if (checked) {
+    next.add(name);
+  } else {
+    next.delete(name);
+  }
+  sessionToolSelection.value = next;
+};
+
+const resetSessionTools = () => {
+  const { defaultSet } = buildDefaultToolSet();
+  sessionToolsDisabled.value = false;
+  sessionToolSelection.value = new Set(defaultSet);
+};
+
+const saveSessionTools = async () => {
+  if (!chatStore.activeSessionId) {
+    closeSessionTools();
+    return;
+  }
+  sessionToolsSaving.value = true;
+  try {
+    const { allowedSet, defaultSet } = buildDefaultToolSet();
+    let overrides = [];
+    if (sessionToolsDisabled.value) {
+      overrides = [TOOL_OVERRIDE_NONE];
+    } else {
+      const selection = Array.from(sessionToolSelection.value).filter((name) =>
+        allowedSet.has(name)
+      );
+      const selectionSet = new Set(selection);
+      const isDefault =
+        selectionSet.size === defaultSet.size &&
+        Array.from(defaultSet).every((name) => selectionSet.has(name));
+      overrides = isDefault ? [] : selection.sort();
+    }
+    await chatStore.updateSessionTools(chatStore.activeSessionId, overrides);
+    closeSessionTools();
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '工具调整失败');
+  } finally {
+    sessionToolsSaving.value = false;
+  }
 };
 
 const parseTimeValue = (value) => {
@@ -1427,6 +1715,28 @@ watch(
     if (value === oldValue) return;
     await init();
     loadToolSummary();
+  }
+);
+
+watch(
+  () => activeAgentId.value,
+  (value) => {
+    if (!value) return;
+    agentStore.getAgent(value).catch(() => null);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => routeAgentId.value,
+  async (value, oldValue) => {
+    if (!value || value === oldValue) return;
+    try {
+      await chatStore.createSession({ agent_id: value });
+      router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
+    } catch (error) {
+      // ignore agent session failure
+    }
   }
 );
 

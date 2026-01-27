@@ -8,11 +8,10 @@ import {
   getSessionEvents,
   listSessions,
   resumeMessageStream,
-  sendMessageStream
+  sendMessageStream,
+  updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
-import { useAuthStore } from '@/stores/auth';
 import { consumeSseStream } from '@/utils/sse';
-import { loadSharedToolSelection } from '@/utils/toolSelection';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
@@ -2087,10 +2086,19 @@ export const useChatStore = defineStore('chat', {
         getSessionEvents(sessionId).catch(() => null)
       ]);
       const data = sessionRes?.data;
-      const sessionCreatedAt = data?.data?.created_at;
+      const sessionDetail = data?.data || null;
+      const sessionCreatedAt = sessionDetail?.created_at;
+      if (sessionDetail?.id) {
+        const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
+        if (index >= 0) {
+          this.sessions[index] = { ...this.sessions[index], ...sessionDetail };
+        } else {
+          this.sessions.unshift(sessionDetail);
+        }
+      }
       const rounds = eventsRes?.data?.data?.rounds || [];
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
-      const rawMessages = attachWorkflowEvents(data?.data?.messages || [], rounds);
+      const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
       let messages = rawMessages.map((message) =>
         hydrateMessage(message, workflowState)
       );
@@ -2125,6 +2133,23 @@ export const useChatStore = defineStore('chat', {
         }
       }
     },
+    async updateSessionTools(sessionId, toolOverrides = []) {
+      const targetId = sessionId || this.activeSessionId;
+      if (!targetId) return null;
+      const payload = {
+        tool_overrides: Array.isArray(toolOverrides) ? toolOverrides : []
+      };
+      const { data } = await updateSessionToolsApi(targetId, payload);
+      const overrides = data?.data?.tool_overrides || [];
+      const index = this.sessions.findIndex((item) => item.id === targetId);
+      if (index >= 0) {
+        this.sessions[index] = {
+          ...this.sessions[index],
+          tool_overrides: overrides
+        };
+      }
+      return overrides;
+    },
     async sendMessage(content, options = {}) {
       abortResumeStream();
       abortSendStream();
@@ -2135,11 +2160,6 @@ export const useChatStore = defineStore('chat', {
       const userMessage = buildMessage('user', content);
       this.messages.push(userMessage);
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
-      const authStore = useAuthStore();
-      // 共享工具需要用户勾选后才允许注入，默认不启用
-      const sharedSelection = Array.from(
-        loadSharedToolSelection(authStore.user?.id).values()
-      );
       const attachments = Array.isArray(options.attachments) ? options.attachments : [];
 
       const activeSession = this.sessions.find((item) => item.id === this.activeSessionId);
@@ -2181,7 +2201,6 @@ export const useChatStore = defineStore('chat', {
           {
             content,
             stream: true,
-            selected_shared_tools: sharedSelection,
             ...(attachments.length > 0 ? { attachments } : {})
           },
           {
