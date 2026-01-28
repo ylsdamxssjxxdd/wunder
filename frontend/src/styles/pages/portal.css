@@ -49,6 +49,165 @@
   backdrop-filter: blur(12px);
 }
 
+.portal-shell .topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  gap: 12px;
+  background: linear-gradient(90deg, rgba(106, 217, 255, 0.16), rgba(180, 169, 255, 0.12));
+  border-bottom: 1px solid var(--portal-border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);
+}
+
+.portal-shell .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.portal-shell .brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: radial-gradient(circle at 30% 30%, rgba(106, 217, 255, 0.5), rgba(106, 217, 255, 0.08));
+  border: 1px solid var(--portal-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--portal-text);
+  box-shadow: 0 0 25px rgba(106, 217, 255, 0.25);
+}
+
+.portal-shell .brand-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.portal-shell .brand-sub {
+  color: var(--portal-muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portal-shell .demo-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #0b1426;
+  background: linear-gradient(135deg, rgba(255, 214, 102, 0.95), rgba(255, 168, 74, 0.95));
+  border: 1px solid rgba(255, 214, 102, 0.6);
+}
+
+.portal-shell .topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.portal-shell .topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.portal-shell .topbar-search {
+  flex: 0 1 320px;
+  min-width: 200px;
+}
+
+.portal-shell .topbar-panel-btn {
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(106, 217, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--portal-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.portal-shell .topbar-panel-btn:hover {
+  border-color: rgba(106, 217, 255, 0.65);
+  color: var(--portal-primary);
+  box-shadow: 0 0 0 6px rgba(106, 217, 255, 0.1);
+}
+
+.portal-shell .topbar-panel-btn.router-link-exact-active {
+  background: rgba(106, 217, 255, 0.18);
+  border-color: rgba(106, 217, 255, 0.6);
+  color: var(--portal-primary);
+}
+
+.portal-shell .topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--portal-border);
+}
+
+.portal-shell .user-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.portal-shell .user-meta-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.portal-shell .user-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--portal-text);
+}
+
+.portal-shell .user-level {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.portal-shell .logout-btn {
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--portal-text);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.portal-shell .logout-btn:hover {
+  color: var(--portal-primary);
+  border-color: rgba(106, 217, 255, 0.45);
+  box-shadow: 0 0 0 6px rgba(106, 217, 255, 0.08);
+}
+
 .user-topbar-brand {
   display: flex;
   align-items: center;
@@ -717,6 +876,11 @@
   .user-topbar {
     flex-wrap: wrap;
   }
+
+  .portal-shell .topbar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
 }
 
 @media (max-width: 720px) {
@@ -737,6 +901,23 @@
   }
 
   .user-topbar-nav {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  .portal-shell .topbar-search {
+    max-width: none;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .portal-shell .topbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .portal-shell .topbar-nav {
     width: 100%;
     overflow-x: auto;
     padding-bottom: 6px;

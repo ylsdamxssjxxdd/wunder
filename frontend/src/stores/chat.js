@@ -313,6 +313,10 @@ const buildMessage = (role, content, createdAt) => ({
 });
 
 const DEFAULT_GREETING = '你好！我是智能体助手，有什么可以帮你的吗？';
+const resolveGreetingContent = (override) => {
+  const trimmed = String(override || '').trim();
+  return trimmed ? trimmed : DEFAULT_GREETING;
+};
 const CHAT_STATE_KEY = 'wille-chat-state';
 
 const buildChatPersistState = () => ({
@@ -678,8 +682,8 @@ const sortSessionsByCreatedAt = (sessions = []) =>
     })
     .map((item) => item.session);
 
-const buildGreetingMessage = (createdAt) => ({
-  ...buildMessage('assistant', DEFAULT_GREETING, createdAt),
+const buildGreetingMessage = (createdAt, greeting) => ({
+  ...buildMessage('assistant', resolveGreetingContent(greeting), createdAt),
   workflowItems: [],
   workflowStreaming: false,
   isGreeting: true
@@ -695,9 +699,13 @@ const resolveGreetingTimestamp = (messages, createdAt) => {
 
 const ensureGreetingMessage = (messages, options = {}) => {
   const safeMessages = Array.isArray(messages) ? messages : [];
+  const greetingText = resolveGreetingContent(options?.greeting);
   // 无论历史会话与否，都补一条问候语，保证提示词预览入口稳定可见
   const greetingIndex = safeMessages.findIndex((message) => message?.isGreeting);
   if (greetingIndex >= 0) {
+    if (safeMessages[greetingIndex]?.content !== greetingText) {
+      safeMessages[greetingIndex].content = greetingText;
+    }
     const createdAt = options?.createdAt ?? options?.sessionCreatedAt;
     if (createdAt) {
       const greetingAt = resolveGreetingTimestamp(safeMessages, createdAt);
@@ -711,7 +719,7 @@ const ensureGreetingMessage = (messages, options = {}) => {
     return safeMessages;
   }
   const greetingAt = resolveGreetingTimestamp(safeMessages, options?.createdAt ?? options?.sessionCreatedAt);
-  return [buildGreetingMessage(greetingAt), ...safeMessages];
+  return [buildGreetingMessage(greetingAt, greetingText), ...safeMessages];
 };
 
 const safeJsonParse = (raw) => {
@@ -2000,7 +2008,8 @@ export const useChatStore = defineStore('chat', {
     sessions: [],
     activeSessionId: null,
     messages: [],
-    loading: false
+    loading: false,
+    greetingOverride: ''
   }),
   actions: {
     markPageUnloading() {
@@ -2018,6 +2027,17 @@ export const useChatStore = defineStore('chat', {
     },
     scheduleSnapshot(immediate = false) {
       scheduleChatSnapshot(this, immediate);
+    },
+    setGreetingOverride(content) {
+      const next = String(content || '').trim();
+      this.greetingOverride = next;
+      const greetingIndex = this.messages.findIndex((message) => message?.isGreeting);
+      if (greetingIndex < 0) return;
+      const greetingText = resolveGreetingContent(next);
+      if (this.messages[greetingIndex].content !== greetingText) {
+        this.messages[greetingIndex].content = greetingText;
+        this.scheduleSnapshot(true);
+      }
     },
     resolveInquiryPanel(message, patch = {}) {
       if (!message || message.role !== 'assistant') return;
@@ -2051,7 +2071,7 @@ export const useChatStore = defineStore('chat', {
       stopRequested = false;
       this.loading = false;
       this.activeSessionId = null;
-      this.messages = ensureGreetingMessage([]);
+      this.messages = ensureGreetingMessage([], { greeting: this.greetingOverride });
       persistDraftSession();
     },
     async createSession(payload = {}) {
@@ -2060,7 +2080,10 @@ export const useChatStore = defineStore('chat', {
       const session = data.data;
       this.sessions.unshift(session);
       this.activeSessionId = session.id;
-      this.messages = ensureGreetingMessage([], { createdAt: session.created_at });
+      this.messages = ensureGreetingMessage([], {
+        createdAt: session.created_at,
+        greeting: this.greetingOverride
+      });
       getSessionWorkflowState(session.id, { reset: true });
       persistActiveSession(session.id);
       syncDemoChatCache({
@@ -2079,7 +2102,9 @@ export const useChatStore = defineStore('chat', {
         const cachedMessages = snapshot.messages
           .map((item) => normalizeSnapshotMessage(item))
           .filter(Boolean);
-        this.messages = ensureGreetingMessage(cachedMessages);
+        this.messages = ensureGreetingMessage(cachedMessages, {
+          greeting: this.greetingOverride
+        });
       }
       const [sessionRes, eventsRes] = await Promise.all([
         getSession(sessionId),
@@ -2104,7 +2129,10 @@ export const useChatStore = defineStore('chat', {
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
       dismissStaleInquiryPanels(messages);
-      this.messages = ensureGreetingMessage(messages, { createdAt: sessionCreatedAt });
+      this.messages = ensureGreetingMessage(messages, {
+        createdAt: sessionCreatedAt,
+        greeting: this.greetingOverride
+      });
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]
         .reverse()

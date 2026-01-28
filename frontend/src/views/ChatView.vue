@@ -40,6 +40,20 @@
             </button>
           </div>
           <button
+            class="topbar-icon-btn"
+            type="button"
+            title="功能广场"
+            aria-label="功能广场"
+            @click="handleOpenPortal"
+          >
+            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+          </button>
+          <button
             class="new-chat-btn"
             type="button"
             title="新建会话"
@@ -49,13 +63,20 @@
             新建会话
           </button>
           <button
-            class="tools-btn"
+            class="topbar-icon-btn"
             type="button"
             title="调整工具"
             aria-label="调整工具"
             @click="openSessionTools"
           >
-            调整工具
+            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h16" />
+              <circle cx="9" cy="6" r="2" />
+              <path d="M4 12h16" />
+              <circle cx="15" cy="12" r="2" />
+              <path d="M4 18h16" />
+              <circle cx="7" cy="18" r="2" />
+            </svg>
           </button>
           <div v-if="activeAgentLabel" class="agent-pill">
             <span class="agent-pill-label">当前智能体</span>
@@ -389,20 +410,6 @@
           <div class="session-tools-meta">
             可用 {{ availableToolCount }} 项，已选 {{ sessionToolSelectionCount }} 项
           </div>
-          <el-input
-            v-model="sessionToolSearch"
-            size="small"
-            placeholder="搜索工具/技能"
-            clearable
-          />
-        </div>
-        <div class="session-tools-controls">
-          <el-switch
-            v-model="sessionToolsDisabled"
-            active-text="禁用全部工具"
-            inactive-text="正常挂载工具"
-          />
-          <el-button size="small" @click="resetSessionTools">恢复默认</el-button>
         </div>
         <div v-if="sessionToolsDisabled" class="session-tools-muted">
           当前会话将禁用所有工具调用。
@@ -436,6 +443,7 @@
         </div>
       </div>
       <template #footer>
+        <el-button @click="resetSessionTools">恢复默认</el-button>
         <el-button @click="closeSessionTools">取消</el-button>
         <el-button type="primary" :loading="sessionToolsSaving" @click="saveSessionTools">
           应用
@@ -586,6 +594,7 @@ const agentStore = useAgentStore();
 const currentUser = computed(() => authStore.user);
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
+const basePath = computed(() => (demoMode.value ? '/demo' : '/app'));
 const draftKey = ref(0);
 const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
@@ -716,6 +725,10 @@ const activeAgent = computed(() =>
 const activeAgentLabel = computed(
   () => activeAgent.value?.name || activeAgentId.value || ''
 );
+const greetingOverride = computed(() => {
+  const desc = String(activeAgent.value?.description || '').trim();
+  return desc;
+});
 const effectiveToolSummary = computed(() =>
   applyToolOverridesToSummary(
     promptToolSummary.value,
@@ -832,8 +845,11 @@ const handleCreateSession = () => {
 };
 
 const handleOpenProfile = () => {
-  const base = demoMode.value ? '/demo' : '/app';
-  router.push(`${base}/profile`);
+  router.push(`${basePath.value}/profile`);
+};
+
+const handleOpenPortal = () => {
+  router.push(`${basePath.value}/home`);
 };
 
 const handleSelectSession = async (sessionId) => {
@@ -1711,6 +1727,15 @@ watch(
   (value) => {
     if (!value) return;
     agentStore.getAgent(value).catch(() => null);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => greetingOverride.value,
+  (value, oldValue) => {
+    if (value === oldValue) return;
+    chatStore.setGreetingOverride(value);
   },
   { immediate: true }
 );

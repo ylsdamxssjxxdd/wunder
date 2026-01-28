@@ -42,18 +42,6 @@
                   </div>
                 </div>
               </section>
-
-              <section class="portal-section tool-manager-section">
-                <div class="portal-section-header">
-                  <div>
-                    <div class="portal-section-title">共享工具</div>
-                    <div class="portal-section-desc">决定哪些共享工具进入你的可挂载列表</div>
-                  </div>
-                </div>
-                <div class="user-tools-dialog user-tools-page">
-                  <UserSharedToolsPanel />
-                </div>
-              </section>
             </div>
 
             <div class="tool-manager-column tool-manager-column--right">
@@ -92,6 +80,14 @@
                       >
                         知识库工具
                       </button>
+                      <button
+                        class="user-tools-tab"
+                        :class="{ active: activeTab === 'shared' }"
+                        type="button"
+                        @click="activeTab = 'shared'"
+                      >
+                        共享工具
+                      </button>
                     </div>
                     <div class="user-tools-content">
                       <UserMcpPane
@@ -112,9 +108,12 @@
                         :active="activeTab === 'knowledge'"
                         @status="updateStatus"
                       />
+                      <UserSharedToolsPanel v-show="activeTab === 'shared'" />
                     </div>
                   </div>
-                  <div class="user-tools-status">{{ statusMessage }}</div>
+                  <div v-if="activeTab !== 'shared'" class="user-tools-status">
+                    {{ statusMessage }}
+                  </div>
                 </div>
               </section>
             </div>

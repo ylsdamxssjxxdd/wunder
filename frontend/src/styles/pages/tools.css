@@ -1,6 +1,6 @@
 .tool-manager-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.4fr);
+  grid-template-columns: minmax(260px, 0.7fr) minmax(520px, 1.7fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 18px;
   align-items: stretch;
@@ -65,7 +65,7 @@
 
 .tool-catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 

@@ -5,11 +5,9 @@
       subtitle="智能体应用入口"
       show-search
       search-placeholder="搜索智能体应用"
+      :hide-chat="true"
       v-model:search="searchQuery"
     >
-      <template #actions>
-        <button class="portal-action-btn" type="button" @click="openCreateDialog">新建智能体应用</button>
-      </template>
     </UserTopbar>
     <main class="portal-content">
       <section class="portal-main">
@@ -128,7 +126,7 @@
                       type="button"
                       @click.stop="selectToolGroup(group)"
                     >
-                      全选
+                      {{ isToolGroupFullySelected(group) ? '取消全选' : '全选' }}
                     </button>
                   </div>
                   <div class="agent-tool-options">
@@ -274,10 +272,21 @@ const applyDefaultTools = () => {
   form.tool_names = allToolValues.value.length ? [...allToolValues.value] : [];
 };
 
+const isToolGroupFullySelected = (group) => {
+  if (!group || !Array.isArray(group.options) || group.options.length === 0) return false;
+  const current = new Set(form.tool_names);
+  return group.options.every((option) => current.has(option.value));
+};
+
 const selectToolGroup = (group) => {
-  if (!group || !Array.isArray(group.options)) return;
+  if (!group || !Array.isArray(group.options) || group.options.length === 0) return;
   const next = new Set(form.tool_names);
-  group.options.forEach((option) => next.add(option.value));
+  const fullySelected = group.options.every((option) => next.has(option.value));
+  if (fullySelected) {
+    group.options.forEach((option) => next.delete(option.value));
+  } else {
+    group.options.forEach((option) => next.add(option.value));
+  }
   form.tool_names = Array.from(next);
 };
 

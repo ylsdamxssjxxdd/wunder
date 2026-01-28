@@ -1072,6 +1072,35 @@
   color: var(--chat-text, #f1f5f9);
 }
 
+.session-tools-dialog .icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--chat-text, #f1f5f9);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.session-tools-dialog .icon-btn:hover {
+  color: var(--chat-primary, #6ad9ff);
+}
+
+.session-tools-dialog .el-button {
+  background: #1e2d4d;
+  border: 1px solid var(--chat-border);
+  color: var(--chat-text, #f1f5f9);
+}
+
+.session-tools-dialog .el-button:hover {
+  border-color: rgba(77, 216, 255, 0.6);
+  color: var(--chat-primary, #6ad9ff);
+}
+
+.session-tools-dialog .el-button--primary {
+  background: linear-gradient(135deg, var(--chat-primary), var(--chat-accent));
+  border: none;
+  color: #0a0d19;
+}
+
 .session-tools-body {
   display: flex;
   flex-direction: column;
@@ -1081,7 +1110,7 @@
 .session-tools-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 

@@ -1,62 +1,63 @@
 <template>
-  <header class="user-topbar">
-    <div class="user-topbar-brand">
-      <div class="user-topbar-logo">W</div>
-      <div class="user-topbar-title">
-        <div class="user-topbar-title-text">{{ title }}</div>
-        <div class="user-topbar-sub">
+  <header class="user-topbar topbar">
+    <div class="brand">
+      <div class="brand-mark">AI</div>
+      <div class="brand-meta">
+        <div class="brand-title">{{ title }}</div>
+        <div class="brand-sub">
           <span>{{ subtitle }}</span>
-          <span v-if="demoMode" class="user-topbar-badge">演示模式</span>
+          <span v-if="demoMode" class="demo-badge">演示模式</span>
         </div>
       </div>
     </div>
-    <nav class="user-topbar-nav">
-      <router-link
-        v-for="item in navItems"
-        :key="item.path"
-        :to="item.path"
-        class="user-topbar-link"
-      >
-        {{ item.label }}
-      </router-link>
-    </nav>
-    <div v-if="showSearch" class="portal-search user-topbar-search">
-      <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="11" cy="11" r="7" />
-        <path d="M16.5 16.5L21 21" />
-      </svg>
-      <input
-        :value="search"
-        type="text"
-        :placeholder="searchPlaceholder"
-        @input="updateSearch"
-      />
-      <button
-        v-if="search"
-        class="portal-search-clear"
-        type="button"
-        aria-label="清空搜索"
-        @click="clearSearch"
-      >
-        ×
-      </button>
-    </div>
-    <div class="user-topbar-actions">
+    <div class="topbar-actions">
+      <nav class="topbar-nav">
+        <router-link
+          v-for="item in navItems"
+          :key="item.path"
+          :to="item.path"
+          class="topbar-panel-btn topbar-nav-link"
+        >
+          {{ item.label }}
+        </router-link>
+      </nav>
+      <div v-if="showSearch" class="portal-search topbar-search">
+        <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M16.5 16.5L21 21" />
+        </svg>
+        <input
+          :value="search"
+          type="text"
+          :placeholder="searchPlaceholder"
+          @input="updateSearch"
+        />
+        <button
+          v-if="search"
+          class="portal-search-clear"
+          type="button"
+          aria-label="清空搜索"
+          @click="clearSearch"
+        >
+          ×
+        </button>
+      </div>
       <slot name="actions" />
       <ThemeToggle />
-      <router-link
-        :to="profilePath"
-        class="user-topbar-user"
-        aria-label="进入我的概况"
-      >
-        <div class="user-topbar-user-meta">
-          <div class="user-topbar-user-name">{{ userName }}</div>
-          <div class="user-topbar-user-level">等级 {{ userLevel }}</div>
-        </div>
-      </router-link>
-      <button class="user-topbar-logout" type="button" aria-label="退出登录" @click="handleLogout">
-        退出
-      </button>
+      <div class="topbar-user">
+        <button
+          class="user-meta user-meta-btn"
+          type="button"
+          aria-label="进入我的概况"
+          @click="handleOpenProfile"
+        >
+          <div class="user-name">{{ userName }}</div>
+          <div class="user-level">等级 {{ userLevel }}</div>
+        </button>
+        <button class="logout-btn" type="button" aria-label="退出登录" @click="handleLogout">
+          退出
+        </button>
+      </div>
     </div>
   </header>
 </template>
@@ -69,7 +70,7 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import { useAuthStore } from '@/stores/auth';
 import { isDemoMode } from '@/utils/demo';
 
-defineProps({
+const props = defineProps({
   title: {
     type: String,
     default: '功能广场'
@@ -89,6 +90,10 @@ defineProps({
   searchPlaceholder: {
     type: String,
     default: '搜索智能体应用'
+  },
+  hideChat: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -100,13 +105,14 @@ const authStore = useAuthStore();
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
-const profilePath = computed(() => `${basePath.value}/profile`);
-
-const navItems = computed(() => [
-  { label: '广场', path: `${basePath.value}/home` },
-  { label: '工具管理', path: `${basePath.value}/tools` },
-  { label: '聊天', path: `${basePath.value}/chat` }
-]);
+const navItems = computed(() => {
+  const items = [
+    { label: '广场', path: `${basePath.value}/home` },
+    { label: '工具管理', path: `${basePath.value}/tools` },
+    { label: '聊天', path: `${basePath.value}/chat` }
+  ];
+  return props.hideChat ? items.filter((item) => item.label !== '聊天') : items;
+});
 
 const userName = computed(() => authStore.user?.username || '访客');
 const userLevel = computed(() => authStore.user?.access_level || '-');
@@ -117,6 +123,10 @@ const updateSearch = (event) => {
 
 const clearSearch = () => {
   emit('update:search', '');
+};
+
+const handleOpenProfile = () => {
+  router.push(`${basePath.value}/profile`);
 };
 
 const handleLogout = () => {

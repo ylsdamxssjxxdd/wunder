@@ -491,6 +491,35 @@
   box-shadow: none;
 }
 
+:root[data-user-theme='light'] .session-tools-dialog .icon-btn {
+  color: #1f2937;
+}
+
+:root[data-user-theme='light'] .session-tools-dialog .icon-btn:hover {
+  color: #2563eb;
+}
+
+:root[data-user-theme='light'] .session-tools-dialog .el-button {
+  background: #f1f5f9;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+:root[data-user-theme='light'] .session-tools-dialog .el-button:hover {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
+:root[data-user-theme='light'] .session-tools-dialog .el-button--primary {
+  background: linear-gradient(135deg, #3b82f6, #7c6cff);
+  border: none;
+  color: #ffffff;
+}
+
 :root[data-user-theme='light'] .session-tools-groups {
   background: #ffffff;
   border-color: rgba(15, 23, 42, 0.12);
