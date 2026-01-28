@@ -235,8 +235,72 @@ impl WorkspaceManager {
         if safe_agent.is_empty() {
             safe_user
         } else {
-            format!("{safe_user}__agent__{safe_agent}")
+            let scoped = format!(
+                "{safe_user}__a__{}",
+                self.short_scope_component(&safe_agent)
+            );
+            let legacy = format!("{safe_user}__agent__{safe_agent}");
+            let previous = format!(
+                "{safe_user}__a__{}",
+                self.short_scope_component_with_len(&safe_agent, 3, 6)
+            );
+            if scoped == legacy {
+                return scoped;
+            }
+            let scoped_root = self.workspace_root(&scoped);
+            let mut migrated = false;
+            if !scoped_root.exists() {
+                for candidate in [previous.as_str(), legacy.as_str()] {
+                    if candidate == scoped.as_str() {
+                        continue;
+                    }
+                    let candidate_root = self.workspace_root(candidate);
+                    if candidate_root.exists() {
+                        if let Err(err) = fs::rename(&candidate_root, &scoped_root) {
+                            warn!("failed to migrate workspace {candidate} -> {scoped}: {err}");
+                            return candidate.to_string();
+                        }
+                        self.clear_workspace_cache(candidate);
+                        migrated = true;
+                        break;
+                    }
+                }
+            }
+            if !migrated && scoped_root.exists() {
+                return scoped;
+            }
+            if self.workspace_root(&previous).exists() {
+                return previous;
+            }
+            scoped
         }
+    }
+
+    pub fn scoped_user_id_variants(&self, user_id: &str, agent_id: Option<&str>) -> Vec<String> {
+        let safe_user = self.safe_user_id(user_id);
+        let agent_id = agent_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let Some(agent_id) = agent_id else {
+            return vec![safe_user];
+        };
+        let safe_agent = self.safe_scope_component(agent_id);
+        if safe_agent.is_empty() {
+            return vec![safe_user];
+        }
+        let scoped = format!(
+            "{safe_user}__a__{}",
+            self.short_scope_component(&safe_agent)
+        );
+        let legacy = format!("{safe_user}__agent__{safe_agent}");
+        let previous = format!(
+            "{safe_user}__a__{}",
+            self.short_scope_component_with_len(&safe_agent, 3, 6)
+        );
+        let mut variants = vec![scoped, legacy, previous];
+        variants.sort();
+        variants.dedup();
+        variants
     }
 
     fn safe_user_id(&self, user_id: &str) -> String {
@@ -266,6 +330,50 @@ impl WorkspaceManager {
             }
         }
         output
+    }
+
+    fn short_scope_component(&self, value: &str) -> String {
+        self.short_scope_component_with_len(value, 3, 5)
+    }
+
+    fn short_scope_component_with_len(
+        &self,
+        value: &str,
+        prefix_len: usize,
+        hash_len: usize,
+    ) -> String {
+        let cleaned = self.safe_scope_component(value);
+        let target_len = prefix_len + hash_len;
+        if cleaned.len() <= target_len || hash_len == 0 {
+            return cleaned;
+        }
+        let prefix = cleaned.chars().take(prefix_len).collect::<String>();
+        let mask = if hash_len >= 16 {
+            u64::MAX
+        } else {
+            (1u64 << (hash_len * 4)) - 1
+        };
+        let hash = fnv1a_hash64(cleaned.as_bytes()) & mask;
+        format!("{prefix}{hash:0width$x}", width = hash_len)
+    }
+
+    fn clear_workspace_cache(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        {
+            let mut cache = self.tree_cache.lock();
+            cache.cache.remove(&safe_id);
+            cache.dirty.remove(&safe_id);
+        }
+        {
+            let mut cache = self.search_cache.lock();
+            cache.remove(&safe_id);
+        }
+        let _ = self.versions.remove(&safe_id);
+        {
+            let mut cache = self.user_usage_cache.lock();
+            cache.data.remove(user_id);
+            cache.updated_ts = 0.0;
+        }
     }
 
     fn user_root(&self, user_id: &str) -> PathBuf {
@@ -1545,6 +1653,15 @@ fn normalize_retention_days(value: i64) -> i64 {
     } else {
         value
     }
+}
+
+fn fnv1a_hash64(data: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn now_ts() -> f64 {

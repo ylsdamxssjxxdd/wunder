@@ -2251,11 +2251,23 @@ async fn admin_monitor_delete(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let ok = state.monitor.delete_session(&session_id);
+    let cleaned = session_id.trim();
+    let user_id = state.monitor.get_record(cleaned).and_then(|record| {
+        record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if let Some(user_id) = user_id {
+        state.workspace.purge_session_data(&user_id, cleaned);
+        let _ = state.memory.delete_record(&user_id, cleaned);
+        let _ = state.user_store.delete_chat_session(&user_id, cleaned);
+    }
+    let ok = state.monitor.purge_session(cleaned);
     if !ok {
         return Ok(Json(json!({
             "ok": false,
-            "message": i18n::t("error.session_not_found_or_running")
+            "message": i18n::t("error.session_not_found")
         })));
     }
     Ok(Json(

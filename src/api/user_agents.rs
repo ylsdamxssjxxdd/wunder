@@ -88,7 +88,9 @@ async fn list_running_agents(
         .list_session_locks_by_user(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut items = Vec::new();
+    let mut seen_sessions = HashSet::new();
     for lock in locks {
+        seen_sessions.insert(lock.session_id.clone());
         let agent_id = lock.agent_id.trim();
         let is_default = agent_id.is_empty();
         let agent_id = if is_default { "" } else { agent_id };
@@ -101,10 +103,13 @@ async fn list_running_agents(
             "is_default": is_default,
         }));
     }
-    let waiting_sessions = state.monitor.list_sessions(false);
-    for session in waiting_sessions {
+    let active_sessions = state.monitor.list_sessions(true);
+    for session in active_sessions {
         let status = session.get("status").and_then(Value::as_str).unwrap_or("");
-        if status != MonitorState::STATUS_WAITING {
+        if status != MonitorState::STATUS_WAITING
+            && status != MonitorState::STATUS_RUNNING
+            && status != MonitorState::STATUS_CANCELLING
+        {
             continue;
         }
         let session_user_id = session.get("user_id").and_then(Value::as_str).unwrap_or("");
@@ -118,6 +123,9 @@ async fn list_running_agents(
             .trim()
             .to_string();
         if session_id.is_empty() {
+            continue;
+        }
+        if seen_sessions.contains(&session_id) {
             continue;
         }
         let record = state
@@ -135,13 +143,14 @@ async fn list_running_agents(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let is_waiting = status == MonitorState::STATUS_WAITING;
         items.push(json!({
             "agent_id": agent_id,
             "session_id": session_id,
             "updated_at": updated_at,
             "expires_at": "",
-            "state": "waiting",
-            "pending_question": true,
+            "state": if is_waiting { "waiting" } else { "running" },
+            "pending_question": is_waiting,
             "is_default": is_default,
         }));
     }
@@ -303,6 +312,14 @@ async fn delete_agent(
         .user_store
         .delete_user_agent(&resolved.user.user_id, cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut workspace_ids = state
+        .workspace
+        .scoped_user_id_variants(&resolved.user.user_id, Some(cleaned));
+    workspace_ids.sort();
+    workspace_ids.dedup();
+    for workspace_id in workspace_ids {
+        let _ = state.workspace.purge_user_data(&workspace_id);
+    }
     Ok(Json(json!({ "data": { "id": cleaned } })))
 }
 

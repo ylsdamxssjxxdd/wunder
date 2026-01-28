@@ -680,6 +680,51 @@ impl MonitorState {
         )
     }
 
+    pub fn purge_session(&self, session_id: &str) -> bool {
+        self.run_guarded(
+            "monitor.purge_session",
+            || false,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return false;
+                }
+                let mut force_cancel = false;
+                {
+                    let sessions = self.sessions.lock();
+                    if let Some(record) = sessions.get(cleaned) {
+                        if record.status == Self::STATUS_RUNNING
+                            || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_WAITING
+                        {
+                            force_cancel = true;
+                        }
+                    }
+                }
+                if !force_cancel {
+                    if let Ok(Some(record)) = self.storage.get_monitor_record(cleaned) {
+                        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+                        if status == Self::STATUS_RUNNING
+                            || status == Self::STATUS_CANCELLING
+                            || status == Self::STATUS_WAITING
+                        {
+                            force_cancel = true;
+                        }
+                    }
+                }
+                let mut sessions = self.sessions.lock();
+                let existed = sessions.remove(cleaned).is_some();
+                drop(sessions);
+                if force_cancel {
+                    let mut forced = self.forced_cancelled.lock();
+                    forced.insert(cleaned.to_string());
+                }
+                let deleted = self.storage.delete_monitor_record(cleaned).is_ok();
+                existed || deleted
+            },
+        )
+    }
+
     pub fn purge_user_sessions(&self, user_id: &str) -> HashMap<String, i64> {
         self.run_guarded(
             "monitor.purge_user_sessions",

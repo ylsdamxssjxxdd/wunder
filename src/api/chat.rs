@@ -337,7 +337,7 @@ async fn delete_session(
     let _ = state
         .memory
         .delete_record(&resolved.user.user_id, &session_id);
-    let _ = state.monitor.delete_session(&session_id);
+    let _ = state.monitor.purge_session(&session_id);
     let _ = state
         .user_store
         .delete_chat_session(&resolved.user.user_id, &session_id);
