@@ -719,7 +719,7 @@ const activeSession = computed(
 const routeAgentId = computed(() => String(route.query.agent_id || '').trim());
 const routeEntry = computed(() => String(route.query.entry || '').trim().toLowerCase());
 const activeAgentId = computed(
-  () => activeSession.value?.agent_id || routeAgentId.value || ''
+  () => activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || ''
 );
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
@@ -731,13 +731,17 @@ const greetingOverride = computed(() => {
   const desc = String(activeAgent.value?.description || '').trim();
   return desc;
 });
-const effectiveToolSummary = computed(() =>
-  applyToolOverridesToSummary(
+const effectiveToolSummary = computed(() => {
+  const overrides = activeSession.value?.tool_overrides;
+  const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
+    ? chatStore.draftToolOverrides
+    : [];
+  return applyToolOverridesToSummary(
     promptToolSummary.value,
-    activeSession.value?.tool_overrides || [],
+    overrides && overrides.length > 0 ? overrides : draftOverrides,
     activeAgent.value?.tool_names || []
-  )
-);
+  );
+});
 const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || '暂无系统提示词';
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
@@ -786,7 +790,14 @@ const filteredToolGroups = computed(() => {
 
 const HISTORY_ROW_HEIGHT = 52;
 const HISTORY_OVERSCAN = 6;
-const historyTotal = computed(() => chatStore.sessions.length);
+const historySourceSessions = computed(() => {
+  const agentId = activeAgentId.value;
+  return chatStore.sessions.filter((session) => {
+    const sessionAgentId = String(session.agent_id || '').trim();
+    return agentId ? sessionAgentId === agentId : !sessionAgentId;
+  });
+});
+const historyTotal = computed(() => historySourceSessions.value.length);
 const historyVirtual = computed(() => historyTotal.value > 40);
 const historyViewportHeight = computed(() => historyListRef.value?.clientHeight || 0);
 const historyVisibleCount = computed(() =>
@@ -807,8 +818,8 @@ const historyEndIndex = computed(() => {
 });
 const historySessions = computed(() =>
   historyVirtual.value
-    ? chatStore.sessions.slice(historyStartIndex.value, historyEndIndex.value)
-    : chatStore.sessions
+    ? historySourceSessions.value.slice(historyStartIndex.value, historyEndIndex.value)
+    : historySourceSessions.value
 );
 const historyPaddingTop = computed(() =>
   historyVirtual.value ? historyStartIndex.value * HISTORY_ROW_HEIGHT : 0
@@ -830,19 +841,16 @@ const init = async () => {
     return;
   }
   if (routeAgentId.value) {
-    try {
-      await chatStore.createSession({ agent_id: routeAgentId.value });
-      router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
-    } catch (error) {
-      // ignore agent session failure
-    }
+    chatStore.openDraftSession({ agent_id: routeAgentId.value });
+    router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
     return;
   }
   chatStore.openDraftSession();
 };
 
 const handleCreateSession = () => {
-  chatStore.openDraftSession();
+  const agentId = activeAgentId.value;
+  chatStore.openDraftSession({ agent_id: agentId });
   draftKey.value += 1;
 };
 
@@ -1350,8 +1358,11 @@ const openPromptPreview = async () => {
     const overrides =
       activeSession.value?.tool_overrides && activeSession.value.tool_overrides.length > 0
         ? activeSession.value.tool_overrides
-        : undefined;
-    const agentId = activeSession.value?.agent_id || routeAgentId.value || undefined;
+        : Array.isArray(chatStore.draftToolOverrides) && chatStore.draftToolOverrides.length > 0
+          ? chatStore.draftToolOverrides
+          : undefined;
+    const agentId =
+      activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
     const requestPayload = {
       ...(agentId ? { agent_id: agentId } : {}),
       ...(overrides ? { tool_overrides: overrides } : {})
@@ -1392,15 +1403,14 @@ const buildDefaultToolSet = () => {
 };
 
 const openSessionTools = async () => {
-  if (!chatStore.activeSessionId) {
-    await chatStore.createSession(routeAgentId.value ? { agent_id: routeAgentId.value } : {});
-  }
   await loadToolSummary();
   if (activeAgentId.value && !activeAgent.value) {
     await agentStore.getAgent(activeAgentId.value);
   }
   const { allowedSet, defaultSet } = buildDefaultToolSet();
-  const overrides = activeSession.value?.tool_overrides || [];
+  const overrides =
+    activeSession.value?.tool_overrides ||
+    (Array.isArray(chatStore.draftToolOverrides) ? chatStore.draftToolOverrides : []);
   if (overrides.includes(TOOL_OVERRIDE_NONE)) {
     sessionToolsDisabled.value = true;
     sessionToolSelection.value = new Set(defaultSet);
@@ -1438,29 +1448,34 @@ const resetSessionTools = () => {
   const { defaultSet } = buildDefaultToolSet();
   sessionToolsDisabled.value = false;
   sessionToolSelection.value = new Set(defaultSet);
+  if (!chatStore.activeSessionId) {
+    chatStore.setDraftToolOverrides([]);
+  }
 };
 
 const saveSessionTools = async () => {
+  const { allowedSet, defaultSet } = buildDefaultToolSet();
+  let overrides = [];
+  if (sessionToolsDisabled.value) {
+    overrides = [TOOL_OVERRIDE_NONE];
+  } else {
+    const selection = Array.from(sessionToolSelection.value).filter((name) =>
+      allowedSet.has(name)
+    );
+    const selectionSet = new Set(selection);
+    const isDefault =
+      selectionSet.size === defaultSet.size &&
+      Array.from(defaultSet).every((name) => selectionSet.has(name));
+    overrides = isDefault ? [] : selection.sort();
+  }
   if (!chatStore.activeSessionId) {
+    chatStore.setDraftToolOverrides(overrides);
     closeSessionTools();
+    ElMessage.success('已保存到新会话，发送消息后生效');
     return;
   }
   sessionToolsSaving.value = true;
   try {
-    const { allowedSet, defaultSet } = buildDefaultToolSet();
-    let overrides = [];
-    if (sessionToolsDisabled.value) {
-      overrides = [TOOL_OVERRIDE_NONE];
-    } else {
-      const selection = Array.from(sessionToolSelection.value).filter((name) =>
-        allowedSet.has(name)
-      );
-      const selectionSet = new Set(selection);
-      const isDefault =
-        selectionSet.size === defaultSet.size &&
-        Array.from(defaultSet).every((name) => selectionSet.has(name));
-      overrides = isDefault ? [] : selection.sort();
-    }
     await chatStore.updateSessionTools(chatStore.activeSessionId, overrides);
     closeSessionTools();
   } catch (error) {
@@ -1756,12 +1771,12 @@ watch(
   async (value, oldValue) => {
     if (!value || value === oldValue) return;
     if (routeEntry.value === 'default') return;
-    try {
-      await chatStore.createSession({ agent_id: value });
-      router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
-    } catch (error) {
-      // ignore agent session failure
+    const wasDraft = !chatStore.activeSessionId;
+    chatStore.openDraftSession({ agent_id: value });
+    if (wasDraft) {
+      draftKey.value += 1;
     }
+    router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
   }
 );
 

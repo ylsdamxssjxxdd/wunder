@@ -1,6 +1,6 @@
 ﻿# MCP Server (FastMCP)
 
-本目录用于运行独立的 MCP 服务（当前内置数据库工具，后续可扩展更多工具），支持 MySQL/PostgreSQL，支持多目标数据库配置。
+本目录用于运行独立的 MCP 服务（当前内置数据库与知识库工具，后续可扩展更多工具），支持 MySQL/PostgreSQL，支持多目标数据库配置。
 
 ## 1. 运行方式
 
@@ -28,7 +28,7 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 
 ## 2. MCP 配置文件
 
-默认读取 `mcp_server/mcp_config.json`，可用 `MCP_CONFIG_PATH` 指定路径。数据库配置仅使用该配置文件；运行参数通过 `MCP_TRANSPORT/MCP_HOST/MCP_PORT` 环境变量配置。
+默认读取 `mcp_server/mcp_config.json`，可用 `MCP_CONFIG_PATH` 指定路径。数据库/知识库配置仅使用该配置文件；运行参数通过 `MCP_TRANSPORT/MCP_HOST/MCP_PORT` 环境变量配置。
 
 ```json
 {
@@ -41,12 +41,39 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
     "database": "personnel",
     "description": "人员与组织信息库",
     "connect_timeout": 5
+  },
+  "knowledge": {
+    "base_url": "http://127.0.0.1:9380",
+    "api_key": "REPLACE_WITH_RAGFLOW_API_KEY",
+    "default_key": "default",
+    "targets": {
+      "default": {
+        "dataset_ids": [
+          "REPLACE_WITH_DATASET_ID"
+        ],
+        "description": "默认知识库"
+      }
+    },
+    "request": {
+      "page_size": 20,
+      "similarity_threshold": 0.2,
+      "vector_similarity_weight": 0.3,
+      "top_k": 1024,
+      "keyword": false,
+      "highlight": false,
+      "use_kg": false,
+      "toc_enhance": false
+    }
   }
 }
 ```
 
 如需多库配置，可在 `database.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
 也可以使用 `database.target_descriptions`（或 `database.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
+
+知识库检索基于 RAGFlow 的 `/api/v1/retrieval` 接口，需要配置 `knowledge.base_url`、`knowledge.api_key` 与 `dataset_ids`。
+多知识库可在 `knowledge.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
+也可以使用 `knowledge.target_descriptions`（或 `knowledge.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
 
 ## 3. MCP 连接示例
 
@@ -65,7 +92,7 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 }
 ```
 
-> 如通过网关或反向代理加鉴权，请在 `headers` 中补充对应的认证头。当前仅保留两个数据库工具：`db_get_schema`、`db_query`。
+> 如通过网关或反向代理加鉴权，请在 `headers` 中补充对应的认证头。当前提供工具：`db_get_schema`、`db_query`、`kb_query`。
 
 ## 4. 服务器部署时的 IP / 端口配置要点
 

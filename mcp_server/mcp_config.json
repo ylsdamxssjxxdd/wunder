@@ -9,5 +9,28 @@
     "database": "personnel",
     "description": "人员与组织信息库",
     "connect_timeout": 5
+  },
+  "knowledge": {
+    "base_url": "http://192.168.0.2",
+    "api_key": "ragflow-xsKC6PT1bqcq2612t1glBC7QGHCG3ySTwCOBLwtoXmU",
+    "default_key": "default",
+    "targets": {
+      "default": {
+        "dataset_ids": [
+          "71034b03fbf411f098530242ac170006"
+        ],
+        "description": "RAGFlow 知识库"
+      }
+    },
+    "request": {
+      "page_size": 20,
+      "similarity_threshold": 0.2,
+      "vector_similarity_weight": 0.3,
+      "top_k": 1024,
+      "keyword": false,
+      "highlight": false,
+      "use_kg": false,
+      "toc_enhance": false
+    }
   }
 }

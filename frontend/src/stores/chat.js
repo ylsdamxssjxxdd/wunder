@@ -2009,7 +2009,9 @@ export const useChatStore = defineStore('chat', {
     activeSessionId: null,
     messages: [],
     loading: false,
-    greetingOverride: ''
+    greetingOverride: '',
+    draftAgentId: '',
+    draftToolOverrides: null
   }),
   actions: {
     markPageUnloading() {
@@ -2065,14 +2067,23 @@ export const useChatStore = defineStore('chat', {
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },
-    openDraftSession() {
+    openDraftSession(options = {}) {
       abortResumeStream();
       abortSendStream();
       stopRequested = false;
       this.loading = false;
       this.activeSessionId = null;
+      this.draftAgentId = String(options.agent_id || '').trim();
+      this.draftToolOverrides = null;
       this.messages = ensureGreetingMessage([], { greeting: this.greetingOverride });
       persistDraftSession();
+    },
+    setDraftToolOverrides(overrides) {
+      if (!Array.isArray(overrides) || overrides.length === 0) {
+        this.draftToolOverrides = null;
+        return;
+      }
+      this.draftToolOverrides = [...overrides];
     },
     async createSession(payload = {}) {
       abortResumeStream();
@@ -2080,6 +2091,7 @@ export const useChatStore = defineStore('chat', {
       const session = data.data;
       this.sessions.unshift(session);
       this.activeSessionId = session.id;
+      this.draftAgentId = String(session.agent_id || '').trim();
       this.messages = ensureGreetingMessage([], {
         createdAt: session.created_at,
         greeting: this.greetingOverride
@@ -2121,6 +2133,8 @@ export const useChatStore = defineStore('chat', {
           this.sessions.unshift(sessionDetail);
         }
       }
+      this.draftAgentId = String(sessionDetail?.agent_id || '').trim();
+      this.draftToolOverrides = null;
       const rounds = eventsRes?.data?.data?.rounds || [];
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
       const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
@@ -2146,6 +2160,8 @@ export const useChatStore = defineStore('chat', {
     async deleteSession(sessionId) {
       const targetId = sessionId || this.activeSessionId;
       if (!targetId) return;
+      const targetSession = this.sessions.find((item) => item.id === targetId) || null;
+      const targetAgentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
       abortResumeStream();
       abortSendStream();
       await deleteSessionApi(targetId);
@@ -2154,10 +2170,14 @@ export const useChatStore = defineStore('chat', {
       removeDemoChatSession(targetId);
       clearChatSnapshot(targetId);
       if (this.activeSessionId === targetId) {
-        if (this.sessions.length > 0) {
-          await this.loadSessionDetail(this.sessions[0].id);
+        const nextSession = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        if (nextSession) {
+          await this.loadSessionDetail(nextSession.id);
         } else {
-          this.openDraftSession();
+          this.openDraftSession({ agent_id: targetAgentId });
         }
       }
     },
@@ -2183,7 +2203,16 @@ export const useChatStore = defineStore('chat', {
       abortSendStream();
       stopRequested = false;
       if (!this.activeSessionId) {
-        await this.createSession();
+        const payload = this.draftAgentId ? { agent_id: this.draftAgentId } : {};
+        const session = await this.createSession(payload);
+        if (Array.isArray(this.draftToolOverrides)) {
+          try {
+            await this.updateSessionTools(session.id, this.draftToolOverrides);
+          } catch (error) {
+            // ignore draft tool override failures
+          }
+        }
+        this.draftToolOverrides = null;
       }
       const userMessage = buildMessage('user', content);
       this.messages.push(userMessage);

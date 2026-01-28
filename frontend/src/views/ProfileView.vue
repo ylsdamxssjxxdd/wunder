@@ -66,7 +66,7 @@
         <div class="profile-charts">
           <div class="profile-chart-quota">
             <div class="profile-chart-label">今日额度</div>
-            <div class="profile-quota-ring" :class="{ 'is-empty': !quotaAvailable }" :style="quotaRingStyle"></div>
+            <div ref="quotaChartRef" class="profile-quota-chart"></div>
             <div class="profile-chart-summary">
               {{ quotaUsedText }} / {{ quotaTotalText }}
             </div>
@@ -78,17 +78,24 @@
 </template>
 
 <script setup>
-import { computed, onMounted, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import * as echarts from 'echarts';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { useThemeStore } from '@/stores/theme';
 import { isDemoMode } from '@/utils/demo';
 
 const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
+const themeStore = useThemeStore();
+
+const quotaChartRef = ref(null);
+let quotaChart = null;
+let stopResizeListener = null;
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const userName = computed(() => authStore.user?.username || '访客');
@@ -128,11 +135,32 @@ const parseQuotaNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeQuotaDate = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+};
+
+const resolveTodayString = () => {
+  const now = new Date();
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
 const accountQuotaSnapshot = computed(() => {
   const user = authStore.user || {};
   const daily = parseQuotaNumber(user.daily_quota ?? user.dailyQuota);
-  const used = parseQuotaNumber(user.daily_quota_used ?? user.dailyQuotaUsed);
-  const date = user.daily_quota_date ?? user.dailyQuotaDate ?? '';
+  const rawUsed = parseQuotaNumber(user.daily_quota_used ?? user.dailyQuotaUsed);
+  const date = normalizeQuotaDate(user.daily_quota_date ?? user.dailyQuotaDate ?? '');
+  const today = resolveTodayString();
+  const used = date && date === today ? rawUsed : 0;
   if (daily === null && used === null && !date) return null;
   const remaining =
     Number.isFinite(daily) && Number.isFinite(used) ? Math.max(daily - used, 0) : null;
@@ -140,14 +168,16 @@ const accountQuotaSnapshot = computed(() => {
     daily,
     used,
     remaining,
-    date: date ? String(date) : ''
+    date: date || today
   };
 });
 
 const latestQuotaSnapshot = computed(() => {
+  const today = resolveTodayString();
   for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
     const snapshot = assistantMessages.value[i]?.stats?.quotaSnapshot;
-    if (snapshot) return snapshot;
+    const date = normalizeQuotaDate(snapshot?.date);
+    if (snapshot && date && date === today) return snapshot;
   }
   return accountQuotaSnapshot.value;
 });
@@ -186,9 +216,111 @@ const quotaPercent = computed(() => {
   return Math.min(Math.max(used / quotaTotal.value, 0), 1);
 });
 
-const quotaRingStyle = computed(() => ({
-  '--quota-angle': `${(quotaPercent.value * 360).toFixed(1)}deg`
-}));
+const quotaLabels = {
+  used: '已用',
+  remaining: '剩余'
+};
+
+const resolveQuotaPalette = () => {
+  const isLight = themeStore.mode === 'light';
+  return {
+    used: '#38bdf8',
+    remaining: '#22c55e',
+    empty: '#ffffff',
+    border: isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(15, 23, 42, 0.6)',
+    tooltipBg: isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.95)',
+    tooltipText: isLight ? '#0f172a' : '#e2e8f0',
+    tooltipBorder: isLight ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.35)'
+  };
+};
+
+const buildQuotaChartData = () => {
+  if (!quotaAvailable.value) {
+    return {
+      data: [
+        {
+          value: 1,
+          name: '__empty__',
+          itemStyle: {
+            color: resolveQuotaPalette().empty,
+            borderColor: resolveQuotaPalette().border,
+            borderWidth: 2,
+            borderRadius: 8
+          }
+        }
+      ],
+      isEmpty: true,
+      visibleCount: 0
+    };
+  }
+  const total = quotaTotal.value ?? 0;
+  const used = quotaUsed.value ?? 0;
+  const remaining = Math.max(total - used, 0);
+  const data = [
+    { value: used, name: quotaLabels.used },
+    { value: remaining, name: quotaLabels.remaining }
+  ];
+  const visibleCount = data.filter((item) => Number(item.value) > 0).length;
+  return { data, isEmpty: visibleCount === 0, visibleCount };
+};
+
+const renderQuotaChart = () => {
+  const container = quotaChartRef.value;
+  if (!container) return;
+  if (!quotaChart) {
+    quotaChart = echarts.init(container);
+  }
+  const palette = resolveQuotaPalette();
+  const { data, isEmpty, visibleCount } = buildQuotaChartData();
+  const padAngle = isEmpty || visibleCount <= 1 ? 0 : 1;
+  const ringStyle = isEmpty
+    ? {
+        borderColor: palette.border,
+        borderWidth: 2,
+        borderRadius: 8,
+        shadowBlur: 0
+      }
+    : {
+        borderColor: palette.border,
+        borderWidth: 2,
+        borderRadius: 6,
+        shadowBlur: 0
+      };
+  quotaChart.setOption(
+    {
+      tooltip: {
+        trigger: 'item',
+        show: !isEmpty,
+        backgroundColor: palette.tooltipBg,
+        borderColor: palette.tooltipBorder,
+        textStyle: { color: palette.tooltipText },
+        formatter: '{b}: {c}'
+      },
+      series: [
+        {
+          type: 'pie',
+          radius: ['46%', '88%'],
+          center: ['50%', '50%'],
+          avoidLabelOverlap: true,
+          label: { show: false },
+          labelLine: { show: false },
+          padAngle,
+          itemStyle: ringStyle,
+          data,
+          color: [palette.used, palette.remaining],
+          silent: isEmpty
+        }
+      ]
+    },
+    true
+  );
+};
+
+const handleQuotaResize = () => {
+  if (quotaChart) {
+    quotaChart.resize();
+  }
+};
 
 const quotaUsedText = computed(() =>
   Number.isFinite(quotaUsed.value) ? formatNumber(quotaUsed.value) : '-'
@@ -275,12 +407,37 @@ onMounted(() => {
     authStore.loadProfile();
   }
   loadSessions();
+  nextTick(() => {
+    renderQuotaChart();
+  });
+  window.addEventListener('resize', handleQuotaResize);
+  stopResizeListener = () => window.removeEventListener('resize', handleQuotaResize);
+});
+
+onBeforeUnmount(() => {
+  if (stopResizeListener) {
+    stopResizeListener();
+    stopResizeListener = null;
+  }
+  if (quotaChart) {
+    quotaChart.dispose();
+    quotaChart = null;
+  }
 });
 
 watch(
   () => route.path,
   () => {
     loadSessions();
+  }
+);
+
+watch(
+  [quotaTotal, quotaUsed, () => themeStore.mode],
+  () => {
+    nextTick(() => {
+      renderQuotaChart();
+    });
   }
 );
 </script>
