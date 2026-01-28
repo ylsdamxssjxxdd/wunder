@@ -5,7 +5,13 @@
         <div class="brand">
           <div class="brand-mark">AI</div>
           <div class="brand-meta">
-            <div class="brand-title">智能体交互系统</div>
+            <div class="brand-title-row">
+              <div class="brand-title">智能体交互系统</div>
+              <div v-if="activeAgentLabel" class="agent-pill">
+                <span class="agent-pill-label">当前智能体</span>
+                <span class="agent-pill-name">{{ activeAgentLabel }}</span>
+              </div>
+            </div>
             <div class="brand-sub">
               <span v-if="demoMode" class="demo-badge">演示模式</span>
             </div>
@@ -40,6 +46,15 @@
             </button>
           </div>
           <button
+            class="new-chat-btn"
+            type="button"
+            title="新建会话"
+            aria-label="新建会话"
+            @click="handleCreateSession"
+          >
+            新建会话
+          </button>
+          <button
             class="topbar-icon-btn"
             type="button"
             title="功能广场"
@@ -52,15 +67,6 @@
               <rect x="3" y="14" width="7" height="7" rx="1.5" />
               <rect x="14" y="14" width="7" height="7" rx="1.5" />
             </svg>
-          </button>
-          <button
-            class="new-chat-btn"
-            type="button"
-            title="新建会话"
-            aria-label="新建会话"
-            @click="handleCreateSession"
-          >
-            新建会话
           </button>
           <button
             class="topbar-icon-btn"
@@ -78,10 +84,6 @@
               <circle cx="7" cy="18" r="2" />
             </svg>
           </button>
-          <div v-if="activeAgentLabel" class="agent-pill">
-            <span class="agent-pill-label">当前智能体</span>
-            <span class="agent-pill-name">{{ activeAgentLabel }}</span>
-          </div>
           <ThemeToggle />
           <div class="topbar-user">
             <button

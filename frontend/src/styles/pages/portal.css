@@ -52,7 +52,7 @@
 .portal-shell .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 10px 16px;
   gap: 12px;
   background: linear-gradient(90deg, rgba(106, 217, 255, 0.16), rgba(180, 169, 255, 0.12));
@@ -64,6 +64,15 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.portal-shell .brand-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .portal-shell .brand-mark {
@@ -113,6 +122,7 @@
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 .portal-shell .topbar-nav {
@@ -123,8 +133,9 @@
 }
 
 .portal-shell .topbar-search {
-  flex: 0 1 320px;
-  min-width: 200px;
+  flex: 1 1 280px;
+  min-width: 180px;
+  max-width: 360px;
 }
 
 .portal-shell .topbar-panel-btn {

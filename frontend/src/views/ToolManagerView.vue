@@ -3,6 +3,7 @@
     <UserTopbar
       title="工具管理"
       subtitle="统一管理可用工具与共享工具"
+      :hide-chat="true"
     />
     <main class="portal-content">
       <section class="portal-main">

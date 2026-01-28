@@ -1,6 +1,6 @@
 <template>
   <div class="portal-shell profile-shell">
-    <UserTopbar title="我的" subtitle="账号与使用概况" />
+    <UserTopbar title="我的" subtitle="账号与使用概况" :hide-chat="true" />
     <main class="profile-content">
       <section class="profile-hero">
         <div class="profile-card profile-identity">

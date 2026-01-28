@@ -10,6 +10,27 @@
         </div>
       </div>
     </div>
+    <div v-if="showSearch" class="portal-search topbar-search">
+      <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="M16.5 16.5L21 21" />
+      </svg>
+      <input
+        :value="search"
+        type="text"
+        :placeholder="searchPlaceholder"
+        @input="updateSearch"
+      />
+      <button
+        v-if="search"
+        class="portal-search-clear"
+        type="button"
+        aria-label="清空搜索"
+        @click="clearSearch"
+      >
+        ×
+      </button>
+    </div>
     <div class="topbar-actions">
       <nav class="topbar-nav">
         <router-link
@@ -21,27 +42,6 @@
           {{ item.label }}
         </router-link>
       </nav>
-      <div v-if="showSearch" class="portal-search topbar-search">
-        <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" />
-          <path d="M16.5 16.5L21 21" />
-        </svg>
-        <input
-          :value="search"
-          type="text"
-          :placeholder="searchPlaceholder"
-          @input="updateSearch"
-        />
-        <button
-          v-if="search"
-          class="portal-search-clear"
-          type="button"
-          aria-label="清空搜索"
-          @click="clearSearch"
-        >
-          ×
-        </button>
-      </div>
       <slot name="actions" />
       <ThemeToggle />
       <div class="topbar-user">

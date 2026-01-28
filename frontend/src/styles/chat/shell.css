@@ -50,6 +50,19 @@
   gap: 10px;
 }
 
+.chat-shell .brand-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-shell .brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .chat-shell .brand-mark {
   width: 40px;
   height: 40px;
