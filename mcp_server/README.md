@@ -70,6 +70,7 @@ docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
 
 如需多库配置，可在 `database.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
 也可以使用 `database.target_descriptions`（或 `database.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
+建议在 `database.description` 中补充核心表及用途（如 `employees=人员主数据`、`departments=部门`），帮助模型更准确选表；保持简洁，避免把所有表都塞进去。
 
 知识库检索基于 RAGFlow 的 `/api/v1/retrieval` 接口，需要配置 `knowledge.base_url`、`knowledge.api_key` 与 `dataset_ids`。
 多知识库可在 `knowledge.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。

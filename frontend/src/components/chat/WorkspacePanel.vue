@@ -234,7 +234,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -249,6 +249,13 @@ import {
   uploadWunderWorkspace
 } from '@/api/workspace';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
+
+const props = defineProps({
+  agentId: {
+    type: String,
+    default: ''
+  }
+});
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -298,6 +305,21 @@ const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
+
+const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+
+const withAgentParams = (params = {}) => {
+  const agentId = normalizedAgentId.value;
+  if (!agentId) return params;
+  return { ...params, agent_id: agentId };
+};
+
+const appendAgentId = (formData) => {
+  const agentId = normalizedAgentId.value;
+  if (agentId) {
+    formData.append('agent_id', agentId);
+  }
+};
 
 const listRef = ref(null);
 const uploadInputRef = ref(null);
@@ -697,13 +719,13 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
   resetWorkspaceSelection();
   const currentPath = normalizeWorkspacePath(path);
   try {
-    const { data } = await fetchWunderWorkspaceContent({
+    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
       path: currentPath,
       include_content: true,
       depth: 1,
       sort_by: state.sortBy,
       order: state.sortOrder
-    });
+    }));
     const payload = data || {};
     const normalizedPath = normalizeWorkspacePath(payload.path ?? currentPath);
     state.path = normalizedPath;
@@ -744,7 +766,9 @@ const loadWorkspaceSearch = async () => {
   state.renamingValue = '';
   resetWorkspaceSelection();
   try {
-    const { data } = await searchWunderWorkspace({ keyword, offset: 0, limit: 200 });
+    const { data } = await searchWunderWorkspace(
+      withAgentParams({ keyword, offset: 0, limit: 200 })
+    );
     const payload = data || {};
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     state.searchMode = true;
@@ -792,13 +816,13 @@ const hydrateExpandedEntries = async () => {
       continue;
     }
     try {
-      const { data } = await fetchWunderWorkspaceContent({
+      const { data } = await fetchWunderWorkspaceContent(withAgentParams({
         path,
         include_content: true,
         depth: 1,
         sort_by: state.sortBy,
         order: state.sortOrder
-      });
+      }));
       attachWorkspaceChildren(state.entries, path, data.entries || []);
     } catch (error) {
       state.expanded.delete(path);
@@ -818,13 +842,13 @@ const toggleWorkspaceDirectory = async (entry) => {
   state.expanded = new Set(state.expanded);
   if (entry.childrenLoaded) return;
   try {
-    const { data } = await fetchWunderWorkspaceContent({
+    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
       path: entry.path,
       include_content: true,
       depth: 1,
       sort_by: state.sortBy,
       order: state.sortOrder
-    });
+    }));
     attachWorkspaceChildren(state.entries, entry.path, data.entries || []);
   } catch (error) {
     state.expanded.delete(entry.path);
@@ -852,22 +876,22 @@ const clearWorkspaceCurrent = async () => {
     return;
   }
   try {
-    const { data } = await fetchWunderWorkspaceContent({
+    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
       path: state.path,
       include_content: true,
       depth: 1,
       sort_by: state.sortBy,
       order: state.sortOrder
-    });
+    }));
     const entries = Array.isArray(data?.entries) ? data.entries : [];
     if (!entries.length) {
       ElMessage.info('当前目录为空，无需清空');
       return;
     }
-    const response = await batchWunderWorkspaceAction({
+    const response = await batchWunderWorkspaceAction(withAgentParams({
       action: 'delete',
       paths: entries.map((entry) => entry.path)
-    });
+    }));
     notifyBatchResult(response.data, '清空');
     await reloadWorkspaceView();
   } catch (error) {
@@ -919,6 +943,7 @@ const uploadWorkspaceFiles = async (files, targetPath, options = {}) => {
   }
   const formData = new FormData();
   formData.append('path', normalizeWorkspacePath(targetPath));
+  appendAgentId(formData);
   fileList.forEach((file, index) => {
     formData.append('files', file);
     if (relativePaths.length) {
@@ -1103,7 +1128,7 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const parentPath = getWorkspaceParentPath(entry.path);
   const destination = joinWorkspacePath(parentPath, trimmed);
   try {
-    await moveWunderWorkspaceEntry({ source: entry.path, destination });
+    await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
     await reloadWorkspaceView();
     ElMessage.success('已重命名');
   } catch (error) {
@@ -1132,7 +1157,9 @@ const deleteWorkspaceSelection = async () => {
   );
   if (!confirmed) return;
   try {
-    const response = await batchWunderWorkspaceAction({ action: 'delete', paths: selectedPaths });
+    const response = await batchWunderWorkspaceAction(
+      withAgentParams({ action: 'delete', paths: selectedPaths })
+    );
     notifyBatchResult(response.data, '删除');
     await reloadWorkspaceView();
   } catch (error) {
@@ -1157,11 +1184,11 @@ const moveWorkspaceSelectionToDirectory = async () => {
     return;
   }
   try {
-    const response = await batchWunderWorkspaceAction({
+    const response = await batchWunderWorkspaceAction(withAgentParams({
       action: 'move',
       paths: selectedPaths,
       destination: targetDir
-    });
+    }));
     notifyBatchResult(response.data, '移动');
     await reloadWorkspaceView();
   } catch (error) {
@@ -1186,11 +1213,11 @@ const copyWorkspaceSelectionToDirectory = async () => {
     return;
   }
   try {
-    const response = await batchWunderWorkspaceAction({
+    const response = await batchWunderWorkspaceAction(withAgentParams({
       action: 'copy',
       paths: selectedPaths,
       destination: targetDir
-    });
+    }));
     notifyBatchResult(response.data, '复制');
     await reloadWorkspaceView();
   } catch (error) {
@@ -1221,7 +1248,7 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
     return;
   }
   try {
-    await moveWunderWorkspaceEntry({ source: entry.path, destination });
+    await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
     await reloadWorkspaceView();
     ElMessage.success(`已移动到 ${targetDir || '/'}`);
   } catch (error) {
@@ -1242,7 +1269,9 @@ const createWorkspaceFile = async () => {
   }
   const targetPath = joinWorkspacePath(state.path, trimmed);
   try {
-    await saveWunderWorkspaceFile({ path: targetPath, content: '', create_if_missing: true });
+    await saveWunderWorkspaceFile(
+      withAgentParams({ path: targetPath, content: '', create_if_missing: true })
+    );
     await reloadWorkspaceView();
     ElMessage.success(`已创建文件 ${trimmed}`);
   } catch (error) {
@@ -1262,7 +1291,7 @@ const createWorkspaceFolder = async () => {
   }
   const targetPath = joinWorkspacePath(state.path, trimmed);
   try {
-    await createWunderWorkspaceDir({ path: targetPath });
+    await createWunderWorkspaceDir(withAgentParams({ path: targetPath }));
     await reloadWorkspaceView();
     ElMessage.success('文件夹已创建');
   } catch (error) {
@@ -1295,12 +1324,12 @@ const saveBlob = (blob, filename) => {
 const downloadEntry = async (entry) => {
   try {
     if (entry.type === 'dir') {
-      const response = await downloadWunderWorkspaceArchive({ path: entry.path });
+      const response = await downloadWunderWorkspaceArchive(withAgentParams({ path: entry.path }));
       const filename = getFilenameFromHeaders(response.headers, `${entry.name || 'folder'}.zip`);
       saveBlob(response.data, filename);
       return;
     }
-    const response = await downloadWunderWorkspaceFile({ path: entry.path });
+    const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
     const filename = getFilenameFromHeaders(response.headers, entry.name || 'download');
     saveBlob(response.data, filename);
   } catch (error) {
@@ -1310,7 +1339,7 @@ const downloadEntry = async (entry) => {
 
 const downloadArchive = async () => {
   try {
-    const response = await downloadWunderWorkspaceArchive();
+    const response = await downloadWunderWorkspaceArchive(withAgentParams({}));
     const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
     saveBlob(response.data, filename);
     ElMessage.success('压缩包已下载');
@@ -1515,11 +1544,13 @@ const handleItemDrop = async (event, entry) => {
     const filtered = filterMoveTargets(internalPaths, targetDir);
     if (!filtered.length) return;
     try {
-      const response = await batchWunderWorkspaceAction({
-        action: 'move',
-        paths: filtered,
-        destination: targetDir
-      });
+      const response = await batchWunderWorkspaceAction(
+        withAgentParams({
+          action: 'move',
+          paths: filtered,
+          destination: targetDir
+        })
+      );
       notifyBatchResult(response.data, `移动到 ${entry.name || '目录'}`);
       await reloadWorkspaceView();
     } catch (error) {
@@ -1561,11 +1592,13 @@ const handleUpDrop = async (event) => {
   if (!sourcePaths.length) return;
   const parentPath = getWorkspaceParentPath(state.path);
   try {
-    const response = await batchWunderWorkspaceAction({
-      action: 'move',
-      paths: sourcePaths,
-      destination: parentPath
-    });
+    const response = await batchWunderWorkspaceAction(
+      withAgentParams({
+        action: 'move',
+        paths: sourcePaths,
+        destination: parentPath
+      })
+    );
     notifyBatchResult(response.data, '移动到上级目录');
     await reloadWorkspaceView();
   } catch (error) {
@@ -1612,11 +1645,13 @@ const openPreview = async (entry) => {
   try {
     if (extension === 'svg') {
       try {
-        const response = await fetchWunderWorkspaceContent({
-          path: entry.path,
-          include_content: true,
-          max_bytes: MAX_TEXT_PREVIEW_SIZE
-        });
+        const response = await fetchWunderWorkspaceContent(
+          withAgentParams({
+            path: entry.path,
+            include_content: true,
+            max_bytes: MAX_TEXT_PREVIEW_SIZE
+          })
+        );
         const payload = response.data || {};
         if (payload.truncated) {
           state.preview.hint = '内容已截断，建议下载查看完整文件。';
@@ -1636,7 +1671,7 @@ const openPreview = async (entry) => {
       }
     }
     if (IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension)) {
-      const response = await downloadWunderWorkspaceFile({ path: entry.path });
+      const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
       let blob = response.data;
       if (IMAGE_EXTENSIONS.has(extension)) {
         const expectedMime = IMAGE_MIME_TYPES[extension] || '';
@@ -1656,11 +1691,13 @@ const openPreview = async (entry) => {
       }
       return;
     }
-    const response = await fetchWunderWorkspaceContent({
-      path: entry.path,
-      include_content: true,
-      max_bytes: MAX_TEXT_PREVIEW_SIZE
-    });
+    const response = await fetchWunderWorkspaceContent(
+      withAgentParams({
+        path: entry.path,
+        include_content: true,
+        max_bytes: MAX_TEXT_PREVIEW_SIZE
+      })
+    );
     const payload = response.data || {};
     if (payload.truncated) {
       state.preview.hint = '内容已截断，建议下载查看完整文件。';
@@ -1701,11 +1738,13 @@ const openEditor = async (entry) => {
   state.editor.content = '';
   state.editor.loading = true;
   try {
-    const response = await fetchWunderWorkspaceContent({
-      path: entry.path,
-      include_content: true,
-      max_bytes: MAX_TEXT_PREVIEW_SIZE
-    });
+    const response = await fetchWunderWorkspaceContent(
+      withAgentParams({
+        path: entry.path,
+        include_content: true,
+        max_bytes: MAX_TEXT_PREVIEW_SIZE
+      })
+    );
     const payload = response.data || {};
     if (payload.truncated) {
       ElMessage.warning('文件过大，无法编辑，请下载查看。');
@@ -1731,10 +1770,12 @@ const closeEditor = () => {
 const saveEditor = async () => {
   if (!state.editor.entry) return;
   try {
-    await saveWunderWorkspaceFile({
-      path: state.editor.entry.path,
-      content: state.editor.content
-    });
+    await saveWunderWorkspaceFile(
+      withAgentParams({
+        path: state.editor.entry.path,
+        content: state.editor.content
+      })
+    );
     ElMessage.success('已保存');
     closeEditor();
     await reloadWorkspaceView();
@@ -1760,6 +1801,17 @@ onMounted(async () => {
   document.addEventListener('scroll', handleGlobalScroll, true);
   window.addEventListener('resize', closeContextMenu);
 });
+
+watch(
+  () => normalizedAgentId.value,
+  async (value, oldValue) => {
+    if (value === oldValue) return;
+    state.path = '';
+    state.parent = null;
+    state.expanded = new Set();
+    await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+  }
+);
 
 onBeforeUnmount(() => {
   clearPreviewUrl();

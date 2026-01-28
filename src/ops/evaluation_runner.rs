@@ -813,6 +813,7 @@ async fn run_case(
         stream: true,
         debug_payload: false,
         session_id: Some(session_id.to_string()),
+        agent_id: None,
         model_name: ctx.model_name.clone(),
         language: Some(ctx.language.clone()),
         config_overrides: ctx.config_overrides.clone(),

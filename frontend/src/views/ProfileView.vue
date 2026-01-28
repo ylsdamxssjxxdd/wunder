@@ -68,7 +68,7 @@
             <div class="profile-chart-label">今日额度</div>
             <div ref="quotaChartRef" class="profile-quota-chart"></div>
             <div class="profile-chart-summary">
-              {{ quotaUsedText }} / {{ quotaTotalText }}
+              {{ quotaRemainingText }} / {{ quotaTotalText }}
             </div>
           </div>
         </div>
@@ -173,6 +173,8 @@ const accountQuotaSnapshot = computed(() => {
 });
 
 const latestQuotaSnapshot = computed(() => {
+  const accountSnapshot = accountQuotaSnapshot.value;
+  if (accountSnapshot) return accountSnapshot;
   const today = resolveTodayString();
   for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
     const snapshot = assistantMessages.value[i]?.stats?.quotaSnapshot;
@@ -191,6 +193,19 @@ const quotaTotal = computed(() => {
   const remaining = snapshot.remaining;
   if (Number.isFinite(used) && Number.isFinite(remaining)) {
     return used + remaining;
+  }
+  return null;
+});
+
+const quotaRemaining = computed(() => {
+  const snapshot = latestQuotaSnapshot.value;
+  if (!snapshot) return null;
+  const remaining = snapshot.remaining;
+  if (Number.isFinite(remaining)) return remaining;
+  const total = quotaTotal.value;
+  const used = snapshot.used;
+  if (Number.isFinite(total) && Number.isFinite(used)) {
+    return Math.max(total - used, 0);
   }
   return null;
 });
@@ -224,10 +239,13 @@ const quotaLabels = {
 const resolveQuotaPalette = () => {
   const isLight = themeStore.mode === 'light';
   return {
+    usedLight: isLight ? '#7dd3fc' : '#5eead4',
     used: '#38bdf8',
+    remainingLight: isLight ? '#86efac' : '#4ade80',
     remaining: '#22c55e',
-    empty: '#ffffff',
+    empty: isLight ? '#f8fafc' : '#0f172a',
     border: isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(15, 23, 42, 0.6)',
+    shadow: isLight ? 'rgba(15, 23, 42, 0.2)' : 'rgba(0, 0, 0, 0.55)',
     tooltipBg: isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.95)',
     tooltipText: isLight ? '#0f172a' : '#e2e8f0',
     tooltipBorder: isLight ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.35)'
@@ -254,8 +272,11 @@ const buildQuotaChartData = () => {
     };
   }
   const total = quotaTotal.value ?? 0;
-  const used = quotaUsed.value ?? 0;
-  const remaining = Math.max(total - used, 0);
+  const remainingRaw = Number.isFinite(quotaRemaining.value)
+    ? quotaRemaining.value
+    : Math.max(total - (quotaUsed.value ?? 0), 0);
+  const remaining = Math.max(Math.min(remainingRaw, total), 0);
+  const used = Math.max(total - remaining, 0);
   const data = [
     { value: used, name: quotaLabels.used },
     { value: remaining, name: quotaLabels.remaining }
@@ -273,18 +294,44 @@ const renderQuotaChart = () => {
   const palette = resolveQuotaPalette();
   const { data, isEmpty, visibleCount } = buildQuotaChartData();
   const padAngle = isEmpty || visibleCount <= 1 ? 0 : 1;
+  const colorStops = [
+    {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 1,
+      y2: 1,
+      colorStops: [
+        { offset: 0, color: palette.usedLight },
+        { offset: 1, color: palette.used }
+      ]
+    },
+    {
+      type: 'linear',
+      x: 0,
+      y: 0,
+      x2: 1,
+      y2: 1,
+      colorStops: [
+        { offset: 0, color: palette.remainingLight },
+        { offset: 1, color: palette.remaining }
+      ]
+    }
+  ];
   const ringStyle = isEmpty
     ? {
         borderColor: palette.border,
         borderWidth: 2,
-        borderRadius: 8,
+        borderRadius: 10,
         shadowBlur: 0
       }
     : {
         borderColor: palette.border,
         borderWidth: 2,
-        borderRadius: 6,
-        shadowBlur: 0
+        borderRadius: 8,
+        shadowBlur: 18,
+        shadowColor: palette.shadow,
+        shadowOffsetY: 4
       };
   quotaChart.setOption(
     {
@@ -299,7 +346,7 @@ const renderQuotaChart = () => {
       series: [
         {
           type: 'pie',
-          radius: ['46%', '88%'],
+          radius: ['38%', '88%'],
           center: ['50%', '50%'],
           avoidLabelOverlap: true,
           label: { show: false },
@@ -307,8 +354,12 @@ const renderQuotaChart = () => {
           padAngle,
           itemStyle: ringStyle,
           data,
-          color: [palette.used, palette.remaining],
-          silent: isEmpty
+          color: colorStops,
+          silent: isEmpty,
+          emphasis: {
+            scale: true,
+            scaleSize: 6
+          }
         }
       ]
     },
@@ -322,8 +373,8 @@ const handleQuotaResize = () => {
   }
 };
 
-const quotaUsedText = computed(() =>
-  Number.isFinite(quotaUsed.value) ? formatNumber(quotaUsed.value) : '-'
+const quotaRemainingText = computed(() =>
+  Number.isFinite(quotaRemaining.value) ? formatNumber(quotaRemaining.value) : '-'
 );
 
 const quotaTotalText = computed(() =>
@@ -403,9 +454,7 @@ const loadSessions = async () => {
 };
 
 onMounted(() => {
-  if (!authStore.user) {
-    authStore.loadProfile();
-  }
+  authStore.loadProfile();
   loadSessions();
   nextTick(() => {
     renderQuotaChart();

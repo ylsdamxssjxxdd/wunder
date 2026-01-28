@@ -1,7 +1,7 @@
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, SessionLockRecord, SessionLockStatus, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -305,6 +305,31 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_session_lock_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'session_locks'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("agent_id") {
+            conn.execute(
+                "ALTER TABLE session_locks ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''",
+                &[],
+            )?;
+        }
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_session_locks_user", &[]);
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent \
+             ON session_locks (user_id, agent_id)",
+            &[],
+        )?;
+        Ok(())
+    }
+
     fn ensure_user_agent_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let rows = conn.query(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_agents'",
@@ -476,12 +501,13 @@ impl StorageBackend for PostgresStorage {
                 CREATE TABLE IF NOT EXISTS session_locks (
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
+                  agent_id TEXT NOT NULL DEFAULT '',
                   created_time DOUBLE PRECISION NOT NULL,
                   updated_time DOUBLE PRECISION NOT NULL,
                   expires_at DOUBLE PRECISION NOT NULL
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user
-                  ON session_locks (user_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent
+                  ON session_locks (user_id, agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_locks_expires
                   ON session_locks (expires_at);
                 CREATE TABLE IF NOT EXISTS stream_events (
@@ -644,6 +670,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_user_account_quota_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
+                    self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
@@ -1274,12 +1301,14 @@ impl StorageBackend for PostgresStorage {
         &self,
         _session_id: &str,
         _user_id: &str,
+        _agent_id: &str,
         _ttl_s: f64,
         _max_sessions: i64,
     ) -> Result<SessionLockStatus> {
         self.ensure_initialized()?;
         let cleaned_session = _session_id.trim();
         let cleaned_user = _user_id.trim();
+        let cleaned_agent = _agent_id.trim();
         if cleaned_session.is_empty() || cleaned_user.is_empty() {
             return Ok(SessionLockStatus::SystemBusy);
         }
@@ -1292,23 +1321,30 @@ impl StorageBackend for PostgresStorage {
         let mut tx = conn.transaction()?;
         tx.execute("DELETE FROM session_locks WHERE expires_at <= $1", &[&now])?;
         let existing = tx.query_opt(
-            "SELECT session_id FROM session_locks WHERE user_id = $1 LIMIT 1",
-            &[&cleaned_user],
+            "SELECT session_id FROM session_locks WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
+            &[&cleaned_user, &cleaned_agent],
         )?;
         if existing.is_some() {
             tx.commit()?;
             return Ok(SessionLockStatus::UserBusy);
         }
         let inserted = tx.execute(
-            "INSERT INTO session_locks (session_id, user_id, created_time, updated_time, expires_at) \
-             VALUES ($1, $2, $3, $4, $5) \
+            "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
              ON CONFLICT DO NOTHING",
-            &[&cleaned_session, &cleaned_user, &now, &now, &expires_at],
+            &[
+                &cleaned_session,
+                &cleaned_user,
+                &cleaned_agent,
+                &now,
+                &now,
+                &expires_at,
+            ],
         )?;
         if inserted == 0 {
             let user_lock = tx.query_opt(
-                "SELECT session_id FROM session_locks WHERE user_id = $1 LIMIT 1",
-                &[&cleaned_user],
+                "SELECT session_id FROM session_locks WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
+                &[&cleaned_user, &cleaned_agent],
             )?;
             tx.commit()?;
             return Ok(if user_lock.is_some() {
@@ -1372,6 +1408,32 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM session_locks WHERE user_id = $1", &[&cleaned])?;
         Ok(affected as i64)
+    }
+
+    fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let now = Self::now_ts();
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT session_id, user_id, agent_id, updated_time, expires_at \
+             FROM session_locks WHERE user_id = $1 AND expires_at > $2",
+            &[&cleaned, &now],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(SessionLockRecord {
+                session_id: row.get(0),
+                user_id: row.get(1),
+                agent_id: row.get(2),
+                updated_time: row.get(3),
+                expires_at: row.get(4),
+            });
+        }
+        Ok(output)
     }
 
     fn append_stream_event(
@@ -2459,6 +2521,7 @@ impl StorageBackend for PostgresStorage {
     fn list_chat_sessions(
         &self,
         user_id: &str,
+        agent_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -2468,24 +2531,78 @@ impl StorageBackend for PostgresStorage {
             return Ok((Vec::new(), 0));
         }
         let mut conn = self.conn()?;
-        let total: i64 = conn
-            .query_one(
-                "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1",
-                &[&cleaned_user],
-            )?
-            .get(0);
-        let rows = if limit > 0 {
-            conn.query(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                 FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
-                &[&cleaned_user, &limit, &offset.max(0)],
-            )?
-        } else {
-            conn.query(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                 FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC",
-                &[&cleaned_user],
-            )?
+        let agent_id = agent_id.map(|value| value.trim());
+        let (total, rows) = match agent_id {
+            None => {
+                let total: i64 = conn
+                    .query_one(
+                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1",
+                        &[&cleaned_user],
+                    )?
+                    .get(0);
+                let rows = if limit > 0 {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
+                        &[&cleaned_user, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC",
+                        &[&cleaned_user],
+                    )?
+                };
+                (total, rows)
+            }
+            Some(value) if value.is_empty() => {
+                let total: i64 = conn
+                    .query_one(
+                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '')",
+                        &[&cleaned_user],
+                    )?
+                    .get(0);
+                let rows = if limit > 0 {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '') \
+                         ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
+                        &[&cleaned_user, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '') \
+                         ORDER BY updated_at DESC",
+                        &[&cleaned_user],
+                    )?
+                };
+                (total, rows)
+            }
+            Some(value) => {
+                let total: i64 = conn
+                    .query_one(
+                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1 AND agent_id = $2",
+                        &[&cleaned_user, &value],
+                    )?
+                    .get(0);
+                let rows = if limit > 0 {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 AND agent_id = $2 \
+                         ORDER BY updated_at DESC LIMIT $3 OFFSET $4",
+                        &[&cleaned_user, &value, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                         FROM chat_sessions WHERE user_id = $1 AND agent_id = $2 \
+                         ORDER BY updated_at DESC",
+                        &[&cleaned_user, &value],
+                    )?
+                };
+                (total, rows)
+            }
         };
         let mut output = Vec::new();
         for row in rows {

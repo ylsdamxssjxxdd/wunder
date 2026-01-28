@@ -654,6 +654,7 @@ impl A2aService {
             stream: false,
             debug_payload: false,
             session_id: Some(session_id.clone()),
+            agent_id: None,
             model_name: if model_name.is_empty() {
                 None
             } else {
@@ -739,6 +740,7 @@ impl A2aService {
             stream: true,
             debug_payload: false,
             session_id: Some(session_id.clone()),
+            agent_id: None,
             model_name: if model_name.is_empty() {
                 None
             } else {

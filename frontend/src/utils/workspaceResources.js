@@ -1,4 +1,5 @@
 const WORKSPACE_PUBLIC_PREFIX = '/workspaces/';
+const WORKSPACE_AGENT_MARKER = '__agent__';
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
 const getBaseOrigin = () => {
@@ -31,14 +32,23 @@ export const parseWorkspaceResourceUrl = (raw) => {
   const rest = pathname.slice(index + WORKSPACE_PUBLIC_PREFIX.length);
   const parts = rest.split('/').filter(Boolean);
   if (parts.length < 2) return null;
-  const userId = parts.shift();
+  const workspaceId = parts.shift();
+  if (!workspaceId) return null;
+  const markerIndex = workspaceId.indexOf(WORKSPACE_AGENT_MARKER);
+  const ownerId =
+    markerIndex >= 0 ? workspaceId.slice(0, markerIndex) : workspaceId;
+  const agentId =
+    markerIndex >= 0 ? workspaceId.slice(markerIndex + WORKSPACE_AGENT_MARKER.length) : '';
   const relativeRaw = parts.join('/');
   if (!relativeRaw) return null;
   const relativePath = decodePath(relativeRaw);
   const filename = relativePath.split('/').pop() || decodePath(parts[parts.length - 1] || '');
-  const publicPath = `${WORKSPACE_PUBLIC_PREFIX}${userId}/${relativeRaw}`;
+  const publicPath = `${WORKSPACE_PUBLIC_PREFIX}${workspaceId}/${relativeRaw}`;
   return {
-    userId,
+    userId: workspaceId,
+    workspaceId,
+    ownerId,
+    agentId,
     relativePath,
     publicPath,
     filename

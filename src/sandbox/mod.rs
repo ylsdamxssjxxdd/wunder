@@ -249,6 +249,7 @@ pub async fn execute_tool(
     config: &Config,
     workspace: &WorkspaceManager,
     user_id: &str,
+    workspace_id: &str,
     session_id: &str,
     tool: &str,
     args: &Value,
@@ -264,7 +265,7 @@ pub async fn execute_tool(
         });
     }
 
-    if let Err(err) = workspace.ensure_user_root(user_id) {
+    if let Err(err) = workspace.ensure_user_root(workspace_id) {
         return json!({
             "ok": false,
             "data": { "detail": err.to_string() },
@@ -274,10 +275,11 @@ pub async fn execute_tool(
     }
 
     let public_root = workspace
-        .public_root(user_id)
+        .public_root(workspace_id)
         .to_string_lossy()
         .replace('\\', "/");
-    let container_workspace_root = resolve_container_workspace_root(config, workspace, user_id);
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
 
     let allow_paths = collect_allow_paths(config, user_tool_bindings);
     let deny_globs = config.security.deny_globs.clone();

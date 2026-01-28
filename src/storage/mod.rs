@@ -92,6 +92,15 @@ pub struct ChatSessionRecord {
     pub tool_overrides: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionLockRecord {
+    pub session_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub updated_time: f64,
+    pub expires_at: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionLockStatus {
     Acquired,
@@ -158,12 +167,14 @@ pub trait StorageBackend: Send + Sync {
         &self,
         session_id: &str,
         user_id: &str,
+        agent_id: &str,
         ttl_s: f64,
         max_sessions: i64,
     ) -> Result<SessionLockStatus>;
     fn touch_session_lock(&self, session_id: &str, ttl_s: f64) -> Result<()>;
     fn release_session_lock(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
+    fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
 
     fn append_stream_event(
         &self,
@@ -271,6 +282,7 @@ pub trait StorageBackend: Send + Sync {
     fn list_chat_sessions(
         &self,
         user_id: &str,
+        agent_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;

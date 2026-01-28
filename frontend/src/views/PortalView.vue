@@ -64,6 +64,10 @@
                     <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
                   </div>
                 </div>
+                <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
+                  <span class="agent-running-dot"></span>
+                  <span>运行中</span>
+                </div>
                 <div class="agent-card-meta">
                   <span>工具 {{ agent.tool_names?.length || 0 }}</span>
                   <span>更新 {{ formatTime(agent.updated_at) }}</span>
@@ -115,6 +119,10 @@
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
                   </div>
+                </div>
+                <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
+                  <span class="agent-running-dot"></span>
+                  <span>运行中</span>
                 </div>
                 <div class="agent-card-meta">
                   <span>工具 {{ agent.tool_names?.length || 0 }}</span>
@@ -208,10 +216,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { listRunningAgents } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useAgentStore } from '@/stores/agents';
@@ -227,6 +236,10 @@ const saving = ref(false);
 const editingId = ref('');
 const toolCatalog = ref(null);
 const toolLoading = ref(false);
+const runningAgentIds = ref([]);
+let runningTimer = null;
+
+const RUNNING_REFRESH_MS = 6000;
 
 const form = reactive({
   name: '',
@@ -258,6 +271,15 @@ onMounted(() => {
   }
   agentStore.loadAgents();
   loadCatalog();
+  loadRunningAgents();
+  runningTimer = window.setInterval(loadRunningAgents, RUNNING_REFRESH_MS);
+});
+
+onBeforeUnmount(() => {
+  if (runningTimer) {
+    clearInterval(runningTimer);
+    runningTimer = null;
+  }
 });
 
 const agents = computed(() => agentStore.agents || []);
@@ -273,6 +295,14 @@ const filteredSharedAgents = computed(() => {
   if (!query) return sharedAgents.value;
   return sharedAgents.value.filter((agent) => matchesQuery(agent, query));
 });
+
+const runningAgentSet = computed(() => new Set(runningAgentIds.value));
+
+const isAgentRunning = (agentId) => {
+  const key = String(agentId || '').trim();
+  if (!key) return false;
+  return runningAgentSet.value.has(key);
+};
 
 const dialogTitle = computed(() => (editingId.value ? '编辑智能体应用' : '新建智能体应用'));
 
@@ -357,6 +387,18 @@ const loadCatalog = async () => {
     ElMessage.error(error.response?.data?.detail || '工具清单加载失败');
   } finally {
     toolLoading.value = false;
+  }
+};
+
+const loadRunningAgents = async () => {
+  try {
+    const { data } = await listRunningAgents();
+    const items = data?.data?.items || [];
+    runningAgentIds.value = items
+      .map((item) => String(item?.agent_id || '').trim())
+      .filter(Boolean);
+  } catch (error) {
+    runningAgentIds.value = [];
   }
 };
 

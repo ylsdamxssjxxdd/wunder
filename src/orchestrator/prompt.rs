@@ -102,12 +102,13 @@ impl Orchestrator {
         tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
-        user_id: &str,
+        _user_id: &str,
+        workspace_id: &str,
         agent_prompt: Option<&str>,
     ) -> String {
         let workdir = self
             .workspace
-            .ensure_user_root(user_id)
+            .ensure_user_root(workspace_id)
             .unwrap_or_else(|_| self.workspace.root().to_path_buf());
         let config_version = self.config_store.version();
         self.prompt_composer
@@ -115,7 +116,7 @@ impl Orchestrator {
                 config,
                 config_version,
                 &self.workspace,
-                user_id,
+                workspace_id,
                 &workdir,
                 config_overrides,
                 allowed_tool_names,
@@ -136,6 +137,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
+        workspace_id: &str,
         session_id: &str,
         language: Option<&str>,
         agent_prompt: Option<&str>,
@@ -157,6 +159,7 @@ impl Orchestrator {
                 skills,
                 user_tool_bindings,
                 user_id,
+                workspace_id,
                 agent_prompt,
             )
             .await;

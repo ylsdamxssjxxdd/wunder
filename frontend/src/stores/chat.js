@@ -2061,8 +2061,12 @@ export const useChatStore = defineStore('chat', {
         return;
       }
     },
-    async loadSessions() {
-      const { data } = await listSessions();
+    async loadSessions(options = {}) {
+      const params = {};
+      if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
+        params.agent_id = options.agent_id ?? '';
+      }
+      const { data } = await listSessions(Object.keys(params).length ? params : undefined);
       this.sessions = sortSessionsByCreatedAt(data.data.items || []);
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;

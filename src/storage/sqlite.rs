@@ -1,8 +1,8 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockStatus, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, SessionLockRecord, SessionLockStatus, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -196,6 +196,30 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_session_lock_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(session_locks)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows {
+            if let Ok(name) = name {
+                columns.insert(name);
+            }
+        }
+        if !columns.contains("agent_id") {
+            conn.execute(
+                "ALTER TABLE session_locks ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        conn.execute("DROP INDEX IF EXISTS idx_session_locks_user", [])?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent \
+             ON session_locks (user_id, agent_id)",
+            [],
+        )?;
+        Ok(())
+    }
+
     fn ensure_user_agent_columns(&self, conn: &Connection) -> Result<()> {
         let mut stmt = conn.prepare("PRAGMA table_info(user_agents)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -283,12 +307,13 @@ impl StorageBackend for SqliteStorage {
             CREATE TABLE IF NOT EXISTS session_locks (
               session_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL DEFAULT '',
               created_time REAL NOT NULL,
               updated_time REAL NOT NULL,
               expires_at REAL NOT NULL
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user
-              ON session_locks (user_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent
+              ON session_locks (user_id, agent_id);
             CREATE INDEX IF NOT EXISTS idx_session_locks_expires
               ON session_locks (expires_at);
             CREATE TABLE IF NOT EXISTS stream_events (
@@ -446,6 +471,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_user_account_quota_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_session_lock_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
@@ -1088,12 +1114,14 @@ impl StorageBackend for SqliteStorage {
         &self,
         session_id: &str,
         user_id: &str,
+        agent_id: &str,
         ttl_s: f64,
         max_sessions: i64,
     ) -> Result<SessionLockStatus> {
         self.ensure_initialized()?;
         let cleaned_session = session_id.trim();
         let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
         if cleaned_session.is_empty() || cleaned_user.is_empty() {
             return Ok(SessionLockStatus::SystemBusy);
         }
@@ -1120,8 +1148,8 @@ impl StorageBackend for SqliteStorage {
         )?;
         let existing: Option<String> = tx
             .query_row(
-                "SELECT session_id FROM session_locks WHERE user_id = ? LIMIT 1",
-                params![cleaned_user],
+                "SELECT session_id FROM session_locks WHERE user_id = ? AND agent_id = ? LIMIT 1",
+                params![cleaned_user, cleaned_agent],
                 |row| row.get(0),
             )
             .optional()?;
@@ -1136,8 +1164,15 @@ impl StorageBackend for SqliteStorage {
             return Ok(SessionLockStatus::SystemBusy);
         }
         let insert = tx.execute(
-            "INSERT INTO session_locks (session_id, user_id, created_time, updated_time, expires_at) VALUES (?, ?, ?, ?, ?)",
-            params![cleaned_session, cleaned_user, now, now, expires_at],
+            "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                cleaned_session,
+                cleaned_user,
+                cleaned_agent,
+                now,
+                now,
+                expires_at
+            ],
         );
         match insert {
             Ok(_) => {
@@ -1206,6 +1241,32 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user],
         )?;
         Ok(affected as i64)
+    }
+
+    fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT session_id, user_id, agent_id, updated_time, expires_at \
+             FROM session_locks WHERE user_id = ? AND expires_at > ?",
+        )?;
+        let rows = stmt
+            .query_map(params![cleaned_user, now], |row| {
+                Ok(SessionLockRecord {
+                    session_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    updated_time: row.get(3)?,
+                    expires_at: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<SessionLockRecord>, _>>()?;
+        Ok(rows)
     }
 
     fn append_stream_event(
@@ -2376,6 +2437,7 @@ impl StorageBackend for SqliteStorage {
     fn list_chat_sessions(
         &self,
         user_id: &str,
+        agent_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -2385,16 +2447,33 @@ impl StorageBackend for SqliteStorage {
             return Ok((Vec::new(), 0));
         }
         let conn = self.open()?;
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?",
-            params![cleaned_user],
-            |row| row.get(0),
-        )?;
-        let mut sql = String::from(
+        let agent_id = agent_id.map(|value| value.trim());
+        let (agent_clause, agent_params) = match agent_id {
+            None => ("".to_string(), Vec::new()),
+            Some(value) if value.is_empty() => (
+                " AND (agent_id IS NULL OR agent_id = '')".to_string(),
+                Vec::new(),
+            ),
+            Some(value) => (
+                " AND agent_id = ?".to_string(),
+                vec![SqlValue::from(value.to_string())],
+            ),
+        };
+        let total_sql =
+            format!("SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}");
+        let mut total_params = Vec::with_capacity(1 + agent_params.len());
+        total_params.push(SqlValue::from(cleaned_user.to_string()));
+        total_params.extend(agent_params.iter().cloned());
+        let total: i64 =
+            conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
+                row.get(0)
+            })?;
+        let mut sql = format!(
             "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-             FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC",
+             FROM chat_sessions WHERE user_id = ?{agent_clause} ORDER BY updated_at DESC"
         );
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+        params_list.extend(agent_params);
         if limit > 0 {
             sql.push_str(" LIMIT ? OFFSET ?");
             params_list.push(SqlValue::from(limit));

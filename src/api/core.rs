@@ -108,6 +108,7 @@ async fn wunder_system_prompt(
         state
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, &request.user_id);
+    let workspace_id = state.workspace.scoped_user_id(&request.user_id, None);
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -116,6 +117,7 @@ async fn wunder_system_prompt(
             &skills_snapshot,
             Some(&user_tool_bindings),
             &request.user_id,
+            &workspace_id,
             request.config_overrides.as_ref(),
             request.agent_prompt.as_deref(),
         )

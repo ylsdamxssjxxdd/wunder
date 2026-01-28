@@ -18,6 +18,8 @@ pub struct WunderRequest {
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default)]
     pub language: Option<String>,

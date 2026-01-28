@@ -21,6 +21,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
         .route("/wunder/agents/shared", get(list_shared_agents))
+        .route("/wunder/agents/running", get(list_running_agents))
         .route(
             "/wunder/agents/{agent_id}",
             get(get_agent).put(update_agent).delete(delete_agent),
@@ -70,6 +71,34 @@ async fn list_shared_agents(
         .iter()
         .map(|record| agent_payload(record))
         .collect::<Vec<_>>();
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
+}
+
+async fn list_running_agents(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let locks = state
+        .user_store
+        .list_session_locks_by_user(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut items = Vec::new();
+    for lock in locks {
+        let agent_id = lock.agent_id.trim();
+        if agent_id.is_empty() {
+            continue;
+        }
+        items.push(json!({
+            "agent_id": agent_id,
+            "session_id": lock.session_id,
+            "updated_at": format_ts(lock.updated_time),
+            "expires_at": format_ts(lock.expires_at),
+        }));
+    }
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))

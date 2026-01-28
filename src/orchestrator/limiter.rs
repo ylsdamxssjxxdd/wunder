@@ -18,7 +18,12 @@ impl RequestLimiter {
         }
     }
 
-    pub(super) async fn acquire(&self, session_id: &str, user_id: &str) -> Result<bool> {
+    pub(super) async fn acquire(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<bool> {
         if session_id.trim().is_empty() || user_id.trim().is_empty() {
             return Ok(false);
         }
@@ -26,10 +31,11 @@ impl RequestLimiter {
             let storage = self.storage.clone();
             let session_id = session_id.to_string();
             let user_id = user_id.to_string();
+            let agent_id = agent_id.to_string();
             let ttl = self.lock_ttl_s;
             let max_active = self.max_active;
             let status = tokio::task::spawn_blocking(move || {
-                storage.try_acquire_session_lock(&session_id, &user_id, ttl, max_active)
+                storage.try_acquire_session_lock(&session_id, &user_id, &agent_id, ttl, max_active)
             })
             .await
             .map_err(|err| anyhow!("session lock join error: {err}"))??;

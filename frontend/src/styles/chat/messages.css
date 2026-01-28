@@ -1073,25 +1073,34 @@
 }
 
 .session-tools-dialog .icon-btn {
-  border: none;
-  background: transparent;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--chat-border);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--chat-text, #f1f5f9);
   cursor: pointer;
   font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .session-tools-dialog .icon-btn:hover {
   color: var(--chat-primary, #6ad9ff);
+  border-color: rgba(106, 217, 255, 0.6);
+  background: rgba(106, 217, 255, 0.12);
 }
 
 .session-tools-dialog .el-button {
-  background: #1e2d4d;
-  border: 1px solid var(--chat-border);
+  background: rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.35);
   color: var(--chat-text, #f1f5f9);
 }
 
 .session-tools-dialog .el-button:hover {
   border-color: rgba(77, 216, 255, 0.6);
+  background: rgba(148, 163, 184, 0.28);
   color: var(--chat-primary, #6ad9ff);
 }
 

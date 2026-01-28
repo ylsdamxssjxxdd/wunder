@@ -37,10 +37,11 @@
   - `stream`：布尔，可选，是否流式输出（默认 true）
   - `debug_payload`：布尔，可选，调试用，开启后会保留模型请求体用于事件与日志记录（默认 false）
   - `session_id`：字符串，可选，指定会话标识
+  - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与工作区隔离）
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
-- 约束：同一 `user_id` 若已有运行中的会话，接口返回 429 并提示稍后再试。
+- 约束：同一 `user_id + agent_id` 若已有运行中的会话，接口返回 429 并提示稍后再试（未传 `agent_id` 时按 user_id 互斥）。
 - 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
@@ -617,9 +618,11 @@
 
 ### 4.1.12 `/wunder/workspace`
 
+- 说明：所有 workspace 接口支持可选 `agent_id`，用于按智能体应用划分工作区；未传或为空时使用默认用户工作区。
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选，未传或为空表示默认工作区）
   - `path`：相对路径（可选，默认根目录）
   - `refresh_tree`：是否刷新工作区树缓存（默认 false）
   - `keyword`：名称关键字过滤（可选）
@@ -642,6 +645,7 @@
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：相对路径（可选，默认根目录）
   - `include_content`：是否返回内容（默认 true）
   - `max_bytes`：文件内容最大字节数（默认 512 KB）
@@ -670,6 +674,7 @@
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `keyword`：搜索关键字
   - `offset`：分页偏移量（可选）
   - `limit`：分页大小（可选）
@@ -688,6 +693,7 @@
 - 方法：`POST`
 - 入参：`multipart/form-data`
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：相对路径（目录）
   - `files`：上传文件列表
   - `relative_paths`：文件相对路径列表（可选，保留目录结构）
@@ -702,6 +708,7 @@
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：相对路径（文件）
 - 返回：文件流
 
@@ -710,6 +717,7 @@
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：相对路径（可选，目录/文件；留空则全量打包）
 - 返回：工作区全量或指定目录的压缩包文件流
 
@@ -718,6 +726,7 @@
 - 方法：`DELETE`
 - 入参（Query）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：相对路径（文件或目录）
 - 返回（JSON）：
   - `ok`：是否成功
@@ -729,6 +738,7 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：目录相对路径
 - 返回（JSON）：
   - `ok`：是否成功
@@ -741,6 +751,7 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `source`：源路径
   - `destination`：目标路径
 - 返回（JSON）：
@@ -754,6 +765,7 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `source`：源路径
   - `destination`：目标路径
 - 返回（JSON）：
@@ -767,6 +779,7 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `action`：批量操作类型（delete/move/copy）
   - `paths`：待处理路径列表
   - `destination`：目标目录（批量移动/复制）
@@ -782,6 +795,7 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
   - `path`：文件相对路径
   - `content`：文件内容
   - `create_if_missing`：文件不存在时是否创建（默认 false）
@@ -1289,7 +1303,7 @@
   - 入参（JSON）：`title`（可选）、`agent_id`（可选）
   - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides）
 - `GET /wunder/chat/sessions`：会话列表
-  - Query：`page`/`page_size` 或 `offset`/`limit`
+  - Query：`page`/`page_size` 或 `offset`/`limit`，可选 `agent_id`（空值表示通用聊天，省略表示不过滤）
   - 返回：`data.total`、`data.items`
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
@@ -1328,6 +1342,8 @@
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表（仅返回同等级共享应用）
   - 返回：`data.total`、`data.items`（同上）
+- `GET /wunder/agents/running`：当前运行中的智能体会话锁（仅返回 agent_id 非空的锁）
+  - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at）
 - `POST /wunder/agents`：创建智能体
   - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）
   - 返回：`data`（同智能体详情）

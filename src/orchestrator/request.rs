@@ -11,12 +11,19 @@ impl Orchestrator {
                 "error.user_id_required",
             )));
         }
-        if let Err(err) = self.workspace.ensure_user_root(&user_id) {
+        let agent_id = request
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+        let workspace_id = self.workspace.scoped_user_id(&user_id, agent_id.as_deref());
+        if let Err(err) = self.workspace.ensure_user_root(&workspace_id) {
             return Err(OrchestratorError::internal(format!(
                 "failed to prepare workspace: {err}"
             )));
         }
-        self.workspace.touch_user_session(&user_id);
+        self.workspace.touch_user_session(&workspace_id);
         let question = request.question.trim().to_string();
         if question.is_empty() {
             return Err(OrchestratorError::invalid_request(i18n::t(
@@ -44,6 +51,7 @@ impl Orchestrator {
             .filter(|items| !items.is_empty());
         Ok(PreparedRequest {
             user_id,
+            workspace_id,
             question,
             session_id,
             tool_names,
@@ -51,6 +59,7 @@ impl Orchestrator {
             model_name: request.model_name.clone(),
             config_overrides: request.config_overrides.clone(),
             agent_prompt: request.agent_prompt.clone(),
+            agent_id,
             stream: request.stream,
             debug_payload: request.debug_payload,
             attachments,
@@ -124,6 +133,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
+        workspace_id: &str,
         config_overrides: Option<&Value>,
         agent_prompt: Option<&str>,
     ) -> String {
@@ -139,6 +149,7 @@ impl Orchestrator {
                 skills,
                 user_tool_bindings,
                 user_id,
+                workspace_id,
                 agent_prompt,
             )
             .await;

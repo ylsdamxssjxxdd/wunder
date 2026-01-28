@@ -1,6 +1,6 @@
 .tool-manager-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.7fr) minmax(520px, 1.7fr);
+  grid-template-columns: minmax(220px, 0.55fr) minmax(560px, 1.85fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 18px;
   align-items: stretch;

@@ -35,7 +35,11 @@ impl Orchestrator {
 
         let result = async {
             let ok = limiter
-                .acquire(&session_id, &user_id)
+                .acquire(
+                    &session_id,
+                    &user_id,
+                    prepared.agent_id.as_deref().unwrap_or(""),
+                )
                 .await
                 .map_err(|err| OrchestratorError::internal(err.to_string()))?;
             if !ok {
@@ -133,13 +137,14 @@ impl Orchestrator {
                     prepared.config_overrides.as_ref(),
                     &allowed_tool_names,
                     tool_call_mode,
-                    &skills_snapshot,
-                    Some(&user_tool_bindings),
-                    &user_id,
-                    &session_id,
-                    Some(&prepared.language),
-                    prepared.agent_prompt.as_deref(),
-                )
+                &skills_snapshot,
+                Some(&user_tool_bindings),
+                &user_id,
+                &prepared.workspace_id,
+                &session_id,
+                Some(&prepared.language),
+                prepared.agent_prompt.as_deref(),
+            )
                 .await;
             system_prompt = self.append_memory_prompt(&user_id, system_prompt).await;
 
@@ -345,6 +350,8 @@ impl Orchestrator {
                 let tool_context = ToolContext {
                     user_id: &user_id,
                     session_id: &session_id,
+                    workspace_id: &prepared.workspace_id,
+                    agent_id: prepared.agent_id.as_deref(),
                     workspace: self.workspace.clone(),
                     lsp_manager: self.lsp_manager.clone(),
                     config: &config,

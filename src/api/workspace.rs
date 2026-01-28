@@ -55,12 +55,14 @@ async fn workspace_list(
 ) -> Result<Json<WorkspaceListResponse>, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let _root = state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if params.refresh_tree {
-        state.workspace.refresh_workspace_tree(&user_id);
+        state.workspace.refresh_workspace_tree(&workspace_id);
     }
     let normalized = normalize_relative_path(&params.path);
     let target_path = if normalized.is_empty() {
@@ -78,7 +80,7 @@ async fn workspace_list(
     let (entries, tree_version, current_path, parent, total) = state
         .workspace
         .list_workspace_entries_async(
-            &user_id,
+            &workspace_id,
             target_path,
             keyword,
             offset,
@@ -107,9 +109,11 @@ async fn workspace_content(
 ) -> Result<Json<WorkspaceContentResponse>, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let _root = state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let normalized = normalize_relative_path(&params.path);
     let target_path = if normalized.is_empty() {
@@ -119,7 +123,7 @@ async fn workspace_content(
     };
     let target = state
         .workspace
-        .resolve_path(&user_id, &target_path)
+        .resolve_path(&workspace_id, &target_path)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !target.exists() {
         return Err(error_response(
@@ -144,7 +148,7 @@ async fn workspace_content(
         let (entries, _tree_version, current_path, _parent, total) = state
             .workspace
             .list_workspace_entries_async(
-                &user_id,
+                &workspace_id,
                 &target_path,
                 keyword,
                 safe_offset,
@@ -161,7 +165,7 @@ async fn workspace_content(
         if params.include_content && safe_depth > 1 {
             attach_children(
                 &state,
-                &user_id,
+                &workspace_id,
                 &mut content_entries,
                 safe_depth - 1,
                 params.sort_by.trim(),
@@ -238,16 +242,18 @@ async fn workspace_search(
 ) -> Result<Json<WorkspaceSearchResponse>, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let offset = params.offset.max(0) as u64;
     let limit = params.limit.max(0) as u64;
     let (entries, total) = state
         .workspace
         .search_workspace_entries_async(
-            &user_id,
+            &workspace_id,
             &params.keyword,
             offset,
             limit,
@@ -284,6 +290,7 @@ async fn workspace_upload(
     }
 
     let mut raw_user_id = String::new();
+    let mut raw_agent_id = String::new();
     let mut base_path = String::new();
     let mut relative_paths = Vec::new();
     let mut pending_files = Vec::new();
@@ -303,6 +310,15 @@ async fn workspace_upload(
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
                 if !value.trim().is_empty() {
                     raw_user_id = value.trim().to_string();
+                }
+            }
+            "agent_id" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                if !value.trim().is_empty() {
+                    raw_agent_id = value.trim().to_string();
                 }
             }
             "path" => {
@@ -356,9 +372,11 @@ async fn workspace_upload(
     )
     .await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(Some(raw_agent_id.as_str()));
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let root = state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let normalized_base = normalize_relative_path(&base_path);
     let target_path = if normalized_base.is_empty() {
@@ -366,7 +384,7 @@ async fn workspace_upload(
     } else {
         normalized_base.clone()
     };
-    let target_dir = match state.workspace.resolve_path(&user_id, &target_path) {
+    let target_dir = match state.workspace.resolve_path(&workspace_id, &target_path) {
         Ok(path) => path,
         Err(err) => {
             cleanup_temp_files(&pending_files, temp_dir.as_ref());
@@ -406,7 +424,7 @@ async fn workspace_upload(
                 .to_string_lossy()
                 .replace('\\', "/")
         };
-        let dest = match state.workspace.resolve_path(&user_id, &joined) {
+        let dest = match state.workspace.resolve_path(&workspace_id, &joined) {
             Ok(path) => path,
             Err(err) => {
                 cleanup_temp_files(&pending_files, temp_dir.as_ref());
@@ -445,8 +463,8 @@ async fn workspace_upload(
         }
     }
 
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     cleanup_temp_files(&pending_files, temp_dir.as_ref());
     Ok(Json(WorkspaceActionResponse {
         ok: true,
@@ -469,13 +487,15 @@ async fn workspace_dir(
     }
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(request.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target_dir = state
         .workspace
-        .resolve_path(&user_id, &normalized)
+        .resolve_path(&workspace_id, &normalized)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if target_dir.exists() && !target_dir.is_dir() {
         return Err(error_response(
@@ -486,8 +506,8 @@ async fn workspace_dir(
     tokio::fs::create_dir_all(&target_dir)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {
         ok: true,
         message: i18n::t("workspace.message.dir_created"),
@@ -517,12 +537,14 @@ async fn workspace_move(
     }
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(request.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if source == destination {
-        let tree_version = state.workspace.get_tree_version(&user_id);
+        let tree_version = state.workspace.get_tree_version(&workspace_id);
         return Ok(Json(WorkspaceActionResponse {
             ok: true,
             message: i18n::t("workspace.message.path_unchanged"),
@@ -532,11 +554,11 @@ async fn workspace_move(
     }
     let source_path = state
         .workspace
-        .resolve_path(&user_id, &source)
+        .resolve_path(&workspace_id, &source)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let destination_path = state
         .workspace
-        .resolve_path(&user_id, &destination)
+        .resolve_path(&workspace_id, &destination)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !source_path.exists() {
         return Err(error_response(
@@ -569,8 +591,8 @@ async fn workspace_move(
     tokio::fs::rename(&source_path, &destination_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {
         ok: true,
         message: i18n::t("workspace.message.moved"),
@@ -605,17 +627,19 @@ async fn workspace_copy(
     }
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(request.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let source_path = state
         .workspace
-        .resolve_path(&user_id, &source)
+        .resolve_path(&workspace_id, &source)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let destination_path = state
         .workspace
-        .resolve_path(&user_id, &destination)
+        .resolve_path(&workspace_id, &destination)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !source_path.exists() {
         return Err(error_response(
@@ -655,8 +679,8 @@ async fn workspace_copy(
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {
         ok: true,
         message: i18n::t("workspace.message.copied"),
@@ -678,9 +702,11 @@ async fn workspace_batch(
     }
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(request.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let root = state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let action = request.action.trim().to_string();
     let mut destination_path = None;
@@ -690,7 +716,7 @@ async fn workspace_batch(
         let resolved = state
             .workspace
             .resolve_path(
-                &user_id,
+                &workspace_id,
                 if destination_root.is_empty() {
                     "."
                 } else {
@@ -719,7 +745,7 @@ async fn workspace_batch(
             });
             continue;
         }
-        let source_path = match state.workspace.resolve_path(&user_id, &normalized) {
+        let source_path = match state.workspace.resolve_path(&workspace_id, &normalized) {
             Ok(path) => path,
             Err(err) => {
                 failed.push(WorkspaceBatchFailure {
@@ -819,8 +845,8 @@ async fn workspace_batch(
         }
     }
 
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     let ok = failed.is_empty();
     let message = if ok {
         i18n::t("workspace.message.batch_success")
@@ -849,13 +875,15 @@ async fn workspace_file_update(
     }
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(request.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = state
         .workspace
-        .resolve_path(&user_id, &normalized)
+        .resolve_path(&workspace_id, &normalized)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if target.exists() {
         if !target.is_file() {
@@ -880,8 +908,8 @@ async fn workspace_file_update(
     tokio::fs::write(&target, request.content.as_bytes())
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {
         ok: true,
         message: i18n::t("workspace.message.file_saved"),
@@ -897,9 +925,11 @@ async fn workspace_archive(
 ) -> Result<Response, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let root = state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !root.exists() || !root.is_dir() {
         return Err(error_response(
@@ -909,11 +939,15 @@ async fn workspace_archive(
     }
     let normalized = normalize_relative_path(&params.path.unwrap_or_default());
     let (target, base_root, filename_prefix) = if normalized.is_empty() {
-        (root.clone(), root.clone(), format!("workspace_{user_id}"))
+        (
+            root.clone(),
+            root.clone(),
+            format!("workspace_{workspace_id}"),
+        )
     } else {
         let target = state
             .workspace
-            .resolve_path(&user_id, &normalized)
+            .resolve_path(&workspace_id, &normalized)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         if !target.exists() {
             return Err(error_response(
@@ -967,6 +1001,8 @@ async fn workspace_download(
 ) -> Result<Response, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -976,11 +1012,11 @@ async fn workspace_download(
     }
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = state
         .workspace
-        .resolve_path(&user_id, &normalized)
+        .resolve_path(&workspace_id, &normalized)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !target.exists() || !target.is_file() {
         return Err(error_response(
@@ -1010,6 +1046,8 @@ async fn workspace_delete(
 ) -> Result<Json<WorkspaceActionResponse>, Response> {
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1019,11 +1057,11 @@ async fn workspace_delete(
     }
     state
         .workspace
-        .ensure_user_root(&user_id)
+        .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = state
         .workspace
-        .resolve_path(&user_id, &normalized)
+        .resolve_path(&workspace_id, &normalized)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !target.exists() {
         return Err(error_response(
@@ -1040,8 +1078,8 @@ async fn workspace_delete(
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    state.workspace.refresh_workspace_tree(&user_id);
-    let tree_version = state.workspace.get_tree_version(&user_id);
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {
         ok: true,
         message: i18n::t("message.deleted"),
@@ -1051,7 +1089,7 @@ async fn workspace_delete(
 }
 fn attach_children<'a>(
     state: &'a Arc<AppState>,
-    user_id: &'a str,
+    workspace_id: &'a str,
     entries: &'a mut [WorkspaceContentEntry],
     remaining_depth: u64,
     sort_by: &'a str,
@@ -1067,7 +1105,7 @@ fn attach_children<'a>(
             }
             let (children, _tree_version, _current, _parent, _total) = state
                 .workspace
-                .list_workspace_entries_async(user_id, &entry.path, None, 0, 0, sort_by, order)
+                .list_workspace_entries_async(workspace_id, &entry.path, None, 0, 0, sort_by, order)
                 .await
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             let mut converted = children
@@ -1077,7 +1115,7 @@ fn attach_children<'a>(
             if remaining_depth > 1 {
                 attach_children(
                     state,
-                    user_id,
+                    workspace_id,
                     &mut converted,
                     remaining_depth - 1,
                     sort_by,
@@ -1098,6 +1136,12 @@ fn normalize_relative_path(value: &str) -> String {
         return String::new();
     }
     trimmed.trim_start_matches('/').to_string()
+}
+
+fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
+    value
+        .map(|raw| raw.trim())
+        .filter(|trimmed| !trimmed.is_empty())
 }
 
 fn format_modified_time(metadata: &std::fs::Metadata) -> String {
@@ -1289,6 +1333,8 @@ struct WorkspaceListQuery {
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
     path: String,
     #[serde(default)]
     refresh_tree: bool,
@@ -1308,6 +1354,8 @@ struct WorkspaceListQuery {
 struct WorkspaceContentQuery {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     #[serde(default)]
     path: String,
     #[serde(default = "default_true")]
@@ -1332,6 +1380,8 @@ struct WorkspaceContentQuery {
 struct WorkspaceSearchQuery {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     keyword: String,
     #[serde(default)]
     offset: i64,
@@ -1347,6 +1397,8 @@ struct WorkspaceSearchQuery {
 struct WorkspaceDownloadQuery {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     path: String,
 }
 
@@ -1355,6 +1407,8 @@ struct WorkspaceArchiveQuery {
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
     path: Option<String>,
 }
 
@@ -1362,6 +1416,8 @@ struct WorkspaceArchiveQuery {
 struct WorkspaceDeleteQuery {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     path: String,
 }
 
@@ -1369,6 +1425,8 @@ struct WorkspaceDeleteQuery {
 struct WorkspaceDirRequest {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     path: String,
 }
 
@@ -1376,6 +1434,8 @@ struct WorkspaceDirRequest {
 struct WorkspaceMoveRequest {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     source: String,
     destination: String,
 }
@@ -1384,6 +1444,8 @@ struct WorkspaceMoveRequest {
 struct WorkspaceCopyRequest {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     source: String,
     destination: String,
 }
@@ -1392,6 +1454,8 @@ struct WorkspaceCopyRequest {
 struct WorkspaceBatchRequest {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     action: String,
     #[serde(default)]
     paths: Vec<String>,
@@ -1403,6 +1467,8 @@ struct WorkspaceBatchRequest {
 struct WorkspaceFileUpdateRequest {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     path: String,
     #[serde(default)]
     content: String,

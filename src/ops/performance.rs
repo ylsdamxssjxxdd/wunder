@@ -56,6 +56,7 @@ struct PerformanceContext {
     http: Arc<reqwest::Client>,
     tool_roots: ToolRoots,
     user_id: String,
+    workspace_id: String,
     run_id: String,
 }
 
@@ -97,6 +98,7 @@ pub async fn run_sample(
         http: Arc::new(reqwest::Client::new()),
         tool_roots,
         user_id: PERF_USER_ID.to_string(),
+        workspace_id: state.workspace.scoped_user_id(PERF_USER_ID, None),
         run_id: Uuid::new_v4().simple().to_string(),
     };
 
@@ -208,6 +210,7 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
                 context.skills.as_ref(),
                 Some(context.user_tool_bindings.as_ref()),
                 &context.user_id,
+                &context.workspace.scoped_user_id(&context.user_id, None),
                 None,
                 None,
             )
@@ -385,6 +388,8 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
     ToolContext {
         user_id: &context.user_id,
         session_id,
+        workspace_id: &context.workspace_id,
+        agent_id: None,
         workspace: context.workspace.clone(),
         lsp_manager: context.lsp_manager.clone(),
         config: context.config.as_ref(),
@@ -418,7 +423,7 @@ async fn run_tool(context: &ToolContext<'_>, name: &str, args: Value) -> Result<
 async fn prepare_dir(context: &PerformanceContext, path: &str) -> Result<(), String> {
     let target = context
         .workspace
-        .resolve_path(&context.user_id, path)
+        .resolve_path(&context.workspace_id, path)
         .map_err(|err| err.to_string())?;
     tokio::fs::create_dir_all(&target)
         .await
@@ -427,7 +432,7 @@ async fn prepare_dir(context: &PerformanceContext, path: &str) -> Result<(), Str
 
 async fn cleanup_perf_dir(context: &PerformanceContext) {
     let dir = format!("{}/{}", PERF_ROOT_DIR, context.run_id);
-    let target = context.workspace.resolve_path(&context.user_id, &dir);
+    let target = context.workspace.resolve_path(&context.workspace_id, &dir);
     let Ok(target) = target else {
         return;
     };

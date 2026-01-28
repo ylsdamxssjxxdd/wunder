@@ -103,7 +103,7 @@
       <div class="main-grid">
         <aside v-if="!isCompactLayout" class="sidebar">
           <div class="glass-card info-panel">
-            <WorkspacePanel />
+            <WorkspacePanel :agent-id="activeAgentId" />
           </div>
 
           <div class="glass-card history-panel">
@@ -491,7 +491,7 @@
         </div>
       </template>
       <div class="panel-dialog-body">
-        <WorkspacePanel />
+        <WorkspacePanel :agent-id="activeAgentId" />
       </div>
     </el-dialog>
 
@@ -834,7 +834,8 @@ const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
-  await chatStore.loadSessions();
+  const initialAgentId = routeAgentId.value || '';
+  await chatStore.loadSessions({ agent_id: initialAgentId });
   if (routeEntry.value === 'default') {
     chatStore.openDraftSession();
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
@@ -842,7 +843,6 @@ const init = async () => {
   }
   if (routeAgentId.value) {
     chatStore.openDraftSession({ agent_id: routeAgentId.value });
-    router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
     return;
   }
   chatStore.openDraftSession();
@@ -918,19 +918,41 @@ let stopWorkspaceRefreshListener = null;
 const isAdminUser = (user) =>
   Array.isArray(user?.roles) && user.roles.some((role) => role === 'admin' || role === 'super_admin');
 
+const normalizeWorkspaceOwnerId = (value) =>
+  String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_');
+
 const resolveWorkspaceResource = (publicPath) => {
   const parsed = parseWorkspaceResourceUrl(publicPath);
   if (!parsed) return null;
   const user = authStore.user;
   if (!user) return null;
   const currentId = String(user.id || '').trim();
-  if (!currentId || parsed.userId === currentId) {
-    return { ...parsed, requestUserId: null, allowed: true };
+  const safeCurrentId = normalizeWorkspaceOwnerId(currentId);
+  const workspaceId = parsed.workspaceId || parsed.userId;
+  const ownerId = parsed.ownerId || workspaceId;
+  const agentId = parsed.agentId || '';
+  const isOwner =
+    Boolean(safeCurrentId) &&
+    (workspaceId === safeCurrentId || workspaceId.startsWith(`${safeCurrentId}__agent__`));
+  if (isOwner) {
+    return {
+      ...parsed,
+      requestUserId: null,
+      requestAgentId: agentId || null,
+      allowed: true
+    };
   }
   if (isAdminUser(user)) {
-    return { ...parsed, requestUserId: parsed.userId, allowed: true };
+    return {
+      ...parsed,
+      requestUserId: ownerId,
+      requestAgentId: agentId || null,
+      allowed: true
+    };
   }
-  return { ...parsed, requestUserId: null, allowed: false };
+  return { ...parsed, requestUserId: null, requestAgentId: null, allowed: false };
 };
 
 const getFilenameFromHeaders = (headers, fallback) => {
@@ -980,6 +1002,9 @@ const fetchWorkspaceResource = async (resource) => {
   const params = { path: resource.relativePath };
   if (resource.requestUserId) {
     params.user_id = resource.requestUserId;
+  }
+  if (resource.requestAgentId) {
+    params.agent_id = resource.requestAgentId;
   }
   const promise = downloadWunderWorkspaceFile(params)
     .then((response) => {
@@ -1761,6 +1786,7 @@ watch(
   () => routeEntry.value,
   async (value, oldValue) => {
     if (!value || value === oldValue || value !== 'default') return;
+    await chatStore.loadSessions({ agent_id: '' });
     chatStore.openDraftSession();
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
   }
@@ -1770,14 +1796,14 @@ watch(
   () => routeAgentId.value,
   async (value, oldValue) => {
     if (!value || value === oldValue) return;
-    if (routeEntry.value === 'default') return;
-    const wasDraft = !chatStore.activeSessionId;
-    chatStore.openDraftSession({ agent_id: value });
-    if (wasDraft) {
-      draftKey.value += 1;
-    }
-    router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });
+  if (routeEntry.value === 'default') return;
+  await chatStore.loadSessions({ agent_id: value });
+  const wasDraft = !chatStore.activeSessionId;
+  chatStore.openDraftSession({ agent_id: value });
+  if (wasDraft) {
+    draftKey.value += 1;
   }
+}
 );
 
 watch(

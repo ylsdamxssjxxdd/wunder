@@ -1007,6 +1007,7 @@ async fn run_request(
         stream: true,
         debug_payload: false,
         session_id: Some(session_id.clone()),
+        agent_id: None,
         model_name,
         language: None,
         config_overrides,

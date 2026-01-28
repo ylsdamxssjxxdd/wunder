@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone)]
 pub(super) struct PreparedRequest {
     pub(super) user_id: String,
+    pub(super) workspace_id: String,
     pub(super) question: String,
     pub(super) session_id: String,
     pub(super) tool_names: Option<Vec<String>>,
@@ -10,6 +11,7 @@ pub(super) struct PreparedRequest {
     pub(super) model_name: Option<String>,
     pub(super) config_overrides: Option<Value>,
     pub(super) agent_prompt: Option<String>,
+    pub(super) agent_id: Option<String>,
     pub(super) stream: bool,
     pub(super) debug_payload: bool,
     pub(super) attachments: Option<Vec<AttachmentPayload>>,

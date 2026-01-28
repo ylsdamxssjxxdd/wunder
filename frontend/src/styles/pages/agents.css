@@ -10,6 +10,7 @@
 }
 
 .agent-card {
+  position: relative;
   border-radius: 18px;
   border: 1px solid var(--portal-border);
   background: var(--portal-card);
@@ -91,6 +92,49 @@
   align-items: center;
 }
 
+.agent-card-running {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(106, 217, 255, 0.35);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--portal-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-running-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 0 rgba(106, 217, 255, 0.6);
+  animation: agentPulse 1.6s ease-out infinite;
+}
+
+@keyframes agentPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(106, 217, 255, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(106, 217, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(106, 217, 255, 0);
+  }
+}
+
+:root[data-user-theme='light'] .agent-card-running {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #2563eb;
+}
+
 .agent-card-link {
   font-size: 12px;
   font-weight: 600;
@@ -123,8 +167,9 @@
 }
 
 .user-tools-dialog.agent-editor-dialog .el-dialog__body {
-  padding: 16px 20px 12px;
+  padding: 16px 20px 24px;
   overflow: auto;
+  max-height: calc(90vh - 180px);
 }
 
 .agent-editor-body {
@@ -224,12 +269,14 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
 .agent-card .user-tools-btn:hover {
   border-color: rgba(106, 217, 255, 0.6);
+  background: rgba(106, 217, 255, 0.22);
   box-shadow: 0 0 0 4px rgba(106, 217, 255, 0.15);
+  transform: translateY(-1px);
 }
 
 .agent-card .user-tools-btn.secondary {
@@ -239,6 +286,7 @@
 
 .agent-card .user-tools-btn.secondary:hover {
   border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.12);
   box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.16);
 }
 
@@ -254,10 +302,12 @@
 }
 
 :root[data-user-theme='light'] .agent-card .user-tools-btn.danger {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.45);
   color: #b91c1c;
 }
 
 :root[data-user-theme='light'] .agent-card .user-tools-btn.danger:hover {
-  background: rgba(248, 113, 113, 0.22);
-  border-color: rgba(185, 28, 28, 0.6);
+  background: rgba(239, 68, 68, 0.26);
+  border-color: rgba(185, 28, 28, 0.7);
 }

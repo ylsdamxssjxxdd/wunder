@@ -223,10 +223,39 @@ impl WorkspaceManager {
         self.root.join(safe_id)
     }
 
+    pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let agent_id = agent_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let Some(agent_id) = agent_id else {
+            return safe_user;
+        };
+        let safe_agent = self.safe_scope_component(agent_id);
+        if safe_agent.is_empty() {
+            safe_user
+        } else {
+            format!("{safe_user}__agent__{safe_agent}")
+        }
+    }
+
     fn safe_user_id(&self, user_id: &str) -> String {
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
             return "anonymous".to_string();
+        }
+        let output = self.safe_scope_component(cleaned);
+        if output.trim().is_empty() {
+            "anonymous".to_string()
+        } else {
+            output
+        }
+    }
+
+    fn safe_scope_component(&self, value: &str) -> String {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            return String::new();
         }
         let mut output = String::with_capacity(cleaned.len());
         for ch in cleaned.chars() {
@@ -236,11 +265,7 @@ impl WorkspaceManager {
                 output.push('_');
             }
         }
-        if output.trim().is_empty() {
-            "anonymous".to_string()
-        } else {
-            output
-        }
+        output
     }
 
     fn user_root(&self, user_id: &str) -> PathBuf {

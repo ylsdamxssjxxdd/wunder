@@ -3,33 +3,35 @@
     <div class="brand">
       <div class="brand-mark">AI</div>
       <div class="brand-meta">
-        <div class="brand-title">{{ title }}</div>
+        <div class="brand-title-row">
+          <div class="brand-title">{{ title }}</div>
+          <div v-if="showSearch" class="portal-search topbar-search">
+            <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M16.5 16.5L21 21" />
+            </svg>
+            <input
+              :value="search"
+              type="text"
+              :placeholder="searchPlaceholder"
+              @input="updateSearch"
+            />
+            <button
+              v-if="search"
+              class="portal-search-clear"
+              type="button"
+              aria-label="清空搜索"
+              @click="clearSearch"
+            >
+              ×
+            </button>
+          </div>
+        </div>
         <div class="brand-sub">
           <span>{{ subtitle }}</span>
           <span v-if="demoMode" class="demo-badge">演示模式</span>
         </div>
       </div>
-    </div>
-    <div v-if="showSearch" class="portal-search topbar-search">
-      <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="11" cy="11" r="7" />
-        <path d="M16.5 16.5L21 21" />
-      </svg>
-      <input
-        :value="search"
-        type="text"
-        :placeholder="searchPlaceholder"
-        @input="updateSearch"
-      />
-      <button
-        v-if="search"
-        class="portal-search-clear"
-        type="button"
-        aria-label="清空搜索"
-        @click="clearSearch"
-      >
-        ×
-      </button>
     </div>
     <div class="topbar-actions">
       <nav class="topbar-nav">

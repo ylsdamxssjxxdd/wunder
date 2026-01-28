@@ -82,6 +82,8 @@ struct SessionListQuery {
     offset: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,9 +191,10 @@ async fn list_sessions(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = resolve_pagination(&query);
+    let agent_id = query.agent_id.as_deref().map(|value| value.trim());
     let (sessions, total) = state
         .user_store
-        .list_chat_sessions(&resolved.user.user_id, offset, limit)
+        .list_chat_sessions(&resolved.user.user_id, agent_id, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let items = sessions.iter().map(session_payload).collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "total": total, "items": items } })))
@@ -438,6 +441,7 @@ async fn send_message(
         stream: payload.stream.unwrap_or(true),
         debug_payload: false,
         session_id: Some(session_id.clone()),
+        agent_id: record.agent_id.clone(),
         model_name: None,
         language: Some(i18n::get_language()),
         config_overrides: None,
@@ -672,6 +676,9 @@ async fn system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let workspace_id = state
+        .workspace
+        .scoped_user_id(&resolved.user.user_id, payload.agent_id.as_deref());
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -680,6 +687,7 @@ async fn system_prompt(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            &workspace_id,
             None,
             agent_prompt.as_deref(),
         )
@@ -736,6 +744,10 @@ async fn session_system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let workspace_id = state.workspace.scoped_user_id(
+        &resolved.user.user_id,
+        record.agent_id.as_deref().or(payload.agent_id.as_deref()),
+    );
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -744,6 +756,7 @@ async fn session_system_prompt(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            &workspace_id,
             None,
             agent_prompt.as_deref(),
         )
@@ -792,6 +805,9 @@ async fn update_session_tools(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let workspace_id = state
+        .workspace
+        .scoped_user_id(&resolved.user.user_id, record.agent_id.as_deref());
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -800,6 +816,7 @@ async fn update_session_tools(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            &workspace_id,
             None,
             agent_prompt.as_deref(),
         )
