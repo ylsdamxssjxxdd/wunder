@@ -830,22 +830,36 @@ const historyPaddingBottom = computed(() =>
 let pendingAutoScroll = false;
 let pendingAutoScrollCount = 0;
 
+const resolveInitialSessionId = (agentId) => {
+  const persisted = chatStore.getLastSessionId?.(agentId) || '';
+  if (persisted && chatStore.sessions.some((session) => session.id === persisted)) {
+    return persisted;
+  }
+  return chatStore.sessions[0]?.id || '';
+};
+
+const openAgentSession = async (agentId) => {
+  const normalizedAgentId = String(agentId || '').trim();
+  await chatStore.loadSessions({ agent_id: normalizedAgentId });
+  const targetId = resolveInitialSessionId(normalizedAgentId);
+  if (targetId) {
+    if (chatStore.activeSessionId !== targetId) {
+      await chatStore.loadSessionDetail(targetId);
+    }
+    return;
+  }
+  chatStore.openDraftSession({ agent_id: normalizedAgentId });
+};
+
 const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
-  const initialAgentId = routeAgentId.value || '';
-  await chatStore.loadSessions({ agent_id: initialAgentId });
+  const initialAgentId = routeEntry.value === 'default' ? '' : routeAgentId.value;
+  await openAgentSession(initialAgentId);
   if (routeEntry.value === 'default') {
-    chatStore.openDraftSession();
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
-    return;
   }
-  if (routeAgentId.value) {
-    chatStore.openDraftSession({ agent_id: routeAgentId.value });
-    return;
-  }
-  chatStore.openDraftSession();
 };
 
 const handleCreateSession = () => {
@@ -1786,8 +1800,7 @@ watch(
   () => routeEntry.value,
   async (value, oldValue) => {
     if (!value || value === oldValue || value !== 'default') return;
-    await chatStore.loadSessions({ agent_id: '' });
-    chatStore.openDraftSession();
+    await openAgentSession('');
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
   }
 );
@@ -1795,15 +1808,10 @@ watch(
 watch(
   () => routeAgentId.value,
   async (value, oldValue) => {
-    if (!value || value === oldValue) return;
-  if (routeEntry.value === 'default') return;
-  await chatStore.loadSessions({ agent_id: value });
-  const wasDraft = !chatStore.activeSessionId;
-  chatStore.openDraftSession({ agent_id: value });
-  if (wasDraft) {
-    draftKey.value += 1;
+    if (value === oldValue) return;
+    if (routeEntry.value === 'default') return;
+    await openAgentSession(value);
   }
-}
 );
 
 watch(

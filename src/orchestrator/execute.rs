@@ -497,13 +497,30 @@ impl Orchestrator {
                         }
                         emitter.emit("tool_result", tool_result_payload).await;
 
-                        if question_panel_finished && !answer.trim().is_empty() {
+                        let question_panel_meta = if question_panel_finished {
+                            let mut panel = result.data.clone();
+                            if let Value::Object(ref mut map) = panel {
+                                map.entry("status".to_string())
+                                    .or_insert_with(|| Value::String("pending".to_string()));
+                                map.entry("keep_open".to_string())
+                                    .or_insert_with(|| Value::Bool(true));
+                            }
+                            Some(json!({ "type": "question_panel", "panel": panel }))
+                        } else {
+                            None
+                        };
+                        if question_panel_finished {
+                            let content = if answer.trim().is_empty() {
+                                None
+                            } else {
+                                Some(&json!(answer.clone()))
+                            };
                             self.append_chat(
                                 &user_id,
                                 &session_id,
                                 "assistant",
-                                Some(&json!(answer.clone())),
-                                None,
+                                content,
+                                question_panel_meta.as_ref(),
                                 None,
                                 None,
                                 None,
@@ -627,6 +644,7 @@ impl Orchestrator {
                 .await;
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
+            let waiting_question_panel = stop_reason == "question_panel";
             round_usage.total =
                 round_usage
                     .total
@@ -668,7 +686,11 @@ impl Orchestrator {
                 last_round_info.insert_into(map);
             }
             emitter.emit("final", final_payload).await;
-            self.monitor.mark_finished(&session_id);
+            if waiting_question_panel {
+                self.monitor.mark_question_panel(&session_id);
+            } else {
+                self.monitor.mark_finished(&session_id);
+            }
             Ok(response)
         }
         .await;

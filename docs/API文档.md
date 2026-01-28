@@ -1342,8 +1342,10 @@
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表（仅返回同等级共享应用）
   - 返回：`data.total`、`data.items`（同上）
-- `GET /wunder/agents/running`：当前运行中的智能体会话锁（仅返回 agent_id 非空的锁）
-  - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at）
+- `GET /wunder/agents/running`：当前运行中的智能体会话锁 + 问询面板待选择状态
+  - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at/state/pending_question/is_default）
+  - `is_default`：表示通用聊天（无 agent_id 的默认入口会话）
+  - `state`：`running` | `waiting`，`pending_question` 表示存在待选择问询面板
 - `POST /wunder/agents`：创建智能体
   - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）
   - 返回：`data`（同智能体详情）

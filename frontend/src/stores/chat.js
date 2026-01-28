@@ -318,10 +318,32 @@ const resolveGreetingContent = (override) => {
   return trimmed ? trimmed : DEFAULT_GREETING;
 };
 const CHAT_STATE_KEY = 'wille-chat-state';
+const DEFAULT_AGENT_KEY = '__default__';
+
+const normalizeAgentKey = (agentId) => {
+  const cleaned = String(agentId || '').trim();
+  return cleaned || DEFAULT_AGENT_KEY;
+};
+
+const normalizeSessionMap = (value) => {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  const output = {};
+  Object.entries(value).forEach(([key, sessionId]) => {
+    const cleanedKey = String(key || '').trim();
+    const cleanedSessionId = String(sessionId || '').trim();
+    if (cleanedKey && cleanedSessionId) {
+      output[cleanedKey] = cleanedSessionId;
+    }
+  });
+  return output;
+};
 
 const buildChatPersistState = () => ({
   activeSessionId: '',
-  draft: false
+  draft: false,
+  lastSessionByAgent: {}
 });
 
 const normalizeChatPersistState = (value) => {
@@ -330,7 +352,8 @@ const normalizeChatPersistState = (value) => {
   }
   return {
     activeSessionId: typeof value.activeSessionId === 'string' ? value.activeSessionId : '',
-    draft: value.draft === true
+    draft: value.draft === true,
+    lastSessionByAgent: normalizeSessionMap(value.lastSessionByAgent)
   };
 };
 
@@ -344,22 +367,57 @@ const readChatPersistState = () => {
   }
 };
 
-const writeChatPersistState = (patch) => {
+const updateChatPersistState = (updater) => {
   try {
     const current = readChatPersistState();
-    const next = normalizeChatPersistState({ ...current, ...patch });
+    const next = normalizeChatPersistState(updater(current));
     localStorage.setItem(CHAT_STATE_KEY, JSON.stringify(next));
   } catch (error) {
     // ignore persistence errors
   }
 };
 
-const persistActiveSession = (sessionId) => {
-  writeChatPersistState({ activeSessionId: String(sessionId || ''), draft: false });
+const updateAgentSessionMap = (map, agentId, sessionId) => {
+  const key = normalizeAgentKey(agentId);
+  const cleanedSessionId = String(sessionId || '').trim();
+  const nextMap = { ...map };
+  if (cleanedSessionId) {
+    nextMap[key] = cleanedSessionId;
+  } else {
+    delete nextMap[key];
+  }
+  return nextMap;
+};
+
+const persistAgentSession = (agentId, sessionId) => {
+  updateChatPersistState((current) => ({
+    ...current,
+    lastSessionByAgent: updateAgentSessionMap(current.lastSessionByAgent, agentId, sessionId)
+  }));
+};
+
+const persistActiveSession = (sessionId, agentId) => {
+  const cleanedSessionId = String(sessionId || '').trim();
+  updateChatPersistState((current) => ({
+    ...current,
+    activeSessionId: cleanedSessionId,
+    draft: false,
+    lastSessionByAgent: updateAgentSessionMap(current.lastSessionByAgent, agentId, cleanedSessionId)
+  }));
 };
 
 const persistDraftSession = () => {
-  writeChatPersistState({ activeSessionId: '', draft: true });
+  updateChatPersistState((current) => ({
+    ...current,
+    activeSessionId: '',
+    draft: true
+  }));
+};
+
+const resolvePersistedSessionId = (agentId) => {
+  const key = normalizeAgentKey(agentId);
+  const state = readChatPersistState();
+  return state.lastSessionByAgent?.[key] || '';
 };
 
 const CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
@@ -827,10 +885,13 @@ const normalizeInquiryPanelPayload = (payload) => {
   if (normalizedRoutes.length === 0) {
     return null;
   }
+  const keepOpenRaw = payload.keep_open ?? payload.keepOpen ?? payload.awaiting;
+  const keepOpen = keepOpenRaw === undefined ? true : keepOpenRaw === true;
   return {
     question: question || '接下来希望从哪个方向推进？',
     routes: normalizedRoutes,
-    multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true
+    multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true,
+    keepOpen
   };
 };
 
@@ -867,7 +928,10 @@ const dismissStaleInquiryPanels = (messages = []) => {
     }
     const panel = normalizeInquiryPanelState(message.questionPanel);
     if (!panel) continue;
-    if (panel.status === 'pending' && (hasUserAfter || !isMessageRunning(message))) {
+    if (
+      panel.status === 'pending' &&
+      (hasUserAfter || (!panel.keepOpen && !isMessageRunning(message)))
+    ) {
       message.questionPanel = { ...panel, status: 'dismissed' };
       updated = true;
       continue;
@@ -2020,6 +2084,12 @@ export const useChatStore = defineStore('chat', {
     getPersistedState() {
       return readChatPersistState();
     },
+    getLastSessionId(agentId) {
+      return resolvePersistedSessionId(agentId);
+    },
+    setLastSessionId(agentId, sessionId) {
+      persistAgentSession(agentId, sessionId);
+    },
     getSnapshotForSession(sessionId) {
       const snapshot = readChatSnapshot();
       if (!snapshot || snapshot.sessionId !== String(sessionId || '')) {
@@ -2101,7 +2171,7 @@ export const useChatStore = defineStore('chat', {
         greeting: this.greetingOverride
       });
       getSessionWorkflowState(session.id, { reset: true });
-      persistActiveSession(session.id);
+      persistActiveSession(session.id, session.agent_id);
       syncDemoChatCache({
         sessions: this.sessions,
         sessionId: this.activeSessionId,
@@ -2112,7 +2182,6 @@ export const useChatStore = defineStore('chat', {
     async loadSessionDetail(sessionId) {
       abortResumeStream();
       this.activeSessionId = sessionId;
-      persistActiveSession(sessionId);
       const snapshot = this.getSnapshotForSession(sessionId);
       if (snapshot?.messages?.length) {
         const cachedMessages = snapshot.messages
@@ -2138,6 +2207,11 @@ export const useChatStore = defineStore('chat', {
         }
       }
       this.draftAgentId = String(sessionDetail?.agent_id || '').trim();
+      const resolvedAgentId =
+        sessionDetail?.agent_id ??
+        this.sessions.find((item) => item.id === sessionId)?.agent_id ??
+        this.draftAgentId;
+      persistActiveSession(sessionId, resolvedAgentId);
       this.draftToolOverrides = null;
       const rounds = eventsRes?.data?.data?.rounds || [];
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
@@ -2173,6 +2247,13 @@ export const useChatStore = defineStore('chat', {
       sessionWorkflowState.delete(String(targetId));
       removeDemoChatSession(targetId);
       clearChatSnapshot(targetId);
+      if (resolvePersistedSessionId(targetAgentId) === targetId) {
+        const fallback = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        persistAgentSession(targetAgentId, fallback?.id || '');
+      }
       if (this.activeSessionId === targetId) {
         const nextSession = this.sessions.find((item) => {
           const agentId = String(item.agent_id || '').trim();

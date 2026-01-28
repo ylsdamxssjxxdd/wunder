@@ -411,6 +411,7 @@ pub struct MonitorState {
 
 impl MonitorState {
     pub const STATUS_RUNNING: &'static str = "running";
+    pub const STATUS_WAITING: &'static str = "waiting";
     pub const STATUS_FINISHED: &'static str = "finished";
     pub const STATUS_ERROR: &'static str = "error";
     pub const STATUS_CANCELLED: &'static str = "cancelled";
@@ -600,6 +601,14 @@ impl MonitorState {
         self.mark_status(session_id, Self::STATUS_FINISHED, None);
     }
 
+    pub fn mark_question_panel(&self, session_id: &str) {
+        self.mark_status(
+            session_id,
+            Self::STATUS_WAITING,
+            Some(&i18n::t("monitor.summary.question_panel")),
+        );
+    }
+
     pub fn mark_error(&self, session_id: &str, message: &str) {
         self.mark_status(session_id, Self::STATUS_ERROR, Some(message));
     }
@@ -623,6 +632,7 @@ impl MonitorState {
                     };
                     if record.status != Self::STATUS_RUNNING
                         && record.status != Self::STATUS_CANCELLING
+                        && record.status != Self::STATUS_WAITING
                     {
                         return false;
                     }
@@ -656,6 +666,7 @@ impl MonitorState {
                 if let Some(record) = sessions.get(session_id) {
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
+                        || record.status == Self::STATUS_WAITING
                     {
                         return false;
                     }
@@ -768,6 +779,7 @@ impl MonitorState {
                     }
                     record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
+                        || record.status == Self::STATUS_WAITING
                 })
                 .map(|record| {
                     let mut summary = record.to_summary();
@@ -1390,13 +1402,23 @@ impl MonitorState {
                     };
                     record.status = status.to_string();
                     record.updated_time = now;
-                    record.ended_time = Some(now);
+                    record.ended_time = if status == Self::STATUS_WAITING {
+                        None
+                    } else {
+                        Some(now)
+                    };
                     match status {
                         Self::STATUS_FINISHED => {
                             record.stage = "final".to_string();
                             record.summary = summary
                                 .map(str::to_string)
                                 .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+                        }
+                        Self::STATUS_WAITING => {
+                            record.stage = "question_panel".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.question_panel"));
                         }
                         Self::STATUS_ERROR => {
                             record.stage = "error".to_string();

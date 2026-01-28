@@ -917,7 +917,8 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
             json!({
                 "question": question.clone(),
                 "routes": routes.clone(),
-                "multiple": payload.multiple
+                "multiple": payload.multiple,
+                "keep_open": true
             }),
         );
     }

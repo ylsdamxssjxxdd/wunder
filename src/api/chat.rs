@@ -886,6 +886,11 @@ fn map_history_message(item: Value) -> Option<Value> {
         "content": content,
         "created_at": created_at,
     });
+    if let Some(panel) = extract_question_panel(&item) {
+        if let Value::Object(ref mut map) = message {
+            map.insert("questionPanel".to_string(), panel);
+        }
+    }
     if role == "assistant" && !reasoning.is_empty() {
         if let Value::Object(ref mut map) = message {
             map.insert("reasoning".to_string(), json!(reasoning));
@@ -947,6 +952,19 @@ fn is_tool_call_meta(item: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|value| value == "tool_call")
         .unwrap_or(false)
+}
+
+fn extract_question_panel(item: &Value) -> Option<Value> {
+    let meta = item.get("meta").and_then(Value::as_object)?;
+    let meta_type = meta.get("type").and_then(Value::as_str).unwrap_or("");
+    if meta_type == "question_panel" {
+        if let Some(panel) = meta.get("panel") {
+            return Some(panel.clone());
+        }
+    }
+    meta.get("question_panel")
+        .or_else(|| meta.get("questionPanel"))
+        .cloned()
 }
 
 fn is_tool_payload_text(text: &str) -> bool {

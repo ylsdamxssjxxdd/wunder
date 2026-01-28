@@ -1,6 +1,7 @@
 // 用户智能体 API：创建/管理用户自定义智能体。
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::monitor::MonitorState;
 use crate::state::AppState;
 use crate::user_access::{
     build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
@@ -89,14 +90,59 @@ async fn list_running_agents(
     let mut items = Vec::new();
     for lock in locks {
         let agent_id = lock.agent_id.trim();
-        if agent_id.is_empty() {
-            continue;
-        }
+        let is_default = agent_id.is_empty();
+        let agent_id = if is_default { "" } else { agent_id };
         items.push(json!({
             "agent_id": agent_id,
             "session_id": lock.session_id,
             "updated_at": format_ts(lock.updated_time),
             "expires_at": format_ts(lock.expires_at),
+            "state": "running",
+            "is_default": is_default,
+        }));
+    }
+    let waiting_sessions = state.monitor.list_sessions(false);
+    for session in waiting_sessions {
+        let status = session.get("status").and_then(Value::as_str).unwrap_or("");
+        if status != MonitorState::STATUS_WAITING {
+            continue;
+        }
+        let session_user_id = session.get("user_id").and_then(Value::as_str).unwrap_or("");
+        if session_user_id != user_id {
+            continue;
+        }
+        let session_id = session
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if session_id.is_empty() {
+            continue;
+        }
+        let record = state
+            .user_store
+            .get_chat_session(&user_id, &session_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let Some(record) = record else {
+            continue;
+        };
+        let agent_id = record.agent_id.unwrap_or_default();
+        let is_default = agent_id.trim().is_empty();
+        let agent_id = if is_default { "".to_string() } else { agent_id };
+        let updated_at = session
+            .get("updated_time")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        items.push(json!({
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "updated_at": updated_at,
+            "expires_at": "",
+            "state": "waiting",
+            "pending_question": true,
+            "is_default": is_default,
         }));
     }
     Ok(Json(

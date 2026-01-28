@@ -29,7 +29,7 @@
   },
   "error.absolute_path_forbidden": {
     "en-US": "Absolute paths are not allowed",
-    "zh-CN": "不允许使用绝对路径"
+    "zh-CN": "workdir请使用相对路径"
   },
   "error.api_key_invalid": {
     "en-US": "Invalid API key",
@@ -813,7 +813,7 @@
   },
   "tool.fs.absolute_forbidden": {
     "en-US": "Absolute paths are not allowed.",
-    "zh-CN": "不允许使用绝对路径。"
+    "zh-CN": "workdir请使用相对路径"
   },
   "tool.fs.path_forbidden": {
     "en-US": "Path is forbidden by security policy.",

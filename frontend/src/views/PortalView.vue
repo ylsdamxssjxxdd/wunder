@@ -34,20 +34,35 @@
                 @keydown.enter="enterDefaultChat"
               >
                 <div class="agent-card-head">
-                  <div>
+                  <div class="agent-card-default-icon" aria-hidden="true">
+                    <svg class="agent-card-default-icon-svg" viewBox="0 0 24 24">
+                      <path d="M7 13h6a4 4 0 0 0 0-8H7a4 4 0 0 0 0 8z" />
+                      <path d="M7 13v4l4-2" />
+                    </svg>
+                  </div>
+                  <div class="agent-card-head-text">
                     <div class="agent-card-title">通用聊天</div>
                     <div class="agent-card-desc">默认聊天能力，随时开启新对话</div>
                   </div>
                 </div>
+                <div
+                  v-if="isAgentRunning(DEFAULT_AGENT_KEY) || isAgentWaiting(DEFAULT_AGENT_KEY)"
+                  class="agent-card-status"
+                >
+                  <div v-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>运行中</span>
+                  </div>
+                  <div v-if="isAgentWaiting(DEFAULT_AGENT_KEY)" class="agent-card-waiting">
+                    <span class="agent-waiting-dot"></span>
+                    <span>待选择</span>
+                  </div>
+                </div>
                 <div class="agent-card-meta">
                   <span>默认入口</span>
-                  <span>无智能体</span>
                 </div>
               </div>
               <div v-if="agentLoading" class="agent-empty">加载中...</div>
-              <div v-else-if="!filteredAgents.length" class="agent-empty">
-                {{ normalizedQuery ? '没有匹配的智能体应用，请尝试其他关键词。' : '还没有智能体应用，点击 + 创建一个吧。' }}
-              </div>
               <div
                 v-else
                 v-for="agent in filteredAgents"
@@ -59,14 +74,38 @@
                 @keydown.enter="enterAgent(agent)"
               >
                 <div class="agent-card-head">
-                  <div>
+                  <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
+                    <svg
+                      v-if="hasAgentIcon(agent)"
+                      class="agent-card-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        v-for="(path, index) in getAgentIconPaths(agent)"
+                        :key="`${agent.id}-icon-${index}`"
+                        :d="path"
+                      />
+                    </svg>
+                    <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
+                  </div>
+                  <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
                   </div>
                 </div>
-                <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
-                  <span class="agent-running-dot"></span>
-                  <span>运行中</span>
+                <div
+                  v-if="isAgentRunning(agent.id) || isAgentWaiting(agent.id)"
+                  class="agent-card-status"
+                >
+                  <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>运行中</span>
+                  </div>
+                  <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
+                    <span class="agent-waiting-dot"></span>
+                    <span>待选择</span>
+                  </div>
                 </div>
                 <div class="agent-card-meta">
                   <span>工具 {{ agent.tool_names?.length || 0 }}</span>
@@ -74,24 +113,36 @@
                 </div>
                 <div class="agent-card-actions">
                   <button
-                    class="user-tools-btn secondary"
+                    class="agent-card-icon-btn"
                     type="button"
+                    title="编辑"
+                    aria-label="编辑"
                     @click.stop="openEditDialog(agent)"
                   >
-                    编辑
+                    <svg class="agent-card-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 16.5V20h3.5L19 8.5 15.5 5 4 16.5z" />
+                      <path d="M13.5 6.5L17 10" />
+                    </svg>
                   </button>
                   <button
-                    class="user-tools-btn danger"
+                    class="agent-card-icon-btn danger"
                     type="button"
+                    title="删除"
+                    aria-label="删除"
                     @click.stop="confirmDelete(agent)"
                   >
-                    删除
+                    <svg class="agent-card-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h16" />
+                      <path d="M9 7V5h6v2" />
+                      <path d="M7 7l1 12h8l1-12" />
+                      <path d="M10 11v5M14 11v5" />
+                    </svg>
                   </button>
                 </div>
               </div>
             </div>
           </section>
-          <section class="portal-section">
+          <section class="portal-section portal-section--shared">
             <div class="portal-section-header">
               <div>
                 <div class="portal-section-title">共享智能体应用</div>
@@ -101,9 +152,6 @@
             </div>
             <div class="agent-grid portal-agent-grid">
               <div v-if="agentLoading" class="agent-empty">加载中...</div>
-              <div v-else-if="!filteredSharedAgents.length" class="agent-empty">
-                {{ normalizedQuery ? '没有匹配的共享智能体应用。' : '暂无共享智能体应用。' }}
-              </div>
               <div
                 v-else
                 v-for="agent in filteredSharedAgents"
@@ -115,14 +163,38 @@
                 @keydown.enter="enterAgent(agent)"
               >
                 <div class="agent-card-head">
-                  <div>
+                  <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
+                    <svg
+                      v-if="hasAgentIcon(agent)"
+                      class="agent-card-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        v-for="(path, index) in getAgentIconPaths(agent)"
+                        :key="`${agent.id}-icon-${index}`"
+                        :d="path"
+                      />
+                    </svg>
+                    <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
+                  </div>
+                  <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
                   </div>
                 </div>
-                <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
-                  <span class="agent-running-dot"></span>
-                  <span>运行中</span>
+                <div
+                  v-if="isAgentRunning(agent.id) || isAgentWaiting(agent.id)"
+                  class="agent-card-status"
+                >
+                  <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>运行中</span>
+                  </div>
+                  <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
+                    <span class="agent-waiting-dot"></span>
+                    <span>待选择</span>
+                  </div>
                 </div>
                 <div class="agent-card-meta">
                   <span>工具 {{ agent.tool_names?.length || 0 }}</span>
@@ -157,6 +229,52 @@
           </el-form-item>
           <el-form-item label="描述">
             <el-input v-model="form.description" placeholder="一句话描述智能体用途" />
+          </el-form-item>
+          <el-form-item label="智能体头像">
+            <div class="agent-avatar-picker">
+              <div class="agent-avatar-section">
+                <div class="agent-avatar-section-title">图标</div>
+                <div class="agent-avatar-options">
+                  <button
+                    v-for="option in avatarIconOptions"
+                    :key="option.name"
+                    class="agent-avatar-option"
+                    :class="{ active: form.icon_name === option.name }"
+                    type="button"
+                    :title="option.label"
+                    @click="selectAvatarIcon(option)"
+                  >
+                    <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text"
+                      >Aa</span
+                    >
+                    <svg v-else class="agent-avatar-option-icon" viewBox="0 0 24 24">
+                      <path
+                        v-for="(path, index) in option.paths"
+                        :key="`${option.name}-${index}`"
+                        :d="path"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="agent-avatar-section">
+                <div class="agent-avatar-section-title">颜色</div>
+                <div class="agent-avatar-colors">
+                  <button
+                    v-for="color in avatarColorOptions"
+                    :key="color || 'default'"
+                    class="agent-avatar-color"
+                    :class="{ active: (form.icon_color || '') === (color || '') }"
+                    type="button"
+                    :title="color ? color : '默认'"
+                    :style="color ? { background: color } : {}"
+                    @click="selectAvatarColor(color)"
+                  >
+                    <span v-if="!color" class="agent-avatar-color-text">默认</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item label="共享设置">
             <div class="agent-share-row">
@@ -237,16 +355,89 @@ const editingId = ref('');
 const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref([]);
+const waitingAgentIds = ref([]);
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
+const DEFAULT_AGENT_KEY = '__default__';
+const DEFAULT_ICON_NAME = 'initial';
+
+const avatarIconOptions = [
+  { name: DEFAULT_ICON_NAME, label: '首字母' },
+  {
+    name: 'chat',
+    label: '聊天',
+    paths: ['M7 13h6a4 4 0 0 0 0-8H7a4 4 0 0 0 0 8z', 'M7 13v4l4-2']
+  },
+  {
+    name: 'bot',
+    label: '机器人',
+    paths: [
+      'M9 7h6a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4v-4a4 4 0 0 1 4-4z',
+      'M12 3v2',
+      'M9 12h.01',
+      'M15 12h.01'
+    ]
+  },
+  {
+    name: 'idea',
+    label: '灵感',
+    paths: ['M9 18h6', 'M10 22h4', 'M12 2a7 7 0 0 0-4 12c1 1 1.5 2 1.5 3h5c0-1 .5-2 1.5-3A7 7 0 0 0 12 2z']
+  },
+  {
+    name: 'target',
+    label: '目标',
+    paths: ['M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20z', 'M12 8l3 4-3 4-3-4 3-4z']
+  },
+  {
+    name: 'bolt',
+    label: '加速',
+    paths: ['M13 2L3 14h7l-1 8 10-12h-7l1-8z']
+  },
+  {
+    name: 'code',
+    label: '代码',
+    paths: ['M8 9l-4 3 4 3', 'M16 9l4 3-4 3', 'M10 19l4-14']
+  },
+  {
+    name: 'chart',
+    label: '分析',
+    paths: ['M4 19V5', 'M4 19h16', 'M10 19V9', 'M16 19V7']
+  },
+  {
+    name: 'shield',
+    label: '守护',
+    paths: ['M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z']
+  },
+  {
+    name: 'spark',
+    label: '星光',
+    paths: ['M12 3l2.5 5 5.5.8-4 3.8.9 5.4-4.9-2.6-4.9 2.6.9-5.4-4-3.8 5.5-.8z']
+  }
+];
+
+const avatarColorOptions = [
+  '',
+  '#6ad9ff',
+  '#a78bfa',
+  '#34d399',
+  '#f472b6',
+  '#fbbf24',
+  '#60a5fa',
+  '#f97316',
+  '#22d3ee',
+  '#94a3b8',
+  '#f87171'
+];
 
 const form = reactive({
   name: '',
   description: '',
   is_shared: false,
   tool_names: [],
-  system_prompt: ''
+  system_prompt: '',
+  icon_name: DEFAULT_ICON_NAME,
+  icon_color: ''
 });
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
@@ -264,6 +455,96 @@ const matchesQuery = (agent, query) => {
     .toLowerCase();
   return source.includes(query);
 };
+
+const getAgentAvatarText = (name) => {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return 'AI';
+  const [first] = Array.from(trimmed);
+  return first ? (first.match(/[a-z]/i) ? first.toUpperCase() : first) : 'AI';
+};
+
+const normalizeIconName = (name) => {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return DEFAULT_ICON_NAME;
+  return avatarIconOptions.some((option) => option.name === trimmed) ? trimmed : DEFAULT_ICON_NAME;
+};
+
+const getAvatarIconOption = (name) => avatarIconOptions.find((option) => option.name === name);
+
+const parseIconValue = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+    if (typeof parsed === 'string') {
+      return { name: parsed };
+    }
+  } catch (error) {
+    return { name: trimmed };
+  }
+  return { name: trimmed };
+};
+
+const getIconConfig = (value) => {
+  const parsed = parseIconValue(value);
+  return {
+    name: normalizeIconName(parsed?.name),
+    color: typeof parsed?.color === 'string' ? parsed.color : ''
+  };
+};
+
+const hasAgentIcon = (agent) => {
+  const config = getIconConfig(agent?.icon);
+  if (config.name === DEFAULT_ICON_NAME) return false;
+  const option = getAvatarIconOption(config.name);
+  return Boolean(option && option.paths && option.paths.length);
+};
+
+const getAgentIconPaths = (agent) => {
+  const config = getIconConfig(agent?.icon);
+  const option = getAvatarIconOption(config.name);
+  return option?.paths || [];
+};
+
+const hexToRgba = (hex, alpha) => {
+  const trimmed = String(hex || '').trim();
+  const match = trimmed.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!match) return '';
+  let value = match[1];
+  if (value.length === 3) {
+    value = value
+      .split('')
+      .map((char) => char + char)
+      .join('');
+  }
+  const parsed = Number.parseInt(value, 16);
+  const r = (parsed >> 16) & 255;
+  const g = (parsed >> 8) & 255;
+  const b = parsed & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const getAvatarStyle = (config) => {
+  if (!config?.color) return {};
+  const strong = hexToRgba(config.color, 0.55);
+  const soft = hexToRgba(config.color, 0.12);
+  const border = hexToRgba(config.color, 0.6);
+  if (!strong || !soft || !border) return {};
+  const style = {
+    background: `radial-gradient(circle at 30% 30%, ${strong}, ${soft})`,
+    borderColor: border
+  };
+  if (config.name !== DEFAULT_ICON_NAME) {
+    style.color = config.color;
+  }
+  return style;
+};
+
+const getAgentAvatarStyle = (agent) => getAvatarStyle(getIconConfig(agent?.icon));
 
 onMounted(() => {
   if (!authStore.user) {
@@ -297,11 +578,18 @@ const filteredSharedAgents = computed(() => {
 });
 
 const runningAgentSet = computed(() => new Set(runningAgentIds.value));
+const waitingAgentSet = computed(() => new Set(waitingAgentIds.value));
 
 const isAgentRunning = (agentId) => {
   const key = String(agentId || '').trim();
   if (!key) return false;
   return runningAgentSet.value.has(key);
+};
+
+const isAgentWaiting = (agentId) => {
+  const key = String(agentId || '').trim();
+  if (!key) return false;
+  return waitingAgentSet.value.has(key);
 };
 
 const dialogTitle = computed(() => (editingId.value ? '编辑智能体应用' : '新建智能体应用'));
@@ -369,11 +657,28 @@ const selectToolGroup = (group) => {
   form.tool_names = Array.from(next);
 };
 
+const selectAvatarIcon = (option) => {
+  if (!option) return;
+  form.icon_name = option.name;
+};
+
+const selectAvatarColor = (color) => {
+  form.icon_color = color || '';
+};
+
+const applyIconToForm = (value) => {
+  const config = getIconConfig(value);
+  form.icon_name = config.name;
+  form.icon_color = config.color || '';
+};
+
 const resetForm = () => {
   form.name = '';
   form.description = '';
   form.is_shared = false;
   form.system_prompt = '';
+  form.icon_name = DEFAULT_ICON_NAME;
+  form.icon_color = '';
   applyDefaultTools();
   editingId.value = '';
 };
@@ -394,11 +699,30 @@ const loadRunningAgents = async () => {
   try {
     const { data } = await listRunningAgents();
     const items = data?.data?.items || [];
-    runningAgentIds.value = items
-      .map((item) => String(item?.agent_id || '').trim())
-      .filter(Boolean);
+    const running = new Set();
+    const waiting = new Set();
+    items.forEach((item) => {
+      const rawAgentId = String(item?.agent_id || '').trim();
+      const agentId = rawAgentId || (item?.is_default ? DEFAULT_AGENT_KEY : '');
+      if (!agentId) return;
+      const state = String(item?.state || '').trim().toLowerCase();
+      const pending = item?.pending_question === true || state === 'waiting';
+      const isRunning =
+        state === 'running' ||
+        state === 'waiting' ||
+        (!state && String(item?.expires_at || '').trim());
+      if (isRunning) {
+        running.add(agentId);
+      }
+      if (pending) {
+        waiting.add(agentId);
+      }
+    });
+    runningAgentIds.value = Array.from(running);
+    waitingAgentIds.value = Array.from(waiting);
   } catch (error) {
     runningAgentIds.value = [];
+    waitingAgentIds.value = [];
   }
 };
 
@@ -420,6 +744,7 @@ const openEditDialog = async (agent) => {
   form.is_shared = Boolean(agent.is_shared);
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
+  applyIconToForm(agent.icon);
   editingId.value = agent.id;
   dialogVisible.value = true;
 };
@@ -432,12 +757,23 @@ const saveAgent = async () => {
   }
   saving.value = true;
   try {
+    const iconPayload = (() => {
+      const name = normalizeIconName(form.icon_name);
+      const color = String(form.icon_color || '').trim();
+      if (name === DEFAULT_ICON_NAME && !color) return '';
+      const payload = { name };
+      if (color) {
+        payload.color = color;
+      }
+      return JSON.stringify(payload);
+    })();
     const payload = {
       name,
       description: form.description || '',
       is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
-      system_prompt: form.system_prompt || ''
+      system_prompt: form.system_prompt || '',
+      icon: iconPayload
     };
     if (editingId.value) {
       await agentStore.updateAgent(editingId.value, payload);
