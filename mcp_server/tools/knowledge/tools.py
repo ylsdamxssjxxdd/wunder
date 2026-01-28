@@ -49,7 +49,7 @@ def register_tools(mcp: FastMCP) -> None:
         kb: Annotated[
             str,
             Field(
-                description="知识库 key，留空则使用默认配置。",
+                description="知识库名称，留空则使用默认配置。",
                 title="知识库",
             ),
         ] = "",

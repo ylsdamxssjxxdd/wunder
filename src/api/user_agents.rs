@@ -20,6 +20,7 @@ use uuid::Uuid;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
+        .route("/wunder/agents/shared", get(list_shared_agents))
         .route(
             "/wunder/agents/{agent_id}",
             get(get_agent).put(update_agent).delete(delete_agent),
@@ -35,6 +36,30 @@ async fn list_agents(
     let agents = state
         .user_store
         .list_user_agents(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let access = state
+        .user_store
+        .get_user_agent_access(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
+    let items = filtered
+        .iter()
+        .map(|record| agent_payload(record))
+        .collect::<Vec<_>>();
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
+}
+
+async fn list_shared_agents(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let agents = state
+        .user_store
+        .list_shared_user_agents(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let access = state
         .user_store
@@ -66,7 +91,7 @@ async fn get_agent(
     }
     let record = state
         .user_store
-        .get_user_agent(&user_id, cleaned)
+        .get_user_agent_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
     let access = state
@@ -104,6 +129,7 @@ async fn create_agent(
     }
     let access_level = normalize_access_level(&resolved.user.access_level);
     let status = normalize_agent_status(payload.status.as_deref());
+    let is_shared = payload.is_shared.unwrap_or(false);
     let now = now_ts();
     let record = crate::storage::UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
@@ -113,6 +139,7 @@ async fn create_agent(
         system_prompt: payload.system_prompt.unwrap_or_default(),
         tool_names,
         access_level,
+        is_shared,
         status,
         icon: payload.icon,
         created_at: now,
@@ -156,6 +183,9 @@ async fn update_agent(
     }
     if let Some(system_prompt) = payload.system_prompt {
         record.system_prompt = system_prompt;
+    }
+    if let Some(is_shared) = payload.is_shared {
+        record.is_shared = is_shared;
     }
     if let Some(tool_names) = payload.tool_names {
         let mut normalized = normalize_tool_list(tool_names);
@@ -209,6 +239,7 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "system_prompt": record.system_prompt,
         "tool_names": record.tool_names,
         "access_level": record.access_level,
+        "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
         "created_at": format_ts(record.created_at),
@@ -284,6 +315,8 @@ struct AgentCreateRequest {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    is_shared: Option<bool>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     icon: Option<String>,
@@ -299,6 +332,8 @@ struct AgentUpdateRequest {
     system_prompt: Option<String>,
     #[serde(default)]
     tool_names: Option<Vec<String>>,
+    #[serde(default)]
+    is_shared: Option<bool>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]

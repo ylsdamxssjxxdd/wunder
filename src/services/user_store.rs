@@ -437,8 +437,16 @@ impl UserStore {
         self.storage.get_user_agent(user_id, agent_id)
     }
 
+    pub fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.storage.get_user_agent_by_id(agent_id)
+    }
+
     pub fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
         self.storage.list_user_agents(user_id)
+    }
+
+    pub fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.storage.list_shared_user_agents(user_id)
     }
 
     pub fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64> {

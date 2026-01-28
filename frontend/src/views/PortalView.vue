@@ -87,6 +87,42 @@
               </div>
             </div>
           </section>
+          <section class="portal-section">
+            <div class="portal-section-header">
+              <div>
+                <div class="portal-section-title">共享智能体应用</div>
+                <div class="portal-section-desc">同等级用户共享的智能体应用入口</div>
+              </div>
+              <div class="portal-section-meta">共 {{ filteredSharedAgents.length }} 个</div>
+            </div>
+            <div class="agent-grid portal-agent-grid">
+              <div v-if="agentLoading" class="agent-empty">加载中...</div>
+              <div v-else-if="!filteredSharedAgents.length" class="agent-empty">
+                {{ normalizedQuery ? '没有匹配的共享智能体应用。' : '暂无共享智能体应用。' }}
+              </div>
+              <div
+                v-else
+                v-for="agent in filteredSharedAgents"
+                :key="agent.id"
+                class="agent-card agent-card--compact agent-card--clickable"
+                role="button"
+                tabindex="0"
+                @click="enterAgent(agent)"
+                @keydown.enter="enterAgent(agent)"
+              >
+                <div class="agent-card-head">
+                  <div>
+                    <div class="agent-card-title">{{ agent.name }}</div>
+                    <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
+                  </div>
+                </div>
+                <div class="agent-card-meta">
+                  <span>工具 {{ agent.tool_names?.length || 0 }}</span>
+                  <span>更新 {{ formatTime(agent.updated_at) }}</span>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </main>
@@ -113,6 +149,12 @@
           </el-form-item>
           <el-form-item label="描述">
             <el-input v-model="form.description" placeholder="一句话描述智能体用途" />
+          </el-form-item>
+          <el-form-item label="共享设置">
+            <div class="agent-share-row">
+              <el-switch v-model="form.is_shared" />
+              <span>共享给同等级用户</span>
+            </div>
           </el-form-item>
           <el-form-item label="挂载工具与技能">
             <div class="agent-tool-picker">
@@ -189,6 +231,7 @@ const toolLoading = ref(false);
 const form = reactive({
   name: '',
   description: '',
+  is_shared: false,
   tool_names: [],
   system_prompt: ''
 });
@@ -218,11 +261,17 @@ onMounted(() => {
 });
 
 const agents = computed(() => agentStore.agents || []);
+const sharedAgents = computed(() => agentStore.sharedAgents || []);
 const agentLoading = computed(() => agentStore.loading);
 const filteredAgents = computed(() => {
   const query = normalizedQuery.value;
   if (!query) return agents.value;
   return agents.value.filter((agent) => matchesQuery(agent, query));
+});
+const filteredSharedAgents = computed(() => {
+  const query = normalizedQuery.value;
+  if (!query) return sharedAgents.value;
+  return sharedAgents.value.filter((agent) => matchesQuery(agent, query));
 });
 
 const dialogTitle = computed(() => (editingId.value ? '编辑智能体应用' : '新建智能体应用'));
@@ -293,6 +342,7 @@ const selectToolGroup = (group) => {
 const resetForm = () => {
   form.name = '';
   form.description = '';
+  form.is_shared = false;
   form.system_prompt = '';
   applyDefaultTools();
   editingId.value = '';
@@ -325,6 +375,7 @@ const openEditDialog = async (agent) => {
   }
   form.name = agent.name || '';
   form.description = agent.description || '';
+  form.is_shared = Boolean(agent.is_shared);
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
   editingId.value = agent.id;
@@ -342,6 +393,7 @@ const saveAgent = async () => {
     const payload = {
       name,
       description: form.description || '',
+      is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || ''
     };

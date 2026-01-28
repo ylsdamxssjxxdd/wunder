@@ -65,6 +65,7 @@ pub struct UserAgentRecord {
     pub system_prompt: String,
     pub tool_names: Vec<String>,
     pub access_level: String,
+    pub is_shared: bool,
     pub status: String,
     pub icon: Option<String>,
     pub created_at: f64,
@@ -305,7 +306,9 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<()>;
     fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()>;
     fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>>;
+    fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>>;
     fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
+    fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
     fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64>;
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;

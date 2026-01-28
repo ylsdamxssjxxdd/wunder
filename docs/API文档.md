@@ -1325,14 +1325,16 @@
 ### 4.1.56 `/wunder/agents`
 
 - `GET /wunder/agents`：智能体列表
-  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/status/icon/created_at/updated_at）
+  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/created_at/updated_at）
+- `GET /wunder/agents/shared`：共享智能体列表（仅返回同等级共享应用）
+  - 返回：`data.total`、`data.items`（同上）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`status`（可选）、`icon`（可选）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`status`/`icon`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`icon`（可选）
   - 返回：`data`（同智能体详情）
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
@@ -1340,6 +1342,7 @@
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户权限等级与管理员覆盖过滤。
   - 智能体等级由用户等级自动决定，无需传入。
+  - 共享智能体仅对同等级用户可见，管理员可通过单用户权限覆盖进一步调整。
 
 ### 4.1.57 `/wunder/admin/user_accounts/*`
 

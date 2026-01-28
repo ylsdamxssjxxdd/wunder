@@ -117,6 +117,14 @@ pub fn is_agent_allowed(
 ) -> bool {
     let user_level = normalize_access_level(&user.access_level);
     let agent_level = normalize_access_level(&agent.access_level);
+    if agent.user_id != user.user_id {
+        if !agent.is_shared {
+            return false;
+        }
+        if user_level != agent_level {
+            return false;
+        }
+    }
     if !is_level_allowed(&user_level, &agent_level) {
         return false;
     }

@@ -134,6 +134,18 @@
   min-height: 0;
 }
 
+.agent-share-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--portal-text);
+}
+
+.agent-share-row span {
+  color: var(--portal-muted);
+}
+
 .agent-editor-hint {
   font-size: 12px;
   color: var(--portal-muted);

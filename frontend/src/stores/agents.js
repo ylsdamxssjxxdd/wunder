@@ -5,19 +5,21 @@ import {
   deleteAgent as deleteAgentApi,
   getAgent as getAgentApi,
   listAgents,
+  listSharedAgents,
   updateAgent as updateAgentApi
 } from '@/api/agents';
 
 export const useAgentStore = defineStore('agents', {
   state: () => ({
     agents: [],
+    sharedAgents: [],
     agentMap: {},
     loading: false
   }),
   actions: {
-    hydrateMap(agents) {
+    hydrateMap(agents, sharedAgents) {
       const map = {};
-      (agents || []).forEach((agent) => {
+      [...(agents || []), ...(sharedAgents || [])].forEach((agent) => {
         if (agent?.id) {
           map[agent.id] = agent;
         }
@@ -27,11 +29,13 @@ export const useAgentStore = defineStore('agents', {
     async loadAgents() {
       this.loading = true;
       try {
-        const { data } = await listAgents();
-        const items = data?.data?.items || [];
-        this.agents = items;
-        this.hydrateMap(items);
-        return items;
+        const [ownedRes, sharedRes] = await Promise.all([listAgents(), listSharedAgents()]);
+        const ownedItems = ownedRes?.data?.data?.items || [];
+        const sharedItems = sharedRes?.data?.data?.items || [];
+        this.agents = ownedItems;
+        this.sharedAgents = sharedItems;
+        this.hydrateMap(ownedItems, sharedItems);
+        return { owned: ownedItems, shared: sharedItems };
       } finally {
         this.loading = false;
       }
@@ -46,9 +50,6 @@ export const useAgentStore = defineStore('agents', {
       const agent = data?.data || null;
       if (agent) {
         this.agentMap = { ...this.agentMap, [key]: agent };
-        if (!this.agents.find((item) => item.id === key)) {
-          this.agents = [agent, ...this.agents];
-        }
       }
       return agent;
     },
@@ -69,6 +70,7 @@ export const useAgentStore = defineStore('agents', {
       if (!key) return null;
       const { data } = await deleteAgentApi(key);
       this.agents = this.agents.filter((item) => item.id !== key);
+      this.sharedAgents = this.sharedAgents.filter((item) => item.id !== key);
       const map = { ...this.agentMap };
       delete map[key];
       this.agentMap = map;

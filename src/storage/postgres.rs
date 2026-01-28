@@ -305,6 +305,25 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_user_agent_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_agents'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("is_shared") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0",
+                &[],
+            )?;
+        }
+        Ok(())
+    }
+
     fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute(
             "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
@@ -603,6 +622,7 @@ impl StorageBackend for PostgresStorage {
                   system_prompt TEXT,
                   tool_names TEXT,
                   access_level TEXT NOT NULL,
+                  is_shared INTEGER NOT NULL DEFAULT 0,
                   status TEXT NOT NULL,
                   icon TEXT,
                   created_at DOUBLE PRECISION NOT NULL,
@@ -624,6 +644,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_user_account_quota_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
+                    self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
@@ -2665,12 +2686,13 @@ impl StorageBackend for PostgresStorage {
         } else {
             Some(Self::string_list_to_json(&record.tool_names))
         };
+        let is_shared = if record.is_shared { 1 } else { 0 };
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, name = EXCLUDED.name, description = EXCLUDED.description, \
              system_prompt = EXCLUDED.system_prompt, tool_names = EXCLUDED.tool_names, access_level = EXCLUDED.access_level, \
-             status = EXCLUDED.status, icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at",
+             is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at",
             &[
                 &record.agent_id,
                 &record.user_id,
@@ -2679,6 +2701,7 @@ impl StorageBackend for PostgresStorage {
                 &record.system_prompt,
                 &tool_names,
                 &record.access_level,
+                &is_shared,
                 &record.status,
                 &record.icon,
                 &record.created_at,
@@ -2697,7 +2720,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
              FROM user_agents WHERE user_id = $1 AND agent_id = $2",
             &[&cleaned_user, &cleaned_agent],
         )?;
@@ -2709,10 +2732,39 @@ impl StorageBackend for PostgresStorage {
             system_prompt: row.get(4),
             tool_names: Self::parse_string_list(row.get(5)),
             access_level: row.get(6),
-            status: row.get(7),
-            icon: row.get(8),
-            created_at: row.get(9),
-            updated_at: row.get(10),
+            is_shared: row.get::<_, i32>(7) != 0,
+            status: row.get(8),
+            icon: row.get(9),
+            created_at: row.get(10),
+            updated_at: row.get(11),
+        }))
+    }
+
+    fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_agent = agent_id.trim();
+        if cleaned_agent.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+             FROM user_agents WHERE agent_id = $1",
+            &[&cleaned_agent],
+        )?;
+        Ok(row.map(|row| UserAgentRecord {
+            agent_id: row.get(0),
+            user_id: row.get(1),
+            name: row.get(2),
+            description: row.get(3),
+            system_prompt: row.get(4),
+            tool_names: Self::parse_string_list(row.get(5)),
+            access_level: row.get(6),
+            is_shared: row.get::<_, i32>(7) != 0,
+            status: row.get(8),
+            icon: row.get(9),
+            created_at: row.get(10),
+            updated_at: row.get(11),
         }))
     }
 
@@ -2724,7 +2776,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
              FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
@@ -2738,10 +2790,43 @@ impl StorageBackend for PostgresStorage {
                 system_prompt: row.get(4),
                 tool_names: Self::parse_string_list(row.get(5)),
                 access_level: row.get(6),
-                status: row.get(7),
-                icon: row.get(8),
-                created_at: row.get(9),
-                updated_at: row.get(10),
+                is_shared: row.get::<_, i32>(7) != 0,
+                status: row.get(8),
+                icon: row.get(9),
+                created_at: row.get(10),
+                updated_at: row.get(11),
+            });
+        }
+        Ok(output)
+    }
+
+    fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+             FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
+            &[&cleaned_user],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(UserAgentRecord {
+                agent_id: row.get(0),
+                user_id: row.get(1),
+                name: row.get(2),
+                description: row.get(3),
+                system_prompt: row.get(4),
+                tool_names: Self::parse_string_list(row.get(5)),
+                access_level: row.get(6),
+                is_shared: row.get::<_, i32>(7) != 0,
+                status: row.get(8),
+                icon: row.get(9),
+                created_at: row.get(10),
+                updated_at: row.get(11),
             });
         }
         Ok(output)

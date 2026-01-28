@@ -1140,7 +1140,7 @@ async fn fetch_agent_record(
     };
     let record = state
         .user_store
-        .get_user_agent(&user.user_id, agent_id)
+        .get_user_agent_by_id(agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let Some(record) = record else {
         if allow_missing {

@@ -195,6 +195,24 @@ impl SqliteStorage {
         }
         Ok(())
     }
+
+    fn ensure_user_agent_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(user_agents)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows {
+            if let Ok(name) = name {
+                columns.insert(name);
+            }
+        }
+        if !columns.contains("is_shared") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl StorageBackend for SqliteStorage {
@@ -409,6 +427,7 @@ impl StorageBackend for SqliteStorage {
               system_prompt TEXT,
               tool_names TEXT,
               access_level TEXT NOT NULL,
+              is_shared INTEGER NOT NULL DEFAULT 0,
               status TEXT NOT NULL,
               icon TEXT,
               created_at REAL NOT NULL,
@@ -427,6 +446,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_user_account_quota_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_user_agent_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -2583,11 +2603,11 @@ impl StorageBackend for SqliteStorage {
             Some(Self::string_list_to_json(&record.tool_names))
         };
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, name = excluded.name, description = excluded.description, \
              system_prompt = excluded.system_prompt, tool_names = excluded.tool_names, access_level = excluded.access_level, \
-             status = excluded.status, icon = excluded.icon, updated_at = excluded.updated_at",
+             is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, updated_at = excluded.updated_at",
             params![
                 record.agent_id,
                 record.user_id,
@@ -2596,6 +2616,7 @@ impl StorageBackend for SqliteStorage {
                 record.system_prompt,
                 tool_names,
                 record.access_level,
+                if record.is_shared { 1 } else { 0 },
                 record.status,
                 record.icon,
                 record.created_at,
@@ -2615,11 +2636,12 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+                "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
                  FROM user_agents WHERE user_id = ? AND agent_id = ?",
                 params![cleaned_user, cleaned_agent],
                 |row| {
                     let tool_names: Option<String> = row.get(5)?;
+                    let is_shared: Option<i64> = row.get(7)?;
                     Ok(UserAgentRecord {
                         agent_id: row.get(0)?,
                         user_id: row.get(1)?,
@@ -2628,10 +2650,46 @@ impl StorageBackend for SqliteStorage {
                         system_prompt: row.get(4)?,
                         tool_names: Self::parse_string_list(tool_names),
                         access_level: row.get(6)?,
-                        status: row.get(7)?,
-                        icon: row.get(8)?,
-                        created_at: row.get(9)?,
-                        updated_at: row.get(10)?,
+                        is_shared: is_shared.unwrap_or(0) != 0,
+                        status: row.get(8)?,
+                        icon: row.get(9)?,
+                        created_at: row.get(10)?,
+                        updated_at: row.get(11)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_agent = agent_id.trim();
+        if cleaned_agent.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+                 FROM user_agents WHERE agent_id = ?",
+                params![cleaned_agent],
+                |row| {
+                    let tool_names: Option<String> = row.get(5)?;
+                    let is_shared: Option<i64> = row.get(7)?;
+                    Ok(UserAgentRecord {
+                        agent_id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        name: row.get(2)?,
+                        description: row.get(3)?,
+                        system_prompt: row.get(4)?,
+                        tool_names: Self::parse_string_list(tool_names),
+                        access_level: row.get(6)?,
+                        is_shared: is_shared.unwrap_or(0) != 0,
+                        status: row.get(8)?,
+                        icon: row.get(9)?,
+                        created_at: row.get(10)?,
+                        updated_at: row.get(11)?,
                     })
                 },
             )
@@ -2647,12 +2705,13 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
              FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], |row| {
                 let tool_names: Option<String> = row.get(5)?;
+                let is_shared: Option<i64> = row.get(7)?;
                 Ok(UserAgentRecord {
                     agent_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -2661,10 +2720,45 @@ impl StorageBackend for SqliteStorage {
                     system_prompt: row.get(4)?,
                     tool_names: Self::parse_string_list(tool_names),
                     access_level: row.get(6)?,
-                    status: row.get(7)?,
-                    icon: row.get(8)?,
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    is_shared: is_shared.unwrap_or(0) != 0,
+                    status: row.get(8)?,
+                    icon: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
+        Ok(rows)
+    }
+
+    fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+             FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![cleaned_user], |row| {
+                let tool_names: Option<String> = row.get(5)?;
+                let is_shared: Option<i64> = row.get(7)?;
+                Ok(UserAgentRecord {
+                    agent_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    system_prompt: row.get(4)?,
+                    tool_names: Self::parse_string_list(tool_names),
+                    access_level: row.get(6)?,
+                    is_shared: is_shared.unwrap_or(0) != 0,
+                    status: row.get(8)?,
+                    icon: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
