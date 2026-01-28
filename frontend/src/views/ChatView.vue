@@ -706,6 +706,7 @@ const activeSession = computed(
   () => chatStore.sessions.find((item) => item.id === chatStore.activeSessionId) || null
 );
 const routeAgentId = computed(() => String(route.query.agent_id || '').trim());
+const routeEntry = computed(() => String(route.query.entry || '').trim().toLowerCase());
 const activeAgentId = computed(
   () => activeSession.value?.agent_id || routeAgentId.value || ''
 );
@@ -807,8 +808,12 @@ const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
-  const persisted = chatStore.getPersistedState();
   await chatStore.loadSessions();
+  if (routeEntry.value === 'default') {
+    chatStore.openDraftSession();
+    router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
+    return;
+  }
   if (routeAgentId.value) {
     try {
       await chatStore.createSession({ agent_id: routeAgentId.value });
@@ -818,24 +823,7 @@ const init = async () => {
     }
     return;
   }
-  if (persisted?.draft) {
-    chatStore.openDraftSession();
-    return;
-  }
-  if (chatStore.sessions.length === 0) {
-    chatStore.openDraftSession();
-    return;
-  }
-  const preferredId = persisted?.activeSessionId || '';
-  const matched = preferredId
-    ? chatStore.sessions.find((session) => session.id === preferredId)
-    : null;
-  const targetId = matched?.id || chatStore.sessions[0].id;
-  try {
-    await chatStore.loadSessionDetail(targetId);
-  } catch (error) {
-    await chatStore.loadSessionDetail(chatStore.sessions[0].id);
-  }
+  chatStore.openDraftSession();
 };
 
 const handleCreateSession = () => {
@@ -1728,9 +1716,19 @@ watch(
 );
 
 watch(
+  () => routeEntry.value,
+  async (value, oldValue) => {
+    if (!value || value === oldValue || value !== 'default') return;
+    chatStore.openDraftSession();
+    router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
+  }
+);
+
+watch(
   () => routeAgentId.value,
   async (value, oldValue) => {
     if (!value || value === oldValue) return;
+    if (routeEntry.value === 'default') return;
     try {
       await chatStore.createSession({ agent_id: value });
       router.replace({ path: route.path, query: { ...route.query, agent_id: undefined } });

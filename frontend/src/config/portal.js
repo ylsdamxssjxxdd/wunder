@@ -1,17 +1,8 @@
 export const portalEntries = [
   {
-    id: 'agents',
-    title: '智能体广场',
-    description: '创建、管理并进入你的专属智能体。',
-    type: 'internal',
-    path: 'agents',
-    icon: 'community',
-    tags: ['智能体', '能力编排']
-  },
-  {
     id: 'tools',
     title: '工具管理',
-    description: '统一维护自建工具、共享工具与附加提示词。',
+    description: '统一维护自建工具与共享工具。',
     type: 'internal',
     path: 'tools',
     icon: 'settings',

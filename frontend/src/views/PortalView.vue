@@ -14,11 +14,6 @@
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
-          <div class="portal-hero">
-            <div class="portal-hero-title">欢迎回来，{{ userName }}</div>
-            <div class="portal-hero-sub">从这里进入或创建你的智能体应用。</div>
-          </div>
-
           <section class="portal-section">
             <div class="portal-section-header">
               <div>
@@ -33,6 +28,24 @@
                 <div class="agent-card-title">新建智能体应用</div>
                 <div class="agent-card-desc">快速组装你的专属能力</div>
               </button>
+              <div
+                class="agent-card agent-card--compact agent-card--default agent-card--clickable"
+                role="button"
+                tabindex="0"
+                @click="enterDefaultChat"
+                @keydown.enter="enterDefaultChat"
+              >
+                <div class="agent-card-head">
+                  <div>
+                    <div class="agent-card-title">通用聊天</div>
+                    <div class="agent-card-desc">默认聊天能力，随时开启新对话</div>
+                  </div>
+                </div>
+                <div class="agent-card-meta">
+                  <span>默认入口</span>
+                  <span>无智能体</span>
+                </div>
+              </div>
               <div v-if="agentLoading" class="agent-empty">加载中...</div>
               <div v-else-if="!filteredAgents.length" class="agent-empty">
                 {{ normalizedQuery ? '没有匹配的智能体应用，请尝试其他关键词。' : '还没有智能体应用，点击 + 创建一个吧。' }}
@@ -41,7 +54,11 @@
                 v-else
                 v-for="agent in filteredAgents"
                 :key="agent.id"
-                class="agent-card agent-card--compact"
+                class="agent-card agent-card--compact agent-card--clickable"
+                role="button"
+                tabindex="0"
+                @click="enterAgent(agent)"
+                @keydown.enter="enterAgent(agent)"
               >
                 <div class="agent-card-head">
                   <div>
@@ -54,11 +71,18 @@
                   <span>更新 {{ formatTime(agent.updated_at) }}</span>
                 </div>
                 <div class="agent-card-actions">
-                  <button class="user-tools-btn" type="button" @click="enterAgent(agent)">进入</button>
-                  <button class="user-tools-btn secondary" type="button" @click="openEditDialog(agent)">
+                  <button
+                    class="user-tools-btn secondary"
+                    type="button"
+                    @click.stop="openEditDialog(agent)"
+                  >
                     编辑
                   </button>
-                  <button class="user-tools-btn danger" type="button" @click="confirmDelete(agent)">
+                  <button
+                    class="user-tools-btn danger"
+                    type="button"
+                    @click.stop="confirmDelete(agent)"
+                  >
                     删除
                   </button>
                 </div>
@@ -97,7 +121,16 @@
               <div v-if="toolLoading" class="agent-tool-loading">加载工具中...</div>
               <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
                 <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
-                  <div class="agent-tool-group-title">{{ group.label }}</div>
+                  <div class="agent-tool-group-header">
+                    <div class="agent-tool-group-title">{{ group.label }}</div>
+                    <button
+                      class="agent-tool-group-select"
+                      type="button"
+                      @click.stop="selectToolGroup(group)"
+                    >
+                      全选
+                    </button>
+                  </div>
                   <div class="agent-tool-options">
                     <el-checkbox
                       v-for="option in group.options"
@@ -163,8 +196,6 @@ const form = reactive({
 });
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
-const userName = computed(() => authStore.user?.username || '访客');
-
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
 const matchesQuery = (agent, query) => {
@@ -241,6 +272,13 @@ const sharedToolsNotice = computed(() => {
 
 const applyDefaultTools = () => {
   form.tool_names = allToolValues.value.length ? [...allToolValues.value] : [];
+};
+
+const selectToolGroup = (group) => {
+  if (!group || !Array.isArray(group.options)) return;
+  const next = new Set(form.tool_names);
+  group.options.forEach((option) => next.add(option.value));
+  form.tool_names = Array.from(next);
 };
 
 const resetForm = () => {
@@ -336,6 +374,10 @@ const enterAgent = (agent) => {
   const agentId = agent?.id;
   if (!agentId) return;
   router.push(`${basePath.value}/chat?agent_id=${encodeURIComponent(agentId)}`);
+};
+
+const enterDefaultChat = () => {
+  router.push({ path: `${basePath.value}/chat`, query: { entry: 'default' } });
 };
 
 const formatTime = (value) => {

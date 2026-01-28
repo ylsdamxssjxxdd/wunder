@@ -123,12 +123,33 @@ const tokenUsageTotal = computed(() =>
     return sum + (Number.isFinite(total) ? total : 0);
   }, 0)
 );
+const parseQuotaNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const accountQuotaSnapshot = computed(() => {
+  const user = authStore.user || {};
+  const daily = parseQuotaNumber(user.daily_quota ?? user.dailyQuota);
+  const used = parseQuotaNumber(user.daily_quota_used ?? user.dailyQuotaUsed);
+  const date = user.daily_quota_date ?? user.dailyQuotaDate ?? '';
+  if (daily === null && used === null && !date) return null;
+  const remaining =
+    Number.isFinite(daily) && Number.isFinite(used) ? Math.max(daily - used, 0) : null;
+  return {
+    daily,
+    used,
+    remaining,
+    date: date ? String(date) : ''
+  };
+});
+
 const latestQuotaSnapshot = computed(() => {
   for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
     const snapshot = assistantMessages.value[i]?.stats?.quotaSnapshot;
     if (snapshot) return snapshot;
   }
-  return null;
+  return accountQuotaSnapshot.value;
 });
 
 const quotaTotal = computed(() => {

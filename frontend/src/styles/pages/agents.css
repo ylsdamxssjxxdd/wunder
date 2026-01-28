@@ -5,7 +5,8 @@
 }
 
 .portal-agent-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, 220px);
+  justify-content: flex-start;
 }
 
 .agent-card {
@@ -20,6 +21,10 @@
   color: inherit;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   min-height: 150px;
+}
+
+.agent-card--clickable {
+  cursor: pointer;
 }
 
 .agent-card:hover {
@@ -160,7 +165,30 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--portal-text);
+  margin-bottom: 0;
+}
+
+.agent-tool-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
+}
+
+.agent-tool-group-select {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(106, 217, 255, 0.35);
+  background: rgba(106, 217, 255, 0.12);
+  color: var(--portal-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-tool-group-select:hover {
+  border-color: rgba(106, 217, 255, 0.6);
 }
 
 .agent-tool-options {

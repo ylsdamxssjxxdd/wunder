@@ -123,6 +123,9 @@ export const ensureDemoProfile = () => {
     username: `demo_${seed}`,
     access_level: 'A',
     is_demo: true,
+    daily_quota: 10000,
+    daily_quota_used: 0,
+    daily_quota_date: new Date().toISOString().slice(0, 10),
     created_at: new Date().toISOString()
   };
   saveDemoProfile(profile);

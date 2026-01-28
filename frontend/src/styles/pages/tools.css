@@ -1,13 +1,21 @@
 .tool-manager-grid {
   display: grid;
   grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.4fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 18px;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .tool-manager-column {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .tool-manager-section {
@@ -15,7 +23,44 @@
 }
 
 .tool-manager-column--right .user-tools-page {
-  min-height: 420px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tool-manager-column--right {
+  height: 100%;
+}
+
+.tool-manager-column--right .tool-manager-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tool-manager-column--right .user-tools-modal {
+  flex: 1;
+  min-height: 0;
+}
+
+.tool-manager-column--right .user-tools-status {
+  margin-top: auto;
+}
+
+.tool-manager-column .tool-manager-section:last-child {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tool-manager-column .tool-manager-section:last-child .user-tools-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .tool-catalog-grid {
@@ -85,11 +130,16 @@
   background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(9, 14, 28, 0.96));
   padding: 16px;
   box-shadow: 0 18px 40px rgba(5, 8, 18, 0.3);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 @media (max-width: 1100px) {
   .tool-manager-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    height: auto;
   }
 
   .tool-manager-column--right .user-tools-page {

@@ -1275,6 +1275,9 @@
 - `roles`：角色列表
 - `status`：账号状态（active/disabled）
 - `access_level`：访问级别（A/B/C）
+- `daily_quota`：每日额度
+- `daily_quota_used`：今日已用额度
+- `daily_quota_date`：额度日期（可选）
 - `is_demo`：是否演示账号
 - `created_at`/`updated_at`：时间戳（秒）
 - `last_login_at`：最近登录时间（秒，可选）

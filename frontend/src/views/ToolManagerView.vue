@@ -7,12 +7,6 @@
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
-          <div class="portal-hero">
-            <div class="portal-hero-title">管理你的能力边界</div>
-            <div class="portal-hero-sub">
-              管理员开放的工具将自动进入你的工具池，自建工具与共享工具可灵活挂载给智能体或会话。
-            </div>
-          </div>
           <div class="tool-manager-grid">
             <div class="tool-manager-column">
               <section class="portal-section tool-manager-section">
