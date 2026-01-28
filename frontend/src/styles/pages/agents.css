@@ -215,13 +215,37 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.agent-card .user-tools-btn:hover {
+  border-color: rgba(106, 217, 255, 0.6);
+  box-shadow: 0 0 0 4px rgba(106, 217, 255, 0.15);
+}
+
 .agent-card .user-tools-btn.secondary {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.agent-card .user-tools-btn.secondary:hover {
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.16);
 }
 
 .agent-card .user-tools-btn.danger {
   background: rgba(248, 113, 113, 0.18);
   border-color: rgba(248, 113, 113, 0.4);
   color: #fee2e2;
+}
+
+.agent-card .user-tools-btn.danger:hover {
+  border-color: rgba(248, 113, 113, 0.65);
+  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.25);
+}
+
+:root[data-user-theme='light'] .agent-card .user-tools-btn.danger {
+  color: #b91c1c;
+}
+
+:root[data-user-theme='light'] .agent-card .user-tools-btn.danger:hover {
+  background: rgba(248, 113, 113, 0.22);
+  border-color: rgba(185, 28, 28, 0.6);
 }

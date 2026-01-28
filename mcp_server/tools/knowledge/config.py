@@ -230,13 +230,10 @@ def build_kb_description_hint() -> str:
 
     items: list[str] = []
     for key, cfg in targets.items():
-        parts: list[str] = []
         if cfg.description:
-            parts.append(cfg.description)
-        if cfg.dataset_ids:
-            parts.append("数据集ID:" + ",".join(cfg.dataset_ids))
-        label = "，".join(parts) if parts else ",".join(cfg.dataset_ids)
-        items.append(f"{key}={label}")
+            items.append(f"{key}（{cfg.description}）")
+        else:
+            items.append(key)
     return "知识库说明：" + "；".join(items)
 
 
