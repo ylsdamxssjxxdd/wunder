@@ -18,6 +18,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
+const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
@@ -212,7 +214,7 @@ async fn create_agent(
         let allowed = compute_allowed_tool_names(&resolved.user, &context);
         tool_names = filter_allowed_tools(&tool_names, &allowed);
     }
-    let access_level = normalize_access_level(&resolved.user.access_level);
+    let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     let status = normalize_agent_status(payload.status.as_deref());
     let is_shared = payload.is_shared.unwrap_or(false);
     let now = now_ts();
@@ -281,7 +283,6 @@ async fn update_agent(
         }
         record.tool_names = normalized;
     }
-    record.access_level = normalize_access_level(&resolved.user.access_level);
     if let Some(status) = payload.status {
         record.status = normalize_agent_status(Some(&status));
     }
@@ -371,15 +372,6 @@ fn normalize_agent_status(raw: Option<&str>) -> String {
     }
 }
 
-fn normalize_access_level(raw: &str) -> String {
-    let level = raw.trim().to_uppercase();
-    if level == "B" || level == "C" {
-        level
-    } else {
-        "A".to_string()
-    }
-}
-
 fn format_ts(ts: f64) -> String {
     let millis = (ts * 1000.0) as i64;
     chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
@@ -453,7 +445,7 @@ async fn ensure_preset_agents(
         .into_iter()
         .collect::<Vec<_>>();
     tool_names.sort();
-    let access_level = normalize_access_level(&user.access_level);
+    let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     for preset in preset_agents() {
         if existing_names.contains(preset.name) {
             continue;

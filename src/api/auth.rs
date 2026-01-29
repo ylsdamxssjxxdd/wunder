@@ -26,6 +26,8 @@ struct RegisterRequest {
     password: String,
     #[serde(default)]
     access_level: Option<String>,
+    #[serde(default)]
+    unit_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,6 +70,7 @@ async fn register(
             payload.email,
             password,
             access_level,
+            payload.unit_id,
             vec!["user".to_string()],
             "active",
             false,
@@ -77,7 +80,8 @@ async fn register(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
-    Ok(Json(auth_response(session.user, session.token.token)))
+    let profile = build_user_profile(&state, &session.user)?;
+    Ok(Json(auth_response(profile, session.token.token)))
 }
 
 async fn login(
@@ -96,7 +100,8 @@ async fn login(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
-    Ok(Json(auth_response(session.user, session.token.token)))
+    let profile = build_user_profile(&state, &session.user)?;
+    Ok(Json(auth_response(profile, session.token.token)))
 }
 
 async fn login_demo(
@@ -107,7 +112,8 @@ async fn login_demo(
         .user_store
         .demo_login(payload.demo_id.as_deref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(auth_response(session.user, session.token.token)))
+    let profile = build_user_profile(&state, &session.user)?;
+    Ok(Json(auth_response(profile, session.token.token)))
 }
 
 async fn me(
@@ -115,9 +121,8 @@ async fn me(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
-    Ok(Json(
-        json!({ "data": UserStore::to_profile(&resolved.user) }),
-    ))
+    let profile = build_user_profile(&state, &resolved.user)?;
+    Ok(Json(json!({ "data": profile })))
 }
 
 async fn update_me(
@@ -197,16 +202,35 @@ async fn update_me(
             .update_user(&record)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    Ok(Json(json!({ "data": UserStore::to_profile(&record) })))
+    let profile = build_user_profile(&state, &record)?;
+    Ok(Json(json!({ "data": profile })))
 }
 
-fn auth_response(user: crate::storage::UserAccountRecord, token: String) -> serde_json::Value {
+fn auth_response(profile: crate::user_store::UserProfile, token: String) -> serde_json::Value {
     json!({
         "data": {
             "access_token": token,
-            "user": UserStore::to_profile(&user)
+            "user": profile
         }
     })
+}
+
+fn build_user_profile(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<crate::user_store::UserProfile, Response> {
+    let unit = user
+        .unit_id
+        .as_deref()
+        .map(|unit_id| {
+            state
+                .user_store
+                .get_org_unit(unit_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+        })
+        .transpose()?
+        .flatten();
+    Ok(UserStore::to_profile_with_unit(user, unit.as_ref()))
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

@@ -49,6 +49,10 @@
                 <i class="fa-solid fa-user-gear"></i>
                 <span data-i18n="panel.userAccounts">用户管理</span>
               </button>
+              <button id="navOrgUnits" class="nav-btn">
+                <i class="fa-solid fa-sitemap"></i>
+                <span data-i18n="panel.orgUnits">单位管理</span>
+              </button>
               <button id="navMemory" class="nav-btn">
                 <i class="fa-solid fa-brain"></i>
                 <span data-i18n="panel.memory">记忆管理</span>
@@ -606,7 +610,7 @@
               </div>
             </div>
             <div class="tips" data-i18n="userAccounts.tip">
-              管理账号状态、访问级别、额度与工具权限。
+              管理账号状态、所属单位、额度与工具权限。
             </div>
             <div class="monitor-section-body monitor-paged">
               <div class="monitor-table-scroll">
@@ -614,7 +618,7 @@
                   <colgroup>
                     <col class="col-user-id" />
                     <col class="col-user-email" />
-                    <col class="col-user-access" />
+                    <col class="col-user-unit" />
                     <col class="col-user-status" />
                     <col class="col-user-quota" />
                     <col class="col-user-login" />
@@ -624,7 +628,7 @@
                     <tr>
                       <th data-i18n="userAccounts.table.user">用户</th>
                       <th data-i18n="userAccounts.table.email">邮箱</th>
-                      <th data-i18n="userAccounts.table.access">访问级别</th>
+                      <th data-i18n="userAccounts.table.unit">所属单位</th>
                       <th data-i18n="userAccounts.table.status">状态</th>
                       <th data-i18n="userAccounts.table.quota">额度</th>
                       <th data-i18n="userAccounts.table.lastLogin">最近登录</th>
@@ -645,6 +649,92 @@
                   </button>
                   <button id="userAccountNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                     下一页
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="orgUnitsPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="orgUnits.title">单位管理</h1>
+            <div class="header-actions">
+              <button id="orgUnitRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+              <button id="orgUnitCreateBtn" class="btn-with-icon">
+                <i class="fa-solid fa-plus"></i>
+                <span data-i18n="orgUnits.action.create">新增单位</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="orgUnits.tip">
+            维护单位层级结构与负责人，支持新增、调整与删除。
+          </div>
+          <div class="management-layout org-units-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label data-i18n="orgUnits.tree.title">单位结构</label>
+              </div>
+              <div id="orgUnitTree" class="org-unit-tree"></div>
+            </div>
+            <div class="management-detail org-unit-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="orgUnitDetailTitle" class="detail-title" data-i18n="orgUnits.detail.empty">
+                    未选择单位
+                  </div>
+                  <div id="orgUnitDetailMeta" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="orgUnitAddChildBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-plus"></i>
+                    <span data-i18n="orgUnits.action.addChild">新增下级</span>
+                  </button>
+                  <button id="orgUnitDeleteBtn" class="danger btn-with-icon">
+                    <i class="fa-solid fa-trash"></i>
+                    <span data-i18n="common.delete">删除</span>
+                  </button>
+                </div>
+              </div>
+              <div class="form-section">
+                <div class="form-row">
+                  <label for="orgUnitFormName" data-i18n="orgUnits.form.name">单位名称</label>
+                  <input id="orgUnitFormName" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="orgUnitFormParent" data-i18n="orgUnits.form.parent">上级单位</label>
+                  <select id="orgUnitFormParent"></select>
+                </div>
+                <div class="form-row">
+                  <label for="orgUnitFormSortOrder" data-i18n="orgUnits.form.sortOrder">排序</label>
+                  <input id="orgUnitFormSortOrder" type="number" min="0" step="1" />
+                </div>
+                <div class="form-row">
+                  <label for="orgUnitFormLeaders" data-i18n="orgUnits.form.leaders">负责人</label>
+                  <input
+                    id="orgUnitFormLeaders"
+                    type="text"
+                    placeholder="用户ID逗号分隔"
+                    data-i18n-placeholder="orgUnits.form.leaders.placeholder"
+                  />
+                  <div class="muted" data-i18n="orgUnits.form.leaders.hint">
+                    填写负责人的用户ID，逗号分隔。
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="orgUnits.form.path">路径</label>
+                  <div id="orgUnitFormPath" class="muted">-</div>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="orgUnits.form.level">层级</label>
+                  <div id="orgUnitFormLevel" class="muted">-</div>
+                </div>
+                <div class="org-unit-actions">
+                  <button id="orgUnitSaveBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span data-i18n="common.save">保存</span>
                   </button>
                 </div>
               </div>
@@ -3391,11 +3481,9 @@
             <input id="userAccountFormPassword" type="password" />
           </div>
           <div class="form-row">
-            <label for="userAccountFormAccess" data-i18n="userAccounts.modal.create.access">访问级别</label>
-            <select id="userAccountFormAccess">
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
+            <label for="userAccountFormUnit" data-i18n="userAccounts.modal.create.unit">所属单位</label>
+            <select id="userAccountFormUnit">
+              <option value="" data-i18n="userAccounts.modal.create.unit.default">默认单位</option>
             </select>
           </div>
           <div class="form-row">
@@ -3466,12 +3554,28 @@
             <div class="muted" data-i18n="userAccounts.modal.settings.roles.hint">user / admin</div>
           </div>
           <div class="form-row">
+            <label for="userAccountSettingsUnitSelect" data-i18n="userAccounts.modal.settings.unit.label">
+              所属单位
+            </label>
+            <div class="form-row-inline">
+              <select id="userAccountSettingsUnitSelect">
+                <option value="" data-i18n="userAccounts.modal.settings.unit.default">默认单位</option>
+              </select>
+              <button id="userAccountSettingsUnitSave" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+              </button>
+            </div>
+            <div class="muted" data-i18n="userAccounts.modal.settings.unit.hint">
+              变更单位后会自动匹配该层级的默认额度。
+            </div>
+          </div>
+          <div class="form-row">
             <label for="userAccountToolDefault" data-i18n="userAccounts.modal.tool.default">
               使用默认权限
             </label>
             <label class="checkbox-row">
               <input id="userAccountToolDefault" type="checkbox" />
-              <span data-i18n="userAccounts.modal.tool.defaultHint">按访问级别默认策略生效</span>
+              <span data-i18n="userAccounts.modal.tool.defaultHint">默认全量工具，可用白名单或黑名单覆盖</span>
             </label>
           </div>
           <div class="form-row">
@@ -3479,7 +3583,17 @@
             <div id="userAccountToolList" class="tool-list"></div>
             <div id="userAccountToolEmpty" class="muted" data-i18n="userAccounts.modal.tool.empty">暂无工具</div>
             <div class="muted" data-i18n="userAccounts.modal.tool.tip">
-              访问级别 A 默认全量工具，B 隐藏技能，C 隐藏技能和知识库。
+              默认权限为全量工具，可在此配置白名单。
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountToolBlockedList" data-i18n="userAccounts.modal.tool.blocked">禁用工具</label>
+            <div id="userAccountToolBlockedList" class="tool-list"></div>
+            <div id="userAccountToolBlockedEmpty" class="muted" data-i18n="userAccounts.modal.tool.blocked.empty">
+              暂无工具
+            </div>
+            <div class="muted" data-i18n="userAccounts.modal.tool.blocked.tip">
+              勾选后即使在默认或白名单中也会被禁用。
             </div>
           </div>
         </div>
@@ -3489,6 +3603,52 @@
           </button>
           <button id="userAccountSettingsCancel" class="secondary btn-with-icon" type="button">
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="orgUnitModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="orgUnitModalTitle" class="detail-title" data-i18n="orgUnits.modal.title">
+            新增单位
+          </div>
+          <button id="orgUnitModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="orgUnitModalName" data-i18n="orgUnits.modal.name">单位名称</label>
+            <input id="orgUnitModalName" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="orgUnitModalParent" data-i18n="orgUnits.modal.parent">上级单位</label>
+            <select id="orgUnitModalParent">
+              <option value="" data-i18n="orgUnits.modal.parent.root">作为一级单位</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="orgUnitModalSortOrder" data-i18n="orgUnits.modal.sortOrder">排序</label>
+            <input id="orgUnitModalSortOrder" type="number" min="0" step="1" />
+          </div>
+          <div class="form-row">
+            <label for="orgUnitModalLeaders" data-i18n="orgUnits.modal.leaders">负责人</label>
+            <input
+              id="orgUnitModalLeaders"
+              type="text"
+              placeholder="用户ID逗号分隔"
+              data-i18n-placeholder="orgUnits.form.leaders.placeholder"
+            />
+            <div class="muted" data-i18n="orgUnits.form.leaders.hint">
+              填写负责人的用户ID，逗号分隔。
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="orgUnitModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="orgUnitModalSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>

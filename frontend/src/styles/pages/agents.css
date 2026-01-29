@@ -285,8 +285,20 @@
   color: #2563eb;
 }
 
+:root[data-user-theme='light'] .agent-avatar-card {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+:root[data-user-theme='light'] .agent-share-card {
+  background: rgba(148, 163, 184, 0.12);
+}
+
 :root[data-user-theme='light'] .agent-avatar-option {
   background: rgba(148, 163, 184, 0.14);
+}
+
+:root[data-user-theme='light'] .agent-avatar-custom-text {
+  background: rgba(255, 255, 255, 0.9);
 }
 
 :root[data-user-theme='light'] .agent-avatar-option.active {
@@ -355,6 +367,71 @@
   min-height: 0;
 }
 
+.agent-basic-settings {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.agent-avatar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--portal-border);
+  background: rgba(15, 23, 42, 0.35);
+  flex: 1 1 320px;
+  min-width: 260px;
+}
+
+.agent-avatar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-avatar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.agent-avatar-toggle {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(106, 217, 255, 0.35);
+  background: rgba(106, 217, 255, 0.12);
+  color: var(--portal-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-avatar-toggle:hover {
+  border-color: rgba(106, 217, 255, 0.6);
+}
+
+.agent-avatar-preview {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--portal-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--portal-text);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.agent-avatar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .agent-share-row {
   display: flex;
   align-items: center;
@@ -365,6 +442,23 @@
 
 .agent-share-row span {
   color: var(--portal-muted);
+}
+
+.agent-share-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--portal-border);
+  background: rgba(15, 23, 42, 0.35);
+  min-width: 180px;
+}
+
+.agent-share-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-text);
 }
 
 .agent-editor-hint {
@@ -382,7 +476,7 @@
 .agent-avatar-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .agent-avatar-section-title {
@@ -395,13 +489,13 @@
 .agent-avatar-colors {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .agent-avatar-option {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   border: 1px solid var(--portal-border);
   background: rgba(15, 23, 42, 0.35);
   color: var(--portal-text);
@@ -424,13 +518,13 @@
 }
 
 .agent-avatar-option-text {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .agent-avatar-option-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   stroke: currentColor;
   fill: none;
   stroke-width: 1.8;
@@ -439,9 +533,9 @@
 }
 
 .agent-avatar-color {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
   border: 1px solid var(--portal-border);
   background: transparent;
   color: var(--portal-muted);
@@ -465,6 +559,39 @@
 .agent-avatar-color-text {
   font-size: 11px;
   font-weight: 600;
+}
+
+.agent-avatar-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.agent-avatar-custom-input {
+  width: 36px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--portal-border);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.agent-avatar-custom-text {
+  flex: 1 1 180px;
+  min-width: 160px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--portal-border);
+  background: rgba(15, 23, 42, 0.4);
+  color: var(--portal-text);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.agent-avatar-custom-text::placeholder {
+  color: var(--portal-muted);
 }
 
 .agent-tool-picker {

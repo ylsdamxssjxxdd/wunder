@@ -122,6 +122,8 @@ export const ensureDemoProfile = () => {
     id: `demo_${seed}`,
     username: `demo_${seed}`,
     access_level: 'A',
+    unit_id: null,
+    unit: null,
     is_demo: true,
     daily_quota: 10000,
     daily_quota_used: 0,

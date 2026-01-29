@@ -93,7 +93,7 @@
               @click="handleOpenProfile"
             >
               <div class="user-name">{{ currentUser?.username || '访客' }}</div>
-              <div class="user-level">等级 {{ currentUser?.access_level || '-' }}</div>
+              <div class="user-level">单位 {{ currentUserUnitLabel }}</div>
             </button>
             <button class="logout-btn" type="button" @click="handleLogout">退出</button>
           </div>
@@ -594,6 +594,10 @@ const authStore = useAuthStore();
 const chatStore = useChatStore();
 const agentStore = useAgentStore();
 const currentUser = computed(() => authStore.user);
+const currentUserUnitLabel = computed(() => {
+  const unit = currentUser.value?.unit;
+  return unit?.path_name || unit?.pathName || unit?.name || currentUser.value?.unit_id || '-';
+});
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (demoMode.value ? '/demo' : '/app'));

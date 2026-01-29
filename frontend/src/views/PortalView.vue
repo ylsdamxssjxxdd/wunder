@@ -230,56 +230,102 @@
           <el-form-item label="描述">
             <el-input v-model="form.description" placeholder="一句话描述智能体用途" />
           </el-form-item>
-          <el-form-item label="智能体头像">
-            <div class="agent-avatar-picker">
-              <div class="agent-avatar-section">
-                <div class="agent-avatar-section-title">图标</div>
-                <div class="agent-avatar-options">
+          <el-form-item label="基础设置">
+            <div class="agent-basic-settings">
+              <div class="agent-avatar-card">
+                <div class="agent-avatar-header">
+                  <div class="agent-avatar-title">头像设置</div>
                   <button
-                    v-for="option in avatarIconOptions"
-                    :key="option.name"
-                    class="agent-avatar-option"
-                    :class="{ active: form.icon_name === option.name }"
+                    class="agent-avatar-toggle"
                     type="button"
-                    :title="option.label"
-                    @click="selectAvatarIcon(option)"
+                    :aria-expanded="avatarPanelVisible"
+                    @click="avatarPanelVisible = !avatarPanelVisible"
                   >
-                    <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text"
-                      >Aa</span
-                    >
-                    <svg v-else class="agent-avatar-option-icon" viewBox="0 0 24 24">
-                      <path
-                        v-for="(path, index) in option.paths"
-                        :key="`${option.name}-${index}`"
-                        :d="path"
+                    {{ avatarPanelVisible ? '收起' : '设置' }}
+                  </button>
+                </div>
+                <div class="agent-avatar-preview" :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })">
+                  <span v-if="form.icon_name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
+                  <svg
+                    v-else-if="getAvatarIconOption(form.icon_name)"
+                    class="agent-avatar-option-icon"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      v-for="(path, index) in getAvatarIconOption(form.icon_name).paths"
+                      :key="`${form.icon_name}-${index}`"
+                      :d="path"
+                    />
+                  </svg>
+                  <span v-else class="agent-avatar-option-text">Aa</span>
+                </div>
+                <div v-show="avatarPanelVisible" class="agent-avatar-panel">
+                  <div class="agent-avatar-section">
+                    <div class="agent-avatar-section-title">头像图标</div>
+                    <div class="agent-avatar-options">
+                      <button
+                        v-for="option in avatarIconOptions"
+                        :key="option.name"
+                        class="agent-avatar-option"
+                        :class="{ active: form.icon_name === option.name }"
+                        type="button"
+                        :title="option.label"
+                        @click="selectAvatarIcon(option)"
+                      >
+                        <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text"
+                          >Aa</span
+                        >
+                        <svg v-else class="agent-avatar-option-icon" viewBox="0 0 24 24">
+                          <path
+                            v-for="(path, index) in option.paths"
+                            :key="`${option.name}-${index}`"
+                            :d="path"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="agent-avatar-section">
+                    <div class="agent-avatar-section-title">头像颜色</div>
+                    <div class="agent-avatar-colors">
+                      <button
+                        v-for="color in avatarColorOptions"
+                        :key="color || 'default'"
+                        class="agent-avatar-color"
+                        :class="{ active: (form.icon_color || '') === (color || '') }"
+                        type="button"
+                        :title="color ? color : '默认'"
+                        :style="color ? { background: color } : {}"
+                        @click="selectAvatarColor(color)"
+                      >
+                        <span v-if="!color" class="agent-avatar-color-text">默认</span>
+                      </button>
+                    </div>
+                    <div class="agent-avatar-custom">
+                      <input
+                        class="agent-avatar-custom-input"
+                        type="color"
+                        :value="customColor || '#6ad9ff'"
+                        @input="updateCustomColor($event.target.value)"
                       />
-                    </svg>
-                  </button>
+                      <input
+                        class="agent-avatar-custom-text"
+                        type="text"
+                        :value="customColor"
+                        placeholder="自定义颜色，例如 #6ad9ff"
+                        @input="updateCustomColor($event.target.value)"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="agent-avatar-section">
-                <div class="agent-avatar-section-title">颜色</div>
-                <div class="agent-avatar-colors">
-                  <button
-                    v-for="color in avatarColorOptions"
-                    :key="color || 'default'"
-                    class="agent-avatar-color"
-                    :class="{ active: (form.icon_color || '') === (color || '') }"
-                    type="button"
-                    :title="color ? color : '默认'"
-                    :style="color ? { background: color } : {}"
-                    @click="selectAvatarColor(color)"
-                  >
-                    <span v-if="!color" class="agent-avatar-color-text">默认</span>
-                  </button>
+              <div class="agent-share-card">
+                <div class="agent-share-title">共享设置</div>
+                <div class="agent-share-row">
+                  <el-switch v-model="form.is_shared" />
+                  <span>共享给同等级用户</span>
                 </div>
               </div>
-            </div>
-          </el-form-item>
-          <el-form-item label="共享设置">
-            <div class="agent-share-row">
-              <el-switch v-model="form.is_shared" />
-              <span>共享给同等级用户</span>
             </div>
           </el-form-item>
           <el-form-item label="挂载工具与技能">
@@ -356,6 +402,8 @@ const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref([]);
 const waitingAgentIds = ref([]);
+const avatarPanelVisible = ref(false);
+const customColor = ref('');
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
@@ -403,6 +451,41 @@ const avatarIconOptions = [
     name: 'chart',
     label: '分析',
     paths: ['M4 19V5', 'M4 19h16', 'M10 19V9', 'M16 19V7']
+  },
+  {
+    name: 'doc',
+    label: '文档',
+    paths: ['M6 3h8l4 4v14H6z', 'M14 3v4h4', 'M8 11h8', 'M8 15h6']
+  },
+  {
+    name: 'pen',
+    label: '写作',
+    paths: ['M4 20h4l10-10-4-4L4 16v4z', 'M13.5 6.5L17 10']
+  },
+  {
+    name: 'calendar',
+    label: '日程',
+    paths: ['M7 4v3', 'M17 4v3', 'M5 7h14', 'M5 7h14v12H5z', 'M9 11h2', 'M13 11h2']
+  },
+  {
+    name: 'briefcase',
+    label: '办公',
+    paths: ['M9 7V5h6v2', 'M4 8h16v11H4z', 'M4 12h16']
+  },
+  {
+    name: 'clipboard',
+    label: '清单',
+    paths: ['M9 4h6v2H9z', 'M7 6h10v14H7z', 'M9 10h6', 'M9 14h6']
+  },
+  {
+    name: 'book',
+    label: '知识',
+    paths: ['M4 5h8v14H4z', 'M12 5h8v14h-8z', 'M12 5v14']
+  },
+  {
+    name: 'check',
+    label: '校验',
+    paths: ['M5 13l4 4L19 7']
   },
   {
     name: 'shield',
@@ -664,12 +747,20 @@ const selectAvatarIcon = (option) => {
 
 const selectAvatarColor = (color) => {
   form.icon_color = color || '';
+  customColor.value = color || '';
+};
+
+const updateCustomColor = (value) => {
+  const next = String(value || '').trim();
+  form.icon_color = next;
+  customColor.value = next;
 };
 
 const applyIconToForm = (value) => {
   const config = getIconConfig(value);
   form.icon_name = config.name;
   form.icon_color = config.color || '';
+  customColor.value = form.icon_color || '';
 };
 
 const resetForm = () => {
@@ -679,6 +770,8 @@ const resetForm = () => {
   form.system_prompt = '';
   form.icon_name = DEFAULT_ICON_NAME;
   form.icon_color = '';
+  customColor.value = '';
+  avatarPanelVisible.value = false;
   applyDefaultTools();
   editingId.value = '';
 };
@@ -745,6 +838,7 @@ const openEditDialog = async (agent) => {
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
   applyIconToForm(agent.icon);
+  avatarPanelVisible.value = false;
   editingId.value = agent.id;
   dialogVisible.value = true;
 };

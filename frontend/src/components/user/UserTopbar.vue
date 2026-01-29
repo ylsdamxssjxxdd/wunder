@@ -5,27 +5,6 @@
       <div class="brand-meta">
         <div class="brand-title-row">
           <div class="brand-title">{{ title }}</div>
-          <div v-if="showSearch" class="portal-search topbar-search">
-            <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M16.5 16.5L21 21" />
-            </svg>
-            <input
-              :value="search"
-              type="text"
-              :placeholder="searchPlaceholder"
-              @input="updateSearch"
-            />
-            <button
-              v-if="search"
-              class="portal-search-clear"
-              type="button"
-              aria-label="清空搜索"
-              @click="clearSearch"
-            >
-              ×
-            </button>
-          </div>
         </div>
         <div class="brand-sub">
           <span>{{ subtitle }}</span>
@@ -54,10 +33,33 @@
           @click="handleOpenProfile"
         >
           <div class="user-name">{{ userName }}</div>
-          <div class="user-level">等级 {{ userLevel }}</div>
+          <div class="user-level">单位 {{ userUnitLabel }}</div>
         </button>
         <button class="logout-btn" type="button" aria-label="退出登录" @click="handleLogout">
           退出
+        </button>
+      </div>
+    </div>
+    <div v-if="showSearch" class="user-topbar-center">
+      <div class="portal-search topbar-search user-topbar-search">
+        <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M16.5 16.5L21 21" />
+        </svg>
+        <input
+          :value="search"
+          type="text"
+          :placeholder="searchPlaceholder"
+          @input="updateSearch"
+        />
+        <button
+          v-if="search"
+          class="portal-search-clear"
+          type="button"
+          aria-label="清空搜索"
+          @click="clearSearch"
+        >
+          ×
         </button>
       </div>
     </div>
@@ -117,7 +119,10 @@ const navItems = computed(() => {
 });
 
 const userName = computed(() => authStore.user?.username || '访客');
-const userLevel = computed(() => authStore.user?.access_level || '-');
+const userUnitLabel = computed(() => {
+  const unit = authStore.user?.unit;
+  return unit?.path_name || unit?.pathName || unit?.name || authStore.user?.unit_id || '-';
+});
 
 const updateSearch = (event) => {
   emit('update:search', event.target.value);

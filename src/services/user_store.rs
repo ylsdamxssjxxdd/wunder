@@ -1,6 +1,7 @@
+use crate::org_units;
 use crate::storage::{
-    ChatSessionRecord, SessionLockRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
-    UserAgentRecord, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -14,9 +15,19 @@ use uuid::Uuid;
 const DEFAULT_TOKEN_TTL_S: i64 = 7 * 24 * 3600;
 const DEFAULT_ADMIN_USER_ID: &str = "admin";
 const DEFAULT_ADMIN_PASSWORD: &str = "admin";
-const DEFAULT_DAILY_QUOTA_A: i64 = 10_000;
-const DEFAULT_DAILY_QUOTA_B: i64 = 1_000;
-const DEFAULT_DAILY_QUOTA_C: i64 = 100;
+const DEFAULT_DAILY_QUOTA_L1: i64 = 10_000;
+const DEFAULT_DAILY_QUOTA_L2: i64 = 5_000;
+const DEFAULT_DAILY_QUOTA_L3: i64 = 1_000;
+const DEFAULT_DAILY_QUOTA_L4: i64 = 100;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserUnitProfile {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub path_name: String,
+    pub level: i32,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserProfile {
@@ -26,6 +37,8 @@ pub struct UserProfile {
     pub roles: Vec<String>,
     pub status: String,
     pub access_level: String,
+    pub unit_id: Option<String>,
+    pub unit: Option<UserUnitProfile>,
     pub daily_quota: i64,
     pub daily_quota_used: i64,
     pub daily_quota_date: Option<String>,
@@ -76,6 +89,7 @@ impl UserStore {
             None,
             DEFAULT_ADMIN_PASSWORD,
             Some("A"),
+            None,
             vec!["admin".to_string()],
             "active",
             false,
@@ -112,11 +126,12 @@ impl UserStore {
         }
     }
 
-    pub fn default_daily_quota(access_level: &str) -> i64 {
-        match access_level.trim().to_uppercase().as_str() {
-            "B" => DEFAULT_DAILY_QUOTA_B,
-            "C" => DEFAULT_DAILY_QUOTA_C,
-            _ => DEFAULT_DAILY_QUOTA_A,
+    pub fn default_daily_quota_by_level(level: Option<i32>) -> i64 {
+        match level.unwrap_or(1) {
+            2 => DEFAULT_DAILY_QUOTA_L2,
+            3 => DEFAULT_DAILY_QUOTA_L3,
+            4 => DEFAULT_DAILY_QUOTA_L4,
+            _ => DEFAULT_DAILY_QUOTA_L1,
         }
     }
 
@@ -148,6 +163,20 @@ impl UserStore {
     }
 
     pub fn to_profile(user: &UserAccountRecord) -> UserProfile {
+        Self::to_profile_with_unit(user, None)
+    }
+
+    pub fn to_profile_with_unit(
+        user: &UserAccountRecord,
+        unit: Option<&OrgUnitRecord>,
+    ) -> UserProfile {
+        let unit_profile = unit.map(|unit| UserUnitProfile {
+            id: unit.unit_id.clone(),
+            name: unit.name.clone(),
+            path: unit.path.clone(),
+            path_name: unit.path_name.clone(),
+            level: unit.level,
+        });
         UserProfile {
             id: user.user_id.clone(),
             username: user.username.clone(),
@@ -155,6 +184,8 @@ impl UserStore {
             roles: user.roles.clone(),
             status: user.status.clone(),
             access_level: user.access_level.clone(),
+            unit_id: user.unit_id.clone(),
+            unit: unit_profile,
             daily_quota: user.daily_quota,
             daily_quota_used: user.daily_quota_used,
             daily_quota_date: user.daily_quota_date.clone(),
@@ -194,10 +225,28 @@ impl UserStore {
     pub fn list_users(
         &self,
         keyword: Option<&str>,
+        unit_ids: Option<&[String]>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)> {
-        self.storage.list_user_accounts(keyword, offset, limit)
+        self.storage
+            .list_user_accounts(keyword, unit_ids, offset, limit)
+    }
+
+    pub fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>> {
+        self.storage.list_org_units()
+    }
+
+    pub fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>> {
+        self.storage.get_org_unit(unit_id)
+    }
+
+    pub fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()> {
+        self.storage.upsert_org_unit(record)
+    }
+
+    pub fn delete_org_unit(&self, unit_id: &str) -> Result<i64> {
+        self.storage.delete_org_unit(unit_id)
     }
 
     pub fn create_user(
@@ -206,6 +255,7 @@ impl UserStore {
         email: Option<String>,
         password: &str,
         access_level: Option<&str>,
+        unit_id: Option<String>,
         roles: Vec<String>,
         status: &str,
         is_demo: bool,
@@ -230,6 +280,7 @@ impl UserStore {
         }
         let now = now_ts();
         let access_level = Self::normalize_access_level(access_level);
+        let (unit_id, unit_level) = self.resolve_unit_for_create(unit_id.as_deref())?;
         let record = UserAccountRecord {
             user_id: user_id.clone(),
             username: user_id.clone(),
@@ -242,7 +293,8 @@ impl UserStore {
             },
             status: status.trim().to_string(),
             access_level: access_level.clone(),
-            daily_quota: Self::default_daily_quota(&access_level),
+            unit_id,
+            daily_quota: Self::default_daily_quota_by_level(unit_level),
             daily_quota_used: 0,
             daily_quota_date: None,
             is_demo,
@@ -252,6 +304,27 @@ impl UserStore {
         };
         self.storage.upsert_user_account(&record)?;
         Ok(record)
+    }
+
+    fn resolve_unit_for_create(
+        &self,
+        unit_id: Option<&str>,
+    ) -> Result<(Option<String>, Option<i32>)> {
+        let cleaned = unit_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let Some(cleaned) = cleaned {
+            let unit = self
+                .storage
+                .get_org_unit(cleaned)?
+                .ok_or_else(|| anyhow!("unit not found"))?;
+            return Ok((Some(unit.unit_id), Some(unit.level)));
+        }
+        let units = self.storage.list_org_units()?;
+        if let Some(default_unit) = org_units::resolve_default_root_unit(&units) {
+            return Ok((Some(default_unit.unit_id), Some(default_unit.level)));
+        }
+        Ok((None, None))
     }
 
     pub fn update_user(&self, record: &UserAccountRecord) -> Result<()> {
@@ -352,6 +425,7 @@ impl UserStore {
                 Some(format!("{username}@demo.local")),
                 &Uuid::new_v4().simple().to_string(),
                 Some("A"),
+                None,
                 vec!["user".to_string()],
                 "active",
                 true,

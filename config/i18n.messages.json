@@ -355,6 +355,38 @@
     "en-US": "Daily quota reached. Please try again tomorrow or contact an administrator.",
     "zh-CN": "今日额度已用完，请明日再试或联系管理员调整。"
   },
+  "error.permission_denied": {
+    "en-US": "Permission denied",
+    "zh-CN": "权限不足"
+  },
+  "error.org_unit_not_found": {
+    "en-US": "Org unit not found",
+    "zh-CN": "单位不存在"
+  },
+  "error.org_unit_level_exceeded": {
+    "en-US": "Org unit level exceeds the maximum depth",
+    "zh-CN": "单位层级不能超过4级"
+  },
+  "error.org_unit_parent_required": {
+    "en-US": "Parent org unit is required",
+    "zh-CN": "需要指定上级单位"
+  },
+  "error.org_unit_required": {
+    "en-US": "Org unit is required",
+    "zh-CN": "需要指定单位"
+  },
+  "error.org_unit_has_children": {
+    "en-US": "Org unit has child units",
+    "zh-CN": "单位仍有下级单位"
+  },
+  "error.org_unit_has_users": {
+    "en-US": "Org unit still has users",
+    "zh-CN": "单位仍有用户"
+  },
+  "error.org_unit_cycle_not_allowed": {
+    "en-US": "Org unit cannot be moved under its descendant",
+    "zh-CN": "单位不能移动到本身下级"
+  },
   "error.zip_invalid": {
     "en-US": "Invalid archive format",
     "zh-CN": "压缩包格式错误"

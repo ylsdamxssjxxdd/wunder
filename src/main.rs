@@ -15,8 +15,8 @@ pub use core::{
 pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, attachment, doc2md, history, knowledge, llm, mcp, memory, prompting, skills, tools,
-    user_access, user_store, user_tools, workspace,
+    a2a_store, attachment, doc2md, history, knowledge, llm, mcp, memory, org_units, prompting,
+    skills, tools, user_access, user_store, user_tools, workspace,
 };
 
 use axum::body::Body;
@@ -286,6 +286,21 @@ async fn api_key_guard(
         if let Ok(Some(user)) = state.user_store.authenticate_token(&token) {
             if crate::user_store::UserStore::is_admin(&user) {
                 return Ok(next.run(request).await);
+            }
+            if auth::is_leader_path(path) {
+                let units = match state.user_store.list_org_units() {
+                    Ok(units) => units,
+                    Err(err) => {
+                        let message = format!("org unit lookup failed: {err}");
+                        return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
+                    }
+                };
+                if units
+                    .iter()
+                    .any(|unit| unit.leader_ids.iter().any(|id| id == &user.user_id))
+                {
+                    return Ok(next.run(request).await);
+                }
             }
         }
     }

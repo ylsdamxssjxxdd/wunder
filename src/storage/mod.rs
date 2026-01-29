@@ -21,6 +21,7 @@ pub struct UserAccountRecord {
     pub roles: Vec<String>,
     pub status: String,
     pub access_level: String,
+    pub unit_id: Option<String>,
     pub daily_quota: i64,
     pub daily_quota_used: i64,
     pub daily_quota_date: Option<String>,
@@ -28,6 +29,20 @@ pub struct UserAccountRecord {
     pub created_at: f64,
     pub updated_at: f64,
     pub last_login_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OrgUnitRecord {
+    pub unit_id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub level: i32,
+    pub path: String,
+    pub path_name: String,
+    pub sort_order: i64,
+    pub leader_ids: Vec<String>,
+    pub created_at: f64,
+    pub updated_at: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -263,10 +278,16 @@ pub trait StorageBackend: Send + Sync {
     fn list_user_accounts(
         &self,
         keyword: Option<&str>,
+        unit_ids: Option<&[String]>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)>;
     fn delete_user_account(&self, user_id: &str) -> Result<i64>;
+
+    fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>>;
+    fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>>;
+    fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()>;
+    fn delete_org_unit(&self, unit_id: &str) -> Result<i64>;
 
     fn create_user_token(&self, record: &UserTokenRecord) -> Result<()>;
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;

@@ -8,6 +8,7 @@ use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
+use crate::org_units;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
 use crate::throughput::ThroughputManager;
@@ -57,6 +58,8 @@ impl AppState {
             Arc::new(UserToolStore::new(&config).context("用户工具目录初始化失败")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
+        org_units::seed_org_units_if_empty(user_store.as_ref())
+            .context("Failed to seed org unit structure")?;
         user_store
             .ensure_default_admin()
             .context("Failed to ensure default admin account")?;

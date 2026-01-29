@@ -1,7 +1,8 @@
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockRecord, SessionLockStatus, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord,
+    UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -255,12 +256,28 @@ impl PostgresStorage {
             )?;
         }
         if quota_added {
-            conn.execute(
-                "UPDATE user_accounts SET daily_quota = CASE UPPER(access_level) \
-                 WHEN 'B' THEN 1000 WHEN 'C' THEN 100 ELSE 10000 END",
-                &[],
-            )?;
+            conn.execute("UPDATE user_accounts SET daily_quota = 10000", &[])?;
         }
+        Ok(())
+    }
+
+    fn ensure_user_account_unit_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_accounts'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("unit_id") {
+            conn.execute("ALTER TABLE user_accounts ADD COLUMN unit_id TEXT", &[])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit ON user_accounts (unit_id)",
+            &[],
+        );
         Ok(())
     }
 
@@ -598,6 +615,7 @@ impl StorageBackend for PostgresStorage {
                   roles TEXT NOT NULL,
                   status TEXT NOT NULL,
                   access_level TEXT NOT NULL,
+                  unit_id TEXT,
                   daily_quota BIGINT NOT NULL DEFAULT 10000,
                   daily_quota_used BIGINT NOT NULL DEFAULT 0,
                   daily_quota_date TEXT,
@@ -608,6 +626,24 @@ impl StorageBackend for PostgresStorage {
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_email
                   ON user_accounts (email);
+                CREATE INDEX IF NOT EXISTS idx_user_accounts_unit
+                  ON user_accounts (unit_id);
+                CREATE TABLE IF NOT EXISTS org_units (
+                  unit_id TEXT PRIMARY KEY,
+                  parent_id TEXT,
+                  name TEXT NOT NULL,
+                  level INTEGER NOT NULL,
+                  path TEXT NOT NULL,
+                  path_name TEXT NOT NULL,
+                  sort_order BIGINT NOT NULL DEFAULT 0,
+                  leader_ids TEXT NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_org_units_parent
+                  ON org_units (parent_id);
+                CREATE INDEX IF NOT EXISTS idx_org_units_path
+                  ON org_units (path);
                 CREATE TABLE IF NOT EXISTS user_tokens (
                   token TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -668,6 +704,7 @@ impl StorageBackend for PostgresStorage {
                 Ok(_) => {
                     self.ensure_monitor_defaults(&mut conn)?;
                     self.ensure_user_account_quota_columns(&mut conn)?;
+                    self.ensure_user_account_unit_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
@@ -2195,11 +2232,11 @@ impl StorageBackend for PostgresStorage {
         let roles = Self::string_list_to_json(&record.roles);
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, \
+            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
              daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
              ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
-             roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, \
+             roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, unit_id = EXCLUDED.unit_id, \
              daily_quota = EXCLUDED.daily_quota, daily_quota_used = EXCLUDED.daily_quota_used, daily_quota_date = EXCLUDED.daily_quota_date, \
              is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
             &[
@@ -2210,6 +2247,7 @@ impl StorageBackend for PostgresStorage {
                 &roles,
                 &record.status,
                 &record.access_level,
+                &record.unit_id,
                 &record.daily_quota,
                 &record.daily_quota_used,
                 &record.daily_quota_date,
@@ -2230,7 +2268,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
              is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = $1",
             &[&cleaned],
         )?;
@@ -2242,13 +2280,14 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_date: row.get(9),
-            is_demo: row.get::<_, i32>(10) != 0,
-            created_at: row.get(11),
-            updated_at: row.get(12),
-            last_login_at: row.get(13),
+            unit_id: row.get(7),
+            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            daily_quota_date: row.get(10),
+            is_demo: row.get::<_, i32>(11) != 0,
+            created_at: row.get(12),
+            updated_at: row.get(13),
+            last_login_at: row.get(14),
         }))
     }
 
@@ -2260,7 +2299,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
              is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = $1",
             &[&cleaned],
         )?;
@@ -2272,13 +2311,14 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_date: row.get(9),
-            is_demo: row.get::<_, i32>(10) != 0,
-            created_at: row.get(11),
-            updated_at: row.get(12),
-            last_login_at: row.get(13),
+            unit_id: row.get(7),
+            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            daily_quota_date: row.get(10),
+            is_demo: row.get::<_, i32>(11) != 0,
+            created_at: row.get(12),
+            updated_at: row.get(13),
+            last_login_at: row.get(14),
         }))
     }
 
@@ -2290,7 +2330,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
              is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = $1",
             &[&cleaned],
         )?;
@@ -2302,19 +2342,21 @@ impl StorageBackend for PostgresStorage {
             roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
             status: row.get(5),
             access_level: row.get(6),
-            daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_date: row.get(9),
-            is_demo: row.get::<_, i32>(10) != 0,
-            created_at: row.get(11),
-            updated_at: row.get(12),
-            last_login_at: row.get(13),
+            unit_id: row.get(7),
+            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            daily_quota_date: row.get(10),
+            is_demo: row.get::<_, i32>(11) != 0,
+            created_at: row.get(12),
+            updated_at: row.get(13),
+            last_login_at: row.get(14),
         }))
     }
 
     fn list_user_accounts(
         &self,
         keyword: Option<&str>,
+        unit_ids: Option<&[String]>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)> {
@@ -2323,47 +2365,113 @@ impl StorageBackend for PostgresStorage {
         let cleaned_keyword = keyword
             .map(|value| value.trim())
             .filter(|value| !value.is_empty());
-        let total: i64 = if let Some(keyword) = cleaned_keyword {
-            let pattern = format!("%{keyword}%");
-            conn.query_one(
-                "SELECT COUNT(*) FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1",
-                &[&pattern],
-            )?
-            .get(0)
-        } else {
-            conn.query_one("SELECT COUNT(*) FROM user_accounts", &[])?
-                .get(0)
-        };
+        let unit_ids = unit_ids
+            .filter(|ids| !ids.is_empty())
+            .map(|ids| ids.to_vec());
 
-        let rows = if let Some(keyword) = cleaned_keyword {
-            let pattern = format!("%{keyword}%");
-            if limit > 0 {
-                conn.query(
-                    "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
-                     is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 \
-                     ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-                    &[&pattern, &limit, &offset.max(0)],
+        let total: i64 = match (&cleaned_keyword, unit_ids.as_ref()) {
+            (Some(keyword), Some(unit_ids)) => {
+                let pattern = format!("%{keyword}%");
+                conn.query_one(
+                    "SELECT COUNT(*) FROM user_accounts WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2)",
+                    &[&pattern, unit_ids],
                 )?
-            } else {
-                conn.query(
-                    "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
-                     is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1 \
-                     ORDER BY created_at DESC",
+                .get(0)
+            }
+            (Some(keyword), None) => {
+                let pattern = format!("%{keyword}%");
+                conn.query_one(
+                    "SELECT COUNT(*) FROM user_accounts WHERE username ILIKE $1 OR email ILIKE $1",
                     &[&pattern],
                 )?
+                .get(0)
             }
-        } else if limit > 0 {
-            conn.query(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
-                 is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-                &[&limit, &offset.max(0)],
-            )?
-        } else {
-            conn.query(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
-                 is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC",
-                &[],
-            )?
+            (None, Some(unit_ids)) => conn
+                .query_one(
+                    "SELECT COUNT(*) FROM user_accounts WHERE unit_id = ANY($1)",
+                    &[unit_ids],
+                )?
+                .get(0),
+            (None, None) => conn
+                .query_one("SELECT COUNT(*) FROM user_accounts", &[])?
+                .get(0),
+        };
+
+        let rows = match (&cleaned_keyword, unit_ids.as_ref()) {
+            (Some(keyword), Some(unit_ids)) => {
+                let pattern = format!("%{keyword}%");
+                if limit > 0 {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
+                         ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+                        &[&pattern, unit_ids, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
+                         ORDER BY created_at DESC",
+                        &[&pattern, unit_ids],
+                    )?
+                }
+            }
+            (Some(keyword), None) => {
+                let pattern = format!("%{keyword}%");
+                if limit > 0 {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE username ILIKE $1 OR email ILIKE $1 \
+                         ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                        &[&pattern, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE username ILIKE $1 OR email ILIKE $1 \
+                         ORDER BY created_at DESC",
+                        &[&pattern],
+                    )?
+                }
+            }
+            (None, Some(unit_ids)) => {
+                if limit > 0 {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE unit_id = ANY($1) \
+                         ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                        &[unit_ids, &limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         WHERE unit_id = ANY($1) ORDER BY created_at DESC",
+                        &[unit_ids],
+                    )?
+                }
+            }
+            (None, None) => {
+                if limit > 0 {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts \
+                         ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                        &[&limit, &offset.max(0)],
+                    )?
+                } else {
+                    conn.query(
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                         is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC",
+                        &[],
+                    )?
+                }
+            }
         };
 
         let mut output = Vec::new();
@@ -2376,13 +2484,14 @@ impl StorageBackend for PostgresStorage {
                 roles: Self::parse_string_list(row.get::<_, Option<String>>(4)),
                 status: row.get(5),
                 access_level: row.get(6),
-                daily_quota: row.get::<_, Option<i64>>(7).unwrap_or(0),
-                daily_quota_used: row.get::<_, Option<i64>>(8).unwrap_or(0),
-                daily_quota_date: row.get(9),
-                is_demo: row.get::<_, i32>(10) != 0,
-                created_at: row.get(11),
-                updated_at: row.get(12),
-                last_login_at: row.get(13),
+                unit_id: row.get(7),
+                daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
+                daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
+                daily_quota_date: row.get(10),
+                is_demo: row.get::<_, i32>(11) != 0,
+                created_at: row.get(12),
+                updated_at: row.get(13),
+                last_login_at: row.get(14),
             });
         }
         Ok((output, total))
@@ -2396,6 +2505,95 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM user_accounts WHERE user_id = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at \
+             FROM org_units ORDER BY path, sort_order, name",
+            &[],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(OrgUnitRecord {
+                unit_id: row.get(0),
+                parent_id: row.get(1),
+                name: row.get(2),
+                level: row.get(3),
+                path: row.get(4),
+                path_name: row.get(5),
+                sort_order: row.get(6),
+                leader_ids: Self::parse_string_list(row.get::<_, Option<String>>(7)),
+                created_at: row.get(8),
+                updated_at: row.get(9),
+            });
+        }
+        Ok(output)
+    }
+
+    fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = unit_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at \
+             FROM org_units WHERE unit_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| OrgUnitRecord {
+            unit_id: row.get(0),
+            parent_id: row.get(1),
+            name: row.get(2),
+            level: row.get(3),
+            path: row.get(4),
+            path_name: row.get(5),
+            sort_order: row.get(6),
+            leader_ids: Self::parse_string_list(row.get::<_, Option<String>>(7)),
+            created_at: row.get(8),
+            updated_at: row.get(9),
+        }))
+    }
+
+    fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let leader_ids = Self::string_list_to_json(&record.leader_ids);
+        conn.execute(
+            "INSERT INTO org_units (unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT(unit_id) DO UPDATE SET parent_id = EXCLUDED.parent_id, name = EXCLUDED.name, level = EXCLUDED.level, \
+             path = EXCLUDED.path, path_name = EXCLUDED.path_name, sort_order = EXCLUDED.sort_order, leader_ids = EXCLUDED.leader_ids, \
+             updated_at = EXCLUDED.updated_at",
+            &[
+                &record.unit_id,
+                &record.parent_id,
+                &record.name,
+                &record.level,
+                &record.path,
+                &record.path_name,
+                &record.sort_order,
+                &leader_ids,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn delete_org_unit(&self, unit_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = unit_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute("DELETE FROM org_units WHERE unit_id = $1", &[&cleaned])?;
         Ok(affected as i64)
     }
 

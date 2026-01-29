@@ -42,6 +42,10 @@ pub fn is_admin_path(path: &str) -> bool {
     true
 }
 
+pub fn is_leader_path(path: &str) -> bool {
+    path.starts_with("/wunder/admin/org_units") || path.starts_with("/wunder/admin/user_accounts")
+}
+
 pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     // 兼容 X-API-Key 与 Authorization: Bearer 的两种格式。
     if let Some(value) = headers.get("x-api-key") {
@@ -105,5 +109,15 @@ mod tests {
         assert!(is_admin_path("/wunder"));
         assert!(is_admin_path("/wunder/mcp"));
         assert!(is_admin_path("/a2a"));
+    }
+
+    #[test]
+    fn test_is_leader_path() {
+        assert!(is_leader_path("/wunder/admin/org_units"));
+        assert!(is_leader_path("/wunder/admin/org_units/root"));
+        assert!(is_leader_path("/wunder/admin/user_accounts"));
+        assert!(is_leader_path("/wunder/admin/user_accounts/abc"));
+        assert!(!is_leader_path("/wunder/admin/users"));
+        assert!(!is_leader_path("/wunder/chat/sessions"));
     }
 }

@@ -188,6 +188,7 @@ fn build_perf_user_record(user_id: &str) -> UserAccountRecord {
         roles: Vec::new(),
         status: "active".to_string(),
         access_level: "A".to_string(),
+        unit_id: None,
         daily_quota: 0,
         daily_quota_used: 0,
         daily_quota_date: None,

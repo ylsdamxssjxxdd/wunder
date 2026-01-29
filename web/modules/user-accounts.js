@@ -5,6 +5,7 @@ import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260124-01";
+import { ensureOrgUnitsLoaded, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
 
@@ -65,7 +66,7 @@ const ensureUserAccountElements = () => {
     "userAccountFormUsername",
     "userAccountFormEmail",
     "userAccountFormPassword",
-    "userAccountFormAccess",
+    "userAccountFormUnit",
     "userAccountFormStatus",
     "userAccountSettingsModal",
     "userAccountSettingsClose",
@@ -76,12 +77,16 @@ const ensureUserAccountElements = () => {
     "userAccountQuotaMeta",
     "userAccountSettingsPasswordInput",
     "userAccountSettingsPasswordSave",
+    "userAccountSettingsUnitSelect",
+    "userAccountSettingsUnitSave",
     "userAccountSettingsRolesInput",
     "userAccountSettingsRolesSave",
     "userAccountSettingsDelete",
     "userAccountToolDefault",
     "userAccountToolList",
     "userAccountToolEmpty",
+    "userAccountToolBlockedList",
+    "userAccountToolBlockedEmpty",
   ];
   const missing = requiredKeys.filter((key) => !elements[key]);
   if (missing.length) {
@@ -99,6 +104,10 @@ const normalizeUserAccount = (item) => {
     typeof item?.online === "boolean" ? item.online : Number.isFinite(activeSessions) && activeSessions > 0;
   const dailyQuota = Number(item?.daily_quota ?? item?.dailyQuota ?? 0);
   const dailyUsed = Number(item?.daily_quota_used ?? item?.dailyQuotaUsed ?? 0);
+  const unit = item?.unit || item?.unit_profile || null;
+  const unitId = String(item?.unit_id || item?.unitId || unit?.id || unit?.unit_id || "").trim();
+  const unitPath = String(unit?.path_name || unit?.pathName || "").trim();
+  const unitName = String(unit?.name || "").trim();
   let dailyRemaining = Number(item?.daily_quota_remaining ?? item?.dailyQuotaRemaining);
   const safeDailyQuota = Number.isFinite(dailyQuota) ? Math.max(0, Math.floor(dailyQuota)) : 0;
   const safeDailyUsed = Number.isFinite(dailyUsed) ? Math.max(0, Math.floor(dailyUsed)) : 0;
@@ -109,7 +118,10 @@ const normalizeUserAccount = (item) => {
     id,
     username,
     email: item?.email || "",
-    access_level: String(item?.access_level || item?.accessLevel || "A"),
+    unit_id: unitId,
+    unit_name: unitName,
+    unit_path: unitPath,
+    unit_level: Number.isFinite(Number(unit?.level)) ? Number(unit?.level) : null,
     status: String(item?.status || "active"),
     roles: Array.isArray(item?.roles) ? item.roles : [],
     daily_quota: safeDailyQuota,
@@ -129,6 +141,13 @@ const formatLoginTime = (value) => {
     return "-";
   }
   return formatTimestamp(ts * 1000);
+};
+
+const resolveUnitLabel = (user) => {
+  if (!user) {
+    return "-";
+  }
+  return user.unit_path || user.unit_name || user.unit_id || "-";
 };
 
 const formatQuotaValue = (user) => {
@@ -161,6 +180,27 @@ const formatQuotaMeta = (user) => {
     ? Math.max(0, Math.floor(user.daily_quota_remaining))
     : Math.max(total - used, 0);
   return t("userAccounts.modal.settings.quota.meta", { used, remaining, total });
+};
+
+const resolveUnitOptions = () =>
+  getOrgUnitOptions({
+    includeRoot: true,
+    rootLabel: t("userAccounts.unit.default"),
+  });
+
+const syncUnitSelect = (select, selected) => {
+  if (!select) {
+    return;
+  }
+  const options = resolveUnitOptions();
+  select.textContent = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.appendChild(node);
+  });
+  select.value = selected || "";
 };
 
 const resolveUserAccountPageSize = () => {
@@ -203,6 +243,10 @@ const renderUserAccountRows = () => {
     return;
   }
   elements.userAccountEmpty.style.display = "none";
+  const unitOptions = getOrgUnitOptions({
+    includeRoot: true,
+    rootLabel: t("userAccounts.unit.default"),
+  });
   state.userAccounts.list.forEach((user) => {
     const row = document.createElement("tr");
 
@@ -212,20 +256,25 @@ const renderUserAccountRows = () => {
     const emailCell = document.createElement("td");
     emailCell.textContent = user.email || "-";
 
-    const accessCell = document.createElement("td");
-    const accessSelect = document.createElement("select");
-    ["A", "B", "C"].forEach((level) => {
-      const option = document.createElement("option");
-      option.value = level;
-      option.textContent = level;
-      accessSelect.appendChild(option);
-    });
-    accessSelect.value = user.access_level || "A";
-    accessSelect.addEventListener("change", (event) => {
-      event.stopPropagation();
-      updateUserAccount(user.id, { access_level: accessSelect.value });
-    });
-    accessCell.appendChild(accessSelect);
+    const unitCell = document.createElement("td");
+    if (!unitOptions.length) {
+      unitCell.textContent = resolveUnitLabel(user);
+    } else {
+      const unitSelect = document.createElement("select");
+      unitOptions.forEach((option) => {
+        const node = document.createElement("option");
+        node.value = option.value;
+        node.textContent = option.label;
+        unitSelect.appendChild(node);
+      });
+      unitSelect.value = user.unit_id || "";
+      unitSelect.title = resolveUnitLabel(user);
+      unitSelect.addEventListener("change", (event) => {
+        event.stopPropagation();
+        updateUserAccount(user.id, { unit_id: unitSelect.value });
+      });
+      unitCell.appendChild(unitSelect);
+    }
 
     const statusCell = document.createElement("td");
     const statusSelect = document.createElement("select");
@@ -261,7 +310,7 @@ const renderUserAccountRows = () => {
 
     row.appendChild(userCell);
     row.appendChild(emailCell);
-    row.appendChild(accessCell);
+    row.appendChild(unitCell);
     row.appendChild(statusCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);
@@ -288,6 +337,11 @@ export const loadUserAccounts = async () => {
   ensureUserAccountsState();
   if (!ensureUserAccountElements()) {
     return;
+  }
+  try {
+    await ensureOrgUnitsLoaded({ silent: true });
+  } catch (error) {
+    appendLog(t("userAccounts.toast.unitLoadFailed", { message: error.message }));
   }
   state.userAccounts.search = String(elements.userAccountSearchInput.value || "").trim();
   const keyword = getUserAccountSearchKeyword();
@@ -387,7 +441,7 @@ const openCreateModal = () => {
   elements.userAccountFormUsername.value = "";
   elements.userAccountFormEmail.value = "";
   elements.userAccountFormPassword.value = "";
-  elements.userAccountFormAccess.value = "A";
+  syncUnitSelect(elements.userAccountFormUnit, "");
   elements.userAccountFormStatus.value = "active";
   if (elements.userAccountModalTitle) {
     elements.userAccountModalTitle.textContent = t("userAccounts.modal.create.title");
@@ -403,11 +457,12 @@ const submitCreateUser = async () => {
     return;
   }
   const email = String(elements.userAccountFormEmail.value || "").trim();
+  const unitId = String(elements.userAccountFormUnit.value || "").trim();
   const payload = {
     username,
     email: email || null,
     password,
-    access_level: elements.userAccountFormAccess.value || "A",
+    unit_id: unitId || null,
     status: elements.userAccountFormStatus.value || "active",
   };
   const wunderBase = getWunderBase();
@@ -450,6 +505,7 @@ const syncSettingsTarget = (user) => {
   elements.userAccountQuotaInput.value = Number.isFinite(user.daily_quota) ? user.daily_quota : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
   elements.userAccountSettingsPasswordInput.value = "";
+  syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
   elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);
 };
 
@@ -518,6 +574,17 @@ const saveRoles = async () => {
   }
 };
 
+const saveUnit = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const unitId = String(elements.userAccountSettingsUnitSelect.value || "").trim();
+  const ok = await updateUserAccount(settingsTarget.id, { unit_id: unitId });
+  if (ok) {
+    refreshSettingsTarget();
+  }
+};
+
 const buildToolOptions = (list) =>
   (Array.isArray(list) ? list : [])
     .map((item) => {
@@ -553,16 +620,29 @@ const scheduleToolSave = (options = {}) => {
   }, delay);
 };
 
-const renderToolOptions = (groups, selected) => {
-  const list = elements.userAccountToolList;
-  list.textContent = "";
-  if (!groups.length) {
-    elements.userAccountToolEmpty.style.display = "block";
+const setToolListDisabled = (list, disabled) => {
+  if (!list) {
     return;
   }
-  elements.userAccountToolEmpty.style.display = "none";
+  list.classList.toggle("is-disabled", disabled);
+  list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.disabled = disabled;
+  });
+};
+
+const renderToolOptions = (list, empty, groups, selected, options = {}) => {
+  if (!list || !empty) {
+    return;
+  }
+  list.textContent = "";
+  if (!groups.length) {
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
   const selectedSet = new Set(selected || []);
-  const disabled = elements.userAccountToolDefault.checked;
+  const disabled = options.disabled === true;
+  const onChange = options.onChange || (() => scheduleToolSave({ silent: true }));
   groups.forEach((group) => {
     const title = document.createElement("div");
     title.className = "user-account-tool-group-title";
@@ -576,9 +656,7 @@ const renderToolOptions = (groups, selected) => {
       checkbox.value = option.value;
       checkbox.checked = selectedSet.has(option.value);
       checkbox.disabled = disabled;
-      checkbox.addEventListener("change", () => {
-        scheduleToolSave({ silent: true });
-      });
+      checkbox.addEventListener("change", () => onChange());
       const label = document.createElement("label");
       const desc = option.description ? `<span class="muted">${option.description}</span>` : "";
       label.innerHTML = `<strong>${option.label}</strong>${desc}`;
@@ -615,19 +693,15 @@ const loadToolAccess = async (userId) => {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const payload = await response.json();
-  return payload?.data?.allowed_tools ?? null;
+  return {
+    allowed: payload?.data?.allowed_tools ?? null,
+    blocked: payload?.data?.blocked_tools ?? [],
+  };
 };
 
 const syncToolAccessToggle = () => {
   const useDefault = elements.userAccountToolDefault.checked;
-  if (elements.userAccountToolList) {
-    elements.userAccountToolList.classList.toggle("is-disabled", useDefault);
-    elements.userAccountToolList
-      .querySelectorAll('input[type="checkbox"]')
-      .forEach((input) => {
-        input.disabled = useDefault;
-      });
-  }
+  setToolListDisabled(elements.userAccountToolList, useDefault);
 };
 
 const openSettingsModal = async (user) => {
@@ -639,27 +713,48 @@ const openSettingsModal = async (user) => {
   elements.userAccountToolList.textContent = "";
   elements.userAccountToolEmpty.textContent = t("common.loading");
   elements.userAccountToolEmpty.style.display = "block";
+  elements.userAccountToolBlockedList.textContent = "";
+  elements.userAccountToolBlockedEmpty.textContent = t("common.loading");
+  elements.userAccountToolBlockedEmpty.style.display = "block";
   syncToolAccessToggle();
   openModal(elements.userAccountSettingsModal);
   try {
-    const [groups, allowed] = await Promise.all([
+    const [groups, access] = await Promise.all([
       loadToolCatalog(user.id),
       loadToolAccess(user.id),
     ]);
     toolGroupsCache = groups;
+    const allowed = access?.allowed ?? null;
+    const blocked = Array.isArray(access?.blocked) ? access.blocked : [];
     const useDefault = allowed === null;
     elements.userAccountToolDefault.checked = useDefault;
-    renderToolOptions(groups, Array.isArray(allowed) ? allowed : []);
+    renderToolOptions(
+      elements.userAccountToolList,
+      elements.userAccountToolEmpty,
+      groups,
+      Array.isArray(allowed) ? allowed : [],
+      { disabled: useDefault }
+    );
+    renderToolOptions(
+      elements.userAccountToolBlockedList,
+      elements.userAccountToolBlockedEmpty,
+      groups,
+      blocked
+    );
     syncToolAccessToggle();
   } catch (error) {
     notify(t("userAccounts.toast.toolLoadFailed", { message: error.message }), "error");
   }
 };
 
-const collectSelectedTools = () =>
-  Array.from(elements.userAccountToolList.querySelectorAll('input[type="checkbox"]'))
+const collectSelectedTools = (list) => {
+  if (!list) {
+    return [];
+  }
+  return Array.from(list.querySelectorAll('input[type="checkbox"]'))
     .filter((input) => input.checked)
     .map((input) => input.value);
+};
 
 const saveToolAccess = async (options = {}) => {
   if (!settingsTarget?.id) {
@@ -667,14 +762,15 @@ const saveToolAccess = async (options = {}) => {
   }
   const silent = options.silent === true;
   const useDefault = elements.userAccountToolDefault.checked;
-  const allowed = useDefault ? null : collectSelectedTools();
+  const allowed = useDefault ? null : collectSelectedTools(elements.userAccountToolList);
+  const blocked = collectSelectedTools(elements.userAccountToolBlockedList);
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/tool_access`;
   try {
     const response = await fetch(endpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ allowed_tools: allowed }),
+      body: JSON.stringify({ allowed_tools: allowed, blocked_tools: blocked }),
     });
     if (!response.ok) {
       notify(t("userAccounts.toast.toolSaveFailed", { status: response.status }), "error");
@@ -720,6 +816,7 @@ export const initUserAccountsPanel = () => {
   elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountQuotaSave.addEventListener("click", saveQuota);
   elements.userAccountSettingsPasswordSave.addEventListener("click", submitPasswordReset);
+  elements.userAccountSettingsUnitSave.addEventListener("click", saveUnit);
   elements.userAccountSettingsRolesSave.addEventListener("click", saveRoles);
   elements.userAccountSettingsDelete.addEventListener("click", () => {
     requestDeleteUser(settingsTarget?.id, {

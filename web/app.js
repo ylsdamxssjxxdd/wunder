@@ -39,6 +39,7 @@ import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=2026011
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260115-03";
+import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260210-01";
 import {
 
   initMemoryPanel,
@@ -75,7 +76,7 @@ import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
-import { applyAuthHeaders, initAdminAuth } from "./modules/admin-auth.js?v=20260120-01";
+import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-07";
 
@@ -149,6 +150,7 @@ const panelMap = {
 
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
+  orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
 
@@ -428,6 +430,18 @@ const bindNavigation = () => {
         state.panelLoaded.userAccounts = true;
       } catch (error) {
         appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
+      }
+    }
+  });
+
+  elements.navOrgUnits.addEventListener("click", async () => {
+    switchPanel("orgUnits");
+    if (!state.panelLoaded.orgUnits) {
+      try {
+        await loadOrgUnits();
+        state.panelLoaded.orgUnits = true;
+      } catch (error) {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.orgUnits"), message: error.message }));
       }
     }
   });
@@ -737,6 +751,26 @@ const bindNavigation = () => {
 
 };
 
+const applyAuthScopeVisibility = () => {
+  const scope = getAuthScope();
+  if (scope !== "leader") {
+    return;
+  }
+  document.body.classList.add("leader-mode");
+  const allowedNavIds = new Set(["navUserAccounts", "navOrgUnits"]);
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    if (!allowedNavIds.has(btn.id)) {
+      btn.style.display = "none";
+    }
+  });
+  document.querySelectorAll(".nav-group").forEach((group) => {
+    const hasVisible = Array.from(group.querySelectorAll(".nav-btn")).some(
+      (btn) => btn.style.display !== "none"
+    );
+    group.style.display = hasVisible ? "" : "none";
+  });
+};
+
 
 
 // 系统介绍面板：全屏按钮与展示容器绑定
@@ -996,6 +1030,7 @@ const bootstrap = async () => {
 
   initUserManagementPanel();
   initUserAccountsPanel();
+  initOrgUnitsPanel();
 
   initMemoryPanel();
 
@@ -1032,12 +1067,32 @@ const bootstrap = async () => {
   bindSidebarCollapse();
 
   await initAdminAuth();
+  applyAuthScopeVisibility();
   loadAdminDefaults({ silent: true }).catch(() => {});
-
-  const initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
+  const authScope = getAuthScope();
+  const leaderPanels = ["orgUnits", "userAccounts"];
+  let initialPanel = panelMap[APP_CONFIG.defaultPanel] ? APP_CONFIG.defaultPanel : "monitor";
+  if (authScope === "leader") {
+    initialPanel = leaderPanels.includes(initialPanel) ? initialPanel : "orgUnits";
+  }
 
   switchPanel(initialPanel);
   expandActiveNavGroupOnly();
+  if (authScope === "leader") {
+    if (initialPanel === "orgUnits") {
+      loadOrgUnits()
+        .then(() => {
+          state.panelLoaded.orgUnits = true;
+        })
+        .catch(() => {});
+    } else if (initialPanel === "userAccounts") {
+      loadUserAccounts()
+        .then(() => {
+          state.panelLoaded.userAccounts = true;
+        })
+        .catch(() => {});
+    }
+  }
 
   if (initialPanel === "paper" && !state.panelLoaded.paper) {
     initPaperPanel()

@@ -49,6 +49,10 @@
   backdrop-filter: blur(12px);
 }
 
+.user-topbar {
+  flex-wrap: nowrap;
+}
+
 .portal-shell .topbar {
   display: flex;
   align-items: center;
@@ -81,13 +85,6 @@
   gap: 12px;
   flex-wrap: nowrap;
   min-width: 0;
-}
-
-.portal-shell .brand-title-row .topbar-search {
-  margin-left: auto;
-  flex: 0 1 320px;
-  width: min(320px, 100%);
-  min-width: 200px;
 }
 
 .portal-shell .brand-mark {
@@ -247,13 +244,15 @@
 }
 
 .user-topbar-center {
-  flex: 1 1 auto;
+  order: 2;
+  flex: 1 1 360px;
   display: flex;
   justify-content: center;
-  min-width: 0;
+  min-width: 240px;
 }
 
 .user-topbar .topbar-actions {
+  order: 3;
   margin-left: 0;
   flex: 0 0 auto;
 }
@@ -311,8 +310,9 @@
 }
 
 .user-topbar-search {
-  flex: 1 1 280px;
+  flex: 0 1 320px;
   max-width: 360px;
+  min-width: 200px;
 }
 
 .user-topbar-link {

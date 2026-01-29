@@ -1,5 +1,6 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
+use crate::auth;
 use crate::config::Config;
 use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, LspConfig, McpServerConfig};
 use crate::i18n;
@@ -19,9 +20,13 @@ use crate::throughput::{
 };
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use crate::user_store::UserStore;
+use crate::{
+    org_units,
+    storage::{OrgUnitRecord, UserAccountRecord},
+};
 use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{
     routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
@@ -142,6 +147,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/performance/sample",
             post(admin_performance_sample),
+        )
+        .route(
+            "/wunder/admin/org_units",
+            get(admin_org_units_list).post(admin_org_units_create),
+        )
+        .route(
+            "/wunder/admin/org_units/{unit_id}",
+            patch(admin_org_units_update).delete(admin_org_units_delete),
         )
         .route(
             "/wunder/admin/user_accounts",
@@ -302,6 +315,8 @@ async fn admin_lsp_update(
 }
 
 const MAX_LSP_DIAGNOSTICS: usize = 20;
+const ORG_UNIT_NAME_SEPARATOR: &str = " / ";
+const MAX_ORG_UNIT_LEVEL: i32 = 4;
 
 fn format_lsp_diagnostics(diagnostics: &[LspDiagnostic]) -> Option<Value> {
     if diagnostics.is_empty() {
@@ -2334,8 +2349,311 @@ async fn admin_performance_sample(
     Ok(Json(response))
 }
 
+async fn admin_org_units_list(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+) -> Result<Json<Value>, Response> {
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let filtered = filter_units_by_scope(units, actor.scope_unit_ids.as_ref());
+    let tree = org_units::build_unit_tree(&filtered);
+    let items = filtered.iter().map(org_unit_payload).collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items, "tree": tree } })))
+}
+
+async fn admin_org_units_create(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    Json(payload): Json<OrgUnitCreateRequest>,
+) -> Result<Json<Value>, Response> {
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let parent_id = normalize_optional_id(payload.parent_id.as_deref());
+    if actor.scope_unit_ids.is_some() {
+        let Some(parent_id) = parent_id.as_deref() else {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.org_unit_parent_required"),
+            ));
+        };
+        ensure_unit_scope(&actor, Some(parent_id))?;
+    }
+    let parent = parent_id
+        .as_ref()
+        .and_then(|id| units.iter().find(|unit| unit.unit_id == *id));
+    if parent_id.is_some() && parent.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.org_unit_not_found"),
+        ));
+    }
+    let level = parent.map_or(1, |parent| parent.level + 1);
+    if level > MAX_ORG_UNIT_LEVEL {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.org_unit_level_exceeded"),
+        ));
+    }
+    let sort_order = payload
+        .sort_order
+        .unwrap_or_else(|| next_unit_sort_order(&units, parent_id.as_deref()));
+    let leader_ids = normalize_leader_ids(payload.leader_ids);
+    let unit_id = format!("unit_{}", Uuid::new_v4().simple());
+    let path = parent
+        .map(|parent| format!("{}/{}", parent.path, unit_id))
+        .unwrap_or_else(|| unit_id.clone());
+    let path_name = parent
+        .map(|parent| format!("{}{}{}", parent.path_name, ORG_UNIT_NAME_SEPARATOR, name))
+        .unwrap_or_else(|| name.to_string());
+    let now = now_ts();
+    let record = OrgUnitRecord {
+        unit_id: unit_id.clone(),
+        parent_id: parent_id.clone(),
+        name: name.to_string(),
+        level,
+        path,
+        path_name,
+        sort_order,
+        leader_ids,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .user_store
+        .upsert_org_unit(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": org_unit_payload(&record) })))
+}
+
+async fn admin_org_units_update(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    AxumPath(unit_id): AxumPath<String>,
+    Json(payload): Json<OrgUnitUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = unit_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    let mut units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let target_index = units
+        .iter()
+        .position(|unit| unit.unit_id == cleaned)
+        .ok_or_else(|| {
+            error_response(StatusCode::NOT_FOUND, i18n::t("error.org_unit_not_found"))
+        })?;
+    let target = units[target_index].clone();
+    ensure_unit_scope(&actor, Some(&target.unit_id))?;
+
+    let name = payload
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(target.name.as_str())
+        .to_string();
+    let parent_override = if payload.parent_id.is_some() {
+        normalize_optional_id(payload.parent_id.as_deref())
+    } else {
+        None
+    };
+    let parent_id = if payload.parent_id.is_some() {
+        parent_override
+    } else {
+        target.parent_id.clone()
+    };
+    if parent_id.as_deref() == Some(cleaned) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.org_unit_cycle_not_allowed"),
+        ));
+    }
+    if actor.scope_unit_ids.is_some() {
+        if parent_id.is_none() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.org_unit_parent_required"),
+            ));
+        }
+        ensure_unit_scope(&actor, parent_id.as_deref())?;
+    }
+    let parent = parent_id
+        .as_ref()
+        .and_then(|id| units.iter().find(|unit| unit.unit_id == *id));
+    if parent_id.is_some() && parent.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.org_unit_not_found"),
+        ));
+    }
+    if let Some(parent) = parent {
+        if parent.path == target.path || parent.path.starts_with(&format!("{}/", target.path)) {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.org_unit_cycle_not_allowed"),
+            ));
+        }
+    }
+
+    let parent_changed = parent_id != target.parent_id;
+    let name_changed = name != target.name;
+    let sort_order = if let Some(sort_order) = payload.sort_order {
+        sort_order
+    } else if parent_changed {
+        next_unit_sort_order(&units, parent_id.as_deref())
+    } else {
+        target.sort_order
+    };
+    let leader_ids = if payload.leader_ids.is_some() {
+        normalize_leader_ids(payload.leader_ids)
+    } else {
+        target.leader_ids.clone()
+    };
+
+    let now = now_ts();
+    let mut updated_units = Vec::new();
+
+    if parent_changed || name_changed {
+        let old_path = target.path.clone();
+        let old_path_name = target.path_name.clone();
+        let old_level = target.level;
+        let (new_level, new_path, new_path_name) = match parent {
+            Some(parent) => {
+                let level = parent.level + 1;
+                if level > MAX_ORG_UNIT_LEVEL {
+                    return Err(error_response(
+                        StatusCode::BAD_REQUEST,
+                        i18n::t("error.org_unit_level_exceeded"),
+                    ));
+                }
+                (
+                    level,
+                    format!("{}/{}", parent.path, target.unit_id),
+                    format!("{}{}{}", parent.path_name, ORG_UNIT_NAME_SEPARATOR, name),
+                )
+            }
+            None => (1, target.unit_id.clone(), name.clone()),
+        };
+        let level_delta = new_level - old_level;
+        let max_level = units
+            .iter()
+            .filter(|unit| unit.path == old_path || unit.path.starts_with(&format!("{old_path}/")))
+            .map(|unit| unit.level)
+            .max()
+            .unwrap_or(old_level);
+        if max_level + level_delta > MAX_ORG_UNIT_LEVEL {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.org_unit_level_exceeded"),
+            ));
+        }
+        for unit in units.iter_mut() {
+            if unit.path == old_path || unit.path.starts_with(&format!("{old_path}/")) {
+                let suffix = unit.path.strip_prefix(&old_path).unwrap_or("");
+                let suffix_name = unit.path_name.strip_prefix(&old_path_name).unwrap_or("");
+                unit.path = format!("{new_path}{suffix}");
+                unit.path_name = format!("{new_path_name}{suffix_name}");
+                unit.level = (unit.level + level_delta).max(1);
+                unit.updated_at = now;
+                if unit.unit_id == cleaned {
+                    unit.name = name.clone();
+                    unit.parent_id = parent_id.clone();
+                    unit.sort_order = sort_order;
+                    unit.leader_ids = leader_ids.clone();
+                }
+                updated_units.push(unit.clone());
+            }
+        }
+    } else {
+        let mut updated = target.clone();
+        updated.sort_order = sort_order;
+        updated.leader_ids = leader_ids;
+        updated.updated_at = now;
+        updated_units.push(updated);
+    }
+
+    for unit in &updated_units {
+        state
+            .user_store
+            .upsert_org_unit(unit)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    let response_unit = updated_units
+        .iter()
+        .find(|unit| unit.unit_id == cleaned)
+        .cloned()
+        .unwrap_or_else(|| target.clone());
+    Ok(Json(json!({ "data": org_unit_payload(&response_unit) })))
+}
+
+async fn admin_org_units_delete(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    AxumPath(unit_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = unit_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_unit_scope(&actor, Some(cleaned))?;
+    if units
+        .iter()
+        .any(|unit| unit.parent_id.as_deref() == Some(cleaned))
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.org_unit_has_children"),
+        ));
+    }
+    let unit_ids = vec![cleaned.to_string()];
+    let (users, _) = state
+        .user_store
+        .list_users(None, Some(&unit_ids), 0, 1)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !users.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.org_unit_has_users"),
+        ));
+    }
+    state
+        .user_store
+        .delete_org_unit(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "unit_id": cleaned } })))
+}
+
 async fn admin_user_accounts_list(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     Query(query): Query<UserAccountListQuery>,
 ) -> Result<Json<Value>, Response> {
     let keyword = query
@@ -2345,9 +2663,19 @@ async fn admin_user_accounts_list(
         .filter(|value| !value.is_empty());
     let offset = query.offset.unwrap_or(0).max(0);
     let limit = query.limit.unwrap_or(50).max(1).min(200);
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let scoped_unit_ids = actor.scope_unit_ids.as_ref().map(|set| {
+        let mut items = set.iter().cloned().collect::<Vec<_>>();
+        items.sort();
+        items
+    });
     let (users, total) = state
         .user_store
-        .list_users(keyword, offset, limit)
+        .list_users(keyword, scoped_unit_ids.as_deref(), offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let today = UserStore::today_string();
     let active_sessions = state.monitor.list_sessions(true);
@@ -2364,10 +2692,15 @@ async fn admin_user_accounts_list(
         let entry = active_map.entry(user_id.to_string()).or_insert(0);
         *entry += 1;
     }
+    let unit_map = build_unit_map(&units);
     let items = users
         .into_iter()
         .map(|user| {
-            let profile = UserStore::to_profile(&user);
+            let unit = user
+                .unit_id
+                .as_ref()
+                .and_then(|unit_id| unit_map.get(unit_id));
+            let profile = UserStore::to_profile_with_unit(&user, unit);
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
             let quota_total = user.daily_quota.max(0);
             let quota_used = if user.daily_quota_date.as_deref() == Some(today.as_str()) {
@@ -2393,6 +2726,7 @@ async fn admin_user_accounts_list(
 
 async fn admin_user_accounts_create(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     Json(payload): Json<UserAccountCreateRequest>,
 ) -> Result<Json<Value>, Response> {
     let username = payload.username.trim();
@@ -2403,6 +2737,30 @@ async fn admin_user_accounts_create(
             i18n::t("error.content_required"),
         ));
     }
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    if actor.scope_unit_ids.is_some() {
+        let Some(unit_id) = unit_id.as_deref() else {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.org_unit_required"),
+            ));
+        };
+        ensure_unit_scope(&actor, Some(unit_id))?;
+    }
+    if let Some(unit_id) = unit_id.as_deref() {
+        let exists = units.iter().any(|unit| unit.unit_id == unit_id);
+        if !exists {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.org_unit_not_found"),
+            ));
+        }
+    }
     let status = normalize_user_status(payload.status.as_deref());
     let roles = normalize_user_roles(payload.roles);
     let email = normalize_user_email(payload.email);
@@ -2412,17 +2770,25 @@ async fn admin_user_accounts_create(
             username,
             email,
             password,
-            payload.access_level.as_deref(),
+            None,
+            unit_id,
             roles,
             &status,
             payload.is_demo,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": UserStore::to_profile(&record) })))
+    let unit = record
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| units.iter().find(|unit| unit.unit_id == *unit_id));
+    Ok(Json(json!({
+        "data": UserStore::to_profile_with_unit(&record, unit)
+    })))
 }
 
 async fn admin_user_accounts_update(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
     Json(payload): Json<UserAccountUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
@@ -2438,19 +2804,53 @@ async fn admin_user_accounts_update(
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
+    let unit_map = build_unit_map(&units);
+    let previous_level = record
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| unit_map.get(unit_id))
+        .map(|unit| unit.level);
     if let Some(email) = payload.email {
         record.email = normalize_user_email(Some(email));
     }
     if let Some(status) = payload.status {
         record.status = normalize_user_status(Some(&status));
     }
-    if let Some(access_level) = payload.access_level {
-        let normalized = UserStore::normalize_access_level(Some(&access_level));
-        if normalized != record.access_level {
-            let previous_default = UserStore::default_daily_quota(&record.access_level);
-            record.access_level = normalized;
+    if payload.unit_id.is_some() {
+        let next_unit_id = normalize_optional_id(payload.unit_id.as_deref());
+        if actor.scope_unit_ids.is_some() {
+            let Some(unit_id) = next_unit_id.as_deref() else {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.org_unit_required"),
+                ));
+            };
+            ensure_unit_scope(&actor, Some(unit_id))?;
+        }
+        if let Some(unit_id) = next_unit_id.as_deref() {
+            if !unit_map.contains_key(unit_id) {
+                return Err(error_response(
+                    StatusCode::NOT_FOUND,
+                    i18n::t("error.org_unit_not_found"),
+                ));
+            }
+        }
+        if next_unit_id != record.unit_id {
+            let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+            record.unit_id = next_unit_id;
+            let next_level = record
+                .unit_id
+                .as_ref()
+                .and_then(|unit_id| unit_map.get(unit_id))
+                .map(|unit| unit.level);
             if payload.daily_quota.is_none() && record.daily_quota == previous_default {
-                record.daily_quota = UserStore::default_daily_quota(&record.access_level);
+                record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
             }
         }
     }
@@ -2465,11 +2865,18 @@ async fn admin_user_accounts_update(
         .user_store
         .update_user(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": UserStore::to_profile(&record) })))
+    let unit = record
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| unit_map.get(unit_id));
+    Ok(Json(json!({
+        "data": UserStore::to_profile_with_unit(&record, unit)
+    })))
 }
 
 async fn admin_user_accounts_reset_password(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
     Json(payload): Json<UserAccountPasswordResetRequest>,
 ) -> Result<Json<Value>, Response> {
@@ -2487,6 +2894,17 @@ async fn admin_user_accounts_reset_password(
             i18n::t("error.content_required"),
         ));
     }
+    let record = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     state
         .user_store
         .set_password(cleaned, password)
@@ -2498,6 +2916,7 @@ async fn admin_user_accounts_reset_password(
 
 async fn admin_user_accounts_tool_access_get(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let cleaned = user_id.trim();
@@ -2507,17 +2926,17 @@ async fn admin_user_accounts_tool_access_get(
             i18n::t("error.user_id_required"),
         ));
     }
-    let user_exists = state
+    let record = state
         .user_store
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .is_some();
-    if !user_exists {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.user_not_found"),
-        ));
-    }
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     let allowed = state
         .user_store
         .get_user_tool_access(cleaned)
@@ -2536,6 +2955,7 @@ async fn admin_user_accounts_tool_access_get(
 
 async fn admin_user_accounts_tool_access_update(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
     Json(payload): Json<UserAccountToolAccessRequest>,
 ) -> Result<Json<Value>, Response> {
@@ -2546,17 +2966,17 @@ async fn admin_user_accounts_tool_access_update(
             i18n::t("error.user_id_required"),
         ));
     }
-    let user_exists = state
+    let record = state
         .user_store
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .is_some();
-    if !user_exists {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.user_not_found"),
-        ));
-    }
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     let allowed = payload.allowed_tools.map(normalize_tool_access_list);
     let blocked = payload.blocked_tools.map(normalize_tool_access_list);
     state
@@ -2570,6 +2990,7 @@ async fn admin_user_accounts_tool_access_update(
 
 async fn admin_user_accounts_agent_access_get(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let cleaned = user_id.trim();
@@ -2579,17 +3000,17 @@ async fn admin_user_accounts_agent_access_get(
             i18n::t("error.user_id_required"),
         ));
     }
-    let user_exists = state
+    let record = state
         .user_store
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .is_some();
-    if !user_exists {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.user_not_found"),
-        ));
-    }
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     let access = state
         .user_store
         .get_user_agent_access(cleaned)
@@ -2608,6 +3029,7 @@ async fn admin_user_accounts_agent_access_get(
 
 async fn admin_user_accounts_agent_access_update(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
     Json(payload): Json<UserAccountAgentAccessRequest>,
 ) -> Result<Json<Value>, Response> {
@@ -2618,17 +3040,17 @@ async fn admin_user_accounts_agent_access_update(
             i18n::t("error.user_id_required"),
         ));
     }
-    let user_exists = state
+    let record = state
         .user_store
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .is_some();
-    if !user_exists {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.user_not_found"),
-        ));
-    }
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     let allowed = payload.allowed_agent_ids.map(normalize_tool_access_list);
     let blocked = payload.blocked_agent_ids.map(normalize_tool_access_list);
     state
@@ -2642,6 +3064,7 @@ async fn admin_user_accounts_agent_access_update(
 
 async fn admin_user_accounts_delete(
     State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let cleaned = user_id.trim();
@@ -2657,17 +3080,17 @@ async fn admin_user_accounts_delete(
             i18n::t("error.user_protected"),
         ));
     }
-    let exists = state
+    let record = state
         .user_store
         .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .is_some();
-    if !exists {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.user_not_found"),
-        ));
-    }
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
     let deleted_user = state
         .user_store
         .delete_user(cleaned)
@@ -3105,6 +3528,130 @@ fn format_ts(ts: f64) -> String {
         Some(dt) => dt.to_rfc3339(),
         None => String::new(),
     }
+}
+
+struct AdminActor {
+    scope_unit_ids: Option<HashSet<String>>,
+}
+
+fn resolve_admin_actor(
+    state: &AppState,
+    headers: &AxumHeaderMap,
+    allow_leader: bool,
+    units: &[OrgUnitRecord],
+) -> Result<AdminActor, Response> {
+    if let Some(token) = auth::extract_bearer_token(headers) {
+        if let Ok(Some(user)) = state.user_store.authenticate_token(&token) {
+            if UserStore::is_admin(&user) {
+                return Ok(AdminActor {
+                    scope_unit_ids: None,
+                });
+            }
+            if allow_leader {
+                let roots = org_units::resolve_leader_root_ids(&user.user_id, units);
+                if roots.is_empty() {
+                    return Err(permission_denied());
+                }
+                let scope = org_units::collect_descendant_unit_ids(units, &roots);
+                return Ok(AdminActor {
+                    scope_unit_ids: Some(scope),
+                });
+            }
+            return Err(permission_denied());
+        }
+    }
+    Ok(AdminActor {
+        scope_unit_ids: None,
+    })
+}
+
+fn ensure_unit_scope(actor: &AdminActor, unit_id: Option<&str>) -> Result<(), Response> {
+    let Some(scope) = actor.scope_unit_ids.as_ref() else {
+        return Ok(());
+    };
+    let cleaned = unit_id
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    if let Some(unit_id) = cleaned {
+        if scope.contains(unit_id) {
+            return Ok(());
+        }
+    }
+    Err(permission_denied())
+}
+
+fn ensure_user_scope(actor: &AdminActor, record: &UserAccountRecord) -> Result<(), Response> {
+    ensure_unit_scope(actor, record.unit_id.as_deref())
+}
+
+fn filter_units_by_scope(
+    units: Vec<OrgUnitRecord>,
+    scope: Option<&HashSet<String>>,
+) -> Vec<OrgUnitRecord> {
+    match scope {
+        Some(scope) => units
+            .into_iter()
+            .filter(|unit| scope.contains(&unit.unit_id))
+            .collect(),
+        None => units,
+    }
+}
+
+fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {
+    units
+        .iter()
+        .map(|unit| (unit.unit_id.clone(), unit.clone()))
+        .collect()
+}
+
+fn org_unit_payload(record: &OrgUnitRecord) -> Value {
+    json!({
+        "unit_id": record.unit_id,
+        "parent_id": record.parent_id,
+        "name": record.name,
+        "level": record.level,
+        "path": record.path,
+        "path_name": record.path_name,
+        "sort_order": record.sort_order,
+        "leader_ids": record.leader_ids,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
+    raw.map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+}
+
+fn normalize_leader_ids(raw: Option<Vec<String>>) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for value in raw.unwrap_or_default() {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if seen.insert(cleaned.to_string()) {
+            output.push(cleaned.to_string());
+        }
+    }
+    output
+}
+
+fn next_unit_sort_order(units: &[OrgUnitRecord], parent_id: Option<&str>) -> i64 {
+    units
+        .iter()
+        .filter(|unit| unit.parent_id.as_deref() == parent_id)
+        .map(|unit| unit.sort_order)
+        .max()
+        .unwrap_or(-1)
+        + 1
+}
+
+fn permission_denied() -> Response {
+    error_response(StatusCode::FORBIDDEN, i18n::t("error.permission_denied"))
 }
 
 fn normalize_user_status(value: Option<&str>) -> String {
@@ -3891,6 +4438,29 @@ struct MonitorToolUsageQuery {
     end_time: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OrgUnitCreateRequest {
+    name: String,
+    #[serde(default)]
+    parent_id: Option<String>,
+    #[serde(default)]
+    sort_order: Option<i64>,
+    #[serde(default)]
+    leader_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrgUnitUpdateRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    parent_id: Option<String>,
+    #[serde(default)]
+    sort_order: Option<i64>,
+    #[serde(default)]
+    leader_ids: Option<Vec<String>>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct UserAccountListQuery {
     #[serde(default)]
@@ -3908,7 +4478,7 @@ struct UserAccountCreateRequest {
     email: Option<String>,
     password: String,
     #[serde(default)]
-    access_level: Option<String>,
+    unit_id: Option<String>,
     #[serde(default)]
     roles: Vec<String>,
     #[serde(default)]
@@ -3924,7 +4494,7 @@ struct UserAccountUpdateRequest {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
-    access_level: Option<String>,
+    unit_id: Option<String>,
     #[serde(default)]
     roles: Option<Vec<String>>,
     #[serde(default)]

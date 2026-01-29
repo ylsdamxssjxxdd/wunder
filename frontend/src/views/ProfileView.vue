@@ -22,7 +22,7 @@
                 <div class="profile-name">{{ userName }}</div>
                 <div class="profile-id">ID：{{ userId }}</div>
                 <div class="profile-tags">
-                  <span class="profile-tag">等级 {{ userLevel }}</span>
+                  <span class="profile-tag">单位 {{ userUnitLabel }}</span>
                   <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
                 </div>
               </div>
@@ -137,7 +137,10 @@ const editForm = reactive({
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const userName = computed(() => authStore.user?.username || '访客');
 const userId = computed(() => authStore.user?.id || '-');
-const userLevel = computed(() => authStore.user?.access_level || '-');
+const userUnitLabel = computed(() => {
+  const unit = authStore.user?.unit;
+  return unit?.path_name || unit?.pathName || unit?.name || authStore.user?.unit_id || '-';
+});
 const userInitials = computed(() => {
   const text = String(userName.value || '').trim();
   if (!text) return 'U';

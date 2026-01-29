@@ -21,7 +21,7 @@
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
-- 注册用户按访问级别分配每日请求额度（A=10000、B=1000、C=100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
+- 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -1269,7 +1269,7 @@
 ### 4.1.54 `/wunder/auth/*`
 
 - `POST /wunder/auth/register`
-  - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）
+  - 入参（JSON）：`username`、`email`（可选）、`password`、`unit_id`（可选）
   - 返回（JSON）：`data.access_token`、`data.user`（UserProfile）
 - `POST /wunder/auth/login`
   - 入参（JSON）：`username`、`password`
@@ -1293,7 +1293,9 @@
 - `email`：邮箱（可选）
 - `roles`：角色列表
 - `status`：账号状态（active/disabled）
-- `access_level`：访问级别（A/B/C）
+- `access_level`：访问级别（保留字段，当前统一为 A）
+- `unit_id`：所属单位 ID（可选）
+- `unit`：所属单位信息（可选，`id/name/path/path_name/level`）
 - `daily_quota`：每日额度
 - `daily_quota_used`：今日已用额度
 - `daily_quota_date`：额度日期（可选）
@@ -1344,7 +1346,7 @@
 
 - `GET /wunder/agents`：智能体列表
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/created_at/updated_at）
-- `GET /wunder/agents/shared`：共享智能体列表（仅返回同等级共享应用）
+- `GET /wunder/agents/shared`：共享智能体列表
   - 返回：`data.total`、`data.items`（同上）
 - `GET /wunder/agents/running`：当前运行中的智能体会话锁 + 问询面板待选择状态
   - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at/state/pending_question/is_default）
@@ -1362,9 +1364,8 @@
   - 返回：`data.id`
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
-  - `tool_names` 会按用户权限等级与管理员覆盖过滤。
-  - 智能体等级由用户等级自动决定，无需传入。
-  - 共享智能体仅对同等级用户可见，管理员可通过单用户权限覆盖进一步调整。
+  - `tool_names` 会按用户工具白名单/黑名单过滤。
+  - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
 
 ### 4.1.57 `/wunder/admin/user_accounts/*`
 
@@ -1372,10 +1373,10 @@
   - Query：`keyword`、`offset`、`limit`
   - 返回：`data.total`、`data.items`（UserProfile + `daily_quota`/`daily_quota_used`/`daily_quota_remaining`/`daily_quota_date`）
 - `POST /wunder/admin/user_accounts`
-  - 入参（JSON）：`username`、`email`（可选）、`password`、`access_level`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
+  - 入参（JSON）：`username`、`email`（可选）、`password`、`unit_id`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
   - 返回：`data`（UserProfile）
 - `PATCH /wunder/admin/user_accounts/{user_id}`
-  - 入参（JSON）：`email`（可选）、`status`（可选）、`access_level`（可选）、`roles`（可选）、`daily_quota`（可选）
+  - 入参（JSON）：`email`（可选）、`status`（可选）、`unit_id`（可选）、`roles`（可选）、`daily_quota`（可选）
   - 返回：`data`（UserProfile）
 - `DELETE /wunder/admin/user_accounts/{user_id}`
   - 返回：`data.ok`、`data.id`
@@ -1392,6 +1393,33 @@
 - `PUT /wunder/admin/user_accounts/{user_id}/agent_access`
   - 入参（JSON）：`allowed_agent_ids`（null 或字符串数组）、`blocked_agent_ids`（可选字符串数组）
   - 返回：`data.allowed_agent_ids`、`data.blocked_agent_ids`
+- 说明：管理员或单位负责人可访问；单位负责人仅能管理本单位及下级单位用户。
+
+### 4.1.58 `/wunder/admin/org_units/*`
+
+- `GET /wunder/admin/org_units`
+  - 返回：`data.items`（OrgUnit 列表）、`data.tree`（树状结构）
+- `POST /wunder/admin/org_units`
+  - 入参（JSON）：`name`（必填）、`parent_id`（可选）、`sort_order`（可选）、`leader_ids`（可选）
+  - 返回：`data`（OrgUnit）
+- `PATCH /wunder/admin/org_units/{unit_id}`
+  - 入参（JSON）：`name`（可选）、`parent_id`（可选）、`sort_order`（可选）、`leader_ids`（可选）
+  - 返回：`data`（OrgUnit）
+- `DELETE /wunder/admin/org_units/{unit_id}`
+  - 返回：`data.unit_id`
+- 说明：管理员或单位负责人可访问；单位负责人仅能管理本单位及下级单位。
+
+#### OrgUnit
+
+- `unit_id`：单位 ID
+- `parent_id`：上级单位 ID（可选）
+- `name`：名称
+- `level`：层级（1~4）
+- `path`：路径 ID 串
+- `path_name`：路径名称串
+- `sort_order`：同级排序
+- `leader_ids`：负责人用户 ID 列表
+- `created_at`/`updated_at`：时间戳（秒）
 
 ### 4.2 流式响应（SSE）
 

@@ -35,15 +35,53 @@ const clearStoredAuth = () => {
   }
 };
 
+const AUTH_SCOPE_ADMIN = "admin";
+const AUTH_SCOPE_LEADER = "leader";
+
 const isAdminUser = (user) => {
   const roles = Array.isArray(user?.roles) ? user.roles : [];
   return roles.includes("admin") || roles.includes("super_admin");
+};
+
+const checkLeaderAccess = async (token) => {
+  const wunderBase = getWunderBase();
+  if (!wunderBase || !token) {
+    return false;
+  }
+  const response = await fetch(`${wunderBase}/admin/org_units`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.ok;
+};
+
+const resolveAuthScope = async (token, user) => {
+  if (!token) {
+    return "";
+  }
+  if (isAdminUser(user)) {
+    return AUTH_SCOPE_ADMIN;
+  }
+  const isLeader = await checkLeaderAccess(token);
+  return isLeader ? AUTH_SCOPE_LEADER : "";
 };
 
 export const getAuthToken = () => {
   const stored = readStoredAuth();
   const token = typeof stored.token === "string" ? stored.token.trim() : "";
   return token;
+};
+
+export const getAuthScope = () => {
+  const stored = readStoredAuth();
+  if (stored?.scope) {
+    return stored.scope;
+  }
+  if (stored?.user && isAdminUser(stored.user)) {
+    return AUTH_SCOPE_ADMIN;
+  }
+  return "";
 };
 
 export const getAuthHeaders = () => {
@@ -104,10 +142,12 @@ const validateToken = async (token) => {
       return false;
     }
     const data = await response.json();
-    if (!isAdminUser(data?.data)) {
+    const user = data?.data || null;
+    const scope = await resolveAuthScope(token, user);
+    if (!scope) {
       return false;
     }
-    writeStoredAuth({ token, user: data?.data || null });
+    writeStoredAuth({ token, user, scope });
     return true;
   } catch (error) {
     return false;
@@ -198,12 +238,13 @@ const performLogin = async () => {
       setLoginError(t("auth.login.error", { message: t("auth.login.error.generic") }));
       return;
     }
-    if (!isAdminUser(user)) {
+    const scope = await resolveAuthScope(token, user);
+    if (!scope) {
       clearStoredAuth();
       setLoginError(t("auth.login.notAdmin"));
       return;
     }
-    writeStoredAuth({ token, user });
+    writeStoredAuth({ token, user, scope });
     completeLogin();
   } catch (error) {
     const message = error?.message || t("auth.login.error.generic");

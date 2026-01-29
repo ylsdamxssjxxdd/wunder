@@ -82,6 +82,7 @@ fn build_virtual_user(user_id: &str) -> UserAccountRecord {
         roles: vec!["user".to_string()],
         status: "active".to_string(),
         access_level: "A".to_string(),
+        unit_id: None,
         daily_quota: 0,
         daily_quota_used: 0,
         daily_quota_date: None,

@@ -37,6 +37,7 @@ export const state = {
     monitor: false,
     users: false,
     userAccounts: false,
+    orgUnits: false,
     memory: false,
     throughput: false,
     performance: false,
@@ -206,6 +207,13 @@ export const state = {
       total: 0,
     },
     toolAccess: {},
+  },
+  orgUnits: {
+    list: [],
+    tree: [],
+    selectedId: "",
+    loaded: false,
+    lastUpdated: 0,
   },
   memory: {
     users: [],

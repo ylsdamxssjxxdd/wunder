@@ -1,8 +1,9 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, SessionLockRecord, SessionLockStatus, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord,
+    UserToolAccessRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -148,12 +149,27 @@ impl SqliteStorage {
             )?;
         }
         if quota_added {
-            conn.execute(
-                "UPDATE user_accounts SET daily_quota = CASE UPPER(access_level) \
-                 WHEN 'B' THEN 1000 WHEN 'C' THEN 100 ELSE 10000 END",
-                [],
-            )?;
+            conn.execute("UPDATE user_accounts SET daily_quota = 10000", [])?;
         }
+        Ok(())
+    }
+
+    fn ensure_user_account_unit_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows {
+            if let Ok(name) = name {
+                columns.insert(name);
+            }
+        }
+        if !columns.contains("unit_id") {
+            conn.execute("ALTER TABLE user_accounts ADD COLUMN unit_id TEXT", [])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit ON user_accounts (unit_id)",
+            [],
+        );
         Ok(())
     }
 
@@ -400,6 +416,7 @@ impl StorageBackend for SqliteStorage {
               roles TEXT NOT NULL,
               status TEXT NOT NULL,
               access_level TEXT NOT NULL,
+              unit_id TEXT,
               daily_quota INTEGER NOT NULL DEFAULT 10000,
               daily_quota_used INTEGER NOT NULL DEFAULT 0,
               daily_quota_date TEXT,
@@ -412,6 +429,24 @@ impl StorageBackend for SqliteStorage {
               ON user_accounts (username);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_user_accounts_email
               ON user_accounts (email);
+            CREATE INDEX IF NOT EXISTS idx_user_accounts_unit
+              ON user_accounts (unit_id);
+            CREATE TABLE IF NOT EXISTS org_units (
+              unit_id TEXT PRIMARY KEY,
+              parent_id TEXT,
+              name TEXT NOT NULL,
+              level INTEGER NOT NULL,
+              path TEXT NOT NULL,
+              path_name TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              leader_ids TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_org_units_parent
+              ON org_units (parent_id);
+            CREATE INDEX IF NOT EXISTS idx_org_units_path
+              ON org_units (path);
             CREATE TABLE IF NOT EXISTS user_tokens (
               token TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -469,6 +504,7 @@ impl StorageBackend for SqliteStorage {
             "#,
         )?;
         self.ensure_user_account_quota_columns(&conn)?;
+        self.ensure_user_account_unit_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
@@ -2090,11 +2126,11 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let roles = Self::string_list_to_json(&record.roles);
         conn.execute(
-            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, \
+            "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
              daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
-             roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, \
+             roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
              daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
              is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
             params![
@@ -2105,6 +2141,7 @@ impl StorageBackend for SqliteStorage {
                 roles,
                 record.status,
                 record.access_level,
+                record.unit_id,
                 record.daily_quota,
                 record.daily_quota_used,
                 record.daily_quota_date,
@@ -2126,7 +2163,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
                  is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = ?",
                 params![cleaned],
                 |row| {
@@ -2138,13 +2175,14 @@ impl StorageBackend for SqliteStorage {
                         roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
                         status: row.get(5)?,
                         access_level: row.get(6)?,
-                        daily_quota: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_date: row.get(9)?,
-                        is_demo: row.get::<_, i64>(10)? != 0,
-                        created_at: row.get(11)?,
-                        updated_at: row.get(12)?,
-                        last_login_at: row.get(13)?,
+                        unit_id: row.get(7)?,
+                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        daily_quota_date: row.get(10)?,
+                        is_demo: row.get::<_, i64>(11)? != 0,
+                        created_at: row.get(12)?,
+                        updated_at: row.get(13)?,
+                        last_login_at: row.get(14)?,
                     })
                 },
             )
@@ -2161,7 +2199,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
                  is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = ?",
                 params![cleaned],
                 |row| {
@@ -2173,13 +2211,14 @@ impl StorageBackend for SqliteStorage {
                         roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
                         status: row.get(5)?,
                         access_level: row.get(6)?,
-                        daily_quota: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_date: row.get(9)?,
-                        is_demo: row.get::<_, i64>(10)? != 0,
-                        created_at: row.get(11)?,
-                        updated_at: row.get(12)?,
-                        last_login_at: row.get(13)?,
+                        unit_id: row.get(7)?,
+                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        daily_quota_date: row.get(10)?,
+                        is_demo: row.get::<_, i64>(11)? != 0,
+                        created_at: row.get(12)?,
+                        updated_at: row.get(13)?,
+                        last_login_at: row.get(14)?,
                     })
                 },
             )
@@ -2196,7 +2235,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
                  is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = ?",
                 params![cleaned],
                 |row| {
@@ -2208,13 +2247,14 @@ impl StorageBackend for SqliteStorage {
                         roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
                         status: row.get(5)?,
                         access_level: row.get(6)?,
-                        daily_quota: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_date: row.get(9)?,
-                        is_demo: row.get::<_, i64>(10)? != 0,
-                        created_at: row.get(11)?,
-                        updated_at: row.get(12)?,
-                        last_login_at: row.get(13)?,
+                        unit_id: row.get(7)?,
+                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        daily_quota_date: row.get(10)?,
+                        is_demo: row.get::<_, i64>(11)? != 0,
+                        created_at: row.get(12)?,
+                        updated_at: row.get(13)?,
+                        last_login_at: row.get(14)?,
                     })
                 },
             )
@@ -2225,6 +2265,7 @@ impl StorageBackend for SqliteStorage {
     fn list_user_accounts(
         &self,
         keyword: Option<&str>,
+        unit_ids: Option<&[String]>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)> {
@@ -2240,6 +2281,16 @@ impl StorageBackend for SqliteStorage {
                 params_list.push(SqlValue::from(pattern));
             }
         }
+        if let Some(unit_ids) = unit_ids.filter(|ids| !ids.is_empty()) {
+            let placeholders = std::iter::repeat("?")
+                .take(unit_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            conditions.push(format!("unit_id IN ({placeholders})"));
+            for unit_id in unit_ids {
+                params_list.push(SqlValue::from(unit_id.clone()));
+            }
+        }
         let mut count_sql = String::from("SELECT COUNT(*) FROM user_accounts");
         if !conditions.is_empty() {
             count_sql.push_str(" WHERE ");
@@ -2252,7 +2303,7 @@ impl StorageBackend for SqliteStorage {
             })?;
 
         let mut sql = String::from(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
              is_demo, created_at, updated_at, last_login_at FROM user_accounts",
         );
         if !conditions.is_empty() {
@@ -2276,13 +2327,14 @@ impl StorageBackend for SqliteStorage {
                     roles: Self::parse_string_list(row.get::<_, Option<String>>(4)?),
                     status: row.get(5)?,
                     access_level: row.get(6)?,
-                    daily_quota: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
-                    daily_quota_used: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                    daily_quota_date: row.get(9)?,
-                    is_demo: row.get::<_, i64>(10)? != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
-                    last_login_at: row.get(13)?,
+                    unit_id: row.get(7)?,
+                    daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                    daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                    daily_quota_date: row.get(10)?,
+                    is_demo: row.get::<_, i64>(11)? != 0,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                    last_login_at: row.get(14)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAccountRecord>, _>>()?;
@@ -2300,6 +2352,100 @@ impl StorageBackend for SqliteStorage {
             "DELETE FROM user_accounts WHERE user_id = ?",
             params![cleaned],
         )?;
+        Ok(affected as i64)
+    }
+
+    fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at \
+             FROM org_units ORDER BY path, sort_order, name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(OrgUnitRecord {
+                    unit_id: row.get(0)?,
+                    parent_id: row.get(1)?,
+                    name: row.get(2)?,
+                    level: row.get(3)?,
+                    path: row.get(4)?,
+                    path_name: row.get(5)?,
+                    sort_order: row.get(6)?,
+                    leader_ids: Self::parse_string_list(row.get::<_, Option<String>>(7)?),
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<OrgUnitRecord>, _>>()?;
+        Ok(rows)
+    }
+
+    fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = unit_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at \
+                 FROM org_units WHERE unit_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(OrgUnitRecord {
+                        unit_id: row.get(0)?,
+                        parent_id: row.get(1)?,
+                        name: row.get(2)?,
+                        level: row.get(3)?,
+                        path: row.get(4)?,
+                        path_name: row.get(5)?,
+                        sort_order: row.get(6)?,
+                        leader_ids: Self::parse_string_list(row.get::<_, Option<String>>(7)?),
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let leader_ids = Self::string_list_to_json(&record.leader_ids);
+        conn.execute(
+            "INSERT INTO org_units (unit_id, parent_id, name, level, path, path_name, sort_order, leader_ids, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(unit_id) DO UPDATE SET parent_id = excluded.parent_id, name = excluded.name, level = excluded.level, \
+             path = excluded.path, path_name = excluded.path_name, sort_order = excluded.sort_order, leader_ids = excluded.leader_ids, \
+             updated_at = excluded.updated_at",
+            params![
+                record.unit_id,
+                record.parent_id,
+                record.name,
+                record.level,
+                record.path,
+                record.path_name,
+                record.sort_order,
+                leader_ids,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn delete_org_unit(&self, unit_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = unit_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute("DELETE FROM org_units WHERE unit_id = ?", params![cleaned])?;
         Ok(affected as i64)
     }
 

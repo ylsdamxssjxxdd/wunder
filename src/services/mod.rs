@@ -6,6 +6,7 @@ pub mod knowledge;
 pub mod llm;
 pub mod mcp;
 pub mod memory;
+pub mod org_units;
 pub mod prompting;
 pub mod skills;
 pub mod tools;
