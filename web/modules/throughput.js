@@ -145,6 +145,22 @@ const getDefaultModelLabel = () => {
   return t("llm.default");
 };
 
+const normalizeModelType = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "llm";
+  }
+  if (raw === "embed" || raw === "embeddings") {
+    return "embedding";
+  }
+  return raw === "embedding" ? "embedding" : "llm";
+};
+
+const getLlmModelNames = () =>
+  state.llm.order.filter((name) =>
+    normalizeModelType(state.llm.configs?.[name]?.model_type) === "llm"
+  );
+
 const resolveModelName = (run, fallback) => {
   const raw = run?.model_name ?? run?.modelName ?? "";
   const text = String(raw || "").trim();
@@ -181,7 +197,7 @@ const renderThroughputModelOptions = (options = {}) => {
   defaultOption.value = "";
   defaultOption.textContent = getDefaultModelLabel();
   select.appendChild(defaultOption);
-  state.llm.order.forEach((name) => {
+  getLlmModelNames().forEach((name) => {
     const option = document.createElement("option");
     option.value = name;
     option.textContent = name;

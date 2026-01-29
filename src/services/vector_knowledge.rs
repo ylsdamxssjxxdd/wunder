@@ -26,6 +26,18 @@ const DEFAULT_CHUNK_OVERLAP: usize = 100;
 const DEFAULT_TOP_K: usize = 5;
 
 const WEAVIATE_CLASS: &str = "KnowledgeChunk";
+const WEAVIATE_PROPERTIES: [(&str, &str); 10] = [
+    ("owner_id", "text"),
+    ("base_name", "text"),
+    ("doc_id", "text"),
+    ("doc_name", "text"),
+    ("chunk_index", "int"),
+    ("start", "int"),
+    ("end", "int"),
+    ("content", "text"),
+    ("embedding_model", "text"),
+    ("created_at", "date"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorDocumentMeta {
@@ -499,6 +511,65 @@ impl WeaviateClient {
         if *guard {
             return Ok(());
         }
+        let schema_url = format!("{}/v1/schema/{}", self.base_url, WEAVIATE_CLASS);
+        let response = self
+            .http
+            .get(&schema_url)
+            .headers(self.build_headers())
+            .send()
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            let existing = body
+                .get("properties")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            item.get("name")
+                                .and_then(Value::as_str)
+                                .map(|name| name.to_string())
+                        })
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+            let mut missing = Vec::new();
+            for (name, data_type) in WEAVIATE_PROPERTIES {
+                if !existing.contains(name) {
+                    missing.push(build_weaviate_property(name, data_type));
+                }
+            }
+            for payload in missing {
+                let response = self
+                    .http
+                    .post(format!(
+                        "{}/v1/schema/{}/properties",
+                        self.base_url, WEAVIATE_CLASS
+                    ))
+                    .headers(self.build_headers())
+                    .json(&payload)
+                    .send()
+                    .await?;
+                let status = response.status();
+                if status.is_success() || status.as_u16() == 422 || status.as_u16() == 409 {
+                    continue;
+                }
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow!("weaviate schema update failed: {status} {body}"));
+            }
+            *guard = true;
+            return Ok(());
+        }
+        if status.as_u16() != 404 {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("weaviate schema read failed: {status} {body}"));
+        }
+        let properties = WEAVIATE_PROPERTIES
+            .iter()
+            .map(|(name, data_type)| build_weaviate_property(name, data_type))
+            .collect::<Vec<_>>();
         let payload = json!({
             "class": WEAVIATE_CLASS,
             "description": "Vector knowledge chunks",
@@ -506,18 +577,7 @@ impl WeaviateClient {
             "vectorIndexConfig": {
                 "distance": "cosine"
             },
-            "properties": [
-                {"name": "owner_id", "dataType": ["text"]},
-                {"name": "base_name", "dataType": ["text"]},
-                {"name": "doc_id", "dataType": ["text"]},
-                {"name": "doc_name", "dataType": ["text"]},
-                {"name": "chunk_index", "dataType": ["int"]},
-                {"name": "start", "dataType": ["int"]},
-                {"name": "end", "dataType": ["int"]},
-                {"name": "content", "dataType": ["text"]},
-                {"name": "embedding_model", "dataType": ["text"]},
-                {"name": "created_at", "dataType": ["date"]},
-            ],
+            "properties": properties,
         });
         let response = self
             .http
@@ -586,10 +646,13 @@ impl WeaviateClient {
                 .json(&payload)
                 .send()
                 .await?;
-            if !response.status().is_success() {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
+            let status = response.status();
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            if !status.is_success() {
                 return Err(anyhow!("weaviate batch insert failed: {status} {body}"));
+            }
+            if let Some(detail) = extract_weaviate_batch_errors(&body) {
+                return Err(anyhow!("weaviate batch insert failed: {detail}"));
             }
             start = end;
         }
@@ -629,7 +692,7 @@ impl WeaviateClient {
             .collect::<Vec<_>>()
             .join(", ");
         let query = format!(
-            "{{{{ Get {{{class}(nearVector: {{vector: [{vector_list}]}}, limit: {top_k}, where: {{operator: And, operands: [{{path: [\"owner_id\"], operator: Equal, valueString: \"{owner}\"}}, {{path: [\"base_name\"], operator: Equal, valueString: \"{base}\"}}, {{path: [\"embedding_model\"], operator: Equal, valueString: \"{model}\"}}]}}) {{ doc_id doc_name chunk_index start end content embedding_model _additional {{ distance }} }} }} }}}}",
+            r#"{{ Get {{ {class}(nearVector: {{vector: [{vector_list}]}}, limit: {top_k}, where: {{operator: And, operands: [{{path: ["owner_id"], operator: Equal, valueString: "{owner}"}}, {{path: ["base_name"], operator: Equal, valueString: "{base}"}}, {{path: ["embedding_model"], operator: Equal, valueString: "{model}"}}]}}) {{ doc_id doc_name chunk_index start end content embedding_model _additional {{ distance }} }} }} }}"#,
             class = WEAVIATE_CLASS,
             owner = escape_graphql_string(owner_id),
             base = escape_graphql_string(base_name),
@@ -645,6 +708,9 @@ impl WeaviateClient {
             .await?;
         let status = response.status();
         let body: Value = response.json().await.unwrap_or(Value::Null);
+        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
+            return Err(anyhow!("weaviate query failed: {detail}"));
+        }
         if !status.is_success() {
             return Err(anyhow!("weaviate query failed: {status} {body}"));
         }
@@ -766,7 +832,7 @@ impl WeaviateClient {
     ) -> Result<Vec<String>> {
         self.ensure_schema().await?;
         let query = format!(
-            "{{{{ Get {{{class}(limit: {limit}, where: {{operator: And, operands: [{{path: [\"owner_id\"], operator: Equal, valueString: \"{owner}\"}}, {{path: [\"base_name\"], operator: Equal, valueString: \"{base}\"}}, {{path: [\"doc_id\"], operator: Equal, valueString: \"{doc}\"}}, {{path: [\"embedding_model\"], operator: Equal, valueString: \"{model}\"}}]}}) {{ _additional {{ id }} }} }} }}}}",
+            r#"{{ Get {{ {class}(limit: {limit}, where: {{operator: And, operands: [{{path: ["owner_id"], operator: Equal, valueString: "{owner}"}}, {{path: ["base_name"], operator: Equal, valueString: "{base}"}}, {{path: ["doc_id"], operator: Equal, valueString: "{doc}"}}, {{path: ["embedding_model"], operator: Equal, valueString: "{model}"}}]}}) {{ _additional {{ id }} }} }} }}"#,
             class = WEAVIATE_CLASS,
             owner = escape_graphql_string(owner_id),
             base = escape_graphql_string(base_name),
@@ -783,6 +849,9 @@ impl WeaviateClient {
             .await?;
         let status = response.status();
         let body: Value = response.json().await.unwrap_or(Value::Null);
+        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
+            return Err(anyhow!("weaviate list ids failed: {detail}"));
+        }
         if !status.is_success() {
             return Err(anyhow!("weaviate list ids failed: {status} {body}"));
         }
@@ -821,6 +890,101 @@ impl WeaviateClient {
 
 fn escape_graphql_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\"', "\\\"")
+}
+
+fn build_weaviate_property(name: &str, data_type: &str) -> Value {
+    json!({
+        "name": name,
+        "dataType": [data_type],
+    })
+}
+
+fn collect_weaviate_error_messages(value: &Value, output: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                output.push(trimmed.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_weaviate_error_messages(item, output);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(Value::String(message)) = map.get("message") {
+                let trimmed = message.trim();
+                if !trimmed.is_empty() {
+                    output.push(trimmed.to_string());
+                }
+            } else if let Some(Value::String(message)) = map.get("error") {
+                let trimmed = message.trim();
+                if !trimmed.is_empty() {
+                    output.push(trimmed.to_string());
+                }
+            } else {
+                for item in map.values() {
+                    collect_weaviate_error_messages(item, output);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn format_weaviate_errors(value: &Value) -> Option<String> {
+    let mut messages = Vec::new();
+    collect_weaviate_error_messages(value, &mut messages);
+    if messages.is_empty() {
+        return None;
+    }
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for message in messages {
+        if seen.insert(message.clone()) {
+            deduped.push(message);
+        }
+    }
+    Some(deduped.join(" | "))
+}
+
+fn extract_weaviate_graphql_errors(body: &Value) -> Option<String> {
+    let errors = body.get("errors")?;
+    format_weaviate_errors(errors)
+}
+
+fn extract_weaviate_batch_errors(body: &Value) -> Option<String> {
+    if let Some(detail) = body.get("errors").and_then(format_weaviate_errors) {
+        return Some(detail);
+    }
+    let objects = body.get("objects").and_then(Value::as_array)?;
+    let mut messages = Vec::new();
+    for item in objects {
+        let status = item
+            .get("result")
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if status.eq_ignore_ascii_case("FAILED") {
+            if let Some(errors) = item.get("result").and_then(|value| value.get("errors")) {
+                collect_weaviate_error_messages(errors, &mut messages);
+            } else if let Some(errors) = item.get("errors") {
+                collect_weaviate_error_messages(errors, &mut messages);
+            }
+        }
+    }
+    if messages.is_empty() {
+        return None;
+    }
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for message in messages {
+        if seen.insert(message.clone()) {
+            deduped.push(message);
+        }
+    }
+    Some(deduped.join(" | "))
 }
 
 pub async fn embed_chunks(

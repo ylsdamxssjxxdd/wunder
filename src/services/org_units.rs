@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
-const ORG_UNIT_SEED_PATH: &str = "config/单位结构.json";
+const ORG_UNIT_SEED_PATH: &str = "config/org_units.json";
 const MAX_ORG_UNIT_LEVEL: i32 = 4;
 
 #[derive(Debug, Deserialize)]

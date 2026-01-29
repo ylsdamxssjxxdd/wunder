@@ -271,6 +271,10 @@
     "en-US": "Parameters are required",
     "zh-CN": "参数不能为空"
   },
+  "error.user_seed_count_invalid": {
+    "en-US": "Invalid test user count",
+    "zh-CN": "测试用户数量不合法"
+  },
   "error.path_out_of_bounds": {
     "en-US": "Path traversal is forbidden",
     "zh-CN": "路径越界访问被禁止"

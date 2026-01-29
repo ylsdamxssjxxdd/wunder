@@ -1,5 +1,5 @@
 use crate::a2a_store::A2aStore;
-use crate::config::{is_debug_log_level, Config};
+use crate::config::{is_debug_log_level, Config, KnowledgeBaseConfig};
 use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
@@ -8,6 +8,7 @@ use crate::storage::UserAccountRecord;
 use crate::tools::{build_tool_roots, execute_tool, ToolContext, ToolRoots};
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::user_tools::UserToolBindings;
+use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
 use futures::future::join_all;
@@ -126,11 +127,16 @@ pub async fn run_sample(
         measure_twice(|| measure_tool_access(concurrency, &context)).await,
     ));
     metrics.push(build_metric(
+        "vector_flow",
+        measure_twice(|| measure_vector_flow(concurrency, &context)).await,
+    ));
+    metrics.push(build_metric(
         "log_write",
         measure_twice(|| measure_log_write(concurrency, &context)).await,
     ));
 
     cleanup_perf_dir(&context).await;
+    cleanup_perf_vector_dir(&context).await;
 
     Ok(PerformanceSampleResponse {
         concurrency,
@@ -235,6 +241,42 @@ async fn measure_tool_access(concurrency: usize, context: &PerformanceContext) -
             let allowed = compute_allowed_tool_names(&user, &user_context);
             let mut names = allowed.into_iter().collect::<Vec<_>>();
             names.sort();
+            Ok(started.elapsed().as_secs_f64() * 1000.0)
+        }
+    })
+    .await
+}
+
+async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    let base_name = format!("perf_vector_{}", context.run_id);
+    let root = match vector_knowledge::resolve_vector_root(None, &base_name, true) {
+        Ok(path) => path,
+        Err(err) => {
+            return MetricSummary {
+                avg_ms: None,
+                ok: false,
+                error: Some(err.to_string()),
+            }
+        }
+    };
+    let base = build_vector_perf_base(&base_name, &root);
+    let content = build_vector_flow_content(&context.run_id);
+    run_concurrent(concurrency, move |index| {
+        let base = base.clone();
+        let root = root.clone();
+        let content = content.clone();
+        async move {
+            let doc_name = format!("perf_doc_{}", index);
+            let started = Instant::now();
+            let meta = vector_knowledge::prepare_document(
+                &base, None, &root, &doc_name, None, &content, None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+            let content = vector_knowledge::read_vector_document_content(&root, &meta.doc_id)
+                .await
+                .map_err(|err| err.to_string())?;
+            let _ = vector_knowledge::build_chunk_previews(&content, &meta).await;
             Ok(started.elapsed().as_secs_f64() * 1000.0)
         }
     })
@@ -438,4 +480,34 @@ async fn cleanup_perf_dir(context: &PerformanceContext) {
         return;
     };
     let _ = tokio::fs::remove_dir_all(&target).await;
+}
+
+async fn cleanup_perf_vector_dir(context: &PerformanceContext) {
+    let base_name = format!("perf_vector_{}", context.run_id);
+    let root = vector_knowledge::resolve_vector_root(None, &base_name, false);
+    let Ok(root) = root else {
+        return;
+    };
+    let _ = tokio::fs::remove_dir_all(&root).await;
+}
+
+fn build_vector_perf_base(base_name: &str, root: &std::path::Path) -> KnowledgeBaseConfig {
+    KnowledgeBaseConfig {
+        name: base_name.to_string(),
+        description: String::new(),
+        root: root.to_string_lossy().to_string(),
+        enabled: true,
+        shared: Some(true),
+        base_type: Some("vector".to_string()),
+        embedding_model: Some("perf".to_string()),
+        chunk_size: None,
+        chunk_overlap: None,
+        top_k: None,
+        score_threshold: None,
+    }
+}
+
+fn build_vector_flow_content(run_id: &str) -> String {
+    let seed = format!("vector perf sample {run_id} lorem ipsum dolor sit amet.\n");
+    seed.repeat(120)
 }

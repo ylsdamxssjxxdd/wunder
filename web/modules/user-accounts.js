@@ -8,6 +8,9 @@ import { t } from "./i18n.js?v=20260124-01";
 import { ensureOrgUnitsLoaded, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
+const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
+const DEFAULT_TEST_USER_PER_UNIT = 1;
+const MAX_TEST_USERS_PER_UNIT = 200;
 
 const ensureUserAccountsState = () => {
   if (!state.userAccounts) {
@@ -52,6 +55,7 @@ const ensureUserAccountElements = () => {
   const requiredKeys = [
     "userAccountSearchInput",
     "userAccountRefreshBtn",
+    "userAccountSeedBtn",
     "userAccountCreateBtn",
     "userAccountTableBody",
     "userAccountEmpty",
@@ -63,6 +67,12 @@ const ensureUserAccountElements = () => {
     "userAccountModalClose",
     "userAccountModalCancel",
     "userAccountModalSave",
+    "userAccountSeedModal",
+    "userAccountSeedModalClose",
+    "userAccountSeedModalCancel",
+    "userAccountSeedModalConfirm",
+    "userAccountSeedCount",
+    "userAccountSeedHint",
     "userAccountFormUsername",
     "userAccountFormEmail",
     "userAccountFormPassword",
@@ -483,6 +493,96 @@ const submitCreateUser = async () => {
   }
 };
 
+let seedBusy = false;
+
+const setSeedBusy = (busy) => {
+  seedBusy = busy;
+  if (elements.userAccountSeedBtn) {
+    elements.userAccountSeedBtn.disabled = busy;
+  }
+  if (elements.userAccountSeedModalConfirm) {
+    elements.userAccountSeedModalConfirm.disabled = busy;
+  }
+  if (elements.userAccountSeedCount) {
+    elements.userAccountSeedCount.disabled = busy;
+  }
+};
+
+const parseSeedCount = () => {
+  const raw = Number(elements.userAccountSeedCount.value);
+  if (!Number.isFinite(raw)) {
+    return null;
+  }
+  const count = Math.floor(raw);
+  if (count <= 0 || count > MAX_TEST_USERS_PER_UNIT) {
+    return null;
+  }
+  return count;
+};
+
+const openSeedModal = () => {
+  if (seedBusy) {
+    return;
+  }
+  elements.userAccountSeedCount.value = DEFAULT_TEST_USER_PER_UNIT;
+  if (elements.userAccountSeedHint) {
+    elements.userAccountSeedHint.textContent = t("userAccounts.modal.seed.hint", {
+      password: DEFAULT_TEST_USER_PASSWORD,
+      max: MAX_TEST_USERS_PER_UNIT,
+    });
+  }
+  openModal(elements.userAccountSeedModal);
+};
+
+const submitSeedUsers = async () => {
+  if (seedBusy) {
+    return;
+  }
+  const perUnit = parseSeedCount();
+  if (!perUnit) {
+    notify(t("userAccounts.toast.seedCountInvalid", { max: MAX_TEST_USERS_PER_UNIT }), "warn");
+    return;
+  }
+  const confirmed = window.confirm(t("userAccounts.seed.confirm", { count: perUnit }));
+  if (!confirmed) {
+    return;
+  }
+  setSeedBusy(true);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/test/seed`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ per_unit: perUnit }),
+    });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.seedFailed", { status: response.status }), "error");
+      return;
+    }
+    const payload = await response.json();
+    const data = payload?.data || {};
+    const created = Number(data.created) || 0;
+    const unitCount = Number(data.unit_count) || 0;
+    const password = data.password || DEFAULT_TEST_USER_PASSWORD;
+    closeModal(elements.userAccountSeedModal);
+    notify(
+      t("userAccounts.toast.seedSuccess", {
+        created,
+        unitCount,
+        perUnit,
+        password,
+      }),
+      "success"
+    );
+    await loadUserAccounts();
+  } catch (error) {
+    notify(t("userAccounts.toast.seedFailed", { status: error.message }), "error");
+  } finally {
+    setSeedBusy(false);
+  }
+};
+
 let settingsTarget = null;
 let toolSaveTimer = null;
 
@@ -792,10 +892,18 @@ export const initUserAccountsPanel = () => {
       notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
     }
   });
+  elements.userAccountSeedBtn.addEventListener("click", openSeedModal);
   elements.userAccountCreateBtn.addEventListener("click", openCreateModal);
   elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalSave.addEventListener("click", submitCreateUser);
+  elements.userAccountSeedModalClose?.addEventListener("click", () =>
+    closeModal(elements.userAccountSeedModal)
+  );
+  elements.userAccountSeedModalCancel.addEventListener("click", () =>
+    closeModal(elements.userAccountSeedModal)
+  );
+  elements.userAccountSeedModalConfirm.addEventListener("click", submitSeedUsers);
   elements.userAccountSettingsClose?.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountQuotaSave.addEventListener("click", saveQuota);

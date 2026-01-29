@@ -33,6 +33,11 @@ const METRICS = [
     color: "#14b8a6",
   },
   {
+    key: "vector_flow",
+    labelKey: "performance.metric.vectorFlow",
+    color: "#0ea5e9",
+  },
+  {
     key: "log_write",
     labelKey: "performance.metric.logWrite",
     color: "#a855f7",

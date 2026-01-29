@@ -95,8 +95,8 @@ export const state = {
     docContent: "",
     docMeta: null,
     docChunks: [],
-    activeChunkIndex: -1,
-    docContentVisible: false,
+    selectedChunkIndices: new Set(),
+    embeddingChunkIndices: new Set(),
     embeddingModels: [],
   },
   builtin: {

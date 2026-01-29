@@ -904,7 +904,7 @@
 
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
-- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
+- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
@@ -1062,7 +1062,29 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库，删除切片向量并标记为 `deleted`。
 
-### 4.1.30.7 `/wunder/admin/knowledge/reindex`
+### 4.1.30.7 `/wunder/admin/knowledge/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选，默认使用知识库配置）
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `embedding_model`：嵌入模型
+  - `top_k`：召回数量
+  - `hits`：召回结果列表
+    - `doc_id`：文档 id
+    - `document`：文档名称
+    - `chunk_index`：切片索引
+    - `start`：切片起点
+    - `end`：切片终点
+    - `content`：切片内容
+    - `score`：相似度分数
+- 说明：仅适用于向量知识库。
+
+### 4.1.30.8 `/wunder/admin/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -1072,7 +1094,7 @@
   - `ok`：是否成功
   - `reindexed`：已重建的 doc_id 列表
   - `failed`：失败项列表（doc_id/error）
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量知识库，执行重建嵌入。
 
 ### 4.1.31 `/wunder/admin/users`
 
@@ -1552,6 +1574,9 @@
 - `POST /wunder/admin/user_accounts`
   - 入参（JSON）：`username`、`email`（可选）、`password`、`unit_id`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
   - 返回：`data`（UserProfile）
+- `POST /wunder/admin/user_accounts/test/seed`
+  - 入参（JSON）：`per_unit`（每单位新增数量，1~200）
+  - 返回：`data.created`、`data.unit_count`、`data.per_unit`、`data.password`
 - `PATCH /wunder/admin/user_accounts/{user_id}`
   - 入参（JSON）：`email`（可选）、`status`（可选）、`unit_id`（可选）、`roles`（可选）、`daily_quota`（可选）
   - 返回：`data`（UserProfile）

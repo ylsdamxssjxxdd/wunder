@@ -32,6 +32,22 @@ const knowledgeChunkModalContent = document.getElementById("knowledgeChunkModalC
 const knowledgeChunkModalSave = document.getElementById("knowledgeChunkModalSave");
 const knowledgeChunkModalCancel = document.getElementById("knowledgeChunkModalCancel");
 const knowledgeChunkModalClose = document.getElementById("knowledgeChunkModalClose");
+const knowledgeDocModal = document.getElementById("knowledgeDocModal");
+const knowledgeDocModalTitle = document.getElementById("knowledgeDocModalTitle");
+const knowledgeDocModalMeta = document.getElementById("knowledgeDocModalMeta");
+const knowledgeDocModalContent = document.getElementById("knowledgeDocModalContent");
+const knowledgeDocModalClose = document.getElementById("knowledgeDocModalClose");
+const knowledgeDocModalCloseBtn = document.getElementById("knowledgeDocModalCloseBtn");
+const knowledgeTestModal = document.getElementById("knowledgeTestModal");
+const knowledgeTestModalTitle = document.getElementById("knowledgeTestModalTitle");
+const knowledgeTestModalClose = document.getElementById("knowledgeTestModalClose");
+const knowledgeTestModalCloseBtn = document.getElementById("knowledgeTestModalCloseBtn");
+const knowledgeTestQuestion = document.getElementById("knowledgeTestQuestion");
+const knowledgeTestRunBtn = document.getElementById("knowledgeTestRunBtn");
+const knowledgeTestStatus = document.getElementById("knowledgeTestStatus");
+const knowledgeTestResult = document.getElementById("knowledgeTestResult");
+const knowledgeTestBtn = document.getElementById("knowledgeTestBtn");
+const knowledgeDocChunkSelectAllBtn = document.getElementById("knowledgeDocChunkSelectAllBtn");
 const knowledgeEditBtn = document.getElementById("knowledgeEditBtn");
 const knowledgeDetailDesc = document.getElementById("knowledgeDetailDesc");
 const knowledgeFileUploadBtn = document.getElementById("knowledgeFileUploadBtn");
@@ -47,8 +63,8 @@ const resetVectorState = () => {
   state.knowledge.docContent = "";
   state.knowledge.docMeta = null;
   state.knowledge.docChunks = [];
-  state.knowledge.activeChunkIndex = -1;
-  state.knowledge.docContentVisible = false;
+  state.knowledge.selectedChunkIndices = new Set();
+  state.knowledge.embeddingChunkIndices = new Set();
 };
 
 const syncKnowledgeEditorStyles = () => {
@@ -541,6 +557,10 @@ const renderKnowledgeDetailHeader = () => {
     if (knowledgeEditBtn) {
       knowledgeEditBtn.disabled = true;
     }
+    if (knowledgeTestBtn) {
+      knowledgeTestBtn.disabled = true;
+      knowledgeTestBtn.style.display = "none";
+    }
     elements.knowledgeDeleteBtn.disabled = true;
     return;
   }
@@ -557,6 +577,11 @@ const renderKnowledgeDetailHeader = () => {
   }
   if (knowledgeEditBtn) {
     knowledgeEditBtn.disabled = false;
+  }
+  if (knowledgeTestBtn) {
+    const isVector = isVectorBase(base);
+    knowledgeTestBtn.disabled = !isVector;
+    knowledgeTestBtn.style.display = isVector ? "" : "none";
   }
   elements.knowledgeDeleteBtn.disabled = false;
 };
@@ -583,8 +608,8 @@ const renderKnowledgeDetail = () => {
   if (elements.knowledgeDocUploadBtn) {
     elements.knowledgeDocUploadBtn.disabled = !base || !vectorMode;
   }
-  if (elements.knowledgeDocReindexAllBtn) {
-    elements.knowledgeDocReindexAllBtn.disabled = !base || !vectorMode;
+  if (elements.knowledgeDocRebuildAllBtn) {
+    elements.knowledgeDocRebuildAllBtn.disabled = !base || !vectorMode;
   }
   if (vectorMode) {
     renderVectorDocList();
@@ -648,13 +673,27 @@ const renderVectorDocList = () => {
     if (doc.doc_id === state.knowledge.activeDocId) {
       item.classList.add("active");
     }
+    const header = document.createElement("div");
+    header.className = "knowledge-doc-item-header";
     const title = document.createElement("div");
     title.className = "knowledge-doc-title";
     title.textContent = doc.name || doc.doc_id || t("knowledge.doc.none");
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "knowledge-doc-delete-btn";
+    deleteBtn.title = t("knowledge.doc.action.delete");
+    deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteVectorDoc(doc.doc_id).catch((error) => {
+        notify(t("knowledge.doc.deleteFailed", { message: error.message }), "error");
+      });
+    });
+    header.append(title, deleteBtn);
     const meta = document.createElement("div");
     meta.className = "knowledge-doc-meta";
     meta.textContent = buildDocMetaText(doc);
-    item.append(title, meta);
+    item.append(header, meta);
     item.addEventListener("click", () => {
       selectVectorDoc(doc.doc_id);
     });
@@ -675,51 +714,56 @@ const buildHighlightedContent = (content, chunk) => {
   return `${escapeHtml(before)}<mark>${escapeHtml(target)}</mark>${escapeHtml(after)}`;
 };
 
-const updateDocContentToggle = () => {
-  const btn = elements.knowledgeDocToggleBtn;
-  if (!btn) {
-    return;
-  }
-  const label = state.knowledge.docContentVisible
-    ? t("knowledge.doc.action.hide")
-    : t("knowledge.doc.action.show");
-  const span = btn.querySelector("span");
-  if (span) {
-    span.textContent = label;
-  } else {
-    btn.textContent = label;
-  }
-};
+const getSelectedChunkIndices = () =>
+  Array.from(state.knowledge.selectedChunkIndices || []);
 
-const setDocContentVisible = (visible) => {
-  state.knowledge.docContentVisible = visible;
-  if (elements.knowledgeDocContentSection) {
-    elements.knowledgeDocContentSection.hidden = !visible;
-    elements.knowledgeDocContentSection.style.display = visible ? "flex" : "none";
-  }
-  updateDocContentToggle();
-};
-
-const renderVectorDocContent = () => {
-  if (!elements.knowledgeDocContent) {
+const renderDocModalContent = () => {
+  if (!knowledgeDocModalContent) {
     return;
   }
   const content = state.knowledge.docContent || "";
   if (!content) {
-    elements.knowledgeDocContent.textContent = t("knowledge.doc.content.empty");
+    knowledgeDocModalContent.textContent = t("knowledge.doc.content.empty");
     return;
   }
-  const chunk = state.knowledge.docChunks.find(
-    (item) => item.index === state.knowledge.activeChunkIndex
-  );
-  if (chunk) {
-    elements.knowledgeDocContent.innerHTML = buildHighlightedContent(content, chunk);
-  } else {
-    elements.knowledgeDocContent.textContent = content;
+  const selected = getSelectedChunkIndices();
+  const chunk =
+    selected.length === 1
+      ? state.knowledge.docChunks.find((item) => item.index === selected[0])
+      : null;
+  knowledgeDocModalContent.innerHTML = buildHighlightedContent(content, chunk);
+};
+
+const openDocModal = () => {
+  if (!knowledgeDocModal) {
+    return;
   }
+  if (!state.knowledge.docMeta) {
+    notify(t("knowledge.doc.none"), "warn");
+    return;
+  }
+  if (knowledgeDocModalTitle) {
+    knowledgeDocModalTitle.textContent =
+      state.knowledge.docMeta.name || t("knowledge.doc.modal.title");
+  }
+  if (knowledgeDocModalMeta) {
+    knowledgeDocModalMeta.textContent = buildDocMetaText(state.knowledge.docMeta);
+  }
+  renderDocModalContent();
+  knowledgeDocModal.classList.add("active");
+};
+
+const closeDocModal = () => {
+  if (!knowledgeDocModal) {
+    return;
+  }
+  knowledgeDocModal.classList.remove("active");
 };
 
 const resolveChunkStatus = (chunk) => {
+  if (state.knowledge.embeddingChunkIndices?.has(chunk?.index)) {
+    return "embedding";
+  }
   const raw = String(chunk?.status || "").trim().toLowerCase();
   return raw || "pending";
 };
@@ -744,14 +788,15 @@ const renderVectorDocChunks = () => {
     const item = document.createElement("div");
     item.className = "knowledge-doc-chunk-item";
     item.dataset.index = chunk.index;
-    if (chunk.index === state.knowledge.activeChunkIndex) {
-      item.classList.add("active");
-    }
     const titleRow = document.createElement("div");
     titleRow.className = "knowledge-doc-chunk-title-row";
     const title = document.createElement("div");
     title.className = "knowledge-doc-chunk-title";
-    title.textContent = `#${chunk.index} ${chunk.start}-${chunk.end}`;
+    const selectMark = document.createElement("span");
+    selectMark.className = "knowledge-doc-chunk-select";
+    const titleText = document.createElement("span");
+    titleText.textContent = `#${chunk.index} ${chunk.start}-${chunk.end}`;
+    title.append(selectMark, titleText);
     const status = document.createElement("span");
     status.className = `knowledge-doc-chunk-status status-${resolveChunkStatus(chunk)}`;
     status.textContent = formatChunkStatus(chunk);
@@ -759,55 +804,130 @@ const renderVectorDocChunks = () => {
     const preview = document.createElement("div");
     preview.className = "knowledge-doc-chunk-preview";
     preview.textContent = chunk.preview || chunk.content || "";
-    const actions = document.createElement("div");
-    actions.className = "knowledge-doc-chunk-actions";
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.className = "knowledge-doc-chunk-action";
-    editBtn.innerHTML = `<i class=\"fa-solid fa-pen\"></i><span>${t(
-      "knowledge.chunk.action.edit"
-    )}</span>`;
-    editBtn.addEventListener("click", (event) => {
+    if (state.knowledge.selectedChunkIndices?.has(chunk.index)) {
+      item.classList.add("selected");
+    }
+    if (state.knowledge.embeddingChunkIndices?.has(chunk.index)) {
+      item.classList.add("embedding");
+    }
+    item.append(titleRow, preview);
+    item.addEventListener("click", () => {
+      toggleChunkSelection(chunk.index);
+    });
+    item.addEventListener("dblclick", (event) => {
       event.stopPropagation();
       openChunkModal(chunk);
     });
-    const embedBtn = document.createElement("button");
-    embedBtn.type = "button";
-    embedBtn.className = "knowledge-doc-chunk-action";
-    embedBtn.innerHTML = `<i class=\"fa-solid fa-cube\"></i><span>${t(
-      "knowledge.chunk.action.embed"
-    )}</span>`;
-    embedBtn.disabled = resolveChunkStatus(chunk) === "embedded";
-    embedBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      embedVectorChunk(chunk.index);
-    });
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "knowledge-doc-chunk-action danger";
-    deleteBtn.innerHTML = `<i class=\"fa-solid fa-trash\"></i><span>${t(
-      "knowledge.chunk.action.delete"
-    )}</span>`;
-    deleteBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      deleteVectorChunk(chunk.index);
-    });
-    actions.append(editBtn, embedBtn, deleteBtn);
-    item.append(titleRow, preview, actions);
-    item.addEventListener("click", () => {
-      const nextIndex = chunk.index;
-      state.knowledge.activeChunkIndex =
-        state.knowledge.activeChunkIndex === nextIndex ? -1 : nextIndex;
-      renderVectorDocContent();
-      elements.knowledgeDocChunks
-        .querySelectorAll(".knowledge-doc-chunk-item")
-        .forEach((node) => {
-          const idx = Number(node.dataset.index);
-          node.classList.toggle("active", idx === state.knowledge.activeChunkIndex);
-        });
-    });
     elements.knowledgeDocChunks.appendChild(item);
   });
+};
+
+const ensureChunkSelection = () => {
+  if (!(state.knowledge.selectedChunkIndices instanceof Set)) {
+    state.knowledge.selectedChunkIndices = new Set();
+  }
+};
+
+const syncChunkSelection = () => {
+  ensureChunkSelection();
+  if (!state.knowledge.docChunks.length) {
+    state.knowledge.selectedChunkIndices.clear();
+    return;
+  }
+  const available = new Set(state.knowledge.docChunks.map((chunk) => chunk.index));
+  state.knowledge.selectedChunkIndices.forEach((index) => {
+    if (!available.has(index)) {
+      state.knowledge.selectedChunkIndices.delete(index);
+    }
+  });
+};
+
+const toggleChunkSelection = (index) => {
+  ensureChunkSelection();
+  if (state.knowledge.selectedChunkIndices.has(index)) {
+    state.knowledge.selectedChunkIndices.delete(index);
+  } else {
+    state.knowledge.selectedChunkIndices.add(index);
+  }
+  renderVectorDocChunks();
+  updateChunkActionState();
+  if (knowledgeDocModal?.classList.contains("active")) {
+    renderDocModalContent();
+  }
+};
+
+const setIconButtonLabel = (button, label) => {
+  if (!button) {
+    return;
+  }
+  button.title = label;
+  button.setAttribute("aria-label", label);
+};
+
+const updateChunkSelectAllState = () => {
+  if (!knowledgeDocChunkSelectAllBtn) {
+    return;
+  }
+  const hasDoc = Boolean(state.knowledge.docMeta);
+  const total = state.knowledge.docChunks.length;
+  const selectedCount = state.knowledge.selectedChunkIndices?.size || 0;
+  const disabled = !hasDoc || total === 0;
+  knowledgeDocChunkSelectAllBtn.disabled = disabled;
+  const allSelected = !disabled && selectedCount === total;
+  const labelKey = allSelected
+    ? "knowledge.chunk.action.clearSelection"
+    : "knowledge.chunk.action.selectAll";
+  const label = t(labelKey);
+  setIconButtonLabel(knowledgeDocChunkSelectAllBtn, label);
+  const icon = knowledgeDocChunkSelectAllBtn.querySelector("i");
+  if (icon) {
+    icon.className = allSelected ? "fa-solid fa-square-minus" : "fa-solid fa-square-check";
+  }
+};
+
+const updateChunkActionState = () => {
+  const hasDoc = Boolean(state.knowledge.docMeta);
+  const selectedCount = state.knowledge.selectedChunkIndices?.size || 0;
+  const embeddingActive = (state.knowledge.embeddingChunkIndices?.size || 0) > 0;
+  const embedBtn = elements.knowledgeDocEmbedBtn;
+  if (embedBtn) {
+    embedBtn.disabled = !hasDoc || selectedCount === 0 || embeddingActive;
+    embedBtn.classList.toggle("is-loading", embeddingActive);
+    const icon = embedBtn.querySelector("i");
+    if (icon) {
+      icon.className = embeddingActive ? "fa-solid fa-spinner" : "fa-solid fa-cube";
+    }
+    const label = embeddingActive
+      ? t("knowledge.chunk.action.embedding")
+      : t("knowledge.doc.action.embed");
+    setIconButtonLabel(embedBtn, label);
+  }
+  const deleteBtn = elements.knowledgeDocChunkDeleteBtn;
+  if (deleteBtn) {
+    deleteBtn.disabled = !hasDoc || selectedCount === 0 || embeddingActive;
+  }
+  updateChunkSelectAllState();
+};
+
+const toggleSelectAllChunks = () => {
+  if (!state.knowledge.docMeta) {
+    return;
+  }
+  const chunks = state.knowledge.docChunks;
+  if (!chunks.length) {
+    return;
+  }
+  ensureChunkSelection();
+  if (state.knowledge.selectedChunkIndices.size === chunks.length) {
+    state.knowledge.selectedChunkIndices.clear();
+  } else {
+    state.knowledge.selectedChunkIndices = new Set(chunks.map((chunk) => chunk.index));
+  }
+  renderVectorDocChunks();
+  updateChunkActionState();
+  if (knowledgeDocModal?.classList.contains("active")) {
+    renderDocModalContent();
+  }
 };
 
 const renderVectorDocDetail = () => {
@@ -821,14 +941,8 @@ const renderVectorDocDetail = () => {
     if (elements.knowledgeDocToggleBtn) {
       elements.knowledgeDocToggleBtn.disabled = true;
     }
-    setDocContentVisible(false);
-    if (elements.knowledgeDocReindexBtn) {
-      elements.knowledgeDocReindexBtn.disabled = true;
-    }
-    if (elements.knowledgeDocDeleteBtn) {
-      elements.knowledgeDocDeleteBtn.disabled = true;
-    }
-    renderVectorDocContent();
+    state.knowledge.selectedChunkIndices = new Set();
+    updateChunkActionState();
     renderVectorDocChunks();
     return;
   }
@@ -837,14 +951,8 @@ const renderVectorDocDetail = () => {
   if (elements.knowledgeDocToggleBtn) {
     elements.knowledgeDocToggleBtn.disabled = false;
   }
-  updateDocContentToggle();
-  if (elements.knowledgeDocReindexBtn) {
-    elements.knowledgeDocReindexBtn.disabled = false;
-  }
-  if (elements.knowledgeDocDeleteBtn) {
-    elements.knowledgeDocDeleteBtn.disabled = false;
-  }
-  renderVectorDocContent();
+  syncChunkSelection();
+  updateChunkActionState();
   renderVectorDocChunks();
 };
 
@@ -880,13 +988,14 @@ const loadVectorDocs = async () => {
     state.knowledge.docContent = "";
     state.knowledge.docMeta = null;
     state.knowledge.docChunks = [];
-    state.knowledge.activeChunkIndex = -1;
+    state.knowledge.selectedChunkIndices = new Set();
+    state.knowledge.embeddingChunkIndices = new Set();
   }
   renderVectorDocList();
   renderVectorDocDetail();
 };
 
-const selectVectorDoc = async (docId) => {
+const selectVectorDoc = async (docId, options = {}) => {
   const base = getActiveBase();
   if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
@@ -896,6 +1005,10 @@ const selectVectorDoc = async (docId) => {
     notify(t("knowledge.doc.none"), "warn");
     return;
   }
+  const keepSelection = options.keepSelection === true;
+  const previousSelection = keepSelection
+    ? new Set(state.knowledge.selectedChunkIndices || [])
+    : new Set();
   const wunderBase = getWunderBase();
   const docEndpoint = `${wunderBase}/admin/knowledge/doc?base=${encodeURIComponent(
     base.name
@@ -920,8 +1033,8 @@ const selectVectorDoc = async (docId) => {
     state.knowledge.docMeta = docResult.doc || null;
     state.knowledge.docContent = docResult.content || "";
     state.knowledge.docChunks = Array.isArray(chunkResult.chunks) ? chunkResult.chunks : [];
-    state.knowledge.activeChunkIndex = -1;
-    setDocContentVisible(false);
+    state.knowledge.selectedChunkIndices = previousSelection;
+    state.knowledge.embeddingChunkIndices = new Set();
     renderVectorDocList();
     renderVectorDocDetail();
   } catch (error) {
@@ -958,7 +1071,8 @@ const deleteVectorDoc = async (docId) => {
     state.knowledge.docContent = "";
     state.knowledge.docMeta = null;
     state.knowledge.docChunks = [];
-    state.knowledge.activeChunkIndex = -1;
+    state.knowledge.selectedChunkIndices = new Set();
+    state.knowledge.embeddingChunkIndices = new Set();
   }
   await loadVectorDocs();
   notify(t("knowledge.doc.deleted"), "success");
@@ -968,7 +1082,7 @@ const refreshActiveVectorDoc = async () => {
   if (!state.knowledge.activeDocId) {
     return;
   }
-  await selectVectorDoc(state.knowledge.activeDocId);
+  await selectVectorDoc(state.knowledge.activeDocId, { keepSelection: true });
   await loadVectorDocs();
 };
 
@@ -1004,7 +1118,7 @@ const updateVectorChunk = async (chunkIndex, content) => {
   notify(t("knowledge.chunk.updateSuccess"), "success");
 };
 
-const embedVectorChunk = async (chunkIndex) => {
+const embedVectorChunk = async (chunkIndex, options = {}) => {
   const base = getActiveBase();
   if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
@@ -1019,23 +1133,45 @@ const embedVectorChunk = async (chunkIndex) => {
     doc_id: state.knowledge.activeDocId,
     chunk_index: chunkIndex,
   };
+  if (!(state.knowledge.embeddingChunkIndices instanceof Set)) {
+    state.knowledge.embeddingChunkIndices = new Set();
+  }
+  state.knowledge.embeddingChunkIndices.add(chunkIndex);
+  renderVectorDocChunks();
+  updateChunkActionState();
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/knowledge/chunk/embed`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(t("knowledge.chunk.embedFailed", { message: response.status }));
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(t("knowledge.chunk.embedFailed", { message: response.status }));
+    }
+    const localChunk = state.knowledge.docChunks.find(
+      (item) => item.index === chunkIndex
+    );
+    if (localChunk) {
+      localChunk.status = "embedded";
+    }
+    if (options.refresh !== false) {
+      await refreshActiveVectorDoc();
+    }
+    if (options.silent !== true) {
+      notify(t("knowledge.chunk.embedSuccess"), "success");
+    }
+  } finally {
+    state.knowledge.embeddingChunkIndices.delete(chunkIndex);
+    renderVectorDocChunks();
+    updateChunkActionState();
   }
-  await refreshActiveVectorDoc();
-  notify(t("knowledge.chunk.embedSuccess"), "success");
 };
 
-const deleteVectorChunk = async (chunkIndex) => {
+const deleteVectorChunk = async (chunkIndex, options = {}) => {
   const base = getActiveBase();
   if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
@@ -1045,7 +1181,10 @@ const deleteVectorChunk = async (chunkIndex) => {
     notify(t("knowledge.doc.none"), "warn");
     return;
   }
-  if (!window.confirm(t("knowledge.chunk.deleteConfirm", { index: chunkIndex }))) {
+  if (
+    options.skipConfirm !== true &&
+    !window.confirm(t("knowledge.chunk.deleteConfirm", { index: chunkIndex }))
+  ) {
     return;
   }
   const payload = {
@@ -1065,8 +1204,77 @@ const deleteVectorChunk = async (chunkIndex) => {
   if (!response.ok) {
     throw new Error(t("knowledge.chunk.deleteFailed", { message: response.status }));
   }
+  state.knowledge.docChunks = state.knowledge.docChunks.filter(
+    (item) => item.index !== chunkIndex
+  );
+  state.knowledge.selectedChunkIndices?.delete(chunkIndex);
+  if (options.refresh !== false) {
+    await refreshActiveVectorDoc();
+  }
+  if (options.silent !== true) {
+    notify(t("knowledge.chunk.deleted"), "success");
+  }
+};
+
+const embedSelectedChunks = async () => {
+  const selected = getSelectedChunkIndices();
+  if (!selected.length) {
+    notify(t("knowledge.chunk.selectRequired"), "warn");
+    return;
+  }
+  const pending = selected.filter((index) => {
+    const chunk = state.knowledge.docChunks.find((item) => item.index === index);
+    return chunk && resolveChunkStatus(chunk) !== "embedded";
+  });
+  if (!pending.length) {
+    notify(t("knowledge.chunk.embedSkipped"), "info");
+    return;
+  }
+  let succeeded = 0;
+  let failed = 0;
+  for (const index of pending) {
+    try {
+      await embedVectorChunk(index, { silent: true, refresh: false });
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+    }
+  }
   await refreshActiveVectorDoc();
-  notify(t("knowledge.chunk.deleted"), "success");
+  if (succeeded) {
+    notify(t("knowledge.chunk.embedBatchSuccess", { count: succeeded }), "success");
+  }
+  if (failed) {
+    notify(t("knowledge.chunk.embedBatchFailed", { count: failed }), "error");
+  }
+};
+
+const deleteSelectedChunks = async () => {
+  const selected = getSelectedChunkIndices();
+  if (!selected.length) {
+    notify(t("knowledge.chunk.selectRequired"), "warn");
+    return;
+  }
+  if (!window.confirm(t("knowledge.chunk.deleteBatchConfirm", { count: selected.length }))) {
+    return;
+  }
+  let succeeded = 0;
+  let failed = 0;
+  for (const index of selected) {
+    try {
+      await deleteVectorChunk(index, { silent: true, refresh: false, skipConfirm: true });
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+    }
+  }
+  await refreshActiveVectorDoc();
+  if (succeeded) {
+    notify(t("knowledge.chunk.deleteBatchSuccess", { count: succeeded }), "success");
+  }
+  if (failed) {
+    notify(t("knowledge.chunk.deleteBatchFailed", { count: failed }), "error");
+  }
 };
 
 const openChunkModal = (chunk) => {
@@ -1112,7 +1320,7 @@ const saveChunkModal = async () => {
   }
 };
 
-const reindexVectorDocs = async (docId) => {
+const rebuildVectorDocs = async (docId) => {
   const base = getActiveBase();
   if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
@@ -1132,17 +1340,150 @@ const reindexVectorDocs = async (docId) => {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    throw new Error(t("knowledge.doc.reindexFailed", { message: response.status }));
+    throw new Error(t("knowledge.doc.rebuildFailed", { message: response.status }));
   }
   const result = await response.json();
   if (result?.ok === false) {
-    notify(t("knowledge.doc.reindexFailed", { message: JSON.stringify(result.failed || []) }), "error");
+    notify(
+      t("knowledge.doc.rebuildFailed", { message: JSON.stringify(result.failed || []) }),
+      "error"
+    );
   } else {
-    notify(t("knowledge.doc.reindexSuccess"), "success");
+    notify(t("knowledge.doc.rebuildSuccess"), "success");
   }
   await loadVectorDocs();
   if (docId) {
     await selectVectorDoc(docId);
+  }
+};
+
+const setKnowledgeTestStatus = (message) => {
+  if (!knowledgeTestStatus) {
+    return;
+  }
+  knowledgeTestStatus.textContent = message || "";
+};
+
+const clearKnowledgeTestResult = () => {
+  if (!knowledgeTestResult) {
+    return;
+  }
+  knowledgeTestResult.textContent = "";
+};
+
+const formatTestScore = (score) => {
+  if (!Number.isFinite(score)) {
+    return "-";
+  }
+  return score.toFixed(3);
+};
+
+const renderKnowledgeTestResults = (hits) => {
+  if (!knowledgeTestResult) {
+    return;
+  }
+  knowledgeTestResult.textContent = "";
+  if (!hits.length) {
+    knowledgeTestResult.textContent = t("knowledge.test.empty");
+    return;
+  }
+  hits.forEach((hit, index) => {
+    const item = document.createElement("div");
+    item.className = "knowledge-test-result-item";
+    const header = document.createElement("div");
+    header.className = "knowledge-test-result-header";
+    const docName = hit.document || hit.doc_id || t("knowledge.doc.none");
+    const scoreText = formatTestScore(Number(hit.score));
+    header.textContent = `${index + 1}. ${docName} #${hit.chunk_index ?? "-"} · ${scoreText}`;
+    const content = document.createElement("div");
+    content.className = "knowledge-test-result-content";
+    content.textContent = hit.content || "";
+    item.append(header, content);
+    knowledgeTestResult.appendChild(item);
+  });
+};
+
+const openKnowledgeTestModal = () => {
+  if (!knowledgeTestModal) {
+    return;
+  }
+  const base = getActiveBase();
+  if (!base || !isVectorBase(base)) {
+    notify(t("knowledge.base.selectRequired"), "warn");
+    return;
+  }
+  if (knowledgeTestModalTitle) {
+    knowledgeTestModalTitle.textContent = t("knowledge.test.title");
+  }
+  if (knowledgeTestQuestion && !knowledgeTestQuestion.value) {
+    knowledgeTestQuestion.value = "";
+  }
+  clearKnowledgeTestResult();
+  setKnowledgeTestStatus("");
+  knowledgeTestModal.classList.add("active");
+  knowledgeTestQuestion?.focus();
+};
+
+const closeKnowledgeTestModal = () => {
+  if (!knowledgeTestModal) {
+    return;
+  }
+  knowledgeTestModal.classList.remove("active");
+};
+
+const runKnowledgeTest = async () => {
+  const base = getActiveBase();
+  if (!base || !base.name || !isVectorBase(base)) {
+    notify(t("knowledge.base.selectRequired"), "warn");
+    return;
+  }
+  const query = String(knowledgeTestQuestion?.value || "").trim();
+  if (!query) {
+    notify(t("knowledge.test.queryRequired"), "warn");
+    return;
+  }
+  if (knowledgeTestRunBtn) {
+    knowledgeTestRunBtn.disabled = true;
+    knowledgeTestRunBtn.classList.add("is-loading");
+    const icon = knowledgeTestRunBtn.querySelector("i");
+    if (icon) {
+      icon.className = "fa-solid fa-spinner";
+    }
+  }
+  setKnowledgeTestStatus(t("knowledge.test.running"));
+  if (knowledgeTestResult) {
+    knowledgeTestResult.textContent = t("common.loading");
+  }
+  try {
+    const wunderBase = getWunderBase();
+    const endpoint = `${wunderBase}/admin/knowledge/test`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ base: base.name, query }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      const message =
+        payload?.detail?.message || payload?.message || String(response.status);
+      throw new Error(message);
+    }
+    const result = await response.json();
+    renderKnowledgeTestResults(Array.isArray(result.hits) ? result.hits : []);
+    setKnowledgeTestStatus(t("knowledge.test.done"));
+  } catch (error) {
+    setKnowledgeTestStatus(t("knowledge.test.failed", { message: error.message }));
+  } finally {
+    if (knowledgeTestRunBtn) {
+      knowledgeTestRunBtn.disabled = false;
+      knowledgeTestRunBtn.classList.remove("is-loading");
+      const icon = knowledgeTestRunBtn.querySelector("i");
+      if (icon) {
+        icon.className = "fa-solid fa-play";
+      }
+    }
   }
 };
 
@@ -1467,8 +1808,8 @@ const applyKnowledgeModal = async () => {
     docContent: state.knowledge.docContent,
     docMeta: state.knowledge.docMeta ? { ...state.knowledge.docMeta } : null,
     docChunks: [...state.knowledge.docChunks],
-    activeChunkIndex: state.knowledge.activeChunkIndex,
-    docContentVisible: state.knowledge.docContentVisible,
+    selectedChunkIndices: [...(state.knowledge.selectedChunkIndices || [])],
+    embeddingChunkIndices: [...(state.knowledge.embeddingChunkIndices || [])],
   };
   if (knowledgeEditingIndex >= 0) {
     state.knowledge.bases[knowledgeEditingIndex] = { ...payload };
@@ -1496,8 +1837,8 @@ const applyKnowledgeModal = async () => {
       state.knowledge.docContent = snapshot.docContent;
       state.knowledge.docMeta = snapshot.docMeta;
       state.knowledge.docChunks = snapshot.docChunks;
-      state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
-      state.knowledge.docContentVisible = snapshot.docContentVisible;
+      state.knowledge.selectedChunkIndices = new Set(snapshot.selectedChunkIndices || []);
+      state.knowledge.embeddingChunkIndices = new Set(snapshot.embeddingChunkIndices || []);
       renderKnowledgeBaseList();
       renderKnowledgeDetail();
       return;
@@ -1519,8 +1860,8 @@ const applyKnowledgeModal = async () => {
     state.knowledge.docContent = snapshot.docContent;
     state.knowledge.docMeta = snapshot.docMeta;
     state.knowledge.docChunks = snapshot.docChunks;
-    state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
-    state.knowledge.docContentVisible = snapshot.docContentVisible;
+    state.knowledge.selectedChunkIndices = new Set(snapshot.selectedChunkIndices || []);
+    state.knowledge.embeddingChunkIndices = new Set(snapshot.embeddingChunkIndices || []);
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
     notify(t("knowledge.saveFailed", { message: error.message }), "error");
@@ -1547,8 +1888,8 @@ const deleteKnowledgeBase = async () => {
     docContent: state.knowledge.docContent,
     docMeta: state.knowledge.docMeta ? { ...state.knowledge.docMeta } : null,
     docChunks: [...state.knowledge.docChunks],
-    activeChunkIndex: state.knowledge.activeChunkIndex,
-    docContentVisible: state.knowledge.docContentVisible,
+    selectedChunkIndices: [...(state.knowledge.selectedChunkIndices || [])],
+    embeddingChunkIndices: [...(state.knowledge.embeddingChunkIndices || [])],
   };
   state.knowledge.bases.splice(state.knowledge.selectedIndex, 1);
   if (!state.knowledge.bases.length) {
@@ -1575,8 +1916,8 @@ const deleteKnowledgeBase = async () => {
       state.knowledge.docContent = snapshot.docContent;
       state.knowledge.docMeta = snapshot.docMeta;
       state.knowledge.docChunks = snapshot.docChunks;
-      state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
-      state.knowledge.docContentVisible = snapshot.docContentVisible;
+      state.knowledge.selectedChunkIndices = new Set(snapshot.selectedChunkIndices || []);
+      state.knowledge.embeddingChunkIndices = new Set(snapshot.embeddingChunkIndices || []);
       renderKnowledgeBaseList();
       renderKnowledgeDetail();
       return;
@@ -1594,8 +1935,8 @@ const deleteKnowledgeBase = async () => {
     state.knowledge.docContent = snapshot.docContent;
     state.knowledge.docMeta = snapshot.docMeta;
     state.knowledge.docChunks = snapshot.docChunks;
-    state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
-    state.knowledge.docContentVisible = snapshot.docContentVisible;
+    state.knowledge.selectedChunkIndices = new Set(snapshot.selectedChunkIndices || []);
+    state.knowledge.embeddingChunkIndices = new Set(snapshot.embeddingChunkIndices || []);
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
     notify(t("knowledge.deleteFailed", { message: error.message }), "error");
@@ -1693,49 +2034,60 @@ export const initKnowledgePanel = () => {
       knowledgeFileUploadInput.click();
     }
   });
-  elements.knowledgeDocReindexAllBtn?.addEventListener("click", async () => {
+  elements.knowledgeDocRebuildAllBtn?.addEventListener("click", async () => {
     try {
-      await reindexVectorDocs();
+      await rebuildVectorDocs();
     } catch (error) {
-      notify(t("knowledge.doc.reindexFailed", { message: error.message }), "error");
-    }
-  });
-  elements.knowledgeDocReindexBtn?.addEventListener("click", async () => {
-    if (!state.knowledge.activeDocId) {
-      notify(t("knowledge.doc.none"), "warn");
-      return;
-    }
-    try {
-      await reindexVectorDocs(state.knowledge.activeDocId);
-    } catch (error) {
-      notify(t("knowledge.doc.reindexFailed", { message: error.message }), "error");
+      notify(t("knowledge.doc.rebuildFailed", { message: error.message }), "error");
     }
   });
   elements.knowledgeDocToggleBtn?.addEventListener("click", () => {
-    if (!state.knowledge.docMeta) {
-      return;
-    }
-    setDocContentVisible(!state.knowledge.docContentVisible);
-    if (state.knowledge.docContentVisible) {
-      renderVectorDocContent();
+    openDocModal();
+  });
+  elements.knowledgeDocEmbedBtn?.addEventListener("click", () => {
+    embedSelectedChunks().catch((error) => {
+      notify(t("knowledge.chunk.embedFailed", { message: error.message }), "error");
+    });
+  });
+  elements.knowledgeDocChunkDeleteBtn?.addEventListener("click", () => {
+    deleteSelectedChunks().catch((error) => {
+      notify(t("knowledge.chunk.deleteFailed", { message: error.message }), "error");
+    });
+  });
+  knowledgeDocChunkSelectAllBtn?.addEventListener("click", () => {
+    toggleSelectAllChunks();
+  });
+  knowledgeTestBtn?.addEventListener("click", () => {
+    openKnowledgeTestModal();
+  });
+  knowledgeDocModalClose?.addEventListener("click", closeDocModal);
+  knowledgeDocModalCloseBtn?.addEventListener("click", closeDocModal);
+  knowledgeDocModal?.addEventListener("click", (event) => {
+    if (event.target === knowledgeDocModal) {
+      closeDocModal();
     }
   });
-  elements.knowledgeDocDeleteBtn?.addEventListener("click", async () => {
-    try {
-      await deleteVectorDoc(state.knowledge.activeDocId);
-    } catch (error) {
-      notify(t("knowledge.doc.deleteFailed", { message: error.message }), "error");
+  knowledgeTestModalClose?.addEventListener("click", closeKnowledgeTestModal);
+  knowledgeTestModalCloseBtn?.addEventListener("click", closeKnowledgeTestModal);
+  knowledgeTestModal?.addEventListener("click", (event) => {
+    if (event.target === knowledgeTestModal) {
+      closeKnowledgeTestModal();
     }
+  });
+  knowledgeTestRunBtn?.addEventListener("click", () => {
+    runKnowledgeTest();
   });
   knowledgeFileUploadInput?.addEventListener("change", async () => {
-    const file = knowledgeFileUploadInput.files?.[0];
-    if (!file) {
+    const files = Array.from(knowledgeFileUploadInput.files || []);
+    if (!files.length) {
       return;
     }
-    try {
-      await uploadKnowledgeFile(file);
-    } catch (error) {
-      notify(t("knowledge.file.uploadFailedMessage", { message: error.message }), "error");
+    for (const file of files) {
+      try {
+        await uploadKnowledgeFile(file);
+      } catch (error) {
+        notify(t("knowledge.file.uploadFailedMessage", { message: error.message }), "error");
+      }
     }
   });
   knowledgeChunkModalSave?.addEventListener("click", saveChunkModal);

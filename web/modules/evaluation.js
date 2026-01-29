@@ -29,6 +29,22 @@ const getDefaultModelLabel = () => {
   return t("llm.default");
 };
 
+const normalizeModelType = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "llm";
+  }
+  if (raw === "embed" || raw === "embeddings") {
+    return "embedding";
+  }
+  return raw === "embedding" ? "embedding" : "llm";
+};
+
+const getLlmModelNames = () =>
+  state.llm.order.filter((name) =>
+    normalizeModelType(state.llm.configs?.[name]?.model_type) === "llm"
+  );
+
 const getSelectedModelName = () =>
   String(elements.evaluationModelSelect?.value || "").trim();
 
@@ -58,7 +74,7 @@ const renderEvaluationModelOptions = (options = {}) => {
   defaultOption.value = "";
   defaultOption.textContent = getDefaultModelLabel();
   select.appendChild(defaultOption);
-  state.llm.order.forEach((name) => {
+  getLlmModelNames().forEach((name) => {
     const option = document.createElement("option");
     option.value = name;
     option.textContent = name;

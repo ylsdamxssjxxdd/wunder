@@ -603,6 +603,10 @@
                   <i class="fa-solid fa-arrows-rotate"></i>
                   <span data-i18n="common.refresh">刷新</span>
                 </button>
+                <button id="userAccountSeedBtn" class="secondary btn-with-icon">
+                  <i class="fa-solid fa-flask"></i>
+                  <span data-i18n="userAccounts.action.seed">新增测试用户</span>
+                </button>
                 <button id="userAccountCreateBtn" class="btn-with-icon">
                   <i class="fa-solid fa-user-plus"></i>
                   <span data-i18n="userAccounts.action.create">新增用户</span>
@@ -1827,6 +1831,9 @@
                   <div id="knowledgeDetailDesc" class="muted"></div>
                 </div>
                 <div class="detail-actions">
+                  <button id="knowledgeTestBtn" class="secondary btn-with-icon">
+                    <i class="fa-solid fa-vial"></i><span data-i18n="knowledge.action.test">测试</span>
+                  </button>
                   <button id="knowledgeEditBtn" class="secondary btn-with-icon">
                     <i class="fa-solid fa-pen"></i><span data-i18n="common.edit">编辑</span>
                   </button>
@@ -1854,6 +1861,7 @@
                         <input
                           id="knowledgeFileUploadInput"
                           type="file"
+                          multiple
                           hidden
                         />
                         <div id="knowledgeFileList" class="knowledge-file-list"></div>
@@ -1880,8 +1888,8 @@
                           <button id="knowledgeDocUploadBtn" class="secondary btn-with-icon btn-compact">
                             <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
                           </button>
-                          <button id="knowledgeDocReindexAllBtn" class="secondary btn-with-icon btn-compact">
-                            <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.action.reindex">重建索引</span>
+                          <button id="knowledgeDocRebuildAllBtn" class="secondary btn-with-icon btn-compact">
+                            <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.action.rebuild">重建嵌入</span>
                           </button>
                         </div>
                         <div id="knowledgeDocList" class="knowledge-doc-list"></div>
@@ -1895,27 +1903,52 @@
                             <div id="knowledgeDocMeta" class="muted"></div>
                           </div>
                           <div class="detail-actions">
-                            <button id="knowledgeDocToggleBtn" class="secondary btn-with-icon btn-compact">
-                              <i class="fa-solid fa-file-lines"></i><span data-i18n="knowledge.doc.action.show">查看原文档</span>
+                            <button
+                              id="knowledgeDocToggleBtn"
+                              class="secondary btn-with-icon btn-compact icon-only"
+                              data-i18n-title="knowledge.doc.action.show"
+                              data-i18n-aria-label="knowledge.doc.action.show"
+                              type="button"
+                            >
+                              <i class="fa-solid fa-file-lines"></i>
                             </button>
-                            <button id="knowledgeDocReindexBtn" class="secondary btn-with-icon btn-compact">
-                              <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.doc.action.reindex">重新索引</span>
+                            <button
+                              id="knowledgeDocEmbedBtn"
+                              class="btn-with-icon btn-compact icon-only"
+                              data-i18n-title="knowledge.doc.action.embed"
+                              data-i18n-aria-label="knowledge.doc.action.embed"
+                              type="button"
+                            >
+                              <i class="fa-solid fa-cube"></i>
                             </button>
-                            <button id="knowledgeDocDeleteBtn" class="danger btn-with-icon btn-compact">
-                              <i class="fa-solid fa-trash"></i><span data-i18n="knowledge.doc.action.delete">删除文档</span>
+                            <button
+                              id="knowledgeDocChunkDeleteBtn"
+                              class="danger btn-with-icon btn-compact icon-only"
+                              data-i18n-title="knowledge.doc.action.deleteChunks"
+                              data-i18n-aria-label="knowledge.doc.action.deleteChunks"
+                              type="button"
+                            >
+                              <i class="fa-solid fa-trash"></i>
                             </button>
                           </div>
-                        </div>
-                        <div id="knowledgeDocContentSection" class="knowledge-doc-content-pane" hidden>
-                          <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.original">
-                            原文档
-                          </div>
-                          <div id="knowledgeDocContent" class="knowledge-doc-content"></div>
                         </div>
                         <div class="knowledge-vector-content">
                           <div class="knowledge-doc-chunks-pane">
-                            <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
-                              切片列表
+                            <div class="knowledge-doc-section-header">
+                              <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
+                                切片列表
+                              </div>
+                              <div class="knowledge-doc-section-actions">
+                                <button
+                                  id="knowledgeDocChunkSelectAllBtn"
+                                  class="secondary btn-with-icon btn-compact icon-only"
+                                  data-i18n-title="knowledge.chunk.action.selectAll"
+                                  data-i18n-aria-label="knowledge.chunk.action.selectAll"
+                                  type="button"
+                                >
+                                  <i class="fa-solid fa-square-check"></i>
+                                </button>
+                              </div>
                             </div>
                             <div id="knowledgeDocChunks" class="knowledge-doc-chunk-list"></div>
                           </div>
@@ -3298,6 +3331,59 @@
         </div>
       </div>
     </div>
+    <div id="knowledgeDocModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div id="knowledgeDocModalTitle" class="detail-title" data-i18n="knowledge.doc.modal.title">原文档</div>
+          <button id="knowledgeDocModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="knowledgeDocModalMeta" class="muted"></div>
+          <div id="knowledgeDocModalContent" class="knowledge-doc-modal-content"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="knowledgeDocModalCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="knowledgeTestModal" class="modal">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div id="knowledgeTestModalTitle" class="detail-title" data-i18n="knowledge.test.title">向量知识库测试</div>
+          <button id="knowledgeTestModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="knowledge-test-layout">
+            <div class="knowledge-test-input">
+              <label for="knowledgeTestQuestion" data-i18n="knowledge.test.question">问题</label>
+              <textarea
+                id="knowledgeTestQuestion"
+                rows="8"
+                placeholder="请输入测试问题"
+                data-i18n-placeholder="knowledge.test.question.placeholder"
+              ></textarea>
+              <div class="knowledge-test-actions">
+                <button id="knowledgeTestRunBtn" class="btn-with-icon">
+                  <i class="fa-solid fa-play"></i><span data-i18n="knowledge.test.action.run">测试</span>
+                </button>
+                <div id="knowledgeTestStatus" class="muted"></div>
+              </div>
+            </div>
+            <div class="knowledge-test-results">
+              <div class="knowledge-doc-section-title" data-i18n="knowledge.test.result.title">召回结果</div>
+              <div id="knowledgeTestResult" class="knowledge-test-result-list"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="knowledgeTestModalCloseBtn" class="secondary btn-with-icon">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <div id="userKnowledgeModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
@@ -3661,6 +3747,33 @@
           </button>
           <button id="userAccountModalSave" class="btn-with-icon" type="button">
             <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="userAccountSeedModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title" data-i18n="userAccounts.modal.seed.title">新增测试用户</div>
+          <button id="userAccountSeedModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label for="userAccountSeedCount" data-i18n="userAccounts.modal.seed.count.label">每单位新增数量</label>
+            <input id="userAccountSeedCount" type="number" min="1" step="1" />
+          </div>
+          <div class="form-row">
+            <div id="userAccountSeedHint" class="muted" data-i18n="userAccounts.modal.seed.hint">
+              将为每个单位随机生成测试用户，默认密码为 Test@123456。
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="userAccountSeedModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountSeedModalConfirm" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-flask"></i><span data-i18n="userAccounts.modal.seed.action">新增</span>
           </button>
         </div>
       </div>

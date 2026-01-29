@@ -117,6 +117,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/knowledge/chunk/delete",
             post(admin_knowledge_chunk_delete),
         )
+        .route("/wunder/admin/knowledge/test", post(admin_knowledge_test))
         .route(
             "/wunder/admin/knowledge/upload",
             post(admin_knowledge_upload),
@@ -191,6 +192,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/user_accounts",
             get(admin_user_accounts_list).post(admin_user_accounts_create),
+        )
+        .route(
+            "/wunder/admin/user_accounts/test/seed",
+            post(admin_user_accounts_seed),
         )
         .route(
             "/wunder/admin/user_accounts/{user_id}",
@@ -349,6 +354,9 @@ async fn admin_lsp_update(
 const MAX_LSP_DIAGNOSTICS: usize = 20;
 const ORG_UNIT_NAME_SEPARATOR: &str = " / ";
 const MAX_ORG_UNIT_LEVEL: i32 = 4;
+const DEFAULT_TEST_USER_PASSWORD: &str = "Test@123456";
+const DEFAULT_TEST_USER_PREFIX: &str = "test_user";
+const MAX_TEST_USERS_PER_UNIT: i64 = 200;
 
 fn format_lsp_diagnostics(diagnostics: &[LspDiagnostic]) -> Option<Value> {
     if diagnostics.is_empty() {
@@ -1473,6 +1481,7 @@ async fn admin_knowledge_update(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let normalized = normalize_admin_knowledge_bases(&config, payload.knowledge.bases)?;
+    let removed_vector_bases = collect_removed_vector_bases(&config.knowledge.bases, &normalized);
     let updated = state
         .config_store
         .update(|config| {
@@ -1480,9 +1489,49 @@ async fn admin_knowledge_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    cleanup_removed_vector_roots(removed_vector_bases).await;
     Ok(Json(
         json!({ "knowledge": { "bases": updated.knowledge.bases } }),
     ))
+}
+
+fn collect_removed_vector_bases(
+    current: &[KnowledgeBaseConfig],
+    next: &[KnowledgeBaseConfig],
+) -> Vec<String> {
+    let mut next_vector = HashSet::new();
+    for base in next {
+        if base.is_vector() {
+            next_vector.insert(base.name.clone());
+        }
+    }
+    current
+        .iter()
+        .filter(|base| base.is_vector())
+        .filter(|base| !next_vector.contains(&base.name))
+        .map(|base| base.name.clone())
+        .collect()
+}
+
+async fn cleanup_removed_vector_roots(bases: Vec<String>) {
+    for name in bases {
+        let root = match vector_knowledge::resolve_vector_root(None, &name, false) {
+            Ok(path) => path,
+            Err(err) => {
+                info!("Failed to resolve vector knowledge root for {name}: {err}");
+                continue;
+            }
+        };
+        if let Err(err) = tokio::fs::remove_dir_all(&root).await {
+            if err.kind() != ErrorKind::NotFound {
+                info!(
+                    "Failed to remove vector knowledge root {}: {}",
+                    root.to_string_lossy(),
+                    err
+                );
+            }
+        }
+    }
 }
 
 async fn admin_knowledge_files(
@@ -1723,6 +1772,78 @@ async fn admin_knowledge_chunks(
         "base": query.base,
         "doc_id": query.doc_id,
         "chunks": chunks
+    })))
+}
+
+async fn admin_knowledge_test(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeTestRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let query = payload.query.trim();
+    if query.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_query_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    ensure_vector_base(&base)?;
+    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
+    let embed_config = vector_knowledge::resolve_embedding_model(&config, embedding_name)
+        .map_err(vector_error_response)?;
+    let timeout_s = embed_config.timeout_s.unwrap_or(120);
+    let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
+        .await
+        .map_err(vector_error_response)?;
+    let vector = vectors.get(0).ok_or_else(|| {
+        error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
+    })?;
+    let top_k = payload
+        .top_k
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
+    let client =
+        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+    let owner_key = vector_knowledge::resolve_owner_key(None);
+    let mut hits = client
+        .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
+        .await
+        .map_err(vector_error_response)?;
+    if let Some(threshold) = base.score_threshold {
+        hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+    }
+    if hits.len() > top_k {
+        hits.truncate(top_k);
+    }
+    let items = hits
+        .into_iter()
+        .map(|hit| {
+            json!({
+                "doc_id": hit.doc_id,
+                "document": hit.doc_name,
+                "chunk_index": hit.chunk_index,
+                "start": hit.start,
+                "end": hit.end,
+                "content": hit.content,
+                "embedding_model": hit.embedding_model,
+                "score": hit.score
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "base": base.name,
+        "query": query,
+        "embedding_model": embedding_name,
+        "top_k": top_k,
+        "hits": items
     })))
 }
 
@@ -3350,6 +3471,58 @@ async fn admin_user_accounts_create(
         .and_then(|unit_id| units.iter().find(|unit| unit.unit_id == *unit_id));
     Ok(Json(json!({
         "data": UserStore::to_profile_with_unit(&record, unit)
+    })))
+}
+
+async fn admin_user_accounts_seed(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    Json(payload): Json<UserAccountSeedRequest>,
+) -> Result<Json<Value>, Response> {
+    let per_unit = payload.per_unit.unwrap_or(0);
+    if per_unit <= 0 || per_unit > MAX_TEST_USERS_PER_UNIT {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_seed_count_invalid"),
+        ));
+    }
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let scoped_units = filter_units_by_scope(units, actor.scope_unit_ids.as_ref());
+    let mut created: i64 = 0;
+    for unit in &scoped_units {
+        for _ in 0..per_unit {
+            let username = format!(
+                "{DEFAULT_TEST_USER_PREFIX}_{unit_id}_{}",
+                Uuid::new_v4().simple(),
+                unit_id = unit.unit_id
+            );
+            state
+                .user_store
+                .create_user(
+                    &username,
+                    None,
+                    DEFAULT_TEST_USER_PASSWORD,
+                    None,
+                    Some(unit.unit_id.clone()),
+                    Vec::new(),
+                    "active",
+                    true,
+                )
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            created += 1;
+        }
+    }
+    Ok(Json(json!({
+        "data": {
+            "created": created,
+            "unit_count": scoped_units.len(),
+            "per_unit": per_unit,
+            "password": DEFAULT_TEST_USER_PASSWORD,
+        }
     })))
 }
 
@@ -5069,6 +5242,14 @@ struct KnowledgeChunksQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct KnowledgeTestRequest {
+    base: String,
+    query: String,
+    #[serde(default)]
+    top_k: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 struct KnowledgeChunkUpdateRequest {
     base: String,
     doc_id: String,
@@ -5190,6 +5371,12 @@ struct UserAccountCreateRequest {
     status: Option<String>,
     #[serde(default)]
     is_demo: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountSeedRequest {
+    #[serde(default)]
+    per_unit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
