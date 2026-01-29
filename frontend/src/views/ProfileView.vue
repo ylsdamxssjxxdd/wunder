@@ -4,53 +4,54 @@
     <main class="profile-content">
       <section class="profile-hero">
         <div class="profile-card profile-identity">
-          <div class="profile-identity-main">
-            <div class="profile-avatar">{{ userInitials }}</div>
-            <div class="profile-info">
-              <div class="profile-name">{{ userName }}</div>
-              <div class="profile-id">ID：{{ userId }}</div>
-              <div class="profile-tags">
-                <span class="profile-tag">等级 {{ userLevel }}</span>
-                <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
+          <button
+            class="profile-edit-btn"
+            type="button"
+            aria-label="编辑资料"
+            @click="openProfileEditor"
+          >
+            <svg class="profile-edit-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 16.5V20h3.5L19 8.5 15.5 5 4 16.5z" />
+              <path d="M13.5 6.5L17 10" />
+            </svg>
+          </button>
+          <div class="profile-identity-body">
+            <div class="profile-identity-main">
+              <div class="profile-avatar">{{ userInitials }}</div>
+              <div class="profile-info">
+                <div class="profile-name">{{ userName }}</div>
+                <div class="profile-id">ID：{{ userId }}</div>
+                <div class="profile-tags">
+                  <span class="profile-tag">等级 {{ userLevel }}</span>
+                  <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="profile-identity-stats">
-            <div class="profile-stat">
-              <div class="profile-stat-label">会话数量</div>
-              <div class="profile-stat-value">{{ sessionCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">近 7 天会话</div>
-              <div class="profile-stat-value">{{ recentSessionCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">当前会话消息</div>
-              <div class="profile-stat-value">{{ conversationMessageCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">最近活跃</div>
-              <div class="profile-stat-value">{{ lastActiveTime }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">用户消息</div>
-              <div class="profile-stat-value">{{ userMessageCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">助手消息</div>
-              <div class="profile-stat-value">{{ assistantMessageCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">工具调用</div>
-              <div class="profile-stat-value">{{ toolCallCount }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">上下文占用</div>
-              <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
-            </div>
-            <div class="profile-stat">
-              <div class="profile-stat-label">累计 Token</div>
-              <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
+            <div class="profile-identity-stats">
+              <div class="profile-stat">
+                <div class="profile-stat-label">会话数量</div>
+                <div class="profile-stat-value">{{ sessionCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">近 7 天会话</div>
+                <div class="profile-stat-value">{{ recentSessionCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">最近活跃</div>
+                <div class="profile-stat-value">{{ lastActiveTime }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">工具调用</div>
+                <div class="profile-stat-value">{{ toolCallCount }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">上下文占用</div>
+                <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
+              </div>
+              <div class="profile-stat">
+                <div class="profile-stat-label">累计 Token</div>
+                <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -74,15 +75,45 @@
         </div>
       </section>
     </main>
+
+    <el-dialog
+      v-model="editDialogVisible"
+      class="profile-edit-dialog"
+      width="460px"
+      top="8vh"
+      :show-close="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="profile-edit-header">
+          <div class="profile-edit-title">编辑资料</div>
+          <button class="icon-btn" type="button" @click="editDialogVisible = false">×</button>
+        </div>
+      </template>
+      <el-form :model="editForm" label-position="top" class="profile-edit-form">
+        <el-form-item label="用户名">
+          <el-input v-model="editForm.username" placeholder="输入新的用户名" />
+        </el-form-item>
+        <el-form-item label="邮箱">
+          <el-input v-model="editForm.email" placeholder="输入邮箱（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveProfile">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import * as echarts from 'echarts';
+import { ElMessage } from 'element-plus';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
+import { updateProfile } from '@/api/auth';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useThemeStore } from '@/stores/theme';
@@ -96,6 +127,12 @@ const themeStore = useThemeStore();
 const quotaChartRef = ref(null);
 let quotaChart = null;
 let stopResizeListener = null;
+const editDialogVisible = ref(false);
+const editSaving = ref(false);
+const editForm = reactive({
+  username: '',
+  email: ''
+});
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const userName = computed(() => authStore.user?.username || '访客');
@@ -114,13 +151,6 @@ const assistantMessages = computed(() =>
   conversationMessages.value.filter((message) => message.role === 'assistant')
 );
 const sessionCount = computed(() => chatStore.sessions.length);
-const conversationMessageCount = computed(() => conversationMessages.value.length);
-const userMessageCount = computed(() =>
-  conversationMessages.value.filter((message) => message.role === 'user').length
-);
-const assistantMessageCount = computed(() =>
-  conversationMessages.value.filter((message) => message.role === 'assistant').length
-);
 const toolCallCount = computed(() =>
   assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0)
 );
@@ -130,6 +160,39 @@ const tokenUsageTotal = computed(() =>
     return sum + (Number.isFinite(total) ? total : 0);
   }, 0)
 );
+
+const openProfileEditor = () => {
+  editForm.username = authStore.user?.username || '';
+  editForm.email = authStore.user?.email || '';
+  editDialogVisible.value = true;
+};
+
+const saveProfile = async () => {
+  const username = String(editForm.username || '').trim();
+  const email = String(editForm.email || '').trim();
+  if (!username) {
+    ElMessage.warning('请输入用户名');
+    return;
+  }
+  editSaving.value = true;
+  try {
+    const payload = {
+      username,
+      email: email || ''
+    };
+    const { data } = await updateProfile(payload);
+    const profile = data?.data;
+    if (profile) {
+      authStore.user = profile;
+    }
+    editDialogVisible.value = false;
+    ElMessage.success('资料已更新');
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail?.message || '更新失败');
+  } finally {
+    editSaving.value = false;
+  }
+};
 const parseQuotaNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;

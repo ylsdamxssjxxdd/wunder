@@ -35,6 +35,7 @@ async fn list_agents(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
+    ensure_preset_agents(&state, &resolved.user).await?;
     let agents = state
         .user_store
         .list_user_agents(&user_id)
@@ -391,6 +392,134 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
+const LEGACY_EMAIL_PRESET_NAME: &str = "邮件写作";
+const PRESET_OFFICIAL_NAME: &str = "公文写作";
+const PRESET_OFFICIAL_DESCRIPTION: &str = "公文起草、格式规范与措辞润色";
+const PRESET_OFFICIAL_PROMPT: &str = "你是公文写作助手。根据需求输出规范公文：1) 明确文种与适用场景；2) 按标准结构组织（标题、主送、正文、落款/日期、附件/抄送）；3) 用词准确、语气正式，避免口语化；4) 如信息不完整，先给出待补充清单。";
+const PRESET_OFFICIAL_ICON: &str = "shield";
+const PRESET_OFFICIAL_COLOR: &str = "#94a3b8";
+
+struct PresetAgent {
+    name: &'static str,
+    description: &'static str,
+    system_prompt: &'static str,
+    icon_name: &'static str,
+    icon_color: &'static str,
+}
+
+async fn ensure_preset_agents(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<(), Response> {
+    let meta_key = format!("{PRESET_META_PREFIX}{}", user.user_id);
+    let existing = state
+        .user_store
+        .list_user_agents(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut existing_names: HashSet<String> = existing
+        .iter()
+        .map(|record| record.name.trim().to_string())
+        .collect();
+    let now = now_ts();
+    for record in existing {
+        if record.name.trim() != LEGACY_EMAIL_PRESET_NAME {
+            continue;
+        }
+        let mut updated = record.clone();
+        updated.name = PRESET_OFFICIAL_NAME.to_string();
+        updated.description = PRESET_OFFICIAL_DESCRIPTION.to_string();
+        updated.system_prompt = PRESET_OFFICIAL_PROMPT.to_string();
+        updated.icon = Some(build_icon_payload(
+            PRESET_OFFICIAL_ICON,
+            PRESET_OFFICIAL_COLOR,
+        ));
+        updated.updated_at = now;
+        let _ = state.user_store.upsert_user_agent(&updated);
+        existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
+        existing_names.insert(PRESET_OFFICIAL_NAME.to_string());
+    }
+    let seeded = state
+        .user_store
+        .get_meta(&meta_key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if seeded.is_some() {
+        return Ok(());
+    }
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let mut tool_names = compute_allowed_tool_names(user, &context)
+        .into_iter()
+        .collect::<Vec<_>>();
+    tool_names.sort();
+    let access_level = normalize_access_level(&user.access_level);
+    for preset in preset_agents() {
+        if existing_names.contains(preset.name) {
+            continue;
+        }
+        let record = crate::storage::UserAgentRecord {
+            agent_id: format!("agent_{}", Uuid::new_v4().simple()),
+            user_id: user.user_id.clone(),
+            name: preset.name.to_string(),
+            description: preset.description.to_string(),
+            system_prompt: preset.system_prompt.to_string(),
+            tool_names: tool_names.clone(),
+            access_level: access_level.clone(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: Some(build_icon_payload(preset.icon_name, preset.icon_color)),
+            created_at: now,
+            updated_at: now,
+        };
+        let _ = state.user_store.upsert_user_agent(&record);
+    }
+    let _ = state.user_store.set_meta(&meta_key, "1");
+    Ok(())
+}
+
+fn preset_agents() -> Vec<PresetAgent> {
+    vec![
+        PresetAgent {
+            name: "文稿校对",
+            description: "语病检查、错别字修正与语气优化",
+            system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。",
+            icon_name: "spark",
+            icon_color: "#fbbf24",
+        },
+        PresetAgent {
+            name: "数据分析",
+            description: "结构化分析数据并输出结论与建议",
+            system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。",
+            icon_name: "chart",
+            icon_color: "#60a5fa",
+        },
+        PresetAgent {
+            name: "会议纪要",
+            description: "整理会议记录并提炼行动项",
+            system_prompt: "你是会议纪要助手。根据会议记录输出：参会人员、讨论要点、达成决策、待办事项（负责人/截止时间）。内容要简洁、结构化，必要时补充未明确的待办确认项。",
+            icon_name: "chat",
+            icon_color: "#a78bfa",
+        },
+        PresetAgent {
+            name: "方案策划",
+            description: "生成清晰可落地的方案与执行计划",
+            system_prompt: "你是方案策划与项目规划助手。先明确目标、范围与约束，再输出结构化方案（背景、目标、策略、里程碑、资源、风险与应对）。重点突出可执行性和量化指标。",
+            icon_name: "target",
+            icon_color: "#34d399",
+        },
+        PresetAgent {
+            name: PRESET_OFFICIAL_NAME,
+            description: PRESET_OFFICIAL_DESCRIPTION,
+            system_prompt: PRESET_OFFICIAL_PROMPT,
+            icon_name: PRESET_OFFICIAL_ICON,
+            icon_color: PRESET_OFFICIAL_COLOR,
+        },
+    ]
+}
+
+fn build_icon_payload(name: &str, color: &str) -> String {
+    serde_json::json!({ "name": name, "color": color }).to_string()
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

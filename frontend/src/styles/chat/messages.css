@@ -1048,6 +1048,10 @@
   --chat-text: #f1f5f9;
   --chat-muted: #b3bccb;
   --chat-border: rgba(255, 255, 255, 0.18);
+  --chat-primary: #6ad9ff;
+  --chat-accent: #b4a9ff;
+  --chat-primary-rgb: 106, 217, 255;
+  --chat-accent-rgb: 180, 169, 255;
   --el-dialog-bg-color: #111a2f;
   --el-text-color-primary: #f1f5f9;
   --el-text-color-regular: #f1f5f9;

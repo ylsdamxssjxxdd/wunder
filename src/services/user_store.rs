@@ -175,6 +175,22 @@ impl UserStore {
         self.storage.get_user_account(user_id)
     }
 
+    pub fn get_user_by_username(&self, username: &str) -> Result<Option<UserAccountRecord>> {
+        self.storage.get_user_account_by_username(username)
+    }
+
+    pub fn get_user_by_email(&self, email: &str) -> Result<Option<UserAccountRecord>> {
+        self.storage.get_user_account_by_email(email)
+    }
+
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        self.storage.get_meta(key)
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        self.storage.set_meta(key, value)
+    }
+
     pub fn list_users(
         &self,
         keyword: Option<&str>,

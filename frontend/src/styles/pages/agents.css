@@ -64,6 +64,8 @@
 .agent-card-avatar {
   width: 34px;
   height: 34px;
+  flex: 0 0 34px;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
   border: 1px solid rgba(106, 217, 255, 0.45);
   background: radial-gradient(circle at 30% 30%, rgba(106, 217, 255, 0.55), rgba(106, 217, 255, 0.08));

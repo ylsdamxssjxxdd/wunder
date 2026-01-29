@@ -1280,6 +1280,10 @@
 - `GET /wunder/auth/me`
   - 鉴权：Bearer Token
   - 返回（JSON）：`data`（UserProfile）
+- `PATCH /wunder/auth/me`
+  - 鉴权：Bearer Token
+  - 入参（JSON）：`username`（可选）、`email`（可选）
+  - 返回（JSON）：`data`（UserProfile）
 - 错误返回：`detail.message`
 
 #### UserProfile
