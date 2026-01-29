@@ -370,15 +370,15 @@
 .agent-basic-settings {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .agent-avatar-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border-radius: 14px;
   border: 1px solid var(--portal-border);
   background: rgba(15, 23, 42, 0.35);
@@ -390,7 +390,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+}
+
+.agent-avatar-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .agent-avatar-title {
@@ -415,9 +422,9 @@
 }
 
 .agent-avatar-preview {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   border: 1px solid var(--portal-border);
   display: inline-flex;
   align-items: center;

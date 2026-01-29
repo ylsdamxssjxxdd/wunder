@@ -234,7 +234,31 @@
             <div class="agent-basic-settings">
               <div class="agent-avatar-card">
                 <div class="agent-avatar-header">
-                  <div class="agent-avatar-title">头像设置</div>
+                  <div class="agent-avatar-header-left">
+                    <div class="agent-avatar-title">头像设置</div>
+                    <div
+                      class="agent-avatar-preview"
+                      :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
+                    >
+                      <span
+                        v-if="form.icon_name === DEFAULT_ICON_NAME"
+                        class="agent-avatar-option-text"
+                        >Aa</span
+                      >
+                      <svg
+                        v-else-if="getAvatarIconOption(form.icon_name)"
+                        class="agent-avatar-option-icon"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          v-for="(path, index) in getAvatarIconOption(form.icon_name).paths"
+                          :key="`${form.icon_name}-${index}`"
+                          :d="path"
+                        />
+                      </svg>
+                      <span v-else class="agent-avatar-option-text">Aa</span>
+                    </div>
+                  </div>
                   <button
                     class="agent-avatar-toggle"
                     type="button"
@@ -243,21 +267,6 @@
                   >
                     {{ avatarPanelVisible ? '收起' : '设置' }}
                   </button>
-                </div>
-                <div class="agent-avatar-preview" :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })">
-                  <span v-if="form.icon_name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
-                  <svg
-                    v-else-if="getAvatarIconOption(form.icon_name)"
-                    class="agent-avatar-option-icon"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      v-for="(path, index) in getAvatarIconOption(form.icon_name).paths"
-                      :key="`${form.icon_name}-${index}`"
-                      :d="path"
-                    />
-                  </svg>
-                  <span v-else class="agent-avatar-option-text">Aa</span>
                 </div>
                 <div v-show="avatarPanelVisible" class="agent-avatar-panel">
                   <div class="agent-avatar-section">
