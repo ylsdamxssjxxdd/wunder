@@ -297,18 +297,30 @@ const buildDocMetaText = (meta) => {
 const applyKnowledgeModalType = (baseType) => {
   const type = normalizeBaseType(baseType);
   const isVector = type === "vector";
+  const toggleRow = (element, visible, displayStyle = "") => {
+    if (!element) {
+      return;
+    }
+    element.hidden = !visible;
+    element.style.display = visible ? displayStyle : "none";
+  };
+  const setInputEnabled = (element, enabled) => {
+    if (!element) {
+      return;
+    }
+    element.disabled = !enabled;
+  };
   if (knowledgeModalType) {
     knowledgeModalType.value = type;
   }
-  if (knowledgeModalEmbeddingRow) {
-    knowledgeModalEmbeddingRow.hidden = !isVector;
-  }
-  if (knowledgeModalChunkRow) {
-    knowledgeModalChunkRow.hidden = !isVector;
-  }
-  if (knowledgeModalSearchRow) {
-    knowledgeModalSearchRow.hidden = !isVector;
-  }
+  toggleRow(knowledgeModalEmbeddingRow, isVector, "");
+  toggleRow(knowledgeModalChunkRow, isVector, "grid");
+  toggleRow(knowledgeModalSearchRow, isVector, "grid");
+  setInputEnabled(knowledgeModalEmbeddingModel, isVector);
+  setInputEnabled(knowledgeModalChunkSize, isVector);
+  setInputEnabled(knowledgeModalChunkOverlap, isVector);
+  setInputEnabled(knowledgeModalTopK, isVector);
+  setInputEnabled(knowledgeModalScoreThreshold, isVector);
   if (knowledgeModalRoot) {
     knowledgeModalRoot.disabled = isVector;
     knowledgeModalRoot.placeholder = isVector
@@ -317,6 +329,7 @@ const applyKnowledgeModalType = (baseType) => {
   }
   if (knowledgeModalRootHint) {
     knowledgeModalRootHint.hidden = !isVector;
+    knowledgeModalRootHint.style.display = isVector ? "" : "none";
   }
 };
 
