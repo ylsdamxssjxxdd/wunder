@@ -45,3 +45,4 @@ frontend/.env
 frontend/node_modules/
 download
 temp_dir
+vector_knowledge

@@ -38,11 +38,11 @@
 .chat-shell .upload-preview-icon {
   width: 14px;
   height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
@@ -71,11 +71,11 @@
 .chat-shell .upload-preview-remove-icon {
   width: 12px;
   height: 12px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-shell .upload-preview-status {
@@ -344,17 +344,16 @@
 .chat-shell .input-icon {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 
 .chat-shell .input-icon-fill {
-  fill: currentColor;
-  stroke: none;
+  color: inherit;
 }
 
 .chat-shell .send-btn {

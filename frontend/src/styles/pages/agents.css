@@ -91,11 +91,11 @@
 .agent-card-default-icon-svg {
   width: 22px;
   height: 22px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .agent-card-avatar--default {
@@ -178,11 +178,11 @@
 .agent-card-icon {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .agent-card-status {
@@ -532,11 +532,11 @@
 .agent-avatar-option-icon {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .agent-avatar-color {

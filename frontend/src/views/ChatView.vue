@@ -26,9 +26,7 @@
               aria-label="临时文件区"
               @click="openWorkspaceDialog"
             >
-              <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" />
-              </svg>
+              <i class="fa-solid fa-folder-open topbar-icon" aria-hidden="true"></i>
               <span class="topbar-panel-text">临时文件</span>
             </button>
             <button
@@ -38,10 +36,7 @@
               aria-label="历史记录"
               @click="openHistoryDialog"
             >
-              <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v6l4 2" />
-              </svg>
+              <i class="fa-solid fa-clock-rotate-left topbar-icon" aria-hidden="true"></i>
               <span class="topbar-panel-text">历史记录</span>
             </button>
           </div>
@@ -61,12 +56,7 @@
             aria-label="功能广场"
             @click="handleOpenPortal"
           >
-            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" />
-              <rect x="14" y="3" width="7" height="7" rx="1.5" />
-              <rect x="3" y="14" width="7" height="7" rx="1.5" />
-              <rect x="14" y="14" width="7" height="7" rx="1.5" />
-            </svg>
+            <i class="fa-solid fa-table-cells-large topbar-icon" aria-hidden="true"></i>
           </button>
           <button
             class="topbar-icon-btn"
@@ -75,14 +65,7 @@
             aria-label="调整工具"
             @click="openSessionTools"
           >
-            <svg class="topbar-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 6h16" />
-              <circle cx="9" cy="6" r="2" />
-              <path d="M4 12h16" />
-              <circle cx="15" cy="12" r="2" />
-              <path d="M4 18h16" />
-              <circle cx="7" cy="18" r="2" />
-            </svg>
+            <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
           </button>
           <ThemeToggle />
           <div class="topbar-user">
@@ -137,12 +120,7 @@
                   aria-label="删除会话"
                   @click.stop="handleDeleteSession(session.id)"
                 >
-                  <svg class="history-delete-icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4 7h16" />
-                    <path d="M9 7V5h6v2" />
-                    <path d="M7 7l1 12h8l1-12" />
-                    <path d="M10 11v5M14 11v5" />
-                  </svg>
+                  <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
                 </button>
               </div>
               <div
@@ -190,10 +168,7 @@
                       aria-label="复制回复"
                       @click="handleCopyMessage(message)"
                     >
-                      <svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="9" y="9" width="10" height="10" rx="2" />
-                        <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
-                      </svg>
+                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
                       <span>复制</span>
                     </button>
                   </div>
@@ -206,10 +181,7 @@
                       aria-label="复制消息"
                       @click="handleCopyMessage(message)"
                     >
-                      <svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="9" y="9" width="10" height="10" rx="2" />
-                        <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
-                      </svg>
+                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
                       <span>复制</span>
                     </button>
                   </div>
@@ -315,12 +287,7 @@
                         :disabled="promptPreviewLoading"
                         @click="openPromptPreview"
                       >
-                        <svg class="prompt-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"
-                          />
-                          <circle cx="12" cy="12" r="3.5" />
-                        </svg>
+                        <i class="fa-solid fa-eye prompt-preview-icon" aria-hidden="true"></i>
                       </button>
                     </el-tooltip>
                   </template>
@@ -536,20 +503,15 @@
                 <div class="history-title-text">{{ formatTitle(session.title) }}</div>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>
-              <button
-                class="history-delete-btn"
-                type="button"
-                title="删除会话"
-                aria-label="删除会话"
-                @click.stop="handleDeleteSession(session.id)"
-              >
-                <svg class="history-delete-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 7h16" />
-                  <path d="M9 7V5h6v2" />
-                  <path d="M7 7l1 12h8l1-12" />
-                  <path d="M10 11v5M14 11v5" />
-                </svg>
-              </button>
+                <button
+                  class="history-delete-btn"
+                  type="button"
+                  title="删除会话"
+                  aria-label="删除会话"
+                  @click.stop="handleDeleteSession(session.id)"
+                >
+                  <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
+                </button>
             </div>
             <div
               v-if="historyPaddingBottom"

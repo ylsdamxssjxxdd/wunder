@@ -141,6 +141,7 @@ const stabilityRunner = {
   lastStepMs: 0,
   preset: null,
 };
+let compactionBusy = false;
 
 const resetStabilityRunner = () => {
   stabilityRunner.running = false;
@@ -199,6 +200,7 @@ const setStabilityControls = (running) => {
   if (elements.sendBtn) {
     elements.sendBtn.disabled = running;
   }
+  syncCompactionButton();
 };
 
 const setStabilityPanelOpen = (open) => {
@@ -757,16 +759,48 @@ const setSendToggleState = (active) => {
   elements.sendBtn.title = label;
 };
 
+const resolveDebugSessionId = () =>
+  String(state.runtime.debugSessionId || elements.sessionId?.value || "").trim();
+
+const isDebugSessionBusy = () => {
+  const status = String(state.runtime.debugSessionStatus || "").trim();
+  return (
+    compactionBusy ||
+    stabilityRunner.running ||
+    state.runtime.debugStreaming ||
+    DEBUG_ACTIVE_STATUSES.has(status)
+  );
+};
+
+const syncCompactionButton = () => {
+  if (!elements.debugCompactionBtn) {
+    return;
+  }
+  const sessionId = resolveDebugSessionId();
+  const busy = isDebugSessionBusy();
+  const disabled = !sessionId || busy;
+  elements.debugCompactionBtn.disabled = disabled;
+  const label = !sessionId
+    ? t("debug.compaction.missingSession")
+    : busy
+    ? t("debug.compaction.busy")
+    : t("debug.compaction.action");
+  elements.debugCompactionBtn.title = label;
+  elements.debugCompactionBtn.setAttribute("aria-label", label);
+};
+
 const updateDebugLogWaiting = (force) => {
   if (typeof force === "boolean") {
     setDebugLogWaiting(force);
     setSendToggleState(force);
+    syncCompactionButton();
     return;
   }
   const status = String(state.runtime.debugSessionStatus || "").trim();
   const shouldWait = Boolean(state.runtime.debugStreaming) || DEBUG_ACTIVE_STATUSES.has(status);
   setDebugLogWaiting(shouldWait);
   setSendToggleState(shouldWait);
+  syncCompactionButton();
 };
 
 // 初始化统计信息结构，便于调试面板复用
@@ -1811,6 +1845,7 @@ const updateSessionId = (sessionId) => {
     state.runtime.debugRestored = false;
   }
   writeDebugState({ sessionId: trimmed });
+  syncCompactionButton();
 };
 
 // 重置模型输出的流式状态，避免新旧请求串联
@@ -3590,6 +3625,53 @@ const readErrorMessage = async (response) => {
   }
 };
 
+const handleManualCompaction = async () => {
+  if (!elements.debugCompactionBtn) {
+    return;
+  }
+  const sessionId = resolveDebugSessionId();
+  if (!sessionId) {
+    notify(t("debug.compaction.missingSession"), "warn");
+    return;
+  }
+  if (isDebugSessionBusy()) {
+    notify(t("debug.compaction.busy"), "warn");
+    return;
+  }
+  const wunderBase = getWunderBase();
+  if (!wunderBase) {
+    notify(t("debug.apiBaseEmpty"), "warn");
+    return;
+  }
+  compactionBusy = true;
+  syncCompactionButton();
+  const payload = {};
+  const modelName = String(elements.debugModelName?.value || "").trim();
+  if (modelName) {
+    payload.model_name = modelName;
+  }
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/compaction`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const message = await readErrorMessage(response);
+      throw new Error(message || t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json().catch(() => ({}));
+    notify(result.message || t("debug.compaction.success"), "success");
+    await restoreDebugPanel({ refresh: true, syncInputs: false });
+  } catch (error) {
+    notify(t("debug.compaction.failed", { message: error.message }), "error");
+  } finally {
+    compactionBusy = false;
+    syncCompactionButton();
+  }
+};
+
 const sendStreamRequest = async (endpoint, payload) => {
   stopDebugPolling();
   state.runtime.debugStreaming = true;
@@ -3962,6 +4044,9 @@ export const initDebugPanel = () => {
   if (elements.debugStabilityStop) {
     elements.debugStabilityStop.addEventListener("click", handleStabilityStop);
   }
+  if (elements.debugCompactionBtn) {
+    elements.debugCompactionBtn.addEventListener("click", handleManualCompaction);
+  }
 
   if (elements.debugNewSessionBtn) {
     elements.debugNewSessionBtn.addEventListener("click", handleNewSession);
@@ -3981,6 +4066,7 @@ export const initDebugPanel = () => {
   if (elements.modelOutputPlanBtn) {
     elements.modelOutputPlanBtn.addEventListener("click", openPlanBoard);
   }
+  syncCompactionButton();
   if (elements.modelOutputPreviewClose) {
     elements.modelOutputPreviewClose.addEventListener("click", closeModelOutputPreview);
   }

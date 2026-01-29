@@ -13,11 +13,7 @@
           @dragleave="handleUpDragLeave"
           @drop="handleUpDrop"
         >
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 17V7" />
-            <path d="M7 12l5-5 5 5" />
-            <path d="M5 19h14" />
-          </svg>
+          <i class="fa-solid fa-arrow-up workspace-icon" aria-hidden="true"></i>
         </button>
         <button
           class="workspace-icon-btn"
@@ -25,29 +21,16 @@
           aria-label="刷新"
           @click="refreshWorkspace"
         >
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 12a8 8 0 1 1-2.3-5.7" />
-            <path d="M20 4v6h-6" />
-          </svg>
+          <i class="fa-solid fa-rotate workspace-icon" aria-hidden="true"></i>
         </button>
         <button class="workspace-icon-btn" title="清空" aria-label="清空" @click="clearWorkspaceCurrent">
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 6h18" />
-            <path d="M8 6V4h8v2" />
-            <path d="M6 6l1 14h10l1-14" />
-          </svg>
+          <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
         </button>
         <button class="workspace-icon-btn" title="上传" aria-label="上传" @click="triggerUpload">
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8 12.5l5.5-5.5a3 3 0 1 1 4.2 4.2l-7 7a5 5 0 0 1-7.1-7.1l7.1-7.1" />
-          </svg>
+          <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
         </button>
         <button class="workspace-icon-btn" title="全下" aria-label="全下" @click="downloadArchive">
-          <svg class="workspace-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 8v8" />
-            <path d="M8 12l4 4 4-4" />
-            <path d="M4 20h16" />
-          </svg>
+          <i class="fa-solid fa-download workspace-icon" aria-hidden="true"></i>
         </button>
       </div>
     </div>
@@ -117,9 +100,7 @@
               aria-label="展开目录"
               @click.stop="toggleWorkspaceDirectory(item.entry)"
             >
-              <svg class="workspace-caret-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 6l6 6-6 6" />
-              </svg>
+              <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
             </button>
             <span
               :class="['workspace-item-icon', getEntryIcon(item.entry).className]"
@@ -154,10 +135,7 @@
 
     <div class="workspace-toolbar workspace-toolbar-bottom">
       <div class="workspace-search">
-        <svg class="workspace-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" />
-          <path d="M16.5 16.5L21 21" />
-        </svg>
+        <i class="fa-solid fa-magnifying-glass workspace-search-icon" aria-hidden="true"></i>
         <input
           v-model="searchKeyword"
           type="text"

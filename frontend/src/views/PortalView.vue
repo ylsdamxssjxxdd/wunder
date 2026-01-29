@@ -35,10 +35,10 @@
               >
                 <div class="agent-card-head">
                   <div class="agent-card-default-icon" aria-hidden="true">
-                    <svg class="agent-card-default-icon-svg" viewBox="0 0 24 24">
-                      <path d="M7 13h6a4 4 0 0 0 0-8H7a4 4 0 0 0 0 8z" />
-                      <path d="M7 13v4l4-2" />
-                    </svg>
+                    <i
+                      class="fa-solid fa-comment-dots agent-card-default-icon-svg"
+                      aria-hidden="true"
+                    ></i>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">通用聊天</div>
@@ -75,18 +75,12 @@
               >
                 <div class="agent-card-head">
                   <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
-                    <svg
+                    <i
                       v-if="hasAgentIcon(agent)"
                       class="agent-card-icon"
-                      viewBox="0 0 24 24"
+                      :class="['fa-solid', getAgentIconClass(agent)]"
                       aria-hidden="true"
-                    >
-                      <path
-                        v-for="(path, index) in getAgentIconPaths(agent)"
-                        :key="`${agent.id}-icon-${index}`"
-                        :d="path"
-                      />
-                    </svg>
+                    ></i>
                     <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
                   </div>
                   <div class="agent-card-head-text">
@@ -119,10 +113,7 @@
                     aria-label="编辑"
                     @click.stop="openEditDialog(agent)"
                   >
-                    <svg class="agent-card-icon" viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M4 16.5V20h3.5L19 8.5 15.5 5 4 16.5z" />
-                      <path d="M13.5 6.5L17 10" />
-                    </svg>
+                    <i class="fa-solid fa-pen-to-square agent-card-icon" aria-hidden="true"></i>
                   </button>
                   <button
                     class="agent-card-icon-btn danger"
@@ -131,12 +122,7 @@
                     aria-label="删除"
                     @click.stop="confirmDelete(agent)"
                   >
-                    <svg class="agent-card-icon" viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M4 7h16" />
-                      <path d="M9 7V5h6v2" />
-                      <path d="M7 7l1 12h8l1-12" />
-                      <path d="M10 11v5M14 11v5" />
-                    </svg>
+                    <i class="fa-solid fa-trash-can agent-card-icon" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
@@ -164,18 +150,12 @@
               >
                 <div class="agent-card-head">
                   <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
-                    <svg
+                    <i
                       v-if="hasAgentIcon(agent)"
                       class="agent-card-icon"
-                      viewBox="0 0 24 24"
+                      :class="['fa-solid', getAgentIconClass(agent)]"
                       aria-hidden="true"
-                    >
-                      <path
-                        v-for="(path, index) in getAgentIconPaths(agent)"
-                        :key="`${agent.id}-icon-${index}`"
-                        :d="path"
-                      />
-                    </svg>
+                    ></i>
                     <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
                   </div>
                   <div class="agent-card-head-text">
@@ -245,17 +225,12 @@
                         class="agent-avatar-option-text"
                         >Aa</span
                       >
-                      <svg
+                      <i
                         v-else-if="getAvatarIconOption(form.icon_name)"
                         class="agent-avatar-option-icon"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          v-for="(path, index) in getAvatarIconOption(form.icon_name).paths"
-                          :key="`${form.icon_name}-${index}`"
-                          :d="path"
-                        />
-                      </svg>
+                        :class="['fa-solid', getAvatarIconOption(form.icon_name).fa]"
+                        aria-hidden="true"
+                      ></i>
                       <span v-else class="agent-avatar-option-text">Aa</span>
                     </div>
                   </div>
@@ -284,13 +259,12 @@
                         <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text"
                           >Aa</span
                         >
-                        <svg v-else class="agent-avatar-option-icon" viewBox="0 0 24 24">
-                          <path
-                            v-for="(path, index) in option.paths"
-                            :key="`${option.name}-${index}`"
-                            :d="path"
-                          />
-                        </svg>
+                        <i
+                          v-else
+                          class="agent-avatar-option-icon"
+                          :class="['fa-solid', option.fa]"
+                          aria-hidden="true"
+                        ></i>
                       </button>
                     </div>
                   </div>
@@ -419,6 +393,25 @@ const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const DEFAULT_ICON_NAME = 'initial';
 
+const AVATAR_ICON_CLASS_MAP = {
+  chat: 'fa-comment-dots',
+  bot: 'fa-robot',
+  idea: 'fa-lightbulb',
+  target: 'fa-bullseye',
+  bolt: 'fa-bolt',
+  code: 'fa-code',
+  chart: 'fa-chart-line',
+  doc: 'fa-file-lines',
+  pen: 'fa-pen-nib',
+  calendar: 'fa-calendar-days',
+  briefcase: 'fa-briefcase',
+  clipboard: 'fa-clipboard-list',
+  book: 'fa-book-open',
+  check: 'fa-check',
+  shield: 'fa-shield-halved',
+  spark: 'fa-wand-sparkles'
+};
+
 const avatarIconOptions = [
   { name: DEFAULT_ICON_NAME, label: '首字母' },
   {
@@ -508,6 +501,11 @@ const avatarIconOptions = [
   }
 ];
 
+avatarIconOptions.forEach((option) => {
+  if (!option || option.name === DEFAULT_ICON_NAME) return;
+  option.fa = AVATAR_ICON_CLASS_MAP[option.name] || 'fa-circle';
+});
+
 const avatarColorOptions = [
   '',
   '#6ad9ff',
@@ -593,13 +591,13 @@ const hasAgentIcon = (agent) => {
   const config = getIconConfig(agent?.icon);
   if (config.name === DEFAULT_ICON_NAME) return false;
   const option = getAvatarIconOption(config.name);
-  return Boolean(option && option.paths && option.paths.length);
+  return Boolean(option?.fa);
 };
 
-const getAgentIconPaths = (agent) => {
+const getAgentIconClass = (agent) => {
   const config = getIconConfig(agent?.icon);
   const option = getAvatarIconOption(config.name);
-  return option?.paths || [];
+  return option?.fa || '';
 };
 
 const hexToRgba = (hex, alpha) => {

@@ -93,6 +93,17 @@ const normalizeModelType = (value) => {
   return MODEL_TYPE_OPTIONS.has(raw) ? raw : "llm";
 };
 
+const isLlmConfig = (config) => normalizeModelType(config?.model_type) === "llm";
+
+const resolveDefaultLlmName = (desiredName, models, order) => {
+  const desired = String(desiredName || "").trim();
+  if (desired && models[desired] && isLlmConfig(models[desired])) {
+    return desired;
+  }
+  const fallback = order.find((name) => isLlmConfig(models[name]));
+  return fallback || "";
+};
+
 const renderProviderOptions = (activeProvider) => {
   if (!elements.llmProvider) {
     return;
@@ -223,8 +234,9 @@ const normalizeLlmSet = (raw) => {
   });
   let defaultName = String(llm.default || "").trim();
   if (!defaultName || !normalizedModels[defaultName]) {
-    defaultName = order[0] || "";
+    defaultName = "";
   }
+  defaultName = resolveDefaultLlmName(defaultName, normalizedModels, order);
   return { defaultName, models: normalizedModels, order };
 };
 
@@ -267,6 +279,24 @@ const clearLlmForm = () => {
   elements.llmHistoryCompactionReset.value = "zero";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
   lastProviderSelection = DEFAULT_PROVIDER_ID;
+  updateLlmTypeVisibility("llm");
+};
+
+const updateLlmTypeVisibility = (modelType) => {
+  const normalized = normalizeModelType(modelType || elements.llmModelType?.value || "llm");
+  const isEmbedding = normalized === "embedding";
+  const toggle = (element, visible) => {
+    if (!element) {
+      return;
+    }
+    element.style.display = visible ? "" : "none";
+  };
+  toggle(elements.llmTemperatureRow, !isEmbedding);
+  toggle(elements.llmMaxOutputRow, !isEmbedding);
+  toggle(elements.llmMaxRoundsRow, !isEmbedding);
+  toggle(elements.llmMaxContextRow, !isEmbedding);
+  toggle(elements.llmCapabilitiesCard, !isEmbedding);
+  toggle(elements.llmCompactionCard, !isEmbedding);
 };
 
 // 将 LLM 配置渲染到表单。
@@ -303,6 +333,7 @@ const applyLlmConfigToForm = (name, config) => {
     0.8
   );
   elements.llmHistoryCompactionReset.value = llm.history_compaction_reset || "zero";
+  updateLlmTypeVisibility(llm.model_type);
   applyProviderDefaults(llm.provider, {
     forceBaseUrl: !llm.base_url,
     previousProvider: lastProviderSelection,
@@ -347,8 +378,9 @@ const updateDetailHeader = () => {
     elements.llmDetailMeta.textContent = parts.join(" · ") || t("llm.detail.selected");
   }
   if (elements.llmSetDefaultBtn) {
-    const isDefault = activeName === state.llm.defaultName;
-    elements.llmSetDefaultBtn.disabled = isDefault;
+    const isEmbedding = normalizeModelType(config?.model_type) === "embedding";
+    const isDefault = activeName === state.llm.defaultName && !isEmbedding;
+    elements.llmSetDefaultBtn.disabled = isDefault || isEmbedding;
     elements.llmSetDefaultBtn.classList.toggle("llm-default-btn", isDefault);
   }
   if (elements.llmDeleteBtn) {
@@ -377,8 +409,15 @@ const renderLlmList = () => {
 
     const title = document.createElement("div");
     title.className = "llm-list-item-title";
+    const modelType = normalizeModelType(config?.model_type);
+    const icon = document.createElement("i");
+    icon.className = `fa-solid ${
+      modelType === "embedding" ? "fa-cube" : "fa-robot"
+    } llm-type-icon ${modelType === "embedding" ? "is-embedding" : "is-llm"}`;
     const titleText = document.createElement("span");
+    titleText.className = "llm-list-item-name";
     titleText.textContent = getDisplayName(name);
+    title.appendChild(icon);
     title.appendChild(titleText);
     if (name === state.llm.defaultName) {
       const badge = document.createElement("span");
@@ -419,16 +458,46 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const historyCompactionReset = String(
     elements.llmHistoryCompactionReset.value || ""
   ).trim();
+  const modelType = normalizeModelType(elements.llmModelType?.value || base.model_type);
+  const provider = normalizeProviderId(elements.llmProvider.value || base.provider);
+  const baseUrl = elements.llmBaseUrl.value.trim();
+  const apiKey = elements.llmApiKey.value.trim();
+  const model = elements.llmModel.value.trim();
+  const timeoutValue = Number.isFinite(timeout) ? timeout : 120;
+  const retryValue = Number.isFinite(retry) ? retry : 1;
+  if (modelType === "embedding") {
+    return {
+      enable: base.enable,
+      model_type: modelType,
+      provider,
+      base_url: baseUrl,
+      api_key: apiKey,
+      model,
+      temperature: null,
+      timeout_s: timeoutValue,
+      retry: retryValue,
+      max_rounds: null,
+      max_context: null,
+      max_output: null,
+      support_vision: false,
+      stream: false,
+      stream_include_usage: false,
+      tool_call_mode: null,
+      history_compaction_ratio: null,
+      history_compaction_reset: null,
+      mock_if_unconfigured: base.mock_if_unconfigured,
+    };
+  }
   return {
     enable: base.enable,
-    model_type: normalizeModelType(elements.llmModelType?.value || base.model_type),
-    provider: normalizeProviderId(elements.llmProvider.value || base.provider),
-    base_url: elements.llmBaseUrl.value.trim(),
-    api_key: elements.llmApiKey.value.trim(),
-    model: elements.llmModel.value.trim(),
+    model_type: modelType,
+    provider,
+    base_url: baseUrl,
+    api_key: apiKey,
+    model,
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
-    timeout_s: Number.isFinite(timeout) ? timeout : 120,
-    retry: Number.isFinite(retry) ? retry : 1,
+    timeout_s: timeoutValue,
+    retry: retryValue,
     max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 10,
     max_context: Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null,
     max_output: Number.isFinite(maxOutput) && maxOutput > 0 ? maxOutput : null,
@@ -719,6 +788,11 @@ const commitActiveConfigEdits = () => {
   if (!state.llm.defaultName) {
     state.llm.defaultName = desiredName;
   }
+  state.llm.defaultName = resolveDefaultLlmName(
+    state.llm.defaultName,
+    state.llm.configs,
+    state.llm.order
+  );
   state.llm.activeName = desiredName;
 };
 
@@ -729,7 +803,12 @@ const buildLlmPayload = () => {
       models[name] = state.llm.configs[name];
     }
   });
-  const defaultName = state.llm.defaultName || state.llm.order[0] || "";
+  const defaultName = resolveDefaultLlmName(
+    state.llm.defaultName,
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultName = defaultName;
   return { default: defaultName, models };
 };
 
@@ -792,7 +871,7 @@ const handleDeleteConfig = () => {
   delete state.llm.nameEdits[activeName];
   state.llm.order = state.llm.order.filter((name) => name !== activeName);
   if (state.llm.defaultName === activeName) {
-    state.llm.defaultName = state.llm.order[0] || "";
+    state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
   }
   state.llm.activeName = state.llm.defaultName || state.llm.order[0] || "";
   resetProbeState();
@@ -809,6 +888,10 @@ const handleDeleteConfig = () => {
 const handleSetDefault = () => {
   const activeName = state.llm.activeName;
   if (!activeName) {
+    return;
+  }
+  const activeConfig = state.llm.configs[activeName];
+  if (normalizeModelType(activeConfig?.model_type) === "embedding") {
     return;
   }
   state.llm.defaultName = activeName;
@@ -833,6 +916,22 @@ const handleNameEdit = () => {
   updateDetailHeader();
 };
 
+const handleModelTypeChange = () => {
+  const activeName = state.llm.activeName;
+  const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
+  updateLlmTypeVisibility(modelType);
+  if (!activeName) {
+    return;
+  }
+  syncActiveConfigToState();
+  if (modelType === "embedding" && state.llm.defaultName === activeName) {
+    state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
+  }
+  renderLlmList();
+  updateDetailHeader();
+  renderDebugModelOptions();
+};
+
 // 初始化模型配置面板交互。
 export const initLlmPanel = () => {
   renderProviderOptions();
@@ -853,6 +952,7 @@ export const initLlmPanel = () => {
   elements.llmDeleteBtn?.addEventListener("click", handleDeleteConfig);
   elements.llmSetDefaultBtn?.addEventListener("click", handleSetDefault);
   elements.llmConfigName?.addEventListener("input", handleNameEdit);
+  elements.llmModelType?.addEventListener("change", handleModelTypeChange);
   elements.llmProbeContextBtn?.addEventListener("click", () => {
     // 手动触发最大上下文探测，缺少必要字段时给出提示
     if (!buildContextProbePayload()) {

@@ -171,11 +171,11 @@
 .chat-shell .theme-toggle-icon {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-shell .topbar-user {
@@ -254,11 +254,11 @@
 .chat-shell .topbar-icon {
   width: 18px;
   height: 18px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 
@@ -452,11 +452,11 @@
 .chat-shell .workspace-icon {
   width: 16px;
   height: 16px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 
@@ -523,9 +523,11 @@
 .chat-shell .workspace-search-icon {
   width: 14px;
   height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--chat-muted);
 }
 
@@ -709,9 +711,11 @@
 .chat-shell .workspace-caret-icon {
   width: 14px;
   height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: transform 0.2s ease;
 }
 

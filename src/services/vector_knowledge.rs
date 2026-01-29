@@ -46,6 +46,10 @@ pub struct VectorChunkMeta {
     pub index: usize,
     pub start: usize,
     pub end: usize,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,6 +69,7 @@ pub struct VectorChunkPreview {
     pub end: usize,
     pub preview: String,
     pub content: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone)]
@@ -235,8 +240,77 @@ pub fn build_chunk_meta(chunks: &[VectorChunk]) -> Vec<VectorChunkMeta> {
             index: chunk.index,
             start: chunk.start,
             end: chunk.end,
+            status: Some("pending".to_string()),
+            content: None,
         })
         .collect()
+}
+
+pub fn resolve_chunk_status(meta: &VectorDocumentMeta, chunk: &VectorChunkMeta) -> String {
+    if let Some(status) = chunk.status.as_deref().map(|value| value.trim()) {
+        if !status.is_empty() {
+            return status.to_string();
+        }
+    }
+    if meta.status.eq_ignore_ascii_case("ready") {
+        "embedded".to_string()
+    } else {
+        "pending".to_string()
+    }
+}
+
+pub fn resolve_chunk_content(content_chars: &[char], chunk: &VectorChunkMeta) -> String {
+    if let Some(custom) = chunk
+        .content
+        .as_deref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        return custom.to_string();
+    }
+    let start = chunk.start.min(content_chars.len());
+    let end = chunk.end.min(content_chars.len());
+    content_chars[start..end].iter().collect()
+}
+
+fn is_chunk_deleted(chunk: &VectorChunkMeta) -> bool {
+    matches!(chunk.status.as_deref(), Some("deleted"))
+}
+
+fn build_chunk_from_meta(
+    content_chars: &[char],
+    doc_id: &str,
+    chunk: &VectorChunkMeta,
+) -> VectorChunk {
+    VectorChunk {
+        index: chunk.index,
+        start: chunk.start,
+        end: chunk.end,
+        content: resolve_chunk_content(content_chars, chunk),
+        chunk_id: build_chunk_id(doc_id, chunk.index),
+    }
+}
+
+pub fn refresh_document_meta(meta: &mut VectorDocumentMeta) {
+    let mut active = 0;
+    let mut all_embedded = true;
+    for chunk in &meta.chunks {
+        let status = resolve_chunk_status(meta, chunk);
+        if status == "deleted" {
+            continue;
+        }
+        active += 1;
+        if status != "embedded" {
+            all_embedded = false;
+        }
+    }
+    meta.chunk_count = active;
+    meta.status = if active > 0 && all_embedded {
+        "ready".to_string()
+    } else {
+        "pending".to_string()
+    };
+    meta.updated_at = now_ts();
 }
 
 pub fn now_ts() -> f64 {
@@ -323,18 +397,21 @@ pub async fn build_chunk_previews(
     let chars: Vec<char> = content.chars().collect();
     meta.chunks
         .iter()
-        .map(|chunk| {
-            let start = chunk.start.min(chars.len());
-            let end = chunk.end.min(chars.len());
-            let slice: String = chars[start..end].iter().collect();
+        .filter_map(|chunk| {
+            let status = resolve_chunk_status(meta, chunk);
+            if status == "deleted" {
+                return None;
+            }
+            let slice = resolve_chunk_content(&chars, chunk);
             let preview = build_preview(&slice, 120);
-            VectorChunkPreview {
+            Some(VectorChunkPreview {
                 index: chunk.index,
                 start: chunk.start,
                 end: chunk.end,
                 preview,
                 content: slice,
-            }
+                status,
+            })
         })
         .collect()
 }
@@ -517,6 +594,24 @@ impl WeaviateClient {
             start = end;
         }
         Ok(())
+    }
+
+    pub async fn delete_chunk(&self, chunk_id: &str) -> Result<bool> {
+        let response = self
+            .http
+            .delete(format!("{}/v1/objects/{}", self.base_url, chunk_id))
+            .headers(self.build_headers())
+            .send()
+            .await?;
+        if response.status().is_success() {
+            return Ok(true);
+        }
+        if response.status().as_u16() == 404 {
+            return Ok(false);
+        }
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(anyhow!("weaviate delete failed: {status} {body}"))
     }
 
     pub async fn query_chunks(
@@ -745,6 +840,53 @@ pub fn resolve_weaviate_client(config: &Config) -> Result<WeaviateClient> {
         .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))
 }
 
+pub async fn prepare_document(
+    base: &KnowledgeBaseConfig,
+    owner_id: Option<&str>,
+    root: &Path,
+    doc_name: &str,
+    doc_id: Option<&str>,
+    content: &str,
+    previous_meta: Option<&VectorDocumentMeta>,
+) -> Result<VectorDocumentMeta> {
+    ensure_vector_base_config(base)?;
+    let chunk_size = resolve_chunk_size(base);
+    let chunk_overlap = resolve_chunk_overlap(base);
+    let owner_key = resolve_owner_key(owner_id);
+    let doc_id = doc_id
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| build_doc_id(Some(owner_key.as_str()), &base.name, doc_name));
+    let chunks = split_text_into_chunks(content, chunk_size, chunk_overlap, &doc_id);
+    if chunks.is_empty() {
+        return Err(anyhow!(i18n::t("error.empty_parse_result")));
+    }
+    let chunk_meta = build_chunk_meta(&chunks);
+    let created_at = previous_meta
+        .map(|meta| meta.created_at)
+        .unwrap_or_else(now_ts);
+    let updated_at = now_ts();
+    let mut meta = VectorDocumentMeta {
+        doc_id,
+        name: doc_name.to_string(),
+        embedding_model: base
+            .embedding_model
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        chunk_size,
+        chunk_overlap,
+        chunk_count: chunk_meta.len(),
+        status: "pending".to_string(),
+        created_at,
+        updated_at,
+        chunks: chunk_meta,
+    };
+    refresh_document_meta(&mut meta);
+    write_vector_document(root, &meta, content).await?;
+    Ok(meta)
+}
+
 pub async fn index_document(
     config: &Config,
     base: &KnowledgeBaseConfig,
@@ -769,11 +911,31 @@ pub async fn index_document(
     let doc_id = doc_id
         .map(|value| value.to_string())
         .unwrap_or_else(|| build_doc_id(Some(owner_key.as_str()), &base.name, doc_name));
-    let chunks = split_text_into_chunks(content, chunk_size, chunk_overlap, &doc_id);
+    let mut chunk_meta = previous_meta
+        .filter(|meta| meta.chunk_size == chunk_size && meta.chunk_overlap == chunk_overlap)
+        .map(|meta| meta.chunks.clone())
+        .unwrap_or_else(|| {
+            let chunks = split_text_into_chunks(content, chunk_size, chunk_overlap, &doc_id);
+            build_chunk_meta(&chunks)
+        });
+    if chunk_meta.is_empty() {
+        return Err(anyhow!(i18n::t("error.empty_parse_result")));
+    }
+    let content_chars: Vec<char> = content.chars().collect();
+    let mut chunks = Vec::new();
+    for chunk in &chunk_meta {
+        if is_chunk_deleted(chunk) {
+            continue;
+        }
+        let vector_chunk = build_chunk_from_meta(&content_chars, &doc_id, chunk);
+        if vector_chunk.content.trim().is_empty() {
+            continue;
+        }
+        chunks.push(vector_chunk);
+    }
     if chunks.is_empty() {
         return Err(anyhow!(i18n::t("error.empty_parse_result")));
     }
-    let chunk_meta = build_chunk_meta(&chunks);
     let timeout_s = embed_config.timeout_s.unwrap_or(120);
     let vectors = embed_chunks(&embed_config, &chunks, timeout_s).await?;
     let client = resolve_weaviate_client(config)?;
@@ -791,11 +953,17 @@ pub async fn index_document(
             &vectors,
         )
         .await?;
+    for chunk in &mut chunk_meta {
+        if is_chunk_deleted(chunk) {
+            continue;
+        }
+        chunk.status = Some("embedded".to_string());
+    }
     let created_at = previous_meta
         .map(|meta| meta.created_at)
         .unwrap_or_else(now_ts);
     let updated_at = now_ts();
-    let meta = VectorDocumentMeta {
+    let mut meta = VectorDocumentMeta {
         doc_id,
         name: doc_name.to_string(),
         embedding_model: embedding_name,
@@ -807,6 +975,7 @@ pub async fn index_document(
         updated_at,
         chunks: chunk_meta,
     };
+    refresh_document_meta(&mut meta);
     write_vector_document(root, &meta, content).await?;
     Ok(meta)
 }

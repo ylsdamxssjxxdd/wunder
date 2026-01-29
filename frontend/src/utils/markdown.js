@@ -302,10 +302,7 @@ const TOKEN_REGEX = {
 const highlightCache = new Map();
 
 const CODE_COPY_ICON = `
-  <svg class="ai-code-copy-icon" viewBox="0 0 24 24" aria-hidden="true">
-    <rect x="9" y="9" width="10" height="10" rx="2" />
-    <path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1" />
-  </svg>
+  <i class="fa-solid fa-copy ai-code-copy-icon" aria-hidden="true"></i>
 `;
 
 markdown.renderer.rules.fence = (tokens, idx, options, env, slf) => {

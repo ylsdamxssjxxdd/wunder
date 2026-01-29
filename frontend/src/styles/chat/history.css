@@ -119,11 +119,11 @@
 .chat-shell .history-delete-icon {
   width: 14px;
   height: 14px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 

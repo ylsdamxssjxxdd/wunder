@@ -3,19 +3,12 @@
     <div v-if="showUploadArea" class="upload-preview">
       <div class="upload-preview-list">
         <div v-for="attachment in attachments" :key="attachment.id" class="upload-preview-item">
-          <svg
+          <i
             v-if="attachment.type === 'image'"
-            class="upload-preview-icon"
-            viewBox="0 0 24 24"
+            class="fa-solid fa-image upload-preview-icon"
             aria-hidden="true"
-          >
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <path d="M8 13l2.5-3 3.5 4 2.5-3 3.5 5" />
-          </svg>
-          <svg v-else class="upload-preview-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
-            <path d="M14 3v5h5" />
-          </svg>
+          ></i>
+          <i v-else class="fa-solid fa-file-lines upload-preview-icon" aria-hidden="true"></i>
           <span class="upload-preview-name" :title="attachment.name">{{ attachment.name }}</span>
           <button
             class="upload-preview-remove"
@@ -24,9 +17,7 @@
             aria-label="移除"
             @click="removeAttachment(attachment.id)"
           >
-            <svg class="upload-preview-remove-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6l-12 12" />
-            </svg>
+            <i class="fa-solid fa-xmark upload-preview-remove-icon" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -59,9 +50,7 @@
         :disabled="attachmentBusy > 0"
         @click="triggerUpload"
       >
-        <svg class="input-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M8 12.5l5.5-5.5a3 3 0 1 1 4.2 4.2l-7 7a5 5 0 0 1-7.1-7.1l7.1-7.1" />
-        </svg>
+        <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
       </button>
       <button
         class="input-icon-btn send-btn"
@@ -71,12 +60,12 @@
         :aria-label="loading ? '终止' : '发送'"
         @click="handleSendOrStop"
       >
-        <svg v-if="loading" class="input-icon input-icon-fill" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
-        <svg v-else class="input-icon input-icon-fill" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 12l-16-8 6 8-6 8 16-8z" />
-        </svg>
+        <i
+          v-if="loading"
+          class="fa-solid fa-stop input-icon input-icon-fill"
+          aria-hidden="true"
+        ></i>
+        <i v-else class="fa-solid fa-paper-plane input-icon input-icon-fill" aria-hidden="true"></i>
       </button>
     </div>
 

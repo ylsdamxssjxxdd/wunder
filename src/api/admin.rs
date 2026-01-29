@@ -106,6 +106,18 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_knowledge_chunks),
         )
         .route(
+            "/wunder/admin/knowledge/chunk/update",
+            post(admin_knowledge_chunk_update),
+        )
+        .route(
+            "/wunder/admin/knowledge/chunk/embed",
+            post(admin_knowledge_chunk_embed),
+        )
+        .route(
+            "/wunder/admin/knowledge/chunk/delete",
+            post(admin_knowledge_chunk_delete),
+        )
+        .route(
             "/wunder/admin/knowledge/upload",
             post(admin_knowledge_upload),
         )
@@ -146,6 +158,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/monitor/{session_id}/cancel",
             post(admin_monitor_cancel),
+        )
+        .route(
+            "/wunder/admin/monitor/{session_id}/compaction",
+            post(admin_monitor_compaction),
         )
         .route(
             "/wunder/admin/throughput/start",
@@ -1710,6 +1726,215 @@ async fn admin_knowledge_chunks(
     })))
 }
 
+async fn admin_knowledge_chunk_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeChunkUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    let content_text = payload.content.trim();
+    if content_text.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let chunk = meta
+        .chunks
+        .iter_mut()
+        .find(|chunk| chunk.index == payload.chunk_index)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_chunk_not_found"),
+            )
+        })?;
+    if chunk.status.as_deref() == Some("deleted") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_chunk_deleted"),
+        ));
+    }
+    chunk.content = Some(content_text.to_string());
+    chunk.status = Some("pending".to_string());
+    vector_knowledge::refresh_document_meta(&mut meta);
+    vector_knowledge::write_vector_document(&root, &meta, &content)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({ "ok": true, "doc": meta })))
+}
+
+async fn admin_knowledge_chunk_embed(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeChunkActionRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let chunk = meta
+        .chunks
+        .iter_mut()
+        .find(|chunk| chunk.index == payload.chunk_index)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_chunk_not_found"),
+            )
+        })?;
+    if chunk.status.as_deref() == Some("deleted") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_chunk_deleted"),
+        ));
+    }
+    let embedding_name = base
+        .embedding_model
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    meta.embedding_model = embedding_name.clone();
+    let content_chars: Vec<char> = content.chars().collect();
+    let chunk_content = vector_knowledge::resolve_chunk_content(&content_chars, chunk);
+    if chunk_content.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let vector_chunk = vector_knowledge::VectorChunk {
+        index: chunk.index,
+        start: chunk.start,
+        end: chunk.end,
+        content: chunk_content,
+        chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
+    };
+    let timeout_s = embed_config.timeout_s.unwrap_or(120);
+    let vectors = vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
+        .await
+        .map_err(vector_error_response)?;
+    let client =
+        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+    let owner_key = vector_knowledge::resolve_owner_key(None);
+    client
+        .upsert_chunks(
+            &owner_key,
+            &base.name,
+            &meta.doc_id,
+            &meta.name,
+            &embedding_name,
+            &[vector_chunk],
+            &vectors,
+        )
+        .await
+        .map_err(vector_error_response)?;
+    chunk.status = Some("embedded".to_string());
+    vector_knowledge::refresh_document_meta(&mut meta);
+    vector_knowledge::write_vector_document(&root, &meta, &content)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({ "ok": true, "doc": meta })))
+}
+
+async fn admin_knowledge_chunk_delete(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeChunkActionRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let chunk = meta
+        .chunks
+        .iter_mut()
+        .find(|chunk| chunk.index == payload.chunk_index)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_chunk_not_found"),
+            )
+        })?;
+    if chunk.status.as_deref() == Some("deleted") {
+        return Ok(Json(json!({ "ok": true, "doc": meta })));
+    }
+    let client =
+        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+    let _ = client
+        .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
+        .await;
+    chunk.status = Some("deleted".to_string());
+    vector_knowledge::refresh_document_meta(&mut meta);
+    vector_knowledge::write_vector_document(&root, &meta, &content)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({ "ok": true, "doc": meta })))
+}
+
 async fn admin_knowledge_reindex(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<KnowledgeReindexRequest>,
@@ -1837,8 +2062,7 @@ async fn admin_knowledge_upload(
                 .await
                 .ok();
         }
-        let meta = vector_knowledge::index_document(
-            &config,
+        let meta = vector_knowledge::prepare_document(
             &base_config,
             None,
             &root,
@@ -2527,6 +2751,84 @@ async fn admin_monitor_cancel(
     ))
 }
 
+async fn admin_monitor_compaction(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<MonitorCompactionRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = session_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    state.monitor.warm_history(false);
+    let record = state
+        .monitor
+        .get_record(cleaned)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+    if status == crate::monitor::MonitorState::STATUS_RUNNING
+        || status == crate::monitor::MonitorState::STATUS_CANCELLING
+    {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            i18n::t("error.session_not_found_or_running"),
+        ));
+    }
+    let user_id = record
+        .get("user_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if user_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let session_record = state
+        .user_store
+        .get_chat_session(&user_id, cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let agent_id = session_record
+        .as_ref()
+        .and_then(|record| record.agent_id.clone());
+    let agent_prompt = agent_id
+        .as_deref()
+        .and_then(|agent_id| {
+            state
+                .user_store
+                .get_user_agent_by_id(agent_id)
+                .ok()
+                .flatten()
+        })
+        .and_then(|record| {
+            let prompt = record.system_prompt.trim();
+            if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt.to_string())
+            }
+        });
+    state
+        .orchestrator
+        .force_compact_session(
+            &user_id,
+            cleaned,
+            payload.model_name.as_deref(),
+            agent_id.as_deref(),
+            agent_prompt.as_deref(),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({ "ok": true, "message": i18n::t("message.updated") }),
+    ))
+}
+
 async fn admin_monitor_delete(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
@@ -3209,12 +3511,8 @@ async fn admin_user_accounts_tool_access_get(
     let allowed_tools = allowed
         .as_ref()
         .and_then(|record| record.allowed_tools.clone());
-    let blocked_tools = allowed
-        .as_ref()
-        .map(|record| record.blocked_tools.clone())
-        .unwrap_or_default();
     Ok(Json(json!({
-        "data": { "allowed_tools": allowed_tools, "blocked_tools": blocked_tools }
+        "data": { "allowed_tools": allowed_tools }
     })))
 }
 
@@ -3243,13 +3541,12 @@ async fn admin_user_accounts_tool_access_update(
     let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     ensure_user_scope(&actor, &record)?;
     let allowed = payload.allowed_tools.map(normalize_tool_access_list);
-    let blocked = payload.blocked_tools.map(normalize_tool_access_list);
     state
         .user_store
-        .set_user_tool_access(cleaned, allowed.as_ref(), blocked.as_ref())
+        .set_user_tool_access(cleaned, allowed.as_ref(), None)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
-        "data": { "allowed_tools": allowed, "blocked_tools": blocked }
+        "data": { "allowed_tools": allowed }
     })))
 }
 
@@ -4772,6 +5069,21 @@ struct KnowledgeChunksQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct KnowledgeChunkUpdateRequest {
+    base: String,
+    doc_id: String,
+    chunk_index: usize,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KnowledgeChunkActionRequest {
+    base: String,
+    doc_id: String,
+    chunk_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
 struct KnowledgeFileUpdate {
     base: String,
     path: String,
@@ -4823,6 +5135,12 @@ struct MonitorToolUsageQuery {
     tool_hours: Option<f64>,
     start_time: Option<f64>,
     end_time: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MonitorCompactionRequest {
+    #[serde(default)]
+    model_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4897,8 +5215,6 @@ struct UserAccountPasswordResetRequest {
 struct UserAccountToolAccessRequest {
     #[serde(default)]
     allowed_tools: Option<Vec<String>>,
-    #[serde(default)]
-    blocked_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

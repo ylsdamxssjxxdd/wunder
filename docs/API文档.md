@@ -215,7 +215,7 @@
   - `embedding_model`：嵌入模型（向量知识库）
   - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
   - `warnings`：转换警告列表
-- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
+- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
 
 ### 4.1.2.10 `/wunder/user_tools/knowledge/docs`
 
@@ -237,7 +237,7 @@
   - `doc_id`：文档 id
 - `GET` 返回（JSON）：
   - `base`：知识库名称
-  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks）
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks[index/start/end/status/content]）
   - `content`：原文内容
 - `DELETE` 入参（Query）：
   - `user_id`：用户唯一标识
@@ -260,7 +260,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `doc_id`：文档 id
-  - `chunks`：切片列表（index/start/end/preview/content）
+  - `chunks`：切片列表（index/start/end/preview/content/status）
 - 说明：仅适用于向量知识库。
 
 ### 4.1.2.13 `/wunder/user_tools/knowledge/reindex`
@@ -679,6 +679,15 @@
   - `message`：提示信息
 - 说明：取消会中断正在进行的 LLM/工具调用，内部轮询取消标记，通常 200ms 内生效。
 
+### 4.1.10.1 `/wunder/admin/monitor/{session_id}/compaction`
+
+- 方法：`POST`
+- 入参（JSON）：`model_name`（可选，指定压缩摘要模型）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
+
 ### 4.1.11 `/wunder/admin/monitor/{session_id}`
 
 - 方法：`DELETE`
@@ -893,7 +902,7 @@
 
 ### 4.1.24.3 管理端前端页面与接口
 
-- 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`。
+- 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
@@ -962,7 +971,7 @@
     - `embedding_model`：嵌入模型（向量知识库）
     - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
     - `warnings`：转换警告列表
-  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
+  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/admin/knowledge/reindex` 或 `/wunder/admin/knowledge/chunk/*` 生成向量。
 
 ### 4.1.30 `/wunder/admin/knowledge/refresh`
 
@@ -992,7 +1001,7 @@
   - `doc_id`：文档 id
 - `GET` 返回（JSON）：
   - `base`：知识库名称
-  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks）
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks[index/start/end/status/content]）
   - `content`：原文内容
 - `DELETE` 入参（Query）：
   - `base`：知识库名称
@@ -1013,10 +1022,47 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `doc_id`：文档 id
-  - `chunks`：切片列表（index/start/end/preview/content）
+  - `chunks`：切片列表（index/start/end/preview/content/status）
 - 说明：仅适用于向量知识库。
 
-### 4.1.30.4 `/wunder/admin/knowledge/reindex`
+### 4.1.30.4 `/wunder/admin/knowledge/chunk/update`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+  - `content`：切片内容
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库，更新内容后切片状态变为 `pending`。
+
+### 4.1.30.5 `/wunder/admin/knowledge/chunk/embed`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库，执行单片嵌入并写入向量库，切片状态更新为 `embedded`。
+
+### 4.1.30.6 `/wunder/admin/knowledge/chunk/delete`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库，删除切片向量并标记为 `deleted`。
+
+### 4.1.30.7 `/wunder/admin/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -1495,7 +1541,7 @@
   - 返回：`data.id`
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
-  - `tool_names` 会按用户工具白名单/黑名单过滤。
+  - `tool_names` 会按用户工具白名单过滤。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
 
 ### 4.1.57 `/wunder/admin/user_accounts/*`
@@ -1515,10 +1561,10 @@
   - 入参（JSON）：`password`
   - 返回：`data.ok`
 - `GET /wunder/admin/user_accounts/{user_id}/tool_access`
-  - 返回：`data.allowed_tools`（null 表示使用默认策略）、`data.blocked_tools`
+  - 返回：`data.allowed_tools`（null 表示使用默认策略）
 - `PUT /wunder/admin/user_accounts/{user_id}/tool_access`
-  - 入参（JSON）：`allowed_tools`（null 或字符串数组）、`blocked_tools`（可选字符串数组）
-  - 返回：`data.allowed_tools`、`data.blocked_tools`
+  - 入参（JSON）：`allowed_tools`（null 或字符串数组）
+  - 返回：`data.allowed_tools`
 - `GET /wunder/admin/user_accounts/{user_id}/agent_access`
   - 返回：`data.allowed_agent_ids`（null 表示使用默认策略）、`data.blocked_agent_ids`
 - `PUT /wunder/admin/user_accounts/{user_id}/agent_access`

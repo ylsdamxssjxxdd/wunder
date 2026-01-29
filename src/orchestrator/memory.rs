@@ -272,6 +272,7 @@ impl Orchestrator {
         emitter: &EventEmitter,
         current_question: &str,
         log_payload: bool,
+        force: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
         let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
             return Ok(messages);
@@ -292,8 +293,14 @@ impl Orchestrator {
         } else {
             None
         };
-        let (should_compact_by_history, should_compact) =
+        let (mut should_compact_by_history, mut should_compact) =
             should_compact_by_context(context_tokens, limit, history_threshold);
+        if force && !should_compact {
+            should_compact = true;
+            if !should_compact_by_history {
+                should_compact_by_history = true;
+            }
+        }
         let total_tokens = context_tokens;
         let history_usage = context_tokens;
         if !should_compact {
@@ -684,6 +691,96 @@ impl Orchestrator {
         emitter.emit("compaction", compaction_payload).await;
 
         Ok(rebuilt)
+    }
+
+    pub(crate) async fn force_compact_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        model_name: Option<&str>,
+        agent_id: Option<&str>,
+        agent_prompt: Option<&str>,
+    ) -> Result<(), OrchestratorError> {
+        let config = self.resolve_config(None).await;
+        let log_payload = is_debug_log_level(&config.observability.log_level);
+        let (_llm_name, llm_config) = self.resolve_llm_config(&config, model_name)?;
+        let skills_snapshot = self.skills.read().await.clone();
+        let user_tool_bindings =
+            self.user_tool_manager
+                .build_bindings(&config, &skills_snapshot, user_id);
+        let allowed_tool_names = self.resolve_allowed_tool_names(
+            &config,
+            &[],
+            &skills_snapshot,
+            Some(&user_tool_bindings),
+        );
+        let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
+        let workspace_id = self.workspace.scoped_user_id(user_id, agent_id);
+        let mut system_prompt = self
+            .resolve_session_prompt(
+                &config,
+                None,
+                &allowed_tool_names,
+                tool_call_mode,
+                &skills_snapshot,
+                Some(&user_tool_bindings),
+                user_id,
+                &workspace_id,
+                session_id,
+                None,
+                agent_prompt,
+            )
+            .await;
+        system_prompt = self.append_memory_prompt(user_id, system_prompt).await;
+
+        let history_manager = HistoryManager;
+        let context_manager = ContextManager;
+        let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
+        let history_messages = history_manager
+            .load_history_messages_async(
+                self.workspace.clone(),
+                user_id.to_string(),
+                session_id.to_string(),
+                config.workspace.max_history_items,
+            )
+            .await;
+        messages.extend(history_messages);
+        let messages = context_manager.normalize_messages(messages);
+        let emitter = EventEmitter::new(
+            session_id.to_string(),
+            user_id.to_string(),
+            None,
+            None,
+            self.monitor.clone(),
+        );
+        let messages = self
+            .maybe_compact_messages(
+                &config,
+                &llm_config,
+                user_id,
+                session_id,
+                RoundInfo::default(),
+                messages,
+                &emitter,
+                "",
+                log_payload,
+                true,
+            )
+            .await?;
+        let messages = context_manager.normalize_messages(messages);
+        let context_tokens = context_manager.estimate_context_tokens(&messages);
+        self.workspace
+            .save_session_context_tokens_async(user_id, session_id, context_tokens)
+            .await;
+        let mut context_payload = json!({
+            "context_tokens": context_tokens,
+            "message_count": messages.len(),
+        });
+        if let Value::Object(ref mut map) = context_payload {
+            RoundInfo::default().insert_into(map);
+        }
+        emitter.emit("context_usage", context_payload).await;
+        Ok(())
     }
 
     pub(super) async fn append_memory_prompt(&self, user_id: &str, prompt: String) -> String {

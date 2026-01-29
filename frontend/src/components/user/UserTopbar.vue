@@ -42,10 +42,7 @@
     </div>
     <div v-if="showSearch" class="user-topbar-center">
       <div class="portal-search topbar-search user-topbar-search">
-        <svg class="portal-search-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" />
-          <path d="M16.5 16.5L21 21" />
-        </svg>
+        <i class="fa-solid fa-magnifying-glass portal-search-icon" aria-hidden="true"></i>
         <input
           :value="search"
           type="text"

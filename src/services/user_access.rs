@@ -73,17 +73,6 @@ pub fn compute_allowed_tool_names(
                 .cloned()
                 .collect::<HashSet<_>>();
         }
-        if !access.blocked_tools.is_empty() {
-            let blocked_set: HashSet<String> = access
-                .blocked_tools
-                .iter()
-                .map(|name| name.trim().to_string())
-                .filter(|name| !name.is_empty())
-                .collect();
-            for name in blocked_set {
-                allowed.remove(&name);
-            }
-        }
     }
 
     allowed

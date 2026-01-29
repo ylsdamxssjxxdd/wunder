@@ -192,7 +192,7 @@ const renderOrgUnitTree = () => {
   };
   const renderNode = (node, depth) => {
     const item = document.createElement("div");
-    item.className = "org-unit-tree-item";
+    item.className = "org-unit-tree-item skill-tree-item";
     if (node.unit_id === state.orgUnits.selectedId) {
       item.classList.add("is-active");
     }
@@ -201,7 +201,7 @@ const renderOrgUnitTree = () => {
     if (hasChildren) {
       item.setAttribute("aria-expanded", String(!isCollapsed));
     }
-    item.classList.add(hasChildren ? "is-branch" : "is-leaf");
+    item.classList.add(hasChildren ? "is-dir" : "is-file");
     item.style.paddingLeft = `${8 + depth * 14}px`;
     item.title = node.path_name || node.name || node.unit_id || "";
     item.setAttribute("role", "button");
@@ -233,7 +233,7 @@ const renderOrgUnitTree = () => {
     const icon = document.createElement("i");
     icon.className = hasChildren ? "fa-solid fa-folder" : "fa-regular fa-folder";
     const name = document.createElement("span");
-    name.className = "org-unit-tree-name";
+    name.className = "skill-tree-name";
     name.textContent = node.name || node.unit_id || "-";
     item.append(toggle, icon, name);
     item.addEventListener("click", () => selectUnit(node.unit_id));

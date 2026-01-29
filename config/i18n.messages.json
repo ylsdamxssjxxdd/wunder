@@ -183,6 +183,14 @@
     "en-US": "Knowledge document not found",
     "zh-CN": "知识库文档不存在"
   },
+  "error.knowledge_chunk_not_found": {
+    "en-US": "Knowledge chunk not found",
+    "zh-CN": "知识库切片不存在"
+  },
+  "error.knowledge_chunk_deleted": {
+    "en-US": "Knowledge chunk has been deleted",
+    "zh-CN": "知识库切片已删除"
+  },
   "error.embedding_model_required": {
     "en-US": "Embedding model is required",
     "zh-CN": "必须选择嵌入模型"

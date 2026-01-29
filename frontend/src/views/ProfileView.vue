@@ -10,10 +10,7 @@
             aria-label="编辑资料"
             @click="openProfileEditor"
           >
-            <svg class="profile-edit-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 16.5V20h3.5L19 8.5 15.5 5 4 16.5z" />
-              <path d="M13.5 6.5L17 10" />
-            </svg>
+            <i class="fa-solid fa-pen-to-square profile-edit-icon" aria-hidden="true"></i>
           </button>
           <div class="profile-identity-body">
             <div class="profile-identity-main">

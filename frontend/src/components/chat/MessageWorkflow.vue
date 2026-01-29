@@ -15,12 +15,7 @@
         @keydown.enter.stop.prevent="openPlanDialog"
         @keydown.space.stop.prevent="openPlanDialog"
       >
-        <svg class="workflow-plan-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="3" width="7" height="7" rx="1" />
-          <rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" />
-          <rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
+        <i class="fa-solid fa-table-cells-large workflow-plan-icon" aria-hidden="true"></i>
       </button>
     </summary>
     <div class="workflow-content">

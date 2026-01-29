@@ -26,6 +26,12 @@ const knowledgeModalEnabled = document.getElementById("knowledgeModalEnabled");
 const knowledgeModalSave = document.getElementById("knowledgeModalSave");
 const knowledgeModalCancel = document.getElementById("knowledgeModalCancel");
 const knowledgeModalClose = document.getElementById("knowledgeModalClose");
+const knowledgeChunkModal = document.getElementById("knowledgeChunkModal");
+const knowledgeChunkModalTitle = document.getElementById("knowledgeChunkModalTitle");
+const knowledgeChunkModalContent = document.getElementById("knowledgeChunkModalContent");
+const knowledgeChunkModalSave = document.getElementById("knowledgeChunkModalSave");
+const knowledgeChunkModalCancel = document.getElementById("knowledgeChunkModalCancel");
+const knowledgeChunkModalClose = document.getElementById("knowledgeChunkModalClose");
 const knowledgeEditBtn = document.getElementById("knowledgeEditBtn");
 const knowledgeDetailDesc = document.getElementById("knowledgeDetailDesc");
 const knowledgeFileUploadBtn = document.getElementById("knowledgeFileUploadBtn");
@@ -33,6 +39,7 @@ const knowledgeFileUploadInput = document.getElementById("knowledgeFileUploadInp
 
 // 记录当前正在编辑的知识库索引（-1 表示新增）
 let knowledgeEditingIndex = -1;
+let editingChunkIndex = null;
 
 const resetVectorState = () => {
   state.knowledge.vectorDocs = [];
@@ -41,6 +48,7 @@ const resetVectorState = () => {
   state.knowledge.docMeta = null;
   state.knowledge.docChunks = [];
   state.knowledge.activeChunkIndex = -1;
+  state.knowledge.docContentVisible = false;
 };
 
 const syncKnowledgeEditorStyles = () => {
@@ -488,12 +496,26 @@ const renderKnowledgeBaseList = () => {
     const title = base.name || t("knowledge.name.unnamed");
     const meta = [];
     meta.push(base.root || t("knowledge.root.unset"));
-    const typeLabel = isVectorBase(base) ? t("knowledge.type.vector") : t("knowledge.type.literal");
+    const isVector = isVectorBase(base);
+    const typeLabel = isVector ? t("knowledge.type.vector") : t("knowledge.type.literal");
     meta.push(typeLabel);
-    if (isVectorBase(base) && base.embedding_model) {
+    if (isVector && base.embedding_model) {
       meta.push(base.embedding_model);
     }
-    item.innerHTML = `<div>${title}</div><small>${meta.join(" · ")}</small>`;
+    item.innerHTML = "";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "knowledge-list-item-title";
+    const icon = document.createElement("i");
+    icon.className = `fa-solid ${
+      isVector ? "fa-diagram-project" : "fa-file-lines"
+    } knowledge-type-icon ${isVector ? "is-vector" : "is-literal"}`;
+    const titleText = document.createElement("span");
+    titleText.className = "knowledge-list-item-name";
+    titleText.textContent = title;
+    titleWrap.append(icon, titleText);
+    const metaText = document.createElement("small");
+    metaText.textContent = meta.join(" · ");
+    item.append(titleWrap, metaText);
     item.addEventListener("click", async () => {
       state.knowledge.selectedIndex = index;
       state.knowledge.files = [];
@@ -543,12 +565,15 @@ const renderKnowledgeDetail = () => {
   renderKnowledgeDetailHeader();
   const base = getActiveBase();
   const vectorMode = base && isVectorBase(base);
-  if (elements.knowledgeFileLayout) {
-    elements.knowledgeFileLayout.hidden = Boolean(vectorMode);
-  }
-  if (elements.knowledgeVectorLayout) {
-    elements.knowledgeVectorLayout.hidden = !vectorMode;
-  }
+  const toggleLayout = (element, visible, displayStyle) => {
+    if (!element) {
+      return;
+    }
+    element.hidden = !visible;
+    element.style.display = visible ? displayStyle : "none";
+  };
+  toggleLayout(elements.knowledgeFileLayout, !vectorMode, "grid");
+  toggleLayout(elements.knowledgeVectorLayout, vectorMode, "grid");
   if (elements.knowledgeFileNewBtn) {
     elements.knowledgeFileNewBtn.disabled = !base || vectorMode;
   }
@@ -650,6 +675,31 @@ const buildHighlightedContent = (content, chunk) => {
   return `${escapeHtml(before)}<mark>${escapeHtml(target)}</mark>${escapeHtml(after)}`;
 };
 
+const updateDocContentToggle = () => {
+  const btn = elements.knowledgeDocToggleBtn;
+  if (!btn) {
+    return;
+  }
+  const label = state.knowledge.docContentVisible
+    ? t("knowledge.doc.action.hide")
+    : t("knowledge.doc.action.show");
+  const span = btn.querySelector("span");
+  if (span) {
+    span.textContent = label;
+  } else {
+    btn.textContent = label;
+  }
+};
+
+const setDocContentVisible = (visible) => {
+  state.knowledge.docContentVisible = visible;
+  if (elements.knowledgeDocContentSection) {
+    elements.knowledgeDocContentSection.hidden = !visible;
+    elements.knowledgeDocContentSection.style.display = visible ? "flex" : "none";
+  }
+  updateDocContentToggle();
+};
+
 const renderVectorDocContent = () => {
   if (!elements.knowledgeDocContent) {
     return;
@@ -669,6 +719,18 @@ const renderVectorDocContent = () => {
   }
 };
 
+const resolveChunkStatus = (chunk) => {
+  const raw = String(chunk?.status || "").trim().toLowerCase();
+  return raw || "pending";
+};
+
+const formatChunkStatus = (chunk) => {
+  const status = resolveChunkStatus(chunk);
+  const key = `knowledge.chunk.status.${status}`;
+  const label = t(key);
+  return label === key ? status : label;
+};
+
 const renderVectorDocChunks = () => {
   if (!elements.knowledgeDocChunks) {
     return;
@@ -685,13 +747,53 @@ const renderVectorDocChunks = () => {
     if (chunk.index === state.knowledge.activeChunkIndex) {
       item.classList.add("active");
     }
+    const titleRow = document.createElement("div");
+    titleRow.className = "knowledge-doc-chunk-title-row";
     const title = document.createElement("div");
     title.className = "knowledge-doc-chunk-title";
     title.textContent = `#${chunk.index} ${chunk.start}-${chunk.end}`;
+    const status = document.createElement("span");
+    status.className = `knowledge-doc-chunk-status status-${resolveChunkStatus(chunk)}`;
+    status.textContent = formatChunkStatus(chunk);
+    titleRow.append(title, status);
     const preview = document.createElement("div");
     preview.className = "knowledge-doc-chunk-preview";
     preview.textContent = chunk.preview || chunk.content || "";
-    item.append(title, preview);
+    const actions = document.createElement("div");
+    actions.className = "knowledge-doc-chunk-actions";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "knowledge-doc-chunk-action";
+    editBtn.innerHTML = `<i class=\"fa-solid fa-pen\"></i><span>${t(
+      "knowledge.chunk.action.edit"
+    )}</span>`;
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openChunkModal(chunk);
+    });
+    const embedBtn = document.createElement("button");
+    embedBtn.type = "button";
+    embedBtn.className = "knowledge-doc-chunk-action";
+    embedBtn.innerHTML = `<i class=\"fa-solid fa-cube\"></i><span>${t(
+      "knowledge.chunk.action.embed"
+    )}</span>`;
+    embedBtn.disabled = resolveChunkStatus(chunk) === "embedded";
+    embedBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      embedVectorChunk(chunk.index);
+    });
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "knowledge-doc-chunk-action danger";
+    deleteBtn.innerHTML = `<i class=\"fa-solid fa-trash\"></i><span>${t(
+      "knowledge.chunk.action.delete"
+    )}</span>`;
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteVectorChunk(chunk.index);
+    });
+    actions.append(editBtn, embedBtn, deleteBtn);
+    item.append(titleRow, preview, actions);
     item.addEventListener("click", () => {
       const nextIndex = chunk.index;
       state.knowledge.activeChunkIndex =
@@ -716,6 +818,10 @@ const renderVectorDocDetail = () => {
   if (!meta) {
     elements.knowledgeDocTitle.textContent = t("knowledge.doc.none");
     elements.knowledgeDocMeta.textContent = "";
+    if (elements.knowledgeDocToggleBtn) {
+      elements.knowledgeDocToggleBtn.disabled = true;
+    }
+    setDocContentVisible(false);
     if (elements.knowledgeDocReindexBtn) {
       elements.knowledgeDocReindexBtn.disabled = true;
     }
@@ -728,6 +834,10 @@ const renderVectorDocDetail = () => {
   }
   elements.knowledgeDocTitle.textContent = meta.name || meta.doc_id || t("knowledge.doc.none");
   elements.knowledgeDocMeta.textContent = buildDocMetaText(meta);
+  if (elements.knowledgeDocToggleBtn) {
+    elements.knowledgeDocToggleBtn.disabled = false;
+  }
+  updateDocContentToggle();
   if (elements.knowledgeDocReindexBtn) {
     elements.knowledgeDocReindexBtn.disabled = false;
   }
@@ -811,6 +921,7 @@ const selectVectorDoc = async (docId) => {
     state.knowledge.docContent = docResult.content || "";
     state.knowledge.docChunks = Array.isArray(chunkResult.chunks) ? chunkResult.chunks : [];
     state.knowledge.activeChunkIndex = -1;
+    setDocContentVisible(false);
     renderVectorDocList();
     renderVectorDocDetail();
   } catch (error) {
@@ -851,6 +962,154 @@ const deleteVectorDoc = async (docId) => {
   }
   await loadVectorDocs();
   notify(t("knowledge.doc.deleted"), "success");
+};
+
+const refreshActiveVectorDoc = async () => {
+  if (!state.knowledge.activeDocId) {
+    return;
+  }
+  await selectVectorDoc(state.knowledge.activeDocId);
+  await loadVectorDocs();
+};
+
+const updateVectorChunk = async (chunkIndex, content) => {
+  const base = getActiveBase();
+  if (!base || !base.name) {
+    notify(t("knowledge.base.selectRequired"), "warn");
+    return;
+  }
+  if (!state.knowledge.activeDocId) {
+    notify(t("knowledge.doc.none"), "warn");
+    return;
+  }
+  const payload = {
+    base: base.name,
+    doc_id: state.knowledge.activeDocId,
+    chunk_index: chunkIndex,
+    content,
+  };
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/knowledge/chunk/update`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("knowledge.chunk.updateFailed", { message: response.status }));
+  }
+  await refreshActiveVectorDoc();
+  notify(t("knowledge.chunk.updateSuccess"), "success");
+};
+
+const embedVectorChunk = async (chunkIndex) => {
+  const base = getActiveBase();
+  if (!base || !base.name) {
+    notify(t("knowledge.base.selectRequired"), "warn");
+    return;
+  }
+  if (!state.knowledge.activeDocId) {
+    notify(t("knowledge.doc.none"), "warn");
+    return;
+  }
+  const payload = {
+    base: base.name,
+    doc_id: state.knowledge.activeDocId,
+    chunk_index: chunkIndex,
+  };
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/knowledge/chunk/embed`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("knowledge.chunk.embedFailed", { message: response.status }));
+  }
+  await refreshActiveVectorDoc();
+  notify(t("knowledge.chunk.embedSuccess"), "success");
+};
+
+const deleteVectorChunk = async (chunkIndex) => {
+  const base = getActiveBase();
+  if (!base || !base.name) {
+    notify(t("knowledge.base.selectRequired"), "warn");
+    return;
+  }
+  if (!state.knowledge.activeDocId) {
+    notify(t("knowledge.doc.none"), "warn");
+    return;
+  }
+  if (!window.confirm(t("knowledge.chunk.deleteConfirm", { index: chunkIndex }))) {
+    return;
+  }
+  const payload = {
+    base: base.name,
+    doc_id: state.knowledge.activeDocId,
+    chunk_index: chunkIndex,
+  };
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/knowledge/chunk/delete`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("knowledge.chunk.deleteFailed", { message: response.status }));
+  }
+  await refreshActiveVectorDoc();
+  notify(t("knowledge.chunk.deleted"), "success");
+};
+
+const openChunkModal = (chunk) => {
+  if (!knowledgeChunkModal || !knowledgeChunkModalContent) {
+    return;
+  }
+  editingChunkIndex = chunk.index;
+  if (knowledgeChunkModalTitle) {
+    knowledgeChunkModalTitle.textContent = t("knowledge.chunk.modal.title", {
+      index: chunk.index,
+    });
+  }
+  knowledgeChunkModalContent.value = chunk.content || "";
+  knowledgeChunkModal.classList.add("active");
+  knowledgeChunkModalContent.focus();
+};
+
+const closeChunkModal = () => {
+  if (!knowledgeChunkModal) {
+    return;
+  }
+  knowledgeChunkModal.classList.remove("active");
+  editingChunkIndex = null;
+  if (knowledgeChunkModalContent) {
+    knowledgeChunkModalContent.value = "";
+  }
+};
+
+const saveChunkModal = async () => {
+  if (editingChunkIndex === null || editingChunkIndex === undefined) {
+    return;
+  }
+  const content = knowledgeChunkModalContent?.value || "";
+  if (!content.trim()) {
+    notify(t("knowledge.chunk.content.required"), "warn");
+    return;
+  }
+  try {
+    await updateVectorChunk(editingChunkIndex, content);
+    closeChunkModal();
+  } catch (error) {
+    notify(t("knowledge.chunk.updateFailed", { message: error.message }), "error");
+  }
 };
 
 const reindexVectorDocs = async (docId) => {
@@ -1209,6 +1468,7 @@ const applyKnowledgeModal = async () => {
     docMeta: state.knowledge.docMeta ? { ...state.knowledge.docMeta } : null,
     docChunks: [...state.knowledge.docChunks],
     activeChunkIndex: state.knowledge.activeChunkIndex,
+    docContentVisible: state.knowledge.docContentVisible,
   };
   if (knowledgeEditingIndex >= 0) {
     state.knowledge.bases[knowledgeEditingIndex] = { ...payload };
@@ -1237,6 +1497,7 @@ const applyKnowledgeModal = async () => {
       state.knowledge.docMeta = snapshot.docMeta;
       state.knowledge.docChunks = snapshot.docChunks;
       state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
+      state.knowledge.docContentVisible = snapshot.docContentVisible;
       renderKnowledgeBaseList();
       renderKnowledgeDetail();
       return;
@@ -1259,6 +1520,7 @@ const applyKnowledgeModal = async () => {
     state.knowledge.docMeta = snapshot.docMeta;
     state.knowledge.docChunks = snapshot.docChunks;
     state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
+    state.knowledge.docContentVisible = snapshot.docContentVisible;
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
     notify(t("knowledge.saveFailed", { message: error.message }), "error");
@@ -1286,6 +1548,7 @@ const deleteKnowledgeBase = async () => {
     docMeta: state.knowledge.docMeta ? { ...state.knowledge.docMeta } : null,
     docChunks: [...state.knowledge.docChunks],
     activeChunkIndex: state.knowledge.activeChunkIndex,
+    docContentVisible: state.knowledge.docContentVisible,
   };
   state.knowledge.bases.splice(state.knowledge.selectedIndex, 1);
   if (!state.knowledge.bases.length) {
@@ -1313,6 +1576,7 @@ const deleteKnowledgeBase = async () => {
       state.knowledge.docMeta = snapshot.docMeta;
       state.knowledge.docChunks = snapshot.docChunks;
       state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
+      state.knowledge.docContentVisible = snapshot.docContentVisible;
       renderKnowledgeBaseList();
       renderKnowledgeDetail();
       return;
@@ -1331,6 +1595,7 @@ const deleteKnowledgeBase = async () => {
     state.knowledge.docMeta = snapshot.docMeta;
     state.knowledge.docChunks = snapshot.docChunks;
     state.knowledge.activeChunkIndex = snapshot.activeChunkIndex;
+    state.knowledge.docContentVisible = snapshot.docContentVisible;
     renderKnowledgeBaseList();
     renderKnowledgeDetail();
     notify(t("knowledge.deleteFailed", { message: error.message }), "error");
@@ -1446,6 +1711,15 @@ export const initKnowledgePanel = () => {
       notify(t("knowledge.doc.reindexFailed", { message: error.message }), "error");
     }
   });
+  elements.knowledgeDocToggleBtn?.addEventListener("click", () => {
+    if (!state.knowledge.docMeta) {
+      return;
+    }
+    setDocContentVisible(!state.knowledge.docContentVisible);
+    if (state.knowledge.docContentVisible) {
+      renderVectorDocContent();
+    }
+  });
   elements.knowledgeDocDeleteBtn?.addEventListener("click", async () => {
     try {
       await deleteVectorDoc(state.knowledge.activeDocId);
@@ -1462,6 +1736,14 @@ export const initKnowledgePanel = () => {
       await uploadKnowledgeFile(file);
     } catch (error) {
       notify(t("knowledge.file.uploadFailedMessage", { message: error.message }), "error");
+    }
+  });
+  knowledgeChunkModalSave?.addEventListener("click", saveChunkModal);
+  knowledgeChunkModalCancel?.addEventListener("click", closeChunkModal);
+  knowledgeChunkModalClose?.addEventListener("click", closeChunkModal);
+  knowledgeChunkModal?.addEventListener("click", (event) => {
+    if (event.target === knowledgeChunkModal) {
+      closeChunkModal();
     }
   });
   elements.knowledgeFileContent?.addEventListener("input", () => {
