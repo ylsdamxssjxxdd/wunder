@@ -2216,24 +2216,6 @@
   color: #475569;
 }
 
-.knowledge-doc-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.knowledge-doc-section-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.knowledge-doc-section-actions .btn-with-icon.icon-only {
-  padding: 4px 6px;
-  min-width: 28px;
-}
-
 .knowledge-doc-chunks-pane {
   display: flex;
   flex-direction: column;

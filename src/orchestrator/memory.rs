@@ -273,6 +273,7 @@ impl Orchestrator {
         current_question: &str,
         log_payload: bool,
         force: bool,
+        exclude_current_user: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
         let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
             return Ok(messages);
@@ -342,7 +343,11 @@ impl Orchestrator {
             .first()
             .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
             .cloned();
-        let current_user_index = Self::locate_current_user_index(&messages);
+        let current_user_index = if exclude_current_user {
+            Self::locate_current_user_index(&messages)
+        } else {
+            None
+        };
         let current_user_message = current_user_index
             .and_then(|index| messages.get(index))
             .cloned();
@@ -765,6 +770,7 @@ impl Orchestrator {
                 "",
                 log_payload,
                 true,
+                false,
             )
             .await?;
         let messages = context_manager.normalize_messages(messages);

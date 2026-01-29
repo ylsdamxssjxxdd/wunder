@@ -260,6 +260,33 @@ impl UserStore {
         status: &str,
         is_demo: bool,
     ) -> Result<UserAccountRecord> {
+        let password_hash = Self::hash_password(password)?;
+        self.create_user_with_password_hash(
+            username,
+            email,
+            password_hash,
+            access_level,
+            unit_id,
+            roles,
+            status,
+            is_demo,
+        )
+    }
+
+    pub fn create_user_with_password_hash(
+        &self,
+        username: &str,
+        email: Option<String>,
+        password_hash: String,
+        access_level: Option<&str>,
+        unit_id: Option<String>,
+        roles: Vec<String>,
+        status: &str,
+        is_demo: bool,
+    ) -> Result<UserAccountRecord> {
+        if password_hash.trim().is_empty() {
+            return Err(anyhow!("password hash is empty"));
+        }
         let user_id =
             Self::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
         if self
@@ -285,7 +312,7 @@ impl UserStore {
             user_id: user_id.clone(),
             username: user_id.clone(),
             email,
-            password_hash: Self::hash_password(password)?,
+            password_hash,
             roles: if roles.is_empty() {
                 vec!["user".to_string()]
             } else {

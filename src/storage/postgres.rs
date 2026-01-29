@@ -281,6 +281,18 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_user_account_list_indexes(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_created ON user_accounts (created_at)",
+            &[],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created ON user_accounts (unit_id, created_at)",
+            &[],
+        );
+        Ok(())
+    }
+
     fn ensure_user_tool_access_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let rows = conn.query(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_tool_access'",
@@ -628,6 +640,10 @@ impl StorageBackend for PostgresStorage {
                   ON user_accounts (email);
                 CREATE INDEX IF NOT EXISTS idx_user_accounts_unit
                   ON user_accounts (unit_id);
+                CREATE INDEX IF NOT EXISTS idx_user_accounts_created
+                  ON user_accounts (created_at);
+                CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created
+                  ON user_accounts (unit_id, created_at);
                 CREATE TABLE IF NOT EXISTS org_units (
                   unit_id TEXT PRIMARY KEY,
                   parent_id TEXT,
@@ -705,6 +721,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_monitor_defaults(&mut conn)?;
                     self.ensure_user_account_quota_columns(&mut conn)?;
                     self.ensure_user_account_unit_columns(&mut conn)?;
+                    self.ensure_user_account_list_indexes(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;

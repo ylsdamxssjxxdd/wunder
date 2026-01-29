@@ -255,6 +255,17 @@ const renderUserAccountRows = () => {
     includeRoot: true,
     rootLabel: t("userAccounts.unit.default"),
   });
+  let unitSelectTemplate = null;
+  if (unitOptions.length) {
+    unitSelectTemplate = document.createElement("select");
+    unitOptions.forEach((option) => {
+      const node = document.createElement("option");
+      node.value = option.value;
+      node.textContent = option.label;
+      unitSelectTemplate.appendChild(node);
+    });
+  }
+  const fragment = document.createDocumentFragment();
   state.userAccounts.list.forEach((user) => {
     const row = document.createElement("tr");
 
@@ -265,16 +276,10 @@ const renderUserAccountRows = () => {
     emailCell.textContent = user.email || "-";
 
     const unitCell = document.createElement("td");
-    if (!unitOptions.length) {
+    if (!unitSelectTemplate) {
       unitCell.textContent = resolveUnitLabel(user);
     } else {
-      const unitSelect = document.createElement("select");
-      unitOptions.forEach((option) => {
-        const node = document.createElement("option");
-        node.value = option.value;
-        node.textContent = option.label;
-        unitSelect.appendChild(node);
-      });
+      const unitSelect = unitSelectTemplate.cloneNode(true);
       unitSelect.value = user.unit_id || "";
       unitSelect.title = resolveUnitLabel(user);
       unitSelect.addEventListener("change", (event) => {
@@ -324,8 +329,9 @@ const renderUserAccountRows = () => {
     row.appendChild(loginCell);
     row.appendChild(actionCell);
 
-    elements.userAccountTableBody.appendChild(row);
+    fragment.appendChild(row);
   });
+  elements.userAccountTableBody.appendChild(fragment);
   renderUserAccountPagination();
 };
 

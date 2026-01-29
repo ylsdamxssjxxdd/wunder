@@ -3492,6 +3492,8 @@ async fn admin_user_accounts_seed(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     let scoped_units = filter_units_by_scope(units, actor.scope_unit_ids.as_ref());
+    let password_hash = UserStore::hash_password(DEFAULT_TEST_USER_PASSWORD)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut created: i64 = 0;
     for unit in &scoped_units {
         for _ in 0..per_unit {
@@ -3502,10 +3504,10 @@ async fn admin_user_accounts_seed(
             );
             state
                 .user_store
-                .create_user(
+                .create_user_with_password_hash(
                     &username,
                     None,
-                    DEFAULT_TEST_USER_PASSWORD,
+                    password_hash.clone(),
                     None,
                     Some(unit.unit_id.clone()),
                     Vec::new(),

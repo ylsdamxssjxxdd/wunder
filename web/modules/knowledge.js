@@ -612,18 +612,20 @@ const renderKnowledgeDetail = () => {
   };
   toggleLayout(elements.knowledgeFileLayout, !vectorMode, "grid");
   toggleLayout(elements.knowledgeVectorLayout, vectorMode, "grid");
-  if (elements.knowledgeFileNewBtn) {
-    elements.knowledgeFileNewBtn.disabled = !base || vectorMode;
-  }
-  if (elements.knowledgeFileSaveBtn) {
-    elements.knowledgeFileSaveBtn.disabled = !base || vectorMode;
-  }
-  if (elements.knowledgeDocUploadBtn) {
-    elements.knowledgeDocUploadBtn.disabled = !base || !vectorMode;
-  }
-  if (elements.knowledgeDocRebuildAllBtn) {
-    elements.knowledgeDocRebuildAllBtn.disabled = !base || !vectorMode;
-  }
+  const toggleButton = (element, visible) => {
+    if (!element) {
+      return;
+    }
+    element.disabled = !visible;
+    element.style.display = visible ? "" : "none";
+  };
+  const showLiteralActions = Boolean(base && !vectorMode);
+  const showVectorActions = Boolean(base && vectorMode);
+  toggleButton(knowledgeFileUploadBtn, showLiteralActions);
+  toggleButton(elements.knowledgeFileNewBtn, showLiteralActions);
+  toggleButton(elements.knowledgeFileSaveBtn, showLiteralActions);
+  toggleButton(elements.knowledgeDocUploadBtn, showVectorActions);
+  toggleButton(elements.knowledgeDocRebuildAllBtn, showVectorActions);
   if (vectorMode) {
     renderVectorDocList();
     renderVectorDocDetail();

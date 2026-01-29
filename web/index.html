@@ -1824,22 +1824,77 @@
               <div id="knowledgeBaseList" class="list-body"></div>
             </div>
             <div class="management-detail knowledge-detail">
-              <div class="detail-header">
-                <div>
-                  <div id="knowledgeDetailTitle" class="detail-title" data-i18n="knowledge.detail.empty">未选择知识库</div>
-                  <div id="knowledgeDetailMeta" class="muted"></div>
-                  <div id="knowledgeDetailDesc" class="muted"></div>
-                </div>
-                <div class="detail-actions">
-                  <button id="knowledgeTestBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-vial"></i><span data-i18n="knowledge.action.test">测试</span>
-                  </button>
-                  <button id="knowledgeEditBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-pen"></i><span data-i18n="common.edit">编辑</span>
-                  </button>
-                  <button id="knowledgeDeleteBtn" class="danger btn-with-icon">
-                    <i class="fa-solid fa-trash"></i><span data-i18n="knowledge.action.delete">删除知识库</span>
-                  </button>
+                <div class="detail-header">
+                  <div>
+                    <div id="knowledgeDetailTitle" class="detail-title" data-i18n="knowledge.detail.empty">未选择知识库</div>
+                    <div id="knowledgeDetailMeta" class="muted"></div>
+                    <div id="knowledgeDetailDesc" class="muted"></div>
+                  </div>
+                  <div class="detail-actions">
+                    <button
+                      id="knowledgeFileUploadBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="common.upload"
+                      data-i18n-aria-label="common.upload"
+                    >
+                      <i class="fa-solid fa-upload"></i>
+                    </button>
+                    <button
+                      id="knowledgeFileNewBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="common.new"
+                      data-i18n-aria-label="common.new"
+                    >
+                      <i class="fa-solid fa-plus"></i>
+                    </button>
+                    <button
+                      id="knowledgeFileSaveBtn"
+                      class="btn-with-icon btn-compact icon-only"
+                      data-i18n-title="common.save"
+                      data-i18n-aria-label="common.save"
+                    >
+                      <i class="fa-solid fa-floppy-disk"></i>
+                    </button>
+                    <button
+                      id="knowledgeDocUploadBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="common.upload"
+                      data-i18n-aria-label="common.upload"
+                    >
+                      <i class="fa-solid fa-upload"></i>
+                    </button>
+                    <button
+                      id="knowledgeDocRebuildAllBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="knowledge.action.rebuild"
+                      data-i18n-aria-label="knowledge.action.rebuild"
+                    >
+                      <i class="fa-solid fa-rotate"></i>
+                    </button>
+                    <button
+                      id="knowledgeTestBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="knowledge.action.test"
+                      data-i18n-aria-label="knowledge.action.test"
+                    >
+                      <i class="fa-solid fa-vial"></i>
+                    </button>
+                    <button
+                      id="knowledgeEditBtn"
+                      class="secondary btn-with-icon btn-compact icon-only"
+                      data-i18n-title="common.edit"
+                      data-i18n-aria-label="common.edit"
+                    >
+                      <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button
+                      id="knowledgeDeleteBtn"
+                      class="danger btn-with-icon btn-compact icon-only"
+                      data-i18n-title="knowledge.action.delete"
+                      data-i18n-aria-label="knowledge.action.delete"
+                    >
+                      <i class="fa-solid fa-trash"></i>
+                    </button>
                 </div>
               </div>
               <div class="knowledge-section form-section">
@@ -1847,17 +1902,6 @@
                   <div class="llm-card knowledge-files-card">
                     <div id="knowledgeFileLayout" class="knowledge-file-layout">
                         <div class="knowledge-file-pane">
-                          <div class="knowledge-file-toolbar">
-                            <button id="knowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
-                              <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
-                            </button>
-                            <button id="knowledgeFileNewBtn" class="secondary btn-with-icon btn-compact">
-                              <i class="fa-solid fa-plus"></i><span data-i18n="common.new">新建</span>
-                            </button>
-                            <button id="knowledgeFileSaveBtn" class="btn-with-icon btn-compact">
-                              <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
-                            </button>
-                          </div>
                         <input
                           id="knowledgeFileUploadInput"
                           type="file"
@@ -1884,14 +1928,6 @@
                     </div>
                     <div id="knowledgeVectorLayout" class="knowledge-vector-layout" hidden>
                       <div class="knowledge-vector-pane">
-                        <div class="knowledge-file-toolbar">
-                          <button id="knowledgeDocUploadBtn" class="secondary btn-with-icon btn-compact">
-                            <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
-                          </button>
-                          <button id="knowledgeDocRebuildAllBtn" class="secondary btn-with-icon btn-compact">
-                            <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.action.rebuild">重建嵌入</span>
-                          </button>
-                        </div>
                         <div id="knowledgeDocList" class="knowledge-doc-list"></div>
                       </div>
                       <div class="knowledge-vector-detail">
@@ -1911,6 +1947,15 @@
                               type="button"
                             >
                               <i class="fa-solid fa-file-lines"></i>
+                            </button>
+                            <button
+                              id="knowledgeDocChunkSelectAllBtn"
+                              class="secondary btn-with-icon btn-compact icon-only"
+                              data-i18n-title="knowledge.chunk.action.selectAll"
+                              data-i18n-aria-label="knowledge.chunk.action.selectAll"
+                              type="button"
+                            >
+                              <i class="fa-solid fa-square-check"></i>
                             </button>
                             <button
                               id="knowledgeDocEmbedBtn"
@@ -1934,21 +1979,8 @@
                         </div>
                         <div class="knowledge-vector-content">
                           <div class="knowledge-doc-chunks-pane">
-                            <div class="knowledge-doc-section-header">
-                              <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
-                                切片列表
-                              </div>
-                              <div class="knowledge-doc-section-actions">
-                                <button
-                                  id="knowledgeDocChunkSelectAllBtn"
-                                  class="secondary btn-with-icon btn-compact icon-only"
-                                  data-i18n-title="knowledge.chunk.action.selectAll"
-                                  data-i18n-aria-label="knowledge.chunk.action.selectAll"
-                                  type="button"
-                                >
-                                  <i class="fa-solid fa-square-check"></i>
-                                </button>
-                              </div>
+                            <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
+                              切片列表
                             </div>
                             <div id="knowledgeDocChunks" class="knowledge-doc-chunk-list"></div>
                           </div>

@@ -173,6 +173,18 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_user_account_list_indexes(&self, conn: &Connection) -> Result<()> {
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_created ON user_accounts (created_at)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created ON user_accounts (unit_id, created_at)",
+            [],
+        );
+        Ok(())
+    }
+
     fn ensure_user_tool_access_columns(&self, conn: &Connection) -> Result<()> {
         let mut stmt = conn.prepare("PRAGMA table_info(user_tool_access)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -431,6 +443,10 @@ impl StorageBackend for SqliteStorage {
               ON user_accounts (email);
             CREATE INDEX IF NOT EXISTS idx_user_accounts_unit
               ON user_accounts (unit_id);
+            CREATE INDEX IF NOT EXISTS idx_user_accounts_created
+              ON user_accounts (created_at);
+            CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created
+              ON user_accounts (unit_id, created_at);
             CREATE TABLE IF NOT EXISTS org_units (
               unit_id TEXT PRIMARY KEY,
               parent_id TEXT,
@@ -505,6 +521,7 @@ impl StorageBackend for SqliteStorage {
         )?;
         self.ensure_user_account_quota_columns(&conn)?;
         self.ensure_user_account_unit_columns(&conn)?;
+        self.ensure_user_account_list_indexes(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;

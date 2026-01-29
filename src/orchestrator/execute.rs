@@ -204,6 +204,7 @@ impl Orchestrator {
                         &question,
                         log_payload,
                         false,
+                        true,
                     )
                     .await?;
                 self.ensure_not_cancelled(&session_id)?;
