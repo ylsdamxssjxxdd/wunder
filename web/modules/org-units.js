@@ -13,7 +13,11 @@ const ensureOrgUnitsState = () => {
       selectedId: "",
       loaded: false,
       lastUpdated: 0,
+      collapsed: new Set(),
     };
+  } else if (!(state.orgUnits.collapsed instanceof Set)) {
+    const collapsed = Array.isArray(state.orgUnits.collapsed) ? state.orgUnits.collapsed : [];
+    state.orgUnits.collapsed = new Set(collapsed);
   }
 };
 
@@ -180,29 +184,69 @@ const renderOrgUnitTree = () => {
     tree.textContent = t("orgUnits.tree.empty");
     return;
   }
+  const collapsedSet = state.orgUnits.collapsed instanceof Set ? state.orgUnits.collapsed : new Set();
+  const selectUnit = (unitId) => {
+    state.orgUnits.selectedId = unitId;
+    renderOrgUnitTree();
+    renderOrgUnitDetail();
+  };
   const renderNode = (node, depth) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "org-unit-node-btn";
+    const item = document.createElement("div");
+    item.className = "org-unit-tree-item";
     if (node.unit_id === state.orgUnits.selectedId) {
-      button.classList.add("active");
+      item.classList.add("is-active");
     }
-    button.style.paddingLeft = `${10 + depth * 16}px`;
-    const name = document.createElement("div");
-    name.className = "org-unit-node-name";
+    const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+    const isCollapsed = hasChildren && collapsedSet.has(node.unit_id);
+    if (hasChildren) {
+      item.setAttribute("aria-expanded", String(!isCollapsed));
+    }
+    item.classList.add(hasChildren ? "is-branch" : "is-leaf");
+    item.style.paddingLeft = `${8 + depth * 14}px`;
+    item.title = node.path_name || node.name || node.unit_id || "";
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    const toggle = document.createElement(hasChildren ? "button" : "span");
+    if (hasChildren) {
+      toggle.type = "button";
+      toggle.className = "org-unit-tree-toggle";
+      toggle.setAttribute("aria-label", t("orgUnits.tree.toggle"));
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (collapsedSet.has(node.unit_id)) {
+          collapsedSet.delete(node.unit_id);
+        } else {
+          collapsedSet.add(node.unit_id);
+        }
+        renderOrgUnitTree();
+      });
+    } else {
+      toggle.className = "org-unit-tree-spacer";
+    }
+    if (hasChildren) {
+      const caret = document.createElement("i");
+      caret.className = collapsedSet.has(node.unit_id)
+        ? "fa-solid fa-caret-right"
+        : "fa-solid fa-caret-down";
+      toggle.appendChild(caret);
+    }
+    const icon = document.createElement("i");
+    icon.className = hasChildren ? "fa-solid fa-folder" : "fa-regular fa-folder";
+    const name = document.createElement("span");
+    name.className = "org-unit-tree-name";
     name.textContent = node.name || node.unit_id || "-";
-    const meta = document.createElement("div");
-    meta.className = "org-unit-node-meta";
-    meta.textContent = node.path_name || "";
-    button.appendChild(name);
-    button.appendChild(meta);
-    button.addEventListener("click", () => {
-      state.orgUnits.selectedId = node.unit_id;
-      renderOrgUnitTree();
-      renderOrgUnitDetail();
+    item.append(toggle, icon, name);
+    item.addEventListener("click", () => selectUnit(node.unit_id));
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectUnit(node.unit_id);
+      }
     });
-    tree.appendChild(button);
-    (node.children || []).forEach((child) => renderNode(child, depth + 1));
+    tree.appendChild(item);
+    if (!isCollapsed) {
+      (node.children || []).forEach((child) => renderNode(child, depth + 1));
+    }
   };
   state.orgUnits.tree.forEach((node) => renderNode(node, 0));
 };

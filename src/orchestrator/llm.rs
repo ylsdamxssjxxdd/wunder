@@ -76,10 +76,20 @@ impl Orchestrator {
         let name = model_name
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| config.llm.default.as_str());
-        if let Some(configured) = config.llm.models.get(name) {
+        if let Some(configured) = config
+            .llm
+            .models
+            .get(name)
+            .filter(|model| is_llm_model(model))
+        {
             return Ok((name.to_string(), configured.clone()));
         }
-        if let Some((fallback_name, fallback)) = config.llm.models.iter().next() {
+        if let Some((fallback_name, fallback)) = config
+            .llm
+            .models
+            .iter()
+            .find(|(_, model)| is_llm_model(model))
+        {
             return Ok((fallback_name.clone(), fallback.clone()));
         }
         Err(OrchestratorError::llm_unavailable(i18n::t(

@@ -90,6 +90,13 @@ export const state = {
     files: [],
     activeFile: "",
     fileContent: "",
+    vectorDocs: [],
+    activeDocId: "",
+    docContent: "",
+    docMeta: null,
+    docChunks: [],
+    activeChunkIndex: -1,
+    embeddingModels: [],
   },
   builtin: {
     tools: [],
@@ -214,6 +221,7 @@ export const state = {
     selectedId: "",
     loaded: false,
     lastUpdated: 0,
+    collapsed: new Set(),
   },
   memory: {
     users: [],

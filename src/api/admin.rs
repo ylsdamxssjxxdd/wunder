@@ -1,8 +1,10 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::auth;
-use crate::config::Config;
-use crate::config::{A2aServiceConfig, KnowledgeBaseConfig, LspConfig, McpServerConfig};
+use crate::config::{
+    normalize_knowledge_base_type, A2aServiceConfig, Config, KnowledgeBaseConfig,
+    KnowledgeBaseType, LspConfig, McpServerConfig,
+};
 use crate::i18n;
 use crate::knowledge;
 use crate::llm;
@@ -20,6 +22,7 @@ use crate::throughput::{
 };
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
 use crate::user_store::UserStore;
+use crate::vector_knowledge;
 use crate::{
     org_units,
     storage::{OrgUnitRecord, UserAccountRecord},
@@ -36,7 +39,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -93,6 +96,15 @@ pub fn router() -> Router<Arc<AppState>> {
                 .put(admin_knowledge_file_update)
                 .delete(admin_knowledge_file_delete),
         )
+        .route("/wunder/admin/knowledge/docs", get(admin_knowledge_docs))
+        .route(
+            "/wunder/admin/knowledge/doc",
+            get(admin_knowledge_doc).delete(admin_knowledge_doc_delete),
+        )
+        .route(
+            "/wunder/admin/knowledge/chunks",
+            get(admin_knowledge_chunks),
+        )
         .route(
             "/wunder/admin/knowledge/upload",
             post(admin_knowledge_upload),
@@ -100,6 +112,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/knowledge/refresh",
             post(admin_knowledge_refresh),
+        )
+        .route(
+            "/wunder/admin/knowledge/reindex",
+            post(admin_knowledge_reindex),
         )
         .route(
             "/wunder/admin/llm",
@@ -1439,10 +1455,12 @@ async fn admin_knowledge_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<KnowledgeUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let normalized = normalize_admin_knowledge_bases(&config, payload.knowledge.bases)?;
     let updated = state
         .config_store
         .update(|config| {
-            config.knowledge.bases = payload.knowledge.bases.clone();
+            config.knowledge.bases = normalized.clone();
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1457,6 +1475,12 @@ async fn admin_knowledge_files(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = resolve_knowledge_root(&base, false)?;
     let files = list_markdown_files(&root);
     Ok(Json(json!({ "base": query.base, "files": files })))
@@ -1468,6 +1492,12 @@ async fn admin_knowledge_file(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = resolve_knowledge_root(&base, false)?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -1503,6 +1533,12 @@ async fn admin_knowledge_file_update(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &payload.base)?;
+    if base.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = resolve_knowledge_root(&base, true)?;
     let target = resolve_knowledge_path(&root, &payload.path)?;
     if target
@@ -1528,6 +1564,12 @@ async fn admin_knowledge_file_update(
         root: root.to_string_lossy().to_string(),
         enabled: base.enabled,
         shared: base.shared,
+        base_type: base.base_type.clone(),
+        embedding_model: base.embedding_model.clone(),
+        chunk_size: base.chunk_size,
+        chunk_overlap: base.chunk_overlap,
+        top_k: base.top_k,
+        score_threshold: base.score_threshold,
     })
     .await;
     Ok(Json(
@@ -1541,6 +1583,12 @@ async fn admin_knowledge_file_delete(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = resolve_knowledge_root(&base, true)?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -1564,12 +1612,170 @@ async fn admin_knowledge_file_delete(
             root: root.to_string_lossy().to_string(),
             enabled: base.enabled,
             shared: base.shared,
+            base_type: base.base_type.clone(),
+            embedding_model: base.embedding_model.clone(),
+            chunk_size: base.chunk_size,
+            chunk_overlap: base.chunk_overlap,
+            top_k: base.top_k,
+            score_threshold: base.score_threshold,
         })
         .await;
     }
     Ok(Json(
         json!({ "ok": true, "message": i18n::t("message.deleted") }),
     ))
+}
+
+async fn admin_knowledge_docs(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KnowledgeDocsQuery>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, &query.base)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let docs = vector_knowledge::list_vector_documents(&root)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({ "base": query.base, "docs": docs })))
+}
+
+async fn admin_knowledge_doc(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KnowledgeDocQuery>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, &query.base)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(
+        json!({ "base": query.base, "doc": meta, "content": content }),
+    ))
+}
+
+async fn admin_knowledge_doc_delete(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KnowledgeDocQuery>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, &query.base)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let client =
+        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+    let owner_key = vector_knowledge::resolve_owner_key(None);
+    let deleted = client
+        .delete_doc_chunks_all(&owner_key, &base.name, &meta.embedding_model, &meta.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    vector_knowledge::delete_vector_document_files(&root, &meta.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({
+        "ok": true,
+        "deleted": deleted,
+        "doc_id": meta.doc_id,
+        "doc_name": meta.name
+    })))
+}
+
+async fn admin_knowledge_chunks(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KnowledgeChunksQuery>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, &query.base)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, false)?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let chunks = vector_knowledge::build_chunk_previews(&content, &meta).await;
+    Ok(Json(json!({
+        "base": query.base,
+        "doc_id": query.doc_id,
+        "chunks": chunks
+    })))
+}
+
+async fn admin_knowledge_reindex(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeReindexRequest>,
+) -> Result<Json<Value>, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    ensure_vector_base(&base)?;
+    let root = resolve_vector_root_for_admin(&base, true)?;
+    let mut targets = Vec::new();
+    if let Some(doc_id) = payload.doc_id.as_deref() {
+        let cleaned = doc_id.trim();
+        if !cleaned.is_empty() {
+            targets.push(cleaned.to_string());
+        }
+    }
+    if targets.is_empty() {
+        let docs = vector_knowledge::list_vector_documents(&root)
+            .await
+            .map_err(vector_error_response)?;
+        targets = docs.into_iter().map(|doc| doc.doc_id).collect();
+    }
+    let mut reindexed = Vec::new();
+    let mut failed = Vec::new();
+    for doc_id in targets {
+        let meta = match vector_knowledge::read_vector_document_meta(&root, &doc_id).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
+                continue;
+            }
+        };
+        let content = match vector_knowledge::read_vector_document_content(&root, &doc_id).await {
+            Ok(content) => content,
+            Err(err) => {
+                failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
+                continue;
+            }
+        };
+        match vector_knowledge::index_document(
+            &config,
+            &base,
+            None,
+            &root,
+            &meta.name,
+            Some(&meta.doc_id),
+            &content,
+            Some(&meta),
+        )
+        .await
+        {
+            Ok(updated) => reindexed.push(updated.doc_id),
+            Err(err) => failed.push(json!({ "doc_id": doc_id, "error": err.to_string() })),
+        }
+    }
+    Ok(Json(json!({
+        "ok": failed.is_empty(),
+        "reindexed": reindexed,
+        "failed": failed
+    })))
 }
 
 async fn admin_knowledge_upload(
@@ -1613,6 +1819,47 @@ async fn admin_knowledge_upload(
     };
     let config = state.config_store.get().await;
     let base_config = resolve_knowledge_base(&config, &base)?;
+    if base_config.is_vector() {
+        let root = resolve_vector_root_for_admin(&base_config, true)?;
+        let temp_dir = upload.temp_dir.clone();
+        let result = convert_upload_to_markdown(&upload).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let (content, converter, warnings) = result?;
+        let doc_name = upload.stem.clone();
+        let existing = vector_knowledge::list_vector_documents(&root)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let mut doc_id: Option<String> = None;
+        let mut previous_meta = None;
+        if let Some(doc) = existing.iter().find(|doc| doc.name == doc_name) {
+            doc_id = Some(doc.doc_id.clone());
+            previous_meta = vector_knowledge::read_vector_document_meta(&root, &doc.doc_id)
+                .await
+                .ok();
+        }
+        let meta = vector_knowledge::index_document(
+            &config,
+            &base_config,
+            None,
+            &root,
+            &doc_name,
+            doc_id.as_deref(),
+            &content,
+            previous_meta.as_ref(),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        return Ok(Json(json!({
+            "ok": true,
+            "message": i18n::t("message.upload_converted"),
+            "doc_id": meta.doc_id,
+            "doc_name": meta.name,
+            "chunk_count": meta.chunk_count,
+            "embedding_model": meta.embedding_model,
+            "converter": converter,
+            "warnings": warnings
+        })));
+    }
     let root = resolve_knowledge_root(&base_config, true)?;
     let output_name = build_markdown_output_path(&upload.filename, &upload.stem);
     let target = resolve_knowledge_path(&root, &output_name)?;
@@ -1627,6 +1874,12 @@ async fn admin_knowledge_upload(
         root: root.to_string_lossy().to_string(),
         enabled: base_config.enabled,
         shared: base_config.shared,
+        base_type: base_config.base_type.clone(),
+        embedding_model: base_config.embedding_model.clone(),
+        chunk_size: base_config.chunk_size,
+        chunk_overlap: base_config.chunk_overlap,
+        top_k: base_config.top_k,
+        score_threshold: base_config.score_threshold,
     })
     .await;
     Ok(Json(json!({
@@ -1651,6 +1904,12 @@ async fn admin_knowledge_refresh(
     }
     let config = state.config_store.get().await;
     let base_config = resolve_knowledge_base(&config, base)?;
+    if base_config.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_requires_reindex"),
+        ));
+    }
     let root = resolve_knowledge_root(&base_config, true)?;
     knowledge::refresh_knowledge_cache(&KnowledgeBaseConfig {
         name: base_config.name.clone(),
@@ -1658,6 +1917,12 @@ async fn admin_knowledge_refresh(
         root: root.to_string_lossy().to_string(),
         enabled: base_config.enabled,
         shared: base_config.shared,
+        base_type: base_config.base_type.clone(),
+        embedding_model: base_config.embedding_model.clone(),
+        chunk_size: base_config.chunk_size,
+        chunk_overlap: base_config.chunk_overlap,
+        top_k: base_config.top_k,
+        score_threshold: base_config.score_threshold,
     })
     .await;
     Ok(Json(
@@ -4083,6 +4348,104 @@ fn resolve_knowledge_path(root: &Path, relative_path: &str) -> Result<PathBuf, R
     Ok(resolved)
 }
 
+fn normalize_admin_knowledge_bases(
+    config: &Config,
+    bases: Vec<KnowledgeBaseConfig>,
+) -> Result<Vec<KnowledgeBaseConfig>, Response> {
+    let mut output = Vec::new();
+    for mut base in bases {
+        base.name = base.name.trim().to_string();
+        base.description = base.description.trim().to_string();
+        if base.name.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.knowledge_base_name_required"),
+            ));
+        }
+        let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+        if base_type == KnowledgeBaseType::Vector {
+            let embedding_model = base
+                .embedding_model
+                .as_deref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        i18n::t("error.embedding_model_required"),
+                    )
+                })?;
+            vector_knowledge::resolve_embedding_model(config, &embedding_model)
+                .map_err(vector_error_response)?;
+            let root = resolve_vector_root_for_admin(&base, true)?;
+            base.root = root.to_string_lossy().to_string();
+            base.base_type = Some("vector".to_string());
+            base.embedding_model = Some(embedding_model);
+        } else {
+            if base.root.trim().is_empty() {
+                base.root = format!("./knowledge/{}", base.name);
+            } else {
+                base.root = base.root.trim().to_string();
+            }
+            base.base_type = None;
+            base.embedding_model = None;
+        }
+        output.push(base);
+    }
+    Ok(output)
+}
+
+fn resolve_vector_root_for_admin(
+    base: &KnowledgeBaseConfig,
+    create: bool,
+) -> Result<PathBuf, Response> {
+    vector_knowledge::resolve_vector_root(None, &base.name, create)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+}
+
+fn ensure_vector_base(base: &KnowledgeBaseConfig) -> Result<(), Response> {
+    if !base.is_vector() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    vector_knowledge::ensure_vector_base_config(base)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(())
+}
+
+fn vector_error_response(err: anyhow::Error) -> Response {
+    if let Some(io_error) = err.downcast_ref::<std::io::Error>() {
+        if io_error.kind() == ErrorKind::NotFound {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_document_not_found"),
+            );
+        }
+    }
+    error_response(StatusCode::BAD_REQUEST, err.to_string())
+}
+
+async fn convert_upload_to_markdown(
+    upload: &UploadedKnowledgeFile,
+) -> Result<(String, String, Vec<String>), Response> {
+    let output_path = upload.temp_dir.join(format!("{}.md", upload.stem));
+    let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let content = tokio::fs::read_to_string(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.empty_parse_result"),
+        ));
+    }
+    Ok((content, conversion.converter, conversion.warnings))
+}
+
 fn normalize_builtin_enabled(enabled: &[String]) -> Vec<String> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
@@ -4386,9 +4749,26 @@ struct KnowledgeFilesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct KnowledgeDocsQuery {
+    base: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct KnowledgeFileQuery {
     base: String,
     path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KnowledgeDocQuery {
+    base: String,
+    doc_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KnowledgeChunksQuery {
+    base: String,
+    doc_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4401,6 +4781,13 @@ struct KnowledgeFileUpdate {
 #[derive(Debug, Deserialize)]
 struct KnowledgeRefreshForm {
     base: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct KnowledgeReindexRequest {
+    base: String,
+    #[serde(default)]
+    doc_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

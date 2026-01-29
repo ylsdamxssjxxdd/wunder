@@ -179,6 +179,34 @@
     "en-US": "Knowledge base directory not found",
     "zh-CN": "知识库目录不存在"
   },
+  "error.knowledge_document_not_found": {
+    "en-US": "Knowledge document not found",
+    "zh-CN": "知识库文档不存在"
+  },
+  "error.embedding_model_required": {
+    "en-US": "Embedding model is required",
+    "zh-CN": "必须选择嵌入模型"
+  },
+  "error.embedding_model_not_found": {
+    "en-US": "Embedding model not found",
+    "zh-CN": "嵌入模型不存在"
+  },
+  "error.vector_store_not_configured": {
+    "en-US": "Vector store is not configured",
+    "zh-CN": "向量数据库未配置"
+  },
+  "error.vector_knowledge_not_file_based": {
+    "en-US": "Vector knowledge bases use document APIs",
+    "zh-CN": "向量知识库需使用文档接口管理"
+  },
+  "error.vector_knowledge_required": {
+    "en-US": "Vector knowledge base required",
+    "zh-CN": "该接口仅支持向量知识库"
+  },
+  "error.vector_knowledge_requires_reindex": {
+    "en-US": "Vector knowledge uses reindex endpoint",
+    "zh-CN": "向量知识库请使用重建索引接口"
+  },
   "error.llm_call_failed": {
     "en-US": "LLM call failed: {detail}",
     "zh-CN": "模型调用失败: {detail}"

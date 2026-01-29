@@ -1,9 +1,12 @@
 // 用户自建工具 API：MCP、技能、知识库与额外提示词管理。
 use crate::api::user_context::resolve_user;
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
-use crate::config::{KnowledgeBaseConfig, McpServerConfig};
+use crate::config::{
+    normalize_knowledge_base_type, Config, KnowledgeBaseConfig, KnowledgeBaseType, McpServerConfig,
+};
 use crate::i18n;
 use crate::knowledge;
+use crate::llm;
 use crate::path_utils::{
     normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -15,7 +18,8 @@ use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
     UserToolContext,
 };
-use crate::user_tools::{UserKnowledgeBase, UserMcpServer};
+use crate::user_tools::{UserKnowledgeBase, UserMcpServer, UserToolsPayload};
+use crate::vector_knowledge;
 use axum::extract::{Multipart, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -23,7 +27,7 @@ use axum::{routing::get, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -64,8 +68,24 @@ pub fn router() -> Router<Arc<AppState>> {
                 .delete(user_knowledge_file_delete),
         )
         .route(
+            "/wunder/user_tools/knowledge/docs",
+            get(user_knowledge_docs),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/doc",
+            get(user_knowledge_doc).delete(user_knowledge_doc_delete),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/chunks",
+            get(user_knowledge_chunks),
+        )
+        .route(
             "/wunder/user_tools/knowledge/upload",
             post(user_knowledge_upload),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/reindex",
+            post(user_knowledge_reindex),
         )
         .route("/wunder/user_tools/tools", get(user_tools_summary))
         .route("/wunder/user_tools/catalog", get(user_tools_catalog))
@@ -441,7 +461,21 @@ async fn user_knowledge_get(
     let user_id = resolved.user.user_id;
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let bases = build_user_knowledge_payload(&state, &user_id, &payload.knowledge_bases, false);
-    Ok(Json(json!({ "data": { "knowledge": { "bases": bases } } })))
+    let config = state.config_store.get().await;
+    let mut embedding_models = config
+        .llm
+        .models
+        .iter()
+        .filter(|(_, model)| llm::is_embedding_model(model))
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    embedding_models.sort();
+    Ok(Json(json!({
+        "data": {
+            "knowledge": { "bases": bases },
+            "embedding_models": embedding_models
+        }
+    })))
 }
 
 async fn user_knowledge_update(
@@ -457,6 +491,14 @@ async fn user_knowledge_update(
         .into_iter()
         .map(UserKnowledgeBase::from)
         .collect::<Vec<_>>();
+    let config = state.config_store.get().await;
+    for base in &bases {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Vector {
+            let model = base.embedding_model.as_deref().unwrap_or("");
+            vector_knowledge::resolve_embedding_model(&config, model)
+                .map_err(vector_error_response)?;
+        }
+    }
     let updated = state
         .user_tool_store
         .update_knowledge_bases(&user_id, bases)
@@ -472,9 +514,18 @@ async fn user_knowledge_files(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(&user_id, &query.base, false)
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let files = list_markdown_files(&root);
     Ok(Json(
@@ -489,9 +540,18 @@ async fn user_knowledge_file(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(&user_id, &query.base, false)
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -527,9 +587,18 @@ async fn user_knowledge_file_update(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, &payload.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(&user_id, &payload.base, true)
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, true)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &payload.path)?;
     if target
@@ -563,9 +632,18 @@ async fn user_knowledge_file_delete(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_not_file_based"),
+        ));
+    }
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(&user_id, &query.base, false)
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let target = resolve_knowledge_path(&root, &query.path)?;
     if target
@@ -647,9 +725,61 @@ async fn user_knowledge_upload(
             ))
         }
     };
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base_config = resolve_user_knowledge_base(&user_payload, &base)?;
+    let base_type = normalize_knowledge_base_type(base_config.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Vector {
+        let config = state.config_store.get().await;
+        ensure_user_vector_base(&config, &base_config)?;
+        let root = state
+            .user_tool_store
+            .resolve_knowledge_base_root_with_type(&user_id, &base_config.name, base_type, true)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let temp_dir = upload.temp_dir.clone();
+        let result = convert_upload_to_markdown(&upload).await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let (content, converter, warnings) = result?;
+        let doc_name = upload.stem.clone();
+        let existing = vector_knowledge::list_vector_documents(&root)
+            .await
+            .map_err(vector_error_response)?;
+        let mut doc_id: Option<String> = None;
+        let mut previous_meta = None;
+        if let Some(doc) = existing.iter().find(|doc| doc.name == doc_name) {
+            doc_id = Some(doc.doc_id.clone());
+            previous_meta = vector_knowledge::read_vector_document_meta(&root, &doc.doc_id)
+                .await
+                .ok();
+        }
+        let knowledge_config = build_user_knowledge_config(&base_config, &root);
+        let meta = vector_knowledge::index_document(
+            &config,
+            &knowledge_config,
+            Some(&user_id),
+            &root,
+            &doc_name,
+            doc_id.as_deref(),
+            &content,
+            previous_meta.as_ref(),
+        )
+        .await
+        .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "ok": true,
+                "message": i18n::t("message.upload_converted"),
+                "doc_id": meta.doc_id,
+                "doc_name": meta.name,
+                "chunk_count": meta.chunk_count,
+                "embedding_model": meta.embedding_model,
+                "converter": converter,
+                "warnings": warnings
+            }
+        })));
+    }
     let root = state
         .user_tool_store
-        .resolve_knowledge_base_root(&user_id, &base, true)
+        .resolve_knowledge_base_root_with_type(&user_id, &base_config.name, base_type, true)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let output_name = build_markdown_output_path(&upload.filename, &upload.stem);
     let target = resolve_knowledge_path(&root, &output_name)?;
@@ -666,6 +796,229 @@ async fn user_knowledge_upload(
             "path": output_name,
             "converter": converter,
             "warnings": warnings
+        }
+    })))
+}
+
+async fn user_knowledge_docs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserKnowledgeDocsQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let docs = vector_knowledge::list_vector_documents(&root)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(
+        json!({ "data": { "base": query.base, "docs": docs } }),
+    ))
+}
+
+async fn user_knowledge_doc(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserKnowledgeDocQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({
+        "data": { "base": query.base, "doc": meta, "content": content }
+    })))
+}
+
+async fn user_knowledge_doc_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserKnowledgeDocQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let config = state.config_store.get().await;
+    let client =
+        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+    let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+    let deleted = client
+        .delete_doc_chunks_all(&owner_key, &base.name, &meta.embedding_model, &meta.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    vector_knowledge::delete_vector_document_files(&root, &meta.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "deleted": deleted,
+            "doc_id": meta.doc_id,
+            "doc_name": meta.name
+        }
+    })))
+}
+
+async fn user_knowledge_chunks(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserKnowledgeChunksQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&payload, &query.base)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
+        .await
+        .map_err(vector_error_response)?;
+    let chunks = vector_knowledge::build_chunk_previews(&content, &meta).await;
+    Ok(Json(json!({
+        "data": {
+            "base": query.base,
+            "doc_id": query.doc_id,
+            "chunks": chunks
+        }
+    })))
+}
+
+async fn user_knowledge_reindex(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserKnowledgeReindexRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, true)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut targets = Vec::new();
+    if let Some(doc_id) = payload.doc_id.as_deref() {
+        let cleaned = doc_id.trim();
+        if !cleaned.is_empty() {
+            targets.push(cleaned.to_string());
+        }
+    }
+    if targets.is_empty() {
+        let docs = vector_knowledge::list_vector_documents(&root)
+            .await
+            .map_err(vector_error_response)?;
+        targets = docs.into_iter().map(|doc| doc.doc_id).collect();
+    }
+    let knowledge_config = build_user_knowledge_config(&base, &root);
+    let config = state.config_store.get().await;
+    let mut reindexed = Vec::new();
+    let mut failed = Vec::new();
+    for doc_id in targets {
+        let meta = match vector_knowledge::read_vector_document_meta(&root, &doc_id).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
+                continue;
+            }
+        };
+        let content = match vector_knowledge::read_vector_document_content(&root, &doc_id).await {
+            Ok(content) => content,
+            Err(err) => {
+                failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
+                continue;
+            }
+        };
+        match vector_knowledge::index_document(
+            &config,
+            &knowledge_config,
+            Some(&user_id),
+            &root,
+            &meta.name,
+            Some(&meta.doc_id),
+            &content,
+            Some(&meta),
+        )
+        .await
+        {
+            Ok(updated) => reindexed.push(updated.doc_id),
+            Err(err) => failed.push(json!({ "doc_id": doc_id, "error": err.to_string() })),
+        }
+    }
+    Ok(Json(json!({
+        "data": {
+            "ok": failed.is_empty(),
+            "reindexed": reindexed,
+            "failed": failed
         }
     })))
 }
@@ -948,9 +1301,10 @@ fn build_user_knowledge_payload(
         .map(|base| {
             let mut root = String::new();
             if !base.name.trim().is_empty() {
+                let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
                 if let Ok(path) = state
                     .user_tool_store
-                    .resolve_knowledge_base_root(user_id, &base.name, create)
+                    .resolve_knowledge_base_root_with_type(user_id, &base.name, base_type, create)
                 {
                     root = path.to_string_lossy().to_string();
                 }
@@ -967,8 +1321,101 @@ async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
         root: root.to_string_lossy().to_string(),
         enabled: true,
         shared: None,
+        base_type: None,
+        embedding_model: None,
+        chunk_size: None,
+        chunk_overlap: None,
+        top_k: None,
+        score_threshold: None,
     };
     let _ = knowledge::refresh_knowledge_cache(&config).await;
+}
+
+fn resolve_user_knowledge_base(
+    payload: &UserToolsPayload,
+    base_name: &str,
+) -> Result<UserKnowledgeBase, Response> {
+    let name = base_name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    payload
+        .knowledge_bases
+        .iter()
+        .find(|base| base.name == name)
+        .cloned()
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_base_not_found"),
+            )
+        })
+}
+
+fn build_user_knowledge_config(base: &UserKnowledgeBase, root: &Path) -> KnowledgeBaseConfig {
+    KnowledgeBaseConfig {
+        name: base.name.clone(),
+        description: base.description.clone(),
+        root: root.to_string_lossy().to_string(),
+        enabled: base.enabled,
+        shared: Some(base.shared),
+        base_type: base.base_type.clone(),
+        embedding_model: base.embedding_model.clone(),
+        chunk_size: base.chunk_size,
+        chunk_overlap: base.chunk_overlap,
+        top_k: base.top_k,
+        score_threshold: base.score_threshold,
+    }
+}
+
+fn ensure_user_vector_base(config: &Config, base: &UserKnowledgeBase) -> Result<(), Response> {
+    if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Vector {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.vector_knowledge_required"),
+        ));
+    }
+    let model = base
+        .embedding_model
+        .as_deref()
+        .map(|value| value.trim())
+        .unwrap_or("");
+    vector_knowledge::resolve_embedding_model(config, model).map_err(vector_error_response)?;
+    Ok(())
+}
+
+fn vector_error_response(err: anyhow::Error) -> Response {
+    if let Some(io_error) = err.downcast_ref::<std::io::Error>() {
+        if io_error.kind() == ErrorKind::NotFound {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.knowledge_document_not_found"),
+            );
+        }
+    }
+    error_response(StatusCode::BAD_REQUEST, err.to_string())
+}
+
+async fn convert_upload_to_markdown(
+    upload: &UploadedKnowledgeFile,
+) -> Result<(String, String, Vec<String>), Response> {
+    let output_path = upload.temp_dir.join(format!("{}.md", upload.stem));
+    let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let content = tokio::fs::read_to_string(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.empty_parse_result"),
+        ));
+    }
+    Ok((content, conversion.converter, conversion.warnings))
 }
 
 fn resolve_knowledge_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
@@ -1255,6 +1702,13 @@ struct UserKnowledgeFilesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct UserKnowledgeDocsQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UserKnowledgeFileQuery {
     #[serde(default)]
     user_id: Option<String>,
@@ -1269,6 +1723,31 @@ struct UserKnowledgeFileUpdate {
     base: String,
     path: String,
     content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeDocQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    doc_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeChunksQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    doc_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeReindexRequest {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    #[serde(default)]
+    doc_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1358,27 +1837,72 @@ struct UserKnowledgeBasePayload {
     enabled: bool,
     #[serde(default)]
     shared: bool,
+    #[serde(default)]
+    base_type: Option<String>,
+    #[serde(default)]
+    embedding_model: Option<String>,
+    #[serde(default)]
+    chunk_size: Option<usize>,
+    #[serde(default)]
+    chunk_overlap: Option<usize>,
+    #[serde(default)]
+    top_k: Option<usize>,
+    #[serde(default)]
+    score_threshold: Option<f32>,
 }
 
 impl UserKnowledgeBasePayload {
     fn from_with_root(base: &UserKnowledgeBase, root: String) -> Self {
+        let base_type = if normalize_knowledge_base_type(base.base_type.as_deref())
+            == KnowledgeBaseType::Vector
+        {
+            Some("vector".to_string())
+        } else {
+            Some("literal".to_string())
+        };
         Self {
             name: base.name.clone(),
             description: base.description.clone(),
             root,
             enabled: base.enabled,
             shared: base.shared,
+            base_type,
+            embedding_model: base.embedding_model.clone(),
+            chunk_size: base.chunk_size,
+            chunk_overlap: base.chunk_overlap,
+            top_k: base.top_k,
+            score_threshold: base.score_threshold,
         }
     }
 }
 
 impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
     fn from(payload: UserKnowledgeBasePayload) -> Self {
+        let base_type = normalize_knowledge_base_type(payload.base_type.as_deref());
+        let base_type_value = if base_type == KnowledgeBaseType::Vector {
+            Some("vector".to_string())
+        } else {
+            None
+        };
         Self {
             name: payload.name,
             description: payload.description,
             enabled: payload.enabled,
             shared: payload.shared,
+            base_type: base_type_value,
+            embedding_model: if base_type == KnowledgeBaseType::Vector {
+                payload
+                    .embedding_model
+                    .as_deref()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            } else {
+                None
+            },
+            chunk_size: payload.chunk_size,
+            chunk_overlap: payload.chunk_overlap,
+            top_k: payload.top_k,
+            score_threshold: payload.score_threshold,
         }
     }
 }

@@ -1,8 +1,9 @@
 // 用户自建工具：负责配置存储、别名绑定与共享工具聚合。
-use crate::config::{Config, McpServerConfig, McpToolSpec};
+use crate::config::{Config, KnowledgeBaseType, McpServerConfig, McpToolSpec};
 use crate::i18n;
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
+use crate::vector_knowledge;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -53,6 +54,18 @@ pub struct UserKnowledgeBase {
     pub enabled: bool,
     #[serde(default)]
     pub shared: bool,
+    #[serde(default)]
+    pub base_type: Option<String>,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    #[serde(default)]
+    pub chunk_size: Option<usize>,
+    #[serde(default)]
+    pub chunk_overlap: Option<usize>,
+    #[serde(default)]
+    pub top_k: Option<usize>,
+    #[serde(default)]
+    pub score_threshold: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -323,9 +336,27 @@ impl UserToolStore {
         Ok(target)
     }
 
+    pub fn resolve_knowledge_base_root_with_type(
+        &self,
+        user_id: &str,
+        base_name: &str,
+        base_type: KnowledgeBaseType,
+        create: bool,
+    ) -> Result<PathBuf> {
+        if base_type == KnowledgeBaseType::Vector {
+            return vector_knowledge::resolve_vector_root(Some(user_id), base_name, create);
+        }
+        self.resolve_knowledge_base_root(user_id, base_name, create)
+    }
+
     fn cleanup_knowledge_dirs(&self, user_id: &str, removed: &HashSet<String>) {
         for name in removed {
             if let Ok(path) = self.resolve_knowledge_base_root(user_id, name, false) {
+                if path.exists() && path.is_dir() {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+            if let Ok(path) = vector_knowledge::resolve_vector_root(Some(user_id), name, false) {
                 if path.exists() && path.is_dir() {
                     let _ = std::fs::remove_dir_all(path);
                 }
@@ -1085,6 +1116,21 @@ fn parse_user_knowledge_base(value: &Value) -> Option<UserKnowledgeBase> {
             .to_string(),
         enabled: obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
         shared: obj.get("shared").and_then(Value::as_bool).unwrap_or(false),
+        base_type: obj
+            .get("base_type")
+            .or_else(|| obj.get("type"))
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        embedding_model: obj
+            .get("embedding_model")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        chunk_size: parse_optional_usize(obj.get("chunk_size")),
+        chunk_overlap: parse_optional_usize(obj.get("chunk_overlap")),
+        top_k: parse_optional_usize(obj.get("top_k")),
+        score_threshold: parse_optional_f32(obj.get("score_threshold")),
     })
 }
 
@@ -1198,8 +1244,31 @@ fn user_knowledge_base_to_value(base: &UserKnowledgeBase) -> Value {
         "name": base.name,
         "description": base.description,
         "enabled": base.enabled,
-        "shared": base.shared
+        "shared": base.shared,
+        "base_type": base.base_type,
+        "embedding_model": base.embedding_model,
+        "chunk_size": base.chunk_size,
+        "chunk_overlap": base.chunk_overlap,
+        "top_k": base.top_k,
+        "score_threshold": base.score_threshold
     })
+}
+
+fn parse_optional_usize(value: Option<&Value>) -> Option<usize> {
+    match value {
+        Some(Value::Number(num)) => num.as_u64().map(|value| value as usize),
+        Some(Value::String(text)) => text.trim().parse::<usize>().ok(),
+        Some(Value::Bool(value)) => Some(if *value { 1 } else { 0 }),
+        _ => None,
+    }
+}
+
+fn parse_optional_f32(value: Option<&Value>) -> Option<f32> {
+    match value {
+        Some(Value::Number(num)) => num.as_f64().map(|value| value as f32),
+        Some(Value::String(text)) => text.trim().parse::<f32>().ok(),
+        _ => None,
+    }
 }
 
 fn normalize_mcp_input_schema(tool: &Value) -> Value {

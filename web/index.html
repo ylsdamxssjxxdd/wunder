@@ -1827,7 +1827,7 @@
               <div class="knowledge-section form-section">
                 <div class="knowledge-content">
                   <div class="llm-card knowledge-files-card">
-                    <div class="knowledge-file-layout">
+                    <div id="knowledgeFileLayout" class="knowledge-file-layout">
                         <div class="knowledge-file-pane">
                           <div class="knowledge-file-toolbar">
                             <button id="knowledgeFileUploadBtn" class="secondary btn-with-icon btn-compact">
@@ -1862,6 +1862,51 @@
                             ></textarea>
                           </div>
                         </div>
+                    </div>
+                    <div id="knowledgeVectorLayout" class="knowledge-vector-layout" hidden>
+                      <div class="knowledge-vector-pane">
+                        <div class="knowledge-file-toolbar">
+                          <button id="knowledgeDocUploadBtn" class="secondary btn-with-icon btn-compact">
+                            <i class="fa-solid fa-upload"></i><span data-i18n="common.upload">上传</span>
+                          </button>
+                          <button id="knowledgeDocReindexAllBtn" class="secondary btn-with-icon btn-compact">
+                            <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.action.reindex">重建索引</span>
+                          </button>
+                        </div>
+                        <div id="knowledgeDocList" class="knowledge-doc-list"></div>
+                      </div>
+                      <div class="knowledge-vector-detail">
+                        <div class="knowledge-doc-header">
+                          <div>
+                            <div id="knowledgeDocTitle" class="detail-title" data-i18n="knowledge.doc.none">
+                              未选择文档
+                            </div>
+                            <div id="knowledgeDocMeta" class="muted"></div>
+                          </div>
+                          <div class="detail-actions">
+                            <button id="knowledgeDocReindexBtn" class="secondary btn-with-icon btn-compact">
+                              <i class="fa-solid fa-rotate"></i><span data-i18n="knowledge.doc.action.reindex">重新索引</span>
+                            </button>
+                            <button id="knowledgeDocDeleteBtn" class="danger btn-with-icon btn-compact">
+                              <i class="fa-solid fa-trash"></i><span data-i18n="knowledge.doc.action.delete">删除文档</span>
+                            </button>
+                          </div>
+                        </div>
+                        <div class="knowledge-vector-content">
+                          <div class="knowledge-doc-content-pane">
+                            <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.original">
+                              原文档
+                            </div>
+                            <div id="knowledgeDocContent" class="knowledge-doc-content"></div>
+                          </div>
+                          <div class="knowledge-doc-chunks-pane">
+                            <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
+                              切片列表
+                            </div>
+                            <div id="knowledgeDocChunks" class="knowledge-doc-chunk-list"></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1915,6 +1960,13 @@
                       placeholder="例如：main"
                       data-i18n-placeholder="llm.placeholder.name"
                     />
+                  </div>
+                  <div class="form-row">
+                    <label for="llmModelType" data-i18n="llm.field.modelType">模型类型</label>
+                    <select id="llmModelType">
+                      <option value="llm" data-i18n="llm.modelType.llm">LLM</option>
+                      <option value="embedding" data-i18n="llm.modelType.embedding">Embedding</option>
+                    </select>
                   </div>
                   <div class="grid">
                     <div class="form-row">
@@ -3103,7 +3155,67 @@
               data-i18n-placeholder="knowledge.modal.placeholder.name"
             />
           </div>
-          <div class="form-row">
+          <div id="knowledgeModalTypeRow" class="form-row">
+            <label for="knowledgeModalType" data-i18n="knowledge.modal.field.type">类型</label>
+            <select id="knowledgeModalType">
+              <option value="literal" data-i18n="knowledge.type.literal">字面知识库</option>
+              <option value="vector" data-i18n="knowledge.type.vector">向量知识库</option>
+            </select>
+          </div>
+          <div id="knowledgeModalEmbeddingRow" class="form-row" hidden>
+            <label for="knowledgeModalEmbeddingModel" data-i18n="knowledge.modal.field.embeddingModel">嵌入模型</label>
+            <select id="knowledgeModalEmbeddingModel"></select>
+          </div>
+          <div id="knowledgeModalChunkRow" class="grid knowledge-modal-grid" hidden>
+            <div class="form-row">
+              <label for="knowledgeModalChunkSize" data-i18n="knowledge.modal.field.chunkSize">切片长度</label>
+              <input
+                id="knowledgeModalChunkSize"
+                type="number"
+                min="100"
+                step="1"
+                placeholder="800"
+                data-i18n-placeholder="knowledge.modal.placeholder.chunkSize"
+              />
+            </div>
+            <div class="form-row">
+              <label for="knowledgeModalChunkOverlap" data-i18n="knowledge.modal.field.chunkOverlap">切片重叠</label>
+              <input
+                id="knowledgeModalChunkOverlap"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="100"
+                data-i18n-placeholder="knowledge.modal.placeholder.chunkOverlap"
+              />
+            </div>
+          </div>
+          <div id="knowledgeModalSearchRow" class="grid knowledge-modal-grid" hidden>
+            <div class="form-row">
+              <label for="knowledgeModalTopK" data-i18n="knowledge.modal.field.topK">Top K</label>
+              <input
+                id="knowledgeModalTopK"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="5"
+                data-i18n-placeholder="knowledge.modal.placeholder.topK"
+              />
+            </div>
+            <div class="form-row">
+              <label for="knowledgeModalScoreThreshold" data-i18n="knowledge.modal.field.scoreThreshold">相似度阈值</label>
+              <input
+                id="knowledgeModalScoreThreshold"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                placeholder="0.5"
+                data-i18n-placeholder="knowledge.modal.placeholder.scoreThreshold"
+              />
+            </div>
+          </div>
+          <div id="knowledgeModalRootRow" class="form-row">
             <label for="knowledgeModalRoot" data-i18n="knowledge.modal.field.root">目录</label>
             <input
               id="knowledgeModalRoot"
@@ -3111,6 +3223,14 @@
               placeholder="可留空，自动创建 ./knowledge/<名称>"
               data-i18n-placeholder="knowledge.modal.placeholder.root"
             />
+            <div
+              id="knowledgeModalRootHint"
+              class="muted"
+              data-i18n="knowledge.modal.tip.vectorRoot"
+              hidden
+            >
+              向量知识库目录由系统自动生成
+            </div>
           </div>
           <div class="form-row">
             <label for="knowledgeModalDesc" data-i18n="knowledge.modal.field.description">描述</label>
@@ -3575,7 +3695,7 @@
             </label>
             <label class="checkbox-row">
               <input id="userAccountToolDefault" type="checkbox" />
-              <span data-i18n="userAccounts.modal.tool.defaultHint">默认全量工具，可用白名单或黑名单覆盖</span>
+              <span data-i18n="userAccounts.modal.tool.defaultHint">默认全量工具，可用白名单覆盖</span>
             </label>
           </div>
           <div class="form-row">
@@ -3584,16 +3704,6 @@
             <div id="userAccountToolEmpty" class="muted" data-i18n="userAccounts.modal.tool.empty">暂无工具</div>
             <div class="muted" data-i18n="userAccounts.modal.tool.tip">
               默认权限为全量工具，可在此配置白名单。
-            </div>
-          </div>
-          <div class="form-row">
-            <label for="userAccountToolBlockedList" data-i18n="userAccounts.modal.tool.blocked">禁用工具</label>
-            <div id="userAccountToolBlockedList" class="tool-list"></div>
-            <div id="userAccountToolBlockedEmpty" class="muted" data-i18n="userAccounts.modal.tool.blocked.empty">
-              暂无工具
-            </div>
-            <div class="muted" data-i18n="userAccounts.modal.tool.blocked.tip">
-              勾选后即使在默认或白名单中也会被禁用。
             </div>
           </div>
         </div>

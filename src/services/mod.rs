@@ -13,4 +13,5 @@ pub mod tools;
 pub mod user_access;
 pub mod user_store;
 pub mod user_tools;
+pub mod vector_knowledge;
 pub mod workspace;

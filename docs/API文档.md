@@ -10,7 +10,8 @@
 - MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
-- 知识库 MCP：新增 `kb_query` 工具，基于 RAGFlow `/api/v1/retrieval`，配置位于 `mcp_config.json` 的 `knowledge`（base_url/api_key/targets/request）。
+- 知识库 MCP：`kb_query` 可选配置（`mcp_config.json` 的 `knowledge`），向量知识库检索不依赖 RAGFlow MCP。
+- 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
 - docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
@@ -19,6 +20,7 @@
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
+- 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
 - 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
@@ -70,7 +72,7 @@
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
   - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
   - `skills`：技能列表（name/description/input_schema）
-  - `knowledge_tools`：字面知识库工具列表（name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
   - `shared_tools_selected`：共享工具勾选列表（可选）
@@ -149,11 +151,13 @@
 - `GET` 入参（Query）：
   - `user_id`：用户唯一标识
 - `GET` 返回（JSON）：
-  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared）
+  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
-  - `knowledge.bases`：知识库列表（name/description/enabled/shared，root 由系统固定生成）
+  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
+- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `vector_knowledge/users/<user_id>/<base>`。
 
 ### 4.1.2.7 `/wunder/user_tools/knowledge/files`
 
@@ -164,6 +168,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `files`：Markdown 文件相对路径列表
+- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
 
 ### 4.1.2.8 `/wunder/user_tools/knowledge/file`
 
@@ -191,6 +196,7 @@
 - `DELETE` 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
+- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
 
 ### 4.1.2.9 `/wunder/user_tools/knowledge/upload`
 
@@ -202,12 +208,75 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
-  - `path`：转换后的 Markdown 相对路径
+  - `path`：转换后的 Markdown 相对路径（字面知识库）
+  - `doc_id`：向量文档 id（向量知识库）
+  - `doc_name`：向量文档名称（向量知识库）
+  - `chunk_count`：切片数量（向量知识库）
+  - `embedding_model`：嵌入模型（向量知识库）
   - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
   - `warnings`：转换警告列表
 - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
 
-### 4.1.2.10 `/wunder/user_tools/tools`
+### 4.1.2.10 `/wunder/user_tools/knowledge/docs`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.11 `/wunder/user_tools/knowledge/doc`
+
+- 方法：`GET/DELETE`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `GET` 返回（JSON）：
+  - `base`：知识库名称
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks）
+  - `content`：原文内容
+- `DELETE` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `deleted`：删除的向量条目数量
+  - `doc_id`：文档 id
+  - `doc_name`：文档名称
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.12 `/wunder/user_tools/knowledge/chunks`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunks`：切片列表（index/start/end/preview/content）
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.13 `/wunder/user_tools/knowledge/reindex`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id（可选，留空则重建全部）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `reindexed`：已重建的 doc_id 列表
+  - `failed`：失败项列表（doc_id/error）
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.14 `/wunder/user_tools/tools`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -215,20 +284,20 @@
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
   - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
   - `skills`：技能列表（name/description/input_schema）
-  - `knowledge_tools`：知识库工具列表（name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
   - `shared_tools_selected`：共享工具勾选列表（字符串数组）
 - 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
 
-### 4.1.2.11 `/wunder/user_tools/catalog`
+### 4.1.2.15 `/wunder/user_tools/catalog`
 
 - 方法：`GET`
 - 返回（JSON）：
   - 字段同 `/wunder/user_tools/tools`
 - 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
 
-### 4.1.2.12 `/wunder/user_tools/shared_tools`
+### 4.1.2.16 `/wunder/user_tools/shared_tools`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -238,7 +307,7 @@
   - `user_id`：用户唯一标识
   - `shared_tools`：共享工具勾选列表
 
-### 4.1.2.13 `/wunder/doc2md/convert`
+### 4.1.2.17 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -253,7 +322,7 @@
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
 
-### 4.1.2.14 `/wunder/attachments/convert`
+### 4.1.2.18 `/wunder/attachments/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -266,7 +335,7 @@
   - `warnings`：转换警告列表
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
-### 4.1.2.15 `/wunder/temp_dir/download`
+### 4.1.2.19 `/wunder/temp_dir/download`
 
 - 方法：`GET`
 - 鉴权：无
@@ -274,7 +343,7 @@
 - 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
 - 返回：文件流（`Content-Disposition: attachment`）
 
-### 4.1.2.16 `/wunder/temp_dir/upload`
+### 4.1.2.20 `/wunder/temp_dir/upload`
 
 - 方法：`POST`
 - 鉴权：无
@@ -288,7 +357,7 @@
   - `ok`：是否成功
   - `files`：上传后的文件名列表
 
-### 4.1.2.17 `/wunder/temp_dir/list`
+### 4.1.2.21 `/wunder/temp_dir/list`
 
 - 方法：`GET`
 - 鉴权：无
@@ -297,7 +366,7 @@
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
 
-### 4.1.2.18 `/wunder/temp_dir/remove`
+### 4.1.2.22 `/wunder/temp_dir/remove`
 
 - 方法：`POST`
 - 鉴权：无
@@ -310,7 +379,7 @@
   - `removed`：已删除文件名列表
   - `missing`：未找到的文件名列表
 
-### 4.1.2.19 `/wunder/mcp`
+### 4.1.2.23 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
@@ -327,7 +396,7 @@
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.20 `/wunder/i18n`
+### 4.1.2.24 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -471,9 +540,10 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（model_type/provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
+  - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
 - `POST` 入参：
   - `llm.default`：默认模型配置名称
   - `llm.models`：模型配置映射，用于保存与下发
@@ -846,10 +916,10 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled）
+  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-  - 说明：当 root 为空时，服务端会自动创建 `./knowledge/<知识库名称>` 目录并回填配置
+  - 说明：当 root 为空时，字面知识库会自动创建 `./knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>`，并要求 `embedding_model`
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 
@@ -859,6 +929,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `files`：Markdown 文件相对路径列表
+- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/docs` 等接口。
 
 ### 4.1.28 `/wunder/admin/knowledge/file`
 
@@ -873,6 +944,7 @@
 - `DELETE` 入参（Query）：
   - `base`：知识库名称
   - `path`：相对知识库根目录的文件路径
+- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/doc` 等接口。
 
 ### 4.1.29 `/wunder/admin/knowledge/upload`
 
@@ -883,7 +955,11 @@
   - 返回（JSON）：
     - `ok`：是否成功
     - `message`：提示信息
-    - `path`：转换后的 Markdown 相对路径
+    - `path`：转换后的 Markdown 相对路径（字面知识库）
+    - `doc_id`：向量文档 id（向量知识库）
+    - `doc_name`：向量文档名称（向量知识库）
+    - `chunk_count`：切片数量（向量知识库）
+    - `embedding_model`：嵌入模型（向量知识库）
     - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
     - `warnings`：转换警告列表
   - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理。
@@ -896,6 +972,61 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
+- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/reindex`。
+
+### 4.1.30.1 `/wunder/admin/knowledge/docs`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
+- 说明：仅适用于向量知识库。
+
+### 4.1.30.2 `/wunder/admin/knowledge/doc`
+
+- 方法：`GET/DELETE`
+- `GET` 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `GET` 返回（JSON）：
+  - `base`：知识库名称
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks）
+  - `content`：原文内容
+- `DELETE` 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `deleted`：删除的向量条目数量
+  - `doc_id`：文档 id
+  - `doc_name`：文档名称
+- 说明：仅适用于向量知识库。
+
+### 4.1.30.3 `/wunder/admin/knowledge/chunks`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunks`：切片列表（index/start/end/preview/content）
+- 说明：仅适用于向量知识库。
+
+### 4.1.30.4 `/wunder/admin/knowledge/reindex`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id（可选，留空则重建全部）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `reindexed`：已重建的 doc_id 列表
+  - `failed`：失败项列表（doc_id/error）
+- 说明：仅适用于向量知识库。
 
 ### 4.1.31 `/wunder/admin/users`
 

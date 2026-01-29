@@ -25,6 +25,16 @@ export const fetchUserKnowledgeFile = (base, path) =>
 export const saveUserKnowledgeFile = (payload) => api.put('/user_tools/knowledge/file', payload);
 export const deleteUserKnowledgeFile = (base, path) =>
   api.delete('/user_tools/knowledge/file', { params: { base, path } });
+export const fetchUserKnowledgeDocs = (base) =>
+  api.get('/user_tools/knowledge/docs', { params: { base } });
+export const fetchUserKnowledgeDoc = (base, doc_id) =>
+  api.get('/user_tools/knowledge/doc', { params: { base, doc_id } });
+export const fetchUserKnowledgeChunks = (base, doc_id) =>
+  api.get('/user_tools/knowledge/chunks', { params: { base, doc_id } });
+export const deleteUserKnowledgeDoc = (base, doc_id) =>
+  api.delete('/user_tools/knowledge/doc', { params: { base, doc_id } });
+export const reindexUserKnowledge = (payload) =>
+  api.post('/user_tools/knowledge/reindex', payload);
 export const uploadUserKnowledgeFile = (base, file) => {
   const form = new FormData();
   form.append('base', base);

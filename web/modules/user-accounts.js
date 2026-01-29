@@ -85,8 +85,6 @@ const ensureUserAccountElements = () => {
     "userAccountToolDefault",
     "userAccountToolList",
     "userAccountToolEmpty",
-    "userAccountToolBlockedList",
-    "userAccountToolBlockedEmpty",
   ];
   const missing = requiredKeys.filter((key) => !elements[key]);
   if (missing.length) {
@@ -486,7 +484,6 @@ const submitCreateUser = async () => {
 };
 
 let settingsTarget = null;
-let toolGroupsCache = [];
 let toolSaveTimer = null;
 
 const resolveRoleSelection = (roles) => {
@@ -695,7 +692,6 @@ const loadToolAccess = async (userId) => {
   const payload = await response.json();
   return {
     allowed: payload?.data?.allowed_tools ?? null,
-    blocked: payload?.data?.blocked_tools ?? [],
   };
 };
 
@@ -713,9 +709,6 @@ const openSettingsModal = async (user) => {
   elements.userAccountToolList.textContent = "";
   elements.userAccountToolEmpty.textContent = t("common.loading");
   elements.userAccountToolEmpty.style.display = "block";
-  elements.userAccountToolBlockedList.textContent = "";
-  elements.userAccountToolBlockedEmpty.textContent = t("common.loading");
-  elements.userAccountToolBlockedEmpty.style.display = "block";
   syncToolAccessToggle();
   openModal(elements.userAccountSettingsModal);
   try {
@@ -723,9 +716,7 @@ const openSettingsModal = async (user) => {
       loadToolCatalog(user.id),
       loadToolAccess(user.id),
     ]);
-    toolGroupsCache = groups;
     const allowed = access?.allowed ?? null;
-    const blocked = Array.isArray(access?.blocked) ? access.blocked : [];
     const useDefault = allowed === null;
     elements.userAccountToolDefault.checked = useDefault;
     renderToolOptions(
@@ -734,12 +725,6 @@ const openSettingsModal = async (user) => {
       groups,
       Array.isArray(allowed) ? allowed : [],
       { disabled: useDefault }
-    );
-    renderToolOptions(
-      elements.userAccountToolBlockedList,
-      elements.userAccountToolBlockedEmpty,
-      groups,
-      blocked
     );
     syncToolAccessToggle();
   } catch (error) {
@@ -763,14 +748,13 @@ const saveToolAccess = async (options = {}) => {
   const silent = options.silent === true;
   const useDefault = elements.userAccountToolDefault.checked;
   const allowed = useDefault ? null : collectSelectedTools(elements.userAccountToolList);
-  const blocked = collectSelectedTools(elements.userAccountToolBlockedList);
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/tool_access`;
   try {
     const response = await fetch(endpoint, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ allowed_tools: allowed, blocked_tools: blocked }),
+      body: JSON.stringify({ allowed_tools: allowed }),
     });
     if (!response.ok) {
       notify(t("userAccounts.toast.toolSaveFailed", { status: response.status }), "error");

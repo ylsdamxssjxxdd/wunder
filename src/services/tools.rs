@@ -1,9 +1,13 @@
 // 内置工具定义与执行入口，保持工具名称与协议一致。
 use crate::a2a_store::{A2aStore, A2aTask};
 use crate::command_utils;
-use crate::config::{is_debug_log_level, A2aServiceConfig, Config, KnowledgeBaseConfig};
+use crate::config::{
+    is_debug_log_level, normalize_knowledge_base_type, A2aServiceConfig, Config,
+    KnowledgeBaseConfig, KnowledgeBaseType,
+};
 use crate::i18n;
 use crate::knowledge;
+use crate::llm::embed_texts;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::mcp;
 use crate::path_utils::{
@@ -15,6 +19,7 @@ use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::user_tools::{
     UserToolAlias, UserToolBindings, UserToolKind, UserToolManager, UserToolStore,
 };
+use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use chrono::{Local, Utc};
@@ -1024,16 +1029,33 @@ async fn execute_user_knowledge(
     let store = context
         .user_tool_store
         .ok_or_else(|| anyhow!(i18n::t("error.knowledge_base_not_found")))?;
+    let payload = store.load_user_tools(&alias.owner_id);
+    let base_info = payload
+        .knowledge_bases
+        .iter()
+        .find(|base| base.name == alias.target)
+        .cloned()
+        .ok_or_else(|| anyhow!(i18n::t("error.knowledge_base_not_found")))?;
+    let base_type = normalize_knowledge_base_type(base_info.base_type.as_deref());
     let root = store
-        .resolve_knowledge_base_root(&alias.owner_id, &alias.target, false)
+        .resolve_knowledge_base_root_with_type(&alias.owner_id, &base_info.name, base_type, false)
         .map_err(|err| anyhow!(err.to_string()))?;
     let base = KnowledgeBaseConfig {
-        name: alias.target.clone(),
-        description: String::new(),
+        name: base_info.name.clone(),
+        description: base_info.description.clone(),
         root: root.to_string_lossy().to_string(),
-        enabled: true,
-        shared: None,
+        enabled: base_info.enabled,
+        shared: Some(base_info.shared),
+        base_type: base_info.base_type.clone(),
+        embedding_model: base_info.embedding_model.clone(),
+        chunk_size: base_info.chunk_size,
+        chunk_overlap: base_info.chunk_overlap,
+        top_k: base_info.top_k,
+        score_threshold: base_info.score_threshold,
     };
+    if base_type == KnowledgeBaseType::Vector {
+        return execute_vector_knowledge(context, &base, Some(&alias.owner_id), args).await;
+    }
     let llm_config = knowledge::resolve_llm_config(context.config, None);
     let docs = if let Some(emitter) = context.event_emitter.as_ref() {
         let include_payload = is_debug_log_level(&context.config.observability.log_level);
@@ -1087,6 +1109,9 @@ async fn execute_knowledge_tool(
     if query.is_empty() {
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
     }
+    if base.is_vector() {
+        return execute_vector_knowledge(context, base, None, args).await;
+    }
     let _ =
         knowledge::resolve_knowledge_root(base, false).map_err(|err| anyhow!(err.to_string()))?;
     let llm_config = knowledge::resolve_llm_config(context.config, None);
@@ -1124,6 +1149,79 @@ async fn execute_knowledge_tool(
         .collect::<Vec<_>>();
     Ok(json!({
         "knowledge_base": base.name,
+        "documents": documents
+    }))
+}
+
+async fn execute_vector_knowledge(
+    context: &ToolContext<'_>,
+    base: &KnowledgeBaseConfig,
+    owner_id: Option<&str>,
+    args: &Value,
+) -> Result<Value> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+    }
+    vector_knowledge::ensure_vector_base_config(base)?;
+    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
+    let embed_config = vector_knowledge::resolve_embedding_model(context.config, embedding_name)?;
+    let timeout_s = embed_config.timeout_s.unwrap_or(120);
+    let vectors = embed_texts(&embed_config, &[query.clone()], timeout_s).await?;
+    let vector = vectors
+        .get(0)
+        .ok_or_else(|| anyhow!("embedding response empty"))?;
+    let client = vector_knowledge::resolve_weaviate_client(context.config)?;
+    let owner_key = vector_knowledge::resolve_owner_key(owner_id);
+    let top_k = extract_limit(args).unwrap_or_else(|| vector_knowledge::resolve_top_k(base));
+    let mut hits = client
+        .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
+        .await?;
+    if let Some(threshold) = base.score_threshold {
+        hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+    }
+    if hits.len() > top_k {
+        hits.truncate(top_k);
+    }
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(
+            "knowledge_request",
+            json!({
+                "knowledge_base": base.name,
+                "vector": true,
+                "embedding_model": embedding_name,
+                "owner_id": owner_key,
+                "query": query,
+                "limit": top_k,
+                "score_threshold": base.score_threshold
+            }),
+        );
+    }
+    let documents = hits
+        .into_iter()
+        .map(|hit| {
+            json!({
+                "doc_id": hit.doc_id,
+                "document": hit.doc_name,
+                "name": hit.doc_name,
+                "chunk_index": hit.chunk_index,
+                "start": hit.start,
+                "end": hit.end,
+                "content": hit.content,
+                "embedding_model": hit.embedding_model,
+                "score": hit.score
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "knowledge_base": base.name,
+        "vector": true,
+        "embedding_model": embedding_name,
         "documents": documents
     }))
 }

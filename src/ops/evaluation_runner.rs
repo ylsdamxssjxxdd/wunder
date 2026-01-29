@@ -5,6 +5,7 @@ use crate::evaluation::{
     EvaluationCase, EvaluationCaseFile, EvaluationChecker, EvaluationDimension,
 };
 use crate::i18n;
+use crate::llm::is_llm_model;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -1200,19 +1201,32 @@ fn resolve_eval_model_name(requested: Option<&str>, config: &Config) -> Option<S
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
     if let Some(name) = requested {
-        if config.llm.models.contains_key(name) {
+        if config
+            .llm
+            .models
+            .get(name)
+            .filter(|model| is_llm_model(model))
+            .is_some()
+        {
             return Some(name.to_string());
         }
     }
     let default_name = config.llm.default.trim();
-    if !default_name.is_empty() && config.llm.models.contains_key(default_name) {
+    if !default_name.is_empty()
+        && config
+            .llm
+            .models
+            .get(default_name)
+            .filter(|model| is_llm_model(model))
+            .is_some()
+    {
         return Some(default_name.to_string());
     }
     config
         .llm
         .models
         .iter()
-        .next()
+        .find(|(_, model)| is_llm_model(model))
         .map(|(name, _)| name.clone())
 }
 

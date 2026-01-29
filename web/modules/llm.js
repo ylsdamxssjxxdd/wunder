@@ -81,6 +81,18 @@ const normalizeToolCallMode = (value) => {
   return TOOL_CALL_MODE_OPTIONS.has(normalized) ? normalized : "function_call";
 };
 
+const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding"]);
+const normalizeModelType = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "llm";
+  }
+  if (raw === "embed" || raw === "embeddings") {
+    return "embedding";
+  }
+  return MODEL_TYPE_OPTIONS.has(raw) ? raw : "llm";
+};
+
 const renderProviderOptions = (activeProvider) => {
   if (!elements.llmProvider) {
     return;
@@ -163,6 +175,7 @@ const parseFloatInput = (input, fallback) => {
 // 规范化 LLM 配置，避免空值影响展示。
 const normalizeLlmConfig = (raw) => ({
   enable: raw?.enable !== false,
+  model_type: normalizeModelType(raw?.model_type),
   provider: normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID),
   base_url: raw?.base_url || "",
   api_key: raw?.api_key || "",
@@ -231,6 +244,9 @@ const clearLlmForm = () => {
   if (elements.llmConfigName) {
     elements.llmConfigName.value = "";
   }
+  if (elements.llmModelType) {
+    elements.llmModelType.value = "llm";
+  }
   renderProviderOptions(DEFAULT_PROVIDER_ID);
   elements.llmProvider.value = DEFAULT_PROVIDER_ID;
   elements.llmModel.value = "";
@@ -262,6 +278,9 @@ const applyLlmConfigToForm = (name, config) => {
   const llm = normalizeLlmConfig(config || {});
   if (elements.llmConfigName) {
     elements.llmConfigName.value = getDisplayName(name);
+  }
+  if (elements.llmModelType) {
+    elements.llmModelType.value = normalizeModelType(llm.model_type);
   }
   renderProviderOptions(llm.provider);
   elements.llmProvider.value = llm.provider;
@@ -402,6 +421,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
   ).trim();
   return {
     enable: base.enable,
+    model_type: normalizeModelType(elements.llmModelType?.value || base.model_type),
     provider: normalizeProviderId(elements.llmProvider.value || base.provider),
     base_url: elements.llmBaseUrl.value.trim(),
     api_key: elements.llmApiKey.value.trim(),
@@ -452,6 +472,10 @@ const selectLlmConfig = (name) => {
 
 // 构建模型上下文探测请求体。
 const buildContextProbePayload = () => {
+  const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
+  if (modelType === "embedding") {
+    return null;
+  }
   const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
   const baseUrl = elements.llmBaseUrl.value.trim() || resolveProviderBaseUrl(provider);
   const model = elements.llmModel.value.trim();
@@ -572,6 +596,10 @@ const renderDebugModelOptions = () => {
   defaultOption.textContent = defaultLabel;
   select.appendChild(defaultOption);
   state.llm.order.forEach((name) => {
+    const config = state.llm.configs[name] || {};
+    if (normalizeModelType(config.model_type) !== "llm") {
+      return;
+    }
     const option = document.createElement("option");
     option.value = name;
     option.textContent = name;

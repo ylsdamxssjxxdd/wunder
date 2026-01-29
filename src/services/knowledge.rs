@@ -1,7 +1,7 @@
 // 知识库模块：解析 Markdown、缓存章节，并支持 LLM + 词面回退检索。
 use crate::config::{Config, KnowledgeBaseConfig, LlmModelConfig};
 use crate::i18n;
-use crate::llm::{build_llm_client, is_llm_configured, ChatMessage};
+use crate::llm::{build_llm_client, is_llm_configured, is_llm_model, ChatMessage};
 use anyhow::Result;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -144,10 +144,20 @@ pub fn resolve_llm_config(config: &Config, model_name: Option<&str>) -> Option<L
     let name = model_name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| config.llm.default.as_str());
-    if let Some(model) = config.llm.models.get(name) {
+    if let Some(model) = config
+        .llm
+        .models
+        .get(name)
+        .filter(|model| is_llm_model(model))
+    {
         return Some(model.clone());
     }
-    config.llm.models.values().next().cloned()
+    config
+        .llm
+        .models
+        .values()
+        .find(|model| is_llm_model(model))
+        .cloned()
 }
 
 pub fn resolve_knowledge_root(base: &KnowledgeBaseConfig, create: bool) -> Result<PathBuf> {

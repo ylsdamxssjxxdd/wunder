@@ -36,6 +36,8 @@ pub struct Config {
     #[serde(default)]
     pub knowledge: KnowledgeConfig,
     #[serde(default)]
+    pub vector_store: VectorStoreConfig,
+    #[serde(default)]
     pub observability: ObservabilityConfig,
     #[serde(default)]
     pub storage: StorageConfig,
@@ -149,6 +151,8 @@ pub struct LlmModelConfig {
     pub history_compaction_reset: Option<String>,
     #[serde(default)]
     pub tool_call_mode: Option<String>,
+    #[serde(default)]
+    pub model_type: Option<String>,
     #[serde(default)]
     pub stop: Option<Vec<String>>,
     #[serde(default)]
@@ -318,6 +322,50 @@ pub struct KnowledgeBaseConfig {
     pub enabled: bool,
     #[serde(default)]
     pub shared: Option<bool>,
+    #[serde(default)]
+    pub base_type: Option<String>,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
+    pub chunk_size: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
+    pub chunk_overlap: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
+    pub top_k: Option<usize>,
+    #[serde(default)]
+    pub score_threshold: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnowledgeBaseType {
+    Literal,
+    Vector,
+}
+
+pub fn normalize_knowledge_base_type(value: Option<&str>) -> KnowledgeBaseType {
+    let raw = value.unwrap_or("").trim();
+    if raw.is_empty() {
+        return KnowledgeBaseType::Literal;
+    }
+    match raw
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .replace(' ', "_")
+        .as_str()
+    {
+        "vector" | "embedding" => KnowledgeBaseType::Vector,
+        _ => KnowledgeBaseType::Literal,
+    }
+}
+
+impl KnowledgeBaseConfig {
+    pub fn base_type(&self) -> KnowledgeBaseType {
+        normalize_knowledge_base_type(self.base_type.as_deref())
+    }
+
+    pub fn is_vector(&self) -> bool {
+        self.base_type() == KnowledgeBaseType::Vector
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -330,6 +378,24 @@ pub struct ObservabilityConfig {
     pub monitor_payload_max_chars: i64,
     #[serde(default)]
     pub monitor_drop_event_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VectorStoreConfig {
+    #[serde(default)]
+    pub weaviate: WeaviateConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WeaviateConfig {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub timeout_s: u64,
+    #[serde(default, deserialize_with = "deserialize_usize_from_any")]
+    pub batch_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -514,6 +580,44 @@ where
     }
 
     deserializer.deserialize_any(UsizeVisitor)
+}
+
+fn deserialize_optional_usize_from_any<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OptionalUsizeVisitor;
+
+    impl<'de> Visitor<'de> for OptionalUsizeVisitor {
+        type Value = Option<usize>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("optional usize or string")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserialize_usize_from_any(deserializer).map(Some)
+        }
+    }
+
+    deserializer.deserialize_option(OptionalUsizeVisitor)
 }
 
 pub fn load_config() -> Config {

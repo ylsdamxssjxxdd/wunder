@@ -24,9 +24,39 @@ const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelType {
+    Llm,
+    Embedding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCallMode {
     ToolCall,
     FunctionCall,
+}
+
+pub fn normalize_model_type(value: Option<&str>) -> ModelType {
+    let raw = value.unwrap_or("").trim();
+    if raw.is_empty() {
+        return ModelType::Llm;
+    }
+    match raw
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .replace(' ', "_")
+        .as_str()
+    {
+        "embedding" | "embed" | "emb" => ModelType::Embedding,
+        _ => ModelType::Llm,
+    }
+}
+
+pub fn is_embedding_model(config: &LlmModelConfig) -> bool {
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Embedding
+}
+
+pub fn is_llm_model(config: &LlmModelConfig) -> bool {
+    !is_embedding_model(config)
 }
 
 pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
@@ -330,6 +360,74 @@ pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
             .as_ref()
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
+}
+
+pub fn is_embedding_configured(config: &LlmModelConfig) -> bool {
+    is_llm_configured(config)
+}
+
+pub async fn embed_texts(
+    config: &LlmModelConfig,
+    inputs: &[String],
+    timeout_s: u64,
+) -> Result<Vec<Vec<f32>>> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let base_url =
+        resolve_base_url(config).ok_or_else(|| anyhow!("embedding base_url is required"))?;
+    let model = config
+        .model
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("embedding model is required"))?;
+    let endpoint = if base_url.ends_with("/v1") {
+        format!("{base_url}/embeddings")
+    } else {
+        format!("{base_url}/v1/embeddings")
+    };
+    let timeout = Duration::from_secs(timeout_s.max(5));
+    let client = Client::builder().timeout(timeout).build()?;
+    let payload = json!({
+        "model": model,
+        "input": inputs,
+    });
+    let response = client
+        .post(endpoint)
+        .headers(build_headers(config.api_key.as_deref().unwrap_or("")))
+        .json(&payload)
+        .send()
+        .await?;
+    let status = response.status();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(anyhow!("embedding request failed: {status} {body}"));
+    }
+    let data = body
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| anyhow!("embedding response missing data"))?;
+    let mut outputs = vec![Vec::new(); inputs.len()];
+    for item in data {
+        let index = item.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let embedding = item
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("embedding response missing embedding"))?;
+        let mut vector = Vec::with_capacity(embedding.len());
+        for value in embedding {
+            let num = value
+                .as_f64()
+                .ok_or_else(|| anyhow!("embedding value is not number"))?;
+            vector.push(num as f32);
+        }
+        if index < outputs.len() {
+            outputs[index] = vector;
+        }
+    }
+    Ok(outputs)
 }
 
 pub fn normalize_provider(provider: Option<&str>) -> String {
