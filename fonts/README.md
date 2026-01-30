@@ -1,7 +1,7 @@
 # Fonts directory
 
 Drop CJK font files here (e.g., .otf/.ttf/.ttc). docker-compose mounts this
-folder to `/usr/share/fonts/wunder` inside the `wunder_rust` and `sandbox`
+folder to `/usr/share/fonts/wunder` inside the `wunder_engine` and `sandbox`
 containers.
 
 Recommended families:

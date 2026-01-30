@@ -157,7 +157,17 @@ const resolveUnitLabel = (user) => {
   if (!user) {
     return "-";
   }
-  return user.unit_path || user.unit_name || user.unit_id || "-";
+  if (user.unit_name) {
+    return user.unit_name;
+  }
+  const fallback = String(user.unit_path || "").trim();
+  if (fallback) {
+    const parts = fallback.split("/").map((part) => part.trim()).filter(Boolean);
+    if (parts.length) {
+      return parts[parts.length - 1];
+    }
+  }
+  return user.unit_id || "-";
 };
 
 const formatQuotaValue = (user) => {

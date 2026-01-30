@@ -16,14 +16,14 @@ python -m mcp_server.main
 
 ### Docker Compose
 
-`docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` 已内置 `wunder-mcp` 服务，默认端口 `9010`。
+`docker-composex86.yml`/`docker-composearm.yml` 已内置 `wunder-mcp` 服务，默认端口 `9010`。
 
 ```bash
 # 在项目根目录
 set MCP_PORT=9010
 set MCP_HOST=0.0.0.0
 # 启动
-docker compose -f docker-compose.rust.x86.yml up -d wunder-mcp
+docker compose -f docker-composex86.yml up -d wunder-mcp
 ```
 
 ## 2. MCP 配置文件

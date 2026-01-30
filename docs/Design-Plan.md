@@ -192,8 +192,8 @@ wunder/
   docs/
   scripts/
   Dockerfile.rust
-  docker-compose.rust.x86.yml
-  docker-compose.rust.arm.yml
+  docker-composex86.yml
+  docker-composearm.yml
   Cargo.toml
 ```
 

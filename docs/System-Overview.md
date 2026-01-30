@@ -5,7 +5,7 @@ wunder is an agent router: for developers, everything is an interface (API/confi
 
 It also provides the A2A standard API at `/a2a` (JSON-RPC + SSE), and publishes AgentCard at `/.well-known/agent-card.json` for cross-system discovery.
 
-The self-hosted MCP endpoint `/wunder/mcp` is implemented by the Rust server (streamable-http). The sandbox service runs the same Rust binary in `sandbox` mode (`WUNDER_SERVER_MODE=sandbox`); `Dockerfile.rust` + `docker-compose.rust.x86.yml`/`docker-compose.rust.arm.yml` are the recommended runtime for the Rust server.
+The self-hosted MCP endpoint `/wunder/mcp` is implemented by the Rust server (streamable-http). The sandbox service runs the same Rust binary in `sandbox` mode (`WUNDER_SERVER_MODE=sandbox`); `Dockerfile.rust` + `docker-composex86.yml`/`docker-composearm.yml` are the recommended runtime for the Rust server.
 With `sandbox.mode=sandbox`, built-in tools like command execution run via the shared sandbox service (`WUNDER_SANDBOX_ENDPOINT`); for docker compose deployments, prefer internal DNS `http://sandbox:9001` and do not publish port 9001.
 Registered users are governed by daily request quotas (default tiers A/B/C), reset at midnight; each model call consumes one unit. Virtual `user_id`s are not quota-limited. Quota usage is surfaced via SSE (`quota_usage`) and UI stats for transparent cost control.
 

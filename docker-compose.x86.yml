@@ -1,17 +1,17 @@
 x-rust-build: &rust-build
   context: .
-  dockerfile: Dockerfile.rust
+  dockerfile: Dockerfile
   args:
     RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
 
 services:
-  wunder_rust:
+  wunder_engine:
     build: *rust-build
     privileged: true
     security_opt:
       - seccomp:unconfined
-    image: wunder-arm
-    platform: linux/arm64
+    image: wunder-x86
+    platform: linux/amd64
     working_dir: /app
     ports:
       - "${WUNDER_PORT:-8000}:${WUNDER_PORT:-8000}"
@@ -33,7 +33,7 @@ services:
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - RUST_LOG=info
-      - CARGO_TARGET_DIR=/app/target/arm64
+      - CARGO_TARGET_DIR=/app/target/x86
     command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; echo "wunder-server missing or stale, waiting for sandbox build..." >&2; while true; do if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; sleep 1; done']
     depends_on:
       sandbox:
@@ -49,8 +49,8 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    image: wunder-arm
-    platform: linux/arm64
+    image: wunder-x86
+    platform: linux/amd64
     working_dir: /app
     environment:
       - TZ=Asia/Shanghai
@@ -62,8 +62,8 @@ services:
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
-      - CARGO_HOME=/app/.cargo/arm64
-      - CARGO_TARGET_DIR=/app/target/arm64
+      - CARGO_HOME=/app/.cargo/x86
+      - CARGO_TARGET_DIR=/app/target/x86
     volumes:
       - ./:/app
       - wunder_workspaces:/workspaces
@@ -77,8 +77,8 @@ services:
     restart: always
 
   wunder-mcp:
-    image: wunder-arm
-    platform: linux/arm64
+    image: wunder-x86
+    platform: linux/amd64
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -100,7 +100,7 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: linux/arm64
+    platform: linux/amd64
     environment:
       - TZ=Asia/Shanghai
       - POSTGRES_DB=wunder
@@ -119,7 +119,7 @@ services:
 
   weaviate:
     image: semitechnologies/weaviate:1.27.0
-    platform: linux/arm64
+    platform: linux/amd64
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -136,12 +136,13 @@ services:
     volumes:
       - wunder_weaviate:/var/lib/weaviate
     restart: always
+
   wunder_frontend:
     image: node:22.14
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: linux/arm64
+    platform: linux/amd64
     container_name: wunder-frontend
     working_dir: /app
     restart: no
@@ -163,12 +164,12 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: linux/arm64
+    platform: linux/amd64
     container_name: wunder-nginx
     environment:
       - TZ=Asia/Shanghai
     depends_on:
-      - wunder_rust
+      - wunder_engine
     restart: always
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro

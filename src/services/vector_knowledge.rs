@@ -30,6 +30,8 @@ const DEFAULT_CHUNK_OVERLAP: usize = 100;
 const DEFAULT_TOP_K: usize = 5;
 
 const WEAVIATE_CLASS: &str = "KnowledgeChunk";
+const WEAVIATE_TEXT_GET_SCALAR: &str = "TextGetObjectsKnowledgeChunk";
+const WEAVIATE_TEXT_DELETE_SCALAR: &str = "TextDeleteObjectsKnowledgeChunk";
 const WEAVIATE_PROPERTIES: [(&str, &str); 10] = [
     ("owner_id", "text"),
     ("base_name", "text"),
@@ -932,21 +934,23 @@ impl WeaviateClient {
         top_k: usize,
     ) -> Result<Vec<VectorSearchHit>> {
         self.ensure_schema().await?;
-        let query = r#"
-            query SearchChunks($vector: [Float!]!, $owner: String!, $base: String!, $model: String!, $limit: Int!) {
-                Get {
+        let limit_value = top_k as i64;
+        let query = format!(
+            r#"
+            query SearchChunks($vector: [Float!]!, $owner: {text_scalar}!, $base: {text_scalar}!, $model: {text_scalar}!) {{
+                Get {{
                     KnowledgeChunk(
-                        nearVector: {vector: $vector},
-                        limit: $limit,
-                        where: {
+                        nearVector: {{vector: $vector}},
+                        limit: {limit_value},
+                        where: {{
                             operator: And,
                             operands: [
-                                {path: ["owner_id"], operator: Equal, valueString: $owner},
-                                {path: ["base_name"], operator: Equal, valueString: $base},
-                                {path: ["embedding_model"], operator: Equal, valueString: $model}
+                                {{path: ["owner_id"], operator: Equal, valueText: $owner}},
+                                {{path: ["base_name"], operator: Equal, valueText: $base}},
+                                {{path: ["embedding_model"], operator: Equal, valueText: $model}}
                             ]
-                        }
-                    ) {
+                        }}
+                    ) {{
                         doc_id
                         doc_name
                         chunk_index
@@ -954,20 +958,22 @@ impl WeaviateClient {
                         end
                         content
                         embedding_model
-                        _additional { distance }
-                    }
-                }
-            }
-        "#;
+                        _additional {{ distance }}
+                    }}
+                }}
+            }}
+        "#,
+            text_scalar = WEAVIATE_TEXT_GET_SCALAR,
+            limit_value = limit_value
+        );
         let body = self
             .graphql_request(
-                query,
+                &query,
                 json!({
                     "vector": vector,
                     "owner": owner_id,
                     "base": base_name,
-                    "model": embedding_model,
-                    "limit": top_k as i64
+                    "model": embedding_model
                 }),
             )
             .await?;
@@ -1108,26 +1114,29 @@ impl WeaviateClient {
         self.ensure_schema().await?;
         let (query, variables) = if let Some(created_at) = exclude_created_at {
             (
-                r#"
-                mutation DeleteChunks($owner: String!, $base: String!, $doc: String!, $model: String!, $created: String!) {
-                    Delete {
+                format!(
+                    r#"
+                mutation DeleteChunks($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!, $created: String!) {{
+                    Delete {{
                         KnowledgeChunk(
-                            where: {
+                            where: {{
                                 operator: And,
                                 operands: [
-                                    {path: ["owner_id"], operator: Equal, valueString: $owner},
-                                    {path: ["base_name"], operator: Equal, valueString: $base},
-                                    {path: ["doc_id"], operator: Equal, valueString: $doc},
-                                    {path: ["embedding_model"], operator: Equal, valueString: $model},
-                                    {path: ["created_at"], operator: NotEqual, valueDate: $created}
+                                    {{path: ["owner_id"], operator: Equal, valueText: $owner}},
+                                    {{path: ["base_name"], operator: Equal, valueText: $base}},
+                                    {{path: ["doc_id"], operator: Equal, valueText: $doc}},
+                                    {{path: ["embedding_model"], operator: Equal, valueText: $model}},
+                                    {{path: ["created_at"], operator: NotEqual, valueDate: $created}}
                                 ]
-                            }
-                        ) {
+                            }}
+                        ) {{
                             matches
-                        }
-                    }
-                }
+                        }}
+                    }}
+                }}
                 "#,
+                    text_scalar = WEAVIATE_TEXT_DELETE_SCALAR
+                ),
                 json!({
                     "owner": owner_id,
                     "base": base_name,
@@ -1138,25 +1147,28 @@ impl WeaviateClient {
             )
         } else {
             (
-                r#"
-                mutation DeleteChunks($owner: String!, $base: String!, $doc: String!, $model: String!) {
-                    Delete {
+                format!(
+                    r#"
+                mutation DeleteChunks($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!) {{
+                    Delete {{
                         KnowledgeChunk(
-                            where: {
+                            where: {{
                                 operator: And,
                                 operands: [
-                                    {path: ["owner_id"], operator: Equal, valueString: $owner},
-                                    {path: ["base_name"], operator: Equal, valueString: $base},
-                                    {path: ["doc_id"], operator: Equal, valueString: $doc},
-                                    {path: ["embedding_model"], operator: Equal, valueString: $model}
+                                    {{path: ["owner_id"], operator: Equal, valueText: $owner}},
+                                    {{path: ["base_name"], operator: Equal, valueText: $base}},
+                                    {{path: ["doc_id"], operator: Equal, valueText: $doc}},
+                                    {{path: ["embedding_model"], operator: Equal, valueText: $model}}
                                 ]
-                            }
-                        ) {
+                            }}
+                        ) {{
                             matches
-                        }
-                    }
-                }
+                        }}
+                    }}
+                }}
                 "#,
+                    text_scalar = WEAVIATE_TEXT_DELETE_SCALAR
+                ),
                 json!({
                     "owner": owner_id,
                     "base": base_name,
@@ -1165,7 +1177,7 @@ impl WeaviateClient {
                 }),
             )
         };
-        let body = self.graphql_request(query, variables).await?;
+        let body = self.graphql_request(&query, variables).await?;
         let matches = body
             .get("data")
             .and_then(|value| value.get("Delete"))
@@ -1185,35 +1197,39 @@ impl WeaviateClient {
         limit: usize,
     ) -> Result<Vec<String>> {
         self.ensure_schema().await?;
-        let query = r#"
-            query ListChunkIds($owner: String!, $base: String!, $doc: String!, $model: String!, $limit: Int!) {
-                Get {
+        let limit_value = limit as i64;
+        let query = format!(
+            r#"
+            query ListChunkIds($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!) {{
+                Get {{
                     KnowledgeChunk(
-                        limit: $limit,
-                        where: {
+                        limit: {limit_value},
+                        where: {{
                             operator: And,
                             operands: [
-                                {path: ["owner_id"], operator: Equal, valueString: $owner},
-                                {path: ["base_name"], operator: Equal, valueString: $base},
-                                {path: ["doc_id"], operator: Equal, valueString: $doc},
-                                {path: ["embedding_model"], operator: Equal, valueString: $model}
+                                {{path: ["owner_id"], operator: Equal, valueText: $owner}},
+                                {{path: ["base_name"], operator: Equal, valueText: $base}},
+                                {{path: ["doc_id"], operator: Equal, valueText: $doc}},
+                                {{path: ["embedding_model"], operator: Equal, valueText: $model}}
                             ]
-                        }
-                    ) {
-                        _additional { id }
-                    }
-                }
-            }
-        "#;
+                        }}
+                    ) {{
+                        _additional {{ id }}
+                    }}
+                }}
+            }}
+        "#,
+            text_scalar = WEAVIATE_TEXT_GET_SCALAR,
+            limit_value = limit_value
+        );
         let body = self
             .graphql_request(
-                query,
+                &query,
                 json!({
                     "owner": owner_id,
                     "base": base_name,
                     "doc": doc_id,
-                    "model": embedding_model,
-                    "limit": limit as i64
+                    "model": embedding_model
                 }),
             )
             .await?;
