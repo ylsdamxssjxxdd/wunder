@@ -1222,10 +1222,18 @@ async fn execute_vector_knowledge(
     }
     let mut grouped_results = Vec::new();
     let mut flat_documents = Vec::new();
+    let multi_query = queries.len() > 1;
+    let mut seen_chunks = HashSet::new();
     for (_, keyword, hits) in aggregated {
         let documents = hits
             .into_iter()
-            .map(|hit| {
+            .filter_map(|hit| {
+                if multi_query {
+                    let key = format!("{}::{}", hit.doc_id, hit.chunk_index);
+                    if !seen_chunks.insert(key) {
+                        return None;
+                    }
+                }
                 let mut doc = json!({
                     "doc_id": hit.doc_id,
                     "document": hit.doc_name,
@@ -1237,13 +1245,13 @@ async fn execute_vector_knowledge(
                     "embedding_model": hit.embedding_model,
                     "score": hit.score
                 });
-                if queries.len() > 1 {
+                if multi_query {
                     doc["keyword"] = json!(keyword);
                 }
-                doc
+                Some(doc)
             })
             .collect::<Vec<_>>();
-        if queries.len() > 1 {
+        if multi_query {
             flat_documents.extend(documents.clone());
         }
         grouped_results.push(json!({
