@@ -358,6 +358,10 @@ impl UserStore {
         self.storage.upsert_user_account(record)
     }
 
+    pub fn upsert_users(&self, records: &[UserAccountRecord]) -> Result<()> {
+        self.storage.upsert_user_accounts(records)
+    }
+
     pub fn delete_user(&self, user_id: &str) -> Result<i64> {
         if Self::is_default_admin(user_id) {
             return Err(anyhow!("default admin account is protected"));
@@ -476,13 +480,8 @@ impl UserStore {
         self.storage.get_user_tool_access(user_id)
     }
 
-    pub fn set_user_tool_access(
-        &self,
-        user_id: &str,
-        allowed: Option<&Vec<String>>,
-        blocked: Option<&Vec<String>>,
-    ) -> Result<()> {
-        self.storage.set_user_tool_access(user_id, allowed, blocked)
+    pub fn set_user_tool_access(&self, user_id: &str, allowed: Option<&Vec<String>>) -> Result<()> {
+        self.storage.set_user_tool_access(user_id, allowed)
     }
 
     pub fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>> {

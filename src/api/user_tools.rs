@@ -13,6 +13,7 @@ use crate::path_utils::{
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::skills::load_skills;
 use crate::state::AppState;
+use crate::storage::StorageBackend;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
@@ -35,6 +36,9 @@ use tracing::info;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::ZipArchive;
+
+const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -485,6 +489,7 @@ async fn user_knowledge_update(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let current = state.user_tool_store.load_user_tools(&user_id);
     let bases = payload
         .knowledge
         .bases
@@ -499,10 +504,12 @@ async fn user_knowledge_update(
                 .map_err(vector_error_response)?;
         }
     }
+    let removed_vector_bases = collect_removed_vector_bases(&current.knowledge_bases, &bases);
     let updated = state
         .user_tool_store
         .update_knowledge_bases(&user_id, bases)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    cleanup_removed_user_vector_docs(state.storage.clone(), &user_id, removed_vector_bases).await;
     let bases = build_user_knowledge_payload(&state, &user_id, &updated.knowledge_bases, true);
     Ok(Json(json!({ "data": { "knowledge": { "bases": bases } } })))
 }
@@ -735,26 +742,39 @@ async fn user_knowledge_upload(
             .user_tool_store
             .resolve_knowledge_base_root_with_type(&user_id, &base_config.name, base_type, true)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let storage = state.storage.clone();
         let temp_dir = upload.temp_dir.clone();
         let result = convert_upload_to_markdown(&upload).await;
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         let (content, converter, warnings) = result?;
         let doc_name = upload.stem.clone();
-        let existing = vector_knowledge::list_vector_documents(&root)
-            .await
-            .map_err(vector_error_response)?;
+        let existing = vector_knowledge::list_vector_documents(
+            storage.as_ref(),
+            Some(&user_id),
+            &base_config.name,
+            &root,
+        )
+        .await
+        .map_err(vector_error_response)?;
         let mut doc_id: Option<String> = None;
         let mut previous_meta = None;
         if let Some(doc) = existing.iter().find(|doc| doc.name == doc_name) {
             doc_id = Some(doc.doc_id.clone());
-            previous_meta = vector_knowledge::read_vector_document_meta(&root, &doc.doc_id)
-                .await
-                .ok();
+            previous_meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_config.name,
+                &root,
+                &doc.doc_id,
+            )
+            .await
+            .ok();
         }
         let knowledge_config = build_user_knowledge_config(&base_config, &root);
         let meta = vector_knowledge::prepare_document(
             &knowledge_config,
             Some(&user_id),
+            storage.as_ref(),
             &root,
             &doc_name,
             doc_id.as_deref(),
@@ -819,9 +839,14 @@ async fn user_knowledge_docs(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let docs = vector_knowledge::list_vector_documents(&root)
-        .await
-        .map_err(vector_error_response)?;
+    let docs = vector_knowledge::list_vector_documents(
+        state.storage.as_ref(),
+        Some(&user_id),
+        &base.name,
+        &root,
+    )
+    .await
+    .map_err(vector_error_response)?;
     Ok(Json(
         json!({ "data": { "base": query.base, "docs": docs } }),
     ))
@@ -847,12 +872,24 @@ async fn user_knowledge_doc(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let meta = vector_knowledge::read_vector_document_meta(
+        state.storage.as_ref(),
+        Some(&user_id),
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(
+        state.storage.as_ref(),
+        Some(&user_id),
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
     Ok(Json(json!({
         "data": { "base": query.base, "doc": meta, "content": content }
     })))
@@ -878,20 +915,46 @@ async fn user_knowledge_doc_delete(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
     let config = state.config_store.get().await;
-    let client =
-        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-    let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-    let deleted = client
-        .delete_doc_chunks_all(&owner_key, &base.name, &meta.embedding_model, &meta.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    vector_knowledge::delete_vector_document_files(&root, &meta.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let root_for_lock = root.clone();
+    let doc_id = query.doc_id.clone();
+    let (meta, deleted) = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+            let deleted = client
+                .delete_doc_chunks_all(&owner_key, &base_name, &meta.embedding_model, &meta.doc_id)
+                .await
+                .map_err(vector_error_response)?;
+            vector_knowledge::delete_vector_document_files(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &meta.doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok((meta, deleted))
+        }
+    })
+    .await?;
     Ok(Json(json!({
         "data": {
             "ok": true,
@@ -922,12 +985,24 @@ async fn user_knowledge_chunks(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let meta = vector_knowledge::read_vector_document_meta(
+        state.storage.as_ref(),
+        Some(&user_id),
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(
+        state.storage.as_ref(),
+        Some(&user_id),
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
     let chunks = vector_knowledge::build_chunk_previews(&content, &meta).await;
     Ok(Json(json!({
         "data": {
@@ -965,6 +1040,7 @@ async fn user_knowledge_reindex(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, true)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let storage = state.storage.clone();
     let mut targets = Vec::new();
     if let Some(doc_id) = payload.doc_id.as_deref() {
         let cleaned = doc_id.trim();
@@ -973,9 +1049,14 @@ async fn user_knowledge_reindex(
         }
     }
     if targets.is_empty() {
-        let docs = vector_knowledge::list_vector_documents(&root)
-            .await
-            .map_err(vector_error_response)?;
+        let docs = vector_knowledge::list_vector_documents(
+            storage.as_ref(),
+            Some(&user_id),
+            &base.name,
+            &root,
+        )
+        .await
+        .map_err(vector_error_response)?;
         targets = docs.into_iter().map(|doc| doc.doc_id).collect();
     }
     let knowledge_config = build_user_knowledge_config(&base, &root);
@@ -983,14 +1064,30 @@ async fn user_knowledge_reindex(
     let mut reindexed = Vec::new();
     let mut failed = Vec::new();
     for doc_id in targets {
-        let meta = match vector_knowledge::read_vector_document_meta(&root, &doc_id).await {
+        let meta = match vector_knowledge::read_vector_document_meta(
+            storage.as_ref(),
+            Some(&user_id),
+            &base.name,
+            &root,
+            &doc_id,
+        )
+        .await
+        {
             Ok(meta) => meta,
             Err(err) => {
                 failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
                 continue;
             }
         };
-        let content = match vector_knowledge::read_vector_document_content(&root, &doc_id).await {
+        let content = match vector_knowledge::read_vector_document_content(
+            storage.as_ref(),
+            Some(&user_id),
+            &base.name,
+            &root,
+            &doc_id,
+        )
+        .await
+        {
             Ok(content) => content,
             Err(err) => {
                 failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
@@ -1001,6 +1098,7 @@ async fn user_knowledge_reindex(
             &config,
             &knowledge_config,
             Some(&user_id),
+            storage.as_ref(),
             &root,
             &meta.name,
             Some(&meta.doc_id),
@@ -1188,9 +1286,13 @@ fn build_user_tools_summary(
         "type": "object",
         "properties": {
             "query": { "type": "string", "description": i18n::t("knowledge.tool.query.description") },
+            "keywords": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": i18n::t("knowledge.tool.keywords.description") },
             "limit": { "type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description") }
         },
-        "required": ["query"]
+        "anyOf": [
+            { "required": ["query"] },
+            { "required": ["keywords"] }
+        ]
     });
     let mut knowledge_tools = Vec::new();
     for base in &config.knowledge.bases {
@@ -1313,6 +1415,40 @@ fn build_user_knowledge_payload(
         .collect()
 }
 
+fn collect_removed_vector_bases(
+    current: &[UserKnowledgeBase],
+    next: &[UserKnowledgeBase],
+) -> Vec<String> {
+    let mut next_vector = HashSet::new();
+    for base in next {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Vector {
+            next_vector.insert(base.name.clone());
+        }
+    }
+    current
+        .iter()
+        .filter(|base| {
+            normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Vector
+        })
+        .filter(|base| !next_vector.contains(&base.name))
+        .map(|base| base.name.clone())
+        .collect()
+}
+
+async fn cleanup_removed_user_vector_docs(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    bases: Vec<String>,
+) {
+    let owner_key = vector_knowledge::resolve_owner_key(Some(user_id));
+    for name in bases {
+        let _ = storage.delete_vector_documents_by_base(&owner_key, &name);
+        if let Ok(root) = vector_knowledge::resolve_vector_root(Some(user_id), &name, false) {
+            let _ = tokio::fs::remove_dir_all(&root).await;
+        }
+    }
+}
+
 async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
     let config = KnowledgeBaseConfig {
         name: base.to_string(),
@@ -1405,9 +1541,24 @@ async fn convert_upload_to_markdown(
     let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if metadata.len() > MAX_KNOWLEDGE_CONTENT_BYTES as u64 {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     if content.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1518,9 +1669,24 @@ async fn persist_knowledge_upload(
     let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if metadata.len() > MAX_KNOWLEDGE_CONTENT_BYTES as u64 {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     if content.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1558,11 +1724,20 @@ async fn save_knowledge_upload_content(
     let mut file = tokio::fs::File::create(target)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut total = 0usize;
     while let Some(chunk) = field
         .chunk()
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     {
+        total = total.saturating_add(chunk.len());
+        if total > MAX_KNOWLEDGE_UPLOAD_BYTES {
+            let _ = tokio::fs::remove_file(target).await;
+            return Err(error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                i18n::t("workspace.error.upload_too_large"),
+            ));
+        }
         file.write_all(&chunk)
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;

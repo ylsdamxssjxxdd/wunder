@@ -67,7 +67,6 @@ pub struct UserTokenRecord {
 pub struct UserToolAccessRecord {
     pub user_id: String,
     pub allowed_tools: Option<Vec<String>>,
-    pub blocked_tools: Vec<String>,
     pub updated_at: f64,
 }
 
@@ -92,6 +91,33 @@ pub struct UserAgentAccessRecord {
     pub user_id: String,
     pub allowed_agent_ids: Option<Vec<String>>,
     pub blocked_agent_ids: Vec<String>,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct VectorDocumentRecord {
+    pub doc_id: String,
+    pub owner_id: String,
+    pub base_name: String,
+    pub doc_name: String,
+    pub embedding_model: String,
+    pub chunk_size: i64,
+    pub chunk_overlap: i64,
+    pub chunk_count: i64,
+    pub status: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub content: String,
+    pub chunks_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct VectorDocumentSummaryRecord {
+    pub doc_id: String,
+    pub doc_name: String,
+    pub status: String,
+    pub chunk_count: i64,
+    pub embedding_model: String,
     pub updated_at: f64,
 }
 
@@ -191,6 +217,22 @@ pub trait StorageBackend: Send + Sync {
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
 
+    fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()>;
+    fn get_vector_document(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<Option<VectorDocumentRecord>>;
+    fn list_vector_document_summaries(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+    ) -> Result<Vec<VectorDocumentSummaryRecord>>;
+    fn delete_vector_document(&self, owner_id: &str, base_name: &str, doc_id: &str)
+        -> Result<bool>;
+    fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64>;
+
     fn append_stream_event(
         &self,
         session_id: &str,
@@ -272,6 +314,7 @@ pub trait StorageBackend: Send + Sync {
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
 
     fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()>;
+    fn upsert_user_accounts(&self, records: &[UserAccountRecord]) -> Result<()>;
     fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
     fn get_user_account_by_username(&self, username: &str) -> Result<Option<UserAccountRecord>>;
     fn get_user_account_by_email(&self, email: &str) -> Result<Option<UserAccountRecord>>;
@@ -328,7 +371,6 @@ pub trait StorageBackend: Send + Sync {
         &self,
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
-        blocked_tools: Option<&Vec<String>>,
     ) -> Result<()>;
     fn get_user_agent_access(&self, user_id: &str) -> Result<Option<UserAgentAccessRecord>>;
     fn set_user_agent_access(

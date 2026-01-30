@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
 use tracing::warn;
 use walkdir::WalkDir;
@@ -98,6 +98,7 @@ enum StorageWrite {
     Chat { user_id: String, payload: Value },
     ToolLog { user_id: String, payload: Value },
     ArtifactLog { user_id: String, payload: Value },
+    Flush { done: SyncSender<()> },
 }
 
 struct StorageWriteQueue {
@@ -140,7 +141,23 @@ impl StorageWriteQueue {
             StorageWrite::ArtifactLog { user_id, payload } => {
                 storage.append_artifact_log(&user_id, &payload)
             }
+            StorageWrite::Flush { done } => {
+                let _ = done.send(());
+                Ok(())
+            }
         }
+    }
+
+    fn flush(&self) -> bool {
+        let (done_tx, done_rx) = mpsc::sync_channel(0);
+        if self
+            .sender
+            .send(StorageWrite::Flush { done: done_tx })
+            .is_err()
+        {
+            return false;
+        }
+        done_rx.recv_timeout(Duration::from_secs(2)).is_ok()
     }
 }
 
@@ -835,6 +852,13 @@ impl WorkspaceManager {
         })?;
         self.maybe_schedule_retention_cleanup();
         Ok(())
+    }
+
+    pub async fn flush_writes_async(self: &Arc<Self>) -> bool {
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || workspace.write_queue.flush())
+            .await
+            .unwrap_or(false)
     }
 
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {

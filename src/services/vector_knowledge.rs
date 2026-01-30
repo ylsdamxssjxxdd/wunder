@@ -3,15 +3,19 @@ use crate::config::{
 };
 use crate::i18n;
 use crate::llm::{embed_texts, is_embedding_model};
+use crate::path_utils::normalize_existing_path;
+use crate::storage::{StorageBackend, VectorDocumentRecord, VectorDocumentSummaryRecord};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 const VECTOR_ROOT_DIR: &str = "vector_knowledge";
@@ -152,9 +156,7 @@ pub fn resolve_vector_root(
         None => root.join(VECTOR_SHARED_DIR),
     };
     let target = owner_root.join(cleaned);
-    if create {
-        std::fs::create_dir_all(&target)?;
-    }
+    let _ = create;
     Ok(target)
 }
 
@@ -332,42 +334,97 @@ pub fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-pub async fn write_vector_document(
-    root: &Path,
+fn build_vector_record(
+    owner_id: &str,
+    base_name: &str,
     meta: &VectorDocumentMeta,
     content: &str,
+) -> Result<VectorDocumentRecord> {
+    let chunks_json = serde_json::to_string(&meta.chunks)?;
+    Ok(VectorDocumentRecord {
+        doc_id: meta.doc_id.clone(),
+        owner_id: owner_id.to_string(),
+        base_name: base_name.to_string(),
+        doc_name: meta.name.clone(),
+        embedding_model: meta.embedding_model.clone(),
+        chunk_size: meta.chunk_size as i64,
+        chunk_overlap: meta.chunk_overlap as i64,
+        chunk_count: meta.chunk_count as i64,
+        status: meta.status.clone(),
+        created_at: meta.created_at,
+        updated_at: meta.updated_at,
+        content: content.to_string(),
+        chunks_json,
+    })
+}
+
+fn build_meta_from_record(record: &VectorDocumentRecord) -> Result<VectorDocumentMeta> {
+    let chunks =
+        serde_json::from_str::<Vec<VectorChunkMeta>>(&record.chunks_json).unwrap_or_default();
+    Ok(VectorDocumentMeta {
+        doc_id: record.doc_id.clone(),
+        name: record.doc_name.clone(),
+        embedding_model: record.embedding_model.clone(),
+        chunk_size: record.chunk_size as usize,
+        chunk_overlap: record.chunk_overlap as usize,
+        chunk_count: record.chunk_count as usize,
+        status: record.status.clone(),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        chunks,
+    })
+}
+
+fn build_summary_from_record(record: &VectorDocumentSummaryRecord) -> VectorDocumentSummary {
+    VectorDocumentSummary {
+        doc_id: record.doc_id.clone(),
+        name: record.doc_name.clone(),
+        status: record.status.clone(),
+        chunk_count: record.chunk_count as usize,
+        embedding_model: record.embedding_model.clone(),
+        updated_at: record.updated_at,
+    }
+}
+
+static MIGRATED_BASES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+async fn ensure_vector_documents_migrated(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    root: &Path,
 ) -> Result<()> {
-    let docs_dir = resolve_vector_documents_dir(root, true)?;
-    let content_path = docs_dir.join(format!("{}{}", meta.doc_id, VECTOR_DOC_EXT));
-    let meta_path = docs_dir.join(format!("{}{}", meta.doc_id, VECTOR_META_EXT));
-    tokio::fs::write(content_path, content).await?;
-    let encoded = serde_json::to_vec_pretty(meta)?;
-    tokio::fs::write(meta_path, encoded).await?;
+    let owner_key = resolve_owner_key(owner_id);
+    let key = format!("{owner_key}::{base_name}");
+    let store = MIGRATED_BASES.get_or_init(|| Mutex::new(HashSet::new()));
+    {
+        let mut guard = store.lock().await;
+        if guard.contains(&key) {
+            return Ok(());
+        }
+        guard.insert(key.clone());
+    }
+    let result = migrate_vector_documents_from_fs(storage, &owner_key, base_name, root).await;
+    if let Err(err) = result {
+        warn!("Vector knowledge migration failed for {owner_key}/{base_name}: {err}");
+        let mut guard = store.lock().await;
+        guard.remove(&key);
+    }
     Ok(())
 }
 
-pub async fn read_vector_document_content(root: &Path, doc_id: &str) -> Result<String> {
-    let docs_dir = resolve_vector_documents_dir(root, false)?;
-    let content_path = docs_dir.join(format!("{doc_id}{VECTOR_DOC_EXT}"));
-    let content = tokio::fs::read_to_string(content_path).await?;
-    Ok(content)
-}
-
-pub async fn read_vector_document_meta(root: &Path, doc_id: &str) -> Result<VectorDocumentMeta> {
-    let docs_dir = resolve_vector_documents_dir(root, false)?;
-    let meta_path = docs_dir.join(format!("{doc_id}{VECTOR_META_EXT}"));
-    let raw = tokio::fs::read_to_string(meta_path).await?;
-    let meta = serde_json::from_str::<VectorDocumentMeta>(&raw)?;
-    Ok(meta)
-}
-
-pub async fn list_vector_documents(root: &Path) -> Result<Vec<VectorDocumentSummary>> {
+async fn migrate_vector_documents_from_fs(
+    storage: &dyn StorageBackend,
+    owner_id: &str,
+    base_name: &str,
+    root: &Path,
+) -> Result<usize> {
     let docs_dir = resolve_vector_documents_dir(root, false)?;
     if !docs_dir.exists() {
-        return Ok(Vec::new());
+        return Ok(0);
     }
-    let mut entries = tokio::fs::read_dir(docs_dir).await?;
-    let mut output = Vec::new();
+    let mut entries = tokio::fs::read_dir(&docs_dir).await?;
+    let mut migrated = 0usize;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
@@ -377,19 +434,71 @@ pub async fn list_vector_documents(root: &Path) -> Result<Vec<VectorDocumentSumm
         if raw.trim().is_empty() {
             continue;
         }
-        if let Ok(meta) = serde_json::from_str::<VectorDocumentMeta>(&raw) {
-            output.push(meta.to_summary());
+        let meta = match serde_json::from_str::<VectorDocumentMeta>(&raw) {
+            Ok(meta) => meta,
+            Err(err) => {
+                warn!(
+                    "Skip malformed vector knowledge meta {}: {err}",
+                    path.to_string_lossy()
+                );
+                continue;
+            }
+        };
+        let content_path = docs_dir.join(format!("{}{}", meta.doc_id, VECTOR_DOC_EXT));
+        let content = match tokio::fs::read_to_string(&content_path).await {
+            Ok(content) => content,
+            Err(err) => {
+                warn!(
+                    "Skip vector knowledge content {}: {err}",
+                    content_path.to_string_lossy()
+                );
+                continue;
+            }
+        };
+        let record = match build_vector_record(owner_id, base_name, &meta, &content) {
+            Ok(record) => record,
+            Err(err) => {
+                warn!("Skip vector knowledge record {}: {err}", meta.doc_id);
+                continue;
+            }
+        };
+        if storage.upsert_vector_document(&record).is_ok() {
+            migrated += 1;
+            let _ = tokio::fs::remove_file(&content_path).await;
+            let _ = tokio::fs::remove_file(&path).await;
         }
     }
-    output.sort_by(|a, b| {
-        b.updated_at
-            .partial_cmp(&a.updated_at)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(output)
+    if migrated > 0 {
+        if tokio::fs::remove_dir(&docs_dir).await.is_ok() {
+            let _ = tokio::fs::remove_dir(root).await;
+        }
+        info!(
+            "Vector knowledge migrated {} docs for {owner_id}/{base_name}",
+            migrated
+        );
+    }
+    Ok(migrated)
 }
 
-pub async fn delete_vector_document_files(root: &Path, doc_id: &str) -> Result<()> {
+async fn read_vector_document_content_from_fs(root: &Path, doc_id: &str) -> Result<String> {
+    let docs_dir = resolve_vector_documents_dir(root, false)?;
+    let content_path = docs_dir.join(format!("{doc_id}{VECTOR_DOC_EXT}"));
+    let content = tokio::fs::read_to_string(content_path).await?;
+    Ok(content)
+}
+
+async fn read_vector_document_meta_from_fs(
+    root: &Path,
+    doc_id: &str,
+) -> Result<VectorDocumentMeta> {
+    let docs_dir = resolve_vector_documents_dir(root, false)?;
+    let meta_path = docs_dir.join(format!("{doc_id}{VECTOR_META_EXT}"));
+    let raw = tokio::fs::read_to_string(meta_path).await?;
+    let meta = serde_json::from_str::<VectorDocumentMeta>(&raw)?;
+    Ok(meta)
+}
+
+async fn delete_vector_document_files_from_fs(root: &Path, doc_id: &str) -> Result<()> {
     let docs_dir = resolve_vector_documents_dir(root, false)?;
     let content_path = docs_dir.join(format!("{doc_id}{VECTOR_DOC_EXT}"));
     let meta_path = docs_dir.join(format!("{doc_id}{VECTOR_META_EXT}"));
@@ -399,6 +508,91 @@ pub async fn delete_vector_document_files(root: &Path, doc_id: &str) -> Result<(
     if meta_path.exists() {
         let _ = tokio::fs::remove_file(meta_path).await;
     }
+    Ok(())
+}
+
+pub async fn write_vector_document(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    meta: &VectorDocumentMeta,
+    content: &str,
+) -> Result<()> {
+    let owner_key = resolve_owner_key(owner_id);
+    let record = build_vector_record(&owner_key, base_name, meta, content)?;
+    storage.upsert_vector_document(&record)?;
+    Ok(())
+}
+
+pub async fn read_vector_document_content(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    root: &Path,
+    doc_id: &str,
+) -> Result<String> {
+    ensure_vector_documents_migrated(storage, owner_id, base_name, root).await?;
+    let owner_key = resolve_owner_key(owner_id);
+    if let Some(record) = storage.get_vector_document(&owner_key, base_name, doc_id)? {
+        return Ok(record.content);
+    }
+    let content = read_vector_document_content_from_fs(root, doc_id).await?;
+    if let Ok(meta) = read_vector_document_meta_from_fs(root, doc_id).await {
+        let record = build_vector_record(&owner_key, base_name, &meta, &content)?;
+        let _ = storage.upsert_vector_document(&record);
+        let _ = delete_vector_document_files_from_fs(root, doc_id).await;
+    }
+    Ok(content)
+}
+
+pub async fn read_vector_document_meta(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    root: &Path,
+    doc_id: &str,
+) -> Result<VectorDocumentMeta> {
+    ensure_vector_documents_migrated(storage, owner_id, base_name, root).await?;
+    let owner_key = resolve_owner_key(owner_id);
+    if let Some(record) = storage.get_vector_document(&owner_key, base_name, doc_id)? {
+        return build_meta_from_record(&record);
+    }
+    let meta = read_vector_document_meta_from_fs(root, doc_id).await?;
+    if let Ok(content) = read_vector_document_content_from_fs(root, doc_id).await {
+        if let Ok(record) = build_vector_record(&owner_key, base_name, &meta, &content) {
+            let _ = storage.upsert_vector_document(&record);
+            let _ = delete_vector_document_files_from_fs(root, doc_id).await;
+        }
+    }
+    Ok(meta)
+}
+
+pub async fn list_vector_documents(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    root: &Path,
+) -> Result<Vec<VectorDocumentSummary>> {
+    ensure_vector_documents_migrated(storage, owner_id, base_name, root).await?;
+    let owner_key = resolve_owner_key(owner_id);
+    let records = storage.list_vector_document_summaries(&owner_key, base_name)?;
+    Ok(records
+        .into_iter()
+        .map(|record| build_summary_from_record(&record))
+        .collect())
+}
+
+pub async fn delete_vector_document_files(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    root: &Path,
+    doc_id: &str,
+) -> Result<()> {
+    ensure_vector_documents_migrated(storage, owner_id, base_name, root).await?;
+    let owner_key = resolve_owner_key(owner_id);
+    let _ = storage.delete_vector_document(&owner_key, base_name, doc_id)?;
+    let _ = delete_vector_document_files_from_fs(root, doc_id).await;
     Ok(())
 }
 
@@ -475,6 +669,31 @@ fn safe_user_id(user_id: &str) -> String {
     output
 }
 
+static DOCUMENT_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn document_lock_key(root: &Path, doc_id: &str) -> String {
+    let normalized_root = normalize_existing_path(root);
+    format!("{}::{}", normalized_root.to_string_lossy(), doc_id)
+}
+
+pub async fn with_document_lock<T, F, Fut>(root: &Path, doc_id: &str, op: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = T>,
+{
+    let key = document_lock_key(root, doc_id);
+    let lock = {
+        let store = DOCUMENT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = store.lock().await;
+        guard
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().await;
+    op().await
+}
+
 #[derive(Clone)]
 pub struct WeaviateClient {
     http: reqwest::Client,
@@ -482,6 +701,13 @@ pub struct WeaviateClient {
     api_key: Option<String>,
     batch_size: usize,
 }
+
+struct WeaviateClientCache {
+    key: String,
+    client: WeaviateClient,
+}
+
+static WEAVIATE_CLIENT_CACHE: OnceLock<StdMutex<Option<WeaviateClientCache>>> = OnceLock::new();
 
 impl WeaviateClient {
     pub fn from_config(config: &WeaviateConfig) -> Option<Self> {
@@ -502,6 +728,26 @@ impl WeaviateClient {
             api_key: config.api_key.clone(),
             batch_size,
         })
+    }
+
+    async fn graphql_request(&self, query: &str, variables: Value) -> Result<Value> {
+        let payload = json!({ "query": query, "variables": variables });
+        let response = self
+            .http
+            .post(format!("{}/v1/graphql", self.base_url))
+            .headers(self.build_headers())
+            .json(&payload)
+            .send()
+            .await?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
+            return Err(anyhow!("weaviate graphql failed: {detail}"));
+        }
+        if !status.is_success() {
+            return Err(anyhow!("weaviate graphql failed: {status} {body}"));
+        }
+        Ok(body)
     }
 
     pub async fn ensure_schema(&self) -> Result<()> {
@@ -608,7 +854,7 @@ impl WeaviateClient {
         embedding_model: &str,
         chunks: &[VectorChunk],
         vectors: &[Vec<f32>],
-    ) -> Result<()> {
+    ) -> Result<String> {
         if chunks.len() != vectors.len() {
             return Err(anyhow!("embedding count mismatch"));
         }
@@ -656,7 +902,7 @@ impl WeaviateClient {
             }
             start = end;
         }
-        Ok(())
+        Ok(created_at)
     }
 
     pub async fn delete_chunk(&self, chunk_id: &str) -> Result<bool> {
@@ -686,34 +932,45 @@ impl WeaviateClient {
         top_k: usize,
     ) -> Result<Vec<VectorSearchHit>> {
         self.ensure_schema().await?;
-        let vector_list = vector
-            .iter()
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let query = format!(
-            r#"{{ Get {{ {class}(nearVector: {{vector: [{vector_list}]}}, limit: {top_k}, where: {{operator: And, operands: [{{path: ["owner_id"], operator: Equal, valueString: "{owner}"}}, {{path: ["base_name"], operator: Equal, valueString: "{base}"}}, {{path: ["embedding_model"], operator: Equal, valueString: "{model}"}}]}}) {{ doc_id doc_name chunk_index start end content embedding_model _additional {{ distance }} }} }} }}"#,
-            class = WEAVIATE_CLASS,
-            owner = escape_graphql_string(owner_id),
-            base = escape_graphql_string(base_name),
-            model = escape_graphql_string(embedding_model),
-        );
-        let payload = json!({ "query": query });
-        let response = self
-            .http
-            .post(format!("{}/v1/graphql", self.base_url))
-            .headers(self.build_headers())
-            .json(&payload)
-            .send()
+        let query = r#"
+            query SearchChunks($vector: [Float!]!, $owner: String!, $base: String!, $model: String!, $limit: Int!) {
+                Get {
+                    KnowledgeChunk(
+                        nearVector: {vector: $vector},
+                        limit: $limit,
+                        where: {
+                            operator: And,
+                            operands: [
+                                {path: ["owner_id"], operator: Equal, valueString: $owner},
+                                {path: ["base_name"], operator: Equal, valueString: $base},
+                                {path: ["embedding_model"], operator: Equal, valueString: $model}
+                            ]
+                        }
+                    ) {
+                        doc_id
+                        doc_name
+                        chunk_index
+                        start
+                        end
+                        content
+                        embedding_model
+                        _additional { distance }
+                    }
+                }
+            }
+        "#;
+        let body = self
+            .graphql_request(
+                query,
+                json!({
+                    "vector": vector,
+                    "owner": owner_id,
+                    "base": base_name,
+                    "model": embedding_model,
+                    "limit": top_k as i64
+                }),
+            )
             .await?;
-        let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
-            return Err(anyhow!("weaviate query failed: {detail}"));
-        }
-        if !status.is_success() {
-            return Err(anyhow!("weaviate query failed: {status} {body}"));
-        }
         let items = body
             .get("data")
             .and_then(|value| value.get("Get"))
@@ -765,17 +1022,7 @@ impl WeaviateClient {
         Ok(hits)
     }
 
-    pub async fn delete_doc_chunks(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-        limit: usize,
-    ) -> Result<usize> {
-        let ids = self
-            .list_chunk_ids(owner_id, base_name, embedding_model, doc_id, limit)
-            .await?;
+    pub async fn delete_chunks_by_ids(&self, ids: &[String]) -> Result<usize> {
         let mut deleted = 0;
         for id in ids {
             let response = self
@@ -791,6 +1038,20 @@ impl WeaviateClient {
         Ok(deleted)
     }
 
+    pub async fn delete_doc_chunks(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        embedding_model: &str,
+        doc_id: &str,
+        limit: usize,
+    ) -> Result<usize> {
+        let ids = self
+            .list_chunk_ids(owner_id, base_name, embedding_model, doc_id, limit)
+            .await?;
+        self.delete_chunks_by_ids(&ids).await
+    }
+
     pub async fn delete_doc_chunks_all(
         &self,
         owner_id: &str,
@@ -798,6 +1059,12 @@ impl WeaviateClient {
         embedding_model: &str,
         doc_id: &str,
     ) -> Result<usize> {
+        if let Ok(deleted) = self
+            .delete_doc_chunks_by_filter(owner_id, base_name, embedding_model, doc_id, None)
+            .await
+        {
+            return Ok(deleted);
+        }
         let mut total = 0;
         let limit = self.batch_size.max(64).min(2048);
         loop {
@@ -807,19 +1074,106 @@ impl WeaviateClient {
             if ids.is_empty() {
                 break;
             }
-            for id in ids {
-                let response = self
-                    .http
-                    .delete(format!("{}/v1/objects/{}", self.base_url, id))
-                    .headers(self.build_headers())
-                    .send()
-                    .await?;
-                if response.status().is_success() {
-                    total += 1;
-                }
-            }
+            total += self.delete_chunks_by_ids(&ids).await?;
         }
         Ok(total)
+    }
+
+    pub async fn delete_doc_chunks_except_created_at(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        embedding_model: &str,
+        doc_id: &str,
+        created_at: &str,
+    ) -> Result<usize> {
+        self.delete_doc_chunks_by_filter(
+            owner_id,
+            base_name,
+            embedding_model,
+            doc_id,
+            Some(created_at),
+        )
+        .await
+    }
+
+    async fn delete_doc_chunks_by_filter(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        embedding_model: &str,
+        doc_id: &str,
+        exclude_created_at: Option<&str>,
+    ) -> Result<usize> {
+        self.ensure_schema().await?;
+        let (query, variables) = if let Some(created_at) = exclude_created_at {
+            (
+                r#"
+                mutation DeleteChunks($owner: String!, $base: String!, $doc: String!, $model: String!, $created: String!) {
+                    Delete {
+                        KnowledgeChunk(
+                            where: {
+                                operator: And,
+                                operands: [
+                                    {path: ["owner_id"], operator: Equal, valueString: $owner},
+                                    {path: ["base_name"], operator: Equal, valueString: $base},
+                                    {path: ["doc_id"], operator: Equal, valueString: $doc},
+                                    {path: ["embedding_model"], operator: Equal, valueString: $model},
+                                    {path: ["created_at"], operator: NotEqual, valueDate: $created}
+                                ]
+                            }
+                        ) {
+                            matches
+                        }
+                    }
+                }
+                "#,
+                json!({
+                    "owner": owner_id,
+                    "base": base_name,
+                    "doc": doc_id,
+                    "model": embedding_model,
+                    "created": created_at
+                }),
+            )
+        } else {
+            (
+                r#"
+                mutation DeleteChunks($owner: String!, $base: String!, $doc: String!, $model: String!) {
+                    Delete {
+                        KnowledgeChunk(
+                            where: {
+                                operator: And,
+                                operands: [
+                                    {path: ["owner_id"], operator: Equal, valueString: $owner},
+                                    {path: ["base_name"], operator: Equal, valueString: $base},
+                                    {path: ["doc_id"], operator: Equal, valueString: $doc},
+                                    {path: ["embedding_model"], operator: Equal, valueString: $model}
+                                ]
+                            }
+                        ) {
+                            matches
+                        }
+                    }
+                }
+                "#,
+                json!({
+                    "owner": owner_id,
+                    "base": base_name,
+                    "doc": doc_id,
+                    "model": embedding_model
+                }),
+            )
+        };
+        let body = self.graphql_request(query, variables).await?;
+        let matches = body
+            .get("data")
+            .and_then(|value| value.get("Delete"))
+            .and_then(|value| value.get(WEAVIATE_CLASS))
+            .and_then(|value| value.get("matches"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        Ok(matches as usize)
     }
 
     async fn list_chunk_ids(
@@ -831,30 +1185,38 @@ impl WeaviateClient {
         limit: usize,
     ) -> Result<Vec<String>> {
         self.ensure_schema().await?;
-        let query = format!(
-            r#"{{ Get {{ {class}(limit: {limit}, where: {{operator: And, operands: [{{path: ["owner_id"], operator: Equal, valueString: "{owner}"}}, {{path: ["base_name"], operator: Equal, valueString: "{base}"}}, {{path: ["doc_id"], operator: Equal, valueString: "{doc}"}}, {{path: ["embedding_model"], operator: Equal, valueString: "{model}"}}]}}) {{ _additional {{ id }} }} }} }}"#,
-            class = WEAVIATE_CLASS,
-            owner = escape_graphql_string(owner_id),
-            base = escape_graphql_string(base_name),
-            doc = escape_graphql_string(doc_id),
-            model = escape_graphql_string(embedding_model),
-        );
-        let payload = json!({ "query": query });
-        let response = self
-            .http
-            .post(format!("{}/v1/graphql", self.base_url))
-            .headers(self.build_headers())
-            .json(&payload)
-            .send()
+        let query = r#"
+            query ListChunkIds($owner: String!, $base: String!, $doc: String!, $model: String!, $limit: Int!) {
+                Get {
+                    KnowledgeChunk(
+                        limit: $limit,
+                        where: {
+                            operator: And,
+                            operands: [
+                                {path: ["owner_id"], operator: Equal, valueString: $owner},
+                                {path: ["base_name"], operator: Equal, valueString: $base},
+                                {path: ["doc_id"], operator: Equal, valueString: $doc},
+                                {path: ["embedding_model"], operator: Equal, valueString: $model}
+                            ]
+                        }
+                    ) {
+                        _additional { id }
+                    }
+                }
+            }
+        "#;
+        let body = self
+            .graphql_request(
+                query,
+                json!({
+                    "owner": owner_id,
+                    "base": base_name,
+                    "doc": doc_id,
+                    "model": embedding_model,
+                    "limit": limit as i64
+                }),
+            )
             .await?;
-        let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
-            return Err(anyhow!("weaviate list ids failed: {detail}"));
-        }
-        if !status.is_success() {
-            return Err(anyhow!("weaviate list ids failed: {status} {body}"));
-        }
         let items = body
             .get("data")
             .and_then(|value| value.get("Get"))
@@ -886,10 +1248,6 @@ impl WeaviateClient {
         }
         headers
     }
-}
-
-fn escape_graphql_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('\"', "\\\"")
 }
 
 fn build_weaviate_property(name: &str, data_type: &str) -> Value {
@@ -999,14 +1357,40 @@ pub async fn embed_chunks(
     embed_texts(config, &inputs, timeout_s).await
 }
 
+fn build_weaviate_cache_key(config: &WeaviateConfig) -> String {
+    let url = config.url.trim().trim_end_matches('/');
+    let api_key = config.api_key.as_deref().unwrap_or("").trim();
+    format!("{url}|{api_key}|{}|{}", config.timeout_s, config.batch_size)
+}
+
 pub fn resolve_weaviate_client(config: &Config) -> Result<WeaviateClient> {
-    WeaviateClient::from_config(&config.vector_store.weaviate)
+    let weaviate = &config.vector_store.weaviate;
+    let key = build_weaviate_cache_key(weaviate);
+    if let Ok(mut guard) = WEAVIATE_CLIENT_CACHE
+        .get_or_init(|| StdMutex::new(None))
+        .lock()
+    {
+        if let Some(entry) = guard.as_ref() {
+            if entry.key == key {
+                return Ok(entry.client.clone());
+            }
+        }
+        let client = WeaviateClient::from_config(weaviate)
+            .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))?;
+        *guard = Some(WeaviateClientCache {
+            key,
+            client: client.clone(),
+        });
+        return Ok(client);
+    }
+    WeaviateClient::from_config(weaviate)
         .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))
 }
 
 pub async fn prepare_document(
     base: &KnowledgeBaseConfig,
     owner_id: Option<&str>,
+    storage: &dyn StorageBackend,
     root: &Path,
     doc_name: &str,
     doc_id: Option<&str>,
@@ -1014,6 +1398,7 @@ pub async fn prepare_document(
     previous_meta: Option<&VectorDocumentMeta>,
 ) -> Result<VectorDocumentMeta> {
     ensure_vector_base_config(base)?;
+    ensure_vector_documents_migrated(storage, owner_id, &base.name, root).await?;
     let chunk_size = resolve_chunk_size(base);
     let chunk_overlap = resolve_chunk_overlap(base);
     let owner_key = resolve_owner_key(owner_id);
@@ -1047,7 +1432,11 @@ pub async fn prepare_document(
         chunks: chunk_meta,
     };
     refresh_document_meta(&mut meta);
-    write_vector_document(root, &meta, content).await?;
+    let doc_id = meta.doc_id.clone();
+    with_document_lock(root, &doc_id, || async {
+        write_vector_document(storage, owner_id, &base.name, &meta, content).await
+    })
+    .await?;
     Ok(meta)
 }
 
@@ -1055,6 +1444,7 @@ pub async fn index_document(
     config: &Config,
     base: &KnowledgeBaseConfig,
     owner_id: Option<&str>,
+    storage: &dyn StorageBackend,
     root: &Path,
     doc_name: &str,
     doc_id: Option<&str>,
@@ -1062,6 +1452,7 @@ pub async fn index_document(
     previous_meta: Option<&VectorDocumentMeta>,
 ) -> Result<VectorDocumentMeta> {
     ensure_vector_base_config(base)?;
+    ensure_vector_documents_migrated(storage, owner_id, &base.name, root).await?;
     let embedding_name = base
         .embedding_model
         .as_deref()
@@ -1100,48 +1491,97 @@ pub async fn index_document(
     if chunks.is_empty() {
         return Err(anyhow!(i18n::t("error.empty_parse_result")));
     }
-    let timeout_s = embed_config.timeout_s.unwrap_or(120);
-    let vectors = embed_chunks(&embed_config, &chunks, timeout_s).await?;
-    let client = resolve_weaviate_client(config)?;
-    let _ = client
-        .delete_doc_chunks_all(&owner_key, &base.name, &embedding_name, &doc_id)
-        .await;
-    client
-        .upsert_chunks(
-            &owner_key,
-            &base.name,
-            &doc_id,
-            doc_name,
-            &embedding_name,
-            &chunks,
-            &vectors,
-        )
-        .await?;
-    for chunk in &mut chunk_meta {
-        if is_chunk_deleted(chunk) {
-            continue;
-        }
-        chunk.status = Some("embedded".to_string());
-    }
+    let previous_embedding = previous_meta
+        .map(|meta| meta.embedding_model.clone())
+        .filter(|value| !value.trim().is_empty());
+    let previous_chunk_ids = previous_meta
+        .map(|meta| {
+            meta.chunks
+                .iter()
+                .filter(|chunk| !is_chunk_deleted(chunk))
+                .map(|chunk| build_chunk_id(&doc_id, chunk.index))
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let new_chunk_ids: HashSet<String> =
+        chunks.iter().map(|chunk| chunk.chunk_id.clone()).collect();
+    let delete_ids: Vec<String> = previous_chunk_ids
+        .difference(&new_chunk_ids)
+        .cloned()
+        .collect();
     let created_at = previous_meta
         .map(|meta| meta.created_at)
         .unwrap_or_else(now_ts);
-    let updated_at = now_ts();
-    let mut meta = VectorDocumentMeta {
-        doc_id,
-        name: doc_name.to_string(),
-        embedding_model: embedding_name,
-        chunk_size,
-        chunk_overlap,
-        chunk_count: chunk_meta.len(),
-        status: "ready".to_string(),
-        created_at,
-        updated_at,
-        chunks: chunk_meta,
-    };
-    refresh_document_meta(&mut meta);
-    write_vector_document(root, &meta, content).await?;
-    Ok(meta)
+    let base_name = base.name.clone();
+    let doc_name = doc_name.to_string();
+    let lock_doc_id = doc_id.clone();
+    let embedding_name = embedding_name.clone();
+    let owner_key = owner_key.clone();
+    let result = with_document_lock(root, &lock_doc_id, move || async move {
+        let timeout_s = embed_config.timeout_s.unwrap_or(120);
+        let vectors = embed_chunks(&embed_config, &chunks, timeout_s).await?;
+        let client = resolve_weaviate_client(config)?;
+        let upserted_at = client
+            .upsert_chunks(
+                &owner_key,
+                &base_name,
+                &doc_id,
+                &doc_name,
+                &embedding_name,
+                &chunks,
+                &vectors,
+            )
+            .await?;
+        if !previous_chunk_ids.is_empty() {
+            if let Err(err) = client
+                .delete_doc_chunks_except_created_at(
+                    &owner_key,
+                    &base_name,
+                    &embedding_name,
+                    &doc_id,
+                    &upserted_at,
+                )
+                .await
+            {
+                if !delete_ids.is_empty() {
+                    let _ = client.delete_chunks_by_ids(&delete_ids).await;
+                } else {
+                    let _ = err;
+                }
+            }
+        }
+        if let Some(previous_embedding) = previous_embedding.as_ref() {
+            if previous_embedding != &embedding_name {
+                let _ = client
+                    .delete_doc_chunks_all(&owner_key, &base_name, previous_embedding, &doc_id)
+                    .await;
+            }
+        }
+        for chunk in &mut chunk_meta {
+            if is_chunk_deleted(chunk) {
+                continue;
+            }
+            chunk.status = Some("embedded".to_string());
+        }
+        let updated_at = now_ts();
+        let mut meta = VectorDocumentMeta {
+            doc_id,
+            name: doc_name,
+            embedding_model: embedding_name,
+            chunk_size,
+            chunk_overlap,
+            chunk_count: chunk_meta.len(),
+            status: "ready".to_string(),
+            created_at,
+            updated_at,
+            chunks: chunk_meta,
+        };
+        refresh_document_meta(&mut meta);
+        write_vector_document(storage, owner_id, &base_name, &meta, content).await?;
+        Ok::<VectorDocumentMeta, anyhow::Error>(meta)
+    })
+    .await?;
+    Ok(result)
 }
 
 pub fn ensure_unique_doc_name(name: &str, existing: &[VectorDocumentSummary]) -> Result<String> {

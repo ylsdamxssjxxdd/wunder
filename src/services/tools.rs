@@ -653,9 +653,13 @@ pub fn collect_prompt_tool_specs_with_language(
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": i18n::t_in_language("knowledge.tool.query.description", language)},
+                    "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": i18n::t_in_language("knowledge.tool.keywords.description", language)},
                     "limit": {"type": "integer", "minimum": 1, "description": i18n::t_in_language("knowledge.tool.limit.description", language)}
                 },
-                "required": ["query"]
+                "anyOf": [
+                    {"required": ["query"]},
+                    {"required": ["keywords"]}
+                ]
             }),
         });
     }
@@ -1017,15 +1021,9 @@ async fn execute_user_knowledge(
     alias: &UserToolAlias,
     args: &Value,
 ) -> Result<Value> {
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if query.is_empty() {
+    let Some(query) = resolve_query_text(args) else {
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
-    }
+    };
     let store = context
         .user_tool_store
         .ok_or_else(|| anyhow!(i18n::t("error.knowledge_base_not_found")))?;
@@ -1100,15 +1098,9 @@ async fn execute_knowledge_tool(
     base: &KnowledgeBaseConfig,
     args: &Value,
 ) -> Result<Value> {
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if query.is_empty() {
+    let Some(query) = resolve_query_text(args) else {
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
-    }
+    };
     if base.is_vector() {
         return execute_vector_knowledge(context, base, None, args).await;
     }
@@ -1159,71 +1151,125 @@ async fn execute_vector_knowledge(
     owner_id: Option<&str>,
     args: &Value,
 ) -> Result<Value> {
+    let keywords = extract_keywords(args);
     let query = args
         .get("query")
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim()
         .to_string();
-    if query.is_empty() {
+    let queries = if !keywords.is_empty() {
+        keywords
+    } else if !query.is_empty() {
+        vec![query.clone()]
+    } else {
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
-    }
+    };
     vector_knowledge::ensure_vector_base_config(base)?;
     let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
     let embed_config = vector_knowledge::resolve_embedding_model(context.config, embedding_name)?;
     let timeout_s = embed_config.timeout_s.unwrap_or(120);
-    let vectors = embed_texts(&embed_config, &[query.clone()], timeout_s).await?;
-    let vector = vectors
-        .get(0)
-        .ok_or_else(|| anyhow!("embedding response empty"))?;
+    let vectors = embed_texts(&embed_config, &queries, timeout_s).await?;
+    if vectors.len() != queries.len() {
+        return Err(anyhow!("embedding response size mismatch"));
+    }
     let client = vector_knowledge::resolve_weaviate_client(context.config)?;
     let owner_key = vector_knowledge::resolve_owner_key(owner_id);
     let top_k = extract_limit(args).unwrap_or_else(|| vector_knowledge::resolve_top_k(base));
-    let mut hits = client
-        .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
-        .await?;
-    if let Some(threshold) = base.score_threshold {
-        hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+    let base_name = base.name.clone();
+    let embedding_name = embedding_name.to_string();
+    let query_results =
+        futures::future::join_all(vectors.into_iter().enumerate().map(|(index, vector)| {
+            let client = client.clone();
+            let owner_key = owner_key.clone();
+            let base_name = base_name.clone();
+            let embedding_name = embedding_name.clone();
+            let keyword = queries.get(index).cloned().unwrap_or_default();
+            async move {
+                let mut hits = client
+                    .query_chunks(&owner_key, &base_name, &embedding_name, &vector, top_k)
+                    .await?;
+                if let Some(threshold) = base.score_threshold {
+                    hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                }
+                if hits.len() > top_k {
+                    hits.truncate(top_k);
+                }
+                Ok::<_, anyhow::Error>((index, keyword, hits))
+            }
+        }))
+        .await;
+    let mut aggregated = Vec::new();
+    for result in query_results {
+        aggregated.push(result?);
     }
-    if hits.len() > top_k {
-        hits.truncate(top_k);
-    }
+    aggregated.sort_by_key(|(index, _, _)| *index);
     if let Some(emitter) = context.event_emitter.as_ref() {
-        emitter.emit(
-            "knowledge_request",
-            json!({
-                "knowledge_base": base.name,
-                "vector": true,
-                "embedding_model": embedding_name,
-                "owner_id": owner_key,
-                "query": query,
-                "limit": top_k,
-                "score_threshold": base.score_threshold
-            }),
-        );
+        let mut payload = json!({
+            "knowledge_base": base.name,
+            "vector": true,
+            "embedding_model": embedding_name.clone(),
+            "owner_id": owner_key,
+            "limit": top_k,
+            "score_threshold": base.score_threshold
+        });
+        if queries.len() == 1 {
+            payload["query"] = json!(queries[0].clone());
+        } else {
+            payload["keywords"] = json!(queries.clone());
+        }
+        emitter.emit("knowledge_request", payload);
     }
-    let documents = hits
-        .into_iter()
-        .map(|hit| {
-            json!({
-                "doc_id": hit.doc_id,
-                "document": hit.doc_name,
-                "name": hit.doc_name,
-                "chunk_index": hit.chunk_index,
-                "start": hit.start,
-                "end": hit.end,
-                "content": hit.content,
-                "embedding_model": hit.embedding_model,
-                "score": hit.score
+    let mut grouped_results = Vec::new();
+    let mut flat_documents = Vec::new();
+    for (_, keyword, hits) in aggregated {
+        let documents = hits
+            .into_iter()
+            .map(|hit| {
+                let mut doc = json!({
+                    "doc_id": hit.doc_id,
+                    "document": hit.doc_name,
+                    "name": hit.doc_name,
+                    "chunk_index": hit.chunk_index,
+                    "start": hit.start,
+                    "end": hit.end,
+                    "content": hit.content,
+                    "embedding_model": hit.embedding_model,
+                    "score": hit.score
+                });
+                if queries.len() > 1 {
+                    doc["keyword"] = json!(keyword);
+                }
+                doc
             })
-        })
-        .collect::<Vec<_>>();
-    Ok(json!({
+            .collect::<Vec<_>>();
+        if queries.len() > 1 {
+            flat_documents.extend(documents.clone());
+        }
+        grouped_results.push(json!({
+            "keyword": keyword,
+            "documents": documents
+        }));
+    }
+    let mut response = json!({
         "knowledge_base": base.name,
         "vector": true,
-        "embedding_model": embedding_name,
-        "documents": documents
-    }))
+        "embedding_model": embedding_name.clone(),
+        "queries": grouped_results
+    });
+    if queries.len() == 1 {
+        if let Some(entry) = response
+            .get("queries")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|value| value.get("documents"))
+        {
+            response["documents"] = entry.clone();
+        }
+    } else {
+        response["documents"] = json!(flat_documents);
+    }
+    Ok(response)
 }
 
 fn split_mcp_target(target: &str) -> Option<(&str, &str)> {
@@ -1244,6 +1290,42 @@ fn find_knowledge_base(config: &Config, name: &str) -> Option<KnowledgeBaseConfi
         .iter()
         .find(|base| base.enabled && base.name == name && !base.root.trim().is_empty())
         .cloned()
+}
+
+fn extract_keywords(args: &Value) -> Vec<String> {
+    let Some(Value::Array(items)) = args.get("keywords") else {
+        return Vec::new();
+    };
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        let Some(text) = item.as_str() else {
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            output.push(trimmed.to_string());
+        }
+    }
+    output
+}
+
+fn resolve_query_text(args: &Value) -> Option<String> {
+    if let Some(text) = args.get("query").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let keywords = extract_keywords(args);
+    if keywords.is_empty() {
+        None
+    } else {
+        Some(keywords.join(" "))
+    }
 }
 
 fn extract_limit(args: &Value) -> Option<usize> {

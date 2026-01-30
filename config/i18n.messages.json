@@ -535,6 +535,10 @@
     "en-US": "Query text",
     "zh-CN": "查询内容"
   },
+  "knowledge.tool.keywords.description": {
+    "en-US": "Keyword list (optional; vector knowledge searches each keyword).",
+    "zh-CN": "关键词列表（可选，向量知识库会逐个检索）"
+  },
   "mcp.instructions": {
     "en-US": "Call the wunder agent to execute a task and return the final response.",
     "zh-CN": "调用 wunder 智能体执行任务并返回最终回复。"

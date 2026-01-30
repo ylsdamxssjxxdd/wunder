@@ -390,14 +390,15 @@ impl Orchestrator {
         }
 
         let user_content = self.build_compaction_user_content(&source_messages);
-        if user_content.trim().is_empty() {
+        let has_candidates = !source_messages.is_empty();
+        if user_content.trim().is_empty() && (!force || !has_candidates) {
             emitter
                 .emit(
                     "compaction",
                     json!({
                         "reason": if should_compact_by_history { "history" } else { "overflow" },
                         "status": "skipped",
-                        "skip_reason": "no_candidates",
+                        "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
                         "history_usage": history_usage,
                         "context_tokens": history_usage,
                         "history_threshold": history_threshold,
@@ -738,6 +739,7 @@ impl Orchestrator {
             .await;
         system_prompt = self.append_memory_prompt(user_id, system_prompt).await;
 
+        let _ = self.workspace.flush_writes_async().await;
         let history_manager = HistoryManager;
         let context_manager = ContextManager;
         let mut messages = vec![json!({ "role": "system", "content": system_prompt })];

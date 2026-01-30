@@ -261,21 +261,36 @@ async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -
     };
     let base = build_vector_perf_base(&base_name, &root);
     let content = build_vector_flow_content(&context.run_id);
+    let storage = context.state.storage.clone();
     run_concurrent(concurrency, move |index| {
         let base = base.clone();
         let root = root.clone();
         let content = content.clone();
+        let storage = storage.clone();
         async move {
             let doc_name = format!("perf_doc_{}", index);
             let started = Instant::now();
             let meta = vector_knowledge::prepare_document(
-                &base, None, &root, &doc_name, None, &content, None,
+                &base,
+                None,
+                storage.as_ref(),
+                &root,
+                &doc_name,
+                None,
+                &content,
+                None,
             )
             .await
             .map_err(|err| err.to_string())?;
-            let content = vector_knowledge::read_vector_document_content(&root, &meta.doc_id)
-                .await
-                .map_err(|err| err.to_string())?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                None,
+                &base.name,
+                &root,
+                &meta.doc_id,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
             let _ = vector_knowledge::build_chunk_previews(&content, &meta).await;
             Ok(started.elapsed().as_secs_f64() * 1000.0)
         }
@@ -484,6 +499,11 @@ async fn cleanup_perf_dir(context: &PerformanceContext) {
 
 async fn cleanup_perf_vector_dir(context: &PerformanceContext) {
     let base_name = format!("perf_vector_{}", context.run_id);
+    let owner_key = vector_knowledge::resolve_owner_key(None);
+    let _ = context
+        .state
+        .storage
+        .delete_vector_documents_by_base(&owner_key, &base_name);
     let root = vector_knowledge::resolve_vector_root(None, &base_name, false);
     let Ok(root) = root else {
         return;

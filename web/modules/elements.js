@@ -328,6 +328,8 @@ export const elements = {
   userAccountToolEmpty: document.getElementById("userAccountToolEmpty"),
   orgUnitRefreshBtn: document.getElementById("orgUnitRefreshBtn"),
   orgUnitCreateBtn: document.getElementById("orgUnitCreateBtn"),
+  orgUnitExpandAllBtn: document.getElementById("orgUnitExpandAllBtn"),
+  orgUnitCollapseAllBtn: document.getElementById("orgUnitCollapseAllBtn"),
   orgUnitTree: document.getElementById("orgUnitTree"),
   orgUnitDetailTitle: document.getElementById("orgUnitDetailTitle"),
   orgUnitDetailMeta: document.getElementById("orgUnitDetailMeta"),

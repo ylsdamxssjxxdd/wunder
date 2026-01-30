@@ -34,6 +34,7 @@ pub struct AppState {
     pub user_store: Arc<UserStore>,
     pub throughput: ThroughputManager,
     pub evaluation: EvaluationManager,
+    pub storage: Arc<dyn StorageBackend>,
 }
 
 impl AppState {
@@ -98,6 +99,7 @@ impl AppState {
             user_store,
             throughput,
             evaluation,
+            storage,
         })
     }
 

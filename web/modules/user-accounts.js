@@ -19,6 +19,8 @@ const ensureUserAccountsState = () => {
       selectedId: "",
       loaded: false,
       search: "",
+      loading: false,
+      pendingReload: false,
       pagination: {
         pageSize: DEFAULT_USER_ACCOUNT_PAGE_SIZE,
         page: 1,
@@ -238,8 +240,9 @@ const renderUserAccountPagination = () => {
     pages: totalPages,
     size: pageSize,
   });
-  userAccountPrevBtn.disabled = currentPage <= 1;
-  userAccountNextBtn.disabled = currentPage >= totalPages;
+  const busy = state.userAccounts.loading;
+  userAccountPrevBtn.disabled = busy || currentPage <= 1;
+  userAccountNextBtn.disabled = busy || currentPage >= totalPages;
 };
 
 const renderUserAccountRows = () => {
@@ -251,20 +254,6 @@ const renderUserAccountRows = () => {
     return;
   }
   elements.userAccountEmpty.style.display = "none";
-  const unitOptions = getOrgUnitOptions({
-    includeRoot: true,
-    rootLabel: t("userAccounts.unit.default"),
-  });
-  let unitSelectTemplate = null;
-  if (unitOptions.length) {
-    unitSelectTemplate = document.createElement("select");
-    unitOptions.forEach((option) => {
-      const node = document.createElement("option");
-      node.value = option.value;
-      node.textContent = option.label;
-      unitSelectTemplate.appendChild(node);
-    });
-  }
   const fragment = document.createDocumentFragment();
   state.userAccounts.list.forEach((user) => {
     const row = document.createElement("tr");
@@ -276,18 +265,8 @@ const renderUserAccountRows = () => {
     emailCell.textContent = user.email || "-";
 
     const unitCell = document.createElement("td");
-    if (!unitSelectTemplate) {
-      unitCell.textContent = resolveUnitLabel(user);
-    } else {
-      const unitSelect = unitSelectTemplate.cloneNode(true);
-      unitSelect.value = user.unit_id || "";
-      unitSelect.title = resolveUnitLabel(user);
-      unitSelect.addEventListener("change", (event) => {
-        event.stopPropagation();
-        updateUserAccount(user.id, { unit_id: unitSelect.value });
-      });
-      unitCell.appendChild(unitSelect);
-    }
+    unitCell.textContent = resolveUnitLabel(user);
+    unitCell.title = resolveUnitLabel(user);
 
     const statusCell = document.createElement("td");
     const statusSelect = document.createElement("select");
@@ -347,9 +326,30 @@ const closeModal = (modal) => {
 
 const getUserAccountSearchKeyword = () => String(state.userAccounts.search || "").trim();
 
+const setUserAccountsLoading = (loading) => {
+  state.userAccounts.loading = loading;
+  if (elements.userAccountRefreshBtn) {
+    elements.userAccountRefreshBtn.disabled = loading;
+  }
+  if (elements.userAccountPrevBtn) {
+    elements.userAccountPrevBtn.disabled = loading || state.userAccounts.pagination.page <= 1;
+  }
+  if (elements.userAccountNextBtn) {
+    const total = Number(state.userAccounts.pagination?.total) || 0;
+    const pageSize = resolveUserAccountPageSize();
+    const totalPages = total ? Math.max(1, Math.ceil(total / pageSize)) : 1;
+    elements.userAccountNextBtn.disabled =
+      loading || state.userAccounts.pagination.page >= totalPages;
+  }
+};
+
 export const loadUserAccounts = async () => {
   ensureUserAccountsState();
   if (!ensureUserAccountElements()) {
+    return;
+  }
+  if (state.userAccounts.loading) {
+    state.userAccounts.pendingReload = true;
     return;
   }
   try {
@@ -370,9 +370,12 @@ export const loadUserAccounts = async () => {
     params.set("keyword", keyword);
   }
   const endpoint = `${wunderBase}/admin/user_accounts?${params.toString()}`;
-  elements.userAccountTableBody.textContent = "";
-  elements.userAccountEmpty.textContent = t("common.loading");
-  elements.userAccountEmpty.style.display = "block";
+  const shouldShowLoading = !state.userAccounts.loaded || !state.userAccounts.list.length;
+  if (shouldShowLoading) {
+    elements.userAccountEmpty.textContent = t("common.loading");
+    elements.userAccountEmpty.style.display = "block";
+  }
+  setUserAccountsLoading(true);
   try {
     const response = await fetch(endpoint);
     if (!response.ok) {
@@ -394,6 +397,14 @@ export const loadUserAccounts = async () => {
     elements.userAccountEmpty.style.display = "block";
     renderUserAccountPagination();
     throw error;
+  } finally {
+    setUserAccountsLoading(false);
+    if (state.userAccounts.pendingReload) {
+      state.userAccounts.pendingReload = false;
+      loadUserAccounts().catch((error) => {
+        appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+      });
+    }
   }
 };
 

@@ -25,6 +25,8 @@ const ensureOrgUnitElements = () => {
   const requiredKeys = [
     "orgUnitRefreshBtn",
     "orgUnitCreateBtn",
+    "orgUnitExpandAllBtn",
+    "orgUnitCollapseAllBtn",
     "orgUnitTree",
     "orgUnitDetailTitle",
     "orgUnitDetailMeta",
@@ -174,6 +176,32 @@ const computeDescendantIds = (unit, units) => {
   return output;
 };
 
+const collapseAllOrgUnits = () => {
+  const tree = state.orgUnits.tree || [];
+  if (!tree.length) {
+    return;
+  }
+  const collapsed = new Set();
+  const stack = [...tree];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node?.unit_id) {
+      continue;
+    }
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      collapsed.add(node.unit_id);
+      node.children.forEach((child) => stack.push(child));
+    }
+  }
+  state.orgUnits.collapsed = collapsed;
+  renderOrgUnitTree();
+};
+
+const expandAllOrgUnits = () => {
+  state.orgUnits.collapsed = new Set();
+  renderOrgUnitTree();
+};
+
 const renderOrgUnitTree = () => {
   const tree = elements.orgUnitTree;
   if (!tree) {
@@ -231,7 +259,7 @@ const renderOrgUnitTree = () => {
       toggle.appendChild(caret);
     }
     const icon = document.createElement("i");
-    icon.className = hasChildren ? "fa-solid fa-folder" : "fa-regular fa-folder";
+    icon.className = hasChildren ? "fa-solid fa-folder" : "fa-regular fa-file-lines";
     const name = document.createElement("span");
     name.className = "skill-tree-name";
     name.textContent = node.name || node.unit_id || "-";
@@ -491,6 +519,8 @@ export const initOrgUnitsPanel = () => {
       appendLog(t("orgUnits.toast.loadFailed", { message: error.message }));
     }
   });
+  elements.orgUnitExpandAllBtn.addEventListener("click", expandAllOrgUnits);
+  elements.orgUnitCollapseAllBtn.addEventListener("click", collapseAllOrgUnits);
   elements.orgUnitCreateBtn.addEventListener("click", () => openCreateModal(""));
   elements.orgUnitAddChildBtn.addEventListener("click", () => {
     const selected = resolveSelectedUnit();

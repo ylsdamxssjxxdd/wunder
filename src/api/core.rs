@@ -238,9 +238,13 @@ async fn wunder_tools(
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": i18n::t("knowledge.tool.query.description")},
+            "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": i18n::t("knowledge.tool.keywords.description")},
             "limit": {"type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description")}
         },
-        "required": ["query"]
+        "anyOf": [
+            {"required": ["query"]},
+            {"required": ["keywords"]}
+        ]
     });
     let mut knowledge_tools = Vec::new();
     for base in &config.knowledge.bases {
@@ -545,9 +549,13 @@ fn build_knowledge_schema() -> Value {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": i18n::t("knowledge.tool.query.description")},
+            "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": i18n::t("knowledge.tool.keywords.description")},
             "limit": {"type": "integer", "minimum": 1, "description": i18n::t("knowledge.tool.limit.description")}
         },
-        "required": ["query"]
+        "anyOf": [
+            {"required": ["query"]},
+            {"required": ["keywords"]}
+        ]
     })
 }
 

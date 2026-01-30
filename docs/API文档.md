@@ -78,6 +78,7 @@
   - `shared_tools_selected`：共享工具勾选列表（可选）
 - 说明：
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
@@ -157,7 +158,7 @@
   - `user_id`：用户唯一标识
   - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
-- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `vector_knowledge/users/<user_id>/<base>`。
+- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
 
 ### 4.1.2.7 `/wunder/user_tools/knowledge/files`
 
@@ -284,11 +285,12 @@
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
   - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
   - `skills`：技能列表（name/description/input_schema）
-  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
+- `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
   - `shared_tools_selected`：共享工具勾选列表（字符串数组）
 - 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
+- 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 
 ### 4.1.2.15 `/wunder/user_tools/catalog`
 
@@ -928,7 +930,7 @@
   - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-  - 说明：当 root 为空时，字面知识库会自动创建 `./knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>`，并要求 `embedding_model`
+- 说明：当 root 为空时，字面知识库会自动创建 `./knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 
@@ -1630,7 +1632,7 @@
 - 当前 Rust 版会输出 `progress`, `llm_output_delta`, `llm_output`, `context_usage`, `quota_usage`, `tool_call`, `tool_result`, `plan_update`, `question_panel`, `final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
-- `event: knowledge_request`：知识库检索模型请求体（调试用）
+- `event: knowledge_request`：知识库检索模型请求体（调试用，包含 `query` 或 `keywords`、`limit`、`embedding_model` 等）
 - `event: llm_output_delta`：模型流式增量片段（调试用，`data.delta` 为正文增量，`data.reasoning_delta` 为思考增量，需按顺序拼接）
   - 说明：断线续传回放时可能携带 event_id_start/event_id_end 用于标记合并范围。
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）

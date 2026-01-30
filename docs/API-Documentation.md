@@ -57,6 +57,7 @@
   - `shared_tools`: shared tools list (name/description/input_schema/owner_id)
 - Notes:
   - Custom/shared tools are named as `user_id@tool` (MCP: `user_id@server@tool`).
+  - Knowledge tools accept `query` or `keywords` list (one required) with optional `limit`; vector knowledge searches each keyword and returns grouped `queries` results (multi-keyword includes `keyword` on documents).
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -540,7 +541,7 @@
 - Round fields: `data.user_round` (user turn), `data.model_round` (model turn).
 - `event: progress`: progress summary
 - `event: llm_request`: model request payload (debug)
-- `event: knowledge_request`: knowledge request payload (debug)
+- `event: knowledge_request`: knowledge request payload (debug; includes `query` or `keywords`, `limit`, `embedding_model`, etc.)
 - `event: llm_output_delta`: stream delta (`data.delta`, `data.reasoning_delta`)
 - `event: llm_stream_retry`: retry info
 - `event: llm_output`: final aggregated output

@@ -676,10 +676,34 @@
           <div class="tips" data-i18n="orgUnits.tip">
             维护单位层级结构与负责人，支持新增、调整与删除。
           </div>
-          <div class="management-layout org-units-layout">
+            <div class="management-layout org-units-layout">
             <div class="management-list">
               <div class="list-header">
                 <label data-i18n="orgUnits.tree.title">单位结构</label>
+                <div class="header-actions">
+                  <button
+                    id="orgUnitExpandAllBtn"
+                    class="secondary btn-with-icon icon-only"
+                    type="button"
+                    title="全部展开"
+                    aria-label="全部展开"
+                    data-i18n-title="orgUnits.tree.expandAll"
+                    data-i18n-aria-label="orgUnits.tree.expandAll"
+                  >
+                    <i class="fa-solid fa-square-plus"></i>
+                  </button>
+                  <button
+                    id="orgUnitCollapseAllBtn"
+                    class="secondary btn-with-icon icon-only"
+                    type="button"
+                    title="全部折叠"
+                    aria-label="全部折叠"
+                    data-i18n-title="orgUnits.tree.collapseAll"
+                    data-i18n-aria-label="orgUnits.tree.collapseAll"
+                  >
+                    <i class="fa-solid fa-square-minus"></i>
+                  </button>
+                </div>
               </div>
               <div id="orgUnitTree" class="org-unit-tree"></div>
             </div>

@@ -3,7 +3,7 @@ use crate::i18n;
 use crate::storage::{
     ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord,
-    UserToolAccessRecord,
+    UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -186,20 +186,7 @@ impl SqliteStorage {
     }
 
     fn ensure_user_tool_access_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(user_tool_access)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
-        }
-        if !columns.contains("blocked_tools") {
-            conn.execute(
-                "ALTER TABLE user_tool_access ADD COLUMN blocked_tools TEXT",
-                [],
-            )?;
-        }
+        let _ = conn;
         Ok(())
     }
 
@@ -477,7 +464,6 @@ impl StorageBackend for SqliteStorage {
             CREATE TABLE IF NOT EXISTS user_tool_access (
               user_id TEXT PRIMARY KEY,
               allowed_tools TEXT,
-              blocked_tools TEXT,
               updated_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -517,6 +503,23 @@ impl StorageBackend for SqliteStorage {
               blocked_agent_ids TEXT,
               updated_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS vector_documents (
+              doc_id TEXT PRIMARY KEY,
+              owner_id TEXT NOT NULL,
+              base_name TEXT NOT NULL,
+              doc_name TEXT NOT NULL,
+              embedding_model TEXT NOT NULL,
+              chunk_size INTEGER NOT NULL,
+              chunk_overlap INTEGER NOT NULL,
+              chunk_count INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              content TEXT NOT NULL,
+              chunks_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_vector_documents_owner_base
+              ON vector_documents (owner_id, base_name, updated_at);
             "#,
         )?;
         self.ensure_user_account_quota_columns(&conn)?;
@@ -2455,6 +2458,46 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
+    fn upsert_user_accounts(&self, records: &[UserAccountRecord]) -> Result<()> {
+        self.ensure_initialized()?;
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction()?;
+        for record in records {
+            let roles = Self::string_list_to_json(&record.roles);
+            tx.execute(
+                "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
+                 daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
+                 roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
+                 daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
+                 is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
+                params![
+                    record.user_id,
+                    record.username,
+                    record.email,
+                    record.password_hash,
+                    roles,
+                    record.status,
+                    record.access_level,
+                    record.unit_id,
+                    record.daily_quota,
+                    record.daily_quota_used,
+                    record.daily_quota_date,
+                    if record.is_demo { 1 } else { 0 },
+                    record.created_at,
+                    record.updated_at,
+                    record.last_login_at
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn delete_org_unit(&self, unit_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = unit_id.trim();
@@ -2725,11 +2768,11 @@ impl StorageBackend for SqliteStorage {
             return Ok(None);
         }
         let conn = self.open()?;
-        let row: Option<(Option<String>, Option<String>, f64)> = conn
+        let row: Option<(Option<String>, f64)> = conn
             .query_row(
-                "SELECT allowed_tools, blocked_tools, updated_at FROM user_tool_access WHERE user_id = ?",
+                "SELECT allowed_tools, updated_at FROM user_tool_access WHERE user_id = ?",
                 params![cleaned],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         let Some(raw) = row else {
@@ -2738,8 +2781,7 @@ impl StorageBackend for SqliteStorage {
         Ok(Some(UserToolAccessRecord {
             user_id: cleaned.to_string(),
             allowed_tools: raw.0.map(|value| Self::parse_string_list(Some(value))),
-            blocked_tools: Self::parse_string_list(raw.1),
-            updated_at: raw.2,
+            updated_at: raw.1,
         }))
     }
 
@@ -2747,7 +2789,6 @@ impl StorageBackend for SqliteStorage {
         &self,
         user_id: &str,
         allowed_tools: Option<&Vec<String>>,
-        blocked_tools: Option<&Vec<String>>,
     ) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
@@ -2755,18 +2796,15 @@ impl StorageBackend for SqliteStorage {
             return Ok(());
         }
         let conn = self.open()?;
-        if allowed_tools.is_some() || blocked_tools.is_some() {
+        if allowed_tools.is_some() {
             let payload = allowed_tools
-                .map(|value| Self::string_list_to_json(value))
-                .unwrap_or_else(|| "[]".to_string());
-            let blocked_payload = blocked_tools
                 .map(|value| Self::string_list_to_json(value))
                 .unwrap_or_else(|| "[]".to_string());
             let now = Self::now_ts();
             conn.execute(
-                "INSERT INTO user_tool_access (user_id, allowed_tools, blocked_tools, updated_at) VALUES (?, ?, ?, ?) \
-                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = excluded.allowed_tools, blocked_tools = excluded.blocked_tools, updated_at = excluded.updated_at",
-                params![cleaned, payload, blocked_payload, now],
+                "INSERT INTO user_tool_access (user_id, allowed_tools, updated_at) VALUES (?, ?, ?) \
+                 ON CONFLICT(user_id) DO UPDATE SET allowed_tools = excluded.allowed_tools, updated_at = excluded.updated_at",
+                params![cleaned, payload, now],
             )?;
         } else {
             conn.execute(
@@ -3018,6 +3056,136 @@ impl StorageBackend for SqliteStorage {
         let affected = conn.execute(
             "DELETE FROM user_agents WHERE user_id = ? AND agent_id = ?",
             params![cleaned_user, cleaned_agent],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO vector_documents \
+             (doc_id, owner_id, base_name, doc_name, embedding_model, chunk_size, chunk_overlap, chunk_count, status, created_at, updated_at, content, chunks_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(doc_id) DO UPDATE SET \
+             owner_id = excluded.owner_id, \
+             base_name = excluded.base_name, \
+             doc_name = excluded.doc_name, \
+             embedding_model = excluded.embedding_model, \
+             chunk_size = excluded.chunk_size, \
+             chunk_overlap = excluded.chunk_overlap, \
+             chunk_count = excluded.chunk_count, \
+             status = excluded.status, \
+             created_at = excluded.created_at, \
+             updated_at = excluded.updated_at, \
+             content = excluded.content, \
+             chunks_json = excluded.chunks_json",
+            params![
+                record.doc_id,
+                record.owner_id,
+                record.base_name,
+                record.doc_name,
+                record.embedding_model,
+                record.chunk_size,
+                record.chunk_overlap,
+                record.chunk_count,
+                record.status,
+                record.created_at,
+                record.updated_at,
+                record.content,
+                record.chunks_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_vector_document(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<Option<VectorDocumentRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT doc_id, owner_id, base_name, doc_name, embedding_model, chunk_size, chunk_overlap, chunk_count, status, created_at, updated_at, content, chunks_json \
+                 FROM vector_documents WHERE doc_id = ? AND owner_id = ? AND base_name = ?",
+                params![doc_id, owner_id, base_name],
+                |row| {
+                    Ok(VectorDocumentRecord {
+                        doc_id: row.get(0)?,
+                        owner_id: row.get(1)?,
+                        base_name: row.get(2)?,
+                        doc_name: row.get(3)?,
+                        embedding_model: row.get(4)?,
+                        chunk_size: row.get::<_, i64>(5)?,
+                        chunk_overlap: row.get::<_, i64>(6)?,
+                        chunk_count: row.get::<_, i64>(7)?,
+                        status: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                        content: row.get(11)?,
+                        chunks_json: row.get(12)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_vector_document_summaries(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+    ) -> Result<Vec<VectorDocumentSummaryRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT doc_id, doc_name, status, chunk_count, embedding_model, updated_at \
+             FROM vector_documents WHERE owner_id = ? AND base_name = ? \
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map(params![owner_id, base_name], |row| {
+            Ok(VectorDocumentSummaryRecord {
+                doc_id: row.get(0)?,
+                doc_name: row.get(1)?,
+                status: row.get(2)?,
+                chunk_count: row.get::<_, i64>(3)?,
+                embedding_model: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(item) = row {
+                output.push(item);
+            }
+        }
+        Ok(output)
+    }
+
+    fn delete_vector_document(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM vector_documents WHERE doc_id = ? AND owner_id = ? AND base_name = ?",
+            params![doc_id, owner_id, base_name],
+        )?;
+        Ok(affected > 0)
+    }
+
+    fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM vector_documents WHERE owner_id = ? AND base_name = ?",
+            params![owner_id, base_name],
         )?;
         Ok(affected as i64)
     }

@@ -25,7 +25,7 @@ use crate::user_store::UserStore;
 use crate::vector_knowledge;
 use crate::{
     org_units,
-    storage::{OrgUnitRecord, UserAccountRecord},
+    storage::{OrgUnitRecord, StorageBackend, UserAccountRecord},
 };
 use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
@@ -49,6 +49,9 @@ use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::ZipArchive;
+
+const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -1489,7 +1492,7 @@ async fn admin_knowledge_update(
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    cleanup_removed_vector_roots(removed_vector_bases).await;
+    cleanup_removed_vector_roots(state.storage.clone(), removed_vector_bases).await;
     Ok(Json(
         json!({ "knowledge": { "bases": updated.knowledge.bases } }),
     ))
@@ -1513,8 +1516,10 @@ fn collect_removed_vector_bases(
         .collect()
 }
 
-async fn cleanup_removed_vector_roots(bases: Vec<String>) {
+async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: Vec<String>) {
     for name in bases {
+        let owner_key = vector_knowledge::resolve_owner_key(None);
+        let _ = storage.delete_vector_documents_by_base(&owner_key, &name);
         let root = match vector_knowledge::resolve_vector_root(None, &name, false) {
             Ok(path) => path,
             Err(err) => {
@@ -1699,9 +1704,10 @@ async fn admin_knowledge_docs(
     let base = resolve_knowledge_base(&config, &query.base)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let docs = vector_knowledge::list_vector_documents(&root)
-        .await
-        .map_err(vector_error_response)?;
+    let docs =
+        vector_knowledge::list_vector_documents(state.storage.as_ref(), None, &base.name, &root)
+            .await
+            .map_err(vector_error_response)?;
     Ok(Json(json!({ "base": query.base, "docs": docs })))
 }
 
@@ -1713,12 +1719,24 @@ async fn admin_knowledge_doc(
     let base = resolve_knowledge_base(&config, &query.base)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let meta = vector_knowledge::read_vector_document_meta(
+        state.storage.as_ref(),
+        None,
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(
+        state.storage.as_ref(),
+        None,
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
     Ok(Json(
         json!({ "base": query.base, "doc": meta, "content": content }),
     ))
@@ -1732,19 +1750,45 @@ async fn admin_knowledge_doc_delete(
     let base = resolve_knowledge_base(&config, &query.base)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let client =
-        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-    let owner_key = vector_knowledge::resolve_owner_key(None);
-    let deleted = client
-        .delete_doc_chunks_all(&owner_key, &base.name, &meta.embedding_model, &meta.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    vector_knowledge::delete_vector_document_files(&root, &meta.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let root_for_lock = root.clone();
+    let doc_id = query.doc_id.clone();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let (meta, deleted) = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let owner_key = vector_knowledge::resolve_owner_key(None);
+            let deleted = client
+                .delete_doc_chunks_all(&owner_key, &base_name, &meta.embedding_model, &meta.doc_id)
+                .await
+                .map_err(vector_error_response)?;
+            vector_knowledge::delete_vector_document_files(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &meta.doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok((meta, deleted))
+        }
+    })
+    .await?;
     Ok(Json(json!({
         "ok": true,
         "deleted": deleted,
@@ -1761,12 +1805,24 @@ async fn admin_knowledge_chunks(
     let base = resolve_knowledge_base(&config, &query.base)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let meta = vector_knowledge::read_vector_document_meta(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, &query.doc_id)
-        .await
-        .map_err(vector_error_response)?;
+    let meta = vector_knowledge::read_vector_document_meta(
+        state.storage.as_ref(),
+        None,
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
+    let content = vector_knowledge::read_vector_document_content(
+        state.storage.as_ref(),
+        None,
+        &base.name,
+        &root,
+        &query.doc_id,
+    )
+    .await
+    .map_err(vector_error_response)?;
     let chunks = vector_knowledge::build_chunk_previews(&content, &meta).await;
     Ok(Json(json!({
         "base": query.base,
@@ -1876,34 +1932,66 @@ async fn admin_knowledge_chunk_update(
     let base = resolve_knowledge_base(&config, base_name)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let chunk = meta
-        .chunks
-        .iter_mut()
-        .find(|chunk| chunk.index == payload.chunk_index)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.knowledge_chunk_not_found"),
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
             )
-        })?;
-    if chunk.status.as_deref() == Some("deleted") {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.knowledge_chunk_deleted"),
-        ));
-    }
-    chunk.content = Some(content_text.to_string());
-    chunk.status = Some("pending".to_string());
-    vector_knowledge::refresh_document_meta(&mut meta);
-    vector_knowledge::write_vector_document(&root, &meta, &content)
-        .await
-        .map_err(vector_error_response)?;
+            .await
+            .map_err(vector_error_response)?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.knowledge_chunk_deleted"),
+                ));
+            }
+            chunk.content = Some(content_text.to_string());
+            chunk.status = Some("pending".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &meta,
+                &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
     Ok(Json(json!({ "ok": true, "doc": meta })))
 }
 
@@ -1929,76 +2017,109 @@ async fn admin_knowledge_chunk_embed(
     let base = resolve_knowledge_base(&config, base_name)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let chunk = meta
-        .chunks
-        .iter_mut()
-        .find(|chunk| chunk.index == payload.chunk_index)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.knowledge_chunk_not_found"),
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
             )
-        })?;
-    if chunk.status.as_deref() == Some("deleted") {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.knowledge_chunk_deleted"),
-        ));
-    }
-    let embedding_name = base
-        .embedding_model
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    meta.embedding_model = embedding_name.clone();
-    let content_chars: Vec<char> = content.chars().collect();
-    let chunk_content = vector_knowledge::resolve_chunk_content(&content_chars, chunk);
-    if chunk_content.trim().is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let vector_chunk = vector_knowledge::VectorChunk {
-        index: chunk.index,
-        start: chunk.start,
-        end: chunk.end,
-        content: chunk_content,
-        chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
-    };
-    let timeout_s = embed_config.timeout_s.unwrap_or(120);
-    let vectors = vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
-        .await
-        .map_err(vector_error_response)?;
-    let client =
-        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-    let owner_key = vector_knowledge::resolve_owner_key(None);
-    client
-        .upsert_chunks(
-            &owner_key,
-            &base.name,
-            &meta.doc_id,
-            &meta.name,
-            &embedding_name,
-            &[vector_chunk],
-            &vectors,
-        )
-        .await
-        .map_err(vector_error_response)?;
-    chunk.status = Some("embedded".to_string());
-    vector_knowledge::refresh_document_meta(&mut meta);
-    vector_knowledge::write_vector_document(&root, &meta, &content)
-        .await
-        .map_err(vector_error_response)?;
+            .await
+            .map_err(vector_error_response)?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.knowledge_chunk_deleted"),
+                ));
+            }
+            let embedding_name = base
+                .embedding_model
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            meta.embedding_model = embedding_name.clone();
+            let content_chars: Vec<char> = content.chars().collect();
+            let chunk_content = vector_knowledge::resolve_chunk_content(&content_chars, chunk);
+            if chunk_content.trim().is_empty() {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.content_required"),
+                ));
+            }
+            let vector_chunk = vector_knowledge::VectorChunk {
+                index: chunk.index,
+                start: chunk.start,
+                end: chunk.end,
+                content: chunk_content,
+                chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
+            };
+            let timeout_s = embed_config.timeout_s.unwrap_or(120);
+            let vectors =
+                vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
+                    .await
+                    .map_err(vector_error_response)?;
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let owner_key = vector_knowledge::resolve_owner_key(None);
+            let _ = client
+                .upsert_chunks(
+                    &owner_key,
+                    &base_name,
+                    &meta.doc_id,
+                    &meta.name,
+                    &embedding_name,
+                    &[vector_chunk],
+                    &vectors,
+                )
+                .await
+                .map_err(vector_error_response)?;
+            chunk.status = Some("embedded".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &meta,
+                &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
     Ok(Json(json!({ "ok": true, "doc": meta })))
 }
 
@@ -2024,35 +2145,67 @@ async fn admin_knowledge_chunk_delete(
     let base = resolve_knowledge_base(&config, base_name)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
-    let mut meta = vector_knowledge::read_vector_document_meta(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let content = vector_knowledge::read_vector_document_content(&root, doc_id)
-        .await
-        .map_err(vector_error_response)?;
-    let chunk = meta
-        .chunks
-        .iter_mut()
-        .find(|chunk| chunk.index == payload.chunk_index)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.knowledge_chunk_not_found"),
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
             )
-        })?;
-    if chunk.status.as_deref() == Some("deleted") {
-        return Ok(Json(json!({ "ok": true, "doc": meta })));
-    }
-    let client =
-        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-    let _ = client
-        .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
-        .await;
-    chunk.status = Some("deleted".to_string());
-    vector_knowledge::refresh_document_meta(&mut meta);
-    vector_knowledge::write_vector_document(&root, &meta, &content)
-        .await
-        .map_err(vector_error_response)?;
+            .await
+            .map_err(vector_error_response)?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Ok(meta);
+            }
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let _ = client
+                .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
+                .await;
+            chunk.status = Some("deleted".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &meta,
+                &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
     Ok(Json(json!({ "ok": true, "doc": meta })))
 }
 
@@ -2071,6 +2224,8 @@ async fn admin_knowledge_reindex(
     let base = resolve_knowledge_base(&config, base_name)?;
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, true)?;
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
     let mut targets = Vec::new();
     if let Some(doc_id) = payload.doc_id.as_deref() {
         let cleaned = doc_id.trim();
@@ -2079,22 +2234,39 @@ async fn admin_knowledge_reindex(
         }
     }
     if targets.is_empty() {
-        let docs = vector_knowledge::list_vector_documents(&root)
-            .await
-            .map_err(vector_error_response)?;
+        let docs =
+            vector_knowledge::list_vector_documents(storage.as_ref(), None, &base_name, &root)
+                .await
+                .map_err(vector_error_response)?;
         targets = docs.into_iter().map(|doc| doc.doc_id).collect();
     }
     let mut reindexed = Vec::new();
     let mut failed = Vec::new();
     for doc_id in targets {
-        let meta = match vector_knowledge::read_vector_document_meta(&root, &doc_id).await {
+        let meta = match vector_knowledge::read_vector_document_meta(
+            storage.as_ref(),
+            None,
+            &base_name,
+            &root,
+            &doc_id,
+        )
+        .await
+        {
             Ok(meta) => meta,
             Err(err) => {
                 failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
                 continue;
             }
         };
-        let content = match vector_knowledge::read_vector_document_content(&root, &doc_id).await {
+        let content = match vector_knowledge::read_vector_document_content(
+            storage.as_ref(),
+            None,
+            &base_name,
+            &root,
+            &doc_id,
+        )
+        .await
+        {
             Ok(content) => content,
             Err(err) => {
                 failed.push(json!({ "doc_id": doc_id, "error": err.to_string() }));
@@ -2105,6 +2277,7 @@ async fn admin_knowledge_reindex(
             &config,
             &base,
             None,
+            storage.as_ref(),
             &root,
             &meta.name,
             Some(&meta.doc_id),
@@ -2167,25 +2340,38 @@ async fn admin_knowledge_upload(
     let base_config = resolve_knowledge_base(&config, &base)?;
     if base_config.is_vector() {
         let root = resolve_vector_root_for_admin(&base_config, true)?;
+        let storage = state.storage.clone();
         let temp_dir = upload.temp_dir.clone();
         let result = convert_upload_to_markdown(&upload).await;
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         let (content, converter, warnings) = result?;
         let doc_name = upload.stem.clone();
-        let existing = vector_knowledge::list_vector_documents(&root)
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let existing = vector_knowledge::list_vector_documents(
+            storage.as_ref(),
+            None,
+            &base_config.name,
+            &root,
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let mut doc_id: Option<String> = None;
         let mut previous_meta = None;
         if let Some(doc) = existing.iter().find(|doc| doc.name == doc_name) {
             doc_id = Some(doc.doc_id.clone());
-            previous_meta = vector_knowledge::read_vector_document_meta(&root, &doc.doc_id)
-                .await
-                .ok();
+            previous_meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                None,
+                &base_config.name,
+                &root,
+                &doc.doc_id,
+            )
+            .await
+            .ok();
         }
         let meta = vector_knowledge::prepare_document(
             &base_config,
             None,
+            storage.as_ref(),
             &root,
             &doc_name,
             doc_id.as_deref(),
@@ -3494,30 +3680,42 @@ async fn admin_user_accounts_seed(
     let scoped_units = filter_units_by_scope(units, actor.scope_unit_ids.as_ref());
     let password_hash = UserStore::hash_password(DEFAULT_TEST_USER_PASSWORD)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut created: i64 = 0;
+    let now = now_ts();
+    let access_level = UserStore::normalize_access_level(None);
+    let capacity = scoped_units.len().saturating_mul(per_unit.max(0) as usize);
+    let mut records = Vec::with_capacity(capacity);
     for unit in &scoped_units {
+        let daily_quota = UserStore::default_daily_quota_by_level(Some(unit.level));
         for _ in 0..per_unit {
             let username = format!(
                 "{DEFAULT_TEST_USER_PREFIX}_{unit_id}_{}",
                 Uuid::new_v4().simple(),
                 unit_id = unit.unit_id
             );
-            state
-                .user_store
-                .create_user_with_password_hash(
-                    &username,
-                    None,
-                    password_hash.clone(),
-                    None,
-                    Some(unit.unit_id.clone()),
-                    Vec::new(),
-                    "active",
-                    true,
-                )
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            created += 1;
+            records.push(UserAccountRecord {
+                user_id: username.clone(),
+                username,
+                email: None,
+                password_hash: password_hash.clone(),
+                roles: vec!["user".to_string()],
+                status: "active".to_string(),
+                access_level: access_level.clone(),
+                unit_id: Some(unit.unit_id.clone()),
+                daily_quota,
+                daily_quota_used: 0,
+                daily_quota_date: None,
+                is_demo: true,
+                created_at: now,
+                updated_at: now,
+                last_login_at: None,
+            });
         }
     }
+    state
+        .user_store
+        .upsert_users(&records)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let created = records.len() as i64;
     Ok(Json(json!({
         "data": {
             "created": created,
@@ -3718,7 +3916,7 @@ async fn admin_user_accounts_tool_access_update(
     let allowed = payload.allowed_tools.map(normalize_tool_access_list);
     state
         .user_store
-        .set_user_tool_access(cleaned, allowed.as_ref(), None)
+        .set_user_tool_access(cleaned, allowed.as_ref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": { "allowed_tools": allowed }
@@ -3832,7 +4030,7 @@ async fn admin_user_accounts_delete(
         .user_store
         .delete_user(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let _ = state.user_store.set_user_tool_access(cleaned, None, None);
+    let _ = state.user_store.set_user_tool_access(cleaned, None);
     let _ = state.user_store.set_user_agent_access(cleaned, None, None);
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
     let purge_result = state.workspace.purge_user_data(cleaned);
@@ -4674,9 +4872,24 @@ async fn persist_knowledge_upload(
     let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if metadata.len() > MAX_KNOWLEDGE_CONTENT_BYTES as u64 {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     if content.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -4714,11 +4927,20 @@ async fn save_knowledge_upload_content(
     let mut file = tokio::fs::File::create(target)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut total = 0usize;
     while let Some(chunk) = field
         .chunk()
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     {
+        total = total.saturating_add(chunk.len());
+        if total > MAX_KNOWLEDGE_UPLOAD_BYTES {
+            let _ = tokio::fs::remove_file(target).await;
+            return Err(error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                i18n::t("workspace.error.upload_too_large"),
+            ));
+        }
         file.write_all(&chunk)
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -4906,9 +5128,24 @@ async fn convert_upload_to_markdown(
     let conversion = convert_to_markdown(&upload.input_path, &output_path, &upload.extension)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if metadata.len() > MAX_KNOWLEDGE_CONTENT_BYTES as u64 {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            i18n::t("tool.read.too_large"),
+        ));
+    }
     if content.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
