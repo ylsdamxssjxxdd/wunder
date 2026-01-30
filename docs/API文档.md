@@ -320,7 +320,7 @@
   - `failed`：失败项列表（doc_id/error）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.14 `/wunder/user_tools/tools`
+### 4.1.2.17 `/wunder/user_tools/tools`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -335,14 +335,14 @@
 - 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 
-### 4.1.2.15 `/wunder/user_tools/catalog`
+### 4.1.2.18 `/wunder/user_tools/catalog`
 
 - 方法：`GET`
 - 返回（JSON）：
   - 字段同 `/wunder/user_tools/tools`
 - 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
 
-### 4.1.2.16 `/wunder/user_tools/shared_tools`
+### 4.1.2.19 `/wunder/user_tools/shared_tools`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -352,7 +352,7 @@
   - `user_id`：用户唯一标识
   - `shared_tools`：共享工具勾选列表
 
-### 4.1.2.17 `/wunder/doc2md/convert`
+### 4.1.2.20 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -367,7 +367,7 @@
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
 
-### 4.1.2.18 `/wunder/attachments/convert`
+### 4.1.2.21 `/wunder/attachments/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -380,7 +380,7 @@
   - `warnings`：转换警告列表
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
-### 4.1.2.19 `/wunder/temp_dir/download`
+### 4.1.2.22 `/wunder/temp_dir/download`
 
 - 方法：`GET`
 - 鉴权：无
@@ -388,7 +388,7 @@
 - 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
 - 返回：文件流（`Content-Disposition: attachment`）
 
-### 4.1.2.20 `/wunder/temp_dir/upload`
+### 4.1.2.23 `/wunder/temp_dir/upload`
 
 - 方法：`POST`
 - 鉴权：无
@@ -402,7 +402,7 @@
   - `ok`：是否成功
   - `files`：上传后的文件名列表
 
-### 4.1.2.21 `/wunder/temp_dir/list`
+### 4.1.2.24 `/wunder/temp_dir/list`
 
 - 方法：`GET`
 - 鉴权：无
@@ -411,7 +411,7 @@
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
 
-### 4.1.2.22 `/wunder/temp_dir/remove`
+### 4.1.2.25 `/wunder/temp_dir/remove`
 
 - 方法：`POST`
 - 鉴权：无
@@ -424,7 +424,7 @@
   - `removed`：已删除文件名列表
   - `missing`：未找到的文件名列表
 
-### 4.1.2.23 `/wunder/mcp`
+### 4.1.2.26 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
@@ -441,7 +441,7 @@
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.24 `/wunder/i18n`
+### 4.1.2.27 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：

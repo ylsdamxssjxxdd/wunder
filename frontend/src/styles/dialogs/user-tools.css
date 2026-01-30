@@ -1028,6 +1028,11 @@
   gap: 8px;
 }
 
+.user-tools-dialog .knowledge-test-input label {
+  font-size: 12px;
+  color: var(--user-tools-muted);
+}
+
 .user-tools-dialog .knowledge-test-actions {
   display: flex;
   align-items: center;
