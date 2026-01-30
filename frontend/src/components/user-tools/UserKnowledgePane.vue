@@ -54,6 +54,28 @@
           <div class="detail-actions">
             <div class="actions">
               <button
+                v-if="isVectorBase"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="上传"
+                aria-label="上传"
+                @click="triggerUpload"
+              >
+                <i class="fa-solid fa-upload" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="isVectorBase"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="重建索引"
+                aria-label="重建索引"
+                @click="reindexDocs()"
+              >
+                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+              </button>
+              <button
                 class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
                 :disabled="!activeBase"
@@ -63,6 +85,8 @@
               >
                 <i class="fa-solid fa-vial" aria-hidden="true"></i>
               </button>
+            </div>
+            <div class="actions">
               <button
                 class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
@@ -158,26 +182,6 @@
               </div>
               <div v-else class="knowledge-vector-layout">
                 <div class="knowledge-vector-pane">
-                  <div class="knowledge-file-toolbar">
-                    <button
-                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                      type="button"
-                      title="上传"
-                      aria-label="上传"
-                      @click="triggerUpload"
-                    >
-                      <i class="fa-solid fa-upload" aria-hidden="true"></i>
-                    </button>
-                    <button
-                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                      type="button"
-                      title="重建索引"
-                      aria-label="重建索引"
-                      @click="reindexDocs()"
-                    >
-                      <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-                    </button>
-                  </div>
                   <div class="knowledge-doc-list">
                     <div v-if="!vectorDocs.length" class="empty-text">暂无向量文档，请先上传。</div>
                     <div
@@ -237,26 +241,6 @@
                         title="批量删除"
                         aria-label="批量删除"
                         @click="deleteSelectedChunks"
-                      >
-                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                      </button>
-                      <button
-                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!activeDocId"
-                        title="重新索引"
-                        aria-label="重新索引"
-                        @click="reindexDocs(activeDocId)"
-                      >
-                        <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-                      </button>
-                      <button
-                        class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!activeDocId"
-                        title="删除文档"
-                        aria-label="删除文档"
-                        @click="deleteDoc(activeDocId)"
                       >
                         <i class="fa-solid fa-trash" aria-hidden="true"></i>
                       </button>
@@ -1520,11 +1504,18 @@ const embedSelectedChunks = async () => {
         chunk_index: index
       });
       succeeded += 1;
+      const localChunk = docChunks.value.find((item) => item.index === index);
+      if (localChunk) {
+        localChunk.status = 'embedded';
+      }
     } catch (error) {
       failed += 1;
+    } finally {
+      const next = new Set(embeddingChunkIndices.value);
+      next.delete(index);
+      embeddingChunkIndices.value = next;
     }
   }
-  embeddingChunkIndices.value = new Set();
   await refreshActiveDoc();
   if (succeeded) {
     ElMessage.success(`已嵌入 ${succeeded} 个切片。`);
