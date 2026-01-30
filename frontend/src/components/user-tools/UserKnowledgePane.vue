@@ -54,6 +54,39 @@
           <div class="detail-actions">
             <div class="actions">
               <button
+                v-if="!isVectorBase"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="上传"
+                aria-label="上传"
+                @click="triggerUpload"
+              >
+                <i class="fa-solid fa-upload" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="!isVectorBase"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="新建"
+                aria-label="新建"
+                @click="createFile"
+              >
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+              <button
+                v-if="!isVectorBase"
+                class="user-tools-btn btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="保存"
+                aria-label="保存"
+                @click="saveFile"
+              >
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+              </button>
+              <button
                 v-if="isVectorBase"
                 class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
@@ -116,35 +149,6 @@
             <div class="user-tools-card knowledge-files-card">
               <div v-if="!isVectorBase" class="knowledge-file-layout">
                 <div class="knowledge-file-pane">
-                  <div class="knowledge-file-toolbar">
-                    <button
-                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                      type="button"
-                      title="上传"
-                      aria-label="上传"
-                      @click="triggerUpload"
-                    >
-                      <i class="fa-solid fa-upload" aria-hidden="true"></i>
-                    </button>
-                    <button
-                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                      type="button"
-                      title="新建"
-                      aria-label="新建"
-                      @click="createFile"
-                    >
-                      <i class="fa-solid fa-plus" aria-hidden="true"></i>
-                    </button>
-                    <button
-                      class="user-tools-btn btn-with-icon btn-compact icon-only"
-                      type="button"
-                      title="保存"
-                      aria-label="保存"
-                      @click="saveFile"
-                    >
-                      <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-                    </button>
-                  </div>
                   <div class="knowledge-file-list">
                     <div v-if="!files.length" class="empty-text">暂无文档，请先刷新列表。</div>
                     <div

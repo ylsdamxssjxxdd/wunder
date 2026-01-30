@@ -1,6 +1,9 @@
 // 用户自建工具：负责配置存储、别名绑定与共享工具聚合。
 use crate::config::{Config, KnowledgeBaseType, McpServerConfig, McpToolSpec};
 use crate::i18n;
+use crate::path_utils::{
+    normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+};
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::vector_knowledge;
@@ -326,8 +329,11 @@ impl UserToolStore {
         }
         let root = self.get_knowledge_root(user_id);
         let target = root.join(cleaned);
-        let resolved = target.canonicalize().unwrap_or_else(|_| target.clone());
-        if resolved != root && !resolved.starts_with(&root) {
+        let normalized_target = normalize_target_path(&target);
+        let normalized_root = normalize_existing_path(&root);
+        let root_compare = normalize_path_for_compare(&normalized_root);
+        let target_compare = normalize_path_for_compare(&normalized_target);
+        if normalized_target != normalized_root && !target_compare.starts_with(&root_compare) {
             return Err(anyhow!(i18n::t("error.knowledge_path_out_of_bounds")));
         }
         if create {
