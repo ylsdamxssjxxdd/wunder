@@ -84,6 +84,18 @@ pub fn router() -> Router<Arc<AppState>> {
             get(user_knowledge_chunks),
         )
         .route(
+            "/wunder/user_tools/knowledge/chunk/embed",
+            post(user_knowledge_chunk_embed),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/chunk/delete",
+            post(user_knowledge_chunk_delete),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/test",
+            post(user_knowledge_test),
+        )
+        .route(
             "/wunder/user_tools/knowledge/upload",
             post(user_knowledge_upload),
         )
@@ -1013,6 +1025,354 @@ async fn user_knowledge_chunks(
     })))
 }
 
+async fn user_knowledge_chunk_embed(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserKnowledgeChunkActionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    let config = state.config_store.get().await;
+    ensure_user_vector_base(&config, &base)?;
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(
+            &user_id,
+            &base.name,
+            KnowledgeBaseType::Vector,
+            false,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let embedding_name = base
+        .embedding_model
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let storage = state.storage.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        let embedding_name = embedding_name.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.knowledge_chunk_deleted"),
+                ));
+            }
+            let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            meta.embedding_model = embedding_name.clone();
+            let content_chars: Vec<char> = content.chars().collect();
+            let chunk_content = vector_knowledge::resolve_chunk_content(&content_chars, chunk);
+            if chunk_content.trim().is_empty() {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.content_required"),
+                ));
+            }
+            let vector_chunk = vector_knowledge::VectorChunk {
+                index: chunk.index,
+                start: chunk.start,
+                end: chunk.end,
+                content: chunk_content,
+                chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
+            };
+            let timeout_s = embed_config.timeout_s.unwrap_or(120);
+            let vectors =
+                vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
+                    .await
+                    .map_err(vector_error_response)?;
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+            let _ = client
+                .upsert_chunks(
+                    &owner_key,
+                    &base_name,
+                    &meta.doc_id,
+                    &meta.name,
+                    &embedding_name,
+                    &[vector_chunk],
+                    &vectors,
+                )
+                .await
+                .map_err(vector_error_response)?;
+            chunk.status = Some("embedded".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &meta,
+                &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
+    Ok(Json(json!({ "data": { "ok": true, "doc": meta } })))
+}
+
+async fn user_knowledge_chunk_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserKnowledgeChunkActionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    let config = state.config_store.get().await;
+    ensure_user_vector_base(&config, &base)?;
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(
+            &user_id,
+            &base.name,
+            KnowledgeBaseType::Vector,
+            false,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Ok(meta);
+            }
+            let client = vector_knowledge::resolve_weaviate_client(&config)
+                .map_err(vector_error_response)?;
+            let _ = client
+                .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
+                .await;
+            chunk.status = Some("deleted".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &meta,
+                &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
+    Ok(Json(json!({ "data": { "ok": true, "doc": meta } })))
+}
+
+async fn user_knowledge_test(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserKnowledgeTestRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let query = payload.query.trim();
+    if query.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_query_required"),
+        ));
+    }
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    let config = state.config_store.get().await;
+    let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let knowledge_config = build_user_knowledge_config(&base, &root);
+    if base_type == KnowledgeBaseType::Vector {
+        ensure_user_vector_base(&config, &base)?;
+        let embedding_name = base
+            .embedding_model
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
+            .map_err(vector_error_response)?;
+        let timeout_s = embed_config.timeout_s.unwrap_or(120);
+        let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
+            .await
+            .map_err(vector_error_response)?;
+        let vector = vectors.get(0).ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
+        })?;
+        let top_k = payload
+            .top_k
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| vector_knowledge::resolve_top_k(&knowledge_config));
+        let client =
+            vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+        let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+        let mut hits = client
+            .query_chunks(&owner_key, &base.name, &embedding_name, vector, top_k)
+            .await
+            .map_err(vector_error_response)?;
+        if let Some(threshold) = base.score_threshold {
+            hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+        }
+        if hits.len() > top_k {
+            hits.truncate(top_k);
+        }
+        let items = hits
+            .into_iter()
+            .map(|hit| {
+                json!({
+                    "doc_id": hit.doc_id,
+                    "document": hit.doc_name,
+                    "chunk_index": hit.chunk_index,
+                    "start": hit.start,
+                    "end": hit.end,
+                    "content": hit.content,
+                    "embedding_model": hit.embedding_model,
+                    "score": hit.score
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(Json(json!({
+            "data": {
+                "base": base.name,
+                "query": query,
+                "embedding_model": embedding_name,
+                "top_k": top_k,
+                "hits": items
+            }
+        })))
+    } else {
+        let llm_config = knowledge::resolve_llm_config(&config, None);
+        let reply = knowledge::query_knowledge_raw(
+            query,
+            &knowledge_config,
+            llm_config.as_ref(),
+            payload.top_k,
+            None,
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        Ok(Json(json!({
+            "data": {
+                "base": base.name,
+                "query": query,
+                "text": reply
+            }
+        })))
+    }
+}
+
 async fn user_knowledge_reindex(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1913,6 +2273,25 @@ struct UserKnowledgeChunksQuery {
     user_id: Option<String>,
     base: String,
     doc_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeChunkActionRequest {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    doc_id: String,
+    chunk_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeTestRequest {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    query: String,
+    #[serde(default)]
+    top_k: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

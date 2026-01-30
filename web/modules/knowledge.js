@@ -592,9 +592,9 @@ const renderKnowledgeDetailHeader = () => {
     knowledgeEditBtn.disabled = false;
   }
   if (knowledgeTestBtn) {
-    const isVector = isVectorBase(base);
-    knowledgeTestBtn.disabled = !isVector;
-    knowledgeTestBtn.style.display = isVector ? "" : "none";
+    const canTest = Boolean(base && base.name);
+    knowledgeTestBtn.disabled = !canTest;
+    knowledgeTestBtn.style.display = canTest ? "" : "none";
   }
   elements.knowledgeDeleteBtn.disabled = false;
 };
@@ -1341,34 +1341,65 @@ const rebuildVectorDocs = async (docId) => {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
+  const rebuildBtn = elements.knowledgeDocRebuildAllBtn;
+  const rebuildIcon = rebuildBtn?.querySelector("i");
+  const previousEmbedding = new Set(state.knowledge.embeddingChunkIndices || []);
+  const chunkIndices = state.knowledge.docChunks.map((chunk) => chunk.index);
+  if (chunkIndices.length) {
+    state.knowledge.embeddingChunkIndices = new Set(chunkIndices);
+    renderVectorDocChunks();
+    updateChunkActionState();
+  }
+  if (rebuildBtn) {
+    rebuildBtn.disabled = true;
+    rebuildBtn.classList.add("is-loading");
+  }
+  if (rebuildIcon) {
+    rebuildIcon.className = "fa-solid fa-spinner";
+  }
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/knowledge/reindex`;
   const payload = { base: base.name };
   if (docId) {
     payload.doc_id = docId;
   }
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(t("knowledge.doc.rebuildFailed", { message: response.status }));
-  }
-  const result = await response.json();
-  if (result?.ok === false) {
-    notify(
-      t("knowledge.doc.rebuildFailed", { message: JSON.stringify(result.failed || []) }),
-      "error"
-    );
-  } else {
-    notify(t("knowledge.doc.rebuildSuccess"), "success");
-  }
-  await loadVectorDocs();
-  if (docId) {
-    await selectVectorDoc(docId);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(t("knowledge.doc.rebuildFailed", { message: response.status }));
+    }
+    const result = await response.json();
+    if (result?.ok === false) {
+      notify(
+        t("knowledge.doc.rebuildFailed", { message: JSON.stringify(result.failed || []) }),
+        "error"
+      );
+    } else {
+      notify(t("knowledge.doc.rebuildSuccess"), "success");
+    }
+    await loadVectorDocs();
+    if (docId) {
+      await selectVectorDoc(docId);
+    }
+  } finally {
+    if (chunkIndices.length) {
+      state.knowledge.embeddingChunkIndices = previousEmbedding;
+      renderVectorDocChunks();
+      updateChunkActionState();
+    }
+    if (rebuildBtn) {
+      rebuildBtn.disabled = false;
+      rebuildBtn.classList.remove("is-loading");
+    }
+    if (rebuildIcon) {
+      rebuildIcon.className = "fa-solid fa-rotate";
+    }
   }
 };
 
@@ -1418,12 +1449,84 @@ const renderKnowledgeTestResults = (hits) => {
   });
 };
 
+const renderKnowledgeTestText = (text) => {
+  if (!knowledgeTestResult) {
+    return;
+  }
+  knowledgeTestResult.textContent = "";
+  const output = String(text || "");
+  if (!output.trim()) {
+    knowledgeTestResult.textContent = t("knowledge.test.empty");
+    return;
+  }
+  const item = document.createElement("div");
+  item.className = "knowledge-test-result-item";
+  const content = document.createElement("div");
+  content.className = "knowledge-test-result-content";
+  content.textContent = output;
+  item.appendChild(content);
+  knowledgeTestResult.appendChild(item);
+};
+
+const appendKnowledgeTestText = (text) => {
+  if (!knowledgeTestResult) {
+    return false;
+  }
+  const output = String(text || "");
+  if (!output.trim()) {
+    return false;
+  }
+  const item = document.createElement("div");
+  item.className = "knowledge-test-result-item";
+  const header = document.createElement("div");
+  header.className = "knowledge-test-result-header";
+  header.textContent = t("knowledge.test.output.title");
+  const content = document.createElement("div");
+  content.className = "knowledge-test-result-content";
+  content.textContent = output;
+  item.append(header, content);
+  knowledgeTestResult.appendChild(item);
+  return true;
+};
+
+const appendKnowledgeTestResults = (hits, options = {}) => {
+  if (!knowledgeTestResult) {
+    return;
+  }
+  if (!hits.length) {
+    if (options.showEmpty) {
+      const item = document.createElement("div");
+      item.className = "knowledge-test-result-item";
+      const content = document.createElement("div");
+      content.className = "knowledge-test-result-content";
+      content.textContent = t("knowledge.test.empty");
+      item.appendChild(content);
+      knowledgeTestResult.appendChild(item);
+    }
+    return;
+  }
+  hits.forEach((hit, index) => {
+    const item = document.createElement("div");
+    item.className = "knowledge-test-result-item";
+    const header = document.createElement("div");
+    header.className = "knowledge-test-result-header";
+    const docName = hit.document || hit.doc_id || t("knowledge.doc.none");
+    const scoreText = formatTestScore(Number(hit.score));
+    header.textContent = `${index + 1}. ${docName} #${hit.chunk_index ?? "-"} / ${scoreText}`;
+    const content = document.createElement("div");
+    content.className = "knowledge-test-result-content";
+    content.textContent = hit.content || "";
+    item.append(header, content);
+    knowledgeTestResult.appendChild(item);
+  });
+};
+
 const openKnowledgeTestModal = () => {
   if (!knowledgeTestModal) {
     return;
   }
   const base = getActiveBase();
-  if (!base || !isVectorBase(base)) {
+  if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
@@ -1448,7 +1551,7 @@ const closeKnowledgeTestModal = () => {
 
 const runKnowledgeTest = async () => {
   const base = getActiveBase();
-  if (!base || !base.name || !isVectorBase(base)) {
+  if (!base || !base.name) {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
@@ -1486,7 +1589,14 @@ const runKnowledgeTest = async () => {
       throw new Error(message);
     }
     const result = await response.json();
-    renderKnowledgeTestResults(Array.isArray(result.hits) ? result.hits : []);
+    const hits = Array.isArray(result.hits) ? result.hits : [];
+    clearKnowledgeTestResult();
+    if (!isVectorBase(base)) {
+      appendKnowledgeTestText(result.text);
+      appendKnowledgeTestResults(hits, { showEmpty: true });
+    } else {
+      appendKnowledgeTestResults(hits, { showEmpty: true });
+    }
     setKnowledgeTestStatus(t("knowledge.test.done"));
   } catch (error) {
     setKnowledgeTestStatus(t("knowledge.test.failed", { message: error.message }));

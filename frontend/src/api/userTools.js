@@ -31,6 +31,11 @@ export const fetchUserKnowledgeDoc = (base, doc_id) =>
   api.get('/user_tools/knowledge/doc', { params: { base, doc_id } });
 export const fetchUserKnowledgeChunks = (base, doc_id) =>
   api.get('/user_tools/knowledge/chunks', { params: { base, doc_id } });
+export const embedUserKnowledgeChunk = (payload) =>
+  api.post('/user_tools/knowledge/chunk/embed', payload);
+export const deleteUserKnowledgeChunk = (payload) =>
+  api.post('/user_tools/knowledge/chunk/delete', payload);
+export const testUserKnowledge = (payload) => api.post('/user_tools/knowledge/test', payload);
 export const deleteUserKnowledgeDoc = (base, doc_id) =>
   api.delete('/user_tools/knowledge/doc', { params: { base, doc_id } });
 export const reindexUserKnowledge = (payload) =>

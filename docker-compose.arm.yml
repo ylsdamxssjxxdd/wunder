@@ -76,7 +76,7 @@ services:
       retries: 20
     restart: always
 
-  wunder-mcp:
+  wunder_mcp:
     image: wunder-arm
     platform: linux/arm64
     privileged: true

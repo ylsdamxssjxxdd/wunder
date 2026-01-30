@@ -247,6 +247,16 @@
   cursor: not-allowed;
 }
 
+.user-tools-dialog .btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-tools-dialog .btn-with-icon i {
+  font-size: 13px;
+}
+
 .user-tools-dialog .user-tools-btn.secondary {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.12);
@@ -261,6 +271,24 @@
 .user-tools-dialog .user-tools-btn.compact {
   padding: 4px 10px;
   font-size: 12px;
+}
+
+.user-tools-dialog .btn-compact {
+  padding: 4px 10px;
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.user-tools-dialog .btn-with-icon.icon-only {
+  padding: 4px 8px;
+  min-width: 32px;
+  justify-content: center;
+  gap: 0;
+  line-height: 1;
+}
+
+.user-tools-dialog .btn-with-icon.icon-only i {
+  font-size: 14px;
 }
 
 .user-tools-dialog .user-tools-footer-btn {
@@ -784,9 +812,16 @@
   gap: 12px;
 }
 
+.user-tools-dialog .knowledge-doc-header .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .user-tools-dialog .knowledge-vector-content {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(220px, 320px);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   min-height: 0;
   flex: 1 1 auto;
@@ -826,6 +861,27 @@
   border-radius: 2px;
 }
 
+.user-tools-dialog .knowledge-doc-modal-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--user-tools-border);
+  background: rgba(15, 23, 42, 0.6);
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 60vh;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user-tools-dialog .knowledge-doc-modal-content mark {
+  background: rgba(250, 204, 21, 0.45);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
 .user-tools-dialog .knowledge-doc-chunk-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -857,18 +913,177 @@
   border-color: rgba(148, 163, 184, 0.25);
 }
 
-.user-tools-dialog .knowledge-doc-chunk-item.active {
-  background: rgba(77, 216, 255, 0.2);
-  border-color: rgba(77, 216, 255, 0.5);
+.user-tools-dialog .knowledge-doc-chunk-item.selected {
+  background: rgba(129, 140, 248, 0.2);
+  border-color: rgba(129, 140, 248, 0.45);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-item.embedding {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-item.selected:hover {
+  background: rgba(129, 140, 248, 0.28);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .user-tools-dialog .knowledge-doc-chunk-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-select {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.5);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-item.selected .knowledge-doc-chunk-select {
+  background: var(--user-tools-accent);
+  border-color: var(--user-tools-accent);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-item.selected .knowledge-doc-chunk-select::after {
+  content: '';
+  width: 6px;
+  height: 3px;
+  border-left: 2px solid #0b1224;
+  border-bottom: 2px solid #0b1224;
+  transform: rotate(-45deg);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status {
+  font-size: 11px;
+  color: var(--user-tools-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-embedded {
+  color: #34d399;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-pending {
+  color: #fbbf24;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-deleted {
+  color: #f87171;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-failed {
+  color: #f97316;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-embedding {
+  color: var(--user-tools-accent);
+}
+
+.user-tools-dialog .knowledge-doc-chunk-status.status-embedding::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: knowledge-spin 0.9s linear infinite;
 }
 
 .user-tools-dialog .knowledge-doc-chunk-preview {
   color: rgba(226, 232, 240, 0.7);
   word-break: break-word;
+}
+
+.user-tools-dialog .knowledge-test-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.user-tools-dialog .knowledge-test-input,
+.user-tools-dialog .knowledge-test-results {
+  min-height: 0;
+}
+
+.user-tools-dialog .knowledge-test-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-tools-dialog .knowledge-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-tools-dialog .knowledge-test-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-tools-dialog .knowledge-test-result-list {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.35);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 55vh;
+  min-height: 0;
+}
+
+.user-tools-dialog .knowledge-test-result-item {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.5);
+  padding: 8px;
+}
+
+.user-tools-dialog .knowledge-test-result-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--user-tools-text);
+  margin-bottom: 6px;
+}
+
+.user-tools-dialog .knowledge-test-result-content {
+  color: rgba(226, 232, 240, 0.75);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user-tools-dialog .btn-with-icon.is-loading i {
+  animation: knowledge-spin 0.9s linear infinite;
+}
+
+@keyframes knowledge-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .user-tools-dialog .user-tools-card {

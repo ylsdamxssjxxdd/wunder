@@ -6,7 +6,7 @@
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-composex86.yml`/`docker-composearm.yml`。
-- MCP 服务容器：`wunder-mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
+- MCP 服务容器：`wunder_mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
@@ -264,7 +264,50 @@
   - `chunks`：切片列表（index/start/end/preview/content/status）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.13 `/wunder/user_tools/knowledge/reindex`
+### 4.1.2.13 `/wunder/user_tools/knowledge/chunk/embed`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.14 `/wunder/user_tools/knowledge/chunk/delete`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库。
+
+### 4.1.2.15 `/wunder/user_tools/knowledge/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选）
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `embedding_model`：嵌入模型（向量知识库）
+  - `top_k`：召回数量（向量知识库）
+  - `hits`：召回列表（doc_id/document/chunk_index/start/end/content/embedding_model/score）
+  - `text`：字面知识库结果文本
+- 说明：支持向量/字面知识库。
+
+### 4.1.2.16 `/wunder/user_tools/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -1074,17 +1117,27 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `query`：测试问题
-  - `embedding_model`：嵌入模型
-  - `top_k`：召回数量
-  - `hits`：召回结果列表
-    - `doc_id`：文档 id
-    - `document`：文档名称
-    - `chunk_index`：切片索引
-    - `start`：切片起点
-    - `end`：切片终点
-    - `content`：切片内容
-    - `score`：相似度分数
-- 说明：仅适用于向量知识库。
+  - 向量知识库：
+    - `embedding_model`：嵌入模型
+    - `top_k`：召回数量
+    - `hits`：召回结果列表
+      - `doc_id`：文档 id
+      - `document`：文档名称
+      - `chunk_index`：切片索引
+      - `start`：切片起点
+      - `end`：切片终点
+      - `content`：切片内容
+      - `score`：相似度分数
+  - 字面知识库：
+    - `text`：模型原始输出
+    - `hits`：命中文档列表
+      - `doc_id`：文档编码
+      - `document`：文档名称
+      - `content`：文档内容
+      - `score`：相关度分数（可选）
+      - `section_path`：章节路径
+      - `reason`：命中原因（可选）
+- 说明：字面知识库会调用大模型生成原始输出，并附带命中文档内容；向量知识库保持召回结果。
 
 ### 4.1.30.8 `/wunder/admin/knowledge/reindex`
 

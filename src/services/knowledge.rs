@@ -264,6 +264,84 @@ pub async fn query_knowledge_documents(
     fallback_documents(&candidates, max_docs)
 }
 
+pub async fn query_knowledge_raw(
+    query: &str,
+    base: &KnowledgeBaseConfig,
+    llm_config: Option<&LlmModelConfig>,
+    limit: Option<usize>,
+    request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
+) -> Result<String> {
+    let (reply, _) =
+        query_knowledge_raw_with_documents(query, base, llm_config, limit, request_logger).await?;
+    Ok(reply)
+}
+
+pub async fn query_knowledge_raw_with_documents(
+    query: &str,
+    base: &KnowledgeBaseConfig,
+    llm_config: Option<&LlmModelConfig>,
+    limit: Option<usize>,
+    request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
+) -> Result<(String, Vec<KnowledgeDocument>)> {
+    let normalized_query = query.trim();
+    if normalized_query.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+    let sections = store().get_sections(base, false).await;
+    if sections.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+    let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
+    let candidates =
+        select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
+    let prompt = build_system_prompt(max_docs);
+    let question = build_question(&base.name, normalized_query, &candidates);
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: json!(prompt),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: json!(question.clone()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    ];
+    if let Some(logger) = request_logger {
+        let payload = build_llm_payload(&messages, llm_config);
+        let base_url = llm_config
+            .and_then(|config| config.base_url.clone())
+            .unwrap_or_default();
+        logger(json!({
+            "knowledge_base": base.name.clone(),
+            "query": normalized_query.to_string(),
+            "limit": max_docs,
+            "candidate_count": candidates.len(),
+            "payload": payload,
+            "base_url": base_url,
+        }));
+    }
+    let Some(config) = llm_config.filter(|config| is_llm_configured(config)) else {
+        return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
+    };
+    let client = build_llm_client(config, reqwest::Client::new());
+    let response = client.complete(&messages).await.map_err(|err| {
+        anyhow::anyhow!(i18n::t_with_params(
+            "error.llm_call_failed",
+            &HashMap::from([("detail".to_string(), err.to_string())]),
+        ))
+    })?;
+    let reply = response.content;
+    let structured = extract_structured_documents(&reply);
+    let documents = materialize_documents(&structured, &sections, max_docs);
+    Ok((reply, documents))
+}
+
 impl KnowledgeStore {
     async fn get_sections(
         &self,

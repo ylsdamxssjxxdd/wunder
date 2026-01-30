@@ -1851,56 +1851,94 @@ async fn admin_knowledge_test(
     }
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
-    ensure_vector_base(&base)?;
-    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
-    let embed_config = vector_knowledge::resolve_embedding_model(&config, embedding_name)
-        .map_err(vector_error_response)?;
-    let timeout_s = embed_config.timeout_s.unwrap_or(120);
-    let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
-        .await
-        .map_err(vector_error_response)?;
-    let vector = vectors.get(0).ok_or_else(|| {
-        error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
-    })?;
-    let top_k = payload
-        .top_k
-        .filter(|value| *value > 0)
-        .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
-    let client =
-        vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-    let owner_key = vector_knowledge::resolve_owner_key(None);
-    let mut hits = client
-        .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
-        .await
-        .map_err(vector_error_response)?;
-    if let Some(threshold) = base.score_threshold {
-        hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
-    }
-    if hits.len() > top_k {
-        hits.truncate(top_k);
-    }
-    let items = hits
-        .into_iter()
-        .map(|hit| {
-            json!({
-                "doc_id": hit.doc_id,
-                "document": hit.doc_name,
-                "chunk_index": hit.chunk_index,
-                "start": hit.start,
-                "end": hit.end,
-                "content": hit.content,
-                "embedding_model": hit.embedding_model,
-                "score": hit.score
+    if base.is_vector() {
+        let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
+        let embed_config = vector_knowledge::resolve_embedding_model(&config, embedding_name)
+            .map_err(vector_error_response)?;
+        let timeout_s = embed_config.timeout_s.unwrap_or(120);
+        let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
+            .await
+            .map_err(vector_error_response)?;
+        let vector = vectors.get(0).ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
+        })?;
+        let top_k = payload
+            .top_k
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
+        let client =
+            vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
+        let owner_key = vector_knowledge::resolve_owner_key(None);
+        let mut hits = client
+            .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
+            .await
+            .map_err(vector_error_response)?;
+        if let Some(threshold) = base.score_threshold {
+            hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+        }
+        if hits.len() > top_k {
+            hits.truncate(top_k);
+        }
+        let items = hits
+            .into_iter()
+            .map(|hit| {
+                json!({
+                    "doc_id": hit.doc_id,
+                    "document": hit.doc_name,
+                    "chunk_index": hit.chunk_index,
+                    "start": hit.start,
+                    "end": hit.end,
+                    "content": hit.content,
+                    "embedding_model": hit.embedding_model,
+                    "score": hit.score
+                })
             })
-        })
-        .collect::<Vec<_>>();
-    Ok(Json(json!({
-        "base": base.name,
-        "query": query,
-        "embedding_model": embedding_name,
-        "top_k": top_k,
-        "hits": items
-    })))
+            .collect::<Vec<_>>();
+        Ok(Json(json!({
+            "base": base.name,
+            "query": query,
+            "embedding_model": embedding_name,
+            "top_k": top_k,
+            "hits": items
+        })))
+    } else {
+        let _ = resolve_knowledge_root(&base, false)?;
+        let llm_config = knowledge::resolve_llm_config(&config, None);
+        let (reply, docs) = knowledge::query_knowledge_raw_with_documents(
+            query,
+            &base,
+            llm_config.as_ref(),
+            payload.top_k,
+            None,
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let items = docs
+            .into_iter()
+            .map(|doc| {
+                let document = if doc.document.trim().is_empty() {
+                    doc.name.clone()
+                } else {
+                    doc.document.clone()
+                };
+                json!({
+                    "doc_id": doc.code,
+                    "document": document,
+                    "chunk_index": Value::Null,
+                    "content": doc.content,
+                    "score": doc.score,
+                    "section_path": doc.section_path,
+                    "reason": doc.reason
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(Json(json!({
+            "base": base.name,
+            "query": query,
+            "text": reply,
+            "hits": items
+        })))
+    }
 }
 
 async fn admin_knowledge_chunk_update(

@@ -3,11 +3,13 @@
     <div class="list-header">
       <label>知识库管理</label>
       <div class="header-actions">
-        <button class="user-tools-btn secondary compact" type="button" @click="addBase">
-          新增
+        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="addBase">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <span>新增</span>
         </button>
-        <button class="user-tools-btn secondary compact" type="button" @click="refreshConfig">
-          刷新
+        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="refreshConfig">
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+          <span>刷新</span>
         </button>
       </div>
     </div>
@@ -52,20 +54,34 @@
           <div class="detail-actions">
             <div class="actions">
               <button
-                class="user-tools-btn secondary compact"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
                 :disabled="!activeBase"
-                @click="editBase"
+                title="知识库测试"
+                aria-label="知识库测试"
+                @click="openTestModal"
               >
-                编辑
+                <i class="fa-solid fa-vial" aria-hidden="true"></i>
               </button>
               <button
-                class="user-tools-btn danger compact"
+                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
                 :disabled="!activeBase"
+                title="编辑"
+                aria-label="编辑"
+                @click="editBase"
+              >
+                <i class="fa-solid fa-pen" aria-hidden="true"></i>
+              </button>
+              <button
+                class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+                type="button"
+                :disabled="!activeBase"
+                title="删除知识库"
+                aria-label="删除知识库"
                 @click="deleteBase"
               >
-                删除知识库
+                <i class="fa-solid fa-trash" aria-hidden="true"></i>
               </button>
             </div>
           </div>
@@ -77,14 +93,32 @@
               <div v-if="!isVectorBase" class="knowledge-file-layout">
                 <div class="knowledge-file-pane">
                   <div class="knowledge-file-toolbar">
-                    <button class="user-tools-btn secondary compact" type="button" @click="triggerUpload">
-                      上传
+                    <button
+                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                      type="button"
+                      title="上传"
+                      aria-label="上传"
+                      @click="triggerUpload"
+                    >
+                      <i class="fa-solid fa-upload" aria-hidden="true"></i>
                     </button>
-                    <button class="user-tools-btn secondary compact" type="button" @click="createFile">
-                      新建
+                    <button
+                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                      type="button"
+                      title="新建"
+                      aria-label="新建"
+                      @click="createFile"
+                    >
+                      <i class="fa-solid fa-plus" aria-hidden="true"></i>
                     </button>
-                    <button class="user-tools-btn compact" type="button" @click="saveFile">
-                      保存
+                    <button
+                      class="user-tools-btn btn-with-icon btn-compact icon-only"
+                      type="button"
+                      title="保存"
+                      aria-label="保存"
+                      @click="saveFile"
+                    >
+                      <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
                     </button>
                   </div>
                   <div class="knowledge-file-list">
@@ -101,9 +135,10 @@
                         class="knowledge-file-delete-btn"
                         type="button"
                         title="删除文档"
+                        aria-label="删除文档"
                         @click.stop="deleteFile(filePath)"
                       >
-                        删除
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
                       </button>
                     </div>
                   </div>
@@ -124,11 +159,23 @@
               <div v-else class="knowledge-vector-layout">
                 <div class="knowledge-vector-pane">
                   <div class="knowledge-file-toolbar">
-                    <button class="user-tools-btn secondary compact" type="button" @click="triggerUpload">
-                      上传
+                    <button
+                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                      type="button"
+                      title="上传"
+                      aria-label="上传"
+                      @click="triggerUpload"
+                    >
+                      <i class="fa-solid fa-upload" aria-hidden="true"></i>
                     </button>
-                    <button class="user-tools-btn secondary compact" type="button" @click="reindexDocs()">
-                      重建索引
+                    <button
+                      class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                      type="button"
+                      title="重建索引"
+                      aria-label="重建索引"
+                      @click="reindexDocs()"
+                    >
+                      <i class="fa-solid fa-rotate" aria-hidden="true"></i>
                     </button>
                   </div>
                   <div class="knowledge-doc-list">
@@ -153,28 +200,69 @@
                     </div>
                     <div class="actions">
                       <button
-                        class="user-tools-btn secondary compact"
+                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                         type="button"
                         :disabled="!activeDocId"
-                        @click="reindexDocs(activeDocId)"
+                        title="查看原文"
+                        aria-label="查看原文"
+                        @click="openDocModal"
                       >
-                        重新索引
+                        <i class="fa-solid fa-file-lines" aria-hidden="true"></i>
                       </button>
                       <button
-                        class="user-tools-btn danger compact"
+                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+                        type="button"
+                        :disabled="!canSelectChunks"
+                        :title="selectAllLabel"
+                        :aria-label="selectAllLabel"
+                        @click="toggleSelectAllChunks"
+                      >
+                        <i class="fa-solid" :class="selectAllIcon" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        class="user-tools-btn btn-with-icon btn-compact icon-only"
+                        type="button"
+                        :disabled="!canBatchEmbed"
+                        :title="embedActionLabel"
+                        :aria-label="embedActionLabel"
+                        :class="{ 'is-loading': embeddingActive }"
+                        @click="embedSelectedChunks"
+                      >
+                        <i class="fa-solid" :class="embedActionIcon" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+                        type="button"
+                        :disabled="!canBatchDelete"
+                        title="批量删除"
+                        aria-label="批量删除"
+                        @click="deleteSelectedChunks"
+                      >
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                         type="button"
                         :disabled="!activeDocId"
+                        title="重新索引"
+                        aria-label="重新索引"
+                        @click="reindexDocs(activeDocId)"
+                      >
+                        <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+                        type="button"
+                        :disabled="!activeDocId"
+                        title="删除文档"
+                        aria-label="删除文档"
                         @click="deleteDoc(activeDocId)"
                       >
-                        删除文档
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
                       </button>
                     </div>
                   </div>
                   <div class="knowledge-vector-content">
-                    <div class="knowledge-doc-content-pane">
-                      <div class="knowledge-doc-section-title">原文档</div>
-                      <div class="knowledge-doc-content" v-html="renderedDocContent"></div>
-                    </div>
                     <div class="knowledge-doc-chunks-pane">
                       <div class="knowledge-doc-section-title">切片列表</div>
                       <div class="knowledge-doc-chunk-list">
@@ -183,11 +271,23 @@
                           v-for="chunk in docChunks"
                           :key="chunk.index"
                           class="knowledge-doc-chunk-item"
-                          :class="{ active: chunk.index === activeChunkIndex }"
-                          @click="toggleChunk(chunk)"
+                          :class="{
+                            selected: isChunkSelected(chunk.index),
+                            embedding: isChunkEmbedding(chunk.index)
+                          }"
+                          @click="toggleChunkSelection(chunk.index)"
                         >
-                          <div class="knowledge-doc-chunk-title">
-                            #{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}
+                          <div class="knowledge-doc-chunk-title-row">
+                            <div class="knowledge-doc-chunk-title">
+                              <span class="knowledge-doc-chunk-select"></span>
+                              <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
+                            </div>
+                            <span
+                              class="knowledge-doc-chunk-status"
+                              :class="`status-${resolveChunkStatus(chunk)}`"
+                            >
+                              {{ formatChunkStatus(chunk) }}
+                            </span>
                           </div>
                           <div class="knowledge-doc-chunk-preview">
                             {{ chunk.preview || chunk.content }}
@@ -296,6 +396,102 @@
         <button class="user-tools-btn" type="button" @click="applyKnowledgeModal">保存</button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="docModalVisible"
+      class="user-tools-dialog user-tools-subdialog knowledge-doc-modal"
+      width="860px"
+      top="8vh"
+      :show-close="false"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="user-tools-header">
+          <div>
+            <div class="user-tools-title">{{ activeDocTitle || '原文档' }}</div>
+            <div class="muted">{{ activeDocMeta }}</div>
+          </div>
+          <button class="icon-btn" type="button" @click="closeDocModal">×</button>
+        </div>
+      </template>
+      <div class="knowledge-doc-modal-content" v-html="renderedDocContent"></div>
+      <template #footer>
+        <button class="user-tools-btn secondary" type="button" @click="closeDocModal">关闭</button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="knowledgeTestVisible"
+      class="user-tools-dialog user-tools-subdialog knowledge-test-dialog"
+      width="920px"
+      top="8vh"
+      :show-close="false"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="user-tools-header">
+          <div class="user-tools-title">知识库测试</div>
+          <button class="icon-btn" type="button" @click="closeTestModal">×</button>
+        </div>
+      </template>
+      <div class="knowledge-test-layout">
+        <div class="knowledge-test-input">
+          <label>问题</label>
+          <el-input
+            v-model="knowledgeTestQuery"
+            type="textarea"
+            :rows="6"
+            placeholder="请输入测试问题"
+          />
+          <div class="knowledge-test-actions">
+            <button
+              class="user-tools-btn btn-with-icon"
+              type="button"
+              :disabled="knowledgeTestLoading"
+              :class="{ 'is-loading': knowledgeTestLoading }"
+              @click="runKnowledgeTest"
+            >
+              <i class="fa-solid" :class="knowledgeTestRunIcon" aria-hidden="true"></i>
+              <span>{{ knowledgeTestRunLabel }}</span>
+            </button>
+            <div class="muted">{{ knowledgeTestStatus }}</div>
+          </div>
+        </div>
+        <div class="knowledge-test-results">
+          <div class="knowledge-doc-section-title">召回结果</div>
+          <div class="knowledge-test-result-list">
+            <div v-if="knowledgeTestResultMessage" class="empty-text">
+              {{ knowledgeTestResultMessage }}
+            </div>
+            <template v-else>
+              <div
+                v-for="(hit, index) in knowledgeTestResults"
+                :key="`${hit.doc_id || hit.document}-${hit.chunk_index}-${index}`"
+                class="knowledge-test-result-item"
+              >
+                <div class="knowledge-test-result-header">
+                  {{
+                    `${index + 1}. ${hit.document || hit.doc_id || '未命名文档'} #${
+                      hit.chunk_index ?? '-'
+                    } · ${formatTestScore(Number(hit.score))}`
+                  }}
+                </div>
+                <div class="knowledge-test-result-content">{{ hit.content || '' }}</div>
+              </div>
+              <div v-if="knowledgeTestText" class="knowledge-test-result-item">
+                <div class="knowledge-test-result-header">文本结果</div>
+                <div class="knowledge-test-result-content">{{ knowledgeTestText }}</div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="user-tools-btn secondary" type="button" @click="closeTestModal">关闭</button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -311,10 +507,13 @@ import {
   fetchUserKnowledgeChunks,
   fetchUserKnowledgeFile,
   fetchUserKnowledgeFiles,
+  embedUserKnowledgeChunk,
+  deleteUserKnowledgeChunk,
   deleteUserKnowledgeDoc,
   reindexUserKnowledge,
   saveUserKnowledgeConfig,
   saveUserKnowledgeFile,
+  testUserKnowledge,
   uploadUserKnowledgeFile
 } from '@/api/userTools';
 
@@ -427,7 +626,8 @@ const activeDocId = ref('');
 const docContent = ref('');
 const docMeta = ref(null);
 const docChunks = ref([]);
-const activeChunkIndex = ref(-1);
+const selectedChunkIndices = ref(new Set());
+const embeddingChunkIndices = ref(new Set());
 const embeddingModels = ref([]);
 const loaded = ref(false);
 const loading = ref(false);
@@ -440,6 +640,13 @@ let knowledgeResizeBound = false;
 
 const knowledgeModalVisible = ref(false);
 const knowledgeEditingIndex = ref(-1);
+const docModalVisible = ref(false);
+const knowledgeTestVisible = ref(false);
+const knowledgeTestQuery = ref('');
+const knowledgeTestStatus = ref('');
+const knowledgeTestResults = ref([]);
+const knowledgeTestText = ref('');
+const knowledgeTestLoading = ref(false);
 const knowledgeForm = reactive({
   name: '',
   description: '',
@@ -566,6 +773,14 @@ const DOC_STATUS_LABELS = {
   failed: '失败'
 };
 
+const CHUNK_STATUS_LABELS = {
+  embedded: '已嵌入',
+  pending: '待嵌入',
+  deleted: '已删除',
+  failed: '失败',
+  embedding: '嵌入中'
+};
+
 const formatDocStatus = (status) => {
   const normalized = String(status || '').trim().toLowerCase();
   if (!normalized) return '';
@@ -602,6 +817,26 @@ const buildDocMetaText = (meta) => {
   }
   return parts.join(' · ');
 };
+
+const resolveChunkStatus = (chunk) => {
+  if (embeddingChunkIndices.value.has(chunk?.index)) {
+    return 'embedding';
+  }
+  const raw = String(chunk?.status || '').trim().toLowerCase();
+  return raw || 'pending';
+};
+
+const formatChunkStatus = (chunk) => {
+  const status = resolveChunkStatus(chunk);
+  if (!status) {
+    return '-';
+  }
+  return CHUNK_STATUS_LABELS[status] || status;
+};
+
+const isChunkSelected = (index) => selectedChunkIndices.value.has(index);
+const isChunkEmbedding = (index) => embeddingChunkIndices.value.has(index);
+const getSelectedChunkIndices = () => Array.from(selectedChunkIndices.value);
 
 const buildHighlightedDocContent = (content, chunk) => {
   const text = String(content || '');
@@ -643,11 +878,48 @@ const knowledgeModalTitle = computed(() =>
 );
 const activeDocTitle = computed(() => docMeta.value?.name || '未选择文档');
 const activeDocMeta = computed(() => buildDocMetaText(docMeta.value));
+const selectedChunkCount = computed(() => selectedChunkIndices.value.size);
+const embeddingActive = computed(() => embeddingChunkIndices.value.size > 0);
+const canSelectChunks = computed(
+  () => Boolean(activeDocId.value) && docChunks.value.length > 0
+);
+const allChunksSelected = computed(
+  () => canSelectChunks.value && selectedChunkIndices.value.size === docChunks.value.length
+);
+const selectAllLabel = computed(() => (allChunksSelected.value ? '取消全选' : '全选'));
+const selectAllIcon = computed(() => (allChunksSelected.value ? 'fa-square-minus' : 'fa-square-check'));
+const embedActionLabel = computed(() => (embeddingActive.value ? '嵌入中' : '批量嵌入'));
+const embedActionIcon = computed(() => (embeddingActive.value ? 'fa-spinner' : 'fa-cube'));
+const canBatchEmbed = computed(
+  () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
+);
+const canBatchDelete = computed(
+  () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
+);
+const knowledgeTestRunLabel = computed(() =>
+  knowledgeTestLoading.value ? '测试中' : '测试'
+);
+const knowledgeTestRunIcon = computed(() =>
+  knowledgeTestLoading.value ? 'fa-spinner' : 'fa-play'
+);
+const knowledgeTestResultMessage = computed(() => {
+  if (knowledgeTestLoading.value) {
+    return '加载中...';
+  }
+  if (knowledgeTestResults.value.length || knowledgeTestText.value) {
+    return '';
+  }
+  return '暂无召回结果。';
+});
 const renderedDocContent = computed(() => {
   if (!docContent.value) {
     return escapeHtml('暂无内容');
   }
-  const chunk = docChunks.value.find((item) => item.index === activeChunkIndex.value);
+  const selected = getSelectedChunkIndices();
+  const chunk =
+    selected.length === 1
+      ? docChunks.value.find((item) => item.index === selected[0])
+      : null;
   return buildHighlightedDocContent(docContent.value, chunk);
 });
 
@@ -727,7 +999,8 @@ const captureKnowledgeSnapshot = () => ({
   docContent: docContent.value,
   docMeta: docMeta.value ? { ...docMeta.value } : null,
   docChunks: [...docChunks.value],
-  activeChunkIndex: activeChunkIndex.value,
+  selectedChunkIndices: getSelectedChunkIndices(),
+  embeddingChunkIndices: Array.from(embeddingChunkIndices.value),
   embeddingModels: [...embeddingModels.value]
 });
 
@@ -742,7 +1015,8 @@ const restoreKnowledgeSnapshot = (snapshot) => {
   docContent.value = snapshot.docContent;
   docMeta.value = snapshot.docMeta;
   docChunks.value = snapshot.docChunks;
-  activeChunkIndex.value = snapshot.activeChunkIndex;
+  selectedChunkIndices.value = new Set(snapshot.selectedChunkIndices || []);
+  embeddingChunkIndices.value = new Set(snapshot.embeddingChunkIndices || []);
   embeddingModels.value = snapshot.embeddingModels;
 };
 
@@ -766,7 +1040,8 @@ const loadConfig = async () => {
     docContent.value = '';
     docMeta.value = null;
     docChunks.value = [];
-    activeChunkIndex.value = -1;
+    selectedChunkIndices.value = new Set();
+    embeddingChunkIndices.value = new Set();
     loaded.value = true;
     if (selectedIndex.value >= 0) {
       await loadFiles();
@@ -812,7 +1087,8 @@ const saveConfig = async (preferredName = '') => {
     docContent.value = '';
     docMeta.value = null;
     docChunks.value = [];
-    activeChunkIndex.value = -1;
+    selectedChunkIndices.value = new Set();
+    embeddingChunkIndices.value = new Set();
     emitStatus('已保存。');
     return normalized;
   } catch (error) {
@@ -831,7 +1107,8 @@ const selectBase = async (index) => {
   docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
-  activeChunkIndex.value = -1;
+  selectedChunkIndices.value = new Set();
+  embeddingChunkIndices.value = new Set();
   await loadFiles();
 };
 
@@ -939,7 +1216,8 @@ const applyKnowledgeModal = async () => {
   docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
-  activeChunkIndex.value = -1;
+  selectedChunkIndices.value = new Set();
+  embeddingChunkIndices.value = new Set();
   try {
     await saveConfig(payload.name);
     if (selectedIndex.value >= 0) {
@@ -993,7 +1271,8 @@ const deleteBase = async () => {
   docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
-  activeChunkIndex.value = -1;
+  selectedChunkIndices.value = new Set();
+  embeddingChunkIndices.value = new Set();
   try {
     const preferredName = bases.value[selectedIndex.value]?.name || '';
     await saveConfig(preferredName);
@@ -1041,7 +1320,8 @@ const resetDocState = () => {
   docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
-  activeChunkIndex.value = -1;
+  selectedChunkIndices.value = new Set();
+  embeddingChunkIndices.value = new Set();
 };
 
 const loadVectorDocs = async () => {
@@ -1059,14 +1339,15 @@ const loadVectorDocs = async () => {
       docContent.value = '';
       docMeta.value = null;
       docChunks.value = [];
-      activeChunkIndex.value = -1;
+      selectedChunkIndices.value = new Set();
+      embeddingChunkIndices.value = new Set();
     }
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || '向量文档列表加载失败');
   }
 };
 
-const selectDoc = async (docId) => {
+const selectDoc = async (docId, options = {}) => {
   const base = activeBase.value;
   if (!base || !base.name) {
     ElMessage.warning('请先选择知识库。');
@@ -1076,6 +1357,8 @@ const selectDoc = async (docId) => {
     ElMessage.warning('请先选择文档。');
     return;
   }
+  const keepSelection = options.keepSelection === true;
+  const previousSelection = keepSelection ? new Set(selectedChunkIndices.value) : new Set();
   try {
     const [docRes, chunkRes] = await Promise.all([
       fetchUserKnowledgeDoc(base.name, docId),
@@ -1087,7 +1370,9 @@ const selectDoc = async (docId) => {
     docMeta.value = docPayload.doc || null;
     docContent.value = docPayload.content || '';
     docChunks.value = Array.isArray(chunkPayload.chunks) ? chunkPayload.chunks : [];
-    activeChunkIndex.value = -1;
+    selectedChunkIndices.value = previousSelection;
+    embeddingChunkIndices.value = new Set();
+    syncChunkSelection();
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || '文档加载失败');
   }
@@ -1120,7 +1405,8 @@ const deleteDoc = async (docId) => {
       docContent.value = '';
       docMeta.value = null;
       docChunks.value = [];
-      activeChunkIndex.value = -1;
+      selectedChunkIndices.value = new Set();
+      embeddingChunkIndices.value = new Set();
     }
     await loadVectorDocs();
     ElMessage.success('文档已删除。');
@@ -1156,9 +1442,210 @@ const reindexDocs = async (docId) => {
   }
 };
 
-const toggleChunk = (chunk) => {
-  if (!chunk) return;
-  activeChunkIndex.value = activeChunkIndex.value === chunk.index ? -1 : chunk.index;
+const syncChunkSelection = () => {
+  if (!docChunks.value.length) {
+    selectedChunkIndices.value = new Set();
+    return;
+  }
+  const available = new Set(docChunks.value.map((chunk) => chunk.index));
+  const next = new Set();
+  selectedChunkIndices.value.forEach((index) => {
+    if (available.has(index)) {
+      next.add(index);
+    }
+  });
+  selectedChunkIndices.value = next;
+};
+
+const toggleChunkSelection = (index) => {
+  const next = new Set(selectedChunkIndices.value);
+  if (next.has(index)) {
+    next.delete(index);
+  } else {
+    next.add(index);
+  }
+  selectedChunkIndices.value = next;
+};
+
+const toggleSelectAllChunks = () => {
+  if (!docChunks.value.length) {
+    return;
+  }
+  if (selectedChunkIndices.value.size === docChunks.value.length) {
+    selectedChunkIndices.value = new Set();
+  } else {
+    selectedChunkIndices.value = new Set(docChunks.value.map((chunk) => chunk.index));
+  }
+};
+
+const refreshActiveDoc = async () => {
+  if (!activeDocId.value) {
+    return;
+  }
+  await selectDoc(activeDocId.value, { keepSelection: true });
+  await loadVectorDocs();
+};
+
+const embedSelectedChunks = async () => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning('请先选择知识库。');
+    return;
+  }
+  if (!activeDocId.value) {
+    ElMessage.warning('请先选择文档。');
+    return;
+  }
+  const selected = getSelectedChunkIndices();
+  if (!selected.length) {
+    ElMessage.warning('请先选择切片。');
+    return;
+  }
+  const pending = selected.filter((index) => {
+    const chunk = docChunks.value.find((item) => item.index === index);
+    return chunk && resolveChunkStatus(chunk) !== 'embedded';
+  });
+  if (!pending.length) {
+    ElMessage.info('选中的切片已全部嵌入。');
+    return;
+  }
+  embeddingChunkIndices.value = new Set(pending);
+  let succeeded = 0;
+  let failed = 0;
+  for (const index of pending) {
+    try {
+      await embedUserKnowledgeChunk({
+        base: base.name,
+        doc_id: activeDocId.value,
+        chunk_index: index
+      });
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+    }
+  }
+  embeddingChunkIndices.value = new Set();
+  await refreshActiveDoc();
+  if (succeeded) {
+    ElMessage.success(`已嵌入 ${succeeded} 个切片。`);
+  }
+  if (failed) {
+    ElMessage.error(`${failed} 个切片嵌入失败。`);
+  }
+};
+
+const deleteSelectedChunks = async () => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning('请先选择知识库。');
+    return;
+  }
+  if (!activeDocId.value) {
+    ElMessage.warning('请先选择文档。');
+    return;
+  }
+  const selected = getSelectedChunkIndices();
+  if (!selected.length) {
+    ElMessage.warning('请先选择切片。');
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selected.length} 个切片吗？`, '提示', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    });
+  } catch (error) {
+    return;
+  }
+  let succeeded = 0;
+  let failed = 0;
+  for (const index of selected) {
+    try {
+      await deleteUserKnowledgeChunk({
+        base: base.name,
+        doc_id: activeDocId.value,
+        chunk_index: index
+      });
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+    }
+  }
+  selectedChunkIndices.value = new Set();
+  await refreshActiveDoc();
+  if (succeeded) {
+    ElMessage.success(`已删除 ${succeeded} 个切片。`);
+  }
+  if (failed) {
+    ElMessage.error(`${failed} 个切片删除失败。`);
+  }
+};
+
+const openDocModal = () => {
+  if (!activeDocId.value) {
+    ElMessage.warning('请先选择文档。');
+    return;
+  }
+  docModalVisible.value = true;
+};
+
+const closeDocModal = () => {
+  docModalVisible.value = false;
+};
+
+const openTestModal = () => {
+  if (!activeBase.value?.name) {
+    ElMessage.warning('请先选择知识库。');
+    return;
+  }
+  knowledgeTestQuery.value = '';
+  knowledgeTestStatus.value = '';
+  knowledgeTestResults.value = [];
+  knowledgeTestText.value = '';
+  knowledgeTestVisible.value = true;
+};
+
+const closeTestModal = () => {
+  knowledgeTestVisible.value = false;
+  knowledgeTestLoading.value = false;
+};
+
+const formatTestScore = (score) => {
+  if (!Number.isFinite(score)) {
+    return '-';
+  }
+  return score.toFixed(3);
+};
+
+const runKnowledgeTest = async () => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning('请先选择知识库。');
+    return;
+  }
+  const query = knowledgeTestQuery.value.trim();
+  if (!query) {
+    ElMessage.warning('请输入测试问题。');
+    return;
+  }
+  knowledgeTestLoading.value = true;
+  knowledgeTestStatus.value = '测试中...';
+  knowledgeTestResults.value = [];
+  knowledgeTestText.value = '';
+  try {
+    const { data } = await testUserKnowledge({ base: base.name, query });
+    const payload = data?.data || {};
+    const hits = Array.isArray(payload.hits) ? payload.hits : [];
+    knowledgeTestResults.value = hits;
+    knowledgeTestText.value = payload.text || '';
+    knowledgeTestStatus.value = '测试完成。';
+  } catch (error) {
+    const message = error.response?.data?.detail?.message || error.message || '请求失败';
+    knowledgeTestStatus.value = `测试失败：${message}`;
+  } finally {
+    knowledgeTestLoading.value = false;
+  }
 };
 
 const selectFile = async (filePath) => {
@@ -1398,6 +1885,8 @@ watch(
     if (!value) {
       cleanupKnowledgeEditorEvents();
       closeKnowledgeModal();
+      closeDocModal();
+      closeTestModal();
     }
   },
   { immediate: true }
@@ -1428,4 +1917,10 @@ watch(
     }
   }
 );
+
+watch(activeDocId, (value) => {
+  if (!value) {
+    docModalVisible.value = false;
+  }
+});
 </script>

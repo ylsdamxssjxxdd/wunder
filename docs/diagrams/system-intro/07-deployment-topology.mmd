@@ -7,10 +7,11 @@
 
   subgraph Runtime["运行服务"]
     Nginx["前端<br/>wunder_nginx"]
-    RustAPI["核心<br/>wunder_engine"]
+    RustAPI["核心<br/>wunder_engine&nbsp;&nbsp;"]
     Sandbox["沙盒<br/>sandbox"]
-    MCP["MCP服务<br/>wunder-mcp"]
+    MCP["MCP服务<br/>wunder_mcp"]
     PG[(数据库<br/>postgres)]
+    VectorDB[(向量数据库&nbsp;&nbsp;<br/>Weaviate)]
   end
 
   subgraph RightSide[" "]
@@ -31,6 +32,7 @@
   ApiClient -->|HTTP/SSE| RustAPI
 
   RustAPI --> PG
+  RustAPI --> VectorDB
   RustAPI --> WS
   RustAPI --> LLM
   RustAPI --> Sandbox
@@ -45,7 +47,7 @@
   classDef volume fill:#f5f5f5,stroke:#bfbfbf,stroke-width:1.2px,color:#434343;
 
   class UserUI,AdminUI,ApiClient client;
-  class Nginx,RustAPI,Sandbox,MCP,PG runtime;
+  class Nginx,RustAPI,Sandbox,MCP,PG,VectorDB runtime;
   class LLM,ExtDB,KB external;
   class WS volume;
 

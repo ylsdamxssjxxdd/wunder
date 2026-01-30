@@ -2373,6 +2373,28 @@
   min-height: 0;
 }
 
+#knowledgeTestModal .modal-card {
+  width: min(980px, 96vw);
+  height: min(620px, 90vh);
+}
+
+#knowledgeTestModal .modal-body {
+  overflow: hidden;
+}
+
+#knowledgeTestModal .knowledge-test-layout {
+  height: 100%;
+}
+
+#knowledgeTestModal .knowledge-test-input,
+#knowledgeTestModal .knowledge-test-results {
+  min-height: 0;
+}
+
+#knowledgeTestModal .knowledge-test-results {
+  flex: 1 1 auto;
+}
+
 .knowledge-test-input {
   display: flex;
   flex-direction: column;
@@ -2402,6 +2424,11 @@
   gap: 10px;
   overflow-y: auto;
   max-height: 55vh;
+}
+
+#knowledgeTestModal .knowledge-test-result-list {
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 .knowledge-test-result-item {

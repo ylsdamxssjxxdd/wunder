@@ -16,14 +16,14 @@ python -m mcp_server.main
 
 ### Docker Compose
 
-`docker-composex86.yml`/`docker-composearm.yml` 已内置 `wunder-mcp` 服务，默认端口 `9010`。
+`docker-composex86.yml`/`docker-composearm.yml` 已内置 `wunder_mcp` 服务，默认端口 `9010`。
 
 ```bash
 # 在项目根目录
 set MCP_PORT=9010
 set MCP_HOST=0.0.0.0
 # 启动
-docker compose -f docker-composex86.yml up -d wunder-mcp
+docker compose -f docker-composex86.yml up -d wunder_mcp
 ```
 
 ## 2. MCP 配置文件
@@ -81,11 +81,11 @@ docker compose -f docker-composex86.yml up -d wunder-mcp
 ```json
 {
   "mcpServers": {
-    "wunder-mcp": {
+    "wunder_mcp": {
       "type": "streamable-http",
       "description": "Wunder MCP 服务（当前内置数据库工具）。",
       "isActive": false,
-      "name": "wunder-mcp",
+      "name": "wunder_mcp",
       "baseUrl": "http://127.0.0.1:9010/mcp",
       "headers": {}
     }
