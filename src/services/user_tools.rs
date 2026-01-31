@@ -1,9 +1,7 @@
 // 用户自建工具：负责配置存储、别名绑定与共享工具聚合。
 use crate::config::{Config, KnowledgeBaseType, McpServerConfig, McpToolSpec};
 use crate::i18n;
-use crate::path_utils::{
-    normalize_existing_path, normalize_path_for_compare, normalize_target_path,
-};
+use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::vector_knowledge;

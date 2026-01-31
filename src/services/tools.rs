@@ -5,17 +5,23 @@ use crate::config::{
     is_debug_log_level, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
+use crate::history::HistoryManager;
 use crate::i18n;
 use crate::knowledge;
 use crate::llm::embed_texts;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::mcp;
+use crate::monitor::MonitorState;
+use crate::orchestrator::Orchestrator;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::sandbox;
-use crate::schemas::ToolSpec;
+use crate::schemas::{ToolSpec, WunderRequest};
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
+use crate::storage::{
+    ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentAccessRecord, UserAgentRecord,
+};
 use crate::user_tools::{
     UserToolAlias, UserToolBindings, UserToolKind, UserToolManager, UserToolStore,
 };
@@ -36,7 +42,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
-use tokio::time::sleep;
+use tokio::sync::oneshot;
+use tokio::time::{sleep, timeout};
 use tracing::warn;
 use url::Url;
 use uuid::Uuid;
@@ -50,6 +57,13 @@ const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_ITEMS: usize = 200;
 const MAX_SEARCH_MATCHES: usize = 200;
 const MAX_LSP_DIAGNOSTICS: usize = 20;
+const MAX_SESSION_LIST_ITEMS: i64 = 200;
+const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
+const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
+const SESSION_RESULT_MAX_CHARS: usize = 2000;
+const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
+const DEFAULT_SESSION_TITLE: &str = "新会话";
+const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
 
 #[derive(Clone)]
 pub struct ToolEventEmitter {
@@ -82,6 +96,10 @@ pub struct ToolContext<'a> {
     pub session_id: &'a str,
     pub workspace_id: &'a str,
     pub agent_id: Option<&'a str>,
+    pub is_admin: bool,
+    pub storage: Arc<dyn StorageBackend>,
+    pub orchestrator: Option<Arc<Orchestrator>>,
+    pub monitor: Option<Arc<MonitorState>>,
     pub workspace: Arc<WorkspaceManager>,
     pub lsp_manager: Arc<LspManager>,
     pub config: &'a Config,
@@ -385,6 +403,36 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 "required": ["operation", "path"]
             }),
         },
+        ToolSpec {
+            name: "子智能体控制".to_string(),
+            description: t("tool.spec.subagent_control.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.subagent_control.args.action"),
+                        "enum": ["list", "history", "send", "spawn"]
+                    },
+                    "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
+                    "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
+                    "messageLimit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
+                    "parentId": {"type": "string", "description": t("tool.spec.sessions_list.args.parent_id")},
+                    "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
+                    "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                    "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
+                    "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
+                    "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
+                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
+                    "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
+                },
+                "required": ["action"]
+            }),
+        },
     ]
 }
 
@@ -412,6 +460,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("replace_text".to_string(), "替换文本".to_string());
     map.insert("edit_file".to_string(), "编辑文件".to_string());
     map.insert("lsp".to_string(), "LSP查询".to_string());
+    map.insert("subagent_control".to_string(), "子智能体控制".to_string());
     map
 }
 
@@ -716,6 +765,7 @@ pub async fn execute_builtin_tool(
         "替换文本" => replace_text(context, args).await,
         "编辑文件" => edit_file(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
+        "子智能体控制" => subagent_control(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(
@@ -936,6 +986,925 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
         "routes": routes,
         "multiple": payload.multiple
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionListArgs {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default, rename = "activeMinutes", alias = "active_minutes")]
+    active_minutes: Option<f64>,
+    #[serde(default, rename = "messageLimit", alias = "message_limit")]
+    message_limit: Option<i64>,
+    #[serde(
+        default,
+        alias = "parent_id",
+        alias = "parentId",
+        alias = "parentSessionId"
+    )]
+    parent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionHistoryArgs {
+    #[serde(
+        default,
+        alias = "session_id",
+        alias = "sessionId",
+        alias = "sessionKey",
+        alias = "session_key"
+    )]
+    session_key: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default, rename = "includeTools", alias = "include_tools")]
+    include_tools: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionSendArgs {
+    #[serde(
+        default,
+        alias = "session_id",
+        alias = "sessionId",
+        alias = "sessionKey",
+        alias = "session_key"
+    )]
+    session_key: Option<String>,
+    message: String,
+    #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
+    timeout_seconds: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionSpawnArgs {
+    task: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default, alias = "agentId", alias = "agent_id")]
+    agent_id: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default, rename = "runTimeoutSeconds", alias = "run_timeout_seconds")]
+    run_timeout_seconds: Option<f64>,
+    #[serde(default)]
+    cleanup: Option<String>,
+}
+
+#[derive(Debug)]
+struct SessionRunOutcome {
+    status: String,
+    answer: Option<String>,
+    error: Option<String>,
+    elapsed_s: f64,
+}
+
+#[derive(Clone, Copy)]
+enum SessionCleanup {
+    Keep,
+    Delete,
+}
+
+#[derive(Clone)]
+struct AnnounceConfig {
+    parent_session_id: String,
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentControlArgs {
+    action: String,
+}
+
+async fn subagent_control(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SubagentControlArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let action = payload.action.trim();
+    if action.is_empty() {
+        return Err(anyhow!("子智能体控制 action 不能为空"));
+    }
+    let action_lower = action.to_lowercase();
+    match action_lower.as_str() {
+        "list" | "sessions_list" | "session_list" | "会话列表" | "列表" => {
+            sessions_list(context, args).await
+        }
+        "history" | "sessions_history" | "session_history" | "会话历史" | "历史" => {
+            sessions_history(context, args).await
+        }
+        "send" | "sessions_send" | "session_send" | "会话发送" | "发送" => {
+            sessions_send(context, args).await
+        }
+        "spawn" | "sessions_spawn" | "session_spawn" | "会话派生" | "派生" => {
+            sessions_spawn(context, args).await
+        }
+        _ => Err(anyhow!("未知子智能体控制 action: {action}")),
+    }
+}
+
+async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionListArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let limit = clamp_limit(payload.limit, 50, MAX_SESSION_LIST_ITEMS);
+    let message_limit = clamp_limit(payload.message_limit, 0, MAX_SESSION_MESSAGE_ITEMS);
+    let parent_id = normalize_optional_string(payload.parent_id);
+    let (mut sessions, _) =
+        context
+            .storage
+            .list_chat_sessions(user_id, None, parent_id.as_deref(), 0, limit)?;
+
+    if let Some(active_minutes) = payload.active_minutes.filter(|value| *value > 0.0) {
+        let cutoff = now_ts() - active_minutes * 60.0;
+        sessions.retain(|record| record.updated_at >= cutoff);
+    }
+    let total = sessions.len() as i64;
+    let mut items = Vec::with_capacity(sessions.len());
+    for record in sessions {
+        let status = context
+            .monitor
+            .as_ref()
+            .and_then(|monitor| monitor.get_record(&record.session_id))
+            .and_then(|entry| {
+                entry
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string())
+            });
+        let messages = if message_limit > 0 {
+            Some(
+                load_session_messages(
+                    context.workspace.clone(),
+                    user_id.to_string(),
+                    record.session_id.clone(),
+                    message_limit,
+                    false,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        let mut item = json!({
+            "session_id": record.session_id,
+            "title": record.title,
+            "agent_id": record.agent_id,
+            "updated_at": format_ts(record.updated_at),
+            "last_message_at": format_ts(record.last_message_at),
+            "parent_session_id": record.parent_session_id,
+            "parent_message_id": record.parent_message_id,
+            "spawn_label": record.spawn_label,
+            "spawned_by": record.spawned_by,
+            "status": status,
+        });
+        if let Some(messages) = messages {
+            if let Value::Object(ref mut map) = item {
+                map.insert("messages".to_string(), json!(messages));
+            }
+        }
+        items.push(item);
+    }
+    Ok(json!({ "total": total, "items": items }))
+}
+
+async fn sessions_history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionHistoryArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let session_id = resolve_session_key(payload.session_key)?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let limit = clamp_limit(payload.limit, 200, MAX_SESSION_HISTORY_ITEMS);
+    let include_tools = payload.include_tools.unwrap_or(false);
+    let record = context
+        .storage
+        .get_chat_session(user_id, &session_id)?
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+    let messages = load_session_messages(
+        context.workspace.clone(),
+        user_id.to_string(),
+        record.session_id,
+        limit,
+        include_tools,
+    )
+    .await;
+    Ok(json!({ "session_id": session_id, "messages": messages }))
+}
+
+async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionSendArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let session_id = resolve_session_key(payload.session_key)?;
+    let message = payload.message.trim().to_string();
+    if message.is_empty() {
+        return Err(anyhow!(i18n::t("error.content_required")));
+    }
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let record = context
+        .storage
+        .get_chat_session(user_id, &session_id)?
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+    let agent_record = load_agent_record(
+        context.storage.as_ref(),
+        user_id,
+        record.agent_id.as_deref(),
+        true,
+    )?;
+    let tool_names = build_effective_tool_names(context, user_id, &record, agent_record.as_ref())?;
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let now = now_ts();
+    let _ = context
+        .storage
+        .touch_chat_session(user_id, &session_id, now, now);
+    if let Some(monitor) = context.monitor.as_ref() {
+        finish_stale_waiting_sessions(
+            monitor,
+            &context.storage,
+            user_id,
+            &session_id,
+            record.agent_id.as_deref(),
+        );
+    }
+    let request = WunderRequest {
+        user_id: user_id.to_string(),
+        question: message,
+        tool_names,
+        skip_tool_calls: false,
+        stream: false,
+        debug_payload: false,
+        session_id: Some(session_id.clone()),
+        agent_id: record.agent_id.clone(),
+        model_name: None,
+        language: Some(i18n::get_language()),
+        config_overrides: None,
+        agent_prompt,
+        attachments: None,
+        is_admin: context.is_admin,
+    };
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let receiver = spawn_session_run(
+        context,
+        request,
+        run_id.clone(),
+        Some(context.session_id.to_string()),
+        record.agent_id.clone(),
+        None,
+        None,
+        SessionCleanup::Keep,
+        None,
+    )
+    .await?;
+
+    let timeout_seconds = payload.timeout_seconds.unwrap_or(0.0).max(0.0);
+    if timeout_seconds <= 0.0 {
+        return Ok(json!({
+            "status": "accepted",
+            "run_id": run_id,
+            "session_id": session_id
+        }));
+    }
+    let outcome = timeout(Duration::from_secs_f64(timeout_seconds), receiver).await;
+    match outcome {
+        Ok(Ok(outcome)) => {
+            if outcome.status == "success" {
+                Ok(json!({
+                    "status": "ok",
+                    "run_id": run_id,
+                    "reply": outcome.answer.unwrap_or_default(),
+                    "elapsed_s": outcome.elapsed_s
+                }))
+            } else {
+                Ok(json!({
+                    "status": outcome.status,
+                    "run_id": run_id,
+                    "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
+                    "elapsed_s": outcome.elapsed_s
+                }))
+            }
+        }
+        Ok(Err(err)) => Ok(json!({
+            "status": "error",
+            "run_id": run_id,
+            "error": err.to_string()
+        })),
+        Err(_) => Ok(json!({
+            "status": "timeout",
+            "run_id": run_id,
+            "error": "timeout"
+        })),
+    }
+}
+
+async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionSpawnArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let task = payload.task.trim().to_string();
+    if task.is_empty() {
+        return Err(anyhow!(i18n::t("error.content_required")));
+    }
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let parent_session_id = context.session_id.trim().to_string();
+    if parent_session_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    }
+    let label = normalize_optional_string(payload.label);
+    let agent_id = normalize_optional_string(payload.agent_id);
+    let model_name = normalize_optional_string(payload.model);
+
+    let parent_record = context
+        .storage
+        .get_chat_session(user_id, &parent_session_id)
+        .unwrap_or(None);
+    let parent_agent_id = parent_record
+        .as_ref()
+        .and_then(|record| record.agent_id.clone())
+        .or_else(|| context.agent_id.map(|value| value.to_string()));
+    let parent_agent_record = load_agent_record(
+        context.storage.as_ref(),
+        user_id,
+        parent_agent_id.as_deref(),
+        true,
+    )?;
+    let parent_tool_names = if let Some(record) = parent_record.as_ref() {
+        build_effective_tool_names(context, user_id, record, parent_agent_record.as_ref())?
+    } else {
+        finalize_tool_names(collect_user_allowed_tools(context, user_id)?)
+    };
+
+    let child_agent_id = agent_id.clone().or(parent_agent_id);
+    let child_agent_record = load_agent_record(
+        context.storage.as_ref(),
+        user_id,
+        child_agent_id.as_deref(),
+        agent_id.is_none(),
+    )?;
+    let agent_prompt = child_agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let now = now_ts();
+    let child_session_id = format!("sess_{}", Uuid::new_v4().simple());
+    let child_record = ChatSessionRecord {
+        session_id: child_session_id.clone(),
+        user_id: user_id.to_string(),
+        title: label
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string()),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: child_agent_id.clone(),
+        tool_overrides: parent_tool_names.clone(),
+        parent_session_id: Some(parent_session_id.clone()),
+        parent_message_id: None,
+        spawn_label: label.clone(),
+        spawned_by: Some("model".to_string()),
+    };
+    context.storage.upsert_chat_session(&child_record)?;
+
+    let request = WunderRequest {
+        user_id: user_id.to_string(),
+        question: task,
+        tool_names: parent_tool_names,
+        skip_tool_calls: false,
+        stream: false,
+        debug_payload: false,
+        session_id: Some(child_session_id.clone()),
+        agent_id: child_agent_id.clone(),
+        model_name: model_name.clone(),
+        language: Some(i18n::get_language()),
+        config_overrides: None,
+        agent_prompt,
+        attachments: None,
+        is_admin: context.is_admin,
+    };
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());
+    let announce = AnnounceConfig {
+        parent_session_id: parent_session_id.clone(),
+        label,
+    };
+    let _ = spawn_session_run(
+        context,
+        request,
+        run_id.clone(),
+        Some(parent_session_id),
+        child_agent_id,
+        model_name,
+        Some(announce),
+        cleanup,
+        payload.run_timeout_seconds,
+    )
+    .await?;
+    Ok(json!({
+        "status": "accepted",
+        "run_id": run_id,
+        "child_session_id": child_session_id
+    }))
+}
+
+async fn spawn_session_run(
+    context: &ToolContext<'_>,
+    request: WunderRequest,
+    run_id: String,
+    parent_session_id: Option<String>,
+    agent_id: Option<String>,
+    model_name: Option<String>,
+    announce: Option<AnnounceConfig>,
+    cleanup: SessionCleanup,
+    run_timeout_s: Option<f64>,
+) -> Result<oneshot::Receiver<SessionRunOutcome>> {
+    let orchestrator = context
+        .orchestrator
+        .clone()
+        .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
+    let session_id = request
+        .session_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+    let user_id = request.user_id.clone();
+    let now = now_ts();
+    let record = SessionRunRecord {
+        run_id: run_id.clone(),
+        session_id: session_id.clone(),
+        parent_session_id: parent_session_id.clone(),
+        user_id: user_id.clone(),
+        agent_id: agent_id.clone(),
+        model_name: model_name.clone(),
+        status: "queued".to_string(),
+        queued_time: now,
+        started_time: 0.0,
+        finished_time: 0.0,
+        elapsed_s: 0.0,
+        result: None,
+        error: None,
+        updated_time: now,
+    };
+    context.storage.upsert_session_run(&record)?;
+
+    let storage = context.storage.clone();
+    let workspace = context.workspace.clone();
+    let monitor = context.monitor.clone();
+    let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
+    tokio::spawn(async move {
+        let started = now_ts();
+        let _ = storage.touch_chat_session(&user_id, &session_id, started, started);
+        let running = SessionRunRecord {
+            status: "running".to_string(),
+            started_time: started,
+            updated_time: started,
+            ..record.clone()
+        };
+        let _ = storage.upsert_session_run(&running);
+
+        let runtime_handle = tokio::runtime::Handle::current();
+        let mut run_handle =
+            tokio::task::spawn_blocking(move || runtime_handle.block_on(orchestrator.run(request)));
+        let mut timeout_triggered = false;
+        let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
+            let timeout_duration = Duration::from_secs_f64(timeout_s);
+            tokio::select! {
+                res = &mut run_handle => match res {
+                    Ok(value) => value,
+                    Err(err) => Err(anyhow!(err.to_string())),
+                },
+                _ = sleep(timeout_duration) => {
+                    timeout_triggered = true;
+                    run_handle.abort();
+                    if let Some(monitor) = monitor.as_ref() {
+                        let _ = monitor.cancel(&session_id);
+                    }
+                    Err(anyhow!("timeout"))
+                }
+            }
+        } else {
+            match run_handle.await {
+                Ok(value) => value,
+                Err(err) => Err(anyhow!(err.to_string())),
+            }
+        };
+        let finished = now_ts();
+        let elapsed = (finished - started).max(0.0);
+        let (status, answer, error) = match run_result {
+            Ok(response) => {
+                let answer = truncate_text(&response.answer, SESSION_RESULT_MAX_CHARS);
+                ("success".to_string(), Some(answer), None)
+            }
+            Err(err) => {
+                if timeout_triggered {
+                    ("timeout".to_string(), None, Some("timeout".to_string()))
+                } else {
+                    ("error".to_string(), None, Some(err.to_string()))
+                }
+            }
+        };
+        let finished_record = SessionRunRecord {
+            status: status.clone(),
+            finished_time: finished,
+            elapsed_s: elapsed,
+            result: answer.clone(),
+            error: error.clone(),
+            updated_time: finished,
+            ..running
+        };
+        let _ = storage.upsert_session_run(&finished_record);
+
+        if let Some(announce) = announce {
+            if !should_skip_announce(answer.as_deref()) {
+                append_child_announce(
+                    &workspace,
+                    &storage,
+                    &user_id,
+                    &announce.parent_session_id,
+                    &session_id,
+                    &run_id,
+                    &status,
+                    answer.as_deref(),
+                    error.as_deref(),
+                    elapsed,
+                    model_name.as_deref(),
+                    announce.label.as_deref(),
+                );
+            }
+        }
+        if matches!(cleanup, SessionCleanup::Delete) {
+            cleanup_session(
+                &storage,
+                &workspace,
+                monitor.as_ref(),
+                &user_id,
+                &session_id,
+            );
+        }
+
+        let _ = tx.send(SessionRunOutcome {
+            status,
+            answer,
+            error,
+            elapsed_s: elapsed,
+        });
+    });
+    Ok(rx)
+}
+
+fn parse_cleanup_mode(value: Option<&str>) -> SessionCleanup {
+    match value.unwrap_or("").trim().to_lowercase().as_str() {
+        "delete" | "remove" => SessionCleanup::Delete,
+        _ => SessionCleanup::Keep,
+    }
+}
+
+fn cleanup_session(
+    storage: &Arc<dyn StorageBackend>,
+    workspace: &WorkspaceManager,
+    monitor: Option<&Arc<MonitorState>>,
+    user_id: &str,
+    session_id: &str,
+) {
+    workspace.purge_session_data(user_id, session_id);
+    let _ = storage.delete_chat_session(user_id, session_id);
+    if let Some(monitor) = monitor {
+        let _ = monitor.purge_session(session_id);
+    }
+}
+
+fn append_child_announce(
+    workspace: &WorkspaceManager,
+    storage: &Arc<dyn StorageBackend>,
+    user_id: &str,
+    parent_session_id: &str,
+    child_session_id: &str,
+    run_id: &str,
+    status: &str,
+    answer: Option<&str>,
+    error: Option<&str>,
+    elapsed_s: f64,
+    model_name: Option<&str>,
+    label: Option<&str>,
+) {
+    let result_text = if status == "success" {
+        answer.unwrap_or("ok").trim()
+    } else {
+        error.unwrap_or("error").trim()
+    };
+    let mut notes = vec![
+        format!("run_id={run_id}"),
+        format!("session_id={child_session_id}"),
+        format!("elapsed_s={:.2}", elapsed_s),
+    ];
+    if let Some(model) = model_name {
+        if !model.trim().is_empty() {
+            notes.push(format!("model={}", model.trim()));
+        }
+    }
+    if let Some(label) = label {
+        if !label.trim().is_empty() {
+            notes.push(format!("label={}", label.trim()));
+        }
+    }
+    let content = format!(
+        "Status: {status}\nResult: {result}\nNotes: {notes}",
+        status = status,
+        result = result_text,
+        notes = notes.join(", ")
+    );
+    let timestamp = Local::now().to_rfc3339();
+    let meta = json!({
+        "type": "subagent_announce",
+        "run_id": run_id,
+        "child_session_id": child_session_id,
+        "status": status,
+        "elapsed_s": elapsed_s
+    });
+    let payload = json!({
+        "role": "assistant",
+        "content": content,
+        "session_id": parent_session_id,
+        "timestamp": timestamp,
+        "meta": meta,
+    });
+    let _ = workspace.append_chat(user_id, &payload);
+    let now = now_ts();
+    let _ = storage.touch_chat_session(user_id, parent_session_id, now, now);
+}
+
+fn should_skip_announce(answer: Option<&str>) -> bool {
+    answer
+        .map(|value| value.trim() == ANNOUNCE_SKIP)
+        .unwrap_or(false)
+}
+
+async fn load_session_messages(
+    workspace: Arc<WorkspaceManager>,
+    user_id: String,
+    session_id: String,
+    limit: i64,
+    include_tools: bool,
+) -> Vec<Value> {
+    tokio::task::spawn_blocking(move || {
+        if include_tools {
+            let history = workspace
+                .load_history(&user_id, &session_id, limit)
+                .unwrap_or_default();
+            history
+                .into_iter()
+                .filter(|item| item.get("role").and_then(Value::as_str) != Some("system"))
+                .collect()
+        } else {
+            let manager = HistoryManager;
+            manager.load_history_messages(&workspace, &user_id, &session_id, limit)
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn resolve_session_key(value: Option<String>) -> Result<String> {
+    let Some(key) = normalize_optional_string(value) else {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    };
+    Ok(key)
+}
+
+fn clamp_limit(value: Option<i64>, default: i64, max: i64) -> i64 {
+    value.unwrap_or(default).max(0).min(max)
+}
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn format_ts(ts: f64) -> String {
+    let millis = (ts * 1000.0) as i64;
+    chrono::DateTime::<Utc>::from_timestamp_millis(millis)
+        .map(|dt| dt.with_timezone(&Local).to_rfc3339())
+        .unwrap_or_default()
+}
+
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut output = trimmed.chars().take(max_chars).collect::<String>();
+    output.push_str("...");
+    output
+}
+
+fn finish_stale_waiting_sessions(
+    monitor: &MonitorState,
+    storage: &Arc<dyn StorageBackend>,
+    user_id: &str,
+    current_session_id: &str,
+    agent_id: Option<&str>,
+) {
+    let normalized_agent = agent_id.unwrap_or("").trim();
+    if user_id.trim().is_empty() {
+        return;
+    }
+    let sessions = monitor.list_sessions(true);
+    for session in sessions {
+        let status = session.get("status").and_then(Value::as_str).unwrap_or("");
+        if status != MonitorState::STATUS_WAITING {
+            continue;
+        }
+        let session_user = session.get("user_id").and_then(Value::as_str).unwrap_or("");
+        if session_user != user_id {
+            continue;
+        }
+        let session_id = session
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if session_id.is_empty() || session_id == current_session_id {
+            continue;
+        }
+        let matches_agent = match storage.get_chat_session(user_id, &session_id) {
+            Ok(Some(record)) => {
+                let record_agent = record.agent_id.unwrap_or_default();
+                record_agent.trim() == normalized_agent
+            }
+            Ok(None) => normalized_agent.is_empty(),
+            Err(_) => false,
+        };
+        if matches_agent {
+            monitor.mark_finished(&session_id);
+        }
+    }
+}
+
+fn collect_user_allowed_tools(context: &ToolContext<'_>, user_id: &str) -> Result<HashSet<String>> {
+    let mut allowed =
+        collect_available_tool_names(context.config, context.skills, context.user_tool_bindings);
+    let access = context.storage.get_user_tool_access(user_id)?;
+    if let Some(access) = access {
+        if let Some(allowed_tools) = access.allowed_tools.as_ref() {
+            let allowed_set: HashSet<String> = allowed_tools
+                .iter()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            allowed = allowed
+                .intersection(&allowed_set)
+                .cloned()
+                .collect::<HashSet<_>>();
+        }
+    }
+    Ok(allowed)
+}
+
+fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    let mut has_none = false;
+    for raw in values {
+        let name = raw.trim().to_string();
+        if name.is_empty() || seen.contains(&name) {
+            continue;
+        }
+        if name == TOOL_OVERRIDE_NONE {
+            has_none = true;
+        }
+        seen.insert(name.clone());
+        output.push(name);
+    }
+    if has_none {
+        vec![TOOL_OVERRIDE_NONE.to_string()]
+    } else {
+        output
+    }
+}
+
+fn resolve_session_tool_overrides(
+    record: &ChatSessionRecord,
+    agent: Option<&UserAgentRecord>,
+) -> Vec<String> {
+    if !record.tool_overrides.is_empty() {
+        normalize_tool_overrides(record.tool_overrides.clone())
+    } else {
+        agent
+            .map(|record| record.tool_names.clone())
+            .unwrap_or_default()
+    }
+}
+
+fn apply_tool_overrides(allowed: HashSet<String>, overrides: &[String]) -> HashSet<String> {
+    if overrides.is_empty() {
+        return allowed;
+    }
+    if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
+        return HashSet::new();
+    }
+    let override_set: HashSet<String> = overrides
+        .iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
+    allowed
+        .intersection(&override_set)
+        .cloned()
+        .collect::<HashSet<_>>()
+}
+
+fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
+    if allowed.is_empty() {
+        return vec![TOOL_OVERRIDE_NONE.to_string()];
+    }
+    let mut list = allowed.drain().collect::<Vec<_>>();
+    list.sort();
+    list
+}
+
+fn build_effective_tool_names(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    record: &ChatSessionRecord,
+    agent: Option<&UserAgentRecord>,
+) -> Result<Vec<String>> {
+    let allowed = collect_user_allowed_tools(context, user_id)?;
+    let overrides = resolve_session_tool_overrides(record, agent);
+    let allowed = apply_tool_overrides(allowed, &overrides);
+    Ok(finalize_tool_names(allowed))
+}
+
+fn is_agent_allowed_by_access(
+    user_id: &str,
+    access: Option<&UserAgentAccessRecord>,
+    agent: &UserAgentRecord,
+) -> bool {
+    if agent.user_id != user_id && !agent.is_shared {
+        return false;
+    }
+    if let Some(access) = access {
+        if !access.blocked_agent_ids.is_empty()
+            && access
+                .blocked_agent_ids
+                .iter()
+                .any(|id| id == &agent.agent_id)
+        {
+            return false;
+        }
+        if let Some(allowed) = access.allowed_agent_ids.as_ref() {
+            return allowed.iter().any(|id| id == &agent.agent_id);
+        }
+    }
+    true
+}
+
+fn load_agent_record(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    agent_id: Option<&str>,
+    allow_missing: bool,
+) -> Result<Option<UserAgentRecord>> {
+    let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let record = storage.get_user_agent_by_id(agent_id)?;
+    let Some(record) = record else {
+        if allow_missing {
+            return Ok(None);
+        }
+        return Err(anyhow!(i18n::t("error.agent_not_found")));
+    };
+    let access = storage.get_user_agent_access(user_id)?;
+    if !is_agent_allowed_by_access(user_id, access.as_ref(), &record) {
+        if allow_missing {
+            return Ok(None);
+        }
+        return Err(anyhow!(i18n::t("error.agent_not_found")));
+    }
+    Ok(Some(record))
 }
 
 async fn execute_user_tool(

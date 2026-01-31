@@ -1685,10 +1685,10 @@ const handleUpDrop = async (event) => {
         destination: parentPath
       })
     );
-    notifyBatchResult(response.data, '移动到上级目录');
+    notifyBatchResult(response.data, t('workspace.action.moveToParent'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '移动失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
   }
 };
 
@@ -1715,15 +1715,15 @@ const openPreview = async (entry) => {
   const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 
   if (OFFICE_EXTENSIONS.has(extension)) {
-    state.preview.hint = '浏览器不支持该格式预览，请下载后使用本地程序打开。';
-    state.preview.content = '暂无预览';
+    state.preview.hint = t('workspace.preview.unsupportedHint');
+    state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;
   }
   const isMediaPreview = IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension);
   if (!isMediaPreview && !canPreviewText) {
-    state.preview.hint = '文件过大，无法预览，请下载查看。';
-    state.preview.content = '暂无预览';
+    state.preview.hint = t('workspace.preview.tooLargeHint');
+    state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;
   }
@@ -1740,8 +1740,8 @@ const openPreview = async (entry) => {
         );
         const payload = response.data || {};
         if (payload.truncated) {
-          state.preview.hint = '内容已截断，建议下载查看完整文件。';
-          state.preview.content = '暂无预览';
+          state.preview.hint = t('workspace.preview.truncatedHint');
+          state.preview.content = t('workspace.preview.empty');
           return;
         }
         const text = typeof payload.content === 'string' ? payload.content : '';
@@ -1786,13 +1786,13 @@ const openPreview = async (entry) => {
     );
     const payload = response.data || {};
     if (payload.truncated) {
-      state.preview.hint = '内容已截断，建议下载查看完整文件。';
+      state.preview.hint = t('workspace.preview.truncatedHint');
     }
     const text = typeof payload.content === 'string' ? payload.content : '';
-    state.preview.content = text || '暂无内容';
+    state.preview.content = text || t('workspace.preview.emptyContent');
   } catch (error) {
-    state.preview.hint = '预览加载失败，请下载查看。';
-    state.preview.content = '暂无预览';
+    state.preview.hint = t('workspace.preview.loadFailedHint');
+    state.preview.content = t('workspace.preview.empty');
   } finally {
     state.preview.loading = false;
   }
@@ -1816,7 +1816,7 @@ const downloadPreview = async () => {
 const openEditor = async (entry) => {
   if (!entry || entry.type !== 'file') return;
   if (!isWorkspaceTextEditable(entry)) {
-    ElMessage.warning('仅支持预览范围内的文本文件编辑');
+    ElMessage.warning(t('workspace.editor.previewOnly'));
     return;
   }
   state.editor.entry = entry;
@@ -1833,13 +1833,13 @@ const openEditor = async (entry) => {
     );
     const payload = response.data || {};
     if (payload.truncated) {
-      ElMessage.warning('文件过大，无法编辑，请下载查看。');
+      ElMessage.warning(t('workspace.editor.tooLarge'));
       closeEditor();
       return;
     }
     state.editor.content = typeof payload.content === 'string' ? payload.content : '';
   } catch (error) {
-    ElMessage.error('文件加载失败');
+    ElMessage.error(t('workspace.editor.loadFailed'));
     closeEditor();
   } finally {
     state.editor.loading = false;
@@ -1862,11 +1862,11 @@ const saveEditor = async () => {
         content: state.editor.content
       })
     );
-    ElMessage.success('已保存');
+    ElMessage.success(t('common.saved'));
     closeEditor();
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '保存失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.editor.saveFailed'));
   }
 };
 

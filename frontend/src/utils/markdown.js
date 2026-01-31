@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { t } from '@/i18n';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
 // 统一的 Markdown 渲染器：禁用原始 HTML，启用自动换行与链接识别
@@ -345,13 +346,13 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
     <div class="ai-resource-body ai-resource-file">
       <div class="ai-resource-file-icon">${escapeHtml(fileBadge)}</div>
       <div class="ai-resource-file-info">
-        <div class="ai-resource-file-label">文件可下载</div>
+      <div class="ai-resource-file-label">${t('chat.resource.fileReady')}</div>
       </div>
     </div>
   `;
   const imageBody = `
     <div class="ai-resource-body">
-      <div class="ai-resource-status">图片加载中...</div>
+      <div class="ai-resource-status">${t('chat.resourceImageLoading')}</div>
       <img class="ai-resource-preview" alt="${safeName}" loading="lazy" />
     </div>
   `;
@@ -362,7 +363,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
           <span class="ai-resource-name">${safeName}</span>
           ${safeKind === 'image' ? metaInline : ''}
         </div>
-        <button class="ai-resource-btn" type="button" data-workspace-action="download">下载</button>
+        <button class="ai-resource-btn" type="button" data-workspace-action="download">${t('common.download')}</button>
       </div>
       ${safeKind === 'image' ? '' : metaBlock}
       ${safeKind === 'image' ? imageBody : fileBody}
@@ -405,9 +406,9 @@ function renderCodeBlock(content = '', info = '') {
     <div class="ai-code-block">
       <div class="ai-code-header">
         ${langLabel}
-        <button class="ai-code-copy" type="button" aria-label="复制代码" title="复制代码">
+        <button class="ai-code-copy" type="button" aria-label="${t('chat.code.copy')}" title="${t('chat.code.copy')}">
           ${CODE_COPY_ICON}
-          <span>复制</span>
+          <span>${t('common.copy')}</span>
         </button>
       </div>
       <pre><code${codeClass}>${highlighted}</code></pre>

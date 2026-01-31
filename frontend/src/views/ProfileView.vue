@@ -1,13 +1,13 @@
 <template>
   <div class="portal-shell profile-shell">
-    <UserTopbar title="我的" subtitle="账号与使用概况" :hide-chat="true" />
+    <UserTopbar :title="t('profile.topbar.title')" :subtitle="t('profile.topbar.subtitle')" :hide-chat="true" />
     <main class="profile-content">
       <section class="profile-hero">
         <div class="profile-card profile-identity">
           <button
             class="profile-edit-btn"
             type="button"
-            aria-label="编辑资料"
+            :aria-label="t('profile.edit.action')"
             @click="openProfileEditor"
           >
             <i class="fa-solid fa-pen-to-square profile-edit-icon" aria-hidden="true"></i>
@@ -17,36 +17,38 @@
               <div class="profile-avatar">{{ userInitials }}</div>
               <div class="profile-info">
                 <div class="profile-name">{{ userName }}</div>
-                <div class="profile-id">ID：{{ userId }}</div>
+                <div class="profile-id">{{ t('profile.idLabel', { id: userId }) }}</div>
                 <div class="profile-tags">
-                  <span class="profile-tag">单位 {{ userUnitLabel }}</span>
-                  <span class="profile-tag">{{ demoMode ? '演示模式' : '正式账号' }}</span>
+                  <span class="profile-tag">{{ t('user.unitLabel', { unit: userUnitLabel }) }}</span>
+                  <span class="profile-tag">
+                    {{ demoMode ? t('profile.account.demo') : t('profile.account.live') }}
+                  </span>
                 </div>
               </div>
             </div>
             <div class="profile-identity-stats">
               <div class="profile-stat">
-                <div class="profile-stat-label">会话数量</div>
+                <div class="profile-stat-label">{{ t('profile.stats.sessions') }}</div>
                 <div class="profile-stat-value">{{ sessionCount }}</div>
               </div>
               <div class="profile-stat">
-                <div class="profile-stat-label">近 7 天会话</div>
+                <div class="profile-stat-label">{{ t('profile.stats.sessions7d') }}</div>
                 <div class="profile-stat-value">{{ recentSessionCount }}</div>
               </div>
               <div class="profile-stat">
-                <div class="profile-stat-label">最近活跃</div>
+                <div class="profile-stat-label">{{ t('profile.stats.lastActive') }}</div>
                 <div class="profile-stat-value">{{ lastActiveTime }}</div>
               </div>
               <div class="profile-stat">
-                <div class="profile-stat-label">工具调用</div>
+                <div class="profile-stat-label">{{ t('profile.stats.toolCalls') }}</div>
                 <div class="profile-stat-value">{{ toolCallCount }}</div>
               </div>
               <div class="profile-stat">
-                <div class="profile-stat-label">上下文占用</div>
+                <div class="profile-stat-label">{{ t('profile.stats.contextTokens') }}</div>
                 <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
               </div>
               <div class="profile-stat">
-                <div class="profile-stat-label">累计 Token</div>
+                <div class="profile-stat-label">{{ t('profile.stats.totalTokens') }}</div>
                 <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
               </div>
             </div>
@@ -57,13 +59,13 @@
       <section class="profile-section profile-metrics-section">
         <div class="profile-section-header">
           <div>
-            <div class="profile-section-title">对话统计</div>
-            <div class="profile-section-desc">基于已加载会话与消息的图表统计</div>
+            <div class="profile-section-title">{{ t('profile.metrics.title') }}</div>
+            <div class="profile-section-desc">{{ t('profile.metrics.desc') }}</div>
           </div>
         </div>
         <div class="profile-charts">
           <div class="profile-chart-quota">
-            <div class="profile-chart-label">今日额度</div>
+            <div class="profile-chart-label">{{ t('profile.metrics.quotaToday') }}</div>
             <div ref="quotaChartRef" class="profile-quota-chart"></div>
             <div class="profile-chart-summary">
               {{ quotaRemainingText }} / {{ quotaTotalText }}
@@ -83,21 +85,23 @@
     >
       <template #header>
         <div class="profile-edit-header">
-          <div class="profile-edit-title">编辑资料</div>
+          <div class="profile-edit-title">{{ t('profile.edit.title') }}</div>
           <button class="icon-btn" type="button" @click="editDialogVisible = false">×</button>
         </div>
       </template>
       <el-form :model="editForm" label-position="top" class="profile-edit-form">
-        <el-form-item label="用户名">
-          <el-input v-model="editForm.username" placeholder="输入新的用户名" />
+        <el-form-item :label="t('profile.edit.username')">
+          <el-input v-model="editForm.username" :placeholder="t('profile.edit.usernamePlaceholder')" />
         </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="editForm.email" placeholder="输入邮箱（可选）" />
+        <el-form-item :label="t('profile.edit.email')">
+          <el-input v-model="editForm.email" :placeholder="t('profile.edit.emailPlaceholder')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="saveProfile">保存</el-button>
+        <el-button @click="editDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveProfile">
+          {{ t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -111,6 +115,7 @@ import { ElMessage } from 'element-plus';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { updateProfile } from '@/api/auth';
+import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useThemeStore } from '@/stores/theme';
@@ -120,6 +125,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const themeStore = useThemeStore();
+const { t, language } = useI18n();
 
 const quotaChartRef = ref(null);
 let quotaChart = null;
@@ -132,7 +138,7 @@ const editForm = reactive({
 });
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
-const userName = computed(() => authStore.user?.username || '访客');
+const userName = computed(() => authStore.user?.username || t('user.guest'));
 const userId = computed(() => authStore.user?.id || '-');
 const userUnitLabel = computed(() => {
   const unit = authStore.user?.unit;
@@ -171,7 +177,7 @@ const saveProfile = async () => {
   const username = String(editForm.username || '').trim();
   const email = String(editForm.email || '').trim();
   if (!username) {
-    ElMessage.warning('请输入用户名');
+    ElMessage.warning(t('profile.edit.usernameRequired'));
     return;
   }
   editSaving.value = true;
@@ -186,9 +192,9 @@ const saveProfile = async () => {
       authStore.user = profile;
     }
     editDialogVisible.value = false;
-    ElMessage.success('资料已更新');
+    ElMessage.success(t('profile.edit.saved'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail?.message || '更新失败');
+    ElMessage.error(error.response?.data?.detail?.message || t('profile.edit.saveFailed'));
   } finally {
     editSaving.value = false;
   }
@@ -294,10 +300,10 @@ const quotaPercent = computed(() => {
   return Math.min(Math.max(used / quotaTotal.value, 0), 1);
 });
 
-const quotaLabels = {
-  used: '已用',
-  remaining: '剩余'
-};
+const quotaLabels = computed(() => ({
+  used: t('profile.quota.used'),
+  remaining: t('profile.quota.remaining')
+}));
 
 const resolveQuotaPalette = () => {
   const isLight = themeStore.mode === 'light';
@@ -341,8 +347,8 @@ const buildQuotaChartData = () => {
   const remaining = Math.max(Math.min(remainingRaw, total), 0);
   const used = Math.max(total - remaining, 0);
   const data = [
-    { value: used, name: quotaLabels.used },
-    { value: remaining, name: quotaLabels.remaining }
+    { value: used, name: quotaLabels.value.used },
+    { value: remaining, name: quotaLabels.value.remaining }
   ];
   const visibleCount = data.filter((item) => Number(item.value) > 0).length;
   return { data, isEmpty: visibleCount === 0, visibleCount };
@@ -484,7 +490,7 @@ const formatTime = (value) => {
 
 const formatNumber = (value) => {
   if (!Number.isFinite(value)) return '-';
-  return new Intl.NumberFormat('zh-CN').format(value);
+  return new Intl.NumberFormat(language.value || 'zh-CN').format(value);
 };
 
 const formatK = (value) => {

@@ -85,6 +85,13 @@ struct SessionListQuery {
     limit: Option<i64>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(
+        default,
+        alias = "parent_id",
+        alias = "parentId",
+        alias = "parentSessionId"
+    )]
+    parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +184,10 @@ async fn create_session(
         last_message_at: now,
         agent_id,
         tool_overrides,
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
     };
     state
         .user_store
@@ -193,9 +204,16 @@ async fn list_sessions(
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = resolve_pagination(&query);
     let agent_id = query.agent_id.as_deref().map(|value| value.trim());
+    let parent_session_id = query.parent_session_id.as_deref().map(|value| value.trim());
     let (sessions, total) = state
         .user_store
-        .list_chat_sessions(&resolved.user.user_id, agent_id, offset, limit)
+        .list_chat_sessions(
+            &resolved.user.user_id,
+            agent_id,
+            parent_session_id,
+            offset,
+            limit,
+        )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let items = sessions.iter().map(session_payload).collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "total": total, "items": items } })))
@@ -384,6 +402,10 @@ async fn send_message(
         last_message_at: now,
         agent_id: None,
         tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
     });
     state
         .user_store
@@ -1201,6 +1223,10 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "last_message_at": format_ts(record.last_message_at),
         "agent_id": record.agent_id,
         "tool_overrides": record.tool_overrides,
+        "parent_session_id": record.parent_session_id,
+        "parent_message_id": record.parent_message_id,
+        "spawn_label": record.spawn_label,
+        "spawned_by": record.spawned_by,
     })
 }
 

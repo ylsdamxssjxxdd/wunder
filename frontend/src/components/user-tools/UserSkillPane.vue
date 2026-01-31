@@ -1,21 +1,21 @@
 <template>
   <div class="user-tools-pane">
     <div class="list-header">
-      <label>技能管理</label>
+      <label>{{ t('userTools.skills.title') }}</label>
       <div class="header-actions">
         <button class="user-tools-btn secondary compact" type="button" @click="triggerUpload">
-          上传技能包
+          {{ t('userTools.skills.action.upload') }}
         </button>
         <button class="user-tools-btn secondary compact" type="button" @click="reloadSkills">
-          刷新
+          {{ t('common.refresh') }}
         </button>
       </div>
     </div>
-    <div class="tips">技能名称会以 user_id@技能名 展示，勾选共享即可让其他用户使用。</div>
+    <div class="tips">{{ t('userTools.skills.tip') }}</div>
     <input ref="uploadInputRef" type="file" accept=".zip" hidden @change="handleUpload" />
 
     <div class="skills-list">
-      <div v-if="!skills.length" class="empty-text">未发现技能，请先上传技能包。</div>
+      <div v-if="!skills.length" class="empty-text">{{ t('userTools.skills.list.empty') }}</div>
       <div
         v-for="skill in skills"
         :key="skill.name"
@@ -24,11 +24,11 @@
       >
         <label class="tool-check" @click.stop>
           <input type="checkbox" :checked="skill.enabled" @change="toggleEnable(skill, $event.target.checked)" />
-          <span>启用</span>
+          <span>{{ t('userTools.action.enable') }}</span>
         </label>
         <label class="tool-check" @click.stop>
           <input type="checkbox" :checked="skill.shared" @change="toggleShared(skill, $event.target.checked)" />
-          <span>共享</span>
+          <span>{{ t('userTools.action.share') }}</span>
         </label>
         <label class="tool-item-info">
           <strong>{{ skill.name }}</strong>
@@ -52,13 +52,15 @@
       </template>
       <div class="user-tools-detail">
         <div class="detail-line">
-          <span class="label">路径</span>
+          <span class="label">{{ t('userTools.skills.detail.pathLabel') }}</span>
           <span>{{ detailMeta || '-' }}</span>
         </div>
         <pre class="detail-schema">{{ detailContent }}</pre>
       </div>
       <template #footer>
-        <el-button class="user-tools-footer-btn" @click="detailVisible = false">关闭</el-button>
+        <el-button class="user-tools-footer-btn" @click="detailVisible = false">
+          {{ t('common.close') }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -69,6 +71,7 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchUserSkillContent, fetchUserSkills, saveUserSkills, uploadUserSkillZip } from '@/api/userTools';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   visible: {
@@ -82,6 +85,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['status']);
+const { t } = useI18n();
 
 const skills = ref([]);
 const loaded = ref(false);
@@ -108,7 +112,7 @@ const buildSkillDesc = (skill) => {
   if (skill.path) {
     parts.push(skill.path);
   }
-  return parts.join(' · ') || '暂无描述';
+  return parts.join(' · ') || t('common.noDescription');
 };
 
 const loadSkills = async () => {
@@ -120,24 +124,24 @@ const loadSkills = async () => {
     skills.value = Array.isArray(payload.skills) ? payload.skills : [];
     loaded.value = true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '技能加载失败');
+    ElMessage.error(error.response?.data?.detail || t('userTools.skills.loadFailed'));
   } finally {
     loading.value = false;
   }
 };
 
 const saveSkills = async () => {
-  emitStatus('正在保存...');
+  emitStatus(t('userTools.saving'));
   try {
     const enabled = skills.value.filter((skill) => skill.enabled).map((skill) => skill.name);
     const shared = skills.value.filter((skill) => skill.shared).map((skill) => skill.name);
     const { data } = await saveUserSkills({ enabled, shared });
     const payload = data?.data || {};
     skills.value = Array.isArray(payload.skills) ? payload.skills : skills.value;
-    emitStatus('已自动保存。');
+    emitStatus(t('userTools.autoSaved'));
   } catch (error) {
-    emitStatus(`保存失败：${error.message || '请求失败'}`);
-    ElMessage.error(error.response?.data?.detail || '自建技能保存失败');
+    emitStatus(t('userTools.saveFailed', { message: error.message || t('common.requestFailed') }));
+    ElMessage.error(error.response?.data?.detail || t('userTools.skills.saveFailed'));
   }
 };
 
@@ -180,27 +184,27 @@ const handleUpload = async () => {
   try {
     await uploadUserSkillZip(file);
     await loadSkills();
-    ElMessage.success('技能上传完成并已刷新。');
+    ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '技能上传失败');
+    ElMessage.error(error.response?.data?.detail || t('userTools.skills.upload.failed'));
   }
 };
 
 const reloadSkills = async () => {
   try {
     await loadSkills();
-    ElMessage.success('技能列表已刷新。');
+    ElMessage.success(t('userTools.skills.refresh.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '技能刷新失败');
+    ElMessage.error(error.response?.data?.detail || t('userTools.skills.refresh.failed'));
   }
 };
 
 const openSkillDetail = async (skill) => {
   if (!skill?.name) return;
   const currentVersion = ++detailVersion;
-  detailTitle.value = skill.name || '技能详情';
+  detailTitle.value = skill.name || t('userTools.skills.detail.title');
   detailMeta.value = skill.path || '';
-  detailContent.value = '加载中...';
+  detailContent.value = t('common.loading');
   detailVisible.value = true;
   try {
     const { data } = await fetchUserSkillContent(skill.name);
@@ -208,12 +212,12 @@ const openSkillDetail = async (skill) => {
     if (currentVersion !== detailVersion) {
       return;
     }
-    detailContent.value = payload.content || '（无内容）';
+    detailContent.value = payload.content || t('userTools.skills.detail.empty');
   } catch (error) {
     if (currentVersion !== detailVersion) {
       return;
     }
-    detailContent.value = `加载失败：${error.message || '请求失败'}`;
+    detailContent.value = t('common.loadFailed', { message: error.message || t('common.requestFailed') });
   }
 };
 

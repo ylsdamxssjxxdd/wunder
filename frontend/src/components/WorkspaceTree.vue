@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="workspace-tree">
-    <div class="workspace-header">目录</div>
+    <div class="workspace-header">{{ t('workspace.tree.title') }}</div>
     <el-tree
       :data="treeData"
       :props="treeProps"
@@ -12,6 +12,8 @@
 </template>
 
 <script setup>
+import { useI18n } from '@/i18n';
+
 const props = defineProps({
   treeData: {
     type: Array,
@@ -20,6 +22,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['select']);
+const { t } = useI18n();
 
 const treeProps = {
   label: 'name',

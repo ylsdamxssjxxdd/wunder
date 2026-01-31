@@ -1,15 +1,20 @@
 <template>
   <div class="admin-view">
     <div class="admin-toolbar">
-      <el-input v-model="keyword" placeholder="搜索用户名或邮箱" size="small" class="toolbar-input" />
-      <el-button type="primary" size="small" @click="loadUsers">查询</el-button>
-      <el-button type="primary" size="small" @click="openDialog">新增用户</el-button>
+      <el-input
+        v-model="keyword"
+        :placeholder="t('admin.users.search')"
+        size="small"
+        class="toolbar-input"
+      />
+      <el-button type="primary" size="small" @click="loadUsers">{{ t('admin.users.query') }}</el-button>
+      <el-button type="primary" size="small" @click="openDialog">{{ t('admin.users.create') }}</el-button>
     </div>
     <div class="admin-table-wrapper">
       <el-table :data="adminStore.users" stripe height="100%">
-        <el-table-column prop="username" label="用户名" />
-        <el-table-column prop="email" label="邮箱" />
-        <el-table-column prop="access_level" label="等级" width="120">
+        <el-table-column prop="username" :label="t('admin.users.username')" />
+        <el-table-column prop="email" :label="t('admin.users.email')" />
+        <el-table-column prop="access_level" :label="t('admin.users.level')" width="120">
           <template #default="scope">
             <el-select v-model="scope.row.access_level" size="small" @change="updateLevel(scope.row)">
               <el-option label="A" value="A" />
@@ -18,7 +23,7 @@
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="120">
+        <el-table-column prop="status" :label="t('common.status')" width="120">
           <template #default="scope">
             <el-select v-model="scope.row.status" size="small" @change="updateStatus(scope.row)">
               <el-option label="active" value="active" />
@@ -26,15 +31,15 @@
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column prop="roles" label="角色" />
-        <el-table-column label="重置密码" width="240">
+        <el-table-column prop="roles" :label="t('admin.users.roles')" />
+        <el-table-column :label="t('admin.users.resetPassword')" width="240">
           <template #default="scope">
             <div class="admin-reset-password">
               <el-input
                 v-model="resetPasswords[scope.row.id]"
                 size="small"
                 type="password"
-                placeholder="新密码"
+                :placeholder="t('admin.users.resetPassword.placeholder')"
                 show-password
               />
               <el-button
@@ -43,31 +48,33 @@
                 :loading="resetLoading[scope.row.id]"
                 @click="handleResetPassword(scope.row)"
               >
-                重置
+                {{ t('common.reset') }}
               </el-button>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="工具权限" width="120">
+        <el-table-column :label="t('admin.users.tools')" width="120">
           <template #default="scope">
-            <el-button size="small" @click="openToolDialog(scope.row)">配置</el-button>
+            <el-button size="small" @click="openToolDialog(scope.row)">
+              {{ t('admin.users.tools.configure') }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
 
-    <el-dialog v-model="dialogVisible" title="新增用户" width="420px">
+    <el-dialog v-model="dialogVisible" :title="t('admin.users.create')" width="420px">
       <el-form :model="form" label-position="top">
-        <el-form-item label="用户名">
+        <el-form-item :label="t('admin.users.username')">
           <el-input v-model="form.username" />
         </el-form-item>
-        <el-form-item label="邮箱">
+        <el-form-item :label="t('admin.users.email')">
           <el-input v-model="form.email" />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item :label="t('admin.users.password')">
           <el-input v-model="form.password" type="password" />
         </el-form-item>
-        <el-form-item label="等级">
+        <el-form-item :label="t('admin.users.level')">
           <el-select v-model="form.access_level">
             <el-option label="A" value="A" />
             <el-option label="B" value="B" />
@@ -76,28 +83,28 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">提交</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="submit">{{ t('common.submit') }}</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="toolDialogVisible" title="工具权限配置" width="720px">
+    <el-dialog v-model="toolDialogVisible" :title="t('admin.users.tools.dialog.title')" width="720px">
       <div v-loading="toolDialogLoading">
         <el-form :model="toolForm" label-position="top">
-          <el-form-item label="用户">
+          <el-form-item :label="t('admin.users.tools.user')">
             <span>{{ selectedUser?.username || '-' }}</span>
           </el-form-item>
-          <el-form-item label="权限策略">
+          <el-form-item :label="t('admin.users.tools.policy')">
             <el-switch
               v-model="toolForm.use_default"
-              active-text="使用默认策略"
-              inactive-text="自定义工具白名单"
+              :active-text="t('admin.users.tools.policy.default')"
+              :inactive-text="t('admin.users.tools.policy.custom')"
             />
             <el-text type="info" size="small">
-              等级规则：A 默认全量工具；B 隐藏技能工具；C 隐藏技能与知识库工具。
+              {{ t('admin.users.tools.policy.tip') }}
             </el-text>
           </el-form-item>
-          <el-form-item label="工具白名单">
+          <el-form-item :label="t('admin.users.tools.whitelist')">
             <el-select
               v-model="toolForm.allowed_tools"
               multiple
@@ -118,8 +125,8 @@
         </el-form>
       </div>
       <template #footer>
-        <el-button @click="toolDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveToolAccess">保存</el-button>
+        <el-button @click="toolDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveToolAccess">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -129,9 +136,11 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { useI18n } from '@/i18n';
 import { useAdminStore } from '@/stores/admin';
 
 const adminStore = useAdminStore();
+const { t } = useI18n();
 const keyword = ref('');
 const dialogVisible = ref(false);
 const toolDialogVisible = ref(false);
@@ -163,10 +172,10 @@ const toolGroups = computed(() => {
       description: item.description || ''
     }));
   return [
-    { label: '内置工具', options: buildOptions(catalog.builtin_tools) },
-    { label: 'MCP 工具', options: buildOptions(catalog.mcp_tools) },
-    { label: '技能工具', options: buildOptions(catalog.skills) },
-    { label: '知识库工具', options: buildOptions(catalog.knowledge_tools) }
+    { label: t('admin.agents.tools.builtin'), options: buildOptions(catalog.builtin_tools) },
+    { label: t('admin.agents.tools.mcp'), options: buildOptions(catalog.mcp_tools) },
+    { label: t('admin.agents.tools.skills'), options: buildOptions(catalog.skills) },
+    { label: t('admin.agents.tools.knowledge'), options: buildOptions(catalog.knowledge_tools) }
   ].filter((group) => group.options.length > 0);
 });
 
@@ -186,9 +195,9 @@ const submit = async () => {
     form.email = '';
     form.password = '';
     form.access_level = 'A';
-    ElMessage.success('创建成功');
+    ElMessage.success(t('admin.users.createSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.createFailed'));
   }
 };
 
@@ -196,7 +205,7 @@ const updateStatus = async (row) => {
   try {
     await adminStore.updateUser(row.id, { status: row.status });
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '更新失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.updateFailed'));
   }
 };
 
@@ -204,25 +213,25 @@ const updateLevel = async (row) => {
   try {
     await adminStore.updateUser(row.id, { access_level: row.access_level });
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '更新失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.updateFailed'));
   }
 };
 
 const handleResetPassword = async (row) => {
   const nextPassword = String(resetPasswords[row.id] || '').trim();
   if (!nextPassword) {
-    ElMessage.warning('请输入新密码');
+    ElMessage.warning(t('admin.users.resetPassword.required'));
     return;
   }
   try {
     // 重置前二次确认，避免误操作
     await ElMessageBox.confirm(
-      `确认重置用户 ${row.username} 密码吗？`,
-      '提示',
+      t('admin.users.resetPassword.confirm', { name: row.username }),
+      t('common.notice'),
       {
         type: 'warning',
-        confirmButtonText: '确认',
-        cancelButtonText: '取消'
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel')
       }
     );
   } catch (error) {
@@ -232,9 +241,9 @@ const handleResetPassword = async (row) => {
   try {
     await adminStore.resetUserPassword(row.id, { password: nextPassword });
     resetPasswords[row.id] = '';
-    ElMessage.success('密码已重置');
+    ElMessage.success(t('admin.users.resetPassword.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '重置失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.resetPassword.failed'));
   } finally {
     resetLoading[row.id] = false;
   }
@@ -277,7 +286,7 @@ const openToolDialog = async (user) => {
     }
     syncToolForm();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '加载失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.loadFailed'));
   } finally {
     toolDialogLoading.value = false;
   }
@@ -286,7 +295,7 @@ const openToolDialog = async (user) => {
 const saveToolAccess = async () => {
   if (!selectedUser.value) return;
   if (!toolForm.agent_id) {
-    ElMessage.warning('暂无可用智能体，请先创建');
+    ElMessage.warning(t('admin.users.tools.noAgent'));
     return;
   }
   try {
@@ -294,9 +303,9 @@ const saveToolAccess = async () => {
       agent_id: toolForm.agent_id,
       allowed_tools: toolForm.use_default ? null : toolForm.allowed_tools
     });
-    ElMessage.success('保存成功');
+    ElMessage.success(t('admin.users.saveSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '保存失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.users.saveFailed'));
   }
 };
 

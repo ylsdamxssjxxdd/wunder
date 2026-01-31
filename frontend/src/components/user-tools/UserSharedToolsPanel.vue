@@ -1,7 +1,7 @@
 <template>
   <div class="user-tools-pane shared-tools-pane">
     <div class="list-header">
-      <label>共享工具</label>
+      <label>{{ t('userTools.shared.title') }}</label>
       <div class="header-actions">
         <button
           class="user-tools-btn secondary compact"
@@ -9,7 +9,7 @@
           :disabled="loading || !sharedTools.length"
           @click="selectAll"
         >
-          全选
+          {{ t('common.selectAll') }}
         </button>
         <button
           class="user-tools-btn secondary compact"
@@ -17,17 +17,17 @@
           :disabled="loading || !sharedTools.length"
           @click="clearAll"
         >
-          清空
+          {{ t('common.clear') }}
         </button>
         <button class="user-tools-btn secondary compact" type="button" :disabled="loading" @click="reload">
-          刷新
+          {{ t('common.refresh') }}
         </button>
       </div>
     </div>
-    <div class="tips">勾选后共享工具才会进入你的工具池，可挂载给智能体或会话。</div>
+    <div class="tips">{{ t('userTools.shared.tip') }}</div>
     <div class="tool-list">
-      <div v-if="loading" class="empty-text">加载中...</div>
-      <div v-else-if="!sharedTools.length" class="empty-text">暂无共享工具</div>
+      <div v-if="loading" class="empty-text">{{ t('common.loading') }}</div>
+      <div v-else-if="!sharedTools.length" class="empty-text">{{ t('userTools.shared.empty') }}</div>
       <div
         v-else
         v-for="tool in sharedTools"
@@ -41,7 +41,7 @@
             :checked="isSelected(tool.name)"
             @change="toggleSelection(tool.name, $event.target.checked)"
           />
-          <span>使用</span>
+          <span>{{ t('common.use') }}</span>
         </label>
         <label class="tool-item-info">
           <strong>{{ tool.name }}</strong>
@@ -59,6 +59,7 @@ import { onBeforeUnmount, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsCatalog, saveUserSharedTools } from '@/api/userTools';
+import { useI18n } from '@/i18n';
 
 const sharedTools = ref([]);
 const selectedSet = ref(new Set());
@@ -67,6 +68,7 @@ const statusMessage = ref('');
 const loadVersion = ref(0);
 const saveTimer = ref(null);
 const saveVersion = ref(0);
+const { t } = useI18n();
 
 const normalizeTool = (tool) => {
   if (!tool) return null;
@@ -89,9 +91,9 @@ const buildToolDesc = (tool) => {
     parts.push(tool.description);
   }
   if (tool.ownerId) {
-    parts.push(`来自 ${tool.ownerId}`);
+    parts.push(t('userTools.shared.source', { owner: tool.ownerId }));
   }
-  return parts.join(' · ') || '暂无描述';
+  return parts.join(' · ') || t('common.noDescription');
 };
 
 const updateStatus = (message) => {
@@ -100,10 +102,13 @@ const updateStatus = (message) => {
     return;
   }
   if (!sharedTools.value.length) {
-    statusMessage.value = '暂无共享工具';
+    statusMessage.value = t('userTools.shared.empty');
     return;
   }
-  statusMessage.value = `已选 ${selectedSet.value.size} / ${sharedTools.value.length}`;
+  statusMessage.value = t('userTools.shared.selection', {
+    selected: selectedSet.value.size,
+    total: sharedTools.value.length
+  });
 };
 
 const isSelected = (name) => selectedSet.value.has(name);
@@ -119,13 +124,13 @@ const persistSelection = () => {
       const payload = Array.from(selectedSet.value);
       await saveUserSharedTools({ shared_tools: payload });
       if (currentVersion === saveVersion.value) {
-        updateStatus('已保存');
+        updateStatus(t('userTools.shared.saved'));
         setTimeout(() => updateStatus(), 1200);
       }
     } catch (error) {
       if (currentVersion !== saveVersion.value) return;
-      updateStatus('保存失败，请稍后重试');
-      ElMessage.error(error.response?.data?.detail || '共享工具保存失败');
+      updateStatus(t('userTools.shared.saveFailed'));
+      ElMessage.error(error.response?.data?.detail || t('userTools.shared.saveFailed'));
     }
   }, 400);
 };
@@ -157,7 +162,7 @@ const clearAll = () => {
 const loadSharedTools = async () => {
   if (loading.value) return;
   loading.value = true;
-  statusMessage.value = '正在加载...';
+  statusMessage.value = t('common.loading');
   const currentVersion = ++loadVersion.value;
   try {
     const { data } = await fetchUserToolsCatalog();
@@ -177,8 +182,8 @@ const loadSharedTools = async () => {
     if (currentVersion !== loadVersion.value) {
       return;
     }
-    updateStatus('加载失败，请稍后重试');
-    ElMessage.error(error.response?.data?.detail || '共享工具加载失败');
+    updateStatus(t('userTools.shared.loadFailed'));
+    ElMessage.error(error.response?.data?.detail || t('userTools.shared.loadFailed'));
   } finally {
     if (currentVersion === loadVersion.value) {
       loading.value = false;

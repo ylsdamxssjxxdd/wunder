@@ -1,8 +1,14 @@
 ﻿<template>
   <div class="settings-view">
     <el-card>
-      <h3>个人设置</h3>
-      <p>原型阶段预留设置面板。</p>
+      <h3>{{ t('settings.title') }}</h3>
+      <p>{{ t('settings.placeholder') }}</p>
     </el-card>
   </div>
 </template>
+
+<script setup>
+import { useI18n } from '@/i18n';
+
+const { t } = useI18n();
+</script>

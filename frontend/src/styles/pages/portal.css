@@ -576,6 +576,25 @@
   gap: 12px;
 }
 
+.portal-section-header--search {
+  align-items: flex-start;
+}
+
+.portal-section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.portal-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
 .portal-section-title {
   font-size: 18px;
   font-weight: 700;
@@ -598,6 +617,7 @@
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: nowrap;
+  flex: 0 1 auto;
 }
 
 .portal-section-search {
@@ -972,6 +992,11 @@
   .portal-content {
     padding: 18px;
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .portal-section-title-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .portal-section-actions {

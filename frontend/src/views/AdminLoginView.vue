@@ -1,16 +1,18 @@
 ﻿<template>
   <div class="auth-page theme-light admin-auth">
     <div class="auth-card">
-      <h2>管理员登录</h2>
+      <h2>{{ t('admin.login.title') }}</h2>
       <el-form :model="form" label-position="top" @submit.prevent>
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="请输入用户名" />
+        <el-form-item :label="t('admin.login.username')">
+          <el-input v-model="form.username" :placeholder="t('auth.placeholder.username')" />
         </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" placeholder="请输入密码" />
+        <el-form-item :label="t('admin.login.password')">
+          <el-input v-model="form.password" type="password" :placeholder="t('auth.placeholder.password')" />
         </el-form-item>
         <div class="auth-actions">
-          <el-button type="primary" :loading="loading" @click="handleLogin">登录</el-button>
+          <el-button type="primary" :loading="loading" @click="handleLogin">
+            {{ t('admin.login.action') }}
+          </el-button>
         </div>
       </el-form>
     </div>
@@ -22,10 +24,12 @@ import { reactive, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
+import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 
 const router = useRouter();
 const authStore = useAuthStore();
+const { t } = useI18n();
 const form = reactive({
   username: '',
   password: ''
@@ -39,12 +43,12 @@ const handleLogin = async () => {
     const roles = data?.user?.roles || [];
     if (!roles.includes('admin') && !roles.includes('super_admin')) {
       authStore.logout();
-      ElMessage.error('当前账号无管理权限');
+      ElMessage.error(t('admin.login.noPermission'));
       return;
     }
     router.push('/admin/users');
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '登录失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.login.error'));
   }
 };
 </script>

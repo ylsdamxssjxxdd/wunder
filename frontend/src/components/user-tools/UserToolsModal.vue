@@ -10,21 +10,21 @@
   >
     <template #header>
       <div class="user-tools-header">
-        <div class="user-tools-title">自建工具</div>
+        <div class="user-tools-title">{{ t('toolManager.title') }}</div>
         <button class="icon-btn" type="button" @click="close">×</button>
       </div>
     </template>
 
     <div class="user-tools-modal">
       <div class="user-tools-sidebar">
-        <div class="user-tools-sidebar-title">工具分类</div>
+        <div class="user-tools-sidebar-title">{{ t('toolManager.section.title') }}</div>
         <button
           class="user-tools-tab"
           :class="{ active: activeTab === 'mcp' }"
           type="button"
           @click="activeTab = 'mcp'"
         >
-          MCP 工具
+          {{ t('toolManager.system.mcp') }}
         </button>
         <button
           class="user-tools-tab"
@@ -32,7 +32,7 @@
           type="button"
           @click="activeTab = 'skills'"
         >
-          技能工具
+          {{ t('toolManager.system.skills') }}
         </button>
         <button
           class="user-tools-tab"
@@ -40,7 +40,7 @@
           type="button"
           @click="activeTab = 'knowledge'"
         >
-          知识库工具
+          {{ t('toolManager.system.knowledge') }}
         </button>
       </div>
 
@@ -69,7 +69,7 @@
     <div class="user-tools-status">{{ statusMessage }}</div>
 
     <template #footer>
-      <el-button class="user-tools-footer-btn" @click="close">关闭</el-button>
+      <el-button class="user-tools-footer-btn" @click="close">{{ t('common.close') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -80,6 +80,7 @@ import { computed, ref, watch } from 'vue';
 import UserKnowledgePane from './UserKnowledgePane.vue';
 import UserMcpPane from './UserMcpPane.vue';
 import UserSkillPane from './UserSkillPane.vue';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   modelValue: {
@@ -97,6 +98,7 @@ const visibleProxy = computed({
 
 const activeTab = ref('mcp');
 const statusMessage = ref('');
+const { t } = useI18n();
 
 const updateStatus = (message) => {
   statusMessage.value = message || '';

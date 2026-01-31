@@ -1,3 +1,5 @@
+import { t } from '@/i18n';
+
 const parseSseBlock = (block) => {
   const lines = block.split(/\r?\n/);
   let eventType = 'message';
@@ -22,7 +24,7 @@ const parseSseBlock = (block) => {
 export const consumeSseStream = async (response, onEvent) => {
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('SSE 响应不可读取');
+    throw new Error(t('chat.sse.unreadable'));
   }
   const decoder = new TextDecoder('utf-8');
   let buffer = '';

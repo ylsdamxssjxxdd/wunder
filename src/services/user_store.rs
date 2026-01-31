@@ -1,7 +1,8 @@
 use crate::org_units;
 use crate::storage::{
-    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenRecord,
+    UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -514,11 +515,12 @@ impl UserStore {
         &self,
         user_id: &str,
         agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
         self.storage
-            .list_chat_sessions(user_id, agent_id, offset, limit)
+            .list_chat_sessions(user_id, agent_id, parent_session_id, offset, limit)
     }
 
     pub fn update_chat_session_title(
@@ -545,6 +547,14 @@ impl UserStore {
 
     pub fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.storage.delete_chat_session(user_id, session_id)
+    }
+
+    pub fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
+        self.storage.upsert_session_run(record)
+    }
+
+    pub fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>> {
+        self.storage.get_session_run(run_id)
     }
 
     pub fn upsert_user_agent(&self, record: &UserAgentRecord) -> Result<()> {

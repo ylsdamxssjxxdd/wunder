@@ -172,7 +172,7 @@ const resolveI18nEndpoint = () => {
     import.meta.env.VITE_API_BASE_URL ||
     import.meta.env.VITE_API_BASE ||
     'http://localhost:18000/wunder';
-  return `${base.replace(/\\/+$/, '')}/i18n`;
+  return `${base.replace(/\/+$/, '')}/i18n`;
 };
 
 export const initI18n = async () => {

@@ -13,8 +13,8 @@
           <button
             class="upload-preview-remove"
             type="button"
-            title="移除"
-            aria-label="移除"
+            :title="t('common.remove')"
+            :aria-label="t('common.remove')"
             @click="removeAttachment(attachment.id)"
           >
             <i class="fa-solid fa-xmark upload-preview-remove-icon" aria-hidden="true"></i>
@@ -22,7 +22,7 @@
         </div>
       </div>
       <div v-if="attachmentBusy > 0" class="upload-preview-status">
-        正在处理 {{ attachmentBusy }} 个附件...
+        {{ t('chat.attachments.processing', { count: attachmentBusy }) }}
       </div>
     </div>
 
@@ -45,8 +45,8 @@
       <button
         class="input-icon-btn upload-btn"
         type="button"
-        title="上传附件"
-        aria-label="上传附件"
+        :title="t('chat.attachments.upload')"
+        :aria-label="t('chat.attachments.upload')"
         :disabled="attachmentBusy > 0"
         @click="triggerUpload"
       >
@@ -56,8 +56,8 @@
         class="input-icon-btn send-btn"
         type="button"
         :disabled="!canSendOrStop"
-        :title="loading ? '终止' : '发送'"
-        :aria-label="loading ? '终止' : '发送'"
+        :title="loading ? t('common.stop') : t('chat.input.send')"
+        :aria-label="loading ? t('common.stop') : t('chat.input.send')"
         @click="handleSendOrStop"
       >
         <i
@@ -85,6 +85,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { convertChatAttachment } from '@/api/chat';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   loading: {
@@ -114,6 +115,7 @@ const attachments = ref([]);
 const attachmentBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
+const { t } = useI18n();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 const DOC_EXTENSIONS = [
@@ -154,7 +156,7 @@ const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
 const inputPlaceholder = computed(() =>
-  props.inquiryActive ? '选择选项或输入文本后点击发送' : '输入消息...'
+  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholder')
 );
 const canSendOrStop = computed(() => {
   if (props.loading) return true;
@@ -189,7 +191,7 @@ const readFileAsDataUrl = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('图片读取失败'));
+    reader.onerror = () => reject(new Error(t('chat.attachments.imageReadFailed')));
     reader.readAsDataURL(file);
   });
 
@@ -280,7 +282,7 @@ const handleAttachmentSelection = async (file) => {
     if (isImageFile(file)) {
       const dataUrl = await readFileAsDataUrl(file);
       if (!dataUrl) {
-        throw new Error('图片内容为空');
+        throw new Error(t('chat.attachments.imageEmpty'));
       }
       attachments.value.push({
         id: buildAttachmentId(),
@@ -289,20 +291,22 @@ const handleAttachmentSelection = async (file) => {
         content: dataUrl,
         mime_type: file.type || ''
       });
-      ElMessage.success(`已附加图片：${filename}`);
+      ElMessage.success(t('chat.attachments.imageAdded', { name: filename }));
       return;
     }
 
     const extension = resolveFileExtension(filename);
     if (!extension || !DOC_EXTENSIONS.includes(`.${extension}`)) {
-      throw new Error(`不支持的文件类型：.${extension || '未知'}`);
+      throw new Error(
+        t('chat.attachments.unsupportedType', { ext: extension || t('common.unknown') })
+      );
     }
 
     const response = await convertChatAttachment(file);
     const payload = response?.data?.data || {};
     const content = typeof payload.content === 'string' ? payload.content : '';
     if (!content.trim()) {
-      throw new Error('解析结果为空');
+      throw new Error(t('chat.attachments.emptyResult'));
     }
     attachments.value.push({
       id: buildAttachmentId(),
@@ -314,12 +318,12 @@ const handleAttachmentSelection = async (file) => {
     });
     const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
     if (warnings.length) {
-      ElMessage.warning(`文件转换存在警告：${warnings[0]}`);
+      ElMessage.warning(t('chat.attachments.convertWarning', { message: warnings[0] }));
     } else {
-      ElMessage.success(`已解析文件：${payload.name || filename}`);
+      ElMessage.success(t('chat.attachments.fileParsed', { name: payload.name || filename }));
     }
   } catch (error) {
-    ElMessage.error(resolveUploadError(error, '附件处理失败'));
+    ElMessage.error(resolveUploadError(error, t('chat.attachments.processFailed')));
   } finally {
     attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
   }
@@ -345,7 +349,7 @@ const handleSend = async () => {
   if (props.loading) return;
   // 附件解析未完成时禁止发送，避免请求缺少必要内容
   if (attachmentBusy.value > 0) {
-    ElMessage.warning('附件处理中，请稍后再发送。');
+    ElMessage.warning(t('chat.attachments.busy'));
     return;
   }
   const content = inputText.value.trim();

@@ -12,7 +12,7 @@
       <div class="thinking-tooltip">{{ fullText }}</div>
     </template>
     <div class="message-thinking">
-      <span class="message-thinking-label">思考</span>
+      <span class="message-thinking-label">{{ t('chat.thinking') }}</span>
       <div ref="marqueeRef" class="message-thinking-marquee">
         <span class="message-thinking-track">
           {{ displayText }}
@@ -25,6 +25,8 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
+import { useI18n } from '@/i18n';
+
 const props = defineProps({
   content: {
     type: String,
@@ -35,6 +37,8 @@ const props = defineProps({
     default: false
   }
 });
+
+const { t } = useI18n();
 
 const stripTrailingTimestamp = (text) => {
   const value = String(text || '').trim();

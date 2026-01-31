@@ -2,7 +2,7 @@
   <div class="inquiry-panel">
     <div class="inquiry-panel-header">
       <div class="inquiry-panel-title">
-        问询面板
+        {{ t('chat.inquiry.title') }}
         <span class="inquiry-panel-mode">{{ modeLabel }}</span>
       </div>
       <div class="inquiry-panel-question">{{ panel.question }}</div>
@@ -20,17 +20,21 @@
       >
         <div class="inquiry-route-main">
           <span class="inquiry-route-label">{{ route.label }}</span>
-          <span v-if="route.recommended" class="inquiry-route-tag">推荐</span>
+          <span v-if="route.recommended" class="inquiry-route-tag">
+            {{ t('chat.inquiry.recommended') }}
+          </span>
         </div>
         <div v-if="route.description" class="inquiry-route-desc">{{ route.description }}</div>
       </button>
     </div>
-    <div class="inquiry-panel-hint">{{ modeHint }}，选择后点击发送，也可以直接输入消息继续。</div>
+    <div class="inquiry-panel-hint">{{ modeHint }}</div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   panel: {
@@ -40,12 +44,15 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['update:selected']);
+const { t } = useI18n();
 
 const selectedIndices = ref([]);
 const isMultiple = computed(() => props.panel?.multiple === true);
-const modeLabel = computed(() => (isMultiple.value ? '多选' : '单选'));
+const modeLabel = computed(() =>
+  isMultiple.value ? t('chat.inquiry.mode.multi') : t('chat.inquiry.mode.single')
+);
 const modeHint = computed(() =>
-  isMultiple.value ? '多选，可选择多个选项' : '单选，再次点击已选项可取消'
+  isMultiple.value ? t('chat.inquiry.hint.multi') : t('chat.inquiry.hint.single')
 );
 
 const emitSelection = () => {

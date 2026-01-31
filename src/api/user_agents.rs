@@ -390,13 +390,15 @@ const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
 const LEGACY_EMAIL_PRESET_NAME: &str = "邮件写作";
 const PRESET_OFFICIAL_NAME: &str = "公文写作";
 const PRESET_OFFICIAL_DESCRIPTION: &str = "公文起草、格式规范与措辞润色";
-const PRESET_OFFICIAL_PROMPT: &str = "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。";
+const PRESET_OFFICIAL_PROMPT: &str =
+    "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。";
 const PRESET_OFFICIAL_ICON: &str = "shield";
 const PRESET_OFFICIAL_COLOR: &str = "#94a3b8";
 const LEGACY_MEETING_NAME: &str = "会议纪要";
 const LEGACY_PLAN_NAME: &str = "方案策划";
 const PRESET_SCI_DRAW_NAME: &str = "科学绘图";
-const PRESET_SCI_DRAW_DESCRIPTION: &str = "你可以将资料放到临时文件区来，我会帮你分析数据并绘制专业图表";
+const PRESET_SCI_DRAW_DESCRIPTION: &str =
+    "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表";
 const PRESET_SCI_DRAW_PROMPT: &str = "你是科学绘图助手。根据研究问题与数据，绘制专业图表";
 const PRESET_SCI_DRAW_ICON: &str = "chart";
 const PRESET_SCI_DRAW_COLOR: &str = "#22d3ee";

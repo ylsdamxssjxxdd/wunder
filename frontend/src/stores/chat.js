@@ -11,6 +11,7 @@ import {
   sendMessageStream,
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
+import { t } from '@/i18n';
 import { consumeSseStream } from '@/utils/sse';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -312,10 +313,9 @@ const buildMessage = (role, content, createdAt) => ({
   stats: role === 'assistant' ? buildMessageStats() : null
 });
 
-const DEFAULT_GREETING = '你好！我是智能体助手，有什么可以帮你的吗？';
 const resolveGreetingContent = (override) => {
   const trimmed = String(override || '').trim();
-  return trimmed ? trimmed : DEFAULT_GREETING;
+  return trimmed ? trimmed : t('chat.greeting');
 };
 const CHAT_STATE_KEY = 'wille-chat-state';
 const DEFAULT_AGENT_KEY = '__default__';
@@ -848,6 +848,20 @@ const normalizePlanPayload = (payload) => {
   };
 };
 
+const isRecommendedLabel = (label) => {
+  const normalized = String(label || '').trim();
+  if (!normalized) return false;
+  const lowered = normalized.toLowerCase();
+  const keywords = new Set(['推荐', 'recommended', t('chat.inquiry.recommended')]);
+  for (const keyword of keywords) {
+    if (!keyword) continue;
+    if (lowered.includes(String(keyword).toLowerCase())) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const normalizeInquiryRoutes = (routes) =>
   (Array.isArray(routes) ? routes : [])
     .map((item) => {
@@ -855,7 +869,7 @@ const normalizeInquiryRoutes = (routes) =>
       if (typeof item === 'string') {
         const label = item.trim();
         if (!label) return null;
-        return { label, description: '', recommended: label.includes('推荐') };
+        return { label, description: '', recommended: isRecommendedLabel(label) };
       }
       if (typeof item !== 'object') return null;
       const label = String(item.label ?? item.title ?? item.name ?? '').trim();
@@ -864,7 +878,7 @@ const normalizeInquiryRoutes = (routes) =>
       return {
         label,
         description,
-        recommended: Boolean(item.recommended ?? item.preferred) || label.includes('推荐')
+        recommended: Boolean(item.recommended ?? item.preferred) || isRecommendedLabel(label)
       };
     })
     .filter(Boolean);
@@ -888,7 +902,7 @@ const normalizeInquiryPanelPayload = (payload) => {
   const keepOpenRaw = payload.keep_open ?? payload.keepOpen ?? payload.awaiting;
   const keepOpen = keepOpenRaw === undefined ? true : keepOpenRaw === true;
   return {
-    question: question || '接下来希望从哪个方向推进？',
+    question: question || t('chat.inquiry.defaultQuestion'),
     routes: normalizedRoutes,
     multiple: payload.multiple === true || payload.allow_multiple === true || payload.multi === true,
     keepOpen
@@ -1558,10 +1572,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const buildOutputDetail = () => {
     const parts = [];
     if (outputReasoning) {
-      parts.push(`[思考过程]\n${tailText(outputReasoning)}`);
+      parts.push(`[${t('chat.workflow.detail.reasoning')}]\n${tailText(outputReasoning)}`);
     }
     if (outputContent) {
-      parts.push(`[模型输出]\n${tailText(outputContent)}`);
+      parts.push(`[${t('chat.workflow.detail.output')}]\n${tailText(outputContent)}`);
     }
     if (!parts.length) {
       return tailText(assistantMessage.content || '');
@@ -1998,18 +2012,20 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'error': {
-        const detail = data?.message ?? payload?.message ?? raw ?? '发生错误';
+        const detail = data?.message ?? payload?.message ?? raw ?? t('chat.error.generic');
         assistantMessage.workflowItems.push(
-          buildWorkflowItem('错误', pickText(detail), 'failed')
+          buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed')
         );
         if (!assistantMessage.content) {
-          assistantMessage.content = '发生错误，请稍后再试。';
+          assistantMessage.content = t('chat.error.retry');
         }
         break;
       }
       default: {
         const fallbackName = data?.name ?? payload?.name;
-        const summary = fallbackName ? `${eventType}: ${fallbackName}` : `事件：${eventType}`;
+        const summary = fallbackName
+          ? t('chat.workflow.eventWithName', { event: eventType, name: fallbackName })
+          : t('chat.workflow.event', { event: eventType });
         assistantMessage.workflowItems.push(buildWorkflowItem(summary, buildDetail(data || raw)));
         break;
       }
@@ -2351,7 +2367,9 @@ export const useChatStore = defineStore('chat', {
         );
         if (!response.ok) {
           const errorText = await readResponseError(response);
-          throw new Error(errorText || `请求失败 (${response.status})`);
+          throw new Error(
+            errorText || t('chat.error.requestFailedWithStatus', { status: response.status })
+          );
         }
         await consumeSseStream(response, (eventType, dataText, eventId) => {
           assignStreamEventId(assistantMessage, eventId);
@@ -2361,15 +2379,23 @@ export const useChatStore = defineStore('chat', {
         if (error?.name === 'AbortError' || stopRequested || pageUnloading) {
           if (!pageUnloading) {
             assistantMessage.workflowItems.push(
-              buildWorkflowItem('已终止', '用户终止了当前请求', 'failed')
+              buildWorkflowItem(
+                t('chat.workflow.aborted'),
+                t('chat.workflow.abortedDetail'),
+                'failed'
+              )
             );
           }
         } else {
           assistantMessage.workflowItems.push(
-            buildWorkflowItem('请求失败', error?.message || '无法获取回复', 'failed')
+            buildWorkflowItem(
+              t('chat.workflow.requestFailed'),
+              error?.message || t('chat.workflow.requestFailedDetail'),
+              'failed'
+            )
           );
           if (!assistantMessage.content) {
-            assistantMessage.content = '请求失败，请稍后再试。';
+            assistantMessage.content = t('chat.error.requestFailed');
           }
         }
       } finally {
@@ -2420,7 +2446,9 @@ export const useChatStore = defineStore('chat', {
         });
         if (!response.ok) {
           const errorText = await readResponseError(response);
-          throw new Error(errorText || `恢复失败 (${response.status})`);
+          throw new Error(
+            errorText || t('chat.error.resumeFailedWithStatus', { status: response.status })
+          );
         }
         await consumeSseStream(response, (eventType, dataText, eventId) => {
           assignStreamEventId(message, eventId);
@@ -2431,10 +2459,14 @@ export const useChatStore = defineStore('chat', {
           aborted = true;
         } else {
           message.workflowItems.push(
-            buildWorkflowItem('恢复失败', error?.message || '无法续传会话', 'failed')
+            buildWorkflowItem(
+              t('chat.workflow.resumeFailed'),
+              error?.message || t('chat.workflow.resumeFailedDetail'),
+              'failed'
+            )
           );
           if (!message.content) {
-            message.content = '会话续传失败，请稍后再试。';
+            message.content = t('chat.error.resumeFailed');
           }
         }
       } finally {

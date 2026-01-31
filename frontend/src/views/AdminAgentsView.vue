@@ -2,29 +2,29 @@
   <div class="admin-view">
     <el-card>
       <div class="wunder-header">
-        <h3>Wunder 连接与状态</h3>
+        <h3>{{ t('admin.agents.title') }}</h3>
         <div class="wunder-actions">
           <el-button type="primary" size="small" :loading="saving" @click="saveSettings">
-            保存设置
+            {{ t('admin.agents.save') }}
           </el-button>
-          <el-button size="small" @click="reloadStatus">刷新状态</el-button>
+          <el-button size="small" @click="reloadStatus">{{ t('admin.agents.refresh') }}</el-button>
         </div>
       </div>
       <div class="wunder-grid">
         <div class="wunder-settings">
           <el-form :model="form" label-position="top">
-            <el-form-item label="Wunder 基础地址">
+            <el-form-item :label="t('admin.agents.baseUrl')">
               <el-input v-model="form.base_url" placeholder="http://localhost:9000" />
             </el-form-item>
-            <el-form-item label="Wunder API Key（选填）">
+            <el-form-item :label="t('admin.agents.apiKey')">
               <el-input
                 v-model="form.api_key"
                 type="password"
                 show-password
-                placeholder="请输入 API Key"
+                :placeholder="t('admin.agents.apiKeyPlaceholder')"
               />
             </el-form-item>
-            <el-form-item label="请求超时（秒）">
+            <el-form-item :label="t('admin.agents.timeout')">
               <el-input-number v-model="form.timeout_seconds" :min="5" :max="600" />
             </el-form-item>
           </el-form>
@@ -32,27 +32,29 @@
         <div class="wunder-status">
           <div class="status-grid">
             <div class="status-item">
-              <span class="label">状态</span>
-              <span class="value">{{ status?.reachable ? '已连接' : '不可用' }}</span>
+              <span class="label">{{ t('admin.agents.status') }}</span>
+              <span class="value">{{
+                status?.reachable ? t('admin.agents.status.online') : t('admin.agents.status.offline')
+              }}</span>
             </div>
             <div class="status-item">
-              <span class="label">最近检测</span>
+              <span class="label">{{ t('admin.agents.lastCheck') }}</span>
               <span class="value">{{ status?.checked_at || '-' }}</span>
             </div>
             <div class="status-item">
-              <span class="label">内置工具</span>
+              <span class="label">{{ t('admin.agents.tools.builtin') }}</span>
               <span class="value">{{ toolCounts.builtin }}</span>
             </div>
             <div class="status-item">
-              <span class="label">MCP 工具</span>
+              <span class="label">{{ t('admin.agents.tools.mcp') }}</span>
               <span class="value">{{ toolCounts.mcp }}</span>
             </div>
             <div class="status-item">
-              <span class="label">技能工具</span>
+              <span class="label">{{ t('admin.agents.tools.skills') }}</span>
               <span class="value">{{ toolCounts.skills }}</span>
             </div>
             <div class="status-item">
-              <span class="label">知识库工具</span>
+              <span class="label">{{ t('admin.agents.tools.knowledge') }}</span>
               <span class="value">{{ toolCounts.knowledge }}</span>
             </div>
           </div>
@@ -65,20 +67,23 @@
 
     <el-card class="tools-card" v-loading="toolsLoading">
       <div class="tools-header">
-        <h3>工具清单</h3>
-        <el-button size="small" @click="reloadTools">刷新工具</el-button>
+        <h3>{{ t('admin.agents.list.title') }}</h3>
+        <el-button size="small" @click="reloadTools">{{ t('admin.agents.list.refresh') }}</el-button>
       </div>
       <el-tabs v-model="activeTab" class="tools-tabs">
-        <el-tab-pane :label="`内置工具 (${toolCounts.builtin})`" name="builtin">
+        <el-tab-pane :label="t('admin.agents.tab.builtin', { count: toolCounts.builtin })" name="builtin">
           <wunder-tool-table :tools="toolCatalog.builtin_tools" table-height="100%" />
         </el-tab-pane>
-        <el-tab-pane :label="`MCP 工具 (${toolCounts.mcp})`" name="mcp">
+        <el-tab-pane :label="t('admin.agents.tab.mcp', { count: toolCounts.mcp })" name="mcp">
           <wunder-tool-table :tools="toolCatalog.mcp_tools" table-height="100%" />
         </el-tab-pane>
-        <el-tab-pane :label="`技能工具 (${toolCounts.skills})`" name="skills">
+        <el-tab-pane :label="t('admin.agents.tab.skills', { count: toolCounts.skills })" name="skills">
           <wunder-tool-table :tools="toolCatalog.skills" table-height="100%" />
         </el-tab-pane>
-        <el-tab-pane :label="`知识库工具 (${toolCounts.knowledge})`" name="knowledge">
+        <el-tab-pane
+          :label="t('admin.agents.tab.knowledge', { count: toolCounts.knowledge })"
+          name="knowledge"
+        >
           <wunder-tool-table :tools="toolCatalog.knowledge_tools" table-height="100%" />
         </el-tab-pane>
       </el-tabs>
@@ -90,10 +95,12 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
+import { useI18n } from '@/i18n';
 import { useAdminStore } from '@/stores/admin';
 import WunderToolTable from '@/components/admin/WunderToolTable.vue';
 
 const adminStore = useAdminStore();
+const { t } = useI18n();
 const saving = ref(false);
 const toolsLoading = ref(false);
 const activeTab = ref('builtin');
@@ -125,7 +132,7 @@ const loadSettings = async () => {
     const data = await adminStore.loadWunderSettings();
     applySettings(data);
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '加载失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.agents.loadFailed'));
   }
 };
 
@@ -134,7 +141,7 @@ const loadTools = async () => {
   try {
     await adminStore.loadWunderTools();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '工具获取失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.agents.toolsFailed'));
   } finally {
     toolsLoading.value = false;
   }
@@ -146,9 +153,9 @@ const saveSettings = async () => {
     const data = await adminStore.updateWunderSettings(form);
     applySettings(data);
     await loadTools();
-    ElMessage.success('保存成功');
+    ElMessage.success(t('admin.agents.saveSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '保存失败');
+    ElMessage.error(error.response?.data?.detail || t('admin.agents.saveFailed'));
   } finally {
     saving.value = false;
   }

@@ -1,11 +1,13 @@
 ﻿<template>
   <div class="workspace-view">
-    <div class="workspace-sidebar">
-      <div class="workspace-actions">
-        <el-button type="primary" size="small" @click="createFolder">新建文件夹</el-button>
+      <div class="workspace-sidebar">
+        <div class="workspace-actions">
+        <el-button type="primary" size="small" @click="createFolder">
+          {{ t('workspace.panel.newFolder') }}
+        </el-button>
+        </div>
+        <WorkspaceTree :tree-data="workspaceStore.folders" @select="handleSelectFolder" />
       </div>
-      <WorkspaceTree :tree-data="workspaceStore.folders" @select="handleSelectFolder" />
-    </div>
     <div class="workspace-main">
       <FileList
         :files="workspaceStore.files"
@@ -31,10 +33,12 @@ import FilePreview from '@/components/FilePreview.vue';
 import WorkspaceTree from '@/components/WorkspaceTree.vue';
 import { useWorkspaceStore } from '@/stores/workspace';
 import { downloadWunderWorkspaceFile } from '@/api/workspace';
+import { useI18n } from '@/i18n';
 
 const workspaceStore = useWorkspaceStore();
 const activeFile = ref(null);
 const route = useRoute();
+const { t } = useI18n();
 
 const init = async () => {
   activeFile.value = null;
@@ -49,19 +53,19 @@ const handleSelectFolder = async (folderId) => {
 
 const createFolder = async () => {
   try {
-    await workspaceStore.createFolder({ name: `新建文件夹-${Date.now()}` });
-    ElMessage.success('已创建文件夹');
+    await workspaceStore.createFolder({ name: `${t('workspace.panel.newFolder')}-${Date.now()}` });
+    ElMessage.success(t('workspace.panel.folderCreated'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.panel.createFailed'));
   }
 };
 
 const handleUpload = async (file) => {
   try {
   await workspaceStore.uploadFile(file, workspaceStore.activePath);
-  ElMessage.success('上传成功');
+  ElMessage.success(t('workspace.panel.uploadSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '上传失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.panel.uploadFailed'));
   }
 };
 

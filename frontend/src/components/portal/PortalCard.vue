@@ -14,14 +14,14 @@
         ></i>
       </div>
       <div class="portal-card-badges">
-        <span v-if="module.badge" class="portal-card-badge">{{ module.badge }}</span>
-        <span v-if="module.status" class="portal-card-status">{{ module.status }}</span>
+        <span v-if="resolvedBadge" class="portal-card-badge">{{ resolvedBadge }}</span>
+        <span v-if="resolvedStatus" class="portal-card-status">{{ resolvedStatus }}</span>
       </div>
     </div>
-    <div class="portal-card-title">{{ module.title }}</div>
-    <div class="portal-card-desc">{{ module.description }}</div>
-    <div v-if="module.tags?.length" class="portal-card-tags">
-      <span v-for="tag in module.tags" :key="tag" class="portal-card-tag">
+    <div class="portal-card-title">{{ resolvedTitle }}</div>
+    <div class="portal-card-desc">{{ resolvedDescription }}</div>
+    <div v-if="resolvedTags.length" class="portal-card-tags">
+      <span v-for="tag in resolvedTags" :key="tag" class="portal-card-tag">
         {{ tag }}
       </span>
     </div>
@@ -35,6 +35,8 @@
 <script setup>
 import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
+
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   module: {
@@ -50,6 +52,7 @@ const props = defineProps({
 const iconName = computed(() => props.module?.icon || 'default');
 const isExternal = computed(() => props.module?.type === 'external');
 const isDisabled = computed(() => props.module?.enabled === false);
+const { t } = useI18n();
 const ICON_CLASS_MAP = {
   chat: 'fa-comments',
   workspace: 'fa-folder-open',
@@ -85,10 +88,33 @@ const linkProps = computed(() => {
   return { to: internalPath.value };
 });
 
+const resolvedTitle = computed(() =>
+  props.module?.titleKey ? t(props.module.titleKey) : props.module?.title || ''
+);
+
+const resolvedDescription = computed(() =>
+  props.module?.descriptionKey ? t(props.module.descriptionKey) : props.module?.description || ''
+);
+
+const resolvedBadge = computed(() =>
+  props.module?.badgeKey ? t(props.module.badgeKey) : props.module?.badge || ''
+);
+
+const resolvedStatus = computed(() =>
+  props.module?.statusKey ? t(props.module.statusKey) : props.module?.status || ''
+);
+
+const resolvedTags = computed(() => {
+  if (Array.isArray(props.module?.tagKeys)) {
+    return props.module.tagKeys.map((key) => t(key));
+  }
+  return Array.isArray(props.module?.tags) ? props.module.tags : [];
+});
+
 const actionLabel = computed(() => {
   if (isDisabled.value) {
-    return props.module?.status || '待配置';
+    return resolvedStatus.value || t('portal.card.pending');
   }
-  return isExternal.value ? '打开外链' : '进入功能';
+  return isExternal.value ? t('portal.card.action.external') : t('portal.card.action.internal');
 });
 </script>

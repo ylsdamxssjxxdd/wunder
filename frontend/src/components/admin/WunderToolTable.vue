@@ -3,58 +3,60 @@
     <div class="tool-toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索工具名称或描述"
+        :placeholder="t('admin.tools.search')"
         size="small"
         clearable
         class="tool-search"
       />
-      <el-text type="info" size="small">共 {{ filteredTools.length }} 个</el-text>
+      <el-text type="info" size="small">
+        {{ t('admin.tools.count', { count: filteredTools.length }) }}
+      </el-text>
     </div>
     <el-table
       :data="filteredTools"
       stripe
-      :empty-text="emptyText"
+      :empty-text="resolvedEmptyText"
       :height="tableHeight"
       :row-class-name="() => 'tool-row'"
       class="tool-grid"
     >
-      <el-table-column prop="name" label="工具名称" width="240">
+      <el-table-column prop="name" :label="t('admin.tools.column.name')" width="240">
         <template #default="{ row }">
           <span class="tool-cell">{{ row.name }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="description" label="描述">
+      <el-table-column prop="description" :label="t('admin.tools.column.description')">
         <template #default="{ row }">
           <span class="tool-cell">{{ row.description || '-' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="120">
+      <el-table-column :label="t('admin.tools.column.action')" width="120">
         <template #default="{ row }">
-          <el-button size="small" @click="openDetail(row)">查看</el-button>
+          <el-button size="small" @click="openDetail(row)">{{ t('common.view') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="工具详情" width="640px">
+    <el-dialog v-model="dialogVisible" :title="t('admin.tools.detail.title')" width="640px">
       <div class="tool-detail">
         <div class="detail-line">
-          <span class="label">名称</span>
+          <span class="label">{{ t('admin.tools.detail.name') }}</span>
           <span>{{ selectedTool?.name || '-' }}</span>
         </div>
         <div class="detail-line">
-          <span class="label">描述</span>
+          <span class="label">{{ t('admin.tools.detail.description') }}</span>
           <span>{{ selectedTool?.description || '-' }}</span>
         </div>
         <div class="detail-line">
-          <span class="label">输入 Schema</span>
+          <span class="label">{{ t('admin.tools.detail.schema') }}</span>
         </div>
         <pre v-if="selectedTool?.input_schema" class="tool-schema">{{
           formatSchema(selectedTool.input_schema)
         }}</pre>
-        <div v-else class="tool-schema-empty">无</div>
+        <div v-else class="tool-schema-empty">{{ t('common.none') }}</div>
       </div>
       <template #footer>
-        <el-button @click="dialogVisible = false">关闭</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.close') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -62,6 +64,8 @@
 
 <script setup>
 import { computed, ref } from 'vue';
+
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   tools: {
@@ -74,13 +78,15 @@ const props = defineProps({
   },
   emptyText: {
     type: String,
-    default: '暂无工具'
+    default: ''
   }
 });
 
+const { t } = useI18n();
 const keyword = ref('');
 const dialogVisible = ref(false);
 const selectedTool = ref(null);
+const resolvedEmptyText = computed(() => props.emptyText || t('admin.tools.empty'));
 
 const filteredTools = computed(() => {
   const list = Array.isArray(props.tools) ? props.tools : [];

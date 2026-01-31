@@ -1,47 +1,47 @@
 export const externalLinkGroups = [
   {
     id: 'support',
-    title: '支持与文档',
-    description: '产品指南、知识库与社区入口',
+    titleKey: 'portal.external.group.support.title',
+    descriptionKey: 'portal.external.group.support.desc',
     items: [
       {
         id: 'docs',
-        title: '使用文档',
-        description: '产品指南、最佳实践与常见问题。',
+        titleKey: 'portal.external.item.docs.title',
+        descriptionKey: 'portal.external.item.docs.desc',
         type: 'external',
         url: 'https://example.com',
         icon: 'docs',
-        tags: ['文档', '外链'],
-        status: '待配置',
+        tagKeys: ['portal.external.tag.docs', 'portal.external.tag.external'],
+        statusKey: 'portal.card.pending',
         enabled: false
       },
       {
         id: 'community',
-        title: '交流社区',
-        description: '加入用户社区，交流方案与经验。',
+        titleKey: 'portal.external.item.community.title',
+        descriptionKey: 'portal.external.item.community.desc',
         type: 'external',
         url: 'https://example.com',
         icon: 'community',
-        tags: ['社区', '外链'],
-        status: '待配置',
+        tagKeys: ['portal.external.tag.community', 'portal.external.tag.external'],
+        statusKey: 'portal.card.pending',
         enabled: false
       }
     ]
   },
   {
     id: 'ops',
-    title: '运维与状态',
-    description: '服务状态与变更公告',
+    titleKey: 'portal.external.group.ops.title',
+    descriptionKey: 'portal.external.group.ops.desc',
     items: [
       {
         id: 'status',
-        title: '系统状态',
-        description: '查看服务状态与可用性公告。',
+        titleKey: 'portal.external.item.status.title',
+        descriptionKey: 'portal.external.item.status.desc',
         type: 'external',
         url: 'https://example.com',
         icon: 'status',
-        tags: ['状态', '外链'],
-        status: '待配置',
+        tagKeys: ['portal.external.tag.status', 'portal.external.tag.external'],
+        statusKey: 'portal.card.pending',
         enabled: false
       }
     ]

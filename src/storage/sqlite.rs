@@ -2,9 +2,9 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord,
-    UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
+    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -209,6 +209,29 @@ impl SqliteStorage {
                 [],
             )?;
         }
+        if !columns.contains("parent_session_id") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
+                [],
+            )?;
+        }
+        if !columns.contains("parent_message_id") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN parent_message_id TEXT",
+                [],
+            )?;
+        }
+        if !columns.contains("spawn_label") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawn_label TEXT", [])?;
+        }
+        if !columns.contains("spawned_by") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawned_by TEXT", [])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent \
+             ON chat_sessions (user_id, parent_session_id, updated_at)",
+            [],
+        );
         Ok(())
     }
 
@@ -487,6 +510,10 @@ impl StorageBackend for SqliteStorage {
               status TEXT,
               agent_id TEXT,
               tool_overrides TEXT,
+              parent_session_id TEXT,
+              parent_message_id TEXT,
+              spawn_label TEXT,
+              spawned_by TEXT,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
               last_message_at REAL NOT NULL
@@ -495,6 +522,30 @@ impl StorageBackend for SqliteStorage {
               ON chat_sessions (user_id);
             CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
               ON chat_sessions (user_id, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent
+              ON chat_sessions (user_id, parent_session_id, updated_at);
+            CREATE TABLE IF NOT EXISTS session_runs (
+              run_id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              parent_session_id TEXT,
+              user_id TEXT NOT NULL,
+              agent_id TEXT,
+              model_name TEXT,
+              status TEXT NOT NULL,
+              queued_time REAL,
+              started_time REAL,
+              finished_time REAL,
+              elapsed_s REAL,
+              result TEXT,
+              error TEXT,
+              updated_time REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_runs_session
+              ON session_runs (session_id, updated_time);
+            CREATE INDEX IF NOT EXISTS idx_session_runs_user
+              ON session_runs (user_id, updated_time);
+            CREATE INDEX IF NOT EXISTS idx_session_runs_parent
+              ON session_runs (parent_session_id, updated_time);
             CREATE TABLE IF NOT EXISTS user_agents (
               agent_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -2218,6 +2269,8 @@ impl StorageBackend for SqliteStorage {
         results.insert("monitor_sessions".to_string(), monitor as i64);
         let stream = hookup_delete("stream_events", "created_time", false)?;
         results.insert("stream_events".to_string(), stream as i64);
+        let session_runs = hookup_delete("session_runs", "COALESCE(updated_time, 0)", false)?;
+        results.insert("session_runs".to_string(), session_runs as i64);
         Ok(results)
     }
 
@@ -2664,12 +2717,15 @@ impl StorageBackend for SqliteStorage {
             Some(Self::string_list_to_json(&record.tool_overrides))
         };
         conn.execute(
-            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, title = excluded.title, \
              status = excluded.status, created_at = excluded.created_at, updated_at = excluded.updated_at, \
              last_message_at = excluded.last_message_at, agent_id = excluded.agent_id, \
-             tool_overrides = excluded.tool_overrides",
+             tool_overrides = excluded.tool_overrides, parent_session_id = excluded.parent_session_id, \
+             parent_message_id = excluded.parent_message_id, spawn_label = excluded.spawn_label, \
+             spawned_by = excluded.spawned_by",
             params![
                 record.session_id,
                 record.user_id,
@@ -2679,7 +2735,11 @@ impl StorageBackend for SqliteStorage {
                 record.updated_at,
                 record.last_message_at,
                 record.agent_id,
-                tool_overrides
+                tool_overrides,
+                record.parent_session_id,
+                record.parent_message_id,
+                record.spawn_label,
+                record.spawned_by
             ],
         )?;
         Ok(())
@@ -2699,7 +2759,8 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+                 parent_session_id, parent_message_id, spawn_label, spawned_by \
                  FROM chat_sessions WHERE user_id = ? AND session_id = ?",
                 params![cleaned_user, cleaned_session],
                 |row| {
@@ -2713,6 +2774,10 @@ impl StorageBackend for SqliteStorage {
                         last_message_at: row.get(5)?,
                         agent_id: row.get(6)?,
                         tool_overrides: Self::parse_string_list(tool_overrides),
+                        parent_session_id: row.get(8)?,
+                        parent_message_id: row.get(9)?,
+                        spawn_label: row.get(10)?,
+                        spawned_by: row.get(11)?,
                     })
                 },
             )
@@ -2724,6 +2789,7 @@ impl StorageBackend for SqliteStorage {
         &self,
         user_id: &str,
         agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -2745,21 +2811,36 @@ impl StorageBackend for SqliteStorage {
                 vec![SqlValue::from(value.to_string())],
             ),
         };
-        let total_sql =
-            format!("SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}");
-        let mut total_params = Vec::with_capacity(1 + agent_params.len());
+        let (parent_clause, parent_params) = match parent_session_id {
+            None => ("".to_string(), Vec::new()),
+            Some(value) if value.trim().is_empty() => (
+                " AND (parent_session_id IS NULL OR parent_session_id = '')".to_string(),
+                Vec::new(),
+            ),
+            Some(value) => (
+                " AND parent_session_id = ?".to_string(),
+                vec![SqlValue::from(value.trim().to_string())],
+            ),
+        };
+        let total_sql = format!(
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}"
+        );
+        let mut total_params = Vec::with_capacity(1 + agent_params.len() + parent_params.len());
         total_params.push(SqlValue::from(cleaned_user.to_string()));
         total_params.extend(agent_params.iter().cloned());
+        total_params.extend(parent_params.iter().cloned());
         let total: i64 =
             conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
                 row.get(0)
             })?;
         let mut sql = format!(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-             FROM chat_sessions WHERE user_id = ?{agent_clause} ORDER BY updated_at DESC"
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by \
+             FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause} ORDER BY updated_at DESC"
         );
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
         params_list.extend(agent_params);
+        params_list.extend(parent_params);
         if limit > 0 {
             sql.push_str(" LIMIT ? OFFSET ?");
             params_list.push(SqlValue::from(limit));
@@ -2778,6 +2859,10 @@ impl StorageBackend for SqliteStorage {
                     last_message_at: row.get(5)?,
                     agent_id: row.get(6)?,
                     tool_overrides: Self::parse_string_list(tool_overrides),
+                    parent_session_id: row.get(8)?,
+                    parent_message_id: row.get(9)?,
+                    spawn_label: row.get(10)?,
+                    spawned_by: row.get(11)?,
                 })
             })?
             .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
@@ -2839,6 +2924,72 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user, cleaned_session],
         )?;
         Ok(affected as i64)
+    }
+
+    fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, \
+             started_time, finished_time, elapsed_s, result, error, updated_time) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(run_id) DO UPDATE SET session_id = excluded.session_id, parent_session_id = excluded.parent_session_id, \
+             user_id = excluded.user_id, agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
+             queued_time = excluded.queued_time, started_time = excluded.started_time, finished_time = excluded.finished_time, \
+             elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time",
+            params![
+                record.run_id,
+                record.session_id,
+                record.parent_session_id,
+                record.user_id,
+                record.agent_id,
+                record.model_name,
+                record.status,
+                record.queued_time,
+                record.started_time,
+                record.finished_time,
+                record.elapsed_s,
+                record.result,
+                record.error,
+                record.updated_time
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, started_time, \
+                 finished_time, elapsed_s, result, error, updated_time FROM session_runs WHERE run_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(SessionRunRecord {
+                        run_id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        parent_session_id: row.get(2)?,
+                        user_id: row.get(3)?,
+                        agent_id: row.get(4)?,
+                        model_name: row.get(5)?,
+                        status: row.get(6)?,
+                        queued_time: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+                        started_time: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
+                        finished_time: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+                        elapsed_s: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+                        result: row.get(11)?,
+                        error: row.get(12)?,
+                        updated_time: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
     }
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {

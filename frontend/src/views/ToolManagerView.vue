@@ -70,9 +70,6 @@
                     </div>
                     <div class="muted">{{ t('toolManager.section.systemDesc') }}</div>
                     <div class="tool-catalog-grid">
-                      <div v-if="!systemToolGroups.length" class="tool-catalog-empty">
-                        {{ t('toolManager.empty') }}
-                      </div>
                       <div
                         v-for="group in systemToolGroups"
                         :key="group.key"
@@ -119,10 +116,13 @@
                     @status="updateStatus"
                   />
                   <UserSharedToolsPanel v-show="activeTab === 'shared'" />
+                  <div
+                    v-if="activeTab !== 'shared' && activeTab !== 'system'"
+                    class="user-tools-status"
+                  >
+                    {{ statusMessage }}
+                  </div>
                 </div>
-              </div>
-              <div v-if="activeTab !== 'shared' && activeTab !== 'system'" class="user-tools-status">
-                {{ statusMessage }}
               </div>
             </div>
           </section>
@@ -177,7 +177,7 @@ const systemToolGroups = computed(() => {
       title: t('toolManager.system.knowledge'),
       items: normalizeList(payload.knowledge_tools)
     }
-  ].filter((group) => group.items.length > 0);
+  ];
 });
 
 const systemToolCount = computed(() =>

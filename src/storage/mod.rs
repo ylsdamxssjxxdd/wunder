@@ -149,6 +149,10 @@ pub struct ChatSessionRecord {
     pub last_message_at: f64,
     pub agent_id: Option<String>,
     pub tool_overrides: Vec<String>,
+    pub parent_session_id: Option<String>,
+    pub parent_message_id: Option<String>,
+    pub spawn_label: Option<String>,
+    pub spawned_by: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +162,24 @@ pub struct SessionLockRecord {
     pub agent_id: String,
     pub updated_time: f64,
     pub expires_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionRunRecord {
+    pub run_id: String,
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
+    pub user_id: String,
+    pub agent_id: Option<String>,
+    pub model_name: Option<String>,
+    pub status: String,
+    pub queued_time: f64,
+    pub started_time: f64,
+    pub finished_time: f64,
+    pub elapsed_s: f64,
+    pub result: Option<String>,
+    pub error: Option<String>,
+    pub updated_time: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,6 +388,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         user_id: &str,
         agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
@@ -384,6 +407,9 @@ pub trait StorageBackend: Send + Sync {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+
+    fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
+    fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>>;
     fn set_user_tool_access(

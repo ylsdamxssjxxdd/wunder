@@ -1,22 +1,26 @@
 ﻿<template>
   <div class="file-preview">
-    <div class="preview-title">预览</div>
+    <div class="preview-title">{{ t('filePreview.title') }}</div>
     <div v-if="file">
-      <p>名称：{{ file.name }}</p>
-      <p>路径：{{ file.path }}</p>
-      <p>大小：{{ file.size }}</p>
-      <p>类型：{{ file.extension || '-' }}</p>
-      <p>更新时间：{{ file.updated_time || '-' }}</p>
+      <p>{{ t('filePreview.name') }}: {{ file.name }}</p>
+      <p>{{ t('filePreview.path') }}: {{ file.path }}</p>
+      <p>{{ t('filePreview.size') }}: {{ file.size }}</p>
+      <p>{{ t('filePreview.type') }}: {{ file.extension || '-' }}</p>
+      <p>{{ t('filePreview.updatedAt') }}: {{ file.updated_time || '-' }}</p>
     </div>
-    <div v-else class="preview-empty">请选择文件查看详情</div>
+    <div v-else class="preview-empty">{{ t('filePreview.empty') }}</div>
   </div>
 </template>
 
 <script setup>
+import { useI18n } from '@/i18n';
+
 defineProps({
   file: {
     type: Object,
     default: null
   }
 });
+
+const { t } = useI18n();
 </script>

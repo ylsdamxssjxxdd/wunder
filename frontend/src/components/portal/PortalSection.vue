@@ -2,10 +2,12 @@
   <section class="portal-section">
     <div class="portal-section-header">
       <div>
-        <div class="portal-section-title">{{ section.title }}</div>
-        <div class="portal-section-desc">{{ section.description }}</div>
+        <div class="portal-section-title">{{ sectionTitle }}</div>
+        <div class="portal-section-desc">{{ sectionDescription }}</div>
       </div>
-      <div class="portal-section-meta">共 {{ section.items.length }} 项</div>
+      <div class="portal-section-meta">
+        {{ t('portal.section.count', { count: section.items.length }) }}
+      </div>
     </div>
     <div class="portal-grid" :class="{ 'portal-grid--compact': compact }">
       <PortalCard
@@ -20,9 +22,12 @@
 </template>
 
 <script setup>
-import PortalCard from '@/components/portal/PortalCard.vue';
+import { computed } from 'vue';
 
-defineProps({
+import PortalCard from '@/components/portal/PortalCard.vue';
+import { useI18n } from '@/i18n';
+
+const props = defineProps({
   section: {
     type: Object,
     required: true
@@ -36,4 +41,14 @@ defineProps({
     default: false
   }
 });
+
+const { t } = useI18n();
+
+const sectionTitle = computed(() =>
+  props.section?.titleKey ? t(props.section.titleKey) : props.section?.title || ''
+);
+
+const sectionDescription = computed(() =>
+  props.section?.descriptionKey ? t(props.section.descriptionKey) : props.section?.description || ''
+);
 </script>

@@ -388,6 +388,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { listRunningAgents } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
+import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 
@@ -395,6 +396,7 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
+const { t } = useI18n();
 const searchQuery = ref('');
 const showSharedAgents = ref(false);
 const dialogVisible = ref(false);
@@ -431,16 +433,16 @@ const AVATAR_ICON_CLASS_MAP = {
   spark: 'fa-wand-sparkles'
 };
 
-const avatarIconOptions = [
-  { name: DEFAULT_ICON_NAME, label: '首字母' },
+const AVATAR_ICON_OPTIONS = [
+  { name: DEFAULT_ICON_NAME, labelKey: 'portal.agent.avatar.icon.initial' },
   {
     name: 'chat',
-    label: '聊天',
+    labelKey: 'portal.agent.avatar.icon.chat',
     paths: ['M7 13h6a4 4 0 0 0 0-8H7a4 4 0 0 0 0 8z', 'M7 13v4l4-2']
   },
   {
     name: 'bot',
-    label: '机器人',
+    labelKey: 'portal.agent.avatar.icon.bot',
     paths: [
       'M9 7h6a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4v-4a4 4 0 0 1 4-4z',
       'M12 3v2',
@@ -450,80 +452,87 @@ const avatarIconOptions = [
   },
   {
     name: 'idea',
-    label: '灵感',
+    labelKey: 'portal.agent.avatar.icon.idea',
     paths: ['M9 18h6', 'M10 22h4', 'M12 2a7 7 0 0 0-4 12c1 1 1.5 2 1.5 3h5c0-1 .5-2 1.5-3A7 7 0 0 0 12 2z']
   },
   {
     name: 'target',
-    label: '目标',
+    labelKey: 'portal.agent.avatar.icon.target',
     paths: ['M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20z', 'M12 8l3 4-3 4-3-4 3-4z']
   },
   {
     name: 'bolt',
-    label: '加速',
+    labelKey: 'portal.agent.avatar.icon.bolt',
     paths: ['M13 2L3 14h7l-1 8 10-12h-7l1-8z']
   },
   {
     name: 'code',
-    label: '代码',
+    labelKey: 'portal.agent.avatar.icon.code',
     paths: ['M8 9l-4 3 4 3', 'M16 9l4 3-4 3', 'M10 19l4-14']
   },
   {
     name: 'chart',
-    label: '分析',
+    labelKey: 'portal.agent.avatar.icon.chart',
     paths: ['M4 19V5', 'M4 19h16', 'M10 19V9', 'M16 19V7']
   },
   {
     name: 'doc',
-    label: '文档',
+    labelKey: 'portal.agent.avatar.icon.doc',
     paths: ['M6 3h8l4 4v14H6z', 'M14 3v4h4', 'M8 11h8', 'M8 15h6']
   },
   {
     name: 'pen',
-    label: '写作',
+    labelKey: 'portal.agent.avatar.icon.pen',
     paths: ['M4 20h4l10-10-4-4L4 16v4z', 'M13.5 6.5L17 10']
   },
   {
     name: 'calendar',
-    label: '日程',
+    labelKey: 'portal.agent.avatar.icon.calendar',
     paths: ['M7 4v3', 'M17 4v3', 'M5 7h14', 'M5 7h14v12H5z', 'M9 11h2', 'M13 11h2']
   },
   {
     name: 'briefcase',
-    label: '办公',
+    labelKey: 'portal.agent.avatar.icon.briefcase',
     paths: ['M9 7V5h6v2', 'M4 8h16v11H4z', 'M4 12h16']
   },
   {
     name: 'clipboard',
-    label: '清单',
+    labelKey: 'portal.agent.avatar.icon.clipboard',
     paths: ['M9 4h6v2H9z', 'M7 6h10v14H7z', 'M9 10h6', 'M9 14h6']
   },
   {
     name: 'book',
-    label: '知识',
+    labelKey: 'portal.agent.avatar.icon.book',
     paths: ['M4 5h8v14H4z', 'M12 5h8v14h-8z', 'M12 5v14']
   },
   {
     name: 'check',
-    label: '校验',
+    labelKey: 'portal.agent.avatar.icon.check',
     paths: ['M5 13l4 4L19 7']
   },
   {
     name: 'shield',
-    label: '守护',
+    labelKey: 'portal.agent.avatar.icon.shield',
     paths: ['M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z']
   },
   {
     name: 'spark',
-    label: '星光',
+    labelKey: 'portal.agent.avatar.icon.spark',
     paths: ['M12 3l2.5 5 5.5.8-4 3.8.9 5.4-4.9-2.6-4.9 2.6.9-5.4-4-3.8 5.5-.8z']
   }
 ];
 
-avatarIconOptions.forEach((option) => {
+AVATAR_ICON_OPTIONS.forEach((option) => {
   if (!option || option.name === DEFAULT_ICON_NAME) return;
   option.fa = AVATAR_ICON_CLASS_MAP[option.name] || 'fa-circle';
 });
+
+const avatarIconOptions = computed(() =>
+  AVATAR_ICON_OPTIONS.map((option) => ({
+    ...option,
+    label: t(option.labelKey)
+  }))
+);
 
 const avatarColorOptions = [
   '',
@@ -575,10 +584,10 @@ const getAgentAvatarText = (name) => {
 const normalizeIconName = (name) => {
   const trimmed = String(name || '').trim();
   if (!trimmed) return DEFAULT_ICON_NAME;
-  return avatarIconOptions.some((option) => option.name === trimmed) ? trimmed : DEFAULT_ICON_NAME;
+  return AVATAR_ICON_OPTIONS.some((option) => option.name === trimmed) ? trimmed : DEFAULT_ICON_NAME;
 };
 
-const getAvatarIconOption = (name) => avatarIconOptions.find((option) => option.name === name);
+const getAvatarIconOption = (name) => AVATAR_ICON_OPTIONS.find((option) => option.name === name);
 
 const parseIconValue = (value) => {
   if (!value || typeof value !== 'string') return null;
@@ -701,7 +710,9 @@ const isAgentWaiting = (agentId) => {
   return waitingAgentSet.value.has(key);
 };
 
-const dialogTitle = computed(() => (editingId.value ? '编辑智能体应用' : '新建智能体应用'));
+const dialogTitle = computed(() =>
+  editingId.value ? t('portal.agent.editTitle') : t('portal.agent.createTitle')
+);
 
 const normalizeOptions = (list) =>
   (Array.isArray(list) ? list : []).map((item) => ({
@@ -719,13 +730,13 @@ const toolGroups = computed(() => {
     (tool) => sharedSelected.has(tool.name)
   );
   return [
-    { label: '内置工具', options: normalizeOptions(payload.builtin_tools) },
-    { label: 'MCP 工具', options: normalizeOptions(payload.mcp_tools) },
-    { label: 'A2A 工具', options: normalizeOptions(payload.a2a_tools) },
-    { label: '技能', options: normalizeOptions(payload.skills) },
-    { label: '知识库', options: normalizeOptions(payload.knowledge_tools) },
-    { label: '我的工具', options: normalizeOptions(payload.user_tools) },
-    { label: '共享工具', options: normalizeOptions(sharedTools) }
+    { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(payload.builtin_tools) },
+    { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(payload.mcp_tools) },
+    { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(payload.a2a_tools) },
+    { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(payload.skills) },
+    { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(payload.knowledge_tools) },
+    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(payload.user_tools) },
+    { label: t('portal.agent.tools.group.shared'), options: normalizeOptions(sharedTools) }
   ].filter((group) => group.options.length > 0);
 });
 
@@ -808,7 +819,7 @@ const loadCatalog = async () => {
     const { data } = await fetchUserToolsCatalog();
     toolCatalog.value = data?.data || null;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '工具清单加载失败');
+    ElMessage.error(error.response?.data?.detail || t('portal.agent.tools.loadFailed'));
   } finally {
     toolLoading.value = false;
   }
@@ -872,7 +883,7 @@ const openEditDialog = async (agent) => {
 const saveAgent = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
-    ElMessage.warning('请填写智能体名称');
+    ElMessage.warning(t('portal.agent.nameRequired'));
     return;
   }
   saving.value = true;
@@ -897,14 +908,14 @@ const saveAgent = async () => {
     };
     if (editingId.value) {
       await agentStore.updateAgent(editingId.value, payload);
-      ElMessage.success('智能体已更新');
+      ElMessage.success(t('portal.agent.updateSuccess'));
     } else {
       await agentStore.createAgent(payload);
-      ElMessage.success('智能体已创建');
+      ElMessage.success(t('portal.agent.createSuccess'));
     }
     dialogVisible.value = false;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '{{ t('portal.agent.save') }}失败');
+    ElMessage.error(error.response?.data?.detail || t('portal.agent.saveFailed'));
   } finally {
     saving.value = false;
   }
@@ -913,19 +924,23 @@ const saveAgent = async () => {
 const confirmDelete = async (agent) => {
   if (!agent) return;
   try {
-    await ElMessageBox.confirm(`确认删除智能体应用 ${agent.name} 吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
+    await ElMessageBox.confirm(
+      t('portal.agent.deleteConfirm', { name: agent.name }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('portal.agent.delete'),
+        cancelButtonText: t('portal.agent.cancel'),
+        type: 'warning'
+      }
+    );
   } catch (error) {
     return;
   }
   try {
     await agentStore.deleteAgent(agent.id);
-    ElMessage.success('已删除');
+    ElMessage.success(t('portal.agent.deleteSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '删除失败');
+    ElMessage.error(error.response?.data?.detail || t('portal.agent.deleteFailed'));
   }
 };
 

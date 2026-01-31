@@ -2,14 +2,14 @@
   <div class="portal-side-card">
     <div class="portal-side-header">
       <div>
-        <div class="portal-side-title">外链入口</div>
-        <div class="portal-side-desc">统一配置的外部页面入口</div>
+        <div class="portal-side-title">{{ t('portal.external.title') }}</div>
+        <div class="portal-side-desc">{{ t('portal.external.desc') }}</div>
       </div>
-      <div class="portal-side-meta">共 {{ displayCount }} 项</div>
+      <div class="portal-side-meta">{{ t('portal.section.count', { count: displayCount }) }}</div>
     </div>
     <div class="portal-side-scroll">
       <div v-if="filteredGroups.length === 0" class="portal-side-empty">
-        {{ normalizedQuery ? '未找到匹配的外链入口' : '暂无外链配置' }}
+        {{ normalizedQuery ? t('portal.external.searchEmpty') : t('portal.external.empty') }}
       </div>
       <div
         v-for="group in filteredGroups"
@@ -38,6 +38,7 @@
 import { computed } from 'vue';
 
 import PortalCard from '@/components/portal/PortalCard.vue';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   groups: {
@@ -54,6 +55,7 @@ const props = defineProps({
   }
 });
 
+const { t } = useI18n();
 const normalizedQuery = computed(() => String(props.query || '').trim().toLowerCase());
 
 const matchesQuery = (item, query) => {

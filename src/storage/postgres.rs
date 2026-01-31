@@ -1,9 +1,9 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord,
-    UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
+    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -318,6 +318,29 @@ impl PostgresStorage {
                 &[],
             )?;
         }
+        if !columns.contains("parent_session_id") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("parent_message_id") {
+            conn.execute(
+                "ALTER TABLE chat_sessions ADD COLUMN parent_message_id TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("spawn_label") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawn_label TEXT", &[])?;
+        }
+        if !columns.contains("spawned_by") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawned_by TEXT", &[])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent \
+             ON chat_sessions (user_id, parent_session_id, updated_at)",
+            &[],
+        );
         Ok(())
     }
 
@@ -687,6 +710,10 @@ impl StorageBackend for PostgresStorage {
                   status TEXT,
                   agent_id TEXT,
                   tool_overrides TEXT,
+                  parent_session_id TEXT,
+                  parent_message_id TEXT,
+                  spawn_label TEXT,
+                  spawned_by TEXT,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL,
                   last_message_at DOUBLE PRECISION NOT NULL
@@ -695,6 +722,30 @@ impl StorageBackend for PostgresStorage {
                   ON chat_sessions (user_id);
                 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
                   ON chat_sessions (user_id, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent
+                  ON chat_sessions (user_id, parent_session_id, updated_at);
+                CREATE TABLE IF NOT EXISTS session_runs (
+                  run_id TEXT PRIMARY KEY,
+                  session_id TEXT NOT NULL,
+                  parent_session_id TEXT,
+                  user_id TEXT NOT NULL,
+                  agent_id TEXT,
+                  model_name TEXT,
+                  status TEXT NOT NULL,
+                  queued_time DOUBLE PRECISION,
+                  started_time DOUBLE PRECISION,
+                  finished_time DOUBLE PRECISION,
+                  elapsed_s DOUBLE PRECISION,
+                  result TEXT,
+                  error TEXT,
+                  updated_time DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_runs_session
+                  ON session_runs (session_id, updated_time);
+                CREATE INDEX IF NOT EXISTS idx_session_runs_user
+                  ON session_runs (user_id, updated_time);
+                CREATE INDEX IF NOT EXISTS idx_session_runs_parent
+                  ON session_runs (parent_session_id, updated_time);
                 CREATE TABLE IF NOT EXISTS user_agents (
                   agent_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -2315,6 +2366,9 @@ impl StorageBackend for PostgresStorage {
         let stream =
             delete_with_filter("DELETE FROM stream_events WHERE created_time < $1", false)?;
         results.insert("stream_events".to_string(), stream as i64);
+        let session_runs =
+            delete_with_filter("DELETE FROM session_runs WHERE updated_time < $1", false)?;
+        results.insert("session_runs".to_string(), session_runs as i64);
         Ok(results)
     }
 
@@ -2797,11 +2851,13 @@ impl StorageBackend for PostgresStorage {
             Some(Self::string_list_to_json(&record.tool_overrides))
         };
         conn.execute(
-            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
              ON CONFLICT(session_id) DO UPDATE SET user_id = EXCLUDED.user_id, title = EXCLUDED.title, status = EXCLUDED.status, \
              created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_message_at = EXCLUDED.last_message_at, \
-             agent_id = EXCLUDED.agent_id, tool_overrides = EXCLUDED.tool_overrides",
+             agent_id = EXCLUDED.agent_id, tool_overrides = EXCLUDED.tool_overrides, parent_session_id = EXCLUDED.parent_session_id, \
+             parent_message_id = EXCLUDED.parent_message_id, spawn_label = EXCLUDED.spawn_label, spawned_by = EXCLUDED.spawned_by",
             &[
                 &record.session_id,
                 &record.user_id,
@@ -2812,6 +2868,10 @@ impl StorageBackend for PostgresStorage {
                 &record.last_message_at,
                 &record.agent_id,
                 &tool_overrides,
+                &record.parent_session_id,
+                &record.parent_message_id,
+                &record.spawn_label,
+                &record.spawned_by,
             ],
         )?;
         Ok(())
@@ -2830,7 +2890,8 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by \
              FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
@@ -2843,6 +2904,10 @@ impl StorageBackend for PostgresStorage {
             last_message_at: row.get(5),
             agent_id: row.get(6),
             tool_overrides: Self::parse_string_list(row.get(7)),
+            parent_session_id: row.get(8),
+            parent_message_id: row.get(9),
+            spawn_label: row.get(10),
+            spawned_by: row.get(11),
         }))
     }
 
@@ -2850,6 +2915,7 @@ impl StorageBackend for PostgresStorage {
         &self,
         user_id: &str,
         agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -2859,79 +2925,63 @@ impl StorageBackend for PostgresStorage {
             return Ok((Vec::new(), 0));
         }
         let mut conn = self.conn()?;
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        params.push(Box::new(cleaned_user.to_string()));
+        conditions.push(format!("user_id = ${}", params.len()));
+
         let agent_id = agent_id.map(|value| value.trim());
-        let (total, rows) = match agent_id {
-            None => {
-                let total: i64 = conn
-                    .query_one(
-                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1",
-                        &[&cleaned_user],
-                    )?
-                    .get(0);
-                let rows = if limit > 0 {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
-                        &[&cleaned_user, &limit, &offset.max(0)],
-                    )?
-                } else {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 ORDER BY updated_at DESC",
-                        &[&cleaned_user],
-                    )?
-                };
-                (total, rows)
-            }
+        match agent_id {
+            None => {}
             Some(value) if value.is_empty() => {
-                let total: i64 = conn
-                    .query_one(
-                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '')",
-                        &[&cleaned_user],
-                    )?
-                    .get(0);
-                let rows = if limit > 0 {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '') \
-                         ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
-                        &[&cleaned_user, &limit, &offset.max(0)],
-                    )?
-                } else {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 AND (agent_id IS NULL OR agent_id = '') \
-                         ORDER BY updated_at DESC",
-                        &[&cleaned_user],
-                    )?
-                };
-                (total, rows)
+                conditions.push("(agent_id IS NULL OR agent_id = '')".to_string());
             }
             Some(value) => {
-                let total: i64 = conn
-                    .query_one(
-                        "SELECT COUNT(*) FROM chat_sessions WHERE user_id = $1 AND agent_id = $2",
-                        &[&cleaned_user, &value],
-                    )?
-                    .get(0);
-                let rows = if limit > 0 {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 AND agent_id = $2 \
-                         ORDER BY updated_at DESC LIMIT $3 OFFSET $4",
-                        &[&cleaned_user, &value, &limit, &offset.max(0)],
-                    )?
-                } else {
-                    conn.query(
-                        "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides \
-                         FROM chat_sessions WHERE user_id = $1 AND agent_id = $2 \
-                         ORDER BY updated_at DESC",
-                        &[&cleaned_user, &value],
-                    )?
-                };
-                (total, rows)
+                params.push(Box::new(value.to_string()));
+                conditions.push(format!("agent_id = ${}", params.len()));
             }
+        }
+
+        match parent_session_id {
+            None => {}
+            Some(value) if value.trim().is_empty() => {
+                conditions
+                    .push("(parent_session_id IS NULL OR parent_session_id = '')".to_string());
+            }
+            Some(value) => {
+                params.push(Box::new(value.trim().to_string()));
+                conditions.push(format!("parent_session_id = ${}", params.len()));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
         };
+        let count_sql = format!("SELECT COUNT(*) FROM chat_sessions{where_clause}");
+        let params_ref: Vec<&(dyn ToSql + Sync)> =
+            params.iter().map(|value| value.as_ref()).collect();
+        let total: i64 = conn.query_one(&count_sql, &params_ref)?.get(0);
+
+        let mut sql = format!(
+            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by FROM chat_sessions{where_clause} \
+             ORDER BY updated_at DESC"
+        );
+        let mut list_params: Vec<Box<dyn ToSql + Sync>> = params;
+        if limit > 0 {
+            list_params.push(Box::new(limit));
+            list_params.push(Box::new(offset.max(0)));
+            sql.push_str(&format!(
+                " LIMIT ${} OFFSET ${}",
+                list_params.len() - 1,
+                list_params.len()
+            ));
+        }
+        let list_ref: Vec<&(dyn ToSql + Sync)> =
+            list_params.iter().map(|value| value.as_ref()).collect();
+        let rows = conn.query(&sql, &list_ref)?;
         let mut output = Vec::new();
         for row in rows {
             output.push(ChatSessionRecord {
@@ -2943,6 +2993,10 @@ impl StorageBackend for PostgresStorage {
                 last_message_at: row.get(5),
                 agent_id: row.get(6),
                 tool_overrides: Self::parse_string_list(row.get(7)),
+                parent_session_id: row.get(8),
+                parent_message_id: row.get(9),
+                spawn_label: row.get(10),
+                spawned_by: row.get(11),
             });
         }
         Ok((output, total))
@@ -3003,6 +3057,67 @@ impl StorageBackend for PostgresStorage {
             &[&cleaned_user, &cleaned_session],
         )?;
         Ok(affected as i64)
+    }
+
+    fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, \
+             started_time, finished_time, elapsed_s, result, error, updated_time) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+             ON CONFLICT(run_id) DO UPDATE SET session_id = EXCLUDED.session_id, parent_session_id = EXCLUDED.parent_session_id, \
+             user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id, model_name = EXCLUDED.model_name, status = EXCLUDED.status, \
+             queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, \
+             elapsed_s = EXCLUDED.elapsed_s, result = EXCLUDED.result, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
+            &[
+                &record.run_id,
+                &record.session_id,
+                &record.parent_session_id,
+                &record.user_id,
+                &record.agent_id,
+                &record.model_name,
+                &record.status,
+                &record.queued_time,
+                &record.started_time,
+                &record.finished_time,
+                &record.elapsed_s,
+                &record.result,
+                &record.error,
+                &record.updated_time,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, started_time, \
+             finished_time, elapsed_s, result, error, updated_time FROM session_runs WHERE run_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| SessionRunRecord {
+            run_id: row.get(0),
+            session_id: row.get(1),
+            parent_session_id: row.get(2),
+            user_id: row.get(3),
+            agent_id: row.get(4),
+            model_name: row.get(5),
+            status: row.get(6),
+            queued_time: row.get::<_, Option<f64>>(7).unwrap_or(0.0),
+            started_time: row.get::<_, Option<f64>>(8).unwrap_or(0.0),
+            finished_time: row.get::<_, Option<f64>>(9).unwrap_or(0.0),
+            elapsed_s: row.get::<_, Option<f64>>(10).unwrap_or(0.0),
+            result: row.get(11),
+            error: row.get(12),
+            updated_time: row.get::<_, Option<f64>>(13).unwrap_or(0.0),
+        }))
     }
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {

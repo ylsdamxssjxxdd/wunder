@@ -1,27 +1,27 @@
 <template>
   <div class="user-tools-pane">
     <div class="list-header">
-      <label>我的 MCP 服务</label>
+      <label>{{ t('userTools.mcp.title') }}</label>
       <div class="header-actions">
         <button class="user-tools-btn secondary compact" type="button" :disabled="!hasConnected" @click="refreshAll">
-          全部刷新
+          {{ t('userTools.mcp.action.refreshAll') }}
         </button>
         <button class="user-tools-btn secondary compact" type="button" @click="openImportModal">
-          导入服务
+          {{ t('userTools.mcp.action.import') }}
         </button>
         <button class="user-tools-btn compact" type="button" @click="addServer">
-          新增服务
+          {{ t('userTools.mcp.action.add') }}
         </button>
       </div>
     </div>
     <div class="tips">
-      配置个人 MCP 服务并选择共享工具，工具会以 user_id@server@tool 形式注入系统提示词。
+      {{ t('userTools.mcp.tip') }}
     </div>
 
     <div class="management-layout">
       <div class="management-list">
         <div class="list-header">
-          <label>服务列表</label>
+          <label>{{ t('userTools.mcp.list.title') }}</label>
         </div>
         <div class="list-body">
           <template v-if="servers.length">
@@ -33,11 +33,11 @@
               type="button"
               @click="selectServer(index)"
             >
-              <div>{{ server.display_name || server.name || '未命名服务' }}</div>
+              <div>{{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}</div>
               <small>{{ buildServerSubtitle(server) }}</small>
             </button>
           </template>
-          <div v-else class="empty-text">暂无 MCP 服务，请新增或导入。</div>
+          <div v-else class="empty-text">{{ t('userTools.mcp.list.emptyHint') }}</div>
         </div>
       </div>
 
@@ -66,7 +66,7 @@
               :disabled="!activeServer || !activeTools.length"
               @click="enableAllTools"
             >
-              全选
+              {{ t('common.selectAll') }}
             </button>
             <button
               class="user-tools-btn secondary"
@@ -74,7 +74,7 @@
               :disabled="!activeServer"
               @click="disableAllTools"
             >
-              全不选
+              {{ t('common.unselectAll') }}
             </button>
           </div>
           <div class="actions">
@@ -84,7 +84,7 @@
               :disabled="!activeServer"
               @click="openEditModal"
             >
-              编辑服务
+              {{ t('userTools.mcp.action.edit') }}
             </button>
             <button
               class="user-tools-btn danger"
@@ -92,11 +92,11 @@
               :disabled="!activeServer"
               @click="removeServer"
             >
-              删除服务
+              {{ t('userTools.mcp.action.delete') }}
             </button>
           </div>
         </div>
-        <div class="muted">勾选启用/共享后将出现在系统提示词工具列表中。</div>
+        <div class="muted">{{ t('userTools.mcp.tip.tools') }}</div>
 
         <div class="tool-list">
           <div v-if="toolListMessage" class="empty-text">{{ toolListMessage }}</div>
@@ -105,29 +105,29 @@
             :key="tool.name"
             class="tool-item tool-item-dual"
             @click="openToolDetail(tool)"
-          >
-            <label class="tool-check" @click.stop>
-              <input
-                type="checkbox"
-                :checked="isToolEnabled(tool)"
-                @change="toggleToolEnable(tool, $event.target.checked)"
-              />
-              <span>启用</span>
-            </label>
-            <label class="tool-check" @click.stop>
-              <input
-                type="checkbox"
-                :checked="isToolShared(tool)"
-                @change="toggleToolShare(tool, $event.target.checked)"
-              />
-              <span>共享</span>
-            </label>
-            <label class="tool-item-info">
-              <strong>{{ tool.name }}</strong>
-              <span class="muted">{{ tool.description || '暂无描述' }}</span>
-            </label>
+            >
+              <label class="tool-check" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="isToolEnabled(tool)"
+                  @change="toggleToolEnable(tool, $event.target.checked)"
+                />
+                <span>{{ t('userTools.action.enable') }}</span>
+              </label>
+              <label class="tool-check" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="isToolShared(tool)"
+                  @change="toggleToolShare(tool, $event.target.checked)"
+                />
+                <span>{{ t('userTools.action.share') }}</span>
+              </label>
+              <label class="tool-item-info">
+                <strong>{{ tool.name }}</strong>
+                <span class="muted">{{ tool.description || t('common.noDescription') }}</span>
+              </label>
+            </div>
           </div>
-        </div>
       </div>
     </div>
 
@@ -147,19 +147,27 @@
       </template>
       <div v-if="activeServer" class="user-tools-form">
         <div class="form-row">
-          <label>服务名称</label>
-          <el-input v-model="activeServer.name" placeholder="例如：local_tools" @input="scheduleSave" />
+          <label>{{ t('userTools.mcp.form.name') }}</label>
+          <el-input
+            v-model="activeServer.name"
+            :placeholder="t('userTools.mcp.form.placeholder.name')"
+            @input="scheduleSave"
+          />
         </div>
         <div class="form-row">
-          <label>显示名称（可选）</label>
-          <el-input v-model="activeServer.display_name" placeholder="用于前端展示" @input="scheduleSave" />
+          <label>{{ t('userTools.mcp.form.displayName') }}</label>
+          <el-input
+            v-model="activeServer.display_name"
+            :placeholder="t('userTools.mcp.form.placeholder.displayName')"
+            @input="scheduleSave"
+          />
         </div>
         <div class="form-row">
-          <label>服务地址</label>
+          <label>{{ t('userTools.mcp.form.endpoint') }}</label>
           <el-input v-model="activeServer.endpoint" placeholder="http://127.0.0.1:9000/mcp" @input="scheduleSave" />
         </div>
         <div class="form-row">
-          <label>传输类型</label>
+          <label>{{ t('userTools.mcp.form.transport') }}</label>
           <el-select v-model="activeServer.transport" placeholder="auto" @change="scheduleSave">
             <el-option label="auto" value="" />
             <el-option label="sse" value="sse" />
@@ -168,16 +176,16 @@
           </el-select>
         </div>
         <div class="form-row">
-          <label>服务描述（可选）</label>
+          <label>{{ t('userTools.mcp.form.description') }}</label>
           <el-input
             v-model="activeServer.description"
             type="textarea"
-            placeholder="用于记录服务作用"
+            :placeholder="t('userTools.mcp.form.placeholder.description')"
             @input="scheduleSave"
           />
         </div>
         <div class="form-row">
-          <label>Headers JSON（可选）</label>
+          <label>{{ t('userTools.mcp.form.headers') }}</label>
           <el-input
             v-model="headersText"
             type="textarea"
@@ -187,17 +195,21 @@
           <div class="error-text">{{ headersError }}</div>
         </div>
         <div class="form-row">
-          <el-checkbox v-model="activeServer.enabled" @change="scheduleSave">启用服务</el-checkbox>
+          <el-checkbox v-model="activeServer.enabled" @change="scheduleSave">
+            {{ t('userTools.mcp.form.enabled') }}
+          </el-checkbox>
         </div>
         <div class="form-row">
-          <label>JSON 结构体预览（可复制）</label>
+          <label>{{ t('userTools.mcp.form.structPreview') }}</label>
           <el-input type="textarea" :model-value="structPreview" readonly />
         </div>
       </div>
-      <div v-else class="empty-text">请先选择服务。</div>
+      <div v-else class="empty-text">{{ t('userTools.mcp.modal.empty') }}</div>
       <template #footer>
-        <el-button class="user-tools-footer-btn" @click="closeMcpModal">取消</el-button>
-        <el-button class="user-tools-footer-btn primary" @click="applyMcpModal">保存</el-button>
+        <el-button class="user-tools-footer-btn" @click="closeMcpModal">{{ t('common.cancel') }}</el-button>
+        <el-button class="user-tools-footer-btn primary" @click="applyMcpModal">
+          {{ t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -211,19 +223,25 @@
     >
       <template #header>
         <div class="user-tools-header">
-          <div class="user-tools-title">导入 MCP 服务</div>
+          <div class="user-tools-title">{{ t('userTools.mcp.import.title') }}</div>
           <button class="icon-btn" type="button" @click="closeImportModal">×</button>
         </div>
       </template>
       <div class="user-tools-form">
         <div class="form-row">
-          <label>MCP 结构体（JSON）</label>
-          <el-input v-model="importContent" type="textarea" placeholder="请输入 JSON 结构体" />
+          <label>{{ t('userTools.mcp.import.structLabel') }}</label>
+          <el-input
+            v-model="importContent"
+            type="textarea"
+            :placeholder="t('userTools.mcp.import.placeholder')"
+          />
         </div>
       </div>
       <template #footer>
-        <el-button class="user-tools-footer-btn" @click="closeImportModal">取消</el-button>
-        <el-button class="user-tools-footer-btn primary" @click="applyImportModal">导入</el-button>
+        <el-button class="user-tools-footer-btn" @click="closeImportModal">{{ t('common.cancel') }}</el-button>
+        <el-button class="user-tools-footer-btn primary" @click="applyImportModal">
+          {{ t('userTools.mcp.action.import') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -236,26 +254,30 @@
     >
       <template #header>
         <div class="user-tools-header">
-          <div class="user-tools-title">{{ toolDetail?.title || '工具详情' }}</div>
+          <div class="user-tools-title">
+            {{ toolDetail?.title || t('userTools.mcp.tool.detailTitle') }}
+          </div>
           <button class="icon-btn" type="button" @click="toolDetailVisible = false">×</button>
         </div>
       </template>
       <div class="user-tools-detail">
         <div class="detail-line">
-          <span class="label">说明</span>
+          <span class="label">{{ t('userTools.mcp.tool.metaLabel') }}</span>
           <span>{{ toolDetail?.meta || '-' }}</span>
         </div>
         <div class="detail-line">
-          <span class="label">描述</span>
+          <span class="label">{{ t('common.description') }}</span>
           <span>{{ toolDetail?.description || '-' }}</span>
         </div>
         <div class="detail-line">
-          <span class="label">输入结构</span>
+          <span class="label">{{ t('userTools.mcp.tool.schemaLabel') }}</span>
         </div>
-        <pre class="detail-schema">{{ toolDetail?.schema || '（无输入结构）' }}</pre>
+        <pre class="detail-schema">{{ toolDetail?.schema || t('userTools.mcp.tool.schemaEmpty') }}</pre>
       </div>
       <template #footer>
-        <el-button class="user-tools-footer-btn" @click="toolDetailVisible = false">关闭</el-button>
+        <el-button class="user-tools-footer-btn" @click="toolDetailVisible = false">
+          {{ t('common.close') }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -266,6 +288,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserMcpServers, fetchUserMcpTools, saveUserMcpServers } from '@/api/userTools';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   visible: {
@@ -279,6 +302,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['status']);
+const { t } = useI18n();
 
 const servers = ref([]);
 const toolsByIndex = ref([]);
@@ -292,7 +316,7 @@ const saveTimer = ref(null);
 const mcpModalVisible = ref(false);
 const importModalVisible = ref(false);
 const toolDetailVisible = ref(false);
-const mcpModalTitle = ref('编辑 MCP 服务');
+const mcpModalTitle = ref(t('userTools.mcp.modal.editTitle'));
 
 const headersText = ref('');
 const headersError = ref('');
@@ -305,7 +329,9 @@ const hasConnected = computed(() =>
   toolsByIndex.value.some((tools) => Array.isArray(tools) && tools.length > 0)
 );
 
-const detailTitle = computed(() => activeServer.value?.display_name || activeServer.value?.name || '未选择服务');
+const detailTitle = computed(
+  () => activeServer.value?.display_name || activeServer.value?.name || t('userTools.mcp.detail.empty')
+);
 const detailDesc = computed(() => activeServer.value?.description || '');
 const detailMeta = computed(() => {
   const server = activeServer.value;
@@ -322,17 +348,19 @@ const detailMeta = computed(() => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
-  metaParts.push(server.enabled !== false ? '已启用' : '未启用');
+  metaParts.push(server.enabled !== false ? t('common.enabled') : t('common.disabled'));
   return metaParts.join(' · ');
 });
 
-const connectLabel = computed(() => (activeTools.value.length ? '刷新' : '连接'));
+const connectLabel = computed(() =>
+  activeTools.value.length ? t('common.refresh') : t('userTools.mcp.action.connect')
+);
 const toolListMessage = computed(() => {
   if (!activeServer.value) {
-    return '请选择一个服务。';
+    return t('userTools.mcp.tools.select');
   }
   if (!activeTools.value.length) {
-    return '尚未加载工具，请先连接服务。';
+    return t('userTools.mcp.tools.connectHint');
   }
   return '';
 });
@@ -353,11 +381,11 @@ const parseHeadersValue = (raw) => {
   try {
     const parsed = JSON.parse(raw);
     if (!isPlainObject(parsed)) {
-      return { headers: null, error: '请求头 JSON 必须是对象' };
+      return { headers: null, error: t('userTools.mcp.headers.mustObject') };
     }
     return { headers: parsed, error: '' };
   } catch (error) {
-    return { headers: null, error: '请求头 JSON 解析失败' };
+    return { headers: null, error: t('userTools.mcp.headers.parseFailed') };
   }
 };
 
@@ -366,17 +394,17 @@ const getToolInputSchema = (tool) =>
 
 const formatToolSchema = (schema) => {
   if (schema === null || schema === undefined) {
-    return '（无输入结构）';
+    return t('userTools.mcp.tool.schemaEmpty');
   }
   if (typeof schema === 'string') {
     const trimmed = schema.trim();
-    return trimmed ? trimmed : '（无输入结构）';
+    return trimmed ? trimmed : t('userTools.mcp.tool.schemaEmpty');
   }
   if (Array.isArray(schema) && schema.length === 0) {
-    return '（无输入结构）';
+    return t('userTools.mcp.tool.schemaEmpty');
   }
   if (isPlainObject(schema) && Object.keys(schema).length === 0) {
-    return '（无输入结构）';
+    return t('userTools.mcp.tool.schemaEmpty');
   }
   try {
     return JSON.stringify(schema, null, 2);
@@ -409,7 +437,7 @@ const normalizeUserMcpServer = (server) => {
 
 const buildUserMcpStructPreview = (server) => {
   if (!server || !server.name || !server.endpoint) {
-    return '填写服务名称与服务地址后生成结构体。';
+    return t('userTools.mcp.struct.tip');
   }
   const config = {
     type: server.transport || undefined,
@@ -496,7 +524,7 @@ const loadServers = async () => {
     selectedIndex.value = servers.value.length ? 0 : -1;
     loaded.value = true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || 'MCP 服务加载失败');
+    ElMessage.error(error.response?.data?.detail || t('userTools.mcp.loadFailed'));
   } finally {
     loading.value = false;
   }
@@ -505,7 +533,7 @@ const loadServers = async () => {
 const saveServers = async () => {
   const currentVersion = ++saveVersion.value;
   saving.value = true;
-  emitStatus('正在保存...');
+  emitStatus(t('userTools.saving'));
   try {
     const payload = {
       servers: servers.value.map((server) => ({
@@ -536,13 +564,13 @@ const saveServers = async () => {
     } else if (selectedIndex.value >= servers.value.length) {
       selectedIndex.value = 0;
     }
-    emitStatus('已自动保存。');
+    emitStatus(t('userTools.autoSaved'));
   } catch (error) {
     if (currentVersion !== saveVersion.value) {
       return;
     }
-    emitStatus(`保存失败：${error.message || '请求失败'}`);
-    ElMessage.error(error.response?.data?.detail || '自建 MCP 保存失败');
+    emitStatus(t('userTools.saveFailed', { message: error.message || t('common.requestFailed') }));
+    ElMessage.error(error.response?.data?.detail || t('userTools.mcp.saveFailed'));
   } finally {
     if (currentVersion === saveVersion.value) {
       saving.value = false;
@@ -589,7 +617,7 @@ const handleHeadersInput = () => {
 
 const openEditModal = () => {
   if (!activeServer.value) return;
-  mcpModalTitle.value = '编辑 MCP 服务';
+  mcpModalTitle.value = t('userTools.mcp.modal.editTitle');
   headersText.value = activeServer.value.headers && Object.keys(activeServer.value.headers).length
     ? JSON.stringify(activeServer.value.headers, null, 2)
     : '';
@@ -603,12 +631,12 @@ const closeMcpModal = () => {
 
 const applyMcpModal = async () => {
   if (headersError.value) {
-    ElMessage.warning('Headers JSON 格式有误，请先修正。');
+    ElMessage.warning(t('userTools.mcp.headers.invalid'));
     return;
   }
   await saveServers();
   closeMcpModal();
-  ElMessage.success('MCP 服务已保存。');
+  ElMessage.success(t('userTools.mcp.saved'));
 };
 
 const openImportModal = () => {
@@ -623,14 +651,14 @@ const closeImportModal = () => {
 const applyImportModal = async () => {
   const raw = (importContent.value || '').trim();
   if (!raw) {
-    ElMessage.warning('请先输入 MCP 结构体。');
+    ElMessage.warning(t('userTools.mcp.struct.required'));
     return;
   }
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    ElMessage.error('MCP 结构体 JSON 解析失败。');
+    ElMessage.error(t('userTools.mcp.struct.parseFailed'));
     return;
   }
   const imported = [];
@@ -649,7 +677,7 @@ const applyImportModal = async () => {
     }
   }
   if (!imported.length) {
-    ElMessage.warning('未识别到可用的 MCP 服务结构。');
+    ElMessage.warning(t('userTools.mcp.struct.noValid'));
     return;
   }
   let lastIndex = selectedIndex.value;
@@ -659,7 +687,7 @@ const applyImportModal = async () => {
   selectedIndex.value = lastIndex;
   await saveServers();
   closeImportModal();
-  ElMessage.success('MCP 服务已导入并保存。');
+  ElMessage.success(t('userTools.mcp.import.success'));
 };
 
 const addServer = () => {
@@ -678,7 +706,7 @@ const addServer = () => {
   servers.value.push(next);
   toolsByIndex.value.push([]);
   selectedIndex.value = servers.value.length - 1;
-  mcpModalTitle.value = '新增 MCP 服务';
+  mcpModalTitle.value = t('userTools.mcp.modal.addTitle');
   headersText.value = '';
   headersError.value = '';
   mcpModalVisible.value = true;
@@ -687,13 +715,18 @@ const addServer = () => {
 const removeServer = async () => {
   if (selectedIndex.value < 0) return;
   const removed = servers.value[selectedIndex.value];
-  const removedName = removed?.display_name || removed?.name || 'MCP 服务';
+  const removedName =
+    removed?.display_name || removed?.name || t('userTools.mcp.server.defaultName');
   try {
-    await ElMessageBox.confirm(`确认删除 ${removedName} 吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
+    await ElMessageBox.confirm(
+      t('userTools.mcp.deleteConfirm', { name: removedName }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
   } catch (error) {
     return;
   }
@@ -705,7 +738,7 @@ const removeServer = async () => {
     selectedIndex.value = Math.max(0, selectedIndex.value - 1);
   }
   scheduleSave();
-  ElMessage.success(`已删除 ${removedName}`);
+  ElMessage.success(t('userTools.mcp.deleteSuccess', { name: removedName }));
 };
 
 const connectServerAtIndex = async (index) => {
@@ -739,10 +772,12 @@ const connectServer = async () => {
   const wasConnected = toolsByIndex.value[index]?.length;
   const ok = await connectServerAtIndex(index);
   if (!ok) {
-    ElMessage.error('MCP 连接失败，请检查服务信息。');
+    ElMessage.error(t('userTools.mcp.connectFailed'));
     return;
   }
-  ElMessage.success(wasConnected ? 'MCP 工具已刷新。' : 'MCP 工具已连接。');
+  ElMessage.success(
+    wasConnected ? t('userTools.mcp.refreshSuccess') : t('userTools.mcp.connectSuccess')
+  );
 };
 
 const refreshAll = async () => {
@@ -758,10 +793,10 @@ const refreshAll = async () => {
     }
   }
   if (!updated) {
-    ElMessage.error('MCP 刷新失败，请检查服务信息。');
+    ElMessage.error(t('userTools.mcp.refreshFailed'));
     return;
   }
-  ElMessage.success('已刷新所有已连接 MCP 服务。');
+  ElMessage.success(t('userTools.mcp.refreshAllSuccess'));
 };
 
 const isToolEnabled = (tool) => {
@@ -848,13 +883,18 @@ const disableAllTools = () => {
 const openToolDetail = (tool) => {
   const server = activeServer.value;
   if (!tool || !server) return;
-  const serverTitle = server.display_name || server.name || '未命名服务';
-  const metaParts = ['自建 MCP 工具', `服务: ${serverTitle}`];
-  metaParts.push(server.enabled !== false ? '服务已启用' : '服务未启用');
-  metaParts.push(isToolEnabled(tool) ? '已启用' : '未启用');
-  metaParts.push(isToolShared(tool) ? '已共享' : '未共享');
+  const serverTitle = server.display_name || server.name || t('userTools.mcp.server.unnamed');
+  const metaParts = [
+    t('userTools.mcp.meta.title'),
+    t('userTools.mcp.meta.server', { name: serverTitle })
+  ];
+  metaParts.push(
+    server.enabled !== false ? t('userTools.mcp.meta.serverEnabled') : t('userTools.mcp.meta.serverDisabled')
+  );
+  metaParts.push(isToolEnabled(tool) ? t('common.enabled') : t('common.disabled'));
+  metaParts.push(isToolShared(tool) ? t('userTools.shared.on') : t('userTools.shared.off'));
   toolDetail.value = {
-    title: tool.name || '工具详情',
+    title: tool.name || t('userTools.mcp.tool.detailTitle'),
     meta: metaParts.join(' · '),
     description: tool.description || '',
     schema: formatToolSchema(getToolInputSchema(tool))

@@ -6,14 +6,14 @@
           <div class="brand-mark">AI</div>
           <div class="brand-meta">
             <div class="brand-title-row">
-              <div class="brand-title">智能体交互系统</div>
+              <div class="brand-title">{{ t('chat.title') }}</div>
               <div v-if="activeAgentLabel" class="agent-pill">
-                <span class="agent-pill-label">当前智能体</span>
+                <span class="agent-pill-label">{{ t('chat.currentAgent') }}</span>
                 <span class="agent-pill-name">{{ activeAgentLabel }}</span>
               </div>
             </div>
             <div class="brand-sub">
-              <span v-if="demoMode" class="demo-badge">演示模式</span>
+              <span v-if="demoMode" class="demo-badge">{{ t('user.demoMode') }}</span>
             </div>
           </div>
         </div>
@@ -22,38 +22,38 @@
             <button
               class="topbar-panel-btn"
               type="button"
-              title="沙盒容器"
-              aria-label="沙盒容器"
+              :title="t('chat.workspacePanel')"
+              :aria-label="t('chat.workspacePanel')"
               @click="openWorkspaceDialog"
             >
               <i class="fa-solid fa-folder-open topbar-icon" aria-hidden="true"></i>
-              <span class="topbar-panel-text">临时文件</span>
+              <span class="topbar-panel-text">{{ t('chat.workspacePanel') }}</span>
             </button>
             <button
               class="topbar-panel-btn"
               type="button"
-              title="历史记录"
-              aria-label="历史记录"
+              :title="t('chat.history')"
+              :aria-label="t('chat.history')"
               @click="openHistoryDialog"
             >
               <i class="fa-solid fa-clock-rotate-left topbar-icon" aria-hidden="true"></i>
-              <span class="topbar-panel-text">历史记录</span>
+              <span class="topbar-panel-text">{{ t('chat.history') }}</span>
             </button>
           </div>
           <button
             class="new-chat-btn"
             type="button"
-            title="新建会话"
-            aria-label="新建会话"
+            :title="t('chat.newSession')"
+            :aria-label="t('chat.newSession')"
             @click="handleCreateSession"
           >
-            新建会话
+            {{ t('chat.newSession') }}
           </button>
           <button
             class="topbar-icon-btn"
             type="button"
-            title="世界"
-            aria-label="世界"
+            :title="t('nav.world')"
+            :aria-label="t('nav.world')"
             @click="handleOpenPortal"
           >
             <i class="fa-solid fa-globe topbar-icon" aria-hidden="true"></i>
@@ -61,8 +61,8 @@
           <button
             class="topbar-icon-btn"
             type="button"
-            title="工具管理"
-            aria-label="工具管理"
+            :title="t('nav.tools')"
+            :aria-label="t('nav.tools')"
             @click="openSessionTools"
           >
             <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
@@ -72,13 +72,15 @@
             <button
               class="user-meta user-meta-btn"
               type="button"
-              aria-label="进入我的概况"
+              :aria-label="t('user.profile.enter')"
               @click="handleOpenProfile"
             >
-              <div class="user-name">{{ currentUser?.username || '访客' }}</div>
-              <div class="user-level">单位 {{ currentUserUnitLabel }}</div>
+              <div class="user-name">{{ currentUser?.username || t('user.guest') }}</div>
+              <div class="user-level">{{ t('user.unitLabel', { unit: currentUserUnitLabel }) }}</div>
             </button>
-            <button class="logout-btn" type="button" @click="handleLogout">退出</button>
+            <button class="logout-btn" type="button" @click="handleLogout">
+              {{ t('nav.logout') }}
+            </button>
           </div>
         </div>
       </header>
@@ -91,7 +93,7 @@
 
           <div class="glass-card history-panel">
             <div class="panel-header">
-              <span class="history-title">历史记录</span>
+              <span class="history-title">{{ t('chat.history') }}</span>
             </div>
             <div
               ref="historyListRef"
@@ -116,8 +118,8 @@
                 <button
                   class="history-delete-btn"
                   type="button"
-                  title="删除会话"
-                  aria-label="删除会话"
+                  :title="t('chat.history.delete')"
+                  :aria-label="t('chat.history.delete')"
                   @click.stop="handleDeleteSession(session.id)"
                 >
                   <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
@@ -147,12 +149,14 @@
                 ]"
                 :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
               >
-                {{ message.role === 'user' ? '你' : 'AI' }}
+                {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
               </div>
               <div class="message-content">
                 <div class="message-header">
                   <div class="message-header-left">
-                    <div class="message-role">{{ message.role === 'user' ? '你' : '智能体' }}</div>
+                    <div class="message-role">
+                      {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistant') }}
+                    </div>
                     <MessageThinking
                       v-if="message.role === 'assistant'"
                       :content="message.reasoning"
@@ -164,12 +168,12 @@
                     <button
                       class="message-copy-btn"
                       type="button"
-                      title="复制回复"
-                      aria-label="复制回复"
+                      :title="t('chat.message.copy')"
+                      :aria-label="t('chat.message.copy')"
                       @click="handleCopyMessage(message)"
                     >
                       <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
-                      <span>复制</span>
+                      <span>{{ t('chat.message.copy') }}</span>
                     </button>
                   </div>
                   <div v-else class="message-actions">
@@ -177,12 +181,12 @@
                     <button
                       class="message-copy-btn"
                       type="button"
-                      title="复制消息"
-                      aria-label="复制消息"
+                      :title="t('chat.message.copy')"
+                      :aria-label="t('chat.message.copy')"
                       @click="handleCopyMessage(message)"
                     >
                       <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
-                      <span>复制</span>
+                      <span>{{ t('chat.message.copy') }}</span>
                     </button>
                   </div>
                 </div>
@@ -219,21 +223,23 @@
                       <template #content>
                         <div class="ability-tooltip">
                           <div class="ability-header">
-                            <span class="ability-title">智能体能力</span>
-                            <span class="ability-sub">工具 · 技能</span>
+                            <span class="ability-title">{{ t('chat.ability.title') }}</span>
+                            <span class="ability-sub">{{ t('chat.ability.subtitle') }}</span>
                           </div>
                           <div v-if="toolSummaryLoading && !hasAbilitySummary" class="ability-muted">
-                            能力加载中...
+                            {{ t('chat.ability.loading') }}
                           </div>
                           <div v-else-if="toolSummaryError" class="ability-error">
                             {{ toolSummaryError }}
                           </div>
                           <template v-else>
-                            <div v-if="!hasAbilitySummary" class="ability-muted">暂无可用工具/技能</div>
+                            <div v-if="!hasAbilitySummary" class="ability-muted">
+                              {{ t('chat.ability.empty') }}
+                            </div>
                             <div v-else class="ability-scroll">
                               <div class="ability-section">
                                 <div class="ability-section-title">
-                                  <span>工具</span>
+                                  <span>{{ t('chat.ability.tools') }}</span>
                                   <span class="ability-count">{{ abilitySummary.tools.length }}</span>
                                 </div>
                                 <div v-if="abilitySummary.tools.length" class="ability-item-list">
@@ -247,15 +253,15 @@
                                       class="ability-item-desc"
                                       :class="{ 'is-empty': !tool.description }"
                                     >
-                                      {{ tool.description || '暂无描述' }}
+                                      {{ tool.description || t('chat.ability.noDesc') }}
                                     </div>
                                   </div>
                                 </div>
-                                <div v-else class="ability-empty">暂无工具</div>
+                                <div v-else class="ability-empty">{{ t('chat.ability.emptyTools') }}</div>
                               </div>
                               <div class="ability-section">
                                 <div class="ability-section-title">
-                                  <span>技能</span>
+                                  <span>{{ t('chat.ability.skills') }}</span>
                                   <span class="ability-count">{{ abilitySummary.skills.length }}</span>
                                 </div>
                                 <div v-if="abilitySummary.skills.length" class="ability-item-list">
@@ -269,11 +275,11 @@
                                       class="ability-item-desc"
                                       :class="{ 'is-empty': !skill.description }"
                                     >
-                                      {{ skill.description || '暂无描述' }}
+                                      {{ skill.description || t('chat.ability.noDesc') }}
                                     </div>
                                   </div>
                                 </div>
-                                <div v-else class="ability-empty">暂无技能</div>
+                                <div v-else class="ability-empty">{{ t('chat.ability.emptySkills') }}</div>
                               </div>
                             </div>
                           </template>
@@ -282,8 +288,8 @@
                       <button
                         class="prompt-preview-btn"
                         type="button"
-                        title="提示词预览"
-                        aria-label="提示词预览"
+                        :title="t('chat.promptPreview')"
+                        :aria-label="t('chat.promptPreview')"
                         :disabled="promptPreviewLoading"
                         @click="openPromptPreview"
                       >
@@ -346,16 +352,18 @@
     >
       <template #header>
         <div class="system-prompt-header">
-          <div class="system-prompt-title">系统提示词预览</div>
+          <div class="system-prompt-title">{{ t('chat.systemPrompt.title') }}</div>
           <button class="icon-btn" type="button" @click="closePromptPreview">×</button>
         </div>
       </template>
       <div class="system-prompt-body">
-        <div v-if="promptPreviewLoading" class="muted">正在加载...</div>
+        <div v-if="promptPreviewLoading" class="muted">{{ t('chat.systemPrompt.loading') }}</div>
         <pre v-else class="system-prompt-content" v-html="promptPreviewHtml"></pre>
       </div>
       <template #footer>
-        <el-button class="system-prompt-footer-btn" @click="closePromptPreview">关闭</el-button>
+        <el-button class="system-prompt-footer-btn" @click="closePromptPreview">
+          {{ t('common.close') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -370,22 +378,22 @@
     >
       <template #header>
         <div class="system-prompt-header">
-          <div class="system-prompt-title">会话工具调整</div>
+          <div class="system-prompt-title">{{ t('chat.sessionTools.title') }}</div>
           <button class="icon-btn" type="button" @click="closeSessionTools">×</button>
         </div>
       </template>
       <div class="session-tools-body">
         <div class="session-tools-bar">
           <div class="session-tools-meta">
-            可用 {{ availableToolCount }} 项，已选 {{ sessionToolSelectionCount }} 项
+            {{ t('chat.sessionTools.summary', { available: availableToolCount, selected: sessionToolSelectionCount }) }}
           </div>
         </div>
         <div v-if="sessionToolsDisabled" class="session-tools-muted">
-          当前会话将禁用所有工具调用。
+          {{ t('chat.sessionTools.none') }}
         </div>
         <div v-else class="session-tools-groups">
           <div v-if="!filteredToolGroups.length" class="session-tools-empty">
-            暂无匹配工具
+            {{ t('chat.sessionTools.empty') }}
           </div>
           <div v-for="group in filteredToolGroups" :key="group.label" class="session-tools-group">
             <div class="session-tools-group-title">{{ group.label }}</div>
@@ -403,7 +411,7 @@
                 <div class="session-tools-item-info">
                   <div class="session-tools-item-name">{{ tool.name }}</div>
                   <div class="session-tools-item-desc">
-                    {{ tool.description || '暂无描述' }}
+                    {{ tool.description || t('chat.ability.noDesc') }}
                   </div>
                 </div>
               </label>
@@ -412,10 +420,10 @@
         </div>
       </div>
       <template #footer>
-        <el-button @click="resetSessionTools">恢复默认</el-button>
-        <el-button @click="closeSessionTools">取消</el-button>
+        <el-button @click="resetSessionTools">{{ t('chat.sessionTools.reset') }}</el-button>
+        <el-button @click="closeSessionTools">{{ t('chat.sessionTools.cancel') }}</el-button>
         <el-button type="primary" :loading="sessionToolsSaving" @click="saveSessionTools">
-          应用
+          {{ t('chat.sessionTools.apply') }}
         </el-button>
       </template>
     </el-dialog>
@@ -432,7 +440,7 @@
     >
       <template #header>
         <div class="image-preview-header">
-          <div class="image-preview-title">{{ imagePreviewTitle || '图片预览' }}</div>
+          <div class="image-preview-title">{{ imagePreviewTitle || t('chat.imagePreview') }}</div>
           <button class="icon-btn" type="button" @click="closeImagePreview">×</button>
         </div>
       </template>
@@ -453,7 +461,7 @@
     >
       <template #header>
         <div class="image-preview-header">
-          <div class="image-preview-title">沙盒容器</div>
+          <div class="image-preview-title">{{ t('chat.workspacePanel') }}</div>
           <button class="icon-btn" type="button" @click="workspaceDialogVisible = false">×</button>
         </div>
       </template>
@@ -474,15 +482,15 @@
     >
       <template #header>
         <div class="image-preview-header">
-          <div class="image-preview-title">历史记录</div>
+          <div class="image-preview-title">{{ t('chat.history') }}</div>
           <button class="icon-btn" type="button" @click="historyDialogVisible = false">×</button>
         </div>
       </template>
       <div class="panel-dialog-body">
-        <div class="history-panel">
-          <div class="panel-header">
-            <span class="history-title">历史记录</span>
-          </div>
+          <div class="history-panel">
+            <div class="panel-header">
+              <span class="history-title">{{ t('chat.history') }}</span>
+            </div>
           <div
             ref="historyListRef"
             :class="['history-container', { virtual: historyVirtual }]"
@@ -506,8 +514,8 @@
                 <button
                   class="history-delete-btn"
                   type="button"
-                  title="删除会话"
-                  aria-label="删除会话"
+                  :title="t('chat.history.delete')"
+                  :aria-label="t('chat.history.delete')"
                   @click.stop="handleDeleteSession(session.id)"
                 >
                   <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
@@ -549,12 +557,14 @@ import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
+import { useI18n } from '@/i18n';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const agentStore = useAgentStore();
+const { t } = useI18n();
 const currentUser = computed(() => authStore.user);
 const currentUserUnitLabel = computed(() => {
   const unit = currentUser.value?.unit;
@@ -709,7 +719,7 @@ const effectiveToolSummary = computed(() => {
   );
 });
 const promptPreviewHtml = computed(() => {
-  const content = promptPreviewContent.value || '暂无系统提示词';
+  const content = promptPreviewContent.value || t('chat.systemPrompt.empty');
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
 });
 // 能力悬浮提示使用的工具/技能明细
@@ -723,18 +733,18 @@ const sessionToolSelectionCount = computed(() =>
 );
 const sessionToolGroups = computed(() => {
   const summary = promptToolSummary.value || {};
-  const buildGroup = (label, list) => ({
-    label,
+  const buildGroup = (labelKey, list) => ({
+    label: t(labelKey),
     items: (Array.isArray(list) ? list : []).map(normalizeToolItem).filter(Boolean)
   });
   return [
-    buildGroup('内置工具', summary.builtin_tools),
-    buildGroup('MCP 工具', summary.mcp_tools),
-    buildGroup('A2A 工具', summary.a2a_tools),
-    buildGroup('知识库工具', summary.knowledge_tools),
-    buildGroup('我的工具', summary.user_tools),
-    buildGroup('共享工具', summary.shared_tools),
-    buildGroup('技能', summary.skills)
+    buildGroup('portal.agent.tools.group.builtin', summary.builtin_tools),
+    buildGroup('portal.agent.tools.group.mcp', summary.mcp_tools),
+    buildGroup('portal.agent.tools.group.a2a', summary.a2a_tools),
+    buildGroup('portal.agent.tools.group.knowledge', summary.knowledge_tools),
+    buildGroup('portal.agent.tools.group.user', summary.user_tools),
+    buildGroup('portal.agent.tools.group.shared', summary.shared_tools),
+    buildGroup('portal.agent.tools.group.skills', summary.skills)
   ].filter((group) => group.items.length > 0);
 });
 const filteredToolGroups = computed(() => {
@@ -851,9 +861,9 @@ const handleSelectSession = async (sessionId) => {
 
 const handleDeleteSession = async (sessionId) => {
   try {
-    await ElMessageBox.confirm('确认删除该会话记录吗？', '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(t('chat.history.confirmDelete'), t('chat.history.confirmTitle'), {
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning'
     });
   } catch (error) {
@@ -1029,13 +1039,13 @@ const hydrateWorkspaceResourceCard = async (card) => {
   if (!publicPath || !preview) return;
   const resource = resolveWorkspaceResource(publicPath);
   if (!resource) {
-    if (status) status.textContent = '资源不可用';
+    if (status) status.textContent = t('chat.resourceUnavailable');
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
     return;
   }
   if (!resource.allowed) {
-    if (status) status.textContent = '当前用户无权限访问该资源';
+    if (status) status.textContent = t('chat.resourceDenied');
     card.dataset.workspaceState = 'forbidden';
     card.classList.add('is-error');
     return;
@@ -1049,7 +1059,9 @@ const hydrateWorkspaceResourceCard = async (card) => {
     if (status) status.textContent = '';
   } catch (error) {
     if (status) {
-      status.textContent = isWorkspaceResourceMissing(error) ? '该文件已被移除' : '图片加载失败';
+      status.textContent = isWorkspaceResourceMissing(error)
+        ? t('chat.resourceMissing')
+        : t('chat.resourceImageFailed');
     }
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
@@ -1079,7 +1091,7 @@ const resetWorkspaceResourceCards = () => {
     card.classList.remove('is-ready');
     const status = card.querySelector('.ai-resource-status');
     if (status) {
-      status.textContent = '图片加载中...';
+      status.textContent = t('chat.resourceImageLoading');
     }
   });
 };
@@ -1114,14 +1126,18 @@ const downloadWorkspaceResource = async (publicPath) => {
   const resource = resolveWorkspaceResource(publicPath);
   if (!resource) return;
   if (!resource.allowed) {
-    ElMessage.warning('当前用户无权限访问该资源');
+    ElMessage.warning(t('chat.resourceDenied'));
     return;
   }
   try {
     const entry = await fetchWorkspaceResource(resource);
     saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
-    ElMessage.error(isWorkspaceResourceMissing(error) ? '该文件已被移除' : '资源下载失败');
+    ElMessage.error(
+      isWorkspaceResourceMissing(error)
+        ? t('chat.resourceMissing')
+        : t('chat.resourceDownloadFailed')
+    );
   }
 };
 
@@ -1141,7 +1157,12 @@ const handleComposerSend = async ({ content, attachments }) => {
         selected: selectedRoutes.map((route) => route.label)
       });
       const selectionText = buildInquiryReply(active.panel, selectedRoutes);
-      finalContent = trimmedContent ? `${selectionText}\n\n用户补充：${trimmedContent}` : selectionText;
+      if (trimmedContent) {
+        const appended = t('chat.askPanelUserAppend', { content: trimmedContent });
+        finalContent = `${selectionText}\n\n${appended}`;
+      } else {
+        finalContent = selectionText;
+      }
     } else {
       chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
     }
@@ -1165,8 +1186,8 @@ const handleStop = async () => {
 };
 
 const buildInquiryReply = (panel, routes) => {
-  const header = '【问询面板选择】';
-  const question = panel?.question ? `问题：${panel.question}` : '';
+  const header = t('chat.askPanelPrefix');
+  const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
   const lines = routes.map((route) => {
     const detail = route.description ? `：${route.description}` : '';
     return `- ${route.label}${detail}`;
@@ -1203,7 +1224,7 @@ const openImagePreview = (src, title = '') => {
   if (!src) return;
   imagePreviewUrl.value = src;
   const trimmedTitle = String(title || '').trim();
-  imagePreviewTitle.value = trimmedTitle || '图片预览';
+  imagePreviewTitle.value = trimmedTitle || t('chat.imagePreview');
   imagePreviewVisible.value = true;
 };
 
@@ -1216,14 +1237,14 @@ const closeImagePreview = () => {
 const handleCopyMessage = async (message) => {
   const content = String(message?.content || '').trim();
   if (!content) {
-    ElMessage.warning('暂无可复制内容');
+    ElMessage.warning(t('chat.message.copyEmpty'));
     return;
   }
   const ok = await copyText(content);
   if (ok) {
-    ElMessage.success('内容已复制');
+    ElMessage.success(t('chat.message.copySuccess'));
   } else {
-    ElMessage.error('复制失败');
+    ElMessage.error(t('chat.message.copyFailed'));
   }
 };
 
@@ -1267,14 +1288,14 @@ const handleMessageClick = async (event) => {
   const codeElement = codeBlock?.querySelector('code');
   const codeText = codeElement?.textContent || '';
   if (!codeText.trim()) {
-    ElMessage.warning('暂无可复制内容');
+    ElMessage.warning(t('chat.message.copyEmpty'));
     return;
   }
   const ok = await copyText(codeText);
   if (ok) {
-    ElMessage.success('代码已复制');
+    ElMessage.success(t('chat.message.copySuccess'));
   } else {
-    ElMessage.error('复制失败');
+    ElMessage.error(t('chat.message.copyFailed'));
   }
 };
 
@@ -1333,7 +1354,7 @@ const loadToolSummary = async () => {
     }
     return payload;
   } catch (error) {
-    toolSummaryError.value = error.response?.data?.detail || '能力信息加载失败';
+    toolSummaryError.value = error.response?.data?.detail || t('chat.toolSummaryFailed');
     return null;
   } finally {
     toolSummaryLoading.value = false;
@@ -1380,7 +1401,7 @@ const openPromptPreview = async () => {
     const responsePayload = promptResult?.data?.data || {};
     promptPreviewContent.value = responsePayload.prompt || '';
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '系统提示词加载失败');
+    ElMessage.error(error.response?.data?.detail || t('chat.systemPromptFailed'));
     promptPreviewContent.value = '';
   } finally {
     promptPreviewLoading.value = false;
@@ -1476,7 +1497,7 @@ const saveSessionTools = async () => {
   if (!chatStore.activeSessionId) {
     chatStore.setDraftToolOverrides(overrides);
     closeSessionTools();
-    ElMessage.success('已保存到新会话，发送消息后生效');
+    ElMessage.success(t('chat.sessionSaved'));
     return;
   }
   sessionToolsSaving.value = true;
@@ -1484,7 +1505,7 @@ const saveSessionTools = async () => {
     await chatStore.updateSessionTools(chatStore.activeSessionId, overrides);
     closeSessionTools();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '工具调整失败');
+    ElMessage.error(error.response?.data?.detail || t('chat.sessionToolFailed'));
   } finally {
     sessionToolsSaving.value = false;
   }
@@ -1541,7 +1562,7 @@ const formatTime = (value) => {
 
 const formatTitle = (title) => {
   const text = String(title || '').trim();
-  if (!text) return '未命名会话';
+  if (!text) return t('chat.session.unnamed');
   return text.length > 20 ? `${text.slice(0, 20)}...` : text;
 };
 
@@ -1641,11 +1662,11 @@ const buildMessageStatsEntries = (message) => {
     return [];
   }
   const entries = [
-    { label: '耗时', value: formatDuration(durationSeconds) },
-    { label: '速度', value: formatSpeed(speed) },
-    { label: 'token占用', value: formatCount(stats?.usage?.total) },
-    { label: '工具调用', value: formatCount(stats?.toolCalls) },
-    { label: '额度消耗', value: formatCount(stats?.quotaConsumed) }
+    { label: t('chat.stats.duration'), value: formatDuration(durationSeconds) },
+    { label: t('chat.stats.speed'), value: formatSpeed(speed) },
+    { label: t('chat.stats.contextTokens'), value: formatCount(stats?.usage?.total) },
+    { label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls) },
+    { label: t('chat.stats.quota'), value: formatCount(stats?.quotaConsumed) }
   ];
   return entries;
 };

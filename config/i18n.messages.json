@@ -1499,6 +1499,94 @@
     "en-US": "Write content to a path. Existing files are overwritten.",
     "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
   },
+  "tool.spec.subagent_control.description": {
+    "en-US": "Control sub-agent sessions (list/history/send/spawn).",
+    "zh-CN": "子智能体会话控制（列表/历史/发送/派生）。"
+  },
+  "tool.spec.subagent_control.args.action": {
+    "en-US": "Action to perform: list/history/send/spawn.",
+    "zh-CN": "操作类型：list/history/send/spawn。"
+  },
+  "tool.spec.sessions_list.description": {
+    "en-US": "List chat sessions for the current user.",
+    "zh-CN": "列出当前用户的会话。"
+  },
+  "tool.spec.sessions_list.args.limit": {
+    "en-US": "Optional. Max number of sessions to return (default 50).",
+    "zh-CN": "可选。返回的会话数量上限（默认 50）。"
+  },
+  "tool.spec.sessions_list.args.active_minutes": {
+    "en-US": "Optional. Only sessions updated within N minutes.",
+    "zh-CN": "可选。仅返回最近 N 分钟内更新的会话。"
+  },
+  "tool.spec.sessions_list.args.message_limit": {
+    "en-US": "Optional. Include last N messages for each session (0 means none).",
+    "zh-CN": "可选。每个会话附带最近 N 条消息（0 表示不附带）。"
+  },
+  "tool.spec.sessions_list.args.parent_id": {
+    "en-US": "Optional. Filter by parent session id.",
+    "zh-CN": "可选。按父会话 id 过滤。"
+  },
+  "tool.spec.sessions_history.description": {
+    "en-US": "Fetch message history for a session.",
+    "zh-CN": "获取指定会话的消息历史。"
+  },
+  "tool.spec.sessions_history.args.session_id": {
+    "en-US": "Target session id (session_id/sessionKey).",
+    "zh-CN": "目标会话 id（session_id/sessionKey）。"
+  },
+  "tool.spec.sessions_history.args.limit": {
+    "en-US": "Optional. Max number of messages to return.",
+    "zh-CN": "可选。返回的消息数量上限。"
+  },
+  "tool.spec.sessions_history.args.include_tools": {
+    "en-US": "Optional. Include tool messages (default false).",
+    "zh-CN": "可选。是否包含工具消息（默认 false）。"
+  },
+  "tool.spec.sessions_send.description": {
+    "en-US": "Send a message to another session.",
+    "zh-CN": "向指定会话发送消息。"
+  },
+  "tool.spec.sessions_send.args.session_id": {
+    "en-US": "Target session id (session_id/sessionKey).",
+    "zh-CN": "目标会话 id（session_id/sessionKey）。"
+  },
+  "tool.spec.sessions_send.args.message": {
+    "en-US": "Message content to send.",
+    "zh-CN": "要发送的消息内容。"
+  },
+  "tool.spec.sessions_send.args.timeout": {
+    "en-US": "Optional. Wait for reply up to N seconds (0 means fire-and-forget).",
+    "zh-CN": "可选。等待回复的秒数（0 表示只发送不等待）。"
+  },
+  "tool.spec.sessions_spawn.description": {
+    "en-US": "Spawn a sub-agent session and run a task.",
+    "zh-CN": "创建子智能体会话并执行任务。"
+  },
+  "tool.spec.sessions_spawn.args.task": {
+    "en-US": "Task or prompt for the sub-agent.",
+    "zh-CN": "子智能体任务或提示词。"
+  },
+  "tool.spec.sessions_spawn.args.label": {
+    "en-US": "Optional. Display label for the sub-session.",
+    "zh-CN": "可选。子会话显示名称。"
+  },
+  "tool.spec.sessions_spawn.args.agent_id": {
+    "en-US": "Optional. Agent id for the sub-session.",
+    "zh-CN": "可选。子会话使用的 agent id。"
+  },
+  "tool.spec.sessions_spawn.args.model": {
+    "en-US": "Optional. Model name override for the sub-session.",
+    "zh-CN": "可选。子会话模型名称覆盖。"
+  },
+  "tool.spec.sessions_spawn.args.timeout": {
+    "en-US": "Optional. Max runtime in seconds (0 means unlimited).",
+    "zh-CN": "可选。最长运行秒数（0 表示不限制）。"
+  },
+  "tool.spec.sessions_spawn.args.cleanup": {
+    "en-US": "Optional. Cleanup policy after completion (keep/delete).",
+    "zh-CN": "可选。完成后的清理策略（keep/delete）。"
+  },
   "workspace.error.batch_action_unsupported": {
     "en-US": "Unsupported batch action",
     "zh-CN": "不支持的批量操作"

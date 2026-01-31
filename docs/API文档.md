@@ -85,6 +85,7 @@
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
+- 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -1564,13 +1565,13 @@
 
 - `POST /wunder/chat/sessions`：创建会话
   - 入参（JSON）：`title`（可选）、`agent_id`（可选）
-  - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides）
+  - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides/parent_session_id/parent_message_id/spawn_label/spawned_by）
 - `GET /wunder/chat/sessions`：会话列表
-  - Query：`page`/`page_size` 或 `offset`/`limit`，可选 `agent_id`（空值表示通用聊天，省略表示不过滤）
+  - Query：`page`/`page_size` 或 `offset`/`limit`，可选 `agent_id`（空值表示通用聊天，省略表示不过滤），可选 `parent_session_id`（或 `parent_id`/`parentId`/`parentSessionId`）
   - 返回：`data.total`、`data.items`
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
-  - 返回：`data`（会话信息 + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
+  - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
   - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话

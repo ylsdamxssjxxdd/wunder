@@ -6,6 +6,7 @@ import {
   fetchWunderWorkspaceContent,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import { t } from '@/i18n';
 import { isDemoMode, loadDemoWorkspaceState, saveDemoWorkspaceState } from '@/utils/demo';
 
 const DEFAULT_TREE_DEPTH = 3;
@@ -69,7 +70,7 @@ const mapFolderEntries = (entries = []) =>
     .filter((entry) => entry?.type === 'dir')
     .map((entry) => ({
       id: entry.path || '',
-      name: entry.name || entry.path || '未命名目录',
+      name: entry.name || entry.path || t('workspace.folder.unnamed'),
       path: entry.path || '',
       children: mapFolderEntries(entry.children || [])
     }));
@@ -110,7 +111,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.folders = [
         {
           id: '',
-          name: '根目录',
+          name: t('workspace.folder.root'),
           path: '',
           children: folders
         }
