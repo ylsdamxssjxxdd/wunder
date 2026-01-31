@@ -1,5 +1,5 @@
 // 核心 API：/wunder 入口、系统提示词、工具清单与 i18n 配置。
-use crate::api::attachment_convert::convert_multipart;
+use crate::api::attachment_convert::{build_ok_conversion_payload, convert_multipart_list};
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
@@ -584,14 +584,8 @@ async fn wunder_i18n(
 }
 
 async fn wunder_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Response> {
-    let conversion = convert_multipart(multipart).await?;
-    Ok(Json(json!({
-        "ok": true,
-        "name": conversion.name,
-        "content": conversion.content,
-        "converter": conversion.converter,
-        "warnings": conversion.warnings,
-    })))
+    let conversions = convert_multipart_list(multipart).await?;
+    Ok(Json(build_ok_conversion_payload(conversions)))
 }
 
 fn map_orchestrator_error(err: Error) -> Response {

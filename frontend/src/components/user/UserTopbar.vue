@@ -18,11 +18,16 @@
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
-          class="topbar-panel-btn topbar-nav-link"
+          class="topbar-panel-btn topbar-nav-link icon-only"
           :title="item.label"
           :aria-label="item.label"
         >
-          <i v-if="item.icon" class="fa-solid" :class="item.icon" aria-hidden="true"></i>
+          <i
+            v-if="item.icon"
+            class="fa-solid topbar-icon"
+            :class="item.icon"
+            aria-hidden="true"
+          ></i>
         </router-link>
       </nav>
       <slot name="actions" />
@@ -117,8 +122,8 @@ const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
 const navItems = computed(() => {
   const items = [
-    { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-globe' },
-    { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-sliders' },
+    { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-earth-asia' },
+    { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-toolbox' },
     { key: 'nav.chat', label: t('nav.chat'), path: `${basePath.value}/chat`, icon: 'fa-comment-dots' }
   ];
   return props.hideChat ? items.filter((item) => item.key !== 'nav.chat') : items;

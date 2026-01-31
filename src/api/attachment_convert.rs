@@ -3,7 +3,7 @@ use crate::i18n;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
@@ -16,20 +16,57 @@ pub(crate) struct AttachmentConversion {
     pub(crate) warnings: Vec<String>,
 }
 
-pub(crate) async fn convert_multipart(
+pub(crate) async fn convert_multipart_list(
     mut multipart: Multipart,
-) -> Result<AttachmentConversion, Response> {
-    let Some(field) = multipart
+) -> Result<Vec<AttachmentConversion>, Response> {
+    let mut conversions = Vec::new();
+    while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    else {
+    {
+        let field_name = field.name().unwrap_or("");
+        if field.file_name().is_none() && field_name != "file" {
+            continue;
+        }
+        let conversion = convert_multipart_field(field).await?;
+        conversions.push(conversion);
+    }
+    if conversions.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.file_not_found"),
         ));
-    };
+    }
+    Ok(conversions)
+}
 
+pub(crate) fn build_conversion_payload(conversions: Vec<AttachmentConversion>) -> Value {
+    let mut conversions = conversions;
+    if conversions.len() == 1 {
+        let conversion = conversions.pop().unwrap();
+        return conversion_to_json(conversion);
+    }
+    let items = conversions
+        .into_iter()
+        .map(conversion_to_json)
+        .collect::<Vec<_>>();
+    json!({ "items": items })
+}
+
+pub(crate) fn build_ok_conversion_payload(conversions: Vec<AttachmentConversion>) -> Value {
+    match build_conversion_payload(conversions) {
+        Value::Object(mut payload) => {
+            payload.insert("ok".to_string(), Value::Bool(true));
+            Value::Object(payload)
+        }
+        _ => json!({ "ok": true }),
+    }
+}
+
+async fn convert_multipart_field(
+    field: axum::extract::multipart::Field<'_>,
+) -> Result<AttachmentConversion, Response> {
     let filename = field.file_name().unwrap_or("upload").to_string();
     let extension = Path::new(&filename)
         .extension()
@@ -94,6 +131,15 @@ pub(crate) async fn convert_multipart(
     .await;
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     result
+}
+
+fn conversion_to_json(conversion: AttachmentConversion) -> Value {
+    json!({
+        "name": conversion.name,
+        "content": conversion.content,
+        "converter": conversion.converter,
+        "warnings": conversion.warnings,
+    })
 }
 
 async fn create_temp_dir() -> Result<PathBuf, std::io::Error> {

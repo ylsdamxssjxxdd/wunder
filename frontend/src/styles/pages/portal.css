@@ -166,6 +166,13 @@
   transition: all 0.2s ease;
 }
 
+.portal-shell .topbar-panel-btn.icon-only {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+}
+
 .portal-shell .topbar-panel-btn:hover {
   border-color: rgba(106, 217, 255, 0.65);
   color: var(--portal-primary);
@@ -373,6 +380,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.portal-shell .topbar-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .user-topbar-user {

@@ -1397,7 +1397,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         parent_session_id: parent_session_id.clone(),
         label,
     };
-    let _ = spawn_session_run(
+    let receiver = spawn_session_run(
         context,
         request,
         run_id.clone(),
@@ -1409,11 +1409,48 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         payload.run_timeout_seconds,
     )
     .await?;
-    Ok(json!({
-        "status": "accepted",
-        "run_id": run_id,
-        "child_session_id": child_session_id
-    }))
+    let wait_seconds = payload.run_timeout_seconds.unwrap_or(0.0).max(0.0);
+    if wait_seconds <= 0.0 {
+        return Ok(json!({
+            "status": "accepted",
+            "run_id": run_id,
+            "child_session_id": child_session_id
+        }));
+    }
+    let outcome = timeout(Duration::from_secs_f64(wait_seconds), receiver).await;
+    match outcome {
+        Ok(Ok(outcome)) => {
+            if outcome.status == "success" {
+                Ok(json!({
+                    "status": "ok",
+                    "run_id": run_id,
+                    "child_session_id": child_session_id,
+                    "reply": outcome.answer.unwrap_or_default(),
+                    "elapsed_s": outcome.elapsed_s
+                }))
+            } else {
+                Ok(json!({
+                    "status": outcome.status,
+                    "run_id": run_id,
+                    "child_session_id": child_session_id,
+                    "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
+                    "elapsed_s": outcome.elapsed_s
+                }))
+            }
+        }
+        Ok(Err(err)) => Ok(json!({
+            "status": "error",
+            "run_id": run_id,
+            "child_session_id": child_session_id,
+            "error": err.to_string()
+        })),
+        Err(_) => Ok(json!({
+            "status": "timeout",
+            "run_id": run_id,
+            "child_session_id": child_session_id,
+            "error": "timeout"
+        })),
+    }
 }
 
 async fn spawn_session_run(

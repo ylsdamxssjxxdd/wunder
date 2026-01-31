@@ -60,6 +60,8 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "\u6280\u80fd\u8c03\u7528", icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_call", icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_get", icon: "fa-wand-magic-sparkles" },
+  { keyword: "\u5b50\u667a\u80fd\u4f53\u63a7\u5236", icon: "fa-robot" },
+  { keyword: "subagent_control", icon: "fa-robot" },
   { keyword: "a2a\u89c2\u5bdf", icon: "fa-glasses" },
   { keyword: "a2a_observe", icon: "fa-glasses" },
   { keyword: "a2a\u7b49\u5f85", icon: "fa-clock" },

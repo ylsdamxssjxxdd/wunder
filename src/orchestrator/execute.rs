@@ -35,13 +35,23 @@ impl Orchestrator {
         let is_admin = prepared.is_admin;
 
         let result = async {
+            let mut lock_agent_id = prepared.agent_id.clone().unwrap_or_default();
             if !is_admin {
+                let storage = self.storage.clone();
+                let lock_user = user_id.clone();
+                let lock_session = session_id.clone();
+                let lock_session_query = lock_session.clone();
+                if let Ok(Ok(Some(record))) = tokio::task::spawn_blocking(move || {
+                    storage.get_chat_session(&lock_user, &lock_session_query)
+                })
+                .await
+                {
+                    if record.parent_session_id.is_some() {
+                        lock_agent_id = format!("subagent:{lock_session}");
+                    }
+                }
                 let ok = limiter
-                    .acquire(
-                        &session_id,
-                        &user_id,
-                        prepared.agent_id.as_deref().unwrap_or(""),
-                    )
+                    .acquire(&session_id, &user_id, &lock_agent_id)
                     .await
                     .map_err(|err| OrchestratorError::internal(err.to_string()))?;
                 if !ok {

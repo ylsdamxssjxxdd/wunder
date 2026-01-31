@@ -25,7 +25,7 @@
 - `action=list`：列出当前用户可见会话（支持 `limit` / `activeMinutes` / `messageLimit`）。
 - `action=history`：读取某会话历史（`session_id` 或兼容 `sessionKey`）。
 - `action=send`：向指定会话发送消息；可选 `timeoutSeconds` 等待结果。
-- `action=spawn`：创建子会话并异步运行，返回 `{status, run_id, child_session_id}`。
+- `action=spawn`：创建子会话并运行任务；`runTimeoutSeconds>0` 时等待完成并返回 `reply/elapsed_s`，否则仅返回 `{status, run_id, child_session_id}`。
 
 ### 4.2 数据模型扩展
 在 `chat_sessions` 上追加子会话关系字段（或建立独立关系表）：
@@ -65,7 +65,8 @@
 ## 7. 资源与生命周期
 - 运行限制：
   - `subagent_max_active`（与 `server.max_active_sessions` 并行约束）。
-  - `runTimeoutSeconds`（子会话超时强制结束）。
+  - `runTimeoutSeconds`（等待子会话完成的秒数，同时作为最长运行时间）。
+  - 子会话使用独立锁域（`subagent:{session_id}`），不与父会话互斥，但仍受全局并发上限约束。
 - 生命周期：
   - 自动归档（例如 60 分钟后清理或标记归档）。
   - 历史裁剪遵循既有策略；管理员可不裁剪。

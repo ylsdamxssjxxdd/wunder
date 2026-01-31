@@ -1,4 +1,4 @@
-use crate::api::attachment_convert::convert_multipart;
+use crate::api::attachment_convert::{build_conversion_payload, convert_multipart_list};
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::monitor::MonitorState;
@@ -875,14 +875,9 @@ async fn update_session_tools(
 }
 
 async fn chat_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Response> {
-    let conversion = convert_multipart(multipart).await?;
+    let conversions = convert_multipart_list(multipart).await?;
     Ok(Json(json!({
-        "data": {
-            "name": conversion.name,
-            "content": conversion.content,
-            "converter": conversion.converter,
-            "warnings": conversion.warnings,
-        }
+        "data": build_conversion_payload(conversions),
     })))
 }
 

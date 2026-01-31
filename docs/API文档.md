@@ -86,6 +86,7 @@
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
+- `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -359,13 +360,11 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：待解析文件
+  - `file`：待解析文件（可传多个同名字段）
 - 返回（JSON）：
   - `ok`：是否成功
-  - `name`：文件名
-  - `content`：解析后的 Markdown 文本
-  - `converter`：转换器（doc2md/text/html/code/pdf）
-  - `warnings`：转换警告列表
+  - 单文件：`name`/`content`/`converter`/`warnings`
+  - 多文件：`items`（数组，元素包含 `name`/`content`/`converter`/`warnings`）
 - 说明：接口无需鉴权，系统内部附件转换统一调用该逻辑。
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
@@ -374,13 +373,11 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：待解析文件
+  - `file`：待解析文件（可传多个同名字段）
 - 返回（JSON）：
   - `ok`：是否成功
-  - `name`：文件名
-  - `content`：解析后的 Markdown 文本
-  - `converter`：转换器（doc2md/text/html/code/pdf）
-  - `warnings`：转换警告列表
+  - 单文件：`name`/`content`/`converter`/`warnings`
+  - 多文件：`items`（数组，元素包含 `name`/`content`/`converter`/`warnings`）
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
 ### 4.1.2.22 `/wunder/temp_dir/download`
@@ -1597,8 +1594,8 @@
   - 入参（JSON）：`agent_id`（可选）、`tool_overrides`（可选）
   - 返回：`data.prompt`
 - `POST /wunder/chat/attachments/convert`：附件转换
-  - 入参：`multipart/form-data`，`file`
-  - 返回：`data`（转换结果/消息/告警）
+  - 入参：`multipart/form-data`，`file`（支持多个同名字段）
+  - 返回：`data`（单文件为转换结果；多文件返回 `items` 列表，元素含 `name`/`content`/`converter`/`warnings`）
 
 ### 4.1.56 `/wunder/agents`
 
@@ -1854,6 +1851,7 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
+
 
 
 

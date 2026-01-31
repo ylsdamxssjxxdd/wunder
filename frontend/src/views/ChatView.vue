@@ -56,13 +56,13 @@
             :aria-label="t('nav.world')"
             @click="handleOpenPortal"
           >
-            <i class="fa-solid fa-globe topbar-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-earth-asia topbar-icon" aria-hidden="true"></i>
           </button>
           <button
             class="topbar-icon-btn"
             type="button"
-            :title="t('nav.tools')"
-            :aria-label="t('nav.tools')"
+            :title="t('chat.toolAdjust')"
+            :aria-label="t('chat.toolAdjust')"
             @click="openSessionTools"
           >
             <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>

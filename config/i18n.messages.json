@@ -1580,8 +1580,8 @@
     "zh-CN": "可选。子会话模型名称覆盖。"
   },
   "tool.spec.sessions_spawn.args.timeout": {
-    "en-US": "Optional. Max runtime in seconds (0 means unlimited).",
-    "zh-CN": "可选。最长运行秒数（0 表示不限制）。"
+    "en-US": "Optional. Wait for completion up to N seconds (0 means fire-and-forget); also used as max runtime.",
+    "zh-CN": "可选。等待子会话完成的秒数（0 表示只派生不等待，同时作为最长运行时间）。"
   },
   "tool.spec.sessions_spawn.args.cleanup": {
     "en-US": "Optional. Cleanup policy after completion (keep/delete).",

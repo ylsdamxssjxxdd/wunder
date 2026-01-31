@@ -58,6 +58,8 @@
 - Notes:
   - Custom/shared tools are named as `user_id@tool` (MCP: `user_id@server@tool`).
   - Knowledge tools accept `query` or `keywords` list (one required) with optional `limit`; vector knowledge searches each keyword and returns grouped `queries` results (multi-keyword includes `keyword` on documents).
+  - Built-in `subagent_control` handles `action=list|history|send|spawn`.
+  - `subagent_control.send` supports `timeoutSeconds` to wait for replies; `subagent_control.spawn` supports `runTimeoutSeconds` to wait and return `reply/elapsed_s`.
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -165,18 +167,20 @@
 
 - Method: `POST`
 - Body (multipart/form-data):
-  - `file`: file to parse
+  - `file`: file to parse (supports multiple fields)
 - Response:
-  - `ok`, `name`, `content`, `converter`, `warnings`
+  - Single file: `ok`, `name`, `content`, `converter`, `warnings`
+  - Multiple files: `ok`, `items` (array of `{name, content, converter, warnings}`)
 - Note: no auth required; supports doc2md extensions. Internal attachment conversion uses the same logic.
 
 ### 4.1.2.11 `/wunder/attachments/convert`
 
 - Method: `POST`
 - Body (multipart/form-data):
-  - `file`: file to parse
+  - `file`: file to parse (supports multiple fields)
 - Response:
-  - `ok`, `name`, `content`, `converter`, `warnings`
+  - Single file: `ok`, `name`, `content`, `converter`, `warnings`
+  - Multiple files: `ok`, `items` (array of `{name, content, converter, warnings}`)
 - Note: debug UI only (auth required); conversion logic matches `/wunder/doc2md/convert`.
 
 ### 4.1.2.12 `/wunder/temp_dir/download`
