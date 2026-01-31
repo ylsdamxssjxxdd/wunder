@@ -1688,6 +1688,37 @@ const normalizeUploadExtension = (filename) => {
   return `.${parts.pop().toLowerCase()}`;
 };
 
+const resolveUploadErrorMessage = async (response) => {
+  let message = "";
+  try {
+    const text = await response.text();
+    if (text) {
+      try {
+        const data = JSON.parse(text);
+        const detail = data?.detail;
+        if (typeof detail === "string") {
+          message = detail.trim();
+        } else if (detail && typeof detail.message === "string") {
+          message = detail.message.trim();
+        } else if (typeof data?.message === "string") {
+          message = data.message.trim();
+        } else {
+          message = text.trim();
+        }
+      } catch {
+        message = text.trim();
+      }
+    }
+  } catch {
+    message = "";
+  }
+  if (!message) {
+    const statusText = response.statusText || "";
+    message = statusText ? `${response.status} ${statusText}` : String(response.status || "");
+  }
+  return message || "request_failed";
+};
+
 const setUploadButtonLoading = (vectorMode, loading) => {
   const button = vectorMode ? elements.knowledgeDocUploadBtn : knowledgeFileUploadBtn;
   if (!button) {
@@ -1732,7 +1763,8 @@ const uploadKnowledgeFile = async (file) => {
       body: formData,
     });
     if (!response.ok) {
-      throw new Error(t("knowledge.file.uploadFailed", { status: response.status }));
+      const detail = await resolveUploadErrorMessage(response);
+      throw new Error(detail || String(response.status));
     }
     const result = await response.json();
     if (vectorMode) {

@@ -393,6 +393,18 @@ const PRESET_OFFICIAL_DESCRIPTION: &str = "公文起草、格式规范与措辞�
 const PRESET_OFFICIAL_PROMPT: &str = "你是公文写作助手。根据需求输出规范公文：1) 明确文种与适用场景；2) 按标准结构组织（标题、主送、正文、落款/日期、附件/抄送）；3) 用词准确、语气正式，避免口语化；4) 如信息不完整，先给出待补充清单。";
 const PRESET_OFFICIAL_ICON: &str = "shield";
 const PRESET_OFFICIAL_COLOR: &str = "#94a3b8";
+const LEGACY_MEETING_NAME: &str = "会议纪要";
+const LEGACY_PLAN_NAME: &str = "方案策划";
+const PRESET_SCI_DRAW_NAME: &str = "科学绘图";
+const PRESET_SCI_DRAW_DESCRIPTION: &str = "生成科学图表方案与绘图建议";
+const PRESET_SCI_DRAW_PROMPT: &str = "你是科学绘图助手。根据研究问题与数据，给出推荐图表类型、数据整理方式、坐标轴/标注/配色方案，并提供绘图步骤（可用 Python/Matplotlib 或 R/ggplot2 模板）。如信息不足，先提出澄清问题。";
+const PRESET_SCI_DRAW_ICON: &str = "chart";
+const PRESET_SCI_DRAW_COLOR: &str = "#22d3ee";
+const PRESET_POLICY_ANALYSIS_NAME: &str = "政策分析";
+const PRESET_POLICY_ANALYSIS_DESCRIPTION: &str = "解读政策要点并评估影响";
+const PRESET_POLICY_ANALYSIS_PROMPT: &str = "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。";
+const PRESET_POLICY_ANALYSIS_ICON: &str = "briefcase";
+const PRESET_POLICY_ANALYSIS_COLOR: &str = "#f97316";
 
 struct PresetAgent {
     name: &'static str,
@@ -417,21 +429,51 @@ async fn ensure_preset_agents(
         .collect();
     let now = now_ts();
     for record in existing {
-        if record.name.trim() != LEGACY_EMAIL_PRESET_NAME {
+        let trimmed_name = record.name.trim();
+        if trimmed_name == LEGACY_EMAIL_PRESET_NAME {
+            let mut updated = record.clone();
+            updated.name = PRESET_OFFICIAL_NAME.to_string();
+            updated.description = PRESET_OFFICIAL_DESCRIPTION.to_string();
+            updated.system_prompt = PRESET_OFFICIAL_PROMPT.to_string();
+            updated.icon = Some(build_icon_payload(
+                PRESET_OFFICIAL_ICON,
+                PRESET_OFFICIAL_COLOR,
+            ));
+            updated.updated_at = now;
+            let _ = state.user_store.upsert_user_agent(&updated);
+            existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
+            existing_names.insert(PRESET_OFFICIAL_NAME.to_string());
             continue;
         }
-        let mut updated = record.clone();
-        updated.name = PRESET_OFFICIAL_NAME.to_string();
-        updated.description = PRESET_OFFICIAL_DESCRIPTION.to_string();
-        updated.system_prompt = PRESET_OFFICIAL_PROMPT.to_string();
-        updated.icon = Some(build_icon_payload(
-            PRESET_OFFICIAL_ICON,
-            PRESET_OFFICIAL_COLOR,
-        ));
-        updated.updated_at = now;
-        let _ = state.user_store.upsert_user_agent(&updated);
-        existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
-        existing_names.insert(PRESET_OFFICIAL_NAME.to_string());
+        if trimmed_name == LEGACY_MEETING_NAME {
+            let mut updated = record.clone();
+            updated.name = PRESET_SCI_DRAW_NAME.to_string();
+            updated.description = PRESET_SCI_DRAW_DESCRIPTION.to_string();
+            updated.system_prompt = PRESET_SCI_DRAW_PROMPT.to_string();
+            updated.icon = Some(build_icon_payload(
+                PRESET_SCI_DRAW_ICON,
+                PRESET_SCI_DRAW_COLOR,
+            ));
+            updated.updated_at = now;
+            let _ = state.user_store.upsert_user_agent(&updated);
+            existing_names.remove(LEGACY_MEETING_NAME);
+            existing_names.insert(PRESET_SCI_DRAW_NAME.to_string());
+            continue;
+        }
+        if trimmed_name == LEGACY_PLAN_NAME {
+            let mut updated = record.clone();
+            updated.name = PRESET_POLICY_ANALYSIS_NAME.to_string();
+            updated.description = PRESET_POLICY_ANALYSIS_DESCRIPTION.to_string();
+            updated.system_prompt = PRESET_POLICY_ANALYSIS_PROMPT.to_string();
+            updated.icon = Some(build_icon_payload(
+                PRESET_POLICY_ANALYSIS_ICON,
+                PRESET_POLICY_ANALYSIS_COLOR,
+            ));
+            updated.updated_at = now;
+            let _ = state.user_store.upsert_user_agent(&updated);
+            existing_names.remove(LEGACY_PLAN_NAME);
+            existing_names.insert(PRESET_POLICY_ANALYSIS_NAME.to_string());
+        }
     }
     let seeded = state
         .user_store
@@ -487,18 +529,18 @@ fn preset_agents() -> Vec<PresetAgent> {
             icon_color: "#60a5fa",
         },
         PresetAgent {
-            name: "会议纪要",
-            description: "整理会议记录并提炼行动项",
-            system_prompt: "你是会议纪要助手。根据会议记录输出：参会人员、讨论要点、达成决策、待办事项（负责人/截止时间）。内容要简洁、结构化，必要时补充未明确的待办确认项。",
-            icon_name: "chat",
-            icon_color: "#a78bfa",
+            name: PRESET_SCI_DRAW_NAME,
+            description: PRESET_SCI_DRAW_DESCRIPTION,
+            system_prompt: PRESET_SCI_DRAW_PROMPT,
+            icon_name: PRESET_SCI_DRAW_ICON,
+            icon_color: PRESET_SCI_DRAW_COLOR,
         },
         PresetAgent {
-            name: "方案策划",
-            description: "生成清晰可落地的方案与执行计划",
-            system_prompt: "你是方案策划与项目规划助手。先明确目标、范围与约束，再输出结构化方案（背景、目标、策略、里程碑、资源、风险与应对）。重点突出可执行性和量化指标。",
-            icon_name: "target",
-            icon_color: "#34d399",
+            name: PRESET_POLICY_ANALYSIS_NAME,
+            description: PRESET_POLICY_ANALYSIS_DESCRIPTION,
+            system_prompt: PRESET_POLICY_ANALYSIS_PROMPT,
+            icon_name: PRESET_POLICY_ANALYSIS_ICON,
+            icon_color: PRESET_POLICY_ANALYSIS_COLOR,
         },
         PresetAgent {
             name: PRESET_OFFICIAL_NAME,

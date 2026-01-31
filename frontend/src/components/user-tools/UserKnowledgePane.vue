@@ -1776,6 +1776,26 @@ const normalizeUploadExtension = (filename) => {
   return `.${parts.pop().toLowerCase()}`;
 };
 
+const resolveUploadErrorMessage = (error) => {
+  const payload = error.response?.data;
+  const detail = payload?.detail;
+  let message = '';
+  if (typeof detail === 'string') {
+    message = detail.trim();
+  } else if (detail && typeof detail.message === 'string') {
+    message = detail.message.trim();
+  } else if (typeof payload?.message === 'string') {
+    message = payload.message.trim();
+  } else if (typeof error.message === 'string') {
+    message = error.message.trim();
+  }
+  const status = error.response?.status;
+  if (status) {
+    return message ? `${message} (${status})` : `请求失败 (${status})`;
+  }
+  return message || '请求失败';
+};
+
 const triggerUpload = () => {
   const base = activeBase.value;
   if (!base || !base.name) {
@@ -1831,7 +1851,7 @@ const handleFileUpload = async () => {
       ElMessage.error('上传接口不存在，请更新后端服务并重启。');
       return;
     }
-    ElMessage.error(error.response?.data?.detail || `文档上传失败：${error.message || '请求失败'}`);
+    ElMessage.error(resolveUploadErrorMessage(error));
   } finally {
     uploadLoading.value = false;
   }

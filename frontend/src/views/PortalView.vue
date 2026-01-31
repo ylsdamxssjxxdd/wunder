@@ -140,7 +140,7 @@
               </div>
             </div>
           </section>
-          <section class="portal-section portal-section--shared">
+          <section v-if="showSharedAgents" class="portal-section portal-section--shared">
             <div class="portal-section-header">
               <div>
                 <div class="portal-section-title">共享智能体应用</div>
@@ -390,6 +390,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const searchQuery = ref('');
+const showSharedAgents = ref(false);
 const dialogVisible = ref(false);
 const saving = ref(false);
 const editingId = ref('');
