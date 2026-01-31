@@ -783,7 +783,8 @@ async fn user_knowledge_upload(
             .ok();
         }
         let knowledge_config = build_user_knowledge_config(&base_config, &root);
-        let meta = vector_knowledge::prepare_document(
+        let meta = vector_knowledge::index_document(
+            &config,
             &knowledge_config,
             Some(&user_id),
             storage.as_ref(),

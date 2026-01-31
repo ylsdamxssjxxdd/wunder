@@ -5,6 +5,7 @@ use crate::schemas::{StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::storage::UserQuotaStatus;
 use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
+use crate::user_store::UserStore;
 use anyhow::Error;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -610,6 +611,16 @@ impl A2aService {
         Self { state }
     }
 
+    fn is_admin_user(&self, user_id: &str) -> bool {
+        self.state
+            .user_store
+            .get_user_by_id(user_id)
+            .ok()
+            .flatten()
+            .map(|user| UserStore::is_admin(&user))
+            .unwrap_or(false)
+    }
+
     fn map_orchestrator_error(&self, err: Error) -> A2AError {
         if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
             if orchestrator_err.code() == "USER_QUOTA_EXCEEDED" {
@@ -664,6 +675,7 @@ impl A2aService {
             config_overrides: None,
             agent_prompt: None,
             attachments: None,
+            is_admin: self.is_admin_user(&user_id),
         };
 
         if blocking {
@@ -750,6 +762,7 @@ impl A2aService {
             config_overrides: None,
             agent_prompt: None,
             attachments: None,
+            is_admin: self.is_admin_user(&user_id),
         };
 
         let (tx, rx) = mpsc::channel(64);

@@ -154,6 +154,7 @@ pub(super) struct EventEmitter {
     queue: Option<mpsc::Sender<StreamSignal>>,
     storage: Option<Arc<dyn StorageBackend>>,
     monitor: Arc<MonitorState>,
+    is_admin: bool,
     closed: Arc<AtomicBool>,
     next_event_id: Arc<AtomicI64>,
     last_cleanup_ts: Arc<AtomicU64>,
@@ -167,18 +168,22 @@ impl EventEmitter {
         queue: Option<mpsc::Sender<StreamSignal>>,
         storage: Option<Arc<dyn StorageBackend>>,
         monitor: Arc<MonitorState>,
+        is_admin: bool,
+        start_event_id: i64,
     ) -> Self {
         let delta_buffer = storage
             .as_ref()
             .map(|_| Arc::new(ParkingMutex::new(StreamDeltaBuffer::new())));
+        let start_event_id = start_event_id.max(0);
         Self {
             session_id,
             user_id,
             queue,
             storage,
             monitor,
+            is_admin,
             closed: Arc::new(AtomicBool::new(false)),
-            next_event_id: Arc::new(AtomicI64::new(1)),
+            next_event_id: Arc::new(AtomicI64::new(start_event_id.saturating_add(1))),
             last_cleanup_ts: Arc::new(AtomicU64::new(0)),
             delta_buffer,
         }
@@ -364,6 +369,9 @@ impl EventEmitter {
     }
 
     fn cleanup_cutoff(&self) -> Option<f64> {
+        if self.is_admin {
+            return None;
+        }
         let now = Utc::now().timestamp_millis() as u64;
         let last = self.last_cleanup_ts.load(AtomicOrdering::SeqCst);
         let interval_ms = (STREAM_EVENT_CLEANUP_INTERVAL_S * 1000.0) as u64;
@@ -384,10 +392,11 @@ impl Orchestrator {
         event_tx: mpsc::Sender<StreamEvent>,
         emitter: EventEmitter,
         runner: JoinHandle<()>,
+        start_event_id: i64,
     ) {
         let storage = self.storage.clone();
         tokio::spawn(async move {
-            let mut last_event_id: i64 = 0;
+            let mut last_event_id: i64 = start_event_id.max(0);
             let mut closed = false;
             let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
 

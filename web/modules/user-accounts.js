@@ -170,6 +170,21 @@ const resolveUnitLabel = (user) => {
   return user.unit_id || "-";
 };
 
+const formatUnitLevel = (user) => {
+  if (!user) {
+    return "-";
+  }
+  const level = Number(user.unit_level);
+  if (!Number.isFinite(level) || level <= 0) {
+    return "-";
+  }
+  const labels = ["一", "二", "三", "四"];
+  if (level >= 1 && level <= labels.length) {
+    return labels[level - 1];
+  }
+  return String(level);
+};
+
 const formatQuotaValue = (user) => {
   if (!user) {
     return "-";
@@ -278,6 +293,9 @@ const renderUserAccountRows = () => {
     unitCell.textContent = resolveUnitLabel(user);
     unitCell.title = resolveUnitLabel(user);
 
+    const unitLevelCell = document.createElement("td");
+    unitLevelCell.textContent = formatUnitLevel(user);
+
     const statusCell = document.createElement("td");
     const statusSelect = document.createElement("select");
     ["active", "disabled"].forEach((status) => {
@@ -313,6 +331,7 @@ const renderUserAccountRows = () => {
     row.appendChild(userCell);
     row.appendChild(emailCell);
     row.appendChild(unitCell);
+    row.appendChild(unitLevelCell);
     row.appendChild(statusCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);

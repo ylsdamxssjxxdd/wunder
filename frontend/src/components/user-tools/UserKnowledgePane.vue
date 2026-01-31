@@ -57,12 +57,13 @@
                 v-if="!isVectorBase"
                 class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
-                :disabled="!activeBase"
+                :disabled="!activeBase || uploadLoading"
                 title="上传"
                 aria-label="上传"
+                :class="{ 'is-loading': uploadLoading }"
                 @click="triggerUpload"
               >
-                <i class="fa-solid fa-upload" aria-hidden="true"></i>
+                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
               </button>
               <button
                 v-if="!isVectorBase"
@@ -90,12 +91,13 @@
                 v-if="isVectorBase"
                 class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                 type="button"
-                :disabled="!activeBase"
+                :disabled="!activeBase || uploadLoading"
                 title="上传"
                 aria-label="上传"
+                :class="{ 'is-loading': uploadLoading }"
                 @click="triggerUpload"
               >
-                <i class="fa-solid fa-upload" aria-hidden="true"></i>
+                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
               </button>
               <button
                 v-if="isVectorBase"
@@ -617,6 +619,7 @@ const docChunks = ref([]);
 const selectedChunkIndices = ref(new Set());
 const embeddingChunkIndices = ref(new Set());
 const embeddingModels = ref([]);
+const uploadLoading = ref(false);
 const loaded = ref(false);
 const loading = ref(false);
 const fileUploadRef = ref(null);
@@ -878,6 +881,7 @@ const selectAllLabel = computed(() => (allChunksSelected.value ? '取消全选' 
 const selectAllIcon = computed(() => (allChunksSelected.value ? 'fa-square-minus' : 'fa-square-check'));
 const embedActionLabel = computed(() => (embeddingActive.value ? '嵌入中' : '批量嵌入'));
 const embedActionIcon = computed(() => (embeddingActive.value ? 'fa-spinner' : 'fa-cube'));
+const uploadIcon = computed(() => (uploadLoading.value ? 'fa-spinner' : 'fa-upload'));
 const canBatchEmbed = computed(
   () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
 );
@@ -1800,6 +1804,7 @@ const handleFileUpload = async () => {
     ElMessage.warning('请先选择知识库。');
     return;
   }
+  uploadLoading.value = true;
   try {
     const { data } = await uploadUserKnowledgeFile(base.name, file);
     const payload = data?.data || {};
@@ -1827,6 +1832,8 @@ const handleFileUpload = async () => {
       return;
     }
     ElMessage.error(error.response?.data?.detail || `文档上传失败：${error.message || '请求失败'}`);
+  } finally {
+    uploadLoading.value = false;
   }
 };
 

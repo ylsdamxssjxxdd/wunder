@@ -1,5 +1,6 @@
 // 核心 API：/wunder 入口、系统提示词、工具清单与 i18n 配置。
 use crate::api::attachment_convert::convert_multipart;
+use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{
@@ -9,9 +10,11 @@ use crate::schemas::{
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
+use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
 use anyhow::Error;
 use axum::extract::{Multipart, Query, State};
+use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
@@ -37,10 +40,13 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn wunder_entry(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(mut request): Json<WunderRequest>,
 ) -> Result<Response, Response> {
     let _ = request.config_overrides.as_ref();
     let _ = request.attachments.as_ref();
+    let resolved = resolve_user(&state, &headers, Some(&request.user_id)).await?;
+    request.is_admin = UserStore::is_admin(&resolved.user);
     if request
         .language
         .as_ref()
@@ -117,6 +123,7 @@ async fn wunder_system_prompt(
             &skills_snapshot,
             Some(&user_tool_bindings),
             &request.user_id,
+            false,
             &workspace_id,
             request.config_overrides.as_ref(),
             request.agent_prompt.as_deref(),

@@ -1013,6 +1013,7 @@ async fn run_request(
         config_overrides,
         agent_prompt: None,
         attachments: None,
+        is_admin: false,
     };
     let started = Instant::now();
     let result = if request_timeout_s > 0.0 {

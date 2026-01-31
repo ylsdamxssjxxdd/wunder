@@ -64,6 +64,7 @@ impl Orchestrator {
             debug_payload: request.debug_payload,
             attachments,
             language,
+            is_admin: request.is_admin,
         })
     }
 
@@ -76,6 +77,8 @@ impl Orchestrator {
             None,
             None,
             self.monitor.clone(),
+            prepared.is_admin,
+            0,
         );
         let response = i18n::with_language(language, async {
             self.execute_request(prepared, emitter).await
@@ -92,12 +95,39 @@ impl Orchestrator {
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);
+        let start_event_id = if prepared.is_admin {
+            let session_id = prepared.session_id.clone();
+            let storage = self.storage.clone();
+            match tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
+                .await
+            {
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
+                    warn!(
+                        "failed to load stream event offset for session {}: {err}",
+                        prepared.session_id
+                    );
+                    0
+                }
+                Err(err) => {
+                    warn!(
+                        "failed to load stream event offset for session {}: {err}",
+                        prepared.session_id
+                    );
+                    0
+                }
+            }
+        } else {
+            0
+        };
         let emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),
             Some(queue_tx),
             Some(self.storage.clone()),
             self.monitor.clone(),
+            prepared.is_admin,
+            start_event_id,
         );
         let runner = {
             let orchestrator = self.clone();
@@ -120,6 +150,7 @@ impl Orchestrator {
             event_tx,
             emitter,
             runner,
+            start_event_id,
         );
         let stream = tokio_stream::wrappers::ReceiverStream::new(event_rx)
             .map(|event| Ok::<_, std::convert::Infallible>(event));
@@ -133,6 +164,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
+        is_admin: bool,
         workspace_id: &str,
         config_overrides: Option<&Value>,
         agent_prompt: Option<&str>,
@@ -153,6 +185,6 @@ impl Orchestrator {
                 agent_prompt,
             )
             .await;
-        self.append_memory_prompt(user_id, prompt).await
+        self.append_memory_prompt(user_id, prompt, is_admin).await
     }
 }

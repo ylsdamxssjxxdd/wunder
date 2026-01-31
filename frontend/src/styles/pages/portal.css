@@ -592,6 +592,20 @@
   font-size: 12px;
 }
 
+.portal-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.portal-section-search {
+  flex: 0 1 280px;
+  min-width: 200px;
+  max-width: 320px;
+}
+
 .portal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 320px));
@@ -954,6 +968,17 @@
   .portal-content {
     padding: 18px;
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .portal-section-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .portal-section-search {
+    width: 100%;
+    max-width: none;
+    flex: 1 1 100%;
   }
 
   .user-topbar-search {

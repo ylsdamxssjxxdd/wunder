@@ -2,123 +2,124 @@
   <div class="portal-shell tool-manager-shell">
     <UserTopbar
       title="工具管理"
-      subtitle="统一管理可用工具与共享工具"
+      subtitle="查看管理员开放工具，并配置你的 MCP、技能与知识库"
       :hide-chat="true"
     />
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
-          <div class="tool-manager-grid">
-            <div class="tool-manager-column">
-              <section class="portal-section tool-manager-section">
-                <div class="portal-section-header">
-                  <div>
-                    <div class="portal-section-title">管理员开放工具</div>
-                    <div class="portal-section-desc">当前账户可使用的系统级工具与技能</div>
-                  </div>
-                  <div class="portal-section-meta">共 {{ systemToolCount }} 项</div>
-                </div>
-                <div class="tool-catalog-grid">
-                  <div v-if="!systemToolGroups.length" class="tool-catalog-empty">暂无可用工具</div>
-                  <div
-                    v-for="group in systemToolGroups"
-                    :key="group.key"
-                    class="tool-catalog-card"
+          <section class="portal-section tool-manager-section">
+            <div class="portal-section-header">
+              <div>
+                <div class="portal-section-title">工具分类</div>
+                <div class="portal-section-desc">查看管理员开放工具，并配置你的工具分类</div>
+              </div>
+            </div>
+            <div class="user-tools-dialog user-tools-page tool-manager-page">
+              <div class="user-tools-modal">
+                <div class="user-tools-sidebar">
+                  <div class="user-tools-sidebar-title">工具分类</div>
+                  <button
+                    class="user-tools-tab"
+                    :class="{ active: activeTab === 'system' }"
+                    type="button"
+                    @click="activeTab = 'system'"
                   >
-                    <div class="tool-catalog-header">
-                      <div class="tool-catalog-title">{{ group.title }}</div>
+                    管理员开放工具（只读）
+                  </button>
+                  <button
+                    class="user-tools-tab"
+                    :class="{ active: activeTab === 'mcp' }"
+                    type="button"
+                    @click="activeTab = 'mcp'"
+                  >
+                    MCP 工具
+                  </button>
+                  <button
+                    class="user-tools-tab"
+                    :class="{ active: activeTab === 'skills' }"
+                    type="button"
+                    @click="activeTab = 'skills'"
+                  >
+                    技能工具
+                  </button>
+                  <button
+                    class="user-tools-tab"
+                    :class="{ active: activeTab === 'knowledge' }"
+                    type="button"
+                    @click="activeTab = 'knowledge'"
+                  >
+                    知识库工具
+                  </button>
+                  <button
+                    class="user-tools-tab"
+                    :class="{ active: activeTab === 'shared' }"
+                    type="button"
+                    @click="activeTab = 'shared'"
+                  >
+                    共享工具
+                  </button>
+                </div>
+                <div class="user-tools-content">
+                  <div v-show="activeTab === 'system'" class="user-tools-pane tool-catalog-pane">
+                    <div class="list-header">
+                      <label>管理员开放工具</label>
+                      <div class="tool-catalog-meta">共 {{ systemToolCount }} 项</div>
                     </div>
-                    <div class="tool-catalog-meta">{{ group.items.length }} 项</div>
-                    <div class="tool-catalog-tags">
-                      <span
-                        v-for="item in group.items"
-                        :key="item.name"
-                        class="tool-catalog-tag"
-                        :title="item.description || item.name"
+                    <div class="muted">管理员开放工具仅可查看。</div>
+                    <div class="tool-catalog-grid">
+                      <div v-if="!systemToolGroups.length" class="tool-catalog-empty">
+                        暂无可用工具
+                      </div>
+                      <div
+                        v-for="group in systemToolGroups"
+                        :key="group.key"
+                        class="tool-catalog-card"
                       >
-                        {{ item.name }}
-                      </span>
-                      <span v-if="!group.items.length" class="tool-catalog-empty">暂无</span>
+                        <div class="tool-catalog-header">
+                          <div class="tool-catalog-title">{{ group.title }}</div>
+                        </div>
+                        <div class="tool-catalog-meta">{{ group.items.length }} 项</div>
+                        <div class="tool-catalog-tags">
+                          <span
+                            v-for="item in group.items"
+                            :key="item.name"
+                            class="tool-catalog-tag"
+                            :title="item.description || item.name"
+                          >
+                            {{ item.name }}
+                          </span>
+                          <span v-if="!group.items.length" class="tool-catalog-empty">暂无</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                  <UserMcpPane
+                    v-show="activeTab === 'mcp'"
+                    :visible="activeTab === 'mcp'"
+                    :active="activeTab === 'mcp'"
+                    @status="updateStatus"
+                  />
+                  <UserSkillPane
+                    v-show="activeTab === 'skills'"
+                    :visible="activeTab === 'skills'"
+                    :active="activeTab === 'skills'"
+                    @status="updateStatus"
+                  />
+                  <UserKnowledgePane
+                    v-show="activeTab === 'knowledge'"
+                    :visible="activeTab === 'knowledge'"
+                    :active="activeTab === 'knowledge'"
+                    @status="updateStatus"
+                  />
+                  <UserSharedToolsPanel v-show="activeTab === 'shared'" />
                 </div>
-              </section>
+              </div>
+              <div v-if="activeTab !== 'shared' && activeTab !== 'system'" class="user-tools-status">
+                {{ statusMessage }}
+              </div>
             </div>
-
-            <div class="tool-manager-column tool-manager-column--right">
-              <section class="portal-section tool-manager-section">
-                <div class="portal-section-header">
-                  <div>
-                    <div class="portal-section-title">自建工具</div>
-                    <div class="portal-section-desc">配置你的 MCP、技能与知识库</div>
-                  </div>
-                </div>
-                <div class="user-tools-dialog user-tools-page">
-                  <div class="user-tools-modal">
-                    <div class="user-tools-sidebar">
-                      <div class="user-tools-sidebar-title">工具分类</div>
-                      <button
-                        class="user-tools-tab"
-                        :class="{ active: activeTab === 'mcp' }"
-                        type="button"
-                        @click="activeTab = 'mcp'"
-                      >
-                        MCP 工具
-                      </button>
-                      <button
-                        class="user-tools-tab"
-                        :class="{ active: activeTab === 'skills' }"
-                        type="button"
-                        @click="activeTab = 'skills'"
-                      >
-                        技能工具
-                      </button>
-                      <button
-                        class="user-tools-tab"
-                        :class="{ active: activeTab === 'knowledge' }"
-                        type="button"
-                        @click="activeTab = 'knowledge'"
-                      >
-                        知识库工具
-                      </button>
-                      <button
-                        class="user-tools-tab"
-                        :class="{ active: activeTab === 'shared' }"
-                        type="button"
-                        @click="activeTab = 'shared'"
-                      >
-                        共享工具
-                      </button>
-                    </div>
-                    <div class="user-tools-content">
-                      <UserMcpPane
-                        v-show="activeTab === 'mcp'"
-                        :visible="activeTab === 'mcp'"
-                        :active="activeTab === 'mcp'"
-                        @status="updateStatus"
-                      />
-                      <UserSkillPane
-                        v-show="activeTab === 'skills'"
-                        :visible="activeTab === 'skills'"
-                        :active="activeTab === 'skills'"
-                        @status="updateStatus"
-                      />
-                      <UserKnowledgePane
-                        v-show="activeTab === 'knowledge'"
-                        :visible="activeTab === 'knowledge'"
-                        :active="activeTab === 'knowledge'"
-                        @status="updateStatus"
-                      />
-                      <UserSharedToolsPanel v-show="activeTab === 'shared'" />
-                    </div>
-                  </div>
-                  <div v-if="activeTab !== 'shared'" class="user-tools-status">
-                    {{ statusMessage }}
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
+          </section>
         </div>
       </section>
     </main>
@@ -137,7 +138,7 @@ import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 
 const toolCatalog = ref(null);
-const activeTab = ref('mcp');
+const activeTab = ref('system');
 const statusMessage = ref('');
 
 const updateStatus = (message) => {

@@ -1,4 +1,5 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
+use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
     ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
@@ -252,6 +253,19 @@ impl SqliteStorage {
         }
         Ok(())
     }
+}
+
+fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
+    if !TOOL_LOG_EXCLUDED_NAMES.is_empty() {
+        let placeholders = vec!["?"; TOOL_LOG_EXCLUDED_NAMES.len()].join(", ");
+        filters.push(format!("tool NOT IN ({placeholders})"));
+        for name in TOOL_LOG_EXCLUDED_NAMES {
+            params_list.push(SqlValue::from(name.to_string()));
+        }
+    }
+    let marker = format!("%{TOOL_LOG_SKILL_READ_MARKER}%");
+    filters.push("(data IS NULL OR data NOT LIKE ?)".to_string());
+    params_list.push(SqlValue::from(marker));
 }
 
 impl StorageBackend for SqliteStorage {
@@ -846,11 +860,20 @@ impl StorageBackend for SqliteStorage {
     fn get_user_tool_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs GROUP BY user_id",
-        )?;
+        let mut query = String::from(
+            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs",
+        );
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        append_tool_log_exclusions(&mut filters, &mut params_list);
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY user_id");
+        let mut stmt = conn.prepare(&query)?;
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
@@ -889,6 +912,7 @@ impl StorageBackend for SqliteStorage {
             filters.push("created_time <= ?".to_string());
             params_list.push(SqlValue::from(until));
         }
+        append_tool_log_exclusions(&mut filters, &mut params_list);
         if !filters.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&filters.join(" AND "));
@@ -936,6 +960,7 @@ impl StorageBackend for SqliteStorage {
             filters.push("created_time <= ?".to_string());
             params_list.push(SqlValue::from(until));
         }
+        append_tool_log_exclusions(&mut filters, &mut params_list);
         if !filters.is_empty() {
             query.push_str(" AND ");
             query.push_str(&filters.join(" AND "));
@@ -1325,6 +1350,23 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
+    fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let value: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(event_id) FROM stream_events WHERE session_id = ?",
+                params![cleaned_session],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value.unwrap_or(0))
+    }
+
     fn append_stream_event(
         &self,
         session_id: &str,
@@ -1495,19 +1537,21 @@ impl StorageBackend for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_summary.is_empty() {
             return Ok(());
         }
-        let safe_limit = max_records.max(1);
         let conn = self.open()?;
         conn.execute(
             "INSERT INTO memory_records (user_id, session_id, summary, created_time, updated_time) VALUES (?, ?, ?, ?, ?) \
              ON CONFLICT(user_id, session_id) DO UPDATE SET summary = excluded.summary, updated_time = excluded.updated_time",
             params![cleaned_user, cleaned_session, cleaned_summary, now_ts, now_ts],
         )?;
-        conn.execute(
-            "DELETE FROM memory_records WHERE user_id = ? AND id NOT IN (\
-                SELECT id FROM memory_records WHERE user_id = ? ORDER BY updated_time DESC, id DESC LIMIT ?\
-             )",
-            params![cleaned_user, cleaned_user, safe_limit],
-        )?;
+        if max_records > 0 {
+            let safe_limit = max_records.max(1);
+            conn.execute(
+                "DELETE FROM memory_records WHERE user_id = ? AND id NOT IN (\
+                    SELECT id FROM memory_records WHERE user_id = ? ORDER BY updated_time DESC, id DESC LIMIT ?\
+                 )",
+                params![cleaned_user, cleaned_user, safe_limit],
+            )?;
+        }
         conn.execute(
             "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id NOT IN (\
                 SELECT session_id FROM memory_records WHERE user_id = ?\
@@ -1525,17 +1569,23 @@ impl StorageBackend for SqliteStorage {
     ) -> Result<Vec<HashMap<String, Value>>> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
-        if cleaned.is_empty() || limit <= 0 {
+        if cleaned.is_empty() {
             return Ok(Vec::new());
         }
         let direction = if order_desc { "DESC" } else { "ASC" };
-        let query = format!(
-            "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction} LIMIT ?"
-        );
+        let query = if limit > 0 {
+            format!(
+                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction} LIMIT ?"
+            )
+        } else {
+            format!(
+                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction}"
+            )
+        };
         let conn = self.open()?;
         let mut stmt = conn.prepare(&query)?;
-        let rows = stmt
-            .query_map(params![cleaned, limit], |row| {
+        let rows = if limit > 0 {
+            stmt.query_map(params![cleaned, limit], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1543,7 +1593,18 @@ impl StorageBackend for SqliteStorage {
                     row.get::<_, f64>(3).unwrap_or(0.0),
                 ))
             })?
-            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?;
+            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?
+        } else {
+            stmt.query_map(params![cleaned], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?
+        };
         let mut records = Vec::new();
         for (session_id, summary, created_time, updated_time) in rows {
             let mut entry = HashMap::new();
@@ -2113,30 +2174,49 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut results = HashMap::new();
-        let chat = conn.execute(
-            "DELETE FROM chat_history WHERE created_time < ?",
-            params![cutoff],
-        )?;
+        let mut admin_ids = Vec::new();
+        let mut stmt = conn.prepare("SELECT user_id, roles FROM user_accounts")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, Option<String>)>, _>>()?;
+        for (user_id, roles_raw) in rows {
+            let roles = Self::parse_string_list(roles_raw);
+            if roles
+                .iter()
+                .any(|role| role == "admin" || role == "super_admin")
+            {
+                admin_ids.push(user_id);
+            }
+        }
+        let hookup_delete = |table: &str, time_field: &str, allow_null_user: bool| -> Result<i64> {
+            let mut sql = format!("DELETE FROM {table} WHERE {time_field} < ?");
+            let mut params: Vec<SqlValue> = vec![SqlValue::from(cutoff)];
+            if !admin_ids.is_empty() {
+                let placeholders = vec!["?"; admin_ids.len()].join(", ");
+                if allow_null_user {
+                    sql.push_str(&format!(
+                        " AND (user_id IS NULL OR user_id NOT IN ({placeholders}))"
+                    ));
+                } else {
+                    sql.push_str(&format!(" AND user_id NOT IN ({placeholders})"));
+                }
+                for user_id in &admin_ids {
+                    params.push(SqlValue::from(user_id.clone()));
+                }
+            }
+            Ok(conn.execute(&sql, params_from_iter(params))? as i64)
+        };
+        let chat = hookup_delete("chat_history", "created_time", false)?;
         results.insert("chat_history".to_string(), chat as i64);
-        let tool = conn.execute(
-            "DELETE FROM tool_logs WHERE created_time < ?",
-            params![cutoff],
-        )?;
+        let tool = hookup_delete("tool_logs", "created_time", false)?;
         results.insert("tool_logs".to_string(), tool as i64);
-        let artifact = conn.execute(
-            "DELETE FROM artifact_logs WHERE created_time < ?",
-            params![cutoff],
-        )?;
+        let artifact = hookup_delete("artifact_logs", "created_time", false)?;
         results.insert("artifact_logs".to_string(), artifact as i64);
-        let monitor = conn.execute(
-            "DELETE FROM monitor_sessions WHERE COALESCE(updated_time, 0) < ?",
-            params![cutoff],
-        )?;
+        let monitor = hookup_delete("monitor_sessions", "COALESCE(updated_time, 0)", true)?;
         results.insert("monitor_sessions".to_string(), monitor as i64);
-        let stream = conn.execute(
-            "DELETE FROM stream_events WHERE created_time < ?",
-            params![cutoff],
-        )?;
+        let stream = hookup_delete("stream_events", "created_time", false)?;
         results.insert("stream_events".to_string(), stream as i64);
         Ok(results)
     }

@@ -248,6 +248,7 @@ impl Orchestrator {
         llm_config: &LlmModelConfig,
         messages: &[Value],
         user_id: &str,
+        is_admin: bool,
         emitter: &EventEmitter,
         session_id: &str,
         stream: bool,
@@ -290,8 +291,10 @@ impl Orchestrator {
             )));
         }
 
-        self.consume_user_quota(user_id, emitter, round_info, emit_quota_events)
-            .await?;
+        if !is_admin {
+            self.consume_user_quota(user_id, emitter, round_info, emit_quota_events)
+                .await?;
+        }
 
         let client = build_llm_client(&effective_config, self.http.clone());
         let chat_messages = self.build_chat_messages(messages);
@@ -325,7 +328,11 @@ impl Orchestrator {
             emitter.emit("llm_request", request_payload).await;
         }
 
-        let timeout_s = self.resolve_llm_timeout_s(&effective_config);
+        let timeout_s = if is_admin {
+            0
+        } else {
+            self.resolve_llm_timeout_s(&effective_config)
+        };
         let max_attempts = effective_config.retry.unwrap_or(0).saturating_add(1).max(1);
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;

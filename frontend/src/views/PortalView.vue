@@ -3,10 +3,7 @@
     <UserTopbar
       title="功能广场"
       subtitle="智能体应用入口"
-      show-search
-      search-placeholder="搜索智能体应用"
       :hide-chat="true"
-      v-model:search="searchQuery"
     >
     </UserTopbar>
     <main class="portal-content">
@@ -18,7 +15,22 @@
                 <div class="portal-section-title">我的智能体应用</div>
                 <div class="portal-section-desc">创建、进入并管理你的智能体应用</div>
               </div>
-              <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
+              <div class="portal-section-actions">
+                <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
+                <div class="portal-search portal-section-search">
+                  <i class="fa-solid fa-magnifying-glass portal-search-icon" aria-hidden="true"></i>
+                  <input v-model="searchQuery" type="text" placeholder="搜索智能体应用" />
+                  <button
+                    v-if="searchQuery"
+                    class="portal-search-clear"
+                    type="button"
+                    aria-label="清空搜索"
+                    @click="searchQuery = ''"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
             </div>
             <div class="agent-grid portal-agent-grid">
               <button class="agent-card agent-card--create" type="button" @click="openCreateDialog">

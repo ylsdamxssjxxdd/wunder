@@ -1,3 +1,4 @@
+use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
     ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, StorageBackend,
@@ -434,6 +435,23 @@ impl PostgresStorage {
 
         Ok(())
     }
+}
+
+fn append_tool_log_exclusions(filters: &mut Vec<String>, params: &mut Vec<Box<dyn ToSql + Sync>>) {
+    if !TOOL_LOG_EXCLUDED_NAMES.is_empty() {
+        let start = params.len() + 1;
+        let placeholders = (0..TOOL_LOG_EXCLUDED_NAMES.len())
+            .map(|index| format!("${}", start + index))
+            .collect::<Vec<_>>()
+            .join(", ");
+        filters.push(format!("tool NOT IN ({placeholders})"));
+        for name in TOOL_LOG_EXCLUDED_NAMES {
+            params.push(Box::new(name.to_string()));
+        }
+    }
+    let marker = format!("%{TOOL_LOG_SKILL_READ_MARKER}%");
+    params.push(Box::new(marker));
+    filters.push(format!("(data IS NULL OR data NOT LIKE ${})", params.len()));
 }
 
 impl StorageBackend for PostgresStorage {
@@ -1045,10 +1063,20 @@ impl StorageBackend for PostgresStorage {
     fn get_user_tool_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
-        let rows = conn.query(
-            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs GROUP BY user_id",
-            &[],
-        )?;
+        let mut query = String::from(
+            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs",
+        );
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        let mut filters = Vec::new();
+        append_tool_log_exclusions(&mut filters, &mut params);
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY user_id");
+        let params_ref: Vec<&(dyn ToSql + Sync)> =
+            params.iter().map(|value| value.as_ref()).collect();
+        let rows = conn.query(&query, &params_ref)?;
         let mut stats = HashMap::new();
         for row in rows {
             let user_id: String = row.get(0);
@@ -1083,6 +1111,7 @@ impl StorageBackend for PostgresStorage {
             params.push(Box::new(until));
             filters.push(format!("created_time <= ${}", params.len()));
         }
+        append_tool_log_exclusions(&mut filters, &mut params);
         if !filters.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&filters.join(" AND "));
@@ -1133,6 +1162,7 @@ impl StorageBackend for PostgresStorage {
             params.push(Box::new(until));
             filters.push(format!("created_time <= ${}", params.len()));
         }
+        append_tool_log_exclusions(&mut filters, &mut params);
         if !filters.is_empty() {
             query.push_str(" AND ");
             query.push_str(&filters.join(" AND "));
@@ -1492,6 +1522,21 @@ impl StorageBackend for PostgresStorage {
         Ok(output)
     }
 
+    fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT MAX(event_id) FROM stream_events WHERE session_id = $1",
+            &[&cleaned_session],
+        )?;
+        let value: Option<i64> = row.get(0);
+        Ok(value.unwrap_or(0))
+    }
+
     fn append_stream_event(
         &self,
         _session_id: &str,
@@ -1657,19 +1702,21 @@ impl StorageBackend for PostgresStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_summary.is_empty() {
             return Ok(());
         }
-        let safe_limit = _max_records.max(1);
         let mut conn = self.conn()?;
         conn.execute(
             "INSERT INTO memory_records (user_id, session_id, summary, created_time, updated_time) VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT(user_id, session_id) DO UPDATE SET summary = EXCLUDED.summary, updated_time = EXCLUDED.updated_time",
             &[&cleaned_user, &cleaned_session, &cleaned_summary, &_now_ts, &_now_ts],
         )?;
-        conn.execute(
-            "DELETE FROM memory_records WHERE user_id = $1 AND id NOT IN (\
-                SELECT id FROM memory_records WHERE user_id = $1 ORDER BY updated_time DESC, id DESC LIMIT $2\
-             )",
-            &[&cleaned_user, &safe_limit],
-        )?;
+        if _max_records > 0 {
+            let safe_limit = _max_records.max(1);
+            conn.execute(
+                "DELETE FROM memory_records WHERE user_id = $1 AND id NOT IN (\
+                    SELECT id FROM memory_records WHERE user_id = $1 ORDER BY updated_time DESC, id DESC LIMIT $2\
+                 )",
+                &[&cleaned_user, &safe_limit],
+            )?;
+        }
         conn.execute(
             "DELETE FROM memory_task_logs WHERE user_id = $1 AND session_id NOT IN (\
                 SELECT session_id FROM memory_records WHERE user_id = $1\
@@ -1687,15 +1734,25 @@ impl StorageBackend for PostgresStorage {
     ) -> Result<Vec<HashMap<String, Value>>> {
         self.ensure_initialized()?;
         let cleaned = _user_id.trim();
-        if cleaned.is_empty() || _limit <= 0 {
+        if cleaned.is_empty() {
             return Ok(Vec::new());
         }
         let direction = if _order_desc { "DESC" } else { "ASC" };
-        let query = format!(
-            "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = $1 ORDER BY updated_time {direction}, id {direction} LIMIT $2"
-        );
+        let query = if _limit > 0 {
+            format!(
+                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = $1 ORDER BY updated_time {direction}, id {direction} LIMIT $2"
+            )
+        } else {
+            format!(
+                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = $1 ORDER BY updated_time {direction}, id {direction}"
+            )
+        };
         let mut conn = self.conn()?;
-        let rows = conn.query(&query, &[&cleaned, &_limit])?;
+        let rows = if _limit > 0 {
+            conn.query(&query, &[&cleaned, &_limit])?
+        } else {
+            conn.query(&query, &[&cleaned])?
+        };
         let mut records = Vec::new();
         for row in rows {
             let session_id: String = row.get(0);
@@ -2220,28 +2277,43 @@ impl StorageBackend for PostgresStorage {
             return Ok(HashMap::new());
         }
         let mut conn = self.conn()?;
+        let rows = conn.query("SELECT user_id, roles FROM user_accounts", &[])?;
+        let mut admin_ids = Vec::new();
+        for row in rows {
+            let user_id: String = row.get(0);
+            let roles_raw: Option<String> = row.get(1);
+            let roles = Self::parse_string_list(roles_raw);
+            if roles
+                .iter()
+                .any(|role| role == "admin" || role == "super_admin")
+            {
+                admin_ids.push(user_id);
+            }
+        }
         let mut results = HashMap::new();
-        let chat = conn.execute(
-            "DELETE FROM chat_history WHERE created_time < $1",
-            &[&cutoff],
-        )?;
+        let mut delete_with_filter = |base_sql: &str, allow_null_user: bool| -> Result<i64> {
+            if admin_ids.is_empty() {
+                return Ok(conn.execute(base_sql, &[&cutoff])? as i64);
+            }
+            let sql = if allow_null_user {
+                format!("{base_sql} AND (user_id IS NULL OR user_id <> ALL($2))")
+            } else {
+                format!("{base_sql} AND user_id <> ALL($2)")
+            };
+            Ok(conn.execute(&sql, &[&cutoff, &admin_ids])? as i64)
+        };
+        let chat = delete_with_filter("DELETE FROM chat_history WHERE created_time < $1", false)?;
         results.insert("chat_history".to_string(), chat as i64);
-        let tool = conn.execute("DELETE FROM tool_logs WHERE created_time < $1", &[&cutoff])?;
+        let tool = delete_with_filter("DELETE FROM tool_logs WHERE created_time < $1", false)?;
         results.insert("tool_logs".to_string(), tool as i64);
-        let artifact = conn.execute(
-            "DELETE FROM artifact_logs WHERE created_time < $1",
-            &[&cutoff],
-        )?;
+        let artifact =
+            delete_with_filter("DELETE FROM artifact_logs WHERE created_time < $1", false)?;
         results.insert("artifact_logs".to_string(), artifact as i64);
-        let monitor = conn.execute(
-            "DELETE FROM monitor_sessions WHERE updated_time < $1",
-            &[&cutoff],
-        )?;
+        let monitor =
+            delete_with_filter("DELETE FROM monitor_sessions WHERE updated_time < $1", true)?;
         results.insert("monitor_sessions".to_string(), monitor as i64);
-        let stream = conn.execute(
-            "DELETE FROM stream_events WHERE created_time < $1",
-            &[&cutoff],
-        )?;
+        let stream =
+            delete_with_filter("DELETE FROM stream_events WHERE created_time < $1", false)?;
         results.insert("stream_events".to_string(), stream as i64);
         Ok(results)
     }

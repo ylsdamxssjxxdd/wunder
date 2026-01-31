@@ -2406,7 +2406,8 @@ async fn admin_knowledge_upload(
             .await
             .ok();
         }
-        let meta = vector_knowledge::prepare_document(
+        let meta = vector_knowledge::index_document(
+            &config,
             &base_config,
             None,
             storage.as_ref(),
@@ -3158,11 +3159,19 @@ async fn admin_monitor_compaction(
                 Some(prompt.to_string())
             }
         });
+    let is_admin = state
+        .user_store
+        .get_user_by_id(&user_id)
+        .ok()
+        .flatten()
+        .map(|user| UserStore::is_admin(&user))
+        .unwrap_or(false);
     state
         .orchestrator
         .force_compact_session(
             &user_id,
             cleaned,
+            is_admin,
             payload.model_name.as_deref(),
             agent_id.as_deref(),
             agent_prompt.as_deref(),
@@ -4377,7 +4386,16 @@ async fn admin_memory_records(
         ));
     }
     let enabled = state.memory.is_enabled(cleaned);
-    let records = state.memory.list_records(cleaned, None, true);
+    let is_admin = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .ok()
+        .flatten()
+        .map(|user| UserStore::is_admin(&user))
+        .unwrap_or(false);
+    let records = state
+        .memory
+        .list_records(cleaned, if is_admin { Some(0) } else { None }, true);
     let output = records
         .into_iter()
         .map(|record| {

@@ -10,6 +10,7 @@ use crate::orchestrator_constants::{
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
+use crate::user_store::UserStore;
 use anyhow::Error;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -207,6 +208,7 @@ async fn get_session(
     Query(query): Query<SessionDetailQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    let is_admin = UserStore::is_admin(&resolved.user);
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
         return Err(error_response(
@@ -220,7 +222,9 @@ async fn get_session(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
 
-    let limit = query.limit.unwrap_or(DEFAULT_MESSAGE_LIMIT);
+    let limit = query
+        .limit
+        .unwrap_or_else(|| if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
     let history = state
         .workspace
         .load_history(&resolved.user.user_id, &session_id, limit)
@@ -351,6 +355,7 @@ async fn send_message(
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Response, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    let is_admin = UserStore::is_admin(&resolved.user);
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
         return Err(error_response(
@@ -454,6 +459,7 @@ async fn send_message(
         config_overrides: None,
         agent_prompt,
         attachments,
+        is_admin,
     };
 
     if request.stream {
@@ -694,6 +700,7 @@ async fn system_prompt(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            UserStore::is_admin(&resolved.user),
             &workspace_id,
             None,
             agent_prompt.as_deref(),
@@ -763,6 +770,7 @@ async fn session_system_prompt(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            UserStore::is_admin(&resolved.user),
             &workspace_id,
             None,
             agent_prompt.as_deref(),
@@ -823,6 +831,7 @@ async fn update_session_tools(
             &user_context.skills,
             Some(&user_context.bindings),
             &resolved.user.user_id,
+            UserStore::is_admin(&resolved.user),
             &workspace_id,
             None,
             agent_prompt.as_deref(),

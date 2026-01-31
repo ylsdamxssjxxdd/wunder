@@ -203,22 +203,26 @@ impl Orchestrator {
         &self,
         mut result: ToolResultPayload,
         started_at: Instant,
+        is_admin: bool,
     ) -> ToolResultPayload {
         let duration_ms = started_at.elapsed().as_millis() as i64;
-        let mut truncated = truncate_tool_result_data(
-            &mut result.data,
-            TOOL_RESULT_HEAD_CHARS,
-            TOOL_RESULT_TAIL_CHARS,
-            TOOL_RESULT_TRUNCATION_MARKER,
-        );
-        if result.error.len() > TOOL_RESULT_MAX_CHARS {
-            result.error = truncate_tool_result_string(
-                &result.error,
+        let mut truncated = false;
+        if !is_admin {
+            truncated = truncate_tool_result_data(
+                &mut result.data,
                 TOOL_RESULT_HEAD_CHARS,
                 TOOL_RESULT_TAIL_CHARS,
                 TOOL_RESULT_TRUNCATION_MARKER,
             );
-            truncated = true;
+            if result.error.len() > TOOL_RESULT_MAX_CHARS {
+                result.error = truncate_tool_result_string(
+                    &result.error,
+                    TOOL_RESULT_HEAD_CHARS,
+                    TOOL_RESULT_TAIL_CHARS,
+                    TOOL_RESULT_TRUNCATION_MARKER,
+                );
+                truncated = true;
+            }
         }
         let output_chars = estimate_tool_result_chars(&result.data);
         let exit_code = extract_exit_code(&result.data);
@@ -639,7 +643,11 @@ impl Orchestrator {
         config: &Config,
         tool_name: &str,
         args: &Value,
+        is_admin: bool,
     ) -> Option<Duration> {
+        if is_admin {
+            return None;
+        }
         let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
         if tool_name == "a2a等待" {
             let wait_s = parse_timeout_secs(args.get("wait_s")).unwrap_or(0.0);

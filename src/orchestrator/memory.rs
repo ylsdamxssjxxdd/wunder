@@ -7,6 +7,7 @@ pub(super) struct MemorySummaryTask {
     task_id: String,
     user_id: String,
     session_id: String,
+    is_admin: bool,
     queued_time: f64,
     config_overrides: Option<Value>,
     model_name: Option<String>,
@@ -267,6 +268,7 @@ impl Orchestrator {
         llm_config: &LlmModelConfig,
         user_id: &str,
         session_id: &str,
+        is_admin: bool,
         round_info: RoundInfo,
         messages: Vec<Value>,
         emitter: &EventEmitter,
@@ -275,6 +277,9 @@ impl Orchestrator {
         force: bool,
         exclude_current_user: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
+        if is_admin && !force {
+            return Ok(messages);
+        }
         let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
             return Ok(messages);
         };
@@ -448,9 +453,14 @@ impl Orchestrator {
         {
             question_candidates.push(current_user_signature.to_string());
         }
+        let history_limit = if is_admin {
+            0
+        } else {
+            config.workspace.max_history_items
+        };
         let history = self
             .workspace
-            .load_history_async(user_id, session_id, config.workspace.max_history_items)
+            .load_history_async(user_id, session_id, history_limit)
             .await
             .unwrap_or_default();
         let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
@@ -547,6 +557,7 @@ impl Orchestrator {
                 llm_config,
                 &summary_input,
                 user_id,
+                is_admin,
                 emitter,
                 session_id,
                 false,
@@ -703,6 +714,7 @@ impl Orchestrator {
         &self,
         user_id: &str,
         session_id: &str,
+        is_admin: bool,
         model_name: Option<&str>,
         agent_id: Option<&str>,
         agent_prompt: Option<&str>,
@@ -737,18 +749,25 @@ impl Orchestrator {
                 agent_prompt,
             )
             .await;
-        system_prompt = self.append_memory_prompt(user_id, system_prompt).await;
+        system_prompt = self
+            .append_memory_prompt(user_id, system_prompt, is_admin)
+            .await;
 
         let _ = self.workspace.flush_writes_async().await;
         let history_manager = HistoryManager;
         let context_manager = ContextManager;
         let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
+        let history_limit = if is_admin {
+            0
+        } else {
+            config.workspace.max_history_items
+        };
         let history_messages = history_manager
             .load_history_messages_async(
                 self.workspace.clone(),
                 user_id.to_string(),
                 session_id.to_string(),
-                config.workspace.max_history_items,
+                history_limit,
             )
             .await;
         messages.extend(history_messages);
@@ -759,6 +778,8 @@ impl Orchestrator {
             None,
             None,
             self.monitor.clone(),
+            is_admin,
+            0,
         );
         let messages = self
             .maybe_compact_messages(
@@ -766,6 +787,7 @@ impl Orchestrator {
                 &llm_config,
                 user_id,
                 session_id,
+                is_admin,
                 RoundInfo::default(),
                 messages,
                 &emitter,
@@ -791,16 +813,22 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub(super) async fn append_memory_prompt(&self, user_id: &str, prompt: String) -> String {
+    pub(super) async fn append_memory_prompt(
+        &self,
+        user_id: &str,
+        prompt: String,
+        is_admin: bool,
+    ) -> String {
         if prompt.trim().is_empty() {
             return prompt;
         }
         if !self.memory_store.is_enabled_async(user_id).await {
             return prompt;
         }
+        let limit = if is_admin { Some(0) } else { None };
         let records = self
             .memory_store
-            .list_records_async(user_id, None, false)
+            .list_records_async(user_id, limit, false)
             .await;
         let block = self.memory_store.build_prompt_block(&records);
         if block.is_empty() {
@@ -966,6 +994,7 @@ impl Orchestrator {
             task_id: Uuid::new_v4().simple().to_string(),
             user_id: prepared.user_id.clone(),
             session_id: prepared.session_id.clone(),
+            is_admin: prepared.is_admin,
             queued_time: now_ts(),
             config_overrides: prepared.config_overrides.clone(),
             model_name: prepared.model_name.clone(),
@@ -1107,12 +1136,15 @@ impl Orchestrator {
             None,
             None,
             self.monitor.clone(),
+            task.is_admin,
+            0,
         );
         let (content, _, _, _) = self
             .call_llm(
                 &llm_config,
                 &messages,
                 &task.user_id,
+                task.is_admin,
                 &emitter,
                 &task.session_id,
                 false,
@@ -1134,6 +1166,7 @@ impl Orchestrator {
                 &task.session_id,
                 &normalized,
                 Some(task.queued_time),
+                if task.is_admin { Some(0) } else { None },
             )
             .await)
     }
@@ -1182,7 +1215,11 @@ impl Orchestrator {
                 &self.workspace,
                 &task.user_id,
                 &task.session_id,
-                config.workspace.max_history_items,
+                if task.is_admin {
+                    0
+                } else {
+                    config.workspace.max_history_items
+                },
             )
         };
         let user_content =

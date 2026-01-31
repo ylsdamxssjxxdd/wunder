@@ -212,6 +212,7 @@ impl ServerHandler for WunderMcpServer {
                 config_overrides: None,
                 agent_prompt: None,
                 attachments: None,
+                is_admin: false,
             })
             .await
             .map_err(|err| {

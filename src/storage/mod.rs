@@ -12,6 +12,24 @@ use std::sync::Arc;
 pub use postgres::PostgresStorage;
 pub use sqlite::SqliteStorage;
 
+pub(crate) const TOOL_LOG_SKILL_READ_MARKER: &str = "\"source\":\"skill_read\"";
+
+pub(crate) const TOOL_LOG_EXCLUDED_NAMES: &[&str] = &[
+    "final_response",
+    "最终回复",
+    "update_plan",
+    "计划面板",
+    "question_panel",
+    "ask_panel",
+    "问询面板",
+    "a2ui",
+    "a2a_observe",
+    "a2a_wait",
+    "a2a观察",
+    "a2a等待",
+    "performance_log",
+];
+
 #[derive(Debug, Clone)]
 pub struct UserAccountRecord {
     pub user_id: String,
@@ -233,6 +251,7 @@ pub trait StorageBackend: Send + Sync {
         -> Result<bool>;
     fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64>;
 
+    fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64>;
     fn append_stream_event(
         &self,
         session_id: &str,

@@ -217,6 +217,7 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
                 context.skills.as_ref(),
                 Some(context.user_tool_bindings.as_ref()),
                 &context.user_id,
+                false,
                 &context.workspace.scoped_user_id(&context.user_id, None),
                 None,
                 None,

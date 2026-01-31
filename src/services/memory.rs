@@ -177,7 +177,7 @@ impl MemoryStore {
         limit: Option<i64>,
         order_desc: bool,
     ) -> Vec<MemoryRecord> {
-        let safe_limit = limit.unwrap_or(self.max_records).max(1);
+        let safe_limit = limit.unwrap_or(self.max_records);
         let rows = self
             .storage
             .load_memory_records(user_id, safe_limit, order_desc)
@@ -392,19 +392,17 @@ impl MemoryStore {
         session_id: &str,
         summary: &str,
         now_ts: Option<f64>,
+        max_records_override: Option<i64>,
     ) -> bool {
         let normalized = Self::normalize_summary(summary);
         if normalized.is_empty() {
             return false;
         }
         let now = now_ts.unwrap_or_else(|| now_ts_value());
-        let _ = self.storage.upsert_memory_record(
-            user_id,
-            session_id,
-            &normalized,
-            self.max_records,
-            now,
-        );
+        let max_records = max_records_override.unwrap_or(self.max_records);
+        let _ =
+            self.storage
+                .upsert_memory_record(user_id, session_id, &normalized, max_records, now);
         true
     }
 
@@ -414,6 +412,7 @@ impl MemoryStore {
         session_id: &str,
         summary: &str,
         now_ts: Option<f64>,
+        max_records_override: Option<i64>,
     ) -> bool {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
@@ -425,7 +424,13 @@ impl MemoryStore {
                 storage,
                 max_records,
             };
-            store.upsert_record(&user_id, &session_id, &summary, now_ts)
+            store.upsert_record(
+                &user_id,
+                &session_id,
+                &summary,
+                now_ts,
+                max_records_override,
+            )
         })
         .await
         .unwrap_or_else(|err| {
@@ -441,7 +446,7 @@ impl MemoryStore {
         summary: &str,
         now_ts: Option<f64>,
     ) -> bool {
-        self.upsert_record(user_id, session_id, summary, now_ts)
+        self.upsert_record(user_id, session_id, summary, now_ts, None)
     }
 
     pub fn delete_record(&self, user_id: &str, session_id: &str) -> i64 {

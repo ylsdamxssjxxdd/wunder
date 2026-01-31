@@ -1,66 +1,25 @@
-.tool-manager-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.55fr) minmax(560px, 1.85fr);
-  grid-template-rows: minmax(0, 1fr);
-  gap: 18px;
-  align-items: stretch;
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-}
-
-.tool-manager-column {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-}
-
 .tool-manager-section {
   margin-bottom: 0;
-}
-
-.tool-manager-column--right .user-tools-page {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.tool-manager-column--right {
   height: 100%;
 }
 
-.tool-manager-column--right .tool-manager-section {
+.tool-manager-page {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.tool-manager-column--right .user-tools-modal {
+.tool-manager-page .user-tools-modal {
   flex: 1;
   min-height: 0;
 }
 
-.tool-manager-column--right .user-tools-status {
+.tool-manager-page .user-tools-status {
   margin-top: auto;
-}
-
-.tool-manager-column .tool-manager-section:last-child {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.tool-manager-column .tool-manager-section:last-child .user-tools-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 
 .tool-catalog-grid {
@@ -136,13 +95,7 @@
 }
 
 @media (max-width: 1100px) {
-  .tool-manager-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto;
-    height: auto;
-  }
-
-  .tool-manager-column--right .user-tools-page {
+  .tool-manager-page {
     min-height: auto;
   }
 }

@@ -29,6 +29,8 @@ pub struct WunderRequest {
     pub agent_prompt: Option<String>,
     #[serde(default)]
     pub attachments: Option<Vec<AttachmentPayload>>,
+    #[serde(skip)]
+    pub is_admin: bool,
 }
 
 fn default_stream() -> bool {

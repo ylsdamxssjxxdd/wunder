@@ -820,6 +820,7 @@ async fn run_case(
         config_overrides: ctx.config_overrides.clone(),
         agent_prompt: None,
         attachments: None,
+        is_admin: false,
     };
 
     let stream_future = collect_case_stream(ctx, request, session_id);

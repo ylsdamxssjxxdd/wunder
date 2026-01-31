@@ -24,6 +24,7 @@
 - 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
+- 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -46,6 +47,7 @@
 - 约束：同一 `user_id + agent_id` 若已有运行中的会话，接口返回 429 并提示稍后再试（未传 `agent_id` 时按 user_id 互斥）。
 - 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
+- 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
 
@@ -711,6 +713,7 @@
   - `events`：事件详情列表
 - 说明：
 - 事件列表会按 `observability.monitor_event_limit` 保留最近 N 条，<= 0 表示不截断。
+  - 管理员会话不受事件数量与字段裁剪限制。
   - 字符串字段会按 `observability.monitor_payload_max_chars` 截断（<= 0 表示不截断）。
   - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
   - `observability.monitor_drop_event_types` 可过滤不持久化的事件类型。

@@ -1688,6 +1688,19 @@ const normalizeUploadExtension = (filename) => {
   return `.${parts.pop().toLowerCase()}`;
 };
 
+const setUploadButtonLoading = (vectorMode, loading) => {
+  const button = vectorMode ? elements.knowledgeDocUploadBtn : knowledgeFileUploadBtn;
+  if (!button) {
+    return;
+  }
+  button.disabled = loading;
+  button.classList.toggle("is-loading", loading);
+  const icon = button.querySelector("i");
+  if (icon) {
+    icon.className = loading ? "fa-solid fa-spinner" : "fa-solid fa-upload";
+  }
+};
+
 const uploadKnowledgeFile = async (file) => {
   const base = getActiveBase();
   if (!base || !base.name) {
@@ -1712,30 +1725,35 @@ const uploadKnowledgeFile = async (file) => {
   const formData = new FormData();
   formData.append("base", base.name);
   formData.append("file", file, file.name);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    body: formData,
-  });
-  if (!response.ok) {
-    throw new Error(t("knowledge.file.uploadFailed", { status: response.status }));
-  }
-  const result = await response.json();
-  if (vectorMode) {
-    await loadVectorDocs();
-    if (result?.doc_id) {
-      await selectVectorDoc(result.doc_id);
+  setUploadButtonLoading(vectorMode, true);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(t("knowledge.file.uploadFailed", { status: response.status }));
     }
-    notify(t("knowledge.doc.uploaded", { name: result?.doc_name || file.name }), "success");
-  } else {
-    await loadKnowledgeFiles();
-    if (result?.path) {
-      await selectKnowledgeFile(result.path);
+    const result = await response.json();
+    if (vectorMode) {
+      await loadVectorDocs();
+      if (result?.doc_id) {
+        await selectVectorDoc(result.doc_id);
+      }
+      notify(t("knowledge.doc.uploaded", { name: result?.doc_name || file.name }), "success");
+    } else {
+      await loadKnowledgeFiles();
+      if (result?.path) {
+        await selectKnowledgeFile(result.path);
+      }
+      notify(t("knowledge.file.uploaded", { name: result?.path || file.name }), "success");
     }
-    notify(t("knowledge.file.uploaded", { name: result?.path || file.name }), "success");
-  }
-  const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
-  if (warnings.length) {
-    notify(t("knowledge.file.warnings", { message: warnings.join(" | ") }), "warn");
+    const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
+    if (warnings.length) {
+      notify(t("knowledge.file.warnings", { message: warnings.join(" | ") }), "warn");
+    }
+  } finally {
+    setUploadButtonLoading(vectorMode, false);
   }
 };
 

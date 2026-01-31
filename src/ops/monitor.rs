@@ -163,6 +163,7 @@ struct LlmRoundMetrics {
 struct SessionRecord {
     session_id: String,
     user_id: String,
+    is_admin: bool,
     question: String,
     status: String,
     stage: String,
@@ -180,10 +181,17 @@ struct SessionRecord {
 }
 
 impl SessionRecord {
-    fn new(session_id: String, user_id: String, question: String, now: f64) -> Self {
+    fn new(
+        session_id: String,
+        user_id: String,
+        question: String,
+        is_admin: bool,
+        now: f64,
+    ) -> Self {
         Self {
             session_id,
             user_id,
+            is_admin,
             question,
             status: MonitorState::STATUS_RUNNING.to_string(),
             stage: "received".to_string(),
@@ -210,6 +218,7 @@ impl SessionRecord {
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
+            "is_admin": self.is_admin,
             "question": self.question,
             "status": self.status,
             "stage": self.stage,
@@ -258,6 +267,10 @@ impl SessionRecord {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let is_admin = payload
+            .get("is_admin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let question = payload
             .get("question")
             .and_then(Value::as_str)
@@ -316,6 +329,7 @@ impl SessionRecord {
         Some(Self {
             session_id,
             user_id,
+            is_admin,
             question,
             status,
             stage,
@@ -511,15 +525,22 @@ impl MonitorState {
         )
     }
 
-    pub fn register(&self, session_id: &str, user_id: &str, question: &str) -> i64 {
+    pub fn register(&self, session_id: &str, user_id: &str, question: &str, is_admin: bool) -> i64 {
         self.run_guarded(
             "monitor.register",
             || 1,
             || {
                 let now = now_ts();
                 let mut sessions = self.sessions.lock();
-                let (to_persist, user_round) =
-                    self.register_locked(&mut sessions, session_id, user_id, question, now, false);
+                let (to_persist, user_round) = self.register_locked(
+                    &mut sessions,
+                    session_id,
+                    user_id,
+                    question,
+                    is_admin,
+                    now,
+                    false,
+                );
                 drop(sessions);
                 if let Some(record) = to_persist {
                     self.save_record(&record);
@@ -1300,9 +1321,11 @@ impl MonitorState {
             } else if record.status == Self::STATUS_CANCELLING {
                 record.stage = "cancelling".to_string();
             }
-            if let Some(limit) = self.event_limit {
-                while record.events.len() > limit {
-                    record.events.pop_front();
+            if !record.is_admin {
+                if let Some(limit) = self.event_limit {
+                    while record.events.len() > limit {
+                        record.events.pop_front();
+                    }
                 }
             }
             rebuilt.insert(record.session_id.clone(), record);
@@ -1369,6 +1392,7 @@ impl MonitorState {
         session_id: &str,
         user_id: &str,
         question: &str,
+        is_admin: bool,
         now: f64,
         append_received: bool,
     ) -> (Option<SessionRecord>, i64) {
@@ -1382,6 +1406,7 @@ impl MonitorState {
         if let Some(record) = sessions.get_mut(session_id) {
             record.user_rounds += 1;
             record.question = question.to_string();
+            record.is_admin = is_admin;
             record.status = Self::STATUS_RUNNING.to_string();
             record.stage = "received".to_string();
             record.summary = i18n::t("monitor.summary.received");
@@ -1409,6 +1434,7 @@ impl MonitorState {
             session_id.to_string(),
             user_id.to_string(),
             question.to_string(),
+            is_admin,
             now,
         );
         let event_type = if append_received {
@@ -1508,23 +1534,28 @@ impl MonitorState {
         data: &Value,
         timestamp: f64,
     ) {
-        if self.drop_event_types.contains(event_type) {
+        if !record.is_admin && self.drop_event_types.contains(event_type) {
             return;
         }
-        let sanitized = self.sanitize_event_data(event_type, data);
+        let sanitized = self.sanitize_event_data(event_type, data, record.is_admin);
         record.events.push_back(MonitorEvent {
             timestamp,
             event_type: event_type.to_string(),
             data: sanitized,
         });
-        if let Some(limit) = self.event_limit {
-            while record.events.len() > limit {
-                record.events.pop_front();
+        if !record.is_admin {
+            if let Some(limit) = self.event_limit {
+                while record.events.len() > limit {
+                    record.events.pop_front();
+                }
             }
         }
     }
 
-    fn sanitize_event_data(&self, event_type: &str, data: &Value) -> Value {
+    fn sanitize_event_data(&self, event_type: &str, data: &Value, is_admin: bool) -> Value {
+        if is_admin {
+            return data.clone();
+        }
         if !data.is_object() {
             return data.clone();
         }

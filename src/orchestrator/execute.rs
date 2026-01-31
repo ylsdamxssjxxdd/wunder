@@ -32,24 +32,27 @@ impl Orchestrator {
         let session_id = prepared.session_id.clone();
         let user_id = prepared.user_id.clone();
         let question = prepared.question.clone();
+        let is_admin = prepared.is_admin;
 
         let result = async {
-            let ok = limiter
-                .acquire(
-                    &session_id,
-                    &user_id,
-                    prepared.agent_id.as_deref().unwrap_or(""),
-                )
-                .await
-                .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-            if !ok {
-                return Err(OrchestratorError::user_busy(i18n::t(
-                    "error.user_session_busy",
-                )));
+            if !is_admin {
+                let ok = limiter
+                    .acquire(
+                        &session_id,
+                        &user_id,
+                        prepared.agent_id.as_deref().unwrap_or(""),
+                    )
+                    .await
+                    .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+                if !ok {
+                    return Err(OrchestratorError::user_busy(i18n::t(
+                        "error.user_session_busy",
+                    )));
+                }
+                acquired = true;
             }
-            acquired = true;
 
-            if prepared.stream {
+            if prepared.stream && !is_admin {
                 let cleanup_session = session_id.clone();
                 let storage = self.storage.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -69,18 +72,22 @@ impl Orchestrator {
 
             // 心跳续租会话锁，避免长任务被误判超时。
             let heartbeat_limiter = limiter.clone();
-            let heartbeat_session = session_id.clone();
-            heartbeat_task = Some(tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(
-                        SESSION_LOCK_HEARTBEAT_S,
-                    ))
-                    .await;
-                    heartbeat_limiter.touch(&heartbeat_session).await;
-                }
-            }));
+            if !is_admin {
+                let heartbeat_session = session_id.clone();
+                heartbeat_task = Some(tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs_f64(
+                            SESSION_LOCK_HEARTBEAT_S,
+                        ))
+                        .await;
+                        heartbeat_limiter.touch(&heartbeat_session).await;
+                    }
+                }));
+            }
 
-            let user_round = self.monitor.register(&session_id, &user_id, &question);
+            let user_round = self
+                .monitor
+                .register(&session_id, &user_id, &question, is_admin);
             let request_round = RoundInfo::user_only(user_round);
             let mut start_payload = json!({
                 "stage": "start",
@@ -146,17 +153,24 @@ impl Orchestrator {
                 prepared.agent_prompt.as_deref(),
             )
                 .await;
-            system_prompt = self.append_memory_prompt(&user_id, system_prompt).await;
+            system_prompt = self
+                .append_memory_prompt(&user_id, system_prompt, is_admin)
+                .await;
 
             let history_manager = HistoryManager;
             let context_manager = ContextManager;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
+            let history_limit = if is_admin {
+                0
+            } else {
+                config.workspace.max_history_items
+            };
             let history_messages = history_manager
                 .load_history_messages_async(
                     self.workspace.clone(),
                     user_id.clone(),
                     session_id.clone(),
-                    config.workspace.max_history_items,
+                    history_limit,
                 )
                 .await;
             messages.extend(history_messages);
@@ -198,6 +212,7 @@ impl Orchestrator {
                         &llm_config,
                         &user_id,
                         &session_id,
+                        is_admin,
                         round_info,
                         messages,
                         &emitter,
@@ -245,6 +260,7 @@ impl Orchestrator {
                         &llm_config,
                         &messages,
                         &user_id,
+                        is_admin,
                         &emitter,
                         &session_id,
                         prepared.stream,
@@ -421,6 +437,7 @@ impl Orchestrator {
                             &tool_context,
                             &allowed_tool_names,
                             &session_id,
+                            is_admin,
                         )
                         .await?;
                     for (index, outcome) in outcomes.into_iter().enumerate() {
@@ -733,6 +750,7 @@ impl Orchestrator {
         tool_context: &ToolContext<'_>,
         allowed_tool_names: &HashSet<String>,
         session_id: &str,
+        is_admin: bool,
     ) -> Result<Vec<ToolExecutionOutcome>, OrchestratorError> {
         if calls.is_empty() {
             return Ok(Vec::new());
@@ -755,7 +773,7 @@ impl Orchestrator {
                 let policy_meta = policy_decision.as_ref().map(|decision| decision.to_value());
                 let started_at = Instant::now();
                 let tool_timeout =
-                    orchestrator.resolve_tool_timeout(tool_context.config, &name, &args);
+                    orchestrator.resolve_tool_timeout(tool_context.config, &name, &args, is_admin);
                 let mut result = if !allowed_tool_names.contains(&name) {
                     ToolResultPayload::error(
                         i18n::t("error.tool_disabled_or_unavailable"),
@@ -825,7 +843,7 @@ impl Orchestrator {
                         }
                     }
                 };
-                result = orchestrator.finalize_tool_result(result, started_at);
+                result = orchestrator.finalize_tool_result(result, started_at, is_admin);
                 Ok(ToolExecutionOutcome { call, name, result })
             }
         }))
