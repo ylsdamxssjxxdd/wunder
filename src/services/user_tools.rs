@@ -330,7 +330,7 @@ impl UserToolStore {
         let root = self.get_knowledge_root(user_id);
         let target = root.join(cleaned);
         let normalized_target = normalize_target_path(&target);
-        let normalized_root = normalize_existing_path(&root);
+        let normalized_root = normalize_target_path(&root);
         let root_compare = normalize_path_for_compare(&normalized_root);
         let target_compare = normalize_path_for_compare(&normalized_target);
         if normalized_target != normalized_root && !target_compare.starts_with(&root_compare) {

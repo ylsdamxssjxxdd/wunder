@@ -1,42 +1,48 @@
 <template>
   <div class="portal-shell">
-    <UserTopbar
-      title="世界"
-      subtitle="智能体应用入口"
-      :hide-chat="true"
-    >
-    </UserTopbar>
+    <UserTopbar :title="t('portal.title')" :subtitle="t('portal.subtitle')" :hide-chat="true" />
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
           <section class="portal-section">
-            <div class="portal-section-header">
-              <div>
-                <div class="portal-section-title">我的智能体应用</div>
-                <div class="portal-section-desc">创建、进入并管理你的智能体应用</div>
-              </div>
-              <div class="portal-section-actions">
-                <div class="portal-search portal-section-search">
-                  <i class="fa-solid fa-magnifying-glass portal-search-icon" aria-hidden="true"></i>
-                  <input v-model="searchQuery" type="text" placeholder="搜索智能体应用" />
-                  <button
-                    v-if="searchQuery"
-                    class="portal-search-clear"
-                    type="button"
-                    aria-label="清空搜索"
-                    @click="searchQuery = ''"
-                  >
-                    ×
-                  </button>
+            <div class="portal-section-header portal-section-header--search">
+              <div class="portal-section-heading">
+                <div class="portal-section-title-row">
+                  <div class="portal-section-title">{{ t('portal.section.myAgents') }}</div>
+                  <div class="portal-section-actions">
+                    <div class="portal-search portal-section-search">
+                      <i
+                        class="fa-solid fa-magnifying-glass portal-search-icon"
+                        aria-hidden="true"
+                      ></i>
+                      <input
+                        v-model="searchQuery"
+                        type="text"
+                        :placeholder="t('portal.search.placeholder')"
+                      />
+                      <button
+                        v-if="searchQuery"
+                        class="portal-search-clear"
+                        type="button"
+                        :aria-label="t('portal.search.clear')"
+                        @click="searchQuery = ''"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div class="portal-section-meta">
+                      {{ t('portal.section.count', { count: filteredAgents.length }) }}
+                    </div>
+                  </div>
                 </div>
-                <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
+                <div class="portal-section-desc">{{ t('portal.section.myAgentsDesc') }}</div>
               </div>
             </div>
             <div class="agent-grid portal-agent-grid">
               <button class="agent-card agent-card--create" type="button" @click="openCreateDialog">
                 <div class="agent-card-plus">+</div>
-                <div class="agent-card-title">新建智能体应用</div>
-                <div class="agent-card-desc">快速组装你的专属能力</div>
+                <div class="agent-card-title">{{ t('portal.card.createTitle') }}</div>
+                <div class="agent-card-desc">{{ t('portal.card.createDesc') }}</div>
               </button>
               <div
                 class="agent-card agent-card--compact agent-card--default agent-card--clickable"
@@ -53,8 +59,8 @@
                     ></i>
                   </div>
                   <div class="agent-card-head-text">
-                    <div class="agent-card-title">通用聊天</div>
-                    <div class="agent-card-desc">默认聊天能力，随时开启新对话</div>
+                    <div class="agent-card-title">{{ t('portal.card.defaultTitle') }}</div>
+                    <div class="agent-card-desc">{{ t('portal.card.defaultDesc') }}</div>
                   </div>
                 </div>
                 <div
@@ -63,18 +69,18 @@
                 >
                   <div v-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="agent-card-running">
                     <span class="agent-running-dot"></span>
-                    <span>运行中</span>
+                    <span>{{ t('portal.card.running') }}</span>
                   </div>
                   <div v-if="isAgentWaiting(DEFAULT_AGENT_KEY)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
-                    <span>待选择</span>
+                    <span>{{ t('portal.card.waiting') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">
-                  <span>默认入口</span>
+                  <span>{{ t('portal.card.defaultMeta') }}</span>
                 </div>
               </div>
-              <div v-if="agentLoading" class="agent-empty">加载中...</div>
+              <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
                 v-else
                 v-for="agent in filteredAgents"
@@ -97,7 +103,7 @@
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
-                    <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
+                    <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
                 <div
@@ -106,23 +112,23 @@
                 >
                   <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
                     <span class="agent-running-dot"></span>
-                    <span>运行中</span>
+                    <span>{{ t('portal.card.running') }}</span>
                   </div>
                   <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
-                    <span>待选择</span>
+                    <span>{{ t('portal.card.waiting') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">
-                  <span>工具 {{ agent.tool_names?.length || 0 }}</span>
-                  <span>更新 {{ formatTime(agent.updated_at) }}</span>
+                  <span>{{ t('portal.card.tools', { count: agent.tool_names?.length || 0 }) }}</span>
+                  <span>{{ t('portal.card.updated', { time: formatTime(agent.updated_at) }) }}</span>
                 </div>
                 <div class="agent-card-actions">
                   <button
                     class="agent-card-icon-btn"
                     type="button"
-                    title="编辑"
-                    aria-label="编辑"
+                    :title="t('portal.agent.edit')"
+                    :aria-label="t('portal.agent.edit')"
                     @click.stop="openEditDialog(agent)"
                   >
                     <i class="fa-solid fa-pen-to-square agent-card-icon" aria-hidden="true"></i>
@@ -130,8 +136,8 @@
                   <button
                     class="agent-card-icon-btn danger"
                     type="button"
-                    title="删除"
-                    aria-label="删除"
+                    :title="t('portal.agent.delete')"
+                    :aria-label="t('portal.agent.delete')"
                     @click.stop="confirmDelete(agent)"
                   >
                     <i class="fa-solid fa-trash-can agent-card-icon" aria-hidden="true"></i>
@@ -143,13 +149,13 @@
           <section v-if="showSharedAgents" class="portal-section portal-section--shared">
             <div class="portal-section-header">
               <div>
-                <div class="portal-section-title">共享智能体应用</div>
-                <div class="portal-section-desc">同等级用户共享的智能体应用入口</div>
+                <div class="portal-section-title">{{ t('portal.section.sharedAgents') }}</div>
+                <div class="portal-section-desc">{{ t('portal.section.sharedAgentsDesc') }}</div>
               </div>
-              <div class="portal-section-meta">共 {{ filteredSharedAgents.length }} 个</div>
+              <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredSharedAgents.length }) }}</div>
             </div>
             <div class="agent-grid portal-agent-grid">
-              <div v-if="agentLoading" class="agent-empty">加载中...</div>
+              <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
                 v-else
                 v-for="agent in filteredSharedAgents"
@@ -172,7 +178,7 @@
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
-                    <div class="agent-card-desc">{{ agent.description || '暂无描述' }}</div>
+                    <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
                 <div
@@ -181,16 +187,16 @@
                 >
                   <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
                     <span class="agent-running-dot"></span>
-                    <span>运行中</span>
+                    <span>{{ t('portal.card.running') }}</span>
                   </div>
                   <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
-                    <span>待选择</span>
+                    <span>{{ t('portal.card.waiting') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">
-                  <span>工具 {{ agent.tool_names?.length || 0 }}</span>
-                  <span>更新 {{ formatTime(agent.updated_at) }}</span>
+                  <span>{{ t('portal.card.tools', { count: agent.tool_names?.length || 0 }) }}</span>
+                  <span>{{ t('portal.card.updated', { time: formatTime(agent.updated_at) }) }}</span>
                 </div>
               </div>
             </div>
@@ -216,18 +222,18 @@
       </template>
       <div class="agent-editor-body">
         <el-form :model="form" label-position="top">
-          <el-form-item label="智能体名称">
-            <el-input v-model="form.name" placeholder="例如：产品分析助手" />
+          <el-form-item :label="t('portal.agent.form.name')">
+            <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
           </el-form-item>
-          <el-form-item label="描述">
-            <el-input v-model="form.description" placeholder="一句话描述智能体用途" />
+          <el-form-item :label="t('portal.agent.form.description')">
+            <el-input v-model="form.description" :placeholder="t('portal.agent.form.placeholder.description')" />
           </el-form-item>
-          <el-form-item label="基础设置">
+          <el-form-item :label="t('portal.agent.form.base')">
             <div class="agent-basic-settings">
               <div class="agent-avatar-card">
                 <div class="agent-avatar-header">
                   <div class="agent-avatar-header-left">
-                    <div class="agent-avatar-title">头像设置</div>
+                    <div class="agent-avatar-title">{{ t('portal.agent.avatarTitle') }}</div>
                     <div
                       class="agent-avatar-preview"
                       :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
@@ -252,12 +258,12 @@
                     :aria-expanded="avatarPanelVisible"
                     @click="avatarPanelVisible = !avatarPanelVisible"
                   >
-                    {{ avatarPanelVisible ? '收起' : '设置' }}
+                    {{ avatarPanelVisible ? t('portal.agent.avatarCollapse') : t('portal.agent.avatarToggle') }}
                   </button>
                 </div>
                 <div v-show="avatarPanelVisible" class="agent-avatar-panel">
                   <div class="agent-avatar-section">
-                    <div class="agent-avatar-section-title">头像图标</div>
+                    <div class="agent-avatar-section-title">{{ t('portal.agent.avatarIcon') }}</div>
                     <div class="agent-avatar-options">
                       <button
                         v-for="option in avatarIconOptions"
@@ -281,7 +287,7 @@
                     </div>
                   </div>
                   <div class="agent-avatar-section">
-                    <div class="agent-avatar-section-title">头像颜色</div>
+                    <div class="agent-avatar-section-title">{{ t('portal.agent.avatarColor') }}</div>
                     <div class="agent-avatar-colors">
                       <button
                         v-for="color in avatarColorOptions"
@@ -289,11 +295,11 @@
                         class="agent-avatar-color"
                         :class="{ active: (form.icon_color || '') === (color || '') }"
                         type="button"
-                        :title="color ? color : '默认'"
+                        :title="color ? color : t('portal.agent.avatarDefault')"
                         :style="color ? { background: color } : {}"
                         @click="selectAvatarColor(color)"
                       >
-                        <span v-if="!color" class="agent-avatar-color-text">默认</span>
+                        <span v-if="!color" class="agent-avatar-color-text">{{ t('portal.agent.avatarDefault') }}</span>
                       </button>
                     </div>
                     <div class="agent-avatar-custom">
@@ -307,7 +313,7 @@
                         class="agent-avatar-custom-text"
                         type="text"
                         :value="customColor"
-                        placeholder="自定义颜色，例如 #6ad9ff"
+                        :placeholder="t('portal.agent.avatarCustom')"
                         @input="updateCustomColor($event.target.value)"
                       />
                     </div>
@@ -315,17 +321,17 @@
                 </div>
               </div>
               <div class="agent-share-card">
-                <div class="agent-share-title">共享设置</div>
+                <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
                 <div class="agent-share-row">
                   <el-switch v-model="form.is_shared" />
-                  <span>共享给同等级用户</span>
+                  <span>{{ t('portal.agent.share.label') }}</span>
                 </div>
               </div>
             </div>
           </el-form-item>
-          <el-form-item label="挂载工具与技能">
+          <el-form-item :label="t('portal.agent.form.tools')">
             <div class="agent-tool-picker">
-              <div v-if="toolLoading" class="agent-tool-loading">加载工具中...</div>
+              <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
               <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
                 <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
                   <div class="agent-tool-group-header">
@@ -335,7 +341,7 @@
                       type="button"
                       @click.stop="selectToolGroup(group)"
                     >
-                      {{ isToolGroupFullySelected(group) ? '取消全选' : '全选' }}
+                      {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
                     </button>
                   </div>
                   <div class="agent-tool-options">
@@ -350,24 +356,24 @@
                 </div>
               </el-checkbox-group>
               <div v-if="sharedToolsNotice" class="agent-editor-hint">
-                共享工具需要在工具管理中勾选后才能出现在这里。
+                {{ t('portal.agent.tools.notice') }}
               </div>
             </div>
           </el-form-item>
-          <el-form-item label="智能体提示词（追加）">
+          <el-form-item :label="t('portal.agent.form.prompt')">
             <el-input
               v-model="form.system_prompt"
               type="textarea"
               :rows="8"
-              placeholder="输入需要追加到基础系统提示词后的内容"
+              :placeholder="t('portal.agent.form.placeholder.prompt')"
             />
           </el-form-item>
         </el-form>
       </div>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="dialogVisible = false">{{ t('portal.agent.cancel') }}</el-button>
         <el-button type="primary" :loading="saving" @click="saveAgent">
-          保存
+          {{ t('portal.agent.save') }}
         </el-button>
       </template>
     </el-dialog>
@@ -898,7 +904,7 @@ const saveAgent = async () => {
     }
     dialogVisible.value = false;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '保存失败');
+    ElMessage.error(error.response?.data?.detail || '{{ t('portal.agent.save') }}失败');
   } finally {
     saving.value = false;
   }

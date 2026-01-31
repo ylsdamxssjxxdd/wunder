@@ -2,7 +2,9 @@
   <el-scrollbar class="message-scroll">
     <div v-for="(message, index) in messages" :key="index" class="message-item">
       <div :class="['message-bubble', message.role === 'user' ? 'user' : 'assistant']">
-        <span class="message-role">{{ message.role === 'user' ? '你' : '智能体' }}</span>
+        <span class="message-role">{{
+          message.role === 'user' ? t('chat.message.user') : t('chat.message.assistant')
+        }}</span>
         <div class="message-content">{{ message.content }}</div>
       </div>
     </div>
@@ -10,10 +12,14 @@
 </template>
 
 <script setup>
+import { useI18n } from '@/i18n';
+
 defineProps({
   messages: {
     type: Array,
     default: () => []
   }
 });
+
+const { t } = useI18n();
 </script>

@@ -56,13 +56,13 @@
             aria-label="世界"
             @click="handleOpenPortal"
           >
-            <i class="fa-solid fa-table-cells-large topbar-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-globe topbar-icon" aria-hidden="true"></i>
           </button>
           <button
             class="topbar-icon-btn"
             type="button"
-            title="调整工具"
-            aria-label="调整工具"
+            title="工具管理"
+            aria-label="工具管理"
             @click="openSessionTools"
           >
             <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>

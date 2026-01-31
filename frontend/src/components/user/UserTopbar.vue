@@ -4,11 +4,11 @@
       <div class="brand-mark">AI</div>
       <div class="brand-meta">
         <div class="brand-title-row">
-          <div class="brand-title">{{ title }}</div>
-        </div>
+        <div class="brand-title">{{ resolvedTitle }}</div>
+      </div>
         <div class="brand-sub">
-          <span>{{ subtitle }}</span>
-          <span v-if="demoMode" class="demo-badge">演示模式</span>
+          <span>{{ resolvedSubtitle }}</span>
+          <span v-if="demoMode" class="demo-badge">{{ t('user.demoMode') }}</span>
         </div>
       </div>
     </div>
@@ -19,8 +19,10 @@
           :key="item.path"
           :to="item.path"
           class="topbar-panel-btn topbar-nav-link"
+          :title="item.label"
+          :aria-label="item.label"
         >
-          {{ item.label }}
+          <i v-if="item.icon" class="fa-solid" :class="item.icon" aria-hidden="true"></i>
         </router-link>
       </nav>
       <slot name="actions" />
@@ -29,14 +31,19 @@
         <button
           class="user-meta user-meta-btn"
           type="button"
-          aria-label="进入我的概况"
+          :aria-label="t('user.profile.enter')"
           @click="handleOpenProfile"
         >
           <div class="user-name">{{ userName }}</div>
-          <div class="user-level">单位 {{ userUnitLabel }}</div>
+          <div class="user-level">{{ t('user.unitLabel', { unit: userUnitLabel }) }}</div>
         </button>
-        <button class="logout-btn" type="button" aria-label="退出登录" @click="handleLogout">
-          退出
+        <button
+          class="logout-btn"
+          type="button"
+          :aria-label="t('nav.logout')"
+          @click="handleLogout"
+        >
+          {{ t('nav.logout') }}
         </button>
       </div>
     </div>
@@ -46,14 +53,14 @@
         <input
           :value="search"
           type="text"
-          :placeholder="searchPlaceholder"
+          :placeholder="resolvedSearchPlaceholder"
           @input="updateSearch"
         />
         <button
           v-if="search"
           class="portal-search-clear"
           type="button"
-          aria-label="清空搜索"
+          :aria-label="t('portal.search.clear')"
           @click="clearSearch"
         >
           ×
@@ -70,15 +77,16 @@ import { useRoute, useRouter } from 'vue-router';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import { useAuthStore } from '@/stores/auth';
 import { isDemoMode } from '@/utils/demo';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   title: {
     type: String,
-    default: '世界'
+    default: ''
   },
   subtitle: {
     type: String,
-    default: '面向用户的智能体入口'
+    default: ''
   },
   showSearch: {
     type: Boolean,
@@ -90,7 +98,7 @@ const props = defineProps({
   },
   searchPlaceholder: {
     type: String,
-    default: '搜索智能体应用'
+    default: ''
   },
   hideChat: {
     type: Boolean,
@@ -103,23 +111,30 @@ const emit = defineEmits(['update:search']);
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const { t } = useI18n();
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
 const navItems = computed(() => {
   const items = [
-    { label: '世界', path: `${basePath.value}/home` },
-    { label: '工具管理', path: `${basePath.value}/tools` },
-    { label: '聊天', path: `${basePath.value}/chat` }
+    { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-globe' },
+    { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-sliders' },
+    { key: 'nav.chat', label: t('nav.chat'), path: `${basePath.value}/chat`, icon: 'fa-comment-dots' }
   ];
-  return props.hideChat ? items.filter((item) => item.label !== '聊天') : items;
+  return props.hideChat ? items.filter((item) => item.key !== 'nav.chat') : items;
 });
 
-const userName = computed(() => authStore.user?.username || '访客');
+const userName = computed(() => authStore.user?.username || t('user.guest'));
 const userUnitLabel = computed(() => {
   const unit = authStore.user?.unit;
   return unit?.path_name || unit?.pathName || unit?.name || authStore.user?.unit_id || '-';
 });
+
+const resolvedTitle = computed(() => props.title || t('portal.title'));
+const resolvedSubtitle = computed(() => props.subtitle || t('portal.subtitle'));
+const resolvedSearchPlaceholder = computed(
+  () => props.searchPlaceholder || t('portal.search.placeholder')
+);
 
 const updateSearch = (event) => {
   emit('update:search', event.target.value);

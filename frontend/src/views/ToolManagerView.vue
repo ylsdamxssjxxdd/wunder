@@ -1,8 +1,8 @@
 <template>
   <div class="portal-shell tool-manager-shell">
     <UserTopbar
-      title="工具管理"
-      subtitle="查看管理员开放工具，并配置你的 MCP、技能与知识库"
+      :title="t('toolManager.title')"
+      :subtitle="t('toolManager.subtitle')"
       :hide-chat="true"
     />
     <main class="portal-content">
@@ -10,22 +10,22 @@
         <div class="portal-main-scroll">
           <section class="portal-section tool-manager-section">
             <div class="portal-section-header">
-              <div>
-                <div class="portal-section-title">工具分类</div>
-                <div class="portal-section-desc">查看管理员开放工具，并配置你的工具分类</div>
+                <div>
+                <div class="portal-section-title">{{ t('toolManager.section.title') }}</div>
+                <div class="portal-section-desc">{{ t('toolManager.section.desc') }}</div>
               </div>
             </div>
             <div class="user-tools-dialog user-tools-page tool-manager-page">
               <div class="user-tools-modal">
                 <div class="user-tools-sidebar">
-                  <div class="user-tools-sidebar-title">工具分类</div>
+                  <div class="user-tools-sidebar-title">{{ t('toolManager.section.title') }}</div>
                   <button
                     class="user-tools-tab"
                     :class="{ active: activeTab === 'system' }"
                     type="button"
                     @click="activeTab = 'system'"
                   >
-                    开放工具
+                    {{ t('toolManager.section.systemTitle') }}
                   </button>
                   <button
                     class="user-tools-tab"
@@ -33,7 +33,7 @@
                     type="button"
                     @click="activeTab = 'mcp'"
                   >
-                    MCP 工具
+                    {{ t('toolManager.system.mcp') }}
                   </button>
                   <button
                     class="user-tools-tab"
@@ -41,7 +41,7 @@
                     type="button"
                     @click="activeTab = 'skills'"
                   >
-                    技能工具
+                    {{ t('toolManager.system.skills') }}
                   </button>
                   <button
                     class="user-tools-tab"
@@ -49,7 +49,7 @@
                     type="button"
                     @click="activeTab = 'knowledge'"
                   >
-                    知识库工具
+                    {{ t('toolManager.system.knowledge') }}
                   </button>
                   <button
                     class="user-tools-tab"
@@ -57,19 +57,21 @@
                     type="button"
                     @click="activeTab = 'shared'"
                   >
-                    共享工具
+                    {{ t('toolManager.section.shared') }}
                   </button>
                 </div>
                 <div class="user-tools-content">
                   <div v-show="activeTab === 'system'" class="user-tools-pane tool-catalog-pane">
                     <div class="list-header">
-                      <label>管理员开放工具</label>
-                      <div class="tool-catalog-meta">共 {{ systemToolCount }} 项</div>
+                      <label>{{ t('toolManager.section.systemTitle') }}</label>
+                      <div class="tool-catalog-meta">
+                        {{ t('toolManager.section.systemCount', { count: systemToolCount }) }}
+                      </div>
                     </div>
-                    <div class="muted">管理员开放工具仅可查看。</div>
+                    <div class="muted">{{ t('toolManager.section.systemDesc') }}</div>
                     <div class="tool-catalog-grid">
                       <div v-if="!systemToolGroups.length" class="tool-catalog-empty">
-                        暂无可用工具
+                        {{ t('toolManager.empty') }}
                       </div>
                       <div
                         v-for="group in systemToolGroups"
@@ -79,7 +81,9 @@
                         <div class="tool-catalog-header">
                           <div class="tool-catalog-title">{{ group.title }}</div>
                         </div>
-                        <div class="tool-catalog-meta">{{ group.items.length }} 项</div>
+                        <div class="tool-catalog-meta">
+                          {{ t('toolManager.section.systemCount', { count: group.items.length }) }}
+                        </div>
                         <div class="tool-catalog-tags">
                           <span
                             v-for="item in group.items"
@@ -89,7 +93,9 @@
                           >
                             {{ item.name }}
                           </span>
-                          <span v-if="!group.items.length" class="tool-catalog-empty">暂无</span>
+                          <span v-if="!group.items.length" class="tool-catalog-empty">
+                            {{ t('common.none') }}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -136,10 +142,12 @@ import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
+import { useI18n } from '@/i18n';
 
 const toolCatalog = ref(null);
 const activeTab = ref('system');
 const statusMessage = ref('');
+const { t } = useI18n();
 
 const updateStatus = (message) => {
   statusMessage.value = message || '';
@@ -151,27 +159,22 @@ const systemToolGroups = computed(() => {
   return [
     {
       key: 'builtin',
-      title: '内置工具',
+      title: t('toolManager.system.builtin'),
       items: normalizeList(payload.builtin_tools)
     },
     {
       key: 'mcp',
-      title: 'MCP 工具',
+      title: t('toolManager.system.mcp'),
       items: normalizeList(payload.mcp_tools)
     },
     {
-      key: 'a2a',
-      title: 'A2A 工具',
-      items: normalizeList(payload.a2a_tools)
-    },
-    {
       key: 'skills',
-      title: '技能工具',
+      title: t('toolManager.system.skills'),
       items: normalizeList(payload.skills)
     },
     {
       key: 'knowledge',
-      title: '知识库工具',
+      title: t('toolManager.system.knowledge'),
       items: normalizeList(payload.knowledge_tools)
     }
   ].filter((group) => group.items.length > 0);
@@ -186,7 +189,7 @@ const loadCatalog = async () => {
     const { data } = await fetchUserToolsCatalog();
     toolCatalog.value = data?.data || null;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '工具清单加载失败');
+    ElMessage.error(error.response?.data?.detail || t('toolManager.loadFailed'));
   }
 };
 

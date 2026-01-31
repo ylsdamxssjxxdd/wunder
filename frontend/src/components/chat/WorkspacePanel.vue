@@ -1,13 +1,13 @@
 ﻿<template>
   <div class="workspace-panel">
     <div class="workspace-header">
-    <div class="workspace-title">沙盒容器</div>
+    <div class="workspace-title">{{ t('workspace.title') }}</div>
       <div class="workspace-header-actions">
         <button
           class="workspace-icon-btn"
           :disabled="!canGoUp"
-          title="上级"
-          aria-label="上级"
+          :title="t('workspace.action.up')"
+          :aria-label="t('workspace.action.up')"
           @click="handleGoUp"
           @dragover="handleUpDragOver"
           @dragleave="handleUpDragLeave"
@@ -17,19 +17,34 @@
         </button>
         <button
           class="workspace-icon-btn"
-          title="刷新"
-          aria-label="刷新"
+          :title="t('common.refresh')"
+          :aria-label="t('common.refresh')"
           @click="refreshWorkspace"
         >
           <i class="fa-solid fa-rotate workspace-icon" aria-hidden="true"></i>
         </button>
-        <button class="workspace-icon-btn" title="清空" aria-label="清空" @click="clearWorkspaceCurrent">
+        <button
+          class="workspace-icon-btn"
+          :title="t('workspace.action.clear')"
+          :aria-label="t('workspace.action.clear')"
+          @click="clearWorkspaceCurrent"
+        >
           <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
         </button>
-        <button class="workspace-icon-btn" title="上传" aria-label="上传" @click="triggerUpload">
+        <button
+          class="workspace-icon-btn"
+          :title="t('common.upload')"
+          :aria-label="t('common.upload')"
+          @click="triggerUpload"
+        >
           <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
         </button>
-        <button class="workspace-icon-btn" title="全下" aria-label="全下" @click="downloadArchive">
+        <button
+          class="workspace-icon-btn"
+          :title="t('workspace.action.downloadAll')"
+          :aria-label="t('workspace.action.downloadAll')"
+          @click="downloadArchive"
+        >
           <i class="fa-solid fa-download workspace-icon" aria-hidden="true"></i>
         </button>
       </div>
@@ -60,7 +75,7 @@
       @drop="handleListDrop"
       @contextmenu.prevent="openContextMenu($event, null)"
     >
-      <div v-if="loading" class="workspace-empty">加载中...</div>
+      <div v-if="loading" class="workspace-empty">{{ t('common.loading') }}</div>
       <div v-else-if="displayEntries.length === 0" class="workspace-empty">{{ emptyText }}</div>
       <template v-else>
         <div
@@ -97,7 +112,7 @@
                 expanded: state.expanded.has(item.entry.path)
               }"
               type="button"
-              aria-label="展开目录"
+              :aria-label="t('workspace.action.expandDir')"
               @click.stop="toggleWorkspaceDirectory(item.entry)"
             >
               <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
@@ -139,7 +154,7 @@
         <input
           v-model="searchKeyword"
           type="text"
-          placeholder="搜索工作区（名称）"
+          :placeholder="t('workspace.search.placeholder')"
           @input="handleSearchInput"
           @keydown="handleSearchKeydown"
         />
@@ -156,32 +171,48 @@
       :style="menuStyle"
       @contextmenu.prevent
     >
-      <button class="workspace-menu-btn" @click="handleNewFile">新建文件</button>
-      <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">编辑</button>
+      <button class="workspace-menu-btn" @click="handleNewFile">
+        {{ t('workspace.menu.newFile') }}
+      </button>
+      <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">
+        {{ t('common.edit') }}
+      </button>
       <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleRename">
-        重命名
+        {{ t('workspace.menu.rename') }}
       </button>
       <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleMove">
-        移动
+        {{ t('workspace.menu.move') }}
       </button>
       <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleCopy">
-        复制
+        {{ t('workspace.menu.copy') }}
       </button>
-      <button class="workspace-menu-btn" @click="handleNewFolder">新建文件夹</button>
+      <button class="workspace-menu-btn" @click="handleNewFolder">
+        {{ t('workspace.menu.newFolder') }}
+      </button>
       <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleDownload">
-        下载
+        {{ t('common.download') }}
       </button>
       <button class="workspace-menu-btn danger" :disabled="!hasSelection" @click="handleDelete">
-        删除
+        {{ t('common.delete') }}
       </button>
     </div>
 
-    <el-dialog v-model="preview.visible" title="文件预览" width="720px" class="workspace-dialog" append-to-body>
-      <div class="workspace-preview-title">{{ preview.entry?.name || '文件预览' }}</div>
+    <el-dialog
+      v-model="preview.visible"
+      :title="t('workspace.preview.dialogTitle')"
+      width="720px"
+      class="workspace-dialog"
+      append-to-body
+    >
+      <div class="workspace-preview-title">
+        {{ preview.entry?.name || t('workspace.preview.dialogTitle') }}
+      </div>
       <div class="workspace-preview-meta">{{ previewMeta }}</div>
       <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
       <div class="workspace-preview" :class="{ embed: preview.embed, 'is-svg': preview.type === 'svg' }">
-        <div v-if="preview.loading" class="workspace-empty">预览加载中...</div>
+        <div v-if="preview.loading" class="workspace-empty">
+          {{ t('workspace.preview.loading') }}
+        </div>
         <template v-else>
           <img v-if="preview.embed && preview.type === 'image'" :src="preview.url" />
           <iframe v-else-if="preview.embed && (preview.type === 'pdf' || preview.type === 'svg')" :src="preview.url" />
@@ -189,23 +220,37 @@
         </template>
       </div>
       <template #footer>
-        <button class="workspace-btn secondary" @click="downloadPreview">下载</button>
-        <button class="workspace-btn secondary" @click="closePreview">关闭</button>
+        <button class="workspace-btn secondary" @click="downloadPreview">
+          {{ t('common.download') }}
+        </button>
+        <button class="workspace-btn secondary" @click="closePreview">
+          {{ t('common.close') }}
+        </button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editor.visible" title="编辑文件" width="720px" class="workspace-dialog" append-to-body>
-      <div class="workspace-preview-title">{{ editor.entry?.name || '编辑文件' }}</div>
+    <el-dialog
+      v-model="editor.visible"
+      :title="t('workspace.editor.dialogTitle')"
+      width="720px"
+      class="workspace-dialog"
+      append-to-body
+    >
+      <div class="workspace-preview-title">
+        {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+      </div>
       <div class="workspace-preview-meta">{{ editor.entry?.path || '' }}</div>
       <textarea
         v-model="editor.content"
         class="workspace-editor-text"
         :disabled="editor.loading"
-        placeholder="加载中..."
+        :placeholder="t('common.loading')"
       />
       <template #footer>
-        <button class="workspace-btn secondary" @click="closeEditor">关闭</button>
-        <button class="workspace-btn" :disabled="editor.loading" @click="saveEditor">保存</button>
+        <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>
+        <button class="workspace-btn" :disabled="editor.loading" @click="saveEditor">
+          {{ t('common.save') }}
+        </button>
       </template>
     </el-dialog>
   </div>
@@ -227,6 +272,7 @@ import {
   uploadWunderWorkspace
 } from '@/api/workspace';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   agentId: {
@@ -234,6 +280,8 @@ const props = defineProps({
     default: ''
   }
 });
+
+const { t } = useI18n();
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -361,8 +409,12 @@ const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
 const contextMenu = computed(() => state.contextMenu);
 const selectedCount = computed(() => state.selectedPaths.size);
-const selectionMeta = computed(() => (selectedCount.value ? `已选择 ${selectedCount.value} 项` : ''));
-const emptyText = computed(() => (state.searchMode ? '未找到匹配文件。' : '暂无文件'));
+const selectionMeta = computed(() =>
+  selectedCount.value ? t('workspace.selection', { count: selectedCount.value }) : ''
+);
+const emptyText = computed(() =>
+  state.searchMode ? t('workspace.empty.search') : t('workspace.empty')
+);
 const searchKeyword = computed({
   get: () => state.searchKeyword,
   set: (value) => {
@@ -437,7 +489,7 @@ const canEdit = computed(() => singleSelectedEntry.value && isWorkspaceTextEdita
 const menuStyle = computed(() => ({ left: `${state.contextMenu.x}px`, top: `${state.contextMenu.y}px` }));
 const uploadProgressText = computed(() => {
   if (!uploadProgress.active) return '';
-  const baseLabel = '上传';
+  const baseLabel = t('common.upload');
   const hasTotal = Number.isFinite(uploadProgress.total) && uploadProgress.total > 0;
   const hasLoaded = Number.isFinite(uploadProgress.loaded) && uploadProgress.loaded > 0;
   if (hasTotal) {
@@ -445,14 +497,20 @@ const uploadProgressText = computed(() => {
       0,
       Math.min(100, Math.round((uploadProgress.loaded / uploadProgress.total) * 100))
     );
-    return `${baseLabel} ${safePercent}% · ${formatBytes(uploadProgress.loaded)} / ${formatBytes(
-      uploadProgress.total
-    )}`;
+    return t('workspace.upload.progress.full', {
+      label: baseLabel,
+      percent: safePercent,
+      loaded: formatBytes(uploadProgress.loaded),
+      total: formatBytes(uploadProgress.total)
+    });
   }
   if (hasLoaded) {
-    return `${baseLabel} · ${formatBytes(uploadProgress.loaded)}`;
+    return t('workspace.upload.progress.partial', {
+      label: baseLabel,
+      loaded: formatBytes(uploadProgress.loaded)
+    });
   }
-  return `${baseLabel}...`;
+  return t('workspace.upload.progress.loading', { label: baseLabel });
 });
 const uploadProgressBarStyle = computed(() => {
   if (!uploadProgress.active) {
@@ -531,26 +589,50 @@ const isWorkspaceTextEditable = (entry) => {
 };
 
 const getEntryIcon = (entry) => {
-  if (entry.type === 'dir') return { text: 'D', className: 'icon-folder', label: '目录' };
+  if (entry.type === 'dir') {
+    return { text: 'D', className: 'icon-folder', label: t('workspace.icon.folder') };
+  }
   const ext = getWorkspaceExtension(entry);
-  if (IMAGE_EXTENSIONS.has(ext)) return { text: 'I', className: 'icon-image', label: '图片' };
-  if (PDF_EXTENSIONS.has(ext)) return { text: 'P', className: 'icon-pdf', label: 'PDF' };
-  if (OFFICE_WORD_EXTENSIONS.has(ext)) return { text: 'W', className: 'icon-word', label: 'Word' };
-  if (OFFICE_EXCEL_EXTENSIONS.has(ext)) return { text: 'X', className: 'icon-excel', label: 'Excel' };
-  if (OFFICE_PPT_EXTENSIONS.has(ext)) return { text: 'P', className: 'icon-ppt', label: 'PPT' };
-  if (ARCHIVE_EXTENSIONS.has(ext)) return { text: 'Z', className: 'icon-archive', label: '压缩包' };
-  if (AUDIO_EXTENSIONS.has(ext)) return { text: 'A', className: 'icon-audio', label: '音频' };
-  if (VIDEO_EXTENSIONS.has(ext)) return { text: 'V', className: 'icon-video', label: '视频' };
-  if (CODE_EXTENSIONS.has(ext)) return { text: 'C', className: 'icon-code', label: '代码' };
-  if (TEXT_EXTENSIONS.has(ext)) return { text: 'T', className: 'icon-text', label: '文本' };
-  if (OFFICE_EXTENSIONS.has(ext)) return { text: 'O', className: 'icon-office', label: '办公文档' };
-  return { text: 'F', className: 'icon-file', label: '文件' };
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    return { text: 'I', className: 'icon-image', label: t('workspace.icon.image') };
+  }
+  if (PDF_EXTENSIONS.has(ext)) {
+    return { text: 'P', className: 'icon-pdf', label: t('workspace.icon.pdf') };
+  }
+  if (OFFICE_WORD_EXTENSIONS.has(ext)) {
+    return { text: 'W', className: 'icon-word', label: t('workspace.icon.word') };
+  }
+  if (OFFICE_EXCEL_EXTENSIONS.has(ext)) {
+    return { text: 'X', className: 'icon-excel', label: t('workspace.icon.excel') };
+  }
+  if (OFFICE_PPT_EXTENSIONS.has(ext)) {
+    return { text: 'P', className: 'icon-ppt', label: t('workspace.icon.ppt') };
+  }
+  if (ARCHIVE_EXTENSIONS.has(ext)) {
+    return { text: 'Z', className: 'icon-archive', label: t('workspace.icon.archive') };
+  }
+  if (AUDIO_EXTENSIONS.has(ext)) {
+    return { text: 'A', className: 'icon-audio', label: t('workspace.icon.audio') };
+  }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { text: 'V', className: 'icon-video', label: t('workspace.icon.video') };
+  }
+  if (CODE_EXTENSIONS.has(ext)) {
+    return { text: 'C', className: 'icon-code', label: t('workspace.icon.code') };
+  }
+  if (TEXT_EXTENSIONS.has(ext)) {
+    return { text: 'T', className: 'icon-text', label: t('workspace.icon.text') };
+  }
+  if (OFFICE_EXTENSIONS.has(ext)) {
+    return { text: 'O', className: 'icon-office', label: t('workspace.icon.office') };
+  }
+  return { text: 'F', className: 'icon-file', label: t('workspace.icon.file') };
 };
 
 const getEntryMeta = (entry) => {
   const parts = [];
   if (entry.type === 'dir') {
-    parts.push('目录');
+    parts.push(t('workspace.meta.folder'));
   } else {
     parts.push(formatBytes(entry.size || 0));
   }
@@ -651,11 +733,11 @@ const toggleWorkspaceSelection = (path) => {
 
 const getWorkspaceSelectionPaths = () => Array.from(state.selectedPaths);
 
-const confirmAction = async (message, title = '提示') => {
+const confirmAction = async (message, title = t('common.notice')) => {
   try {
     await ElMessageBox.confirm(message, title, {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning'
     });
     return true;
@@ -666,14 +748,14 @@ const confirmAction = async (message, title = '提示') => {
 
 const promptInput = async (message, options = {}) => {
   const {
-    title = '提示',
+    title = t('common.notice'),
     placeholder = '',
     defaultValue = ''
   } = options;
   try {
     const { value } = await ElMessageBox.prompt(message, title, {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
       inputValue: defaultValue,
       inputPlaceholder: placeholder
     });
@@ -722,7 +804,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     await hydrateExpandedEntries();
     return true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '工作区加载失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.loadFailed'));
     state.entries = [];
     return false;
   } finally {
@@ -752,7 +834,7 @@ const loadWorkspaceSearch = async () => {
     state.searchMode = true;
     return true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '搜索失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.searchFailed'));
     state.entries = [];
     return false;
   } finally {
@@ -831,25 +913,31 @@ const toggleWorkspaceDirectory = async (entry) => {
   } catch (error) {
     state.expanded.delete(entry.path);
     state.expanded = new Set(state.expanded);
-    ElMessage.error(error.response?.data?.detail || '目录展开失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.expandFailed'));
   }
 };
 
 const refreshWorkspace = async () => {
   const ok = await reloadWorkspaceView();
   if (ok) {
-    ElMessage.success(state.searchMode ? '搜索结果已刷新' : '工作区已刷新');
+    ElMessage.success(
+      state.searchMode ? t('workspace.refresh.searchSuccess') : t('workspace.refresh.success')
+    );
   }
 };
 
 const clearWorkspaceCurrent = async () => {
   const display = displayPath.value;
   try {
-    await ElMessageBox.confirm(`确认清空 ${display} 下所有内容吗？`, '清空沙盒容器', {
-      confirmButtonText: '清空',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
+    await ElMessageBox.confirm(
+      t('workspace.clear.confirm', { path: display }),
+      t('workspace.clear.title'),
+      {
+        confirmButtonText: t('workspace.clear.action'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
   } catch (error) {
     return;
   }
@@ -863,17 +951,17 @@ const clearWorkspaceCurrent = async () => {
     }));
     const entries = Array.isArray(data?.entries) ? data.entries : [];
     if (!entries.length) {
-      ElMessage.info('当前目录为空，无需清空');
+      ElMessage.info(t('workspace.clear.empty'));
       return;
     }
     const response = await batchWunderWorkspaceAction(withAgentParams({
       action: 'delete',
       paths: entries.map((entry) => entry.path)
     }));
-    notifyBatchResult(response.data, '清空');
+    notifyBatchResult(response.data, t('workspace.action.clear'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '清空失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.clear.failed'));
   }
 };
 
@@ -917,7 +1005,9 @@ const uploadWorkspaceFiles = async (files, targetPath, options = {}) => {
   const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
   // 对齐 Wunder 上传限制：单次上传总大小不超过 200MB
   if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
-    throw new Error(`上传文件总大小超过限制（上限 ${formatBytes(MAX_WORKSPACE_UPLOAD_BYTES)}）`);
+    throw new Error(
+      t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) })
+    );
   }
   const formData = new FormData();
   formData.append('path', normalizeWorkspacePath(targetPath));
@@ -955,9 +1045,9 @@ const handleUploadInput = async (event) => {
   if (!files.length) return;
   try {
     await uploadWorkspaceFiles(files, state.path);
-    ElMessage.success('上传完成');
+    ElMessage.success(t('workspace.upload.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || error.message || '上传失败');
+    ElMessage.error(error.response?.data?.detail || error.message || t('workspace.upload.failed'));
   }
 };
 
@@ -1094,11 +1184,11 @@ const finishWorkspaceRename = async (entry, nextName) => {
   if (!entry || state.renamingPath !== entry.path) return;
   state.renamingPath = '';
   const trimmed = String(nextName || '').trim();
-  if (!trimmed || !isValidWorkspaceName(trimmed)) {
-    ElMessage.warning('名称不能为空且不能包含斜杠');
-    state.renamingValue = '';
-    return;
-  }
+    if (!trimmed || !isValidWorkspaceName(trimmed)) {
+      ElMessage.warning(t('workspace.name.invalid'));
+      state.renamingValue = '';
+      return;
+    }
   if (trimmed === entry.name) {
     state.renamingValue = '';
     return;
@@ -1107,142 +1197,150 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const destination = joinWorkspacePath(parentPath, trimmed);
   try {
     await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
-    await reloadWorkspaceView();
-    ElMessage.success('已重命名');
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '重命名失败');
-  } finally {
-    state.renamingValue = '';
-  }
+      await reloadWorkspaceView();
+      ElMessage.success(t('workspace.rename.success'));
+    } catch (error) {
+      ElMessage.error(error.response?.data?.detail || t('workspace.rename.failed'));
+    } finally {
+      state.renamingValue = '';
+    }
 };
 
 const notifyBatchResult = (payload, actionLabel) => {
   const data = payload?.data || {};
   const failed = Array.isArray(data.failed) ? data.failed : [];
   const succeeded = Array.isArray(data.succeeded) ? data.succeeded : [];
-  if (failed.length) {
-    ElMessage.warning(`${actionLabel}完成：成功 ${succeeded.length} 项，失败 ${failed.length} 项`);
-  } else {
-    ElMessage.success(`${actionLabel}完成`);
-  }
-};
+    if (failed.length) {
+      ElMessage.warning(
+        t('workspace.batch.partial', {
+          action: actionLabel,
+          success: succeeded.length,
+          failed: failed.length
+        })
+      );
+    } else {
+      ElMessage.success(t('workspace.batch.success', { action: actionLabel }));
+    }
+  };
 
 const deleteWorkspaceSelection = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) return;
   const confirmed = await confirmAction(
-    selectedPaths.length === 1 ? '确认删除所选条目吗？' : `确认删除所选 ${selectedPaths.length} 项吗？`
+    selectedPaths.length === 1
+      ? t('workspace.delete.confirm.single')
+      : t('workspace.delete.confirm.multi', { count: selectedPaths.length })
   );
   if (!confirmed) return;
   try {
     const response = await batchWunderWorkspaceAction(
       withAgentParams({ action: 'delete', paths: selectedPaths })
     );
-    notifyBatchResult(response.data, '删除');
+    notifyBatchResult(response.data, t('common.delete'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '删除失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.delete.failed'));
   }
 };
 
-const moveWorkspaceSelectionToDirectory = async () => {
-  const selectedPaths = getWorkspaceSelectionPaths();
-  if (!selectedPaths.length) {
-    ElMessage.info('未选择任何条目');
-    return;
-  }
-  const targetDirInput = await promptInput('请输入目标目录（相对路径，留空为根目录）', {
-    placeholder: '例如：project/docs',
-    defaultValue: ''
-  });
-  if (targetDirInput === null) return;
-  const targetDir = normalizeWorkspacePath(targetDirInput.trim());
-  if (!isValidWorkspacePath(targetDir)) {
-    ElMessage.warning('目录格式不正确，不能包含非法路径段');
-    return;
-  }
-  try {
-    const response = await batchWunderWorkspaceAction(withAgentParams({
-      action: 'move',
-      paths: selectedPaths,
-      destination: targetDir
-    }));
-    notifyBatchResult(response.data, '移动');
-    await reloadWorkspaceView();
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '移动失败');
-  }
-};
+  const moveWorkspaceSelectionToDirectory = async () => {
+    const selectedPaths = getWorkspaceSelectionPaths();
+    if (!selectedPaths.length) {
+      ElMessage.info(t('workspace.selection.empty'));
+      return;
+    }
+    const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+      placeholder: t('workspace.move.placeholder'),
+      defaultValue: ''
+    });
+    if (targetDirInput === null) return;
+    const targetDir = normalizeWorkspacePath(targetDirInput.trim());
+    if (!isValidWorkspacePath(targetDir)) {
+      ElMessage.warning(t('workspace.path.invalid'));
+      return;
+    }
+    try {
+      const response = await batchWunderWorkspaceAction(withAgentParams({
+        action: 'move',
+        paths: selectedPaths,
+        destination: targetDir
+      }));
+      notifyBatchResult(response.data, t('workspace.action.move'));
+      await reloadWorkspaceView();
+    } catch (error) {
+      ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
+    }
+  };
 
-const copyWorkspaceSelectionToDirectory = async () => {
-  const selectedPaths = getWorkspaceSelectionPaths();
-  if (!selectedPaths.length) {
-    ElMessage.info('未选择任何条目');
-    return;
-  }
-  const targetDirInput = await promptInput('请输入目标目录（相对路径，留空为根目录）', {
-    placeholder: '例如：project/docs',
-    defaultValue: ''
-  });
-  if (targetDirInput === null) return;
-  const targetDir = normalizeWorkspacePath(targetDirInput.trim());
-  if (!isValidWorkspacePath(targetDir)) {
-    ElMessage.warning('目录格式不正确，不能包含非法路径段');
-    return;
-  }
-  try {
-    const response = await batchWunderWorkspaceAction(withAgentParams({
-      action: 'copy',
-      paths: selectedPaths,
-      destination: targetDir
-    }));
-    notifyBatchResult(response.data, '复制');
-    await reloadWorkspaceView();
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '复制失败');
-  }
-};
+  const copyWorkspaceSelectionToDirectory = async () => {
+    const selectedPaths = getWorkspaceSelectionPaths();
+    if (!selectedPaths.length) {
+      ElMessage.info(t('workspace.selection.empty'));
+      return;
+    }
+    const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+      placeholder: t('workspace.move.placeholder'),
+      defaultValue: ''
+    });
+    if (targetDirInput === null) return;
+    const targetDir = normalizeWorkspacePath(targetDirInput.trim());
+    if (!isValidWorkspacePath(targetDir)) {
+      ElMessage.warning(t('workspace.path.invalid'));
+      return;
+    }
+    try {
+      const response = await batchWunderWorkspaceAction(withAgentParams({
+        action: 'copy',
+        paths: selectedPaths,
+        destination: targetDir
+      }));
+      notifyBatchResult(response.data, t('workspace.action.copy'));
+      await reloadWorkspaceView();
+    } catch (error) {
+      ElMessage.error(error.response?.data?.detail || t('workspace.copy.failed'));
+    }
+  };
 
 const moveWorkspaceEntryToDirectory = async (entry) => {
   if (!entry) return;
-  const targetDirInput = await promptInput('请输入目标目录（相对路径，留空为根目录）', {
-    placeholder: '例如：project/docs',
+  const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+    placeholder: t('workspace.move.placeholder'),
     defaultValue: ''
   });
   if (targetDirInput === null) return;
   const targetDir = normalizeWorkspacePath(targetDirInput.trim());
   if (!isValidWorkspacePath(targetDir)) {
-    ElMessage.warning('目录格式不正确，不能包含非法路径段');
+    ElMessage.warning(t('workspace.path.invalid'));
     return;
   }
   const sourceName = entry.name || entry.path.split('/').pop();
   if (!sourceName) {
-    ElMessage.error('无法解析源文件名称');
+    ElMessage.error(t('workspace.move.sourceMissing'));
     return;
   }
   const destination = joinWorkspacePath(targetDir, sourceName);
   if (destination === entry.path) {
-    ElMessage.info('目标目录与当前目录一致');
+    ElMessage.info(t('workspace.move.sameDir'));
     return;
   }
   try {
     await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
     await reloadWorkspaceView();
-    ElMessage.success(`已移动到 ${targetDir || '/'}`);
+    ElMessage.success(t('workspace.move.success', { target: targetDir || '/' }));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '移动失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
   }
 };
 
 const createWorkspaceFile = async () => {
-  const fileName = await promptInput('请输入新文件名称', {
-    placeholder: '例如：notes.txt',
+  const fileName = await promptInput(t('workspace.createFile.prompt'), {
+    placeholder: t('workspace.createFile.placeholder'),
     defaultValue: 'untitled.txt'
   });
   if (fileName === null) return;
   const trimmed = String(fileName || '').trim();
   if (!isValidWorkspaceName(trimmed)) {
-    ElMessage.warning('名称不能为空且不能包含斜杠');
+    ElMessage.warning(t('workspace.name.invalid'));
     return;
   }
   const targetPath = joinWorkspacePath(state.path, trimmed);
@@ -1251,29 +1349,29 @@ const createWorkspaceFile = async () => {
       withAgentParams({ path: targetPath, content: '', create_if_missing: true })
     );
     await reloadWorkspaceView();
-    ElMessage.success(`已创建文件 ${trimmed}`);
+    ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '创建文件失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.createFile.failed'));
   }
 };
 
 const createWorkspaceFolder = async () => {
-  const folderName = await promptInput('请输入新文件夹名称', {
-    placeholder: '例如：docs'
+  const folderName = await promptInput(t('workspace.createFolder.prompt'), {
+    placeholder: t('workspace.createFolder.placeholder')
   });
   if (folderName === null) return;
   const trimmed = String(folderName || '').trim();
   if (!isValidWorkspaceName(trimmed)) {
-    ElMessage.warning('名称不能为空且不能包含斜杠');
+    ElMessage.warning(t('workspace.name.invalid'));
     return;
   }
   const targetPath = joinWorkspacePath(state.path, trimmed);
   try {
     await createWunderWorkspaceDir(withAgentParams({ path: targetPath }));
     await reloadWorkspaceView();
-    ElMessage.success('文件夹已创建');
+    ElMessage.success(t('workspace.createFolder.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '创建失败');
+    ElMessage.error(error.response?.data?.detail || t('workspace.createFolder.failed'));
   }
 };
 
@@ -1292,7 +1390,7 @@ const saveBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename || 'download';
+  link.download = filename || t('workspace.download.defaultName');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -1303,15 +1401,21 @@ const downloadEntry = async (entry) => {
   try {
     if (entry.type === 'dir') {
       const response = await downloadWunderWorkspaceArchive(withAgentParams({ path: entry.path }));
-      const filename = getFilenameFromHeaders(response.headers, `${entry.name || 'folder'}.zip`);
+      const filename = getFilenameFromHeaders(
+        response.headers,
+        `${entry.name || t('workspace.download.folder')}.zip`
+      );
       saveBlob(response.data, filename);
       return;
     }
     const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
-    const filename = getFilenameFromHeaders(response.headers, entry.name || 'download');
+    const filename = getFilenameFromHeaders(
+      response.headers,
+      entry.name || t('workspace.download.defaultName')
+    );
     saveBlob(response.data, filename);
   } catch (error) {
-    ElMessage.error('下载失败');
+    ElMessage.error(t('workspace.download.failed'));
   }
 };
 
@@ -1320,9 +1424,9 @@ const downloadArchive = async () => {
     const response = await downloadWunderWorkspaceArchive(withAgentParams({}));
     const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
     saveBlob(response.data, filename);
-    ElMessage.success('压缩包已下载');
+    ElMessage.success(t('workspace.download.archiveSuccess'));
   } catch (error) {
-    ElMessage.error('压缩包下载失败');
+    ElMessage.error(t('workspace.download.archiveFailed'));
   }
 };
 
@@ -1446,9 +1550,11 @@ const handleListDrop = async (event) => {
   if (!dropped.length) return;
   try {
     await uploadWorkspaceGroups(dropped, state.path);
-    ElMessage.success('拖拽上传完成');
+    ElMessage.success(t('workspace.dragUpload.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || error.message || '拖拽上传失败');
+    ElMessage.error(
+      error.response?.data?.detail || error.message || t('workspace.dragUpload.failed')
+    );
   }
 };
 
@@ -1505,7 +1611,7 @@ const filterMoveTargets = (paths, targetDir) => {
     filtered.push(normalized);
   });
   if (blocked) {
-    ElMessage.warning('不能移动到自身或子目录');
+    ElMessage.warning(t('workspace.move.blocked'));
   }
   return filtered;
 };
@@ -1529,10 +1635,10 @@ const handleItemDrop = async (event, entry) => {
           destination: targetDir
         })
       );
-      notifyBatchResult(response.data, `移动到 ${entry.name || '目录'}`);
+      notifyBatchResult(response.data, t('workspace.move.toFolder', { name: entry.name || t('workspace.meta.folder') }));
       await reloadWorkspaceView();
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || '移动失败');
+      ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
     }
     return;
   }
@@ -1540,9 +1646,11 @@ const handleItemDrop = async (event, entry) => {
   if (!dropped.length) return;
   try {
     await uploadWorkspaceGroups(dropped, entry.path);
-    ElMessage.success('拖拽上传完成');
+    ElMessage.success(t('workspace.dragUpload.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || error.message || '拖拽上传失败');
+    ElMessage.error(
+      error.response?.data?.detail || error.message || t('workspace.dragUpload.failed')
+    );
   }
 };
 

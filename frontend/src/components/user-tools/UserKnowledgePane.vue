@@ -1,27 +1,26 @@
 <template>
   <div class="user-tools-pane">
     <div class="list-header">
-      <label>知识库管理</label>
+      <label>{{ t('userTools.knowledge.title') }}</label>
       <div class="header-actions">
         <button class="user-tools-btn secondary btn-with-icon" type="button" @click="addBase">
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
-          <span>新增</span>
+          <span>{{ t('knowledge.action.add') }}</span>
         </button>
         <button class="user-tools-btn secondary btn-with-icon" type="button" @click="refreshConfig">
           <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-          <span>刷新</span>
+          <span>{{ t('knowledge.action.refresh') }}</span>
         </button>
       </div>
     </div>
     <div class="tips">
-      字面知识库目录固定在 data/user_tools/&lt;user&gt;/knowledge，向量知识库存储在
-      vector_knowledge/users/&lt;user&gt;。工具名称会以 user_id@知识库名 展示，新增或编辑在弹窗中完成。
+      {{ t('userTools.knowledge.tip') }}
     </div>
 
     <div class="management-layout knowledge-layout">
       <div class="management-list">
         <div class="list-header">
-          <label>知识库列表</label>
+          <label>{{ t('knowledge.list.title') }}</label>
         </div>
         <div class="list-body">
           <template v-if="bases.length">
@@ -33,14 +32,18 @@
               type="button"
               @click="selectBase(index)"
             >
-              <div>{{ base.name || '未命名知识库' }}</div>
+              <div>{{ base.name || t('knowledge.name.unnamed') }}</div>
               <small>
-                {{ base.root || '未生成目录' }} ·
-                {{ normalizeBaseType(base.base_type) === 'vector' ? '向量' : '字面' }}
+                {{ base.root || t('userTools.knowledge.root.uncreated') }} ·
+                {{
+                  normalizeBaseType(base.base_type) === 'vector'
+                    ? t('knowledge.type.vector')
+                    : t('knowledge.type.literal')
+                }}
               </small>
             </button>
           </template>
-          <div v-else class="empty-text">暂无知识库，请新增。</div>
+          <div v-else class="empty-text">{{ t('userTools.knowledge.list.empty') }}</div>
         </div>
       </div>
 
@@ -51,98 +54,94 @@
             <div class="muted">{{ detailMeta }}</div>
             <div class="muted">{{ detailDesc }}</div>
           </div>
-          <div class="detail-actions">
-            <div class="actions">
-              <button
-                v-if="!isVectorBase"
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase || uploadLoading"
-                title="上传"
-                aria-label="上传"
-                :class="{ 'is-loading': uploadLoading }"
-                @click="triggerUpload"
-              >
-                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
-              </button>
-              <button
-                v-if="!isVectorBase"
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="新建"
-                aria-label="新建"
-                @click="createFile"
-              >
-                <i class="fa-solid fa-plus" aria-hidden="true"></i>
-              </button>
-              <button
-                v-if="!isVectorBase"
-                class="user-tools-btn btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="保存"
-                aria-label="保存"
-                @click="saveFile"
-              >
-                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-              </button>
-              <button
-                v-if="isVectorBase"
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase || uploadLoading"
-                title="上传"
-                aria-label="上传"
-                :class="{ 'is-loading': uploadLoading }"
-                @click="triggerUpload"
-              >
-                <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
-              </button>
-              <button
-                v-if="isVectorBase"
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="重建索引"
-                aria-label="重建索引"
-                @click="reindexDocs()"
-              >
-                <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-              </button>
-              <button
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="知识库测试"
-                aria-label="知识库测试"
-                @click="openTestModal"
-              >
-                <i class="fa-solid fa-vial" aria-hidden="true"></i>
-              </button>
-            </div>
-            <div class="actions">
-              <button
-                class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="编辑"
-                aria-label="编辑"
-                @click="editBase"
-              >
-                <i class="fa-solid fa-pen" aria-hidden="true"></i>
-              </button>
-              <button
-                class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="!activeBase"
-                title="删除知识库"
-                aria-label="删除知识库"
-                @click="deleteBase"
-              >
-                <i class="fa-solid fa-trash" aria-hidden="true"></i>
-              </button>
-            </div>
+          <div class="detail-actions knowledge-detail-actions">
+            <button
+              v-if="!isVectorBase"
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase || uploadLoading"
+              :title="t('common.upload')"
+              :aria-label="t('common.upload')"
+              :class="{ 'is-loading': uploadLoading }"
+              @click="triggerUpload"
+            >
+              <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="!isVectorBase"
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('common.create')"
+              :aria-label="t('common.create')"
+              @click="createFile"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="!isVectorBase"
+              class="user-tools-btn btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              @click="saveFile"
+            >
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="isVectorBase"
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase || uploadLoading"
+              :title="t('common.upload')"
+              :aria-label="t('common.upload')"
+              :class="{ 'is-loading': uploadLoading }"
+              @click="triggerUpload"
+            >
+              <i class="fa-solid" :class="uploadIcon" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="isVectorBase"
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('knowledge.action.reindex')"
+              :aria-label="t('knowledge.action.reindex')"
+              @click="reindexDocs()"
+            >
+              <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('knowledge.action.test')"
+              :aria-label="t('knowledge.action.test')"
+              @click="openTestModal"
+            >
+              <i class="fa-solid fa-vial" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('common.edit')"
+              :aria-label="t('common.edit')"
+              @click="editBase"
+            >
+              <i class="fa-solid fa-pen" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('knowledge.action.delete')"
+              :aria-label="t('knowledge.action.delete')"
+              @click="deleteBase"
+            >
+              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            </button>
           </div>
         </div>
 
@@ -152,7 +151,7 @@
               <div v-if="!isVectorBase" class="knowledge-file-layout">
                 <div class="knowledge-file-pane">
                   <div class="knowledge-file-list">
-                    <div v-if="!files.length" class="empty-text">暂无文档，请先刷新列表。</div>
+                    <div v-if="!files.length" class="empty-text">{{ t('knowledge.file.empty') }}</div>
                     <div
                       v-for="filePath in files"
                       :key="filePath"
@@ -161,20 +160,11 @@
                       @click="selectFile(filePath)"
                     >
                       <span class="knowledge-file-name">{{ filePath }}</span>
-                      <button
-                        class="knowledge-file-delete-btn"
-                        type="button"
-                        title="删除文档"
-                        aria-label="删除文档"
-                        @click.stop="deleteFile(filePath)"
-                      >
-                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                      </button>
                     </div>
                   </div>
                 </div>
                 <div class="knowledge-file-editor">
-                  <div class="muted">{{ activeFile || '未选择文档' }}</div>
+                  <div class="muted">{{ activeFile || t('knowledge.file.none') }}</div>
                   <div ref="knowledgeEditorRef" class="knowledge-editor-wrapper">
                     <div ref="knowledgeHighlightRef" class="knowledge-editor-highlight"></div>
                     <el-input
@@ -189,7 +179,9 @@
               <div v-else class="knowledge-vector-layout">
                 <div class="knowledge-vector-pane">
                   <div class="knowledge-doc-list">
-                    <div v-if="!vectorDocs.length" class="empty-text">暂无向量文档，请先上传。</div>
+                    <div v-if="!vectorDocs.length" class="empty-text">
+                      {{ t('knowledge.doc.list.empty') }}
+                    </div>
                     <div
                       v-for="doc in vectorDocs"
                       :key="doc.doc_id"
@@ -208,17 +200,7 @@
                       <div class="detail-title">{{ activeDocTitle }}</div>
                       <div class="muted">{{ activeDocMeta }}</div>
                     </div>
-                    <div class="actions">
-                      <button
-                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!activeDocId"
-                        title="查看原文"
-                        aria-label="查看原文"
-                        @click="openDocModal"
-                      >
-                        <i class="fa-solid fa-file-lines" aria-hidden="true"></i>
-                      </button>
+                    <div class="detail-actions knowledge-doc-actions">
                       <button
                         class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
                         type="button"
@@ -244,8 +226,8 @@
                         class="user-tools-btn danger btn-with-icon btn-compact icon-only"
                         type="button"
                         :disabled="!canBatchDelete"
-                        title="批量删除"
-                        aria-label="批量删除"
+                        :title="t('knowledge.doc.action.deleteChunks')"
+                        :aria-label="t('knowledge.doc.action.deleteChunks')"
                         @click="deleteSelectedChunks"
                       >
                         <i class="fa-solid fa-trash" aria-hidden="true"></i>
@@ -254,9 +236,13 @@
                   </div>
                   <div class="knowledge-vector-content">
                     <div class="knowledge-doc-chunks-pane">
-                      <div class="knowledge-doc-section-title">切片列表</div>
+                      <div class="knowledge-doc-section-title">
+                        {{ t('knowledge.doc.section.chunks') }}
+                      </div>
                       <div class="knowledge-doc-chunk-list">
-                        <div v-if="!docChunks.length" class="empty-text">暂无切片。</div>
+                        <div v-if="!docChunks.length" class="empty-text">
+                          {{ t('knowledge.chunk.empty') }}
+                        </div>
                         <div
                           v-for="chunk in docChunks"
                           :key="chunk.index"
@@ -314,100 +300,106 @@
 
       <div class="user-tools-form">
         <div class="form-row">
-          <label>名称</label>
-          <el-input v-model="knowledgeForm.name" placeholder="知识库名称" />
+          <label>{{ t('knowledge.modal.field.name') }}</label>
+          <el-input v-model="knowledgeForm.name" :placeholder="t('knowledge.modal.placeholder.name')" />
         </div>
         <div class="form-row">
-          <label>类型</label>
-          <el-select v-model="knowledgeForm.base_type" placeholder="请选择知识库类型">
-            <el-option label="字面知识库" value="literal" />
-            <el-option label="向量知识库" value="vector" />
+          <label>{{ t('knowledge.modal.field.type') }}</label>
+          <el-select
+            v-model="knowledgeForm.base_type"
+            :placeholder="t('knowledge.modal.placeholder.type')"
+          >
+            <el-option :label="t('knowledge.type.literal')" value="literal" />
+            <el-option :label="t('knowledge.type.vector')" value="vector" />
           </el-select>
         </div>
         <div v-if="knowledgeForm.base_type === 'vector'" class="form-row">
-          <label>嵌入模型</label>
+          <label>{{ t('knowledge.modal.field.embeddingModel') }}</label>
           <el-select
             v-model="knowledgeForm.embedding_model"
             filterable
             allow-create
             default-first-option
-            placeholder="请选择嵌入模型"
+            :placeholder="t('knowledge.modal.placeholder.embeddingModel')"
           >
             <el-option v-for="model in embeddingModels" :key="model" :label="model" :value="model" />
           </el-select>
-          <div v-if="!embeddingModels.length" class="muted">暂无可用嵌入模型，请联系管理员配置。</div>
-        </div>
-        <div v-if="knowledgeForm.base_type === 'vector'" class="grid">
-          <div class="form-row">
-            <label>切片长度</label>
-            <el-input v-model="knowledgeForm.chunk_size" type="number" placeholder="默认 800" />
-          </div>
-          <div class="form-row">
-            <label>切片重叠</label>
-            <el-input v-model="knowledgeForm.chunk_overlap" type="number" placeholder="默认 100" />
+          <div v-if="!embeddingModels.length" class="muted">
+            {{ t('knowledge.embedding.empty') }}
           </div>
         </div>
         <div v-if="knowledgeForm.base_type === 'vector'" class="grid">
           <div class="form-row">
-            <label>Top K</label>
-            <el-input v-model="knowledgeForm.top_k" type="number" placeholder="默认 5" />
+            <label>{{ t('knowledge.modal.field.chunkSize') }}</label>
+            <el-input
+              v-model="knowledgeForm.chunk_size"
+              type="number"
+              :placeholder="t('knowledge.modal.placeholder.chunkSize')"
+            />
           </div>
           <div class="form-row">
-            <label>相似度阈值</label>
-            <el-input v-model="knowledgeForm.score_threshold" type="number" placeholder="可选" />
+            <label>{{ t('knowledge.modal.field.chunkOverlap') }}</label>
+            <el-input
+              v-model="knowledgeForm.chunk_overlap"
+              type="number"
+              :placeholder="t('knowledge.modal.placeholder.chunkOverlap')"
+            />
+          </div>
+        </div>
+        <div v-if="knowledgeForm.base_type === 'vector'" class="grid">
+          <div class="form-row">
+            <label>{{ t('knowledge.modal.field.topK') }}</label>
+            <el-input
+              v-model="knowledgeForm.top_k"
+              type="number"
+              :placeholder="t('knowledge.modal.placeholder.topK')"
+            />
+          </div>
+          <div class="form-row">
+            <label>{{ t('knowledge.modal.field.scoreThreshold') }}</label>
+            <el-input
+              v-model="knowledgeForm.score_threshold"
+              type="number"
+              :placeholder="t('knowledge.modal.placeholder.scoreThreshold')"
+            />
           </div>
         </div>
         <div class="form-row">
-          <label>描述</label>
-          <el-input v-model="knowledgeForm.description" type="textarea" :rows="4" placeholder="知识库用途说明" />
+          <label>{{ t('knowledge.modal.field.description') }}</label>
+          <el-input
+            v-model="knowledgeForm.description"
+            type="textarea"
+            :rows="4"
+            :placeholder="t('knowledge.modal.placeholder.description')"
+          />
         </div>
         <div class="form-row">
           <label class="checkbox-row">
             <input type="checkbox" v-model="knowledgeForm.enabled" />
-            <span>启用</span>
+            <span>{{ t('common.enable') }}</span>
           </label>
         </div>
         <div class="form-row">
           <label class="checkbox-row">
             <input type="checkbox" v-model="knowledgeForm.shared" />
-            <span>共享</span>
+            <span>{{ t('common.share') }}</span>
           </label>
         </div>
         <div v-if="knowledgeForm.base_type === 'vector'" class="muted">
-          向量知识库存储在 vector_knowledge/users/&lt;user&gt;/&lt;名称&gt;，保存后自动生成。
+          {{ t('knowledge.modal.tip.vectorRoot') }}
         </div>
         <div v-else class="muted">
-          目录固定在 data/user_tools/&lt;user&gt;/knowledge/&lt;名称&gt;，保存后自动生成。
+          {{ t('userTools.knowledge.modal.tip') }}
         </div>
       </div>
 
       <template #footer>
-        <button class="user-tools-btn secondary" type="button" @click="closeKnowledgeModal">取消</button>
-        <button class="user-tools-btn" type="button" @click="applyKnowledgeModal">保存</button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="docModalVisible"
-      class="user-tools-dialog user-tools-subdialog knowledge-doc-modal"
-      width="860px"
-      top="8vh"
-      :show-close="false"
-      :close-on-click-modal="false"
-      append-to-body
-    >
-      <template #header>
-        <div class="user-tools-header">
-          <div>
-            <div class="user-tools-title">{{ activeDocTitle || '原文档' }}</div>
-            <div class="muted">{{ activeDocMeta }}</div>
-          </div>
-          <button class="icon-btn" type="button" @click="closeDocModal">×</button>
-        </div>
-      </template>
-      <div class="knowledge-doc-modal-content" v-html="renderedDocContent"></div>
-      <template #footer>
-        <button class="user-tools-btn secondary" type="button" @click="closeDocModal">关闭</button>
+        <button class="user-tools-btn secondary" type="button" @click="closeKnowledgeModal">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="user-tools-btn" type="button" @click="applyKnowledgeModal">
+          {{ t('common.save') }}
+        </button>
       </template>
     </el-dialog>
 
@@ -422,18 +414,18 @@
     >
       <template #header>
         <div class="user-tools-header">
-          <div class="user-tools-title">知识库测试</div>
+          <div class="user-tools-title">{{ t('knowledge.test.title') }}</div>
           <button class="icon-btn" type="button" @click="closeTestModal">×</button>
         </div>
       </template>
       <div class="knowledge-test-layout">
         <div class="knowledge-test-input">
-          <label>问题</label>
+          <label>{{ t('knowledge.test.question') }}</label>
           <el-input
             v-model="knowledgeTestQuery"
             type="textarea"
             :rows="6"
-            placeholder="请输入测试问题"
+            :placeholder="t('knowledge.test.question.placeholder')"
           />
           <div class="knowledge-test-actions">
             <button
@@ -450,7 +442,7 @@
           </div>
         </div>
         <div class="knowledge-test-results">
-          <div class="knowledge-doc-section-title">召回结果</div>
+          <div class="knowledge-doc-section-title">{{ t('knowledge.test.result.title') }}</div>
           <div class="knowledge-test-result-list">
             <div v-if="knowledgeTestResultMessage" class="empty-text">
               {{ knowledgeTestResultMessage }}
@@ -463,7 +455,7 @@
               >
                 <div class="knowledge-test-result-header">
                   {{
-                    `${index + 1}. ${hit.document || hit.doc_id || '未命名文档'} #${
+                    `${index + 1}. ${hit.document || hit.doc_id || t('knowledge.doc.unnamed')} #${
                       hit.chunk_index ?? '-'
                     } · ${formatTestScore(Number(hit.score))}`
                   }}
@@ -471,7 +463,9 @@
                 <div class="knowledge-test-result-content">{{ hit.content || '' }}</div>
               </div>
               <div v-if="knowledgeTestText" class="knowledge-test-result-item">
-                <div class="knowledge-test-result-header">文本结果</div>
+                <div class="knowledge-test-result-header">
+                  {{ t('knowledge.test.output.title') }}
+                </div>
                 <div class="knowledge-test-result-content">{{ knowledgeTestText }}</div>
               </div>
             </template>
@@ -479,7 +473,9 @@
         </div>
       </div>
       <template #footer>
-        <button class="user-tools-btn secondary" type="button" @click="closeTestModal">关闭</button>
+        <button class="user-tools-btn secondary" type="button" @click="closeTestModal">
+          {{ t('common.close') }}
+        </button>
       </template>
     </el-dialog>
   </div>
@@ -490,22 +486,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
-  deleteUserKnowledgeFile,
   fetchUserKnowledgeConfig,
-  fetchUserKnowledgeDoc,
   fetchUserKnowledgeDocs,
   fetchUserKnowledgeChunks,
   fetchUserKnowledgeFile,
   fetchUserKnowledgeFiles,
   embedUserKnowledgeChunk,
   deleteUserKnowledgeChunk,
-  deleteUserKnowledgeDoc,
   reindexUserKnowledge,
   saveUserKnowledgeConfig,
   saveUserKnowledgeFile,
   testUserKnowledge,
   uploadUserKnowledgeFile
 } from '@/api/userTools';
+import { useI18n } from '@/i18n';
 
 const props = defineProps({
   visible: {
@@ -519,6 +513,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['status']);
+const { t } = useI18n();
 
 // doc2md 支持的扩展名列表（用于前端过滤）
 const USER_KNOWLEDGE_UPLOAD_EXTENSIONS = [
@@ -613,7 +608,6 @@ const activeFile = ref('');
 const fileContent = ref('');
 const vectorDocs = ref([]);
 const activeDocId = ref('');
-const docContent = ref('');
 const docMeta = ref(null);
 const docChunks = ref([]);
 const selectedChunkIndices = ref(new Set());
@@ -631,7 +625,6 @@ let knowledgeResizeBound = false;
 
 const knowledgeModalVisible = ref(false);
 const knowledgeEditingIndex = ref(-1);
-const docModalVisible = ref(false);
 const knowledgeTestVisible = ref(false);
 const knowledgeTestQuery = ref('');
 const knowledgeTestStatus = ref('');
@@ -757,25 +750,26 @@ const scheduleKnowledgeEditorUpdate = () => {
   });
 };
 
-const DOC_STATUS_LABELS = {
-  ready: '已就绪',
-  indexing: '索引中',
-  pending: '待处理',
-  failed: '失败'
+const DOC_STATUS_KEYS = {
+  ready: 'knowledge.doc.status.ready',
+  indexing: 'knowledge.doc.status.indexing',
+  pending: 'knowledge.doc.status.pending',
+  failed: 'knowledge.doc.status.failed'
 };
 
-const CHUNK_STATUS_LABELS = {
-  embedded: '已嵌入',
-  pending: '待嵌入',
-  deleted: '已删除',
-  failed: '失败',
-  embedding: '嵌入中'
+const CHUNK_STATUS_KEYS = {
+  embedded: 'knowledge.chunk.status.embedded',
+  pending: 'knowledge.chunk.status.pending',
+  deleted: 'knowledge.chunk.status.deleted',
+  failed: 'knowledge.chunk.status.failed',
+  embedding: 'knowledge.chunk.status.embedding'
 };
 
 const formatDocStatus = (status) => {
   const normalized = String(status || '').trim().toLowerCase();
   if (!normalized) return '';
-  return DOC_STATUS_LABELS[normalized] || normalized;
+  const key = DOC_STATUS_KEYS[normalized];
+  return key ? t(key) : normalized;
 };
 
 const formatDocUpdatedAt = (timestamp) => {
@@ -793,14 +787,14 @@ const buildDocMetaText = (meta) => {
   if (!meta) return '';
   const parts = [];
   if (meta.embedding_model) {
-    parts.push(`嵌入模型:${meta.embedding_model}`);
+    parts.push(t('knowledge.doc.meta.embedding', { name: meta.embedding_model }));
   }
   if (Number.isFinite(meta.chunk_count)) {
-    parts.push(`切片 ${meta.chunk_count}`);
+    parts.push(t('knowledge.doc.meta.chunks', { count: meta.chunk_count }));
   }
   const updated = formatDocUpdatedAt(meta.updated_at);
   if (updated) {
-    parts.push(`更新于 ${updated}`);
+    parts.push(t('knowledge.doc.meta.updated', { time: updated }));
   }
   const status = formatDocStatus(meta.status);
   if (status) {
@@ -822,52 +816,48 @@ const formatChunkStatus = (chunk) => {
   if (!status) {
     return '-';
   }
-  return CHUNK_STATUS_LABELS[status] || status;
+  const key = CHUNK_STATUS_KEYS[status];
+  return key ? t(key) : status;
 };
 
 const isChunkSelected = (index) => selectedChunkIndices.value.has(index);
 const isChunkEmbedding = (index) => embeddingChunkIndices.value.has(index);
 const getSelectedChunkIndices = () => Array.from(selectedChunkIndices.value);
 
-const buildHighlightedDocContent = (content, chunk) => {
-  const text = String(content || '');
-  if (!chunk) {
-    return escapeHtml(text);
-  }
-  const chars = Array.from(text);
-  const start = Math.min(Math.max(chunk.start ?? 0, 0), chars.length);
-  const end = Math.min(Math.max(chunk.end ?? start, start), chars.length);
-  const before = chars.slice(0, start).join('');
-  const target = chars.slice(start, end).join('');
-  const after = chars.slice(end).join('');
-  return `${escapeHtml(before)}<mark>${escapeHtml(target)}</mark>${escapeHtml(after)}`;
-};
-
 const activeBase = computed(() => bases.value[selectedIndex.value] || null);
 const isVectorBase = computed(
   () => normalizeBaseType(activeBase.value?.base_type) === 'vector'
 );
-const detailTitle = computed(() => activeBase.value?.name || '未选择知识库');
+const detailTitle = computed(() => activeBase.value?.name || t('knowledge.detail.empty'));
 const detailMeta = computed(() => {
   if (!activeBase.value) {
     return '';
   }
-  const root = activeBase.value.root || '未生成目录';
-  const parts = [root, activeBase.value.enabled !== false ? '已启用' : '未启用'];
-  parts.push(isVectorBase.value ? '向量知识库' : '字面知识库');
+  const root = activeBase.value.root || t('userTools.knowledge.root.uncreated');
+  const parts = [
+    root,
+    activeBase.value.enabled !== false
+      ? t('knowledge.status.enabled')
+      : t('knowledge.status.disabled')
+  ];
+  parts.push(isVectorBase.value ? t('knowledge.type.vector') : t('knowledge.type.literal'));
   if (isVectorBase.value && activeBase.value.embedding_model) {
-    parts.push(`嵌入模型:${activeBase.value.embedding_model}`);
+    parts.push(
+      t('knowledge.doc.meta.embedding', { name: activeBase.value.embedding_model })
+    );
   }
   if (activeBase.value.shared) {
-    parts.push('已共享');
+    parts.push(t('common.shared'));
   }
   return parts.join(' · ');
 });
 const detailDesc = computed(() => activeBase.value?.description || '');
 const knowledgeModalTitle = computed(() =>
-  knowledgeEditingIndex.value >= 0 ? '编辑知识库' : '新增知识库'
+  knowledgeEditingIndex.value >= 0 ? t('knowledge.modal.editTitle') : t('knowledge.modal.addTitle')
 );
-const activeDocTitle = computed(() => docMeta.value?.name || '未选择文档');
+const activeDocTitle = computed(
+  () => docMeta.value?.name || activeDocId.value || t('knowledge.doc.none')
+);
 const activeDocMeta = computed(() => buildDocMetaText(docMeta.value));
 const selectedChunkCount = computed(() => selectedChunkIndices.value.size);
 const embeddingActive = computed(() => embeddingChunkIndices.value.size > 0);
@@ -877,9 +867,15 @@ const canSelectChunks = computed(
 const allChunksSelected = computed(
   () => canSelectChunks.value && selectedChunkIndices.value.size === docChunks.value.length
 );
-const selectAllLabel = computed(() => (allChunksSelected.value ? '取消全选' : '全选'));
+const selectAllLabel = computed(() =>
+  allChunksSelected.value
+    ? t('knowledge.chunk.action.clearSelection')
+    : t('knowledge.chunk.action.selectAll')
+);
 const selectAllIcon = computed(() => (allChunksSelected.value ? 'fa-square-minus' : 'fa-square-check'));
-const embedActionLabel = computed(() => (embeddingActive.value ? '嵌入中' : '批量嵌入'));
+const embedActionLabel = computed(() =>
+  embeddingActive.value ? t('knowledge.chunk.action.embedding') : t('knowledge.doc.action.embed')
+);
 const embedActionIcon = computed(() => (embeddingActive.value ? 'fa-spinner' : 'fa-cube'));
 const uploadIcon = computed(() => (uploadLoading.value ? 'fa-spinner' : 'fa-upload'));
 const canBatchEmbed = computed(
@@ -889,32 +885,20 @@ const canBatchDelete = computed(
   () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
 );
 const knowledgeTestRunLabel = computed(() =>
-  knowledgeTestLoading.value ? '测试中' : '测试'
+  knowledgeTestLoading.value ? t('knowledge.test.running') : t('knowledge.test.action.run')
 );
 const knowledgeTestRunIcon = computed(() =>
   knowledgeTestLoading.value ? 'fa-spinner' : 'fa-play'
 );
 const knowledgeTestResultMessage = computed(() => {
   if (knowledgeTestLoading.value) {
-    return '加载中...';
+    return t('common.loading');
   }
   if (knowledgeTestResults.value.length || knowledgeTestText.value) {
     return '';
   }
-  return '暂无召回结果。';
+  return t('knowledge.test.empty');
 });
-const renderedDocContent = computed(() => {
-  if (!docContent.value) {
-    return escapeHtml('暂无内容');
-  }
-  const selected = getSelectedChunkIndices();
-  const chunk =
-    selected.length === 1
-      ? docChunks.value.find((item) => item.index === selected[0])
-      : null;
-  return buildHighlightedDocContent(docContent.value, chunk);
-});
-
 const emitStatus = (message) => {
   emit('status', message || '');
 };
@@ -962,17 +946,17 @@ const buildConfigPayload = () => ({
 const validateConfigPayload = (payload) => {
   const invalid = payload.bases.filter((base) => !base.name);
   if (invalid.length) {
-    return '存在未填写名称的知识库，请补全后再保存。';
+    return t('knowledge.payload.invalid');
   }
   for (const base of payload.bases) {
     if (normalizeBaseType(base.base_type) === 'vector' && !base.embedding_model) {
-      return '向量知识库需要选择嵌入模型。';
+      return t('knowledge.embedding.required');
     }
   }
   const nameSet = new Set();
   for (const base of payload.bases) {
     if (nameSet.has(base.name)) {
-      return `知识库名称重复：${base.name}`;
+      return t('knowledge.name.duplicate', { name: base.name });
     }
     nameSet.add(base.name);
   }
@@ -988,7 +972,6 @@ const captureKnowledgeSnapshot = () => ({
   fileContent: fileContent.value,
   vectorDocs: [...vectorDocs.value],
   activeDocId: activeDocId.value,
-  docContent: docContent.value,
   docMeta: docMeta.value ? { ...docMeta.value } : null,
   docChunks: [...docChunks.value],
   selectedChunkIndices: getSelectedChunkIndices(),
@@ -1004,7 +987,6 @@ const restoreKnowledgeSnapshot = (snapshot) => {
   fileContent.value = snapshot.fileContent;
   vectorDocs.value = snapshot.vectorDocs;
   activeDocId.value = snapshot.activeDocId;
-  docContent.value = snapshot.docContent;
   docMeta.value = snapshot.docMeta;
   docChunks.value = snapshot.docChunks;
   selectedChunkIndices.value = new Set(snapshot.selectedChunkIndices || []);
@@ -1029,7 +1011,6 @@ const loadConfig = async () => {
     fileContent.value = '';
     vectorDocs.value = [];
     activeDocId.value = '';
-    docContent.value = '';
     docMeta.value = null;
     docChunks.value = [];
     selectedChunkIndices.value = new Set();
@@ -1039,7 +1020,7 @@ const loadConfig = async () => {
       await loadFiles();
     }
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '知识库配置加载失败');
+    ElMessage.error(error.response?.data?.detail || t('knowledge.refreshFailed', { message: error.message || '' }));
   } finally {
     loading.value = false;
   }
@@ -1047,7 +1028,7 @@ const loadConfig = async () => {
 
 // 统一保存知识库配置，并以服务端结果回写
 const saveConfig = async (preferredName = '') => {
-  emitStatus('正在保存...');
+  emitStatus(t('common.saving'));
   const payload = buildConfigPayload();
   const validationError = validateConfigPayload(payload);
   if (validationError) {
@@ -1076,15 +1057,14 @@ const saveConfig = async (preferredName = '') => {
     fileContent.value = '';
     vectorDocs.value = [];
     activeDocId.value = '';
-    docContent.value = '';
     docMeta.value = null;
     docChunks.value = [];
     selectedChunkIndices.value = new Set();
     embeddingChunkIndices.value = new Set();
-    emitStatus('已保存。');
+    emitStatus(t('common.saved'));
     return normalized;
   } catch (error) {
-    emitStatus(`保存失败：${error.message || '请求失败'}`);
+    emitStatus(t('knowledge.saveFailed', { message: error.message || t('common.requestFailed') }));
     throw error;
   }
 };
@@ -1096,7 +1076,6 @@ const selectBase = async (index) => {
   fileContent.value = '';
   vectorDocs.value = [];
   activeDocId.value = '';
-  docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
   selectedChunkIndices.value = new Set();
@@ -1148,17 +1127,17 @@ const closeKnowledgeModal = () => {
 
 const validateKnowledgeBase = (payload, index) => {
   if (!payload.name) {
-    return '请填写知识库名称。';
+    return t('knowledge.name.required');
   }
   if (normalizeBaseType(payload.base_type) === 'vector' && !payload.embedding_model) {
-    return '向量知识库需要选择嵌入模型。';
+    return t('knowledge.embedding.required');
   }
   for (let i = 0; i < bases.value.length; i += 1) {
     if (i === index) {
       continue;
     }
     if (bases.value[i].name.trim() === payload.name) {
-      return `知识库名称重复：${payload.name}`;
+      return t('knowledge.name.duplicate', { name: payload.name });
     }
   }
   return '';
@@ -1205,7 +1184,6 @@ const applyKnowledgeModal = async () => {
   fileContent.value = '';
   vectorDocs.value = [];
   activeDocId.value = '';
-  docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
   selectedChunkIndices.value = new Set();
@@ -1215,11 +1193,16 @@ const applyKnowledgeModal = async () => {
     if (selectedIndex.value >= 0) {
       await loadFiles();
     }
-    ElMessage.success(editing >= 0 ? '知识库已更新。' : '知识库已新增。');
+    ElMessage.success(
+      editing >= 0 ? t('knowledge.base.updated') : t('knowledge.base.added')
+    );
     closeKnowledgeModal();
   } catch (error) {
     restoreKnowledgeSnapshot(snapshot);
-    ElMessage.error(error.response?.data?.detail || `保存失败：${error.message || '请求失败'}`);
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.saveFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
@@ -1230,7 +1213,7 @@ const addBase = () => {
 const editBase = () => {
   const base = activeBase.value;
   if (!base) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   openKnowledgeModal(base, selectedIndex.value);
@@ -1240,9 +1223,10 @@ const deleteBase = async () => {
   const base = activeBase.value;
   if (!base) return;
   try {
-    await ElMessageBox.confirm(`确认删除知识库 ${base.name || '未命名知识库'} 吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+    const name = base.name || t('knowledge.name.unnamed');
+    await ElMessageBox.confirm(t('knowledge.base.deleteConfirm', { name }), t('common.notice'), {
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning'
     });
   } catch (error) {
@@ -1260,7 +1244,6 @@ const deleteBase = async () => {
   fileContent.value = '';
   vectorDocs.value = [];
   activeDocId.value = '';
-  docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
   selectedChunkIndices.value = new Set();
@@ -1271,10 +1254,13 @@ const deleteBase = async () => {
     if (selectedIndex.value >= 0) {
       await loadFiles();
     }
-    ElMessage.success('知识库已删除。');
+    ElMessage.success(t('knowledge.base.deleted'));
   } catch (error) {
     restoreKnowledgeSnapshot(snapshot);
-    ElMessage.error(error.response?.data?.detail || `删除失败：${error.message || '请求失败'}`);
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.deleteFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
@@ -1302,14 +1288,16 @@ const loadFiles = async () => {
       fileContent.value = '';
     }
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '文档列表加载失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.file.listFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
 const resetDocState = () => {
   vectorDocs.value = [];
   activeDocId.value = '';
-  docContent.value = '';
   docMeta.value = null;
   docChunks.value = [];
   selectedChunkIndices.value = new Set();
@@ -1326,91 +1314,60 @@ const loadVectorDocs = async () => {
     const { data } = await fetchUserKnowledgeDocs(base.name);
     const payload = data?.data || {};
     vectorDocs.value = Array.isArray(payload.docs) ? payload.docs : [];
-    if (activeDocId.value && !vectorDocs.value.some((doc) => doc.doc_id === activeDocId.value)) {
-      activeDocId.value = '';
-      docContent.value = '';
-      docMeta.value = null;
-      docChunks.value = [];
-      selectedChunkIndices.value = new Set();
-      embeddingChunkIndices.value = new Set();
+    if (activeDocId.value) {
+      const matched = vectorDocs.value.find((doc) => doc.doc_id === activeDocId.value) || null;
+      if (!matched) {
+        activeDocId.value = '';
+        docMeta.value = null;
+        docChunks.value = [];
+        selectedChunkIndices.value = new Set();
+        embeddingChunkIndices.value = new Set();
+      } else {
+        docMeta.value = matched;
+      }
     }
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '向量文档列表加载失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.doc.loadFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
 const selectDoc = async (docId, options = {}) => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (!docId) {
-    ElMessage.warning('请先选择文档。');
+    ElMessage.warning(t('knowledge.doc.selectRequired'));
     return;
   }
   const keepSelection = options.keepSelection === true;
   const previousSelection = keepSelection ? new Set(selectedChunkIndices.value) : new Set();
   try {
-    const [docRes, chunkRes] = await Promise.all([
-      fetchUserKnowledgeDoc(base.name, docId),
-      fetchUserKnowledgeChunks(base.name, docId)
-    ]);
-    const docPayload = docRes?.data?.data || {};
+    const chunkRes = await fetchUserKnowledgeChunks(base.name, docId);
     const chunkPayload = chunkRes?.data?.data || {};
     activeDocId.value = docId;
-    docMeta.value = docPayload.doc || null;
-    docContent.value = docPayload.content || '';
+    docMeta.value =
+      vectorDocs.value.find((doc) => doc.doc_id === docId) || { doc_id: docId, name: docId };
     docChunks.value = Array.isArray(chunkPayload.chunks) ? chunkPayload.chunks : [];
     selectedChunkIndices.value = previousSelection;
     embeddingChunkIndices.value = new Set();
     syncChunkSelection();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '文档加载失败');
-  }
-};
-
-const deleteDoc = async (docId) => {
-  const base = activeBase.value;
-  if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
-    return;
-  }
-  const target = docId || activeDocId.value;
-  if (!target) {
-    ElMessage.warning('请先选择文档。');
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(`确认删除文档 ${docMeta.value?.name || target} 吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
-  } catch (error) {
-    return;
-  }
-  try {
-    await deleteUserKnowledgeDoc(base.name, target);
-    if (activeDocId.value === target) {
-      activeDocId.value = '';
-      docContent.value = '';
-      docMeta.value = null;
-      docChunks.value = [];
-      selectedChunkIndices.value = new Set();
-      embeddingChunkIndices.value = new Set();
-    }
-    await loadVectorDocs();
-    ElMessage.success('文档已删除。');
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '文档删除失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.doc.loadFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
 const reindexDocs = async (docId) => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   try {
@@ -1421,16 +1378,19 @@ const reindexDocs = async (docId) => {
     const { data } = await reindexUserKnowledge(payload);
     const result = data?.data || {};
     if (result.ok === false) {
-      ElMessage.error('索引重建失败，请查看日志。');
+      ElMessage.error(t('knowledge.doc.reindexFailed', { message: t('common.notice') }));
     } else {
-      ElMessage.success('索引已更新。');
+      ElMessage.success(t('knowledge.doc.reindexSuccess'));
     }
     await loadVectorDocs();
     if (docId) {
       await selectDoc(docId);
     }
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '索引重建失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.doc.reindexFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
@@ -1481,16 +1441,16 @@ const refreshActiveDoc = async () => {
 const embedSelectedChunks = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (!activeDocId.value) {
-    ElMessage.warning('请先选择文档。');
+    ElMessage.warning(t('knowledge.doc.selectRequired'));
     return;
   }
   const selected = getSelectedChunkIndices();
   if (!selected.length) {
-    ElMessage.warning('请先选择切片。');
+    ElMessage.warning(t('knowledge.chunk.selectRequired'));
     return;
   }
   const pending = selected.filter((index) => {
@@ -1498,7 +1458,7 @@ const embedSelectedChunks = async () => {
     return chunk && resolveChunkStatus(chunk) !== 'embedded';
   });
   if (!pending.length) {
-    ElMessage.info('选中的切片已全部嵌入。');
+    ElMessage.info(t('knowledge.chunk.embedSkipped'));
     return;
   }
   embeddingChunkIndices.value = new Set(pending);
@@ -1522,38 +1482,43 @@ const embedSelectedChunks = async () => {
       const next = new Set(embeddingChunkIndices.value);
       next.delete(index);
       embeddingChunkIndices.value = next;
+      await nextTick();
     }
   }
   await refreshActiveDoc();
   if (succeeded) {
-    ElMessage.success(`已嵌入 ${succeeded} 个切片。`);
+    ElMessage.success(t('knowledge.chunk.embedBatchSuccess', { count: succeeded }));
   }
   if (failed) {
-    ElMessage.error(`${failed} 个切片嵌入失败。`);
+    ElMessage.error(t('knowledge.chunk.embedBatchFailed', { count: failed }));
   }
 };
 
 const deleteSelectedChunks = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (!activeDocId.value) {
-    ElMessage.warning('请先选择文档。');
+    ElMessage.warning(t('knowledge.doc.selectRequired'));
     return;
   }
   const selected = getSelectedChunkIndices();
   if (!selected.length) {
-    ElMessage.warning('请先选择切片。');
+    ElMessage.warning(t('knowledge.chunk.selectRequired'));
     return;
   }
   try {
-    await ElMessageBox.confirm(`确认删除选中的 ${selected.length} 个切片吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm(
+      t('knowledge.chunk.deleteBatchConfirm', { count: selected.length }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
       type: 'warning'
-    });
+      }
+    );
   } catch (error) {
     return;
   }
@@ -1574,28 +1539,16 @@ const deleteSelectedChunks = async () => {
   selectedChunkIndices.value = new Set();
   await refreshActiveDoc();
   if (succeeded) {
-    ElMessage.success(`已删除 ${succeeded} 个切片。`);
+    ElMessage.success(t('knowledge.chunk.deleteBatchSuccess', { count: succeeded }));
   }
   if (failed) {
-    ElMessage.error(`${failed} 个切片删除失败。`);
+    ElMessage.error(t('knowledge.chunk.deleteBatchFailed', { count: failed }));
   }
-};
-
-const openDocModal = () => {
-  if (!activeDocId.value) {
-    ElMessage.warning('请先选择文档。');
-    return;
-  }
-  docModalVisible.value = true;
-};
-
-const closeDocModal = () => {
-  docModalVisible.value = false;
 };
 
 const openTestModal = () => {
   if (!activeBase.value?.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   knowledgeTestQuery.value = '';
@@ -1620,16 +1573,16 @@ const formatTestScore = (score) => {
 const runKnowledgeTest = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   const query = knowledgeTestQuery.value.trim();
   if (!query) {
-    ElMessage.warning('请输入测试问题。');
+    ElMessage.warning(t('knowledge.test.queryRequired'));
     return;
   }
   knowledgeTestLoading.value = true;
-  knowledgeTestStatus.value = '测试中...';
+  knowledgeTestStatus.value = t('knowledge.test.running');
   knowledgeTestResults.value = [];
   knowledgeTestText.value = '';
   try {
@@ -1638,10 +1591,11 @@ const runKnowledgeTest = async () => {
     const hits = Array.isArray(payload.hits) ? payload.hits : [];
     knowledgeTestResults.value = hits;
     knowledgeTestText.value = payload.text || '';
-    knowledgeTestStatus.value = '测试完成。';
+    knowledgeTestStatus.value = t('knowledge.test.done');
   } catch (error) {
-    const message = error.response?.data?.detail?.message || error.message || '请求失败';
-    knowledgeTestStatus.value = `测试失败：${message}`;
+    const message =
+      error.response?.data?.detail?.message || error.message || t('common.requestFailed');
+    knowledgeTestStatus.value = t('knowledge.test.failed', { message });
   } finally {
     knowledgeTestLoading.value = false;
   }
@@ -1650,11 +1604,11 @@ const runKnowledgeTest = async () => {
 const selectFile = async (filePath) => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (normalizeBaseType(base.base_type) === 'vector') {
-    ElMessage.warning('向量知识库不支持直接编辑文档。');
+    ElMessage.warning(t('knowledge.vector.readonly'));
     return;
   }
   try {
@@ -1663,22 +1617,27 @@ const selectFile = async (filePath) => {
     activeFile.value = payload.path || filePath;
     fileContent.value = payload.content || '';
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '读取失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.file.readFailed', {
+          status: error.response?.status || t('common.unknown')
+        })
+    );
   }
 };
 
 const saveFile = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (normalizeBaseType(base.base_type) === 'vector') {
-    ElMessage.warning('向量知识库不支持直接编辑文档。');
+    ElMessage.warning(t('knowledge.vector.readonly'));
     return;
   }
   if (!activeFile.value) {
-    ElMessage.warning('请先选择要保存的文档。');
+    ElMessage.warning(t('knowledge.file.saveRequired'));
     return;
   }
   try {
@@ -1688,78 +1647,47 @@ const saveFile = async () => {
       content: fileContent.value
     });
     await loadFiles();
-    ElMessage.success('文档已保存并刷新索引。');
+    ElMessage.success(t('knowledge.file.saved'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '文档保存失败');
-  }
-};
-
-// 支持列表项悬停删除指定文档
-const deleteFile = async (targetPath = '') => {
-  const base = activeBase.value;
-  if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
-    return;
-  }
-  if (normalizeBaseType(base.base_type) === 'vector') {
-    ElMessage.warning('向量知识库不支持直接编辑文档。');
-    return;
-  }
-  const path = targetPath || activeFile.value;
-  if (!path) {
-    ElMessage.warning('请先选择要删除的文档。');
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(`确认删除 ${path} 吗？`, '提示', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning'
-    });
-  } catch (error) {
-    return;
-  }
-  try {
-    await deleteUserKnowledgeFile(base.name, path);
-    if (path === activeFile.value) {
-      activeFile.value = '';
-      fileContent.value = '';
-    }
-    await loadFiles();
-    ElMessage.success('文档已删除并刷新索引。');
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '文档删除失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.file.saveFailed', { message: error.message || t('common.requestFailed') })
+    );
   }
 };
 
 const createFile = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (normalizeBaseType(base.base_type) === 'vector') {
-    ElMessage.warning('向量知识库不支持直接编辑文档。');
+    ElMessage.warning(t('knowledge.vector.readonly'));
     return;
   }
   let filename = '';
   try {
-    const { value } = await ElMessageBox.prompt('请输入新文档文件名（.md）', '新建文档', {
-      confirmButtonText: '创建',
-      cancelButtonText: '取消',
+    const { value } = await ElMessageBox.prompt(
+      t('knowledge.file.newPrompt'),
+      t('knowledge.file.newTitle'),
+      {
+        confirmButtonText: t('common.create'),
+        cancelButtonText: t('common.cancel'),
       inputValue: 'example.md'
-    });
+      }
+    );
     filename = value || '';
   } catch (error) {
     return;
   }
   const trimmed = filename.trim();
   if (!trimmed) {
-    ElMessage.warning('文件名不能为空。');
+    ElMessage.warning(t('userTools.knowledge.file.nameRequired'));
     return;
   }
   if (!trimmed.toLowerCase().endsWith('.md')) {
-    ElMessage.warning('仅支持 .md 文档。');
+    ElMessage.warning(t('userTools.knowledge.file.mdOnly'));
     return;
   }
   activeFile.value = trimmed;
@@ -1791,15 +1719,16 @@ const resolveUploadErrorMessage = (error) => {
   }
   const status = error.response?.status;
   if (status) {
-    return message ? `${message} (${status})` : `请求失败 (${status})`;
+    const fallback = t('common.requestFailed');
+    return message ? `${message} (${status})` : `${fallback} (${status})`;
   }
-  return message || '请求失败';
+  return message || t('common.requestFailed');
 };
 
 const triggerUpload = () => {
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   if (!fileUploadRef.value) return;
@@ -1812,16 +1741,16 @@ const handleFileUpload = async () => {
   if (!file) return;
   const extension = normalizeUploadExtension(file.name);
   if (!extension) {
-    ElMessage.warning('文件缺少扩展名。');
+    ElMessage.warning(t('knowledge.file.extensionMissing'));
     return;
   }
   if (!USER_KNOWLEDGE_UPLOAD_EXTENSIONS.includes(extension)) {
-    ElMessage.warning(`不支持的文件类型：${extension}`);
+    ElMessage.warning(t('knowledge.file.unsupported', { extension }));
     return;
   }
   const base = activeBase.value;
   if (!base || !base.name) {
-    ElMessage.warning('请先选择知识库。');
+    ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   uploadLoading.value = true;
@@ -1833,22 +1762,22 @@ const handleFileUpload = async () => {
       if (payload.doc_id) {
         await selectDoc(payload.doc_id);
       }
-      ElMessage.success(`上传完成：${payload.doc_name || file.name}`);
+      ElMessage.success(t('knowledge.doc.uploaded', { name: payload.doc_name || file.name }));
     } else {
       await loadFiles();
       if (payload.path) {
         await selectFile(payload.path);
       }
-      ElMessage.success(`上传完成：${payload.path || file.name}`);
+      ElMessage.success(t('knowledge.file.uploaded', { name: payload.path || file.name }));
     }
     const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
     if (warnings.length) {
-      ElMessage.warning(`转换警告：${warnings.join(' | ')}`);
+      ElMessage.warning(t('knowledge.file.warnings', { message: warnings.join(' | ') }));
     }
   } catch (error) {
     const status = error.response?.status;
     if (status === 404) {
-      ElMessage.error('上传接口不存在，请更新后端服务并重启。');
+      ElMessage.error(t('knowledge.file.uploadEndpointMissing'));
       return;
     }
     ElMessage.error(resolveUploadErrorMessage(error));
@@ -1860,9 +1789,14 @@ const handleFileUpload = async () => {
 const refreshConfig = async () => {
   try {
     await loadConfig();
-    ElMessage.success('知识库配置已刷新。');
+    ElMessage.success(t('userTools.knowledge.refresh.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '知识库刷新失败');
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('userTools.knowledge.refresh.failed', {
+          message: error.message || t('common.requestFailed')
+        })
+    );
   }
 };
 
@@ -1907,7 +1841,6 @@ watch(
     if (!value) {
       cleanupKnowledgeEditorEvents();
       closeKnowledgeModal();
-      closeDocModal();
       closeTestModal();
     }
   },
@@ -1940,9 +1873,4 @@ watch(
   }
 );
 
-watch(activeDocId, (value) => {
-  if (!value) {
-    docModalVisible.value = false;
-  }
-});
 </script>

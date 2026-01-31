@@ -465,6 +465,12 @@
   flex-wrap: wrap;
 }
 
+.user-tools-dialog .knowledge-detail-actions {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+}
+
 .user-tools-dialog .detail-actions .actions {
   display: flex;
   gap: 8px;
@@ -812,8 +818,7 @@
   gap: 12px;
 }
 
-.user-tools-dialog .knowledge-doc-header .actions {
-  display: flex;
+.user-tools-dialog .knowledge-doc-header .knowledge-doc-actions {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;

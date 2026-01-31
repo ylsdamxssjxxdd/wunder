@@ -37,6 +37,8 @@ Wunder 的设计目标是构建一个“智能体调度平台”：对开发者�
 | 框架层 | LangGraph、AutoGen、CrewAI[15][16][17] | 协作与流程编排 | 需自建治理与运维 |
 | 调度治理层 | Wunder | 统一入口、治理、可观测、预算与隔离 | 需与上层应用协同集成 |
 
+值得注意的是，近期开源社区出现了热门个人助手项目 OpenClaw[31]。其以本地常驻 Gateway 作为控制平面，通过 WebSocket 协议统一接入 WhatsApp、Telegram、Slack、Discord、Signal、iMessage、WebChat 等渠道，并支持多智能体路由（每个 agent 拥有独立 workspace 与 session 存储）；同时以节点模式将 macOS/iOS/Android 等设备能力（画布、相机、录屏、定位等）纳入工具面。该路径强调“个人助手 + 多设备”的产品化体验，与 Wunder 的调度治理定位互补：前者更聚焦端到端交互与渠道覆盖，后者更强调跨用户、多工具与治理能力。
+
 ### 2.3 前沿研究趋势与系统启示
 近期研究强调“推理控制”与“反馈机制”的重要性。Tree of Thoughts 通过探索多条思路并自评选择提升规划能力[19]，提示调度系统应提供可插拔的搜索与回滚控制点；Reflexion 将反馈转化为记忆文本，使智能体在多次试验中持续改进而无需更新权重[20]，说明记忆应成为可审计的反馈载体。
 
@@ -492,3 +494,4 @@ LSP 语义增强将代码语义能力引入智能体环境，使模型能够基�
 [28] Beyer B., Jones C., Petoff J., Murphy N. R. Site Reliability Engineering: How Google Runs Production Systems. O'Reilly Media, 2016.
 [29] Kleppmann M. Designing Data-Intensive Applications: The Big Ideas Behind Reliable, Scalable, and Maintainable Systems. O'Reilly Media, 2017.
 [30] Basiri A., Behnam N., de Rooij R., et al. Chaos Engineering. IEEE Software, 2016. https://doi.org/10.1109/MS.2016.88
+[31] OpenClaw. OpenClaw: Personal AI Assistant (GitHub). https://github.com/openclaw/openclaw (accessed 2026-01-31)
