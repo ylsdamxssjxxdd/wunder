@@ -1,7 +1,7 @@
 <template>
   <div class="portal-shell">
     <UserTopbar
-      title="功能广场"
+      title="世界"
       subtitle="智能体应用入口"
       :hide-chat="true"
     >
@@ -16,7 +16,6 @@
                 <div class="portal-section-desc">创建、进入并管理你的智能体应用</div>
               </div>
               <div class="portal-section-actions">
-                <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
                 <div class="portal-search portal-section-search">
                   <i class="fa-solid fa-magnifying-glass portal-search-icon" aria-hidden="true"></i>
                   <input v-model="searchQuery" type="text" placeholder="搜索智能体应用" />
@@ -30,6 +29,7 @@
                     ×
                   </button>
                 </div>
+                <div class="portal-section-meta">共 {{ filteredAgents.length }} 个</div>
               </div>
             </div>
             <div class="agent-grid portal-agent-grid">

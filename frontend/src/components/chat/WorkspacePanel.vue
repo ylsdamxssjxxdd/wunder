@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="workspace-panel">
     <div class="workspace-header">
-      <div class="workspace-title">临时文件区</div>
+    <div class="workspace-title">沙盒容器</div>
       <div class="workspace-header-actions">
         <button
           class="workspace-icon-btn"
@@ -278,7 +278,7 @@ const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
-// 临时文件区上传总大小上限（对齐 Wunder 配置）
+// 沙盒容器上传总大小上限（对齐 Wunder 配置）
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
@@ -845,7 +845,7 @@ const refreshWorkspace = async () => {
 const clearWorkspaceCurrent = async () => {
   const display = displayPath.value;
   try {
-    await ElMessageBox.confirm(`确认清空 ${display} 下所有内容吗？`, '清空临时文件区', {
+    await ElMessageBox.confirm(`确认清空 ${display} 下所有内容吗？`, '清空沙盒容器', {
       confirmButtonText: '清空',
       cancelButtonText: '取消',
       type: 'warning'

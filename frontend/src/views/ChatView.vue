@@ -22,8 +22,8 @@
             <button
               class="topbar-panel-btn"
               type="button"
-              title="临时文件区"
-              aria-label="临时文件区"
+              title="沙盒容器"
+              aria-label="沙盒容器"
               @click="openWorkspaceDialog"
             >
               <i class="fa-solid fa-folder-open topbar-icon" aria-hidden="true"></i>
@@ -52,8 +52,8 @@
           <button
             class="topbar-icon-btn"
             type="button"
-            title="功能广场"
-            aria-label="功能广场"
+            title="世界"
+            aria-label="世界"
             @click="handleOpenPortal"
           >
             <i class="fa-solid fa-table-cells-large topbar-icon" aria-hidden="true"></i>
@@ -453,7 +453,7 @@
     >
       <template #header>
         <div class="image-preview-header">
-          <div class="image-preview-title">临时文件区</div>
+          <div class="image-preview-title">沙盒容器</div>
           <button class="icon-btn" type="button" @click="workspaceDialogVisible = false">×</button>
         </div>
       </template>

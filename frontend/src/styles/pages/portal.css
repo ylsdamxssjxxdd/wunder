@@ -597,13 +597,17 @@
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .portal-section-search {
-  flex: 0 1 280px;
-  min-width: 200px;
+  flex: 1 1 260px;
+  min-width: 160px;
   max-width: 320px;
+}
+
+.portal-section-actions .portal-section-meta {
+  white-space: nowrap;
 }
 
 .portal-grid {
@@ -973,6 +977,7 @@
   .portal-section-actions {
     width: 100%;
     justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .portal-section-search {

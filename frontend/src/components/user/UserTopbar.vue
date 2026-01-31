@@ -74,7 +74,7 @@ import { isDemoMode } from '@/utils/demo';
 const props = defineProps({
   title: {
     type: String,
-    default: '功能广场'
+    default: '世界'
   },
   subtitle: {
     type: String,
@@ -108,7 +108,7 @@ const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
 const navItems = computed(() => {
   const items = [
-    { label: '广场', path: `${basePath.value}/home` },
+    { label: '世界', path: `${basePath.value}/home` },
     { label: '工具管理', path: `${basePath.value}/tools` },
     { label: '聊天', path: `${basePath.value}/chat` }
   ];

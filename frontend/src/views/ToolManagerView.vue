@@ -25,7 +25,7 @@
                     type="button"
                     @click="activeTab = 'system'"
                   >
-                    管理员开放工具（只读）
+                    开放工具
                   </button>
                   <button
                     class="user-tools-tab"
