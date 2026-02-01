@@ -9,7 +9,7 @@
       <section class="portal-main">
         <div class="portal-main-scroll">
           <section class="portal-section tool-manager-section">
-            <div class="user-tools-modal user-tools-dialog tool-manager-page">
+            <div class="tool-manager-page user-tools-dialog">
               <div class="user-tools-sidebar">
                 <div class="user-tools-sidebar-title">{{ t('toolManager.section.title') }}</div>
                 <button

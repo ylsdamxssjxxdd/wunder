@@ -9,7 +9,15 @@
 .tool-manager-page {
   flex: 1;
   min-height: 0;
-  gap: 16px;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 12px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .tool-manager-page .user-tools-sidebar {
@@ -99,18 +107,10 @@
   text-align: center;
 }
 
-.tool-manager-page {
-  border-radius: 18px;
-  border: 1px solid var(--user-tools-border);
-  background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(9, 14, 28, 0.96));
-  padding: 16px;
-  box-shadow: 0 18px 40px rgba(5, 8, 18, 0.3);
-  min-height: 0;
-}
-
 @media (max-width: 1100px) {
   .tool-manager-page {
     min-height: auto;
+    flex-direction: column;
   }
 
   .tool-catalog-grid {
@@ -119,9 +119,9 @@
 }
 
 :root[data-user-theme='light'] .tool-manager-page {
-  background: #ffffff;
-  border-color: rgba(148, 163, 184, 0.3);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 :root[data-user-theme='light'] .tool-manager-page .user-tools-sidebar {
