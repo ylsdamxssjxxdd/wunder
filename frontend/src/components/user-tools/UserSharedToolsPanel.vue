@@ -22,6 +22,7 @@
         <button class="user-tools-btn secondary compact" type="button" :disabled="loading" @click="reload">
           {{ t('common.refresh') }}
         </button>
+        <div v-if="statusMessage" class="user-tools-status list-status">{{ statusMessage }}</div>
       </div>
     </div>
     <div class="tips">{{ t('userTools.shared.tip') }}</div>
@@ -49,8 +50,6 @@
         </label>
       </div>
     </div>
-
-    <div class="user-tools-status">{{ statusMessage }}</div>
   </div>
 </template>
 

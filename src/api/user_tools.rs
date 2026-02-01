@@ -8,10 +8,10 @@ use crate::i18n;
 use crate::knowledge;
 use crate::llm;
 use crate::path_utils::{
-    normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+    is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
-use crate::skills::load_skills;
+use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
@@ -49,7 +49,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/user_tools/mcp/tools", post(user_mcp_tools))
         .route(
             "/wunder/user_tools/skills",
-            get(user_skills_get).post(user_skills_update),
+            get(user_skills_get)
+                .post(user_skills_update)
+                .delete(user_skills_delete),
+        )
+        .route("/wunder/user_tools/skills/files", get(user_skills_files))
+        .route(
+            "/wunder/user_tools/skills/file",
+            get(user_skills_file).put(user_skills_file_update),
         )
         .route(
             "/wunder/user_tools/skills/content",
@@ -315,6 +322,65 @@ async fn user_skills_update(
     })))
 }
 
+fn resolve_user_skill_spec(
+    config: &Config,
+    skill_root: &Path,
+    name: &str,
+) -> Result<SkillSpec, Response> {
+    let mut scan_config = config.clone();
+    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+    scan_config.skills.enabled = Vec::new();
+    let registry = load_skills(&scan_config, false, false, false);
+    registry
+        .get(name)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))
+}
+
+fn resolve_user_skill_root(skill_root: &Path, spec: &SkillSpec) -> Result<PathBuf, Response> {
+    let root = normalize_existing_path(&spec.root);
+    if !root.exists() || !root.is_dir() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    if !is_within_root(skill_root, &root) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.path_out_of_bounds"),
+        ));
+    }
+    Ok(root)
+}
+
+fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
+    let rel = Path::new(relative_path);
+    if rel.is_absolute() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.absolute_path_forbidden"),
+        ));
+    }
+    if rel
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.path_out_of_bounds"),
+        ));
+    }
+    let target = root.join(rel);
+    let normalized = normalize_target_path(&target);
+    if !is_within_root(root, &normalized) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.path_out_of_bounds"),
+        ));
+    }
+    Ok(normalized)
+}
+
 async fn user_skills_content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -331,13 +397,7 @@ async fn user_skills_content(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let mut scan_config = config.clone();
-    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
-    scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false, false);
-    let spec = registry
-        .get(name)
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;
+    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
     let skill_path = PathBuf::from(&spec.path);
     if !skill_path.exists() || !skill_path.is_file() {
         return Err(error_response(
@@ -361,6 +421,217 @@ async fn user_skills_content(
             "name": name,
             "path": skill_path.to_string_lossy(),
             "content": content
+        }
+    })))
+}
+
+async fn user_skills_files(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserSkillFilesQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    let root = resolve_user_skill_root(&skill_root, &spec)?;
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        let rel_text = rel.to_string_lossy().replace('\\', "/");
+        let kind = if entry.file_type().is_dir() {
+            "dir"
+        } else {
+            "file"
+        };
+        entries.push((rel_text, kind.to_string()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let payload = entries
+        .into_iter()
+        .map(|(path, kind)| json!({ "path": path, "kind": kind }))
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "data": {
+            "name": spec.name,
+            "root": root.to_string_lossy().replace('\\', "/"),
+            "entries": payload
+        }
+    })))
+}
+
+async fn user_skills_file(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserSkillFileQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let relative_path = query.path.trim();
+    if relative_path.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.file_path_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    let root = resolve_user_skill_root(&skill_root, &spec)?;
+    let target = resolve_skill_file_path(&root, relative_path)?;
+    if !target.exists() || !target.is_file() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    let content = tokio::fs::read_to_string(&target).await.map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t_with_params(
+                "error.skill_file_read_failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            ),
+        )
+    })?;
+    let rel = target.strip_prefix(&root).unwrap_or(&target);
+    let rel_text = rel.to_string_lossy().replace('\\', "/");
+    Ok(Json(json!({
+        "data": {
+            "name": spec.name,
+            "path": rel_text,
+            "content": content
+        }
+    })))
+}
+
+async fn user_skills_file_update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserSkillFileUpdate>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let relative_path = payload.path.trim();
+    if relative_path.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.file_path_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    let root = resolve_user_skill_root(&skill_root, &spec)?;
+    let target = resolve_skill_file_path(&root, relative_path)?;
+    if !target.exists() || !target.is_file() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_file_not_found"),
+        ));
+    }
+    tokio::fs::write(&target, payload.content.as_bytes())
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let should_reload = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("SKILL.md"))
+        .unwrap_or(false);
+    if should_reload {
+        state.user_tool_manager.clear_skill_cache(Some(&user_id));
+    }
+    let rel = target.strip_prefix(&root).unwrap_or(&target);
+    let rel_text = rel.to_string_lossy().replace('\\', "/");
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "path": rel_text,
+            "reloaded": should_reload
+        }
+    })))
+}
+
+async fn user_skills_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserSkillDeleteQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    let root = resolve_user_skill_root(&skill_root, &spec)?;
+    tokio::fs::remove_dir_all(&root).await.map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t_with_params(
+                "error.skill_delete_failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            ),
+        )
+    })?;
+    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let enabled: Vec<String> = payload
+        .skills
+        .enabled
+        .iter()
+        .filter(|value| value.as_str() != name)
+        .cloned()
+        .collect();
+    let shared: Vec<String> = payload
+        .skills
+        .shared
+        .iter()
+        .filter(|value| value.as_str() != name)
+        .cloned()
+        .collect();
+    if enabled != payload.skills.enabled || shared != payload.skills.shared {
+        state
+            .user_tool_store
+            .update_skills(&user_id, enabled, shared)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    state.user_tool_manager.clear_skill_cache(Some(&user_id));
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "name": name,
+            "message": i18n::t("message.skill_deleted")
         }
     })))
 }
@@ -2211,6 +2482,38 @@ struct UserSkillsUpdate {
 
 #[derive(Debug, Deserialize)]
 struct UserSkillContentQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserSkillFilesQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserSkillFileQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserSkillFileUpdate {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+    path: String,
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserSkillDeleteQuery {
     #[serde(default)]
     user_id: Option<String>,
     name: String,

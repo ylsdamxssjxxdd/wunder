@@ -12,6 +12,7 @@
         <button class="user-tools-btn compact" type="button" @click="addServer">
           {{ t('userTools.mcp.action.add') }}
         </button>
+        <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
       </div>
     </div>
     <div class="tips">
@@ -298,6 +299,10 @@ const props = defineProps({
   active: {
     type: Boolean,
     default: false
+  },
+  status: {
+    type: String,
+    default: ''
   }
 });
 

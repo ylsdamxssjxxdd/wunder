@@ -8,6 +8,12 @@ export const fetchUserSkills = () => api.get('/user_tools/skills');
 export const saveUserSkills = (payload) => api.post('/user_tools/skills', payload);
 export const fetchUserSkillContent = (name) =>
   api.get('/user_tools/skills/content', { params: { name } });
+export const fetchUserSkillFiles = (name) =>
+  api.get('/user_tools/skills/files', { params: { name } });
+export const fetchUserSkillFile = (name, path) =>
+  api.get('/user_tools/skills/file', { params: { name, path } });
+export const saveUserSkillFile = (payload) => api.put('/user_tools/skills/file', payload);
+export const deleteUserSkill = (name) => api.delete('/user_tools/skills', { params: { name } });
 export const uploadUserSkillZip = (file) => {
   const form = new FormData();
   form.append('file', file);

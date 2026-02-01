@@ -116,7 +116,7 @@
 
 ### 4.1.2.3 `/wunder/user_tools/skills`
 
-- 方法：`GET/POST`
+- 方法：`GET/POST/DELETE`
 - `GET` 入参（Query）：
   - `user_id`：字符串，用户唯一标识
 - `GET` 返回（JSON）：
@@ -128,8 +128,47 @@
   - `enabled`：启用技能名列表
   - `shared`：共享技能名列表
 - `POST` 返回：同 `GET`
+- `DELETE` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `name`：技能名称
+  - `message`：提示信息
 
-### 4.1.2.4 `/wunder/user_tools/skills/content`
+### 4.1.2.4 `/wunder/user_tools/skills/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `root`：技能根目录
+  - `entries`：文件列表（path/kind）
+
+### 4.1.2.5 `/wunder/user_tools/skills/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+- `GET` 返回（JSON）：
+  - `name`：技能名称
+  - `path`：文件路径
+  - `content`：文件内容
+- `PUT` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `path`：文件路径
+  - `reloaded`：是否触发技能刷新（编辑 SKILL.md 时为 true）
+
+### 4.1.2.6 `/wunder/user_tools/skills/content`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -140,7 +179,7 @@
   - `path`：SKILL.md 文件路径
   - `content`：SKILL.md 完整内容
 
-### 4.1.2.5 `/wunder/user_tools/skills/upload`
+### 4.1.2.7 `/wunder/user_tools/skills/upload`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -150,7 +189,7 @@
   - `extracted`：解压文件数量
   - `message`：提示信息
 
-### 4.1.2.6 `/wunder/user_tools/knowledge`
+### 4.1.2.8 `/wunder/user_tools/knowledge`
 
 - 方法：`GET/POST`
 - `GET` 入参（Query）：
@@ -164,7 +203,7 @@
 - `POST` 返回：同 `GET`
 - 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
 
-### 4.1.2.7 `/wunder/user_tools/knowledge/files`
+### 4.1.2.9 `/wunder/user_tools/knowledge/files`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -175,7 +214,7 @@
   - `files`：Markdown 文件相对路径列表
 - 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
 
-### 4.1.2.8 `/wunder/user_tools/knowledge/file`
+### 4.1.2.10 `/wunder/user_tools/knowledge/file`
 
 - 方法：`GET/PUT/DELETE`
 - `GET` 入参（Query）：
@@ -203,7 +242,7 @@
   - `message`：提示信息
 - 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
 
-### 4.1.2.9 `/wunder/user_tools/knowledge/upload`
+### 4.1.2.11 `/wunder/user_tools/knowledge/upload`
 
 - 方法：`POST`
 - 入参（multipart/form-data）：
@@ -222,7 +261,7 @@
   - `warnings`：转换警告列表
 - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
 
-### 4.1.2.10 `/wunder/user_tools/knowledge/docs`
+### 4.1.2.12 `/wunder/user_tools/knowledge/docs`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -233,7 +272,7 @@
   - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.11 `/wunder/user_tools/knowledge/doc`
+### 4.1.2.13 `/wunder/user_tools/knowledge/doc`
 
 - 方法：`GET/DELETE`
 - `GET` 入参（Query）：
@@ -255,7 +294,7 @@
   - `doc_name`：文档名称
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.12 `/wunder/user_tools/knowledge/chunks`
+### 4.1.2.14 `/wunder/user_tools/knowledge/chunks`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -268,7 +307,7 @@
   - `chunks`：切片列表（index/start/end/preview/content/status）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.13 `/wunder/user_tools/knowledge/chunk/embed`
+### 4.1.2.15 `/wunder/user_tools/knowledge/chunk/embed`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -281,7 +320,7 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.14 `/wunder/user_tools/knowledge/chunk/delete`
+### 4.1.2.16 `/wunder/user_tools/knowledge/chunk/delete`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -294,7 +333,7 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.15 `/wunder/user_tools/knowledge/test`
+### 4.1.2.17 `/wunder/user_tools/knowledge/test`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -311,7 +350,7 @@
   - `text`：字面知识库结果文本
 - 说明：支持向量/字面知识库。
 
-### 4.1.2.16 `/wunder/user_tools/knowledge/reindex`
+### 4.1.2.18 `/wunder/user_tools/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -324,7 +363,7 @@
   - `failed`：失败项列表（doc_id/error）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.17 `/wunder/user_tools/tools`
+### 4.1.2.19 `/wunder/user_tools/tools`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -339,14 +378,14 @@
 - 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 
-### 4.1.2.18 `/wunder/user_tools/catalog`
+### 4.1.2.20 `/wunder/user_tools/catalog`
 
 - 方法：`GET`
 - 返回（JSON）：
   - 字段同 `/wunder/user_tools/tools`
 - 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
 
-### 4.1.2.19 `/wunder/user_tools/shared_tools`
+### 4.1.2.21 `/wunder/user_tools/shared_tools`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -356,7 +395,7 @@
   - `user_id`：用户唯一标识
   - `shared_tools`：共享工具勾选列表
 
-### 4.1.2.20 `/wunder/doc2md/convert`
+### 4.1.2.22 `/wunder/doc2md/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -369,7 +408,7 @@
 - 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
 - 上传限制：默认 200MB。
 
-### 4.1.2.21 `/wunder/attachments/convert`
+### 4.1.2.23 `/wunder/attachments/convert`
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
@@ -380,7 +419,7 @@
   - 多文件：`items`（数组，元素包含 `name`/`content`/`converter`/`warnings`）
 - 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
 
-### 4.1.2.22 `/wunder/temp_dir/download`
+### 4.1.2.24 `/wunder/temp_dir/download`
 
 - 方法：`GET`
 - 鉴权：无
@@ -388,7 +427,7 @@
 - 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
 - 返回：文件流（`Content-Disposition: attachment`）
 
-### 4.1.2.23 `/wunder/temp_dir/upload`
+### 4.1.2.25 `/wunder/temp_dir/upload`
 
 - 方法：`POST`
 - 鉴权：无
@@ -402,7 +441,7 @@
   - `ok`：是否成功
   - `files`：上传后的文件名列表
 
-### 4.1.2.24 `/wunder/temp_dir/list`
+### 4.1.2.26 `/wunder/temp_dir/list`
 
 - 方法：`GET`
 - 鉴权：无
@@ -411,7 +450,7 @@
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
 
-### 4.1.2.25 `/wunder/temp_dir/remove`
+### 4.1.2.27 `/wunder/temp_dir/remove`
 
 - 方法：`POST`
 - 鉴权：无
@@ -424,7 +463,7 @@
   - `removed`：已删除文件名列表
   - `missing`：未找到的文件名列表
 
-### 4.1.2.26 `/wunder/mcp`
+### 4.1.2.28 `/wunder/mcp`
 
 - 类型：MCP 服务（streamable-http）
 - 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
@@ -441,7 +480,7 @@
 - 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
 - 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
 
-### 4.1.2.27 `/wunder/i18n`
+### 4.1.2.29 `/wunder/i18n`
 
 - 方法：`GET`
 - 返回（JSON）：

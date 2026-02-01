@@ -49,24 +49,25 @@
           v-show="activeTab === 'mcp'"
           :visible="visibleProxy"
           :active="activeTab === 'mcp'"
+          :status="statusMessage"
           @status="updateStatus"
         />
         <UserSkillPane
           v-show="activeTab === 'skills'"
           :visible="visibleProxy"
           :active="activeTab === 'skills'"
+          :status="statusMessage"
           @status="updateStatus"
         />
         <UserKnowledgePane
           v-show="activeTab === 'knowledge'"
           :visible="visibleProxy"
           :active="activeTab === 'knowledge'"
+          :status="statusMessage"
           @status="updateStatus"
         />
       </div>
     </div>
-
-    <div class="user-tools-status">{{ statusMessage }}</div>
 
     <template #footer>
       <el-button class="user-tools-footer-btn" @click="close">{{ t('common.close') }}</el-button>

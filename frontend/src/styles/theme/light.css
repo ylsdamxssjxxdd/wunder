@@ -737,6 +737,37 @@
   box-shadow: none;
 }
 
+:root[data-user-theme='light'] .user-tools-dialog .skill-detail-pane {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+:root[data-user-theme='light'] .user-tools-dialog .skill-file-tree {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--user-tools-text);
+}
+
+:root[data-user-theme='light'] .user-tools-dialog .skill-tree-item.is-file:hover {
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+:root[data-user-theme='light'] .user-tools-dialog .skill-tree-item.is-active {
+  background: rgba(59, 130, 246, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.45);
+}
+
+:root[data-user-theme='light'] .user-tools-dialog .skill-editor-body {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-user-theme='light'] .user-tools-dialog .skill-editor-body.is-disabled {
+  background: rgba(15, 23, 42, 0.02);
+}
+
 :root[data-user-theme='light'] .user-tools-dialog .tool-item:hover,
 :root[data-user-theme='light'] .user-tools-dialog .skill-item:hover {
   background: rgba(59, 130, 246, 0.08);

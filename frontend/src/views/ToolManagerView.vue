@@ -9,120 +9,109 @@
       <section class="portal-main">
         <div class="portal-main-scroll">
           <section class="portal-section tool-manager-section">
-            <div class="portal-section-header">
-                <div>
-                <div class="portal-section-title">{{ t('toolManager.section.title') }}</div>
-                <div class="portal-section-desc">{{ t('toolManager.section.desc') }}</div>
+            <div class="user-tools-modal user-tools-dialog tool-manager-page">
+              <div class="user-tools-sidebar">
+                <div class="user-tools-sidebar-title">{{ t('toolManager.section.title') }}</div>
+                <button
+                  class="user-tools-tab"
+                  :class="{ active: activeTab === 'system' }"
+                  type="button"
+                  @click="activeTab = 'system'"
+                >
+                  {{ t('toolManager.section.systemTitle') }}
+                </button>
+                <button
+                  class="user-tools-tab"
+                  :class="{ active: activeTab === 'mcp' }"
+                  type="button"
+                  @click="activeTab = 'mcp'"
+                >
+                  {{ t('toolManager.system.mcp') }}
+                </button>
+                <button
+                  class="user-tools-tab"
+                  :class="{ active: activeTab === 'skills' }"
+                  type="button"
+                  @click="activeTab = 'skills'"
+                >
+                  {{ t('toolManager.system.skills') }}
+                </button>
+                <button
+                  class="user-tools-tab"
+                  :class="{ active: activeTab === 'knowledge' }"
+                  type="button"
+                  @click="activeTab = 'knowledge'"
+                >
+                  {{ t('toolManager.system.knowledge') }}
+                </button>
+                <button
+                  class="user-tools-tab"
+                  :class="{ active: activeTab === 'shared' }"
+                  type="button"
+                  @click="activeTab = 'shared'"
+                >
+                  {{ t('toolManager.section.shared') }}
+                </button>
               </div>
-            </div>
-            <div class="user-tools-dialog user-tools-page tool-manager-page">
-              <div class="user-tools-modal">
-                <div class="user-tools-sidebar">
-                  <div class="user-tools-sidebar-title">{{ t('toolManager.section.title') }}</div>
-                  <button
-                    class="user-tools-tab"
-                    :class="{ active: activeTab === 'system' }"
-                    type="button"
-                    @click="activeTab = 'system'"
-                  >
-                    {{ t('toolManager.section.systemTitle') }}
-                  </button>
-                  <button
-                    class="user-tools-tab"
-                    :class="{ active: activeTab === 'mcp' }"
-                    type="button"
-                    @click="activeTab = 'mcp'"
-                  >
-                    {{ t('toolManager.system.mcp') }}
-                  </button>
-                  <button
-                    class="user-tools-tab"
-                    :class="{ active: activeTab === 'skills' }"
-                    type="button"
-                    @click="activeTab = 'skills'"
-                  >
-                    {{ t('toolManager.system.skills') }}
-                  </button>
-                  <button
-                    class="user-tools-tab"
-                    :class="{ active: activeTab === 'knowledge' }"
-                    type="button"
-                    @click="activeTab = 'knowledge'"
-                  >
-                    {{ t('toolManager.system.knowledge') }}
-                  </button>
-                  <button
-                    class="user-tools-tab"
-                    :class="{ active: activeTab === 'shared' }"
-                    type="button"
-                    @click="activeTab = 'shared'"
-                  >
-                    {{ t('toolManager.section.shared') }}
-                  </button>
-                </div>
-                <div class="user-tools-content">
-                  <div v-show="activeTab === 'system'" class="user-tools-pane tool-catalog-pane">
-                    <div class="list-header">
-                      <label>{{ t('toolManager.section.systemTitle') }}</label>
+              <div class="user-tools-content">
+                <div v-show="activeTab === 'system'" class="user-tools-pane tool-catalog-pane">
+                  <div class="list-header">
+                    <label>{{ t('toolManager.section.systemTitle') }}</label>
+                    <div class="tool-catalog-meta">
+                      {{ t('toolManager.section.systemCount', { count: systemToolCount }) }}
+                    </div>
+                  </div>
+                  <div class="muted">{{ t('toolManager.section.systemDesc') }}</div>
+                  <div class="tool-catalog-grid">
+                    <div
+                      v-for="group in systemToolGroups"
+                      :key="group.key"
+                      class="tool-catalog-card"
+                    >
+                      <div class="tool-catalog-header">
+                        <div class="tool-catalog-title">{{ group.title }}</div>
+                      </div>
                       <div class="tool-catalog-meta">
-                        {{ t('toolManager.section.systemCount', { count: systemToolCount }) }}
+                        {{ t('toolManager.section.systemCount', { count: group.items.length }) }}
+                      </div>
+                      <div class="tool-catalog-tags">
+                        <span
+                          v-for="item in group.items"
+                          :key="item.name"
+                          class="tool-catalog-tag"
+                          :title="item.description || item.name"
+                        >
+                          {{ item.name }}
+                        </span>
+                        <span v-if="!group.items.length" class="tool-catalog-empty">
+                          {{ t('common.none') }}
+                        </span>
                       </div>
                     </div>
-                    <div class="muted">{{ t('toolManager.section.systemDesc') }}</div>
-                    <div class="tool-catalog-grid">
-                      <div
-                        v-for="group in systemToolGroups"
-                        :key="group.key"
-                        class="tool-catalog-card"
-                      >
-                        <div class="tool-catalog-header">
-                          <div class="tool-catalog-title">{{ group.title }}</div>
-                        </div>
-                        <div class="tool-catalog-meta">
-                          {{ t('toolManager.section.systemCount', { count: group.items.length }) }}
-                        </div>
-                        <div class="tool-catalog-tags">
-                          <span
-                            v-for="item in group.items"
-                            :key="item.name"
-                            class="tool-catalog-tag"
-                            :title="item.description || item.name"
-                          >
-                            {{ item.name }}
-                          </span>
-                          <span v-if="!group.items.length" class="tool-catalog-empty">
-                            {{ t('common.none') }}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <UserMcpPane
-                    v-show="activeTab === 'mcp'"
-                    :visible="activeTab === 'mcp'"
-                    :active="activeTab === 'mcp'"
-                    @status="updateStatus"
-                  />
-                  <UserSkillPane
-                    v-show="activeTab === 'skills'"
-                    :visible="activeTab === 'skills'"
-                    :active="activeTab === 'skills'"
-                    @status="updateStatus"
-                  />
-                  <UserKnowledgePane
-                    v-show="activeTab === 'knowledge'"
-                    :visible="activeTab === 'knowledge'"
-                    :active="activeTab === 'knowledge'"
-                    @status="updateStatus"
-                  />
-                  <UserSharedToolsPanel v-show="activeTab === 'shared'" />
-                  <div
-                    v-if="activeTab !== 'shared' && activeTab !== 'system'"
-                    class="user-tools-status"
-                  >
-                    {{ statusMessage }}
                   </div>
                 </div>
+                <UserMcpPane
+                  v-show="activeTab === 'mcp'"
+                  :visible="activeTab === 'mcp'"
+                  :active="activeTab === 'mcp'"
+                  :status="statusMessage"
+                  @status="updateStatus"
+                />
+                <UserSkillPane
+                  v-show="activeTab === 'skills'"
+                  :visible="activeTab === 'skills'"
+                  :active="activeTab === 'skills'"
+                  :status="statusMessage"
+                  @status="updateStatus"
+                />
+                <UserKnowledgePane
+                  v-show="activeTab === 'knowledge'"
+                  :visible="activeTab === 'knowledge'"
+                  :active="activeTab === 'knowledge'"
+                  :status="statusMessage"
+                  @status="updateStatus"
+                />
+                <UserSharedToolsPanel v-show="activeTab === 'shared'" />
               </div>
             </div>
           </section>
