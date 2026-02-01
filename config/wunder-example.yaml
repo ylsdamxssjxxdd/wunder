@@ -1,7 +1,7 @@
 server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
-  host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
-  port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
-  mode: ${WUNDER_SERVER_MODE:-api} # 服务模式：API=api，沙盒服务=sandbox
+  host: ${WUNDER_HOST} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
+  port: ${WUNDER_PORT} # 服务监听端口（可用 WUNDER_PORT 覆盖）
+  mode: ${WUNDER_SERVER_MODE} # 服务模式：API=api，沙盒服务=sandbox
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 300 # 全局最大并发会话数，超过后请求排队
 
@@ -43,7 +43,7 @@ mcp: # MCP 工具配置
   timeout_s: 1200 # MCP 调用超时（秒），避免外部服务长期阻塞
   servers: # MCP 服务列表
     - name: wunder # MCP 服务名称（用于 server@tool 标识）
-      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
+      endpoint: http://127.0.0.1:${WUNDER_PORT}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
       allow_tools: # 允许调用的工具白名单（为空表示全部）
         - excute
         - doc2md
@@ -77,7 +77,7 @@ a2a: # A2A 配置
   timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表
     - name: wunder # A2A 服务名称（工具名为 a2a@name）
-      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/a2a # A2A JSON-RPC 端点
+      endpoint: http://127.0.0.1:${WUNDER_PORT}/a2a # A2A JSON-RPC 端点
       service_type: internal # internal 表示 Wunder 内部 A2A
       user_id: demo_user # 内部 A2A 需固定 user_id，挂载工具后无需模型传入
       enabled: false # 是否启用该服务
@@ -116,7 +116,7 @@ knowledge: # 字面知识库配置
       enabled: true # 是否启用该知识库
 
 workspace: # 工作区配置
-  root: ${WUNDER_WORKSPACE_ROOT:-./workspaces} # 工作区根目录（按 user_id 划分子目录）
+  root: ${WUNDER_WORKSPACE_ROOT} # 工作区根目录（按 user_id 划分子目录）
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
@@ -124,12 +124,12 @@ storage: # 存储配置
   backend: auto # auto | sqlite | postgres
   db_path: ./data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）
   postgres:
-    dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@127.0.0.1:5432/wunder} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
+    dsn: ${WUNDER_POSTGRES_DSN} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
     connect_timeout_s: 5 # PostgreSQL 连接超时（秒）
-    pool_size: ${WUNDER_POSTGRES_POOL_SIZE:-64} # PostgreSQL 连接池大小（并发高时可上调）
+    pool_size: ${WUNDER_POSTGRES_POOL_SIZE} # PostgreSQL 连接池大小（并发高时可上调）
 
 observability: # 可观测性配置
-  log_level: INFO # 日志级别（DEBUG/INFO/WARNING/ERROR）
+  log_level: ${WUNDER_LOG_LEVEL} # 日志级别（DEBUG/INFO/WARNING/ERROR）
   monitor_event_limit: 500 # 监控事件保留条数上限（<=0 表示不限制，注意会增加内存占用）
   monitor_payload_max_chars: 0 # 监控事件单条最大字符数（<= 0 表示不截断）
   monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）
@@ -138,7 +138,7 @@ observability: # 可观测性配置
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）
-  endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
+  endpoint: ${WUNDER_SANDBOX_ENDPOINT} # 沙盒服务地址（可通过环境变量覆盖）
   container_root: /workspaces # 容器内项目根目录
   network: bridge # 容器网络模式（bridge/host）
   readonly_rootfs: true # 是否以只读根文件系统运行容器
