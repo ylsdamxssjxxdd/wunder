@@ -2,9 +2,11 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
-    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
-    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
+    ChannelSessionRecord, ChatSessionRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -546,6 +548,122 @@ impl StorageBackend for SqliteStorage {
               ON session_runs (user_id, updated_time);
             CREATE INDEX IF NOT EXISTS idx_session_runs_parent
               ON session_runs (parent_session_id, updated_time);
+            CREATE TABLE IF NOT EXISTS channel_accounts (
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              config TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY (channel, account_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_accounts_status
+              ON channel_accounts (status);
+            CREATE TABLE IF NOT EXISTS channel_bindings (
+              binding_id TEXT PRIMARY KEY,
+              channel TEXT,
+              account_id TEXT,
+              peer_kind TEXT,
+              peer_id TEXT,
+              agent_id TEXT,
+              tool_overrides TEXT,
+              priority INTEGER NOT NULL DEFAULT 0,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_bindings_match
+              ON channel_bindings (channel, account_id, peer_kind, peer_id, priority);
+            CREATE TABLE IF NOT EXISTS channel_sessions (
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              peer_kind TEXT NOT NULL,
+              peer_id TEXT NOT NULL,
+              thread_id TEXT,
+              session_id TEXT NOT NULL,
+              agent_id TEXT,
+              user_id TEXT NOT NULL,
+              tts_enabled INTEGER,
+              tts_voice TEXT,
+              metadata TEXT,
+              last_message_at REAL NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY (channel, account_id, peer_kind, peer_id, thread_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_sessions_session
+              ON channel_sessions (session_id);
+            CREATE INDEX IF NOT EXISTS idx_channel_sessions_peer
+              ON channel_sessions (channel, account_id, peer_id);
+            CREATE TABLE IF NOT EXISTS channel_messages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              peer_kind TEXT NOT NULL,
+              peer_id TEXT NOT NULL,
+              thread_id TEXT,
+              session_id TEXT,
+              message_id TEXT,
+              sender_id TEXT,
+              message_type TEXT,
+              payload TEXT NOT NULL,
+              raw_payload TEXT,
+              created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_session
+              ON channel_messages (session_id, id);
+            CREATE INDEX IF NOT EXISTS idx_channel_messages_peer
+              ON channel_messages (channel, account_id, peer_id, id);
+            CREATE TABLE IF NOT EXISTS channel_outbox (
+              outbox_id TEXT PRIMARY KEY,
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              peer_kind TEXT NOT NULL,
+              peer_id TEXT NOT NULL,
+              thread_id TEXT,
+              payload TEXT NOT NULL,
+              status TEXT NOT NULL,
+              retry_count INTEGER NOT NULL,
+              retry_at REAL NOT NULL,
+              last_error TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              delivered_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_outbox_status
+              ON channel_outbox (status, retry_at);
+            CREATE INDEX IF NOT EXISTS idx_channel_outbox_peer
+              ON channel_outbox (channel, account_id, peer_id);
+            CREATE TABLE IF NOT EXISTS media_assets (
+              asset_id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              url TEXT NOT NULL,
+              mime TEXT,
+              size INTEGER,
+              hash TEXT,
+              source TEXT,
+              created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_media_assets_hash
+              ON media_assets (hash);
+            CREATE TABLE IF NOT EXISTS speech_jobs (
+              job_id TEXT PRIMARY KEY,
+              job_type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              input_text TEXT,
+              input_url TEXT,
+              output_text TEXT,
+              output_url TEXT,
+              model TEXT,
+              error TEXT,
+              retry_count INTEGER NOT NULL,
+              next_retry_at REAL NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              metadata TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_speech_jobs_status
+              ON speech_jobs (job_type, status, next_retry_at);
             CREATE TABLE IF NOT EXISTS user_agents (
               agent_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -2924,6 +3042,740 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user, cleaned_session],
         )?;
         Ok(affected as i64)
+    }
+
+    fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let config = Self::json_to_string(&record.config);
+        conn.execute(
+            "INSERT INTO channel_accounts (channel, account_id, config, status, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(channel, account_id) DO UPDATE SET config = excluded.config, status = excluded.status, updated_at = excluded.updated_at",
+            params![
+                record.channel,
+                record.account_id,
+                config,
+                record.status,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_channel_account(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<Option<ChannelAccountRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT channel, account_id, config, status, created_at, updated_at FROM channel_accounts WHERE channel = ? AND account_id = ?",
+                params![cleaned_channel, cleaned_account],
+                |row| {
+                    let config_text: String = row.get(2)?;
+                    Ok(ChannelAccountRecord {
+                        channel: row.get(0)?,
+                        account_id: row.get(1)?,
+                        config: Self::json_from_str(&config_text).unwrap_or(Value::Null),
+                        status: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_channel_accounts(
+        &self,
+        channel: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<ChannelAccountRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("channel = ?".to_string());
+            params_list.push(SqlValue::from(channel.to_string()));
+        }
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("status = ?".to_string());
+            params_list.push(SqlValue::from(status.to_string()));
+        }
+        let mut query =
+            "SELECT channel, account_id, config, status, created_at, updated_at FROM channel_accounts"
+                .to_string();
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let config_text: String = row.get(2)?;
+            Ok(ChannelAccountRecord {
+                channel: row.get(0)?,
+                account_id: row.get(1)?,
+                config: Self::json_from_str(&config_text).unwrap_or(Value::Null),
+                status: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn delete_channel_account(&self, channel: &str, account_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_accounts WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_channel_binding(&self, record: &ChannelBindingRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
+        let enabled = if record.enabled { 1 } else { 0 };
+        conn.execute(
+            "INSERT INTO channel_bindings (binding_id, channel, account_id, peer_kind, peer_id, agent_id, tool_overrides, priority, enabled, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(binding_id) DO UPDATE SET channel = excluded.channel, account_id = excluded.account_id, peer_kind = excluded.peer_kind, peer_id = excluded.peer_id, \
+             agent_id = excluded.agent_id, tool_overrides = excluded.tool_overrides, priority = excluded.priority, enabled = excluded.enabled, updated_at = excluded.updated_at",
+            params![
+                record.binding_id,
+                record.channel,
+                record.account_id,
+                record.peer_kind,
+                record.peer_id,
+                record.agent_id,
+                tool_overrides,
+                record.priority,
+                enabled,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_channel_bindings(&self, channel: Option<&str>) -> Result<Vec<ChannelBindingRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut query = "SELECT binding_id, channel, account_id, peer_kind, peer_id, agent_id, tool_overrides, priority, enabled, created_at, updated_at FROM channel_bindings".to_string();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            query.push_str(" WHERE channel = ?");
+            params_list.push(SqlValue::from(channel.to_string()));
+        }
+        query.push_str(" ORDER BY priority DESC, updated_at DESC");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let tool_overrides: Option<String> = row.get(6)?;
+            Ok(ChannelBindingRecord {
+                binding_id: row.get(0)?,
+                channel: row.get(1)?,
+                account_id: row.get(2)?,
+                peer_kind: row.get(3)?,
+                peer_id: row.get(4)?,
+                agent_id: row.get(5)?,
+                tool_overrides: Self::parse_string_list(tool_overrides),
+                priority: row.get(7)?,
+                enabled: row.get::<_, i64>(8)? != 0,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn delete_channel_binding(&self, binding_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = binding_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_bindings WHERE binding_id = ?",
+            params![cleaned],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
+        let tts_enabled = record.tts_enabled.map(|value| if value { 1 } else { 0 });
+        conn.execute(
+            "INSERT INTO channel_sessions (channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(channel, account_id, peer_kind, peer_id, thread_id) DO UPDATE SET session_id = excluded.session_id, agent_id = excluded.agent_id, user_id = excluded.user_id, \
+             tts_enabled = excluded.tts_enabled, tts_voice = excluded.tts_voice, metadata = excluded.metadata, last_message_at = excluded.last_message_at, updated_at = excluded.updated_at",
+            params![
+                record.channel,
+                record.account_id,
+                record.peer_kind,
+                record.peer_id,
+                record.thread_id,
+                record.session_id,
+                record.agent_id,
+                record.user_id,
+                tts_enabled,
+                record.tts_voice,
+                metadata,
+                record.last_message_at,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_channel_session(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+        thread_id: Option<&str>,
+    ) -> Result<Option<ChannelSessionRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        let cleaned_peer_kind = peer_kind.trim();
+        let cleaned_peer_id = peer_id.trim();
+        if cleaned_channel.is_empty()
+            || cleaned_account.is_empty()
+            || cleaned_peer_kind.is_empty()
+            || cleaned_peer_id.is_empty()
+        {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at \
+                 FROM channel_sessions WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ? AND (thread_id IS ? OR thread_id = ?)",
+                params![cleaned_channel, cleaned_account, cleaned_peer_kind, cleaned_peer_id, thread_id, thread_id],
+                |row| {
+                    let metadata_text: Option<String> = row.get(10)?;
+                    Ok(ChannelSessionRecord {
+                        channel: row.get(0)?,
+                        account_id: row.get(1)?,
+                        peer_kind: row.get(2)?,
+                        peer_id: row.get(3)?,
+                        thread_id: row.get(4)?,
+                        session_id: row.get(5)?,
+                        agent_id: row.get(6)?,
+                        user_id: row.get(7)?,
+                        tts_enabled: row
+                            .get::<_, Option<i64>>(8)?
+                            .map(|value| value != 0),
+                        tts_voice: row.get(9)?,
+                        metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
+                        last_message_at: row.get(11)?,
+                        created_at: row.get(12)?,
+                        updated_at: row.get(13)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_channel_sessions(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        peer_id: Option<&str>,
+        session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChannelSessionRecord>, i64)> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("channel = ?".to_string());
+            params_list.push(SqlValue::from(channel.to_string()));
+        }
+        if let Some(account) = account_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("account_id = ?".to_string());
+            params_list.push(SqlValue::from(account.to_string()));
+        }
+        if let Some(peer_id) = peer_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("peer_id = ?".to_string());
+            params_list.push(SqlValue::from(peer_id.to_string()));
+        }
+        if let Some(session_id) = session_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("session_id = ?".to_string());
+            params_list.push(SqlValue::from(session_id.to_string()));
+        }
+        let mut query = "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at FROM channel_sessions".to_string();
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let offset_value = offset.max(0);
+        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
+        params_list.push(SqlValue::from(limit_value));
+        params_list.push(SqlValue::from(offset_value));
+        query.push_str(" LIMIT ? OFFSET ?");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let metadata_text: Option<String> = row.get(10)?;
+            Ok(ChannelSessionRecord {
+                channel: row.get(0)?,
+                account_id: row.get(1)?,
+                peer_kind: row.get(2)?,
+                peer_id: row.get(3)?,
+                thread_id: row.get(4)?,
+                session_id: row.get(5)?,
+                agent_id: row.get(6)?,
+                user_id: row.get(7)?,
+                tts_enabled: row.get::<_, Option<i64>>(8)?.map(|value| value != 0),
+                tts_voice: row.get(9)?,
+                metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
+                last_message_at: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+
+        let mut count_query = "SELECT COUNT(*) FROM channel_sessions".to_string();
+        if !filters.is_empty() {
+            count_query.push_str(" WHERE ");
+            count_query.push_str(&filters.join(" AND "));
+        }
+        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
+        let total: i64 = conn.query_row(&count_query, count_params, |row| row.get(0))?;
+        Ok((output, total))
+    }
+
+    fn insert_channel_message(&self, record: &ChannelMessageRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let payload = Self::json_to_string(&record.payload);
+        let raw_payload = record.raw_payload.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO channel_messages (channel, account_id, peer_kind, peer_id, thread_id, session_id, message_id, sender_id, message_type, payload, raw_payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                record.channel,
+                record.account_id,
+                record.peer_kind,
+                record.peer_id,
+                record.thread_id,
+                record.session_id,
+                record.message_id,
+                record.sender_id,
+                record.message_type,
+                payload,
+                raw_payload,
+                record.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_channel_messages(
+        &self,
+        channel: Option<&str>,
+        session_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ChannelMessageRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("channel = ?".to_string());
+            params_list.push(SqlValue::from(channel.to_string()));
+        }
+        if let Some(session_id) = session_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("session_id = ?".to_string());
+            params_list.push(SqlValue::from(session_id.to_string()));
+        }
+        let mut query = "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, message_id, sender_id, message_type, payload, raw_payload, created_at FROM channel_messages".to_string();
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY id DESC");
+        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
+        params_list.push(SqlValue::from(limit_value));
+        query.push_str(" LIMIT ?");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let payload_text: String = row.get(9)?;
+            let raw_text: Option<String> = row.get(10)?;
+            Ok(ChannelMessageRecord {
+                channel: row.get(0)?,
+                account_id: row.get(1)?,
+                peer_kind: row.get(2)?,
+                peer_id: row.get(3)?,
+                thread_id: row.get(4)?,
+                session_id: row.get(5)?,
+                message_id: row.get(6)?,
+                sender_id: row.get(7)?,
+                message_type: row.get(8)?,
+                payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
+                raw_payload: raw_text.and_then(|value| Self::json_from_str(&value)),
+                created_at: row.get(11)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let payload = Self::json_to_string(&record.payload);
+        conn.execute(
+            "INSERT INTO channel_outbox (outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(outbox_id) DO UPDATE SET payload = excluded.payload, status = excluded.status, retry_count = excluded.retry_count, retry_at = excluded.retry_at, \
+             last_error = excluded.last_error, updated_at = excluded.updated_at, delivered_at = excluded.delivered_at",
+            params![
+                record.outbox_id,
+                record.channel,
+                record.account_id,
+                record.peer_kind,
+                record.peer_id,
+                record.thread_id,
+                payload,
+                record.status,
+                record.retry_count,
+                record.retry_at,
+                record.last_error,
+                record.created_at,
+                record.updated_at,
+                record.delivered_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = outbox_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at \
+                 FROM channel_outbox WHERE outbox_id = ?",
+                params![cleaned],
+                |row| {
+                    let payload_text: String = row.get(6)?;
+                    Ok(ChannelOutboxRecord {
+                        outbox_id: row.get(0)?,
+                        channel: row.get(1)?,
+                        account_id: row.get(2)?,
+                        peer_kind: row.get(3)?,
+                        peer_id: row.get(4)?,
+                        thread_id: row.get(5)?,
+                        payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
+                        status: row.get(7)?,
+                        retry_count: row.get(8)?,
+                        retry_at: row.get(9)?,
+                        last_error: row.get(10)?,
+                        created_at: row.get(11)?,
+                        updated_at: row.get(12)?,
+                        delivered_at: row.get(13)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let now = Self::now_ts();
+        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
+        let mut stmt = conn.prepare(
+            "SELECT outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at \
+             FROM channel_outbox WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? ORDER BY retry_at ASC LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![now, limit_value], |row| {
+            let payload_text: String = row.get(6)?;
+            Ok(ChannelOutboxRecord {
+                outbox_id: row.get(0)?,
+                channel: row.get(1)?,
+                account_id: row.get(2)?,
+                peer_kind: row.get(3)?,
+                peer_id: row.get(4)?,
+                thread_id: row.get(5)?,
+                payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
+                status: row.get(7)?,
+                retry_count: row.get(8)?,
+                retry_at: row.get(9)?,
+                last_error: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                delivered_at: row.get(13)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn update_channel_outbox_status(
+        &self,
+        outbox_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        last_error: Option<&str>,
+        delivered_at: Option<f64>,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = outbox_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE channel_outbox SET status = ?, retry_count = ?, retry_at = ?, last_error = ?, updated_at = ?, delivered_at = ? WHERE outbox_id = ?",
+            params![status, retry_count, retry_at, last_error, updated_at, delivered_at, cleaned],
+        )?;
+        Ok(())
+    }
+
+    fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO media_assets (asset_id, kind, url, mime, size, hash, source, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(asset_id) DO UPDATE SET kind = excluded.kind, url = excluded.url, mime = excluded.mime, size = excluded.size, hash = excluded.hash, source = excluded.source",
+            params![
+                record.asset_id,
+                record.kind,
+                record.url,
+                record.mime,
+                record.size,
+                record.hash,
+                record.source,
+                record.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_media_asset(&self, asset_id: &str) -> Result<Option<MediaAssetRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = asset_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT asset_id, kind, url, mime, size, hash, source, created_at FROM media_assets WHERE asset_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(MediaAssetRecord {
+                        asset_id: row.get(0)?,
+                        kind: row.get(1)?,
+                        url: row.get(2)?,
+                        mime: row.get(3)?,
+                        size: row.get(4)?,
+                        hash: row.get(5)?,
+                        source: row.get(6)?,
+                        created_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn get_media_asset_by_hash(&self, hash: &str) -> Result<Option<MediaAssetRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = hash.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT asset_id, kind, url, mime, size, hash, source, created_at FROM media_assets WHERE hash = ?",
+                params![cleaned],
+                |row| {
+                    Ok(MediaAssetRecord {
+                        asset_id: row.get(0)?,
+                        kind: row.get(1)?,
+                        url: row.get(2)?,
+                        mime: row.get(3)?,
+                        size: row.get(4)?,
+                        hash: row.get(5)?,
+                        source: row.get(6)?,
+                        created_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn upsert_speech_job(&self, record: &SpeechJobRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO speech_jobs (job_id, job_type, status, input_text, input_url, output_text, output_url, model, error, retry_count, next_retry_at, created_at, updated_at, metadata) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(job_id) DO UPDATE SET status = excluded.status, input_text = excluded.input_text, input_url = excluded.input_url, output_text = excluded.output_text, \
+             output_url = excluded.output_url, model = excluded.model, error = excluded.error, retry_count = excluded.retry_count, next_retry_at = excluded.next_retry_at, \
+             updated_at = excluded.updated_at, metadata = excluded.metadata",
+            params![
+                record.job_id,
+                record.job_type,
+                record.status,
+                record.input_text,
+                record.input_url,
+                record.output_text,
+                record.output_url,
+                record.model,
+                record.error,
+                record.retry_count,
+                record.next_retry_at,
+                record.created_at,
+                record.updated_at,
+                metadata
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_pending_speech_jobs(&self, job_type: &str, limit: i64) -> Result<Vec<SpeechJobRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = job_type.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let now = Self::now_ts();
+        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
+        let mut stmt = conn.prepare(
+            "SELECT job_id, job_type, status, input_text, input_url, output_text, output_url, model, error, retry_count, next_retry_at, created_at, updated_at, metadata \
+             FROM speech_jobs WHERE job_type = ? AND (status = 'queued' OR status = 'retry') AND next_retry_at <= ? ORDER BY next_retry_at ASC LIMIT ?",
+        )?;
+        let rows = stmt.query_map(params![cleaned, now, limit_value], |row| {
+            let metadata_text: Option<String> = row.get(13)?;
+            Ok(SpeechJobRecord {
+                job_id: row.get(0)?,
+                job_type: row.get(1)?,
+                status: row.get(2)?,
+                input_text: row.get(3)?,
+                input_url: row.get(4)?,
+                output_text: row.get(5)?,
+                output_url: row.get(6)?,
+                model: row.get(7)?,
+                error: row.get(8)?,
+                retry_count: row.get(9)?,
+                next_retry_at: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
     }
 
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {

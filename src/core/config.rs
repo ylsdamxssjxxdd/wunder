@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
+    pub channels: ChannelsConfig,
+    #[serde(default)]
     pub sandbox: SandboxConfig,
 }
 
@@ -406,6 +408,136 @@ pub struct StorageConfig {
     pub db_path: String,
     #[serde(default)]
     pub postgres: PostgresConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub allow_unknown_accounts: bool,
+    #[serde(default)]
+    pub default_agent_id: Option<String>,
+    #[serde(default)]
+    pub default_tool_overrides: Vec<String>,
+    #[serde(default)]
+    pub rate_limit: ChannelRateLimitConfig,
+    #[serde(default)]
+    pub outbox: ChannelOutboxConfig,
+    #[serde(default)]
+    pub media: ChannelMediaConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelRateLimitConfig {
+    #[serde(default)]
+    pub default_qps: u32,
+    #[serde(default)]
+    pub default_concurrency: u32,
+    #[serde(default)]
+    pub by_channel: HashMap<String, ChannelRateLimitOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelRateLimitOverride {
+    #[serde(default)]
+    pub qps: Option<u32>,
+    #[serde(default)]
+    pub concurrency: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelOutboxConfig {
+    #[serde(default)]
+    pub worker_enabled: bool,
+    #[serde(default)]
+    pub poll_interval_ms: u64,
+    #[serde(default)]
+    pub max_batch: usize,
+    #[serde(default)]
+    pub max_retries: u32,
+    #[serde(default)]
+    pub retry_base_s: f64,
+    #[serde(default)]
+    pub retry_max_s: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelMediaConfig {
+    #[serde(default)]
+    pub asr: ChannelAsrConfig,
+    #[serde(default)]
+    pub tts: ChannelTtsConfig,
+    #[serde(default)]
+    pub ocr: ChannelOcrConfig,
+    #[serde(default)]
+    pub geocode: ChannelGeocodeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelAsrConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub timeout_s: u64,
+    #[serde(default)]
+    pub max_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelTtsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub voice: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub timeout_s: u64,
+    #[serde(default)]
+    pub max_chars: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelOcrConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub timeout_s: u64,
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChannelGeocodeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub timeout_s: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

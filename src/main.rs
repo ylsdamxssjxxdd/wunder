@@ -1,5 +1,6 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
 mod api;
+mod channels;
 mod core;
 mod lsp;
 mod ops;
@@ -8,6 +9,7 @@ mod sandbox;
 mod services;
 mod storage;
 
+pub use channels::ChannelHub;
 pub use core::{
     auth, command_utils, config, config_store, exec_policy, i18n, path_utils, schemas, shutdown,
     state, token_utils,

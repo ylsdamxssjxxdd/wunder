@@ -156,6 +156,113 @@ pub struct ChatSessionRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChannelAccountRecord {
+    pub channel: String,
+    pub account_id: String,
+    pub config: Value,
+    pub status: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelBindingRecord {
+    pub binding_id: String,
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: Option<String>,
+    pub peer_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub tool_overrides: Vec<String>,
+    pub priority: i64,
+    pub enabled: bool,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelSessionRecord {
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: String,
+    pub peer_id: String,
+    pub thread_id: Option<String>,
+    pub session_id: String,
+    pub agent_id: Option<String>,
+    pub user_id: String,
+    pub tts_enabled: Option<bool>,
+    pub tts_voice: Option<String>,
+    pub metadata: Option<Value>,
+    pub last_message_at: f64,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelMessageRecord {
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: String,
+    pub peer_id: String,
+    pub thread_id: Option<String>,
+    pub session_id: String,
+    pub message_id: Option<String>,
+    pub sender_id: Option<String>,
+    pub message_type: String,
+    pub payload: Value,
+    pub raw_payload: Option<Value>,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelOutboxRecord {
+    pub outbox_id: String,
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: String,
+    pub peer_id: String,
+    pub thread_id: Option<String>,
+    pub payload: Value,
+    pub status: String,
+    pub retry_count: i64,
+    pub retry_at: f64,
+    pub last_error: Option<String>,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub delivered_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaAssetRecord {
+    pub asset_id: String,
+    pub kind: String,
+    pub url: String,
+    pub mime: Option<String>,
+    pub size: Option<i64>,
+    pub hash: Option<String>,
+    pub source: Option<String>,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpeechJobRecord {
+    pub job_id: String,
+    pub job_type: String,
+    pub status: String,
+    pub input_text: Option<String>,
+    pub input_url: Option<String>,
+    pub output_text: Option<String>,
+    pub output_url: Option<String>,
+    pub model: Option<String>,
+    pub error: Option<String>,
+    pub retry_count: i64,
+    pub next_retry_at: f64,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionLockRecord {
     pub session_id: String,
     pub user_id: String,
@@ -407,6 +514,71 @@ pub trait StorageBackend: Send + Sync {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+
+    fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;
+    fn get_channel_account(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<Option<ChannelAccountRecord>>;
+    fn list_channel_accounts(
+        &self,
+        channel: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<ChannelAccountRecord>>;
+    fn delete_channel_account(&self, channel: &str, account_id: &str) -> Result<i64>;
+
+    fn upsert_channel_binding(&self, record: &ChannelBindingRecord) -> Result<()>;
+    fn list_channel_bindings(&self, channel: Option<&str>) -> Result<Vec<ChannelBindingRecord>>;
+    fn delete_channel_binding(&self, binding_id: &str) -> Result<i64>;
+
+    fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()>;
+    fn get_channel_session(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+        thread_id: Option<&str>,
+    ) -> Result<Option<ChannelSessionRecord>>;
+    fn list_channel_sessions(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        peer_id: Option<&str>,
+        session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChannelSessionRecord>, i64)>;
+
+    fn insert_channel_message(&self, record: &ChannelMessageRecord) -> Result<()>;
+    fn list_channel_messages(
+        &self,
+        channel: Option<&str>,
+        session_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ChannelMessageRecord>>;
+
+    fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()>;
+    fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>>;
+    fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>>;
+    fn update_channel_outbox_status(
+        &self,
+        outbox_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        last_error: Option<&str>,
+        delivered_at: Option<f64>,
+        updated_at: f64,
+    ) -> Result<()>;
+
+    fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()>;
+    fn get_media_asset(&self, asset_id: &str) -> Result<Option<MediaAssetRecord>>;
+    fn get_media_asset_by_hash(&self, hash: &str) -> Result<Option<MediaAssetRecord>>;
+
+    fn upsert_speech_job(&self, record: &SpeechJobRecord) -> Result<()>;
+    fn list_pending_speech_jobs(&self, job_type: &str, limit: i64) -> Result<Vec<SpeechJobRecord>>;
 
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;

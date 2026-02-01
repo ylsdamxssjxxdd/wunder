@@ -1,6 +1,7 @@
 // 全局状态：配置存储、工作区管理与调度器。
 
 use crate::a2a_store::A2aStore;
+use crate::channels::ChannelHub;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::evaluation_runner::EvaluationManager;
@@ -35,6 +36,7 @@ pub struct AppState {
     pub throughput: ThroughputManager,
     pub evaluation: EvaluationManager,
     pub storage: Arc<dyn StorageBackend>,
+    pub channels: Arc<ChannelHub>,
 }
 
 impl AppState {
@@ -76,6 +78,13 @@ impl AppState {
             storage.clone(),
         ));
         let memory = Arc::new(MemoryStore::new(storage.clone()));
+        let channels = Arc::new(ChannelHub::new(
+            config_store.clone(),
+            storage.clone(),
+            orchestrator.clone(),
+            user_store.clone(),
+            monitor.clone(),
+        ));
         let throughput = ThroughputManager::new();
         let evaluation = EvaluationManager::new(
             config_store.clone(),
@@ -100,6 +109,7 @@ impl AppState {
             throughput,
             evaluation,
             storage,
+            channels,
         })
     }
 

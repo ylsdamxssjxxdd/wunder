@@ -3,6 +3,7 @@ pub mod a2a;
 pub mod admin;
 pub(crate) mod attachment_convert;
 pub mod auth;
+pub mod channel;
 pub mod chat;
 pub mod core;
 pub mod doc2md;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .merge(auth::router())
+        .merge(channel::router())
         .merge(chat::router())
         .merge(core::router())
         .merge(doc2md::router())

@@ -1597,6 +1597,39 @@
 - `created_at`/`updated_at`：时间戳（秒）
 - `last_login_at`：最近登录时间（秒，可选）
 
+
+### 4.1.54.1 `/wunder/channel/{provider}/webhook`
+
+- 方法：`POST`
+- 鉴权：可选（按渠道账号配置 inbound_token 校验）
+- Path 参数：`provider` 渠道标识（如 telegram/wecom/web）
+- Query：
+  - `account_id`：可选，覆盖 ChannelMessage.account_id
+- Header：
+  - `x-channel-account`：可选，覆盖 account_id
+  - `x-channel-token` 或 `Authorization: Bearer <token>`：用于 inbound_token 校验
+- 入参（JSON）：
+  - 单条 ChannelMessage
+  - ChannelMessage 数组
+  - 包装结构 `{ messages: [ChannelMessage, ...] }`
+- 返回（JSON）：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
+- 说明：raw_payload 与标准化消息会落库到 `channel_messages`。
+
+#### ChannelMessage
+
+- `channel`：渠道名称（可空；为空时使用 URL 中 provider）
+- `account_id`：渠道账号标识
+- `peer`：`{ kind, id, name? }`
+- `thread`：`{ id, topic? }`（可选）
+- `message_id`：渠道消息 id（可选）
+- `sender`：`{ id, name? }`（可选）
+- `type`：`text|image|audio|video|location|file|mixed`
+- `text`：文本内容（可选）
+- `attachments`：`[{ kind,url,mime?,size?,name? }]`
+- `location`：`{ lat,lng,address? }`
+- `ts`：时间戳（可选）
+- `meta`：扩展字段（可选）
+
 ### 4.1.55 `/wunder/chat/*`
 
 - `POST /wunder/chat/sessions`：创建会话
@@ -1717,6 +1750,48 @@
 - `sort_order`：同级排序
 - `leader_ids`：负责人用户 ID 列表
 - `created_at`/`updated_at`：时间戳（秒）
+
+### 4.1.59 `/wunder/admin/channels/*`
+
+- `GET /wunder/admin/channels/accounts`
+  - Query：`channel`、`status`
+  - 返回：`data.items`（channel/account_id/config/status/created_at/updated_at）
+- `POST /wunder/admin/channels/accounts`
+  - 入参：`channel`、`account_id`、`config`、`status`（可选）
+  - 返回：账号记录
+- `DELETE /wunder/admin/channels/accounts/{channel}/{account_id}`
+  - 返回：`data.deleted`
+
+- `GET /wunder/admin/channels/bindings`
+  - Query：`channel`
+  - 返回：`data.items`（binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at）
+- `POST /wunder/admin/channels/bindings`
+  - 入参：`binding_id`（可选）、`channel`、`account_id`、`peer_kind`、`peer_id`、`agent_id`、`tool_overrides`、`priority`、`enabled`
+  - 返回：绑定记录
+- `DELETE /wunder/admin/channels/bindings/{binding_id}`
+  - 返回：`data.deleted`
+
+- `GET /wunder/admin/channels/sessions`
+  - Query：`channel`、`account_id`、`peer_id`、`session_id`、`offset`、`limit`
+  - 返回：`data.items`（channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at）与 `data.total`
+
+- `POST /wunder/admin/channels/test`
+  - 入参：`message`（ChannelMessage）
+  - 返回：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
+
+#### ChannelAccount.config 字段
+
+- `inbound_token`：入站鉴权 token（可选）
+- `outbound_url`：出站投递 URL（可选）
+- `outbound_token`：出站鉴权 token（可选）
+- `outbound_headers`：出站附加 Headers（对象，可选）
+- `timeout_s`：出站超时秒数（可选）
+- `allow_peers`/`deny_peers`：允许/禁止的会话列表（可选）
+- `allow_senders`/`deny_senders`：允许/禁止的发送者列表（可选）
+- `tts_enabled`：是否启用 TTS（可选）
+- `tts_voice`：TTS voice 覆盖（可选）
+- `tool_overrides`：默认工具覆盖（可选）
+- `agent_id`：默认路由 agent_id（可选）
 
 ### 4.2 流式响应（SSE）
 
