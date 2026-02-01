@@ -2,16 +2,17 @@ import axios from 'axios';
 
 import { getDemoToken, isDemoMode } from '@/utils/demo';
 import { getCurrentLanguage } from '@/i18n';
+import { resolveApiBase } from '@/config/runtime';
 
 const api = axios.create({
-  baseURL:
-    import.meta.env.VITE_API_BASE_URL ||
-    import.meta.env.VITE_API_BASE ||
-    'http://localhost:18000/wunder',
   timeout: 30000
 });
 
 api.interceptors.request.use((config) => {
+  const apiBase = resolveApiBase();
+  if (apiBase) {
+    config.baseURL = apiBase;
+  }
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;

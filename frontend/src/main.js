@@ -8,6 +8,7 @@ import App from './App.vue';
 import router from './router';
 import { usePerformanceStore } from '@/stores/performance';
 import { initI18n } from '@/i18n';
+import { loadRuntimeConfig } from '@/config/runtime';
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -17,6 +18,7 @@ app.use(ElementPlus);
 app.use(router);
 
 const bootstrap = async () => {
+  await loadRuntimeConfig();
   await initI18n();
   app.mount('#app');
 };

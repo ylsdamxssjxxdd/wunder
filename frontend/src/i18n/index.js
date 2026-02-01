@@ -2,6 +2,7 @@ import { ref } from 'vue';
 
 import enUS from './messages/en-US';
 import zhCN from './messages/zh-CN';
+import { resolveApiBase } from '@/config/runtime';
 
 const LOCALES = {
   'zh-CN': zhCN,
@@ -168,10 +169,7 @@ export const configureI18n = (config = {}) => {
 };
 
 const resolveI18nEndpoint = () => {
-  const base =
-    import.meta.env.VITE_API_BASE_URL ||
-    import.meta.env.VITE_API_BASE ||
-    'http://localhost:18000/wunder';
+  const base = resolveApiBase();
   return `${base.replace(/\/+$/, '')}/i18n`;
 };
 
