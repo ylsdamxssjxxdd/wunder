@@ -1343,12 +1343,11 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         finalize_tool_names(collect_user_allowed_tools(context, user_id)?)
     };
 
-    let child_agent_id = agent_id.clone().or(parent_agent_id);
-    let child_agent_record = load_agent_record(
+    let (child_agent_id, child_agent_record) = resolve_child_agent(
         context.storage.as_ref(),
         user_id,
-        child_agent_id.as_deref(),
-        agent_id.is_none(),
+        agent_id.as_deref(),
+        parent_agent_id.as_deref(),
     )?;
     let agent_prompt = child_agent_record
         .as_ref()
@@ -1397,7 +1396,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         parent_session_id: parent_session_id.clone(),
         label,
     };
-    let receiver = spawn_session_run(
+    let mut receiver = spawn_session_run(
         context,
         request,
         run_id.clone(),
@@ -1417,7 +1416,44 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "child_session_id": child_session_id
         }));
     }
-    let outcome = timeout(Duration::from_secs_f64(wait_seconds), receiver).await;
+    let summary = i18n::t("monitor.summary.subagent_wait");
+    let wait_payload = json!({
+        "stage": "subagent_wait",
+        "summary": summary,
+        "run_id": run_id,
+        "child_session_id": child_session_id
+    });
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit("progress", wait_payload);
+    }
+    let start_wait = Instant::now();
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        Duration::from_secs(5),
+    );
+    let deadline = tokio::time::sleep(Duration::from_secs_f64(wait_seconds));
+    tokio::pin!(deadline);
+    let outcome = loop {
+        tokio::select! {
+            result = &mut receiver => {
+                break Ok(result);
+            }
+            _ = heartbeat.tick() => {
+                if let Some(emitter) = context.event_emitter.as_ref() {
+                    emitter.emit("progress", json!({
+                        "stage": "subagent_wait",
+                        "summary": i18n::t("monitor.summary.subagent_wait"),
+                        "run_id": run_id,
+                        "child_session_id": child_session_id,
+                        "elapsed_s": start_wait.elapsed().as_secs_f64()
+                    }));
+                }
+            }
+            _ = &mut deadline => {
+                break Err("timeout");
+            }
+        }
+    };
     match outcome {
         Ok(Ok(outcome)) => {
             if outcome.status == "success" {
@@ -1451,6 +1487,31 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "error": "timeout"
         })),
     }
+}
+
+fn resolve_child_agent(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    requested_agent_id: Option<&str>,
+    parent_agent_id: Option<&str>,
+) -> Result<(Option<String>, Option<UserAgentRecord>)> {
+    let requested = requested_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(requested) = requested {
+        if let Some(record) = load_agent_record(storage, user_id, Some(requested), true)? {
+            return Ok((Some(record.agent_id.clone()), Some(record)));
+        }
+    }
+    let parent = parent_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(parent) = parent {
+        if let Some(record) = load_agent_record(storage, user_id, Some(parent), true)? {
+            return Ok((Some(record.agent_id.clone()), Some(record)));
+        }
+    }
+    Ok((None, None))
 }
 
 async fn spawn_session_run(

@@ -2106,6 +2106,7 @@ fn localize_summary(summary: &str) -> String {
         "monitor.summary.finished",
         "monitor.summary.received",
         "monitor.summary.model_call",
+        "monitor.summary.subagent_wait",
         "monitor.summary.exception",
         "monitor.summary.cancelled",
         "monitor.summary.cancel_requested",

@@ -655,6 +655,10 @@
     "en-US": "LLM request",
     "zh-CN": "调用模型请求"
   },
+  "monitor.summary.subagent_wait": {
+    "en-US": "Waiting for subagent",
+    "zh-CN": "等待子智能体完成"
+  },
   "monitor.summary.received": {
     "en-US": "Request received; processing.",
     "zh-CN": "已接收请求，开始处理。"
