@@ -72,7 +72,7 @@ export default {
   'portal.agent.form.description': 'Description',
   'portal.agent.form.base': 'Basic Settings',
   'portal.agent.form.tools': 'Attach Tools & Skills',
-  'portal.agent.form.prompt': 'Agent Prompt (Append)',
+  'portal.agent.form.prompt': 'Prompt',
   'portal.agent.form.placeholder.name': 'e.g., Product Analysis Assistant',
   'portal.agent.form.placeholder.description': 'One-line description of the agent app',
   'portal.agent.form.placeholder.prompt': 'Append content to the base system prompt',

@@ -72,7 +72,7 @@ export default {
   'portal.agent.form.description': '描述',
   'portal.agent.form.base': '基础设置',
   'portal.agent.form.tools': '挂载工具与技能',
-  'portal.agent.form.prompt': '智能体提示词（追加）',
+  'portal.agent.form.prompt': '提示词',
   'portal.agent.form.placeholder.name': '例如：产品分析助手',
   'portal.agent.form.placeholder.description': '一句话描述智能体用途',
   'portal.agent.form.placeholder.prompt': '输入需要追加到基础系统提示词后的内容',

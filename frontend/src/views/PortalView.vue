@@ -27,7 +27,7 @@
                         :aria-label="t('portal.search.clear')"
                         @click="searchQuery = ''"
                       >
-                        ×
+                        &times;
                       </button>
                     </div>
                     <div class="portal-section-meta">
@@ -217,26 +217,42 @@
       <template #header>
         <div class="user-tools-header">
           <div class="user-tools-title">{{ dialogTitle }}</div>
-          <button class="icon-btn" type="button" @click="dialogVisible = false">×</button>
+          <button class="icon-btn" type="button" @click="dialogVisible = false">&times;</button>
         </div>
       </template>
       <div class="agent-editor-body">
-        <el-form :model="form" label-position="top">
-          <el-form-item :label="t('portal.agent.form.name')">
+        <el-form :model="form" label-position="top" class="agent-editor-form">
+          <el-form-item class="agent-form-item agent-form-item--name" :label="t('portal.agent.form.name')">
             <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
           </el-form-item>
-          <el-form-item :label="t('portal.agent.form.description')">
+          <el-form-item
+            class="agent-form-item agent-form-item--description"
+            :label="t('portal.agent.form.description')"
+          >
             <el-input v-model="form.description" :placeholder="t('portal.agent.form.placeholder.description')" />
           </el-form-item>
-          <el-form-item :label="t('portal.agent.form.base')">
+          <el-form-item class="agent-form-item agent-form-item--prompt" :label="t('portal.agent.form.prompt')">
+            <el-input
+              v-model="form.system_prompt"
+              type="textarea"
+              :rows="8"
+              :placeholder="t('portal.agent.form.placeholder.prompt')"
+            />
+          </el-form-item>
+          <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
             <div class="agent-basic-settings">
               <div class="agent-avatar-card">
                 <div class="agent-avatar-header">
                   <div class="agent-avatar-header-left">
                     <div class="agent-avatar-title">{{ t('portal.agent.avatarTitle') }}</div>
                     <div
-                      class="agent-avatar-preview"
+                      class="agent-avatar-preview agent-avatar-preview--toggle"
+                      role="button"
+                      tabindex="0"
+                      :aria-expanded="avatarPanelVisible"
                       :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
+                      @click="avatarPanelVisible = !avatarPanelVisible"
+                      @keydown.enter="avatarPanelVisible = !avatarPanelVisible"
                     >
                       <span
                         v-if="form.icon_name === DEFAULT_ICON_NAME"
@@ -252,14 +268,6 @@
                       <span v-else class="agent-avatar-option-text">Aa</span>
                     </div>
                   </div>
-                  <button
-                    class="agent-avatar-toggle"
-                    type="button"
-                    :aria-expanded="avatarPanelVisible"
-                    @click="avatarPanelVisible = !avatarPanelVisible"
-                  >
-                    {{ avatarPanelVisible ? t('portal.agent.avatarCollapse') : t('portal.agent.avatarToggle') }}
-                  </button>
                 </div>
                 <div v-show="avatarPanelVisible" class="agent-avatar-panel">
                   <div class="agent-avatar-section">
@@ -329,7 +337,7 @@
               </div>
             </div>
           </el-form-item>
-          <el-form-item :label="t('portal.agent.form.tools')">
+          <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
             <div class="agent-tool-picker">
               <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
               <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
@@ -348,7 +356,7 @@
                     <el-checkbox
                       v-for="option in group.options"
                       :key="option.value"
-                      :label="option.value"
+                      :value="option.value"
                     >
                       <span :title="option.description || option.label">{{ option.label }}</span>
                     </el-checkbox>
@@ -359,14 +367,6 @@
                 {{ t('portal.agent.tools.notice') }}
               </div>
             </div>
-          </el-form-item>
-          <el-form-item :label="t('portal.agent.form.prompt')">
-            <el-input
-              v-model="form.system_prompt"
-              type="textarea"
-              :rows="8"
-              :placeholder="t('portal.agent.form.placeholder.prompt')"
-            />
           </el-form-item>
         </el-form>
       </div>
@@ -406,7 +406,7 @@ const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref([]);
 const waitingAgentIds = ref([]);
-const avatarPanelVisible = ref(false);
+const avatarPanelVisible = ref(true);
 const customColor = ref('');
 let runningTimer = null;
 
@@ -808,7 +808,7 @@ const resetForm = () => {
   form.icon_name = DEFAULT_ICON_NAME;
   form.icon_color = '';
   customColor.value = '';
-  avatarPanelVisible.value = false;
+  avatarPanelVisible.value = true;
   applyDefaultTools();
   editingId.value = '';
 };
@@ -875,7 +875,7 @@ const openEditDialog = async (agent) => {
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
   applyIconToForm(agent.icon);
-  avatarPanelVisible.value = false;
+  avatarPanelVisible.value = true;
   editingId.value = agent.id;
   dialogVisible.value = true;
 };
