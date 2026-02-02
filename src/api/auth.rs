@@ -1,13 +1,16 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::org_units;
 use crate::state::AppState;
+use crate::storage::OrgUnitRecord;
 use crate::user_store::UserStore;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -15,6 +18,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/register", post(register))
         .route("/wunder/auth/login", post(login))
         .route("/wunder/auth/demo", post(login_demo))
+        .route("/wunder/auth/org_units", get(list_org_units))
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
 
@@ -48,6 +52,8 @@ struct UpdateProfileRequest {
     username: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    unit_id: Option<String>,
 }
 
 async fn register(
@@ -195,6 +201,40 @@ async fn update_me(
             changed = true;
         }
     }
+    if let Some(unit_id) = payload.unit_id {
+        let units = state
+            .user_store
+            .list_org_units()
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let unit_map = build_unit_map(&units);
+        let previous_level = record
+            .unit_id
+            .as_ref()
+            .and_then(|value| unit_map.get(value))
+            .map(|unit| unit.level);
+        let next_unit_id = normalize_optional_id(Some(&unit_id));
+        if let Some(next_unit_id) = next_unit_id.as_deref() {
+            if !unit_map.contains_key(next_unit_id) {
+                return Err(error_response(
+                    StatusCode::NOT_FOUND,
+                    i18n::t("error.org_unit_not_found"),
+                ));
+            }
+        }
+        if next_unit_id != record.unit_id {
+            let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+            record.unit_id = next_unit_id;
+            let next_level = record
+                .unit_id
+                .as_ref()
+                .and_then(|value| unit_map.get(value))
+                .map(|unit| unit.level);
+            if record.daily_quota == previous_default {
+                record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
+            }
+            changed = true;
+        }
+    }
     if changed {
         record.updated_at = now_ts();
         state
@@ -204,6 +244,18 @@ async fn update_me(
     }
     let profile = build_user_profile(&state, &record)?;
     Ok(Json(json!({ "data": profile })))
+}
+
+async fn list_org_units(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let tree = org_units::build_unit_tree(&units);
+    let items = units.iter().map(org_unit_payload).collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items, "tree": tree } })))
 }
 
 fn auth_response(profile: crate::user_store::UserProfile, token: String) -> serde_json::Value {
@@ -231,6 +283,34 @@ fn build_user_profile(
         .transpose()?
         .flatten();
     Ok(UserStore::to_profile_with_unit(user, unit.as_ref()))
+}
+
+fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {
+    units
+        .iter()
+        .map(|unit| (unit.unit_id.clone(), unit.clone()))
+        .collect()
+}
+
+fn org_unit_payload(record: &OrgUnitRecord) -> Value {
+    json!({
+        "unit_id": record.unit_id,
+        "parent_id": record.parent_id,
+        "name": record.name,
+        "level": record.level,
+        "path": record.path,
+        "path_name": record.path_name,
+        "sort_order": record.sort_order,
+        "leader_ids": record.leader_ids,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
+    raw.map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

@@ -4,15 +4,7 @@
     <main class="profile-content">
       <section class="profile-hero">
         <div class="profile-card profile-identity">
-          <button
-            class="profile-edit-btn"
-            type="button"
-            :aria-label="t('profile.edit.action')"
-            @click="openProfileEditor"
-          >
-            <i class="fa-solid fa-pen-to-square profile-edit-icon" aria-hidden="true"></i>
-          </button>
-          <div class="profile-identity-body">
+          <div class="profile-identity-header">
             <div class="profile-identity-main">
               <div class="profile-avatar">{{ userInitials }}</div>
               <div class="profile-info">
@@ -26,49 +18,73 @@
                 </div>
               </div>
             </div>
-            <div class="profile-identity-stats">
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.sessions') }}</div>
-                <div class="profile-stat-value">{{ sessionCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.sessions7d') }}</div>
-                <div class="profile-stat-value">{{ recentSessionCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.lastActive') }}</div>
-                <div class="profile-stat-value">{{ lastActiveTime }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.toolCalls') }}</div>
-                <div class="profile-stat-value">{{ toolCallCount }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.contextTokens') }}</div>
-                <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
-              </div>
-              <div class="profile-stat">
-                <div class="profile-stat-label">{{ t('profile.stats.totalTokens') }}</div>
-                <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
-              </div>
+            <button
+              class="profile-edit-btn"
+              type="button"
+              :aria-label="t('profile.edit.action')"
+              @click="openProfileEditor"
+            >
+              <i class="fa-solid fa-pen-to-square profile-edit-icon" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="profile-identity-stats">
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.sessions') }}</div>
+              <div class="profile-stat-value">{{ sessionCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.sessions7d') }}</div>
+              <div class="profile-stat-value">{{ recentSessionCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.lastActive') }}</div>
+              <div class="profile-stat-value">{{ lastActiveTime }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.toolCalls') }}</div>
+              <div class="profile-stat-value">{{ toolCallCount }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.contextTokens') }}</div>
+              <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
+            </div>
+            <div class="profile-stat">
+              <div class="profile-stat-label">{{ t('profile.stats.totalTokens') }}</div>
+              <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
             </div>
           </div>
         </div>
       </section>
 
       <section class="profile-section profile-metrics-section">
-        <div class="profile-section-header">
-          <div>
-            <div class="profile-section-title">{{ t('profile.metrics.title') }}</div>
-            <div class="profile-section-desc">{{ t('profile.metrics.desc') }}</div>
+        <div class="profile-card profile-section-card">
+          <div class="profile-section-header">
+            <div>
+              <div class="profile-section-title">{{ t('profile.metrics.title') }}</div>
+              <div class="profile-section-desc">{{ t('profile.metrics.desc') }}</div>
+            </div>
           </div>
-        </div>
-        <div class="profile-charts">
-          <div class="profile-chart-quota">
-            <div class="profile-chart-label">{{ t('profile.metrics.quotaToday') }}</div>
-            <div ref="quotaChartRef" class="profile-quota-chart"></div>
-            <div class="profile-chart-summary">
-              {{ quotaRemainingText }} / {{ quotaTotalText }}
+          <div class="profile-charts">
+            <div class="profile-chart-quota">
+              <div class="profile-chart-label">{{ t('profile.metrics.quotaToday') }}</div>
+              <div ref="quotaChartRef" class="profile-quota-chart"></div>
+              <div class="profile-chart-summary">
+                {{ quotaRemainingText }} / {{ quotaTotalText }}
+              </div>
+            </div>
+            <div class="profile-metric-breakdown">
+              <div class="profile-metric-item">
+                <div class="profile-stat-label">{{ quotaLabels.used }}</div>
+                <div class="profile-stat-value">{{ quotaUsedText }}</div>
+              </div>
+              <div class="profile-metric-item">
+                <div class="profile-stat-label">{{ quotaLabels.remaining }}</div>
+                <div class="profile-stat-value">{{ quotaRemainingText }}</div>
+              </div>
+              <div class="profile-metric-item">
+                <div class="profile-stat-label">{{ t('profile.metrics.quotaToday') }}</div>
+                <div class="profile-stat-value">{{ quotaTotalText }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -86,7 +102,7 @@
       <template #header>
         <div class="profile-edit-header">
           <div class="profile-edit-title">{{ t('profile.edit.title') }}</div>
-          <button class="icon-btn" type="button" @click="editDialogVisible = false">×</button>
+          <button class="icon-btn" type="button" @click="editDialogVisible = false">&times;</button>
         </div>
       </template>
       <el-form :model="editForm" label-position="top" class="profile-edit-form">
@@ -95,6 +111,24 @@
         </el-form-item>
         <el-form-item :label="t('profile.edit.email')">
           <el-input v-model="editForm.email" :placeholder="t('profile.edit.emailPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('profile.edit.unit')">
+          <el-select
+            v-model="editForm.unit_id"
+            :placeholder="t('profile.edit.unitPlaceholder')"
+            filterable
+            clearable
+            :loading="unitLoading"
+            :disabled="unitLoading || unitOptions.length === 0"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="unit in unitOptions"
+              :key="unit.value"
+              :label="unit.label"
+              :value="unit.value"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -114,7 +148,7 @@ import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
-import { updateProfile } from '@/api/auth';
+import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -134,8 +168,11 @@ const editDialogVisible = ref(false);
 const editSaving = ref(false);
 const editForm = reactive({
   username: '',
-  email: ''
+  email: '',
+  unit_id: ''
 });
+const unitOptions = ref([]);
+const unitLoading = ref(false);
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const userName = computed(() => authStore.user?.username || t('user.guest'));
@@ -170,7 +207,30 @@ const tokenUsageTotal = computed(() =>
 const openProfileEditor = () => {
   editForm.username = authStore.user?.username || '';
   editForm.email = authStore.user?.email || '';
+  editForm.unit_id = authStore.user?.unit_id || '';
   editDialogVisible.value = true;
+};
+
+const buildUnitOptions = (items) =>
+  (items || [])
+    .map((unit) => ({
+      value: unit.unit_id || unit.id || '',
+      label: unit.path_name || unit.pathName || unit.name || unit.unit_id || '-'
+    }))
+    .filter((unit) => unit.value)
+    .sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+
+const loadUnits = async () => {
+  unitLoading.value = true;
+  try {
+    const { data } = await fetchOrgUnits();
+    const items = data?.data?.items || [];
+    unitOptions.value = buildUnitOptions(items);
+  } catch (error) {
+    unitOptions.value = [];
+  } finally {
+    unitLoading.value = false;
+  }
 };
 
 const saveProfile = async () => {
@@ -184,7 +244,8 @@ const saveProfile = async () => {
   try {
     const payload = {
       username,
-      email: email || ''
+      email: email || '',
+      unit_id: editForm.unit_id || ''
     };
     const { data } = await updateProfile(payload);
     const profile = data?.data;
@@ -446,6 +507,10 @@ const quotaRemainingText = computed(() =>
   Number.isFinite(quotaRemaining.value) ? formatNumber(quotaRemaining.value) : '-'
 );
 
+const quotaUsedText = computed(() =>
+  Number.isFinite(quotaUsed.value) ? formatNumber(quotaUsed.value) : '-'
+);
+
 const quotaTotalText = computed(() =>
   Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
 );
@@ -524,6 +589,7 @@ const loadSessions = async () => {
 
 onMounted(() => {
   authStore.loadProfile();
+  loadUnits();
   loadSessions();
   nextTick(() => {
     renderQuotaChart();

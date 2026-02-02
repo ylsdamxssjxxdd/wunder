@@ -1571,12 +1571,15 @@
 - `POST /wunder/auth/demo`
   - 入参（JSON）：`demo_id`（可选）
   - 返回：同注册
+- `GET /wunder/auth/org_units`
+  - 入参：无
+  - 返回（JSON）：`data.items`（单位列表）、`data.tree`（单位树）
 - `GET /wunder/auth/me`
   - 鉴权：Bearer Token
   - 返回（JSON）：`data`（UserProfile）
 - `PATCH /wunder/auth/me`
   - 鉴权：Bearer Token
-  - 入参（JSON）：`username`（可选）、`email`（可选）
+  - 入参（JSON）：`username`（可选）、`email`（可选）、`unit_id`（可选）
   - 返回（JSON）：`data`（UserProfile）
 - 错误返回：`detail.message`
 

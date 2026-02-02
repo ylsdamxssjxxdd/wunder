@@ -1,9 +1,10 @@
 import api from './http';
 
 import { getDemoToken, isDemoMode } from '@/utils/demo';
+import { resolveApiBase } from '@/config/runtime';
 
 const buildUrl = (path) => {
-  const base = api.defaults.baseURL || '';
+  const base = resolveApiBase() || api.defaults.baseURL || '';
   return `${base.replace(/\/$/, '')}${path}`;
 };
 
