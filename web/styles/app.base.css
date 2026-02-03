@@ -439,6 +439,7 @@ h1 {
   gap: 10px;
   min-height: 0;
   overflow: hidden;
+  flex: 1 1 0;
 }
 
 .performance-results {
@@ -486,6 +487,8 @@ h1 {
 .throughput-summary-block {
   overflow: hidden;
   max-height: 40vh;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .monitor-summary.throughput-summary {
@@ -510,23 +513,44 @@ h1 {
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  overflow: hidden;
+  max-height: 100%;
 }
 
 .throughput-chart-card {
-  min-height: 320px;
-  height: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+  max-height: 100%;
 }
 
 .throughput-chart-wide {
   grid-column: 1 / -1;
+  min-height: 0;
 }
 
 .throughput-threads {
+  min-height: 200px;
+  height: auto;
+  flex: 1 1 0;
+}
+
+.throughput-form .throughput-threads {
+  margin-top: 12px;
   min-height: 220px;
-  max-height: 220px;
-  height: 220px;
-  flex: 0 0 220px;
+}
+
+.throughput-form .form-section {
+  flex: 0 1 auto;
+  max-height: 45%;
+  overflow-y: auto;
+}
+
+.throughput-chart-card .monitor-chart {
+  min-height: 0;
+  height: auto;
 }
 
 .throughput-thread-filters {
@@ -540,6 +564,39 @@ h1 {
 .throughput-thread-filters .tab-btn {
   font-size: 12px;
   padding: 4px 10px;
+}
+
+.throughput-thread-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px;
+  max-height: 100%;
+  overflow: auto;
+  align-content: start;
+}
+
+.throughput-thread-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  background: linear-gradient(135deg, #ffffff, #eef2ff);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  min-height: 48px;
+}
+
+.throughput-thread-stat .stat-label {
+  font-size: 11px;
+  color: #475569;
+}
+
+.throughput-thread-stat .stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d4ed8;
 }
 
 .throughput-header-actions {

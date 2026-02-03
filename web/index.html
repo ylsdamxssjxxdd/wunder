@@ -2356,12 +2356,6 @@
                   </div>
                 </div>
                 <div class="form-row">
-                  <label data-i18n="throughput.form.dataset">测试题库</label>
-                  <div class="muted" data-i18n="throughput.form.datasetHint">
-                    使用内置 50 条问题，压测时随机抽取。
-                  </div>
-                </div>
-                <div class="form-row">
                   <label for="throughputUserPrefix" data-i18n="throughput.form.userPrefix">user_id 前缀</label>
                   <input
                     id="throughputUserPrefix"
@@ -2384,17 +2378,53 @@
                   </div>
                 </div>
                 <div class="form-row">
-                  <label for="throughputTimeout" data-i18n="throughput.form.timeout">单次请求超时（秒）</label>
-                  <input id="throughputTimeout" type="number" min="0" step="0.1" />
-                  <div class="muted" data-i18n="throughput.form.timeoutHint">0 表示不启用超时。</div>
-                </div>
-                <div class="form-row">
                   <label data-i18n="throughput.form.defaults">默认配置</label>
                   <div class="muted" data-i18n="throughput.form.defaultsHint">
                     使用默认模型与管理员启用工具，stream 固定为 true。
                   </div>
                 </div>
                 <div id="throughputFormStatus" class="muted"></div>
+              </div>
+              <div class="monitor-block throughput-threads">
+                <div class="monitor-block-title">
+                  <i class="fa-solid fa-list-ul"></i>
+                  <span data-i18n="throughput.threads.title">线程监视</span>
+                </div>
+                <div class="monitor-table-wrap">
+                  <div id="throughputThreadBody" class="throughput-thread-stats">
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.total">线程总数</div>
+                      <div id="throughputThreadTotal" class="stat-value">-</div>
+                    </div>
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.active">活动中</div>
+                      <div id="throughputThreadActive" class="stat-value">-</div>
+                    </div>
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.finished">已完成</div>
+                      <div id="throughputThreadFinished" class="stat-value">-</div>
+                    </div>
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.failed">已失败</div>
+                      <div id="throughputThreadFailed" class="stat-value">-</div>
+                    </div>
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.singleDecodeSpeed">
+                        单解码速度
+                      </div>
+                      <div id="throughputThreadSingleDecodeSpeed" class="stat-value">-</div>
+                    </div>
+                    <div class="throughput-thread-stat">
+                      <div class="stat-label" data-i18n="throughput.threads.stat.singlePrefillSpeed">
+                        单预填充速度
+                      </div>
+                      <div id="throughputThreadSinglePrefillSpeed" class="stat-value">-</div>
+                    </div>
+                  </div>
+                  <div id="throughputThreadEmpty" class="muted" data-i18n="throughput.threads.empty">
+                    暂无线程
+                  </div>
+                </div>
               </div>
             </div>
             <div class="throughput-results">
@@ -2507,78 +2537,6 @@
                     性能曲线
                   </div>
                   <div id="throughputCurveChart" class="monitor-chart"></div>
-                </div>
-              </div>
-              <div class="monitor-block throughput-threads">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-list-ul"></i>
-                  <span data-i18n="throughput.threads.title">线程监视</span>
-                  <div class="throughput-thread-filters" role="group">
-                    <button
-                      id="throughputThreadFilterAll"
-                      class="tab-btn active"
-                      type="button"
-                      data-i18n="throughput.threads.filter.all"
-                    >
-                      全部
-                    </button>
-                    <button
-                      id="throughputThreadFilterActive"
-                      class="tab-btn"
-                      type="button"
-                      data-i18n="throughput.threads.filter.active"
-                    >
-                      活动中
-                    </button>
-                    <button
-                      id="throughputThreadFilterFinished"
-                      class="tab-btn"
-                      type="button"
-                      data-i18n="throughput.threads.filter.finished"
-                    >
-                      已完成
-                    </button>
-                    <button
-                      id="throughputThreadFilterFailed"
-                      class="tab-btn"
-                      type="button"
-                      data-i18n="throughput.threads.filter.failed"
-                    >
-                      已失败
-                    </button>
-                  </div>
-                </div>
-                <div class="monitor-table-wrap">
-                  <div class="monitor-table-scroll">
-                    <table class="monitor-table throughput-thread-table">
-                      <colgroup>
-                        <col class="col-start" />
-                        <col class="col-session" />
-                        <col class="col-user" />
-                        <col class="col-question" />
-                        <col class="col-status" />
-                        <col class="col-token" />
-                        <col class="col-elapsed" />
-                        <col class="col-stage" />
-                      </colgroup>
-                      <thead>
-                        <tr>
-                          <th data-i18n="monitor.table.start">开始时间</th>
-                          <th data-i18n="monitor.table.session">会话</th>
-                          <th data-i18n="monitor.table.user">用户</th>
-                          <th data-i18n="monitor.table.question">问题</th>
-                          <th data-i18n="monitor.table.status">状态</th>
-                          <th data-i18n="monitor.table.token">Token</th>
-                          <th data-i18n="monitor.table.elapsed">耗时</th>
-                          <th data-i18n="monitor.table.stage">阶段</th>
-                        </tr>
-                      </thead>
-                      <tbody id="throughputThreadBody"></tbody>
-                    </table>
-                    <div id="throughputThreadEmpty" class="muted" data-i18n="throughput.threads.empty">
-                      暂无线程
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>

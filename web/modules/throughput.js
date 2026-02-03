@@ -4,7 +4,6 @@ import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { escapeHtml, formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
-import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { t } from "./i18n.js?v=20260124-01";
 
@@ -435,7 +434,8 @@ const formatTokenRate = (value, options = {}) => {
     decimals = 1;
   }
   const prefix = options.lowerBound ? ">=" : "";
-  return `${prefix}${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
+  const suffix = options.withUnit === false ? "" : ` ${t("monitor.detail.tokenRate.unit")}`;
+  return `${prefix}${scaled.toFixed(decimals)}${unit}${suffix}`;
 };
 
 const parseTimestampMs = (value) => {
@@ -458,25 +458,6 @@ const resolveStatusLabel = (status) => {
   const key = `throughput.status.${status}`;
   const text = t(key);
   return text || status;
-};
-
-const getSessionStatusLabel = (status) => {
-  const normalized = String(status || "");
-  const mapping = {
-    running: t("monitor.sessionStatus.running"),
-    cancelling: t("monitor.sessionStatus.cancelling"),
-    finished: t("monitor.sessionStatus.finished"),
-    error: t("monitor.sessionStatus.error"),
-    cancelled: t("monitor.sessionStatus.cancelled"),
-  };
-  return mapping[normalized] || normalized || "-";
-};
-
-const buildStatusBadge = (status) => {
-  const span = document.createElement("span");
-  span.className = `monitor-status ${status}`;
-  span.textContent = getSessionStatusLabel(status);
-  return span;
 };
 
 const sortSessionsByUpdate = (sessions) =>
@@ -696,6 +677,14 @@ const applySpeedMetrics = () => {
   }
   if (elements.throughputSingleDecodeSpeed) {
     elements.throughputSingleDecodeSpeed.textContent = formatTokenRate(currentSingleDecodeSpeed);
+  }
+  if (elements.throughputThreadSingleDecodeSpeed) {
+    elements.throughputThreadSingleDecodeSpeed.textContent =
+      formatTokenRate(currentSingleDecodeSpeed, { withUnit: false });
+  }
+  if (elements.throughputThreadSinglePrefillSpeed) {
+    elements.throughputThreadSinglePrefillSpeed.textContent =
+      formatTokenRate(currentSinglePrefillSpeed, { withUnit: false });
   }
 };
 
@@ -955,11 +944,18 @@ const computeSumSpeed = (sessions, tokenKey, durationKey, speedKey) => {
 };
 
 const renderThroughputSessions = () => {
-  if (!elements.throughputThreadBody || !elements.throughputThreadEmpty) {
+  if (
+    !elements.throughputThreadBody ||
+    !elements.throughputThreadEmpty ||
+    !elements.throughputThreadTotal ||
+    !elements.throughputThreadActive ||
+    !elements.throughputThreadFinished ||
+    !elements.throughputThreadFailed ||
+    !elements.throughputThreadSingleDecodeSpeed ||
+    !elements.throughputThreadSinglePrefillSpeed
+  ) {
     return;
   }
-  const body = elements.throughputThreadBody;
-  body.textContent = "";
   const list = Array.isArray(throughputSessions) ? throughputSessions : [];
   const filtered = list.filter((session) => {
     const status = session?.status;
@@ -982,51 +978,37 @@ const renderThroughputSessions = () => {
     elements.throughputThreadEmpty.setAttribute("data-i18n", empty.key);
     elements.throughputThreadEmpty.textContent = empty.text;
     elements.throughputThreadEmpty.style.display = "block";
+    elements.throughputThreadBody.style.display = "none";
+    setText(elements.throughputThreadTotal, "-");
+    setText(elements.throughputThreadActive, "-");
+    setText(elements.throughputThreadFinished, "-");
+    setText(elements.throughputThreadFailed, "-");
+    setText(elements.throughputThreadSingleDecodeSpeed, "-");
+    setText(elements.throughputThreadSinglePrefillSpeed, "-");
     return;
   }
   elements.throughputThreadEmpty.style.display = "none";
-  filtered.forEach((session) => {
-    const row = document.createElement("tr");
-    const startCell = document.createElement("td");
-    startCell.textContent = formatTimestamp(session.start_time);
-    const sessionCell = document.createElement("td");
-    const rawSessionId = session.session_id || "";
-    sessionCell.textContent = rawSessionId ? rawSessionId.slice(0, 4) : "-";
-    if (rawSessionId) {
-      sessionCell.title = rawSessionId;
-    }
-    const userCell = document.createElement("td");
-    userCell.textContent = session.user_id || "-";
-    const questionCell = document.createElement("td");
-    questionCell.textContent = session.question || "-";
-    if (session.question) {
-      questionCell.title = session.question;
-    }
-    const statusCell = document.createElement("td");
-    statusCell.appendChild(buildStatusBadge(session.status || ""));
-    const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(
-      session?.context_tokens_peak ?? session?.context_tokens ?? session?.token_usage
-    );
-    const elapsedCell = document.createElement("td");
-    elapsedCell.textContent = formatDuration(session.elapsed_s);
-    const stageCell = document.createElement("td");
-    stageCell.textContent = session.stage || "-";
-    row.appendChild(startCell);
-    row.appendChild(sessionCell);
-    row.appendChild(userCell);
-    row.appendChild(questionCell);
-    row.appendChild(statusCell);
-    row.appendChild(tokenCell);
-    row.appendChild(elapsedCell);
-    row.appendChild(stageCell);
-    row.addEventListener("click", () => {
-      if (session.session_id) {
-        openMonitorDetail(session.session_id);
-      }
-    });
-    body.appendChild(row);
-  });
+  elements.throughputThreadBody.style.display = "grid";
+  const totalCount = filtered.length;
+  const activeCount = filtered.filter((session) =>
+    ACTIVE_SESSION_STATUSES.has(session?.status)
+  ).length;
+  const finishedCount = filtered.filter((session) => session?.status === "finished").length;
+  const failedCount = filtered.filter((session) =>
+    FAILED_SESSION_STATUSES.has(session?.status)
+  ).length;
+  setText(elements.throughputThreadTotal, formatCount(totalCount));
+  setText(elements.throughputThreadActive, formatCount(activeCount));
+  setText(elements.throughputThreadFinished, formatCount(finishedCount));
+  setText(elements.throughputThreadFailed, formatCount(failedCount));
+  setText(
+    elements.throughputThreadSingleDecodeSpeed,
+    formatTokenRate(currentSingleDecodeSpeed, { withUnit: false })
+  );
+  setText(
+    elements.throughputThreadSinglePrefillSpeed,
+    formatTokenRate(currentSinglePrefillSpeed, { withUnit: false })
+  );
 };
 
 const fetchMonitorSessions = async () => {
@@ -1123,9 +1105,12 @@ const buildPayload = () => {
   if (!Number.isFinite(max_tokens) || max_tokens <= 0) {
     throw new Error(t("throughput.error.maxTokens"));
   }
-  const request_timeout_s = Number(elements.throughputTimeout?.value);
-  if (Number.isFinite(request_timeout_s) && request_timeout_s < 0) {
-    throw new Error(t("throughput.error.timeout"));
+  let request_timeout_s = DEFAULT_CONFIG.request_timeout_s;
+  if (elements.throughputTimeout) {
+    request_timeout_s = Number(elements.throughputTimeout.value);
+    if (!Number.isFinite(request_timeout_s) || request_timeout_s < 0) {
+      throw new Error(t("throughput.error.timeout"));
+    }
   }
   return {
     concurrency_list: concurrencyList,
