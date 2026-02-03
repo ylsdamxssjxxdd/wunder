@@ -65,7 +65,7 @@ See `docs/API-Documentation.md`.
 
 ### 5.1 API layer
 
-- Axum routing, unified `/wunder` entry.
+- Axum routing, unified `/wunder` entry and WebSocket endpoints (`/wunder/ws`, `/wunder/chat/ws`) with SSE fallback.
 - Connection lifecycle management, SSE streaming.
 - Unified auth and validation (serde + guards), API/MCP secured by `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.

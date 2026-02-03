@@ -7,6 +7,7 @@ pub mod channel;
 pub mod chat;
 pub mod chat_ws;
 pub mod core;
+pub mod core_ws;
 pub mod doc2md;
 pub mod evaluation;
 pub mod temp_dir;
@@ -14,6 +15,7 @@ pub mod user_agents;
 pub mod user_context;
 pub mod user_tools;
 pub mod workspace;
+pub(crate) mod ws_helpers;
 
 use crate::state::AppState;
 use axum::Router;
@@ -25,6 +27,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(channel::router())
         .merge(chat::router())
         .merge(chat_ws::router())
+        .merge(core_ws::router())
         .merge(core::router())
         .merge(doc2md::router())
         .merge(temp_dir::router())

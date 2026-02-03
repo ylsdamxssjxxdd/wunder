@@ -1,4 +1,3 @@
-use crate::api::chat::{build_chat_request, ChatAttachment};
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, parse_payload, resolve_session_id, resume_stream_events, send_ws_error,
@@ -6,32 +5,53 @@ use crate::api::ws_helpers::{
 };
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
+use crate::schemas::{AttachmentPayload, WunderRequest};
 use crate::state::AppState;
+use crate::user_store::UserStore;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::{routing::get, Router};
 use chrono::Utc;
 use futures::{SinkExt, StreamExt as WsStreamExt};
 use serde::Deserialize;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/wunder/chat/ws", get(chat_ws))
+    Router::new().route("/wunder/ws", get(wunder_ws))
 }
 
 #[derive(Debug, Deserialize)]
 struct WsStartPayload {
-    content: String,
+    #[serde(default)]
+    user_id: Option<String>,
+    question: String,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    skip_tool_calls: bool,
     #[serde(default)]
     stream: Option<bool>,
     #[serde(default)]
-    attachments: Option<Vec<ChatAttachment>>,
+    debug_payload: bool,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    model_name: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    config_overrides: Option<Value>,
+    #[serde(default)]
+    agent_prompt: Option<String>,
+    #[serde(default)]
+    attachments: Option<Vec<AttachmentPayload>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,14 +67,14 @@ struct WsCancelPayload {
     session_id: Option<String>,
 }
 
-async fn chat_ws(
+async fn wunder_ws(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, Response> {
     let auth_headers = apply_ws_auth_headers(&headers, &query);
-    let resolved = resolve_user(&state, &auth_headers, None).await?;
+    let resolved = resolve_user(&state, &auth_headers, query.user_id.as_deref()).await?;
     Ok(ws.on_upgrade(move |socket| handle_ws(socket, state, resolved.user)))
 }
 
@@ -125,41 +145,81 @@ async fn handle_ws(
                                 continue;
                             }
                         };
-                        let session_id =
-                            resolve_session_id(envelope.session_id, payload.session_id);
-                        let Some(session_id) = session_id.filter(|value| !value.trim().is_empty())
-                        else {
+                        let _ = payload.stream;
+                        let question = payload.question.trim().to_string();
+                        if question.is_empty() {
                             let _ = send_ws_error(
                                 &out_tx,
                                 envelope.request_id.as_deref(),
-                                "SESSION_REQUIRED",
-                                i18n::t("error.param_required"),
+                                "QUESTION_REQUIRED",
+                                i18n::t("error.question_required"),
                             )
                             .await;
                             continue;
+                        }
+                        let payload_user_id = payload
+                            .user_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(|value| value.to_string());
+                        let user_id = match payload_user_id {
+                            Some(value) => {
+                                if value != user.user_id && !UserStore::is_admin(&user) {
+                                    let _ = send_ws_error(
+                                        &out_tx,
+                                        envelope.request_id.as_deref(),
+                                        "UNAUTHORIZED",
+                                        i18n::t("error.auth_required"),
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                                value
+                            }
+                            None => user.user_id.clone(),
                         };
-                        let stream = payload.stream.unwrap_or(true);
-                        let request = match build_chat_request(
-                            &state,
-                            &user,
-                            &session_id,
-                            payload.content,
-                            stream,
-                            payload.attachments,
-                        )
-                        .await
-                        {
-                            Ok(request) => request,
-                            Err(response) => {
+                        let session_id =
+                            resolve_session_id(envelope.session_id, payload.session_id).and_then(
+                                |value| {
+                                    let trimmed = value.trim().to_string();
+                                    if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed)
+                                    }
+                                },
+                            );
+                        if let Some(session_id) = session_id.as_deref() {
+                            if let Err(SessionAccessError::Forbidden) =
+                                validate_session_access(&state, &user, session_id)
+                            {
                                 let _ = send_ws_error(
                                     &out_tx,
                                     envelope.request_id.as_deref(),
-                                    map_ws_error_code(response.status()),
-                                    extract_error_message(response),
+                                    "PERMISSION_DENIED",
+                                    i18n::t("error.permission_denied"),
                                 )
                                 .await;
                                 continue;
                             }
+                        }
+                        let stream = true;
+                        let request = WunderRequest {
+                            user_id,
+                            question,
+                            tool_names: payload.tool_names,
+                            skip_tool_calls: payload.skip_tool_calls,
+                            stream,
+                            debug_payload: payload.debug_payload,
+                            session_id,
+                            agent_id: payload.agent_id,
+                            model_name: payload.model_name,
+                            language: payload.language,
+                            config_overrides: payload.config_overrides,
+                            agent_prompt: payload.agent_prompt,
+                            attachments: payload.attachments,
+                            is_admin: UserStore::is_admin(&user),
                         };
 
                         let request_id = envelope.request_id.clone();
@@ -237,6 +297,29 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
+                        match validate_session_access(&state, &user, &session_id) {
+                            Ok(()) => {}
+                            Err(SessionAccessError::NotFound) => {
+                                let _ = send_ws_error(
+                                    &out_tx,
+                                    envelope.request_id.as_deref(),
+                                    "SESSION_NOT_FOUND",
+                                    i18n::t("error.session_not_found"),
+                                )
+                                .await;
+                                continue;
+                            }
+                            Err(SessionAccessError::Forbidden) => {
+                                let _ = send_ws_error(
+                                    &out_tx,
+                                    envelope.request_id.as_deref(),
+                                    "PERMISSION_DENIED",
+                                    i18n::t("error.permission_denied"),
+                                )
+                                .await;
+                                continue;
+                            }
+                        }
                         let after_event_id = payload.after_event_id.unwrap_or(0);
                         if after_event_id <= 0 {
                             let _ = send_ws_error(
@@ -244,16 +327,6 @@ async fn handle_ws(
                                 envelope.request_id.as_deref(),
                                 "AFTER_EVENT_ID_REQUIRED",
                                 i18n::t("error.param_required"),
-                            )
-                            .await;
-                            continue;
-                        }
-                        if !session_exists(&state, &user.user_id, &session_id) {
-                            let _ = send_ws_error(
-                                &out_tx,
-                                envelope.request_id.as_deref(),
-                                "SESSION_NOT_FOUND",
-                                i18n::t("error.session_not_found"),
                             )
                             .await;
                             continue;
@@ -302,15 +375,28 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
-                        if !session_exists(&state, &user.user_id, &session_id) {
-                            let _ = send_ws_error(
-                                &out_tx,
-                                envelope.request_id.as_deref(),
-                                "SESSION_NOT_FOUND",
-                                i18n::t("error.session_not_found"),
-                            )
-                            .await;
-                            continue;
+                        match validate_session_access(&state, &user, &session_id) {
+                            Ok(()) => {}
+                            Err(SessionAccessError::NotFound) => {
+                                let _ = send_ws_error(
+                                    &out_tx,
+                                    envelope.request_id.as_deref(),
+                                    "SESSION_NOT_FOUND",
+                                    i18n::t("error.session_not_found"),
+                                )
+                                .await;
+                                continue;
+                            }
+                            Err(SessionAccessError::Forbidden) => {
+                                let _ = send_ws_error(
+                                    &out_tx,
+                                    envelope.request_id.as_deref(),
+                                    "PERMISSION_DENIED",
+                                    i18n::t("error.permission_denied"),
+                                )
+                                .await;
+                                continue;
+                            }
                         }
                         let _ = state.monitor.cancel(&session_id);
                     }
@@ -339,38 +425,38 @@ async fn handle_ws(
     let _ = writer.await;
 }
 
+#[derive(Debug)]
+enum SessionAccessError {
+    NotFound,
+    Forbidden,
+}
+
+fn validate_session_access(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+    session_id: &str,
+) -> Result<(), SessionAccessError> {
+    let record = state.monitor.get_record(session_id);
+    let Some(record) = record else {
+        return Err(SessionAccessError::NotFound);
+    };
+    if UserStore::is_admin(user) {
+        return Ok(());
+    }
+    let record_user_id = record.get("user_id").and_then(Value::as_str).unwrap_or("");
+    if record_user_id.is_empty() {
+        return Err(SessionAccessError::NotFound);
+    }
+    if record_user_id == user.user_id {
+        Ok(())
+    } else {
+        Err(SessionAccessError::Forbidden)
+    }
+}
+
 fn is_stream_busy(task: &Option<tokio::task::JoinHandle<()>>) -> bool {
     match task {
         Some(handle) => !handle.is_finished(),
         None => false,
-    }
-}
-
-fn session_exists(state: &AppState, user_id: &str, session_id: &str) -> bool {
-    state
-        .user_store
-        .get_chat_session(user_id, session_id)
-        .ok()
-        .flatten()
-        .is_some()
-}
-
-fn extract_error_message(response: Response) -> String {
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED {
-        return i18n::t("error.auth_required");
-    }
-    if status == StatusCode::NOT_FOUND {
-        return i18n::t("error.session_not_found");
-    }
-    i18n::t("error.content_required")
-}
-
-fn map_ws_error_code(status: StatusCode) -> &'static str {
-    match status {
-        StatusCode::UNAUTHORIZED => "AUTH_REQUIRED",
-        StatusCode::NOT_FOUND => "SESSION_NOT_FOUND",
-        StatusCode::BAD_REQUEST => "INVALID_REQUEST",
-        _ => "BAD_REQUEST",
     }
 }

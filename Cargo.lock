@@ -2213,6 +2213,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlsx"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0295eab89d6a958c668175c6aec25b9be8122bc37edd50a5d13fca07867979a0"
+dependencies = [
+ "chrono",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "zip 0.6.6",
+]
+
+[[package]]
 name = "rmcp"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3743,6 +3757,7 @@ dependencies = [
  "quick-xml",
  "regex",
  "reqwest",
+ "rlsx",
  "rmcp",
  "rusqlite",
  "serde",

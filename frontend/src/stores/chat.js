@@ -1305,11 +1305,40 @@ const resolveToolCategory = (toolName, payload) => {
   return 'default';
 };
 
-let resumeController = null;
-let sendController = null;
-let resumeSocket = null;
-let sendSocket = null;
-let stopRequested = false;
+const sessionRuntime = new Map();
+
+const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
+
+const ensureRuntime = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  if (!sessionRuntime.has(key)) {
+    sessionRuntime.set(key, {
+      sendController: null,
+      resumeController: null,
+      sendSocket: null,
+      resumeSocket: null,
+      stopRequested: false
+    });
+  }
+  return sessionRuntime.get(key);
+};
+
+const getRuntime = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  return sessionRuntime.get(key) || null;
+};
+
+const setSessionLoading = (store, sessionId, value) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return;
+  if (value) {
+    store.loadingBySession[key] = true;
+  } else if (store.loadingBySession[key]) {
+    delete store.loadingBySession[key];
+  }
+};
 
 const DEFAULT_STREAM_TRANSPORT = 'ws';
 
@@ -1333,25 +1362,29 @@ const safeCloseSocket = (socket) => {
   }
 };
 
-const abortResumeStream = () => {
-  if (resumeController) {
-    resumeController.abort();
-    resumeController = null;
+const abortResumeStream = (sessionId) => {
+  const runtime = getRuntime(sessionId);
+  if (!runtime) return;
+  if (runtime.resumeController) {
+    runtime.resumeController.abort();
+    runtime.resumeController = null;
   }
-  if (resumeSocket) {
-    safeCloseSocket(resumeSocket);
-    resumeSocket = null;
+  if (runtime.resumeSocket) {
+    safeCloseSocket(runtime.resumeSocket);
+    runtime.resumeSocket = null;
   }
 };
 
-const abortSendStream = () => {
-  if (sendController) {
-    sendController.abort();
-    sendController = null;
+const abortSendStream = (sessionId) => {
+  const runtime = getRuntime(sessionId);
+  if (!runtime) return;
+  if (runtime.sendController) {
+    runtime.sendController.abort();
+    runtime.sendController = null;
   }
-  if (sendSocket) {
-    safeCloseSocket(sendSocket);
-    sendSocket = null;
+  if (runtime.sendSocket) {
+    safeCloseSocket(runtime.sendSocket);
+    runtime.sendSocket = null;
   }
 };
 
@@ -2122,11 +2155,18 @@ export const useChatStore = defineStore('chat', {
     sessions: [],
     activeSessionId: null,
     messages: [],
-    loading: false,
+    loadingBySession: {},
     greetingOverride: '',
     draftAgentId: '',
     draftToolOverrides: null
   }),
+  getters: {
+    isSessionLoading: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      return Boolean(state.loadingBySession[key]);
+    }
+  },
   actions: {
     markPageUnloading() {
       pageUnloading = true;
@@ -2192,10 +2232,14 @@ export const useChatStore = defineStore('chat', {
       return this.sessions;
     },
     openDraftSession(options = {}) {
-      abortResumeStream();
-      abortSendStream();
-      stopRequested = false;
-      this.loading = false;
+      const currentSessionId = this.activeSessionId;
+      abortResumeStream(currentSessionId);
+      abortSendStream(currentSessionId);
+      const runtime = ensureRuntime(currentSessionId);
+      if (runtime) {
+        runtime.stopRequested = false;
+      }
+      setSessionLoading(this, currentSessionId, false);
       this.activeSessionId = null;
       this.draftAgentId = String(options.agent_id || '').trim();
       this.draftToolOverrides = null;
@@ -2210,7 +2254,7 @@ export const useChatStore = defineStore('chat', {
       this.draftToolOverrides = [...overrides];
     },
     async createSession(payload = {}) {
-      abortResumeStream();
+      abortResumeStream(this.activeSessionId);
       const { data } = await createSession(payload);
       const session = data.data;
       this.sessions.unshift(session);
@@ -2230,7 +2274,8 @@ export const useChatStore = defineStore('chat', {
       return session;
     },
     async loadSessionDetail(sessionId) {
-      abortResumeStream();
+      const previousSessionId = this.activeSessionId;
+      abortResumeStream(previousSessionId);
       this.activeSessionId = sessionId;
       const snapshot = this.getSnapshotForSession(sessionId);
       if (snapshot?.messages?.length) {
@@ -2290,8 +2335,10 @@ export const useChatStore = defineStore('chat', {
       if (!targetId) return;
       const targetSession = this.sessions.find((item) => item.id === targetId) || null;
       const targetAgentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
-      abortResumeStream();
-      abortSendStream();
+      abortResumeStream(targetId);
+      abortSendStream(targetId);
+      setSessionLoading(this, targetId, false);
+      sessionRuntime.delete(resolveSessionKey(targetId));
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       sessionWorkflowState.delete(String(targetId));
@@ -2334,9 +2381,13 @@ export const useChatStore = defineStore('chat', {
       return overrides;
     },
     async sendMessage(content, options = {}) {
-      abortResumeStream();
-      abortSendStream();
-      stopRequested = false;
+      const initialSessionId = this.activeSessionId;
+      abortResumeStream(initialSessionId);
+      abortSendStream(initialSessionId);
+      const initialRuntime = ensureRuntime(initialSessionId);
+      if (initialRuntime) {
+        initialRuntime.stopRequested = false;
+      }
       if (!this.activeSessionId) {
         const payload = this.draftAgentId ? { agent_id: this.draftAgentId } : {};
         const session = await this.createSession(payload);
@@ -2353,8 +2404,10 @@ export const useChatStore = defineStore('chat', {
       this.messages.push(userMessage);
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
       const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+      const sessionId = this.activeSessionId;
+      const runtime = ensureRuntime(sessionId);
 
-      const activeSession = this.sessions.find((item) => item.id === this.activeSessionId);
+      const activeSession = this.sessions.find((item) => item.id === sessionId);
       if (activeSession && shouldAutoTitle(activeSession.title)) {
         const autoTitle = buildSessionTitle(content);
         if (autoTitle) {
@@ -2377,9 +2430,9 @@ export const useChatStore = defineStore('chat', {
       const assistantMessage = this.messages[this.messages.length - 1];
       this.scheduleSnapshot(true);
 
-      this.loading = true;
+      setSessionLoading(this, sessionId, true);
 
-      const workflowState = getSessionWorkflowState(this.activeSessionId);
+      const workflowState = getSessionWorkflowState(sessionId);
       const processor = createWorkflowProcessor(
         assistantMessage,
         workflowState,
@@ -2387,7 +2440,9 @@ export const useChatStore = defineStore('chat', {
       );
 
       try {
-        sendController = new AbortController();
+        if (runtime) {
+          runtime.sendController = new AbortController();
+        }
         const payload = {
           content,
           stream: true,
@@ -2398,8 +2453,8 @@ export const useChatStore = defineStore('chat', {
           processor.handleEvent(eventType, dataText);
         };
         const streamWithSse = async () => {
-          const response = await sendMessageStream(this.activeSessionId, payload, {
-            signal: sendController.signal
+          const response = await sendMessageStream(sessionId, payload, {
+            signal: runtime?.sendController?.signal
           });
           if (!response.ok) {
             const errorText = await readResponseError(response);
@@ -2410,18 +2465,21 @@ export const useChatStore = defineStore('chat', {
           await consumeSseStream(response, onEvent);
         };
         const streamWithWs = async () => {
-          sendSocket = openChatSocket();
+          const socket = openChatSocket();
+          if (runtime) {
+            runtime.sendSocket = socket;
+          }
           await consumeWsStream(
-            sendSocket,
+            socket,
             onEvent,
             {
-              signal: sendController.signal,
+              signal: runtime?.sendController?.signal,
               closeOnFinal: true,
               onOpen: () => {
-                sendSocket.send(
+                socket.send(
                   JSON.stringify({
                     type: 'start',
-                    session_id: this.activeSessionId,
+                    session_id: sessionId,
                     payload
                   })
                 );
@@ -2444,7 +2502,7 @@ export const useChatStore = defineStore('chat', {
           await streamWithSse();
         }
       } catch (error) {
-        if (error?.name === 'AbortError' || stopRequested || pageUnloading) {
+        if (error?.name === 'AbortError' || runtime?.stopRequested || pageUnloading) {
           if (!pageUnloading) {
             assistantMessage.workflowItems.push(
               buildWorkflowItem(
@@ -2469,46 +2527,55 @@ export const useChatStore = defineStore('chat', {
       } finally {
         assistantMessage.workflowStreaming = false;
         assistantMessage.stream_incomplete = false;
-        this.loading = false;
+        setSessionLoading(this, sessionId, false);
         processor.finalize();
-        sendController = null;
-        if (sendSocket) {
-          safeCloseSocket(sendSocket);
-          sendSocket = null;
+        if (runtime) {
+          runtime.sendController = null;
+          if (runtime.sendSocket) {
+            safeCloseSocket(runtime.sendSocket);
+            runtime.sendSocket = null;
+          }
+          runtime.stopRequested = false;
         }
-        stopRequested = false;
         syncDemoChatCache({
           sessions: this.sessions,
-          sessionId: this.activeSessionId,
+          sessionId,
           messages: this.messages
         });
         this.scheduleSnapshot(true);
-        emitWorkspaceRefresh({ sessionId: this.activeSessionId, reason: 'message-finished' });
+        emitWorkspaceRefresh({ sessionId, reason: 'message-finished' });
       }
     },
     async stopStream() {
       if (!this.activeSessionId) {
         return;
       }
-      stopRequested = true;
-      abortSendStream();
+      const sessionId = this.activeSessionId;
+      const runtime = ensureRuntime(sessionId);
+      if (runtime) {
+        runtime.stopRequested = true;
+      }
+      abortSendStream(sessionId);
       try {
-        await cancelMessageStream(this.activeSessionId);
+        await cancelMessageStream(sessionId);
       } catch (error) {
         // 终止失败时仅记录状态，不影响前端中止动作
       }
-      this.loading = false;
+      setSessionLoading(this, sessionId, false);
     },
     async resumeStream(sessionId, message) {
       if (!message || !message.stream_incomplete) return;
-      this.loading = true;
+      setSessionLoading(this, sessionId, true);
       message.workflowStreaming = true;
       message.stream_incomplete = true;
       this.scheduleSnapshot();
       const workflowState = getSessionWorkflowState(sessionId);
       const processor = createWorkflowProcessor(message, workflowState, () => this.scheduleSnapshot());
-      abortResumeStream();
-      resumeController = new AbortController();
+      abortResumeStream(sessionId);
+      const runtime = ensureRuntime(sessionId);
+      if (runtime) {
+        runtime.resumeController = new AbortController();
+      }
       let aborted = false;
       const afterEventId = normalizeStreamEventId(message.stream_event_id);
       try {
@@ -2518,7 +2585,7 @@ export const useChatStore = defineStore('chat', {
         };
         const streamWithSse = async () => {
           const response = await resumeMessageStream(sessionId, {
-            signal: resumeController.signal,
+            signal: runtime?.resumeController?.signal,
             afterEventId
           });
           if (!response.ok) {
@@ -2530,15 +2597,18 @@ export const useChatStore = defineStore('chat', {
           await consumeSseStream(response, onEvent);
         };
         const streamWithWs = async () => {
-          resumeSocket = openChatSocket();
+          const socket = openChatSocket();
+          if (runtime) {
+            runtime.resumeSocket = socket;
+          }
           await consumeWsStream(
-            resumeSocket,
+            socket,
             onEvent,
             {
-              signal: resumeController.signal,
+              signal: runtime?.resumeController?.signal,
               closeOnFinal: true,
               onOpen: () => {
-                resumeSocket.send(
+                socket.send(
                   JSON.stringify({
                     type: 'resume',
                     session_id: sessionId,
@@ -2551,7 +2621,7 @@ export const useChatStore = defineStore('chat', {
             }
           );
         };
-        const transport = resolveStreamTransport();
+        const transport = afterEventId ? resolveStreamTransport() : 'sse';
         if (transport === 'ws') {
           try {
             await streamWithWs();
@@ -2585,14 +2655,14 @@ export const useChatStore = defineStore('chat', {
         if (!aborted) {
           message.stream_incomplete = false;
         }
-        this.loading = false;
+        setSessionLoading(this, sessionId, false);
         processor.finalize();
-        if (!aborted) {
-          resumeController = null;
+        if (runtime && !aborted) {
+          runtime.resumeController = null;
         }
-        if (resumeSocket) {
-          safeCloseSocket(resumeSocket);
-          resumeSocket = null;
+        if (runtime?.resumeSocket) {
+          safeCloseSocket(runtime.resumeSocket);
+          runtime.resumeSocket = null;
         }
         this.scheduleSnapshot(true);
         emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });

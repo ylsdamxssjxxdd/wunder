@@ -6,7 +6,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use std::sync::Arc;
 
-const MAX_DOC2MD_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+const MAX_DOC2MD_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route(

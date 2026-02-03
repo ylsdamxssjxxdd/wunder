@@ -345,7 +345,7 @@
             />
             <ChatComposer
               :key="composerKey"
-              :loading="chatStore.loading"
+              :loading="chatStore.isSessionLoading(chatStore.activeSessionId)"
               :demo-mode="demoMode"
               :inquiry-active="Boolean(activeInquiryPanel)"
               :inquiry-selection="inquirySelection"

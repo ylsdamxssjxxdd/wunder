@@ -29,11 +29,11 @@
 - **WS Endpoint**：`/wunder/chat/ws`
 - 适用：用户侧前端聊天（当前 SSE 入口 `/wunder/chat/sessions/{session_id}/messages` 的替代传输）
 
-### 3.2 统一入口（可选扩展）
+### 3.2 统一入口（已实现）
 - **WS Endpoint**：`/wunder/ws`
 - 适用：统一 `/wunder` 入口的 WS 版本（与 `/wunder` POST 语义一致）
 
-> 说明：`/wunder/chat/ws` 为优先实现路径，`/wunder/ws` 可后续补齐。
+> 说明：`/wunder/chat/ws` 用于用户侧会话，`/wunder/ws` 主要面向统一 API 入口与服务端调用。
 
 ## 4. 认证与握手
 
@@ -46,6 +46,7 @@
 
 **非浏览器客户端**
 - 允许 `Authorization: Bearer <token>` Header
+- 使用 API Key 访问 `/wunder/ws` 时，需在 Query 中携带 `user_id` 用于解析目标用户
 
 **鉴权复用**
 - 复用现有 `resolve_user` / Bearer Token 鉴权逻辑。
@@ -79,6 +80,25 @@
 }
 ```
 > 说明：当前仅支持 `session_id/content/stream/attachments`，其余字段保留为后续扩展。
+
+**start（/wunder/ws）**
+```json
+{
+  "type": "start",
+  "request_id": "req_xxx",
+  "payload": {
+    "user_id": "u_123",
+    "question": "用户问题",
+    "stream": true,
+    "session_id": "sess_xxx",
+    "tool_names": ["search", "read_file"],
+    "skip_tool_calls": false,
+    "config_overrides": null,
+    "language": "zh-CN"
+  }
+}
+```
+> 说明：`/wunder/ws` 使用与 `/wunder` POST 一致的请求体字段；`stream` 默认强制为 `true`。
 
 **resume**
 ```json
@@ -206,6 +226,17 @@ sequenceDiagram
 - 服务端错误统一转为 `type=error` 事件。
 - WS 为默认传输，SSE 作为兼容 fallback。
 - 协议字段尽量与 SSE 事件语义一致，降低前端改造成本。
+
+**常见错误码（code）**
+- `INVALID_JSON`：消息无法解析为 JSON Envelope
+- `PAYLOAD_REQUIRED` / `INVALID_PAYLOAD`：payload 缺失或结构不合法
+- `QUESTION_REQUIRED` / `CONTENT_REQUIRED`：问题或内容为空
+- `SESSION_REQUIRED` / `SESSION_NOT_FOUND`：缺少 session_id 或会话不存在
+- `AFTER_EVENT_ID_REQUIRED`：resume 缺少 after_event_id
+- `STREAM_BUSY`：连接已在执行流式请求
+- `PERMISSION_DENIED` / `UNAUTHORIZED`：会话不属于当前用户或鉴权失败
+- `UNSUPPORTED_TYPE`：未知消息类型
+- `INVALID_REQUEST`：请求体校验未通过（后端返回 BAD_REQUEST）
 
 ## 11. 实施步骤（建议拆解）
 

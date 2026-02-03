@@ -6,9 +6,10 @@ use html2md::parse_html;
 use pdf_extract::extract_text as extract_pdf_text;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader as XmlReader;
+use rlsx::{parse_xlsx_to_workbook, CellValue as RlsxCellValue};
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -270,8 +271,16 @@ fn convert_pptx(path: &Path) -> Result<Doc2mdResult> {
         return Err(anyhow!(i18n::t("error.converter_doc2md_convert_failed")));
     }
     let mut blocks = Vec::new();
+    let mut warnings = Vec::new();
     for (index, xml) in slides {
-        let paragraphs = parse_pptx_xml(&xml)?;
+        let mut paragraphs = parse_pptx_xml(&xml).unwrap_or_default();
+        if paragraphs.is_empty() {
+            let fallback = parse_pptx_xml_fallback(&xml);
+            if !fallback.is_empty() {
+                paragraphs = fallback;
+                warnings.push(format!("pptx fallback parser used for slide {index}"));
+            }
+        }
         if paragraphs.is_empty() {
             continue;
         }
@@ -286,7 +295,7 @@ fn convert_pptx(path: &Path) -> Result<Doc2mdResult> {
     Ok(Doc2mdResult {
         markdown: blocks.join("\n\n"),
         converter: "doc2md".to_string(),
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -343,19 +352,19 @@ fn convert_et(path: &Path) -> Result<Doc2mdResult> {
 }
 
 fn convert_spreadsheet(path: &Path) -> Result<Doc2mdResult> {
-    let mut workbook = match open_workbook_auto(path) {
-        Ok(workbook) => workbook,
-        Err(err) => {
-            let open_error = anyhow!(format!("spreadsheet open failed: {err}"));
-            if detect_zip_kind(path) == Some("xlsx") {
-                if let Ok(mut result) = convert_xlsx_relaxed(path) {
-                    result.warnings.push(format!("calamine failed: {err}"));
+    if detect_zip_kind(path) == Some("xlsx") {
+        match convert_xlsx_rlsx(path) {
+            Ok(result) => return Ok(result),
+            Err(err) => {
+                if let Ok(mut result) = convert_spreadsheet_calamine(path) {
+                    result.warnings.push(format!("rlsx failed: {err}"));
                     return Ok(result);
                 }
+                return Err(anyhow!(format!("spreadsheet open failed: {err}")));
             }
-            return Err(open_error);
         }
-    };
+    }
+    let mut workbook = convert_spreadsheet_calamine_workbook(path)?;
     let sheet_names = workbook.sheet_names().to_owned();
     let mut blocks = Vec::new();
     for name in sheet_names {
@@ -377,392 +386,104 @@ fn convert_spreadsheet(path: &Path) -> Result<Doc2mdResult> {
     })
 }
 
-#[derive(Debug, Clone)]
-struct XlsxSheetInfo {
-    name: String,
-    sheet_id: Option<u32>,
-    rel_id: Option<String>,
-}
-
-fn convert_xlsx_relaxed(path: &Path) -> Result<Doc2mdResult> {
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file).map_err(|_| anyhow!(i18n::t("error.zip_invalid")))?;
-    let entry_names = archive
-        .file_names()
-        .map(|name| name.to_string())
-        .collect::<Vec<_>>();
-
-    let shared_strings =
-        match read_zip_entry_bytes(&mut archive, &entry_names, "xl/sharedStrings.xml") {
-            Some(data) => read_xlsx_shared_strings(&data).unwrap_or_default(),
-            None => Vec::new(),
-        };
-
-    let workbook_sheets = match read_zip_entry_bytes(&mut archive, &entry_names, "xl/workbook.xml")
-    {
-        Some(data) => read_xlsx_workbook_sheets(&data).unwrap_or_default(),
-        None => Vec::new(),
-    };
-
-    let relationships =
-        match read_zip_entry_bytes(&mut archive, &entry_names, "xl/_rels/workbook.xml.rels") {
-            Some(data) => read_xlsx_relationships(&data).unwrap_or_default(),
-            None => std::collections::HashMap::new(),
-        };
-
-    let sheet_files = list_xlsx_worksheet_files(&entry_names);
-    if sheet_files.is_empty() {
-        return Err(anyhow!(i18n::t("error.converter_doc2md_convert_failed")));
-    }
-
-    let mut sheet_entries = Vec::new();
-    if !workbook_sheets.is_empty() {
-        for (index, info) in workbook_sheets.iter().enumerate() {
-            if let Some(path) =
-                resolve_xlsx_sheet_path(info, &relationships, &entry_names, &sheet_files, index)
-            {
-                let name = if info.name.is_empty() {
-                    derive_sheet_name(&path, index)
-                } else {
-                    info.name.clone()
-                };
-                sheet_entries.push((name, path));
-            }
-        }
-    }
-
-    if sheet_entries.is_empty() {
-        for (index, path) in sheet_files.iter().enumerate() {
-            sheet_entries.push((derive_sheet_name(path, index), path.clone()));
-        }
-    }
-
+fn convert_spreadsheet_calamine(path: &Path) -> Result<Doc2mdResult> {
+    let mut workbook = convert_spreadsheet_calamine_workbook(path)?;
+    let sheet_names = workbook.sheet_names().to_owned();
     let mut blocks = Vec::new();
-    for (index, (name, path)) in sheet_entries.into_iter().enumerate() {
-        let data = match read_zip_entry_bytes(&mut archive, &entry_names, &path) {
-            Some(data) => data,
-            None => continue,
-        };
-        let rows = read_xlsx_sheet_rows(&data, &shared_strings)?;
-        let table = rows_to_markdown(rows);
-        if table.trim().is_empty() {
-            continue;
+    for name in sheet_names {
+        if let Ok(range) = workbook.worksheet_range(&name) {
+            let table = range_to_markdown(&range);
+            if table.trim().is_empty() {
+                continue;
+            }
+            blocks.push(format!("## {name}\n\n{table}"));
         }
-        let title = if name.trim().is_empty() {
-            format!("Sheet {}", index + 1)
-        } else {
-            name
-        };
-        blocks.push(format!("## {title}\n\n{table}"));
     }
-
     if blocks.is_empty() {
         return Err(anyhow!(i18n::t("error.converter_doc2md_convert_failed")));
     }
     Ok(Doc2mdResult {
         markdown: blocks.join("\n\n"),
         converter: "doc2md".to_string(),
-        warnings: vec!["xlsx fallback parser used; formulas/styles are ignored".to_string()],
+        warnings: Vec::new(),
     })
 }
 
-fn read_zip_entry_bytes<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-    entry_names: &[String],
-    path: &str,
-) -> Option<Vec<u8>> {
-    let actual = entry_names
-        .iter()
-        .find(|name| name.eq_ignore_ascii_case(path))?
-        .to_string();
-    let mut entry = archive.by_name(&actual).ok()?;
-    let mut buffer = Vec::new();
-    entry.read_to_end(&mut buffer).ok()?;
-    Some(buffer)
+fn convert_spreadsheet_calamine_workbook(
+    path: &Path,
+) -> Result<calamine::Sheets<std::io::BufReader<std::fs::File>>> {
+    open_workbook_auto(path).map_err(|err| anyhow!(format!("spreadsheet open failed: {err}")))
 }
 
-fn read_xlsx_shared_strings(data: &[u8]) -> Result<Vec<String>> {
-    let mut reader = XmlReader::from_reader(Cursor::new(data));
-    reader.trim_text(false);
-    let mut buf = Vec::new();
-    let mut strings = Vec::new();
-    let mut current = String::new();
-    let mut in_si = false;
-    let mut in_t = false;
-    let mut in_phonetic = false;
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => match local_name(e.name().as_ref()) {
-                b"si" => {
-                    in_si = true;
-                    current.clear();
-                }
-                b"t" => {
-                    if in_si && !in_phonetic {
-                        in_t = true;
-                    }
-                }
-                b"rPh" => in_phonetic = true,
-                _ => {}
-            },
-            Ok(Event::Text(t)) => {
-                if in_t {
-                    let text = t
-                        .unescape()
-                        .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()));
-                    current.push_str(&text);
-                }
-            }
-            Ok(Event::End(ref e)) => match local_name(e.name().as_ref()) {
-                b"t" => in_t = false,
-                b"rPh" => in_phonetic = false,
-                b"si" => {
-                    in_si = false;
-                    strings.push(current.clone());
-                }
-                _ => {}
-            },
-            Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!(format!("sharedStrings parse failed: {err}"))),
-            _ => {}
+fn convert_xlsx_rlsx(path: &Path) -> Result<Doc2mdResult> {
+    let workbook =
+        parse_xlsx_to_workbook(path).map_err(|err| anyhow!(format!("xlsx parse failed: {err}")))?;
+    let mut blocks = Vec::new();
+    for (index, sheet) in workbook.sheets.iter().enumerate() {
+        let rows = rlsx_sheet_rows_to_matrix(&sheet.rows);
+        let table = rows_to_markdown(rows);
+        if table.trim().is_empty() {
+            continue;
         }
+        let name = if sheet.name.trim().is_empty() {
+            format!("Sheet {}", index + 1)
+        } else {
+            sheet.name.clone()
+        };
+        blocks.push(format!("## {name}\n\n{table}"));
     }
-    Ok(strings)
-}
-
-fn read_xlsx_workbook_sheets(data: &[u8]) -> Result<Vec<XlsxSheetInfo>> {
-    let mut reader = XmlReader::from_reader(Cursor::new(data));
-    reader.trim_text(false);
-    let mut buf = Vec::new();
-    let mut sheets = Vec::new();
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if local_name(e.name().as_ref()) == b"sheet" => {
-                let name = attr_value(&reader, e, b"name").unwrap_or_default();
-                let sheet_id =
-                    attr_value(&reader, e, b"sheetId").and_then(|value| value.parse::<u32>().ok());
-                let rel_id = attr_value(&reader, e, b"id");
-                sheets.push(XlsxSheetInfo {
-                    name,
-                    sheet_id,
-                    rel_id,
-                });
-            }
-            Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!(format!("workbook parse failed: {err}"))),
-            _ => {}
-        }
+    if blocks.is_empty() {
+        return Err(anyhow!(i18n::t("error.converter_doc2md_convert_failed")));
     }
-    Ok(sheets)
+    Ok(Doc2mdResult {
+        markdown: blocks.join("\n\n"),
+        converter: "doc2md".to_string(),
+        warnings: Vec::new(),
+    })
 }
 
-fn read_xlsx_relationships(data: &[u8]) -> Result<std::collections::HashMap<String, String>> {
-    let mut reader = XmlReader::from_reader(Cursor::new(data));
-    reader.trim_text(false);
-    let mut buf = Vec::new();
-    let mut relationships = std::collections::HashMap::new();
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if local_name(e.name().as_ref()) == b"Relationship" => {
-                let id = attr_value(&reader, e, b"Id").unwrap_or_default();
-                let target = attr_value(&reader, e, b"Target").unwrap_or_default();
-                if !id.is_empty() && !target.is_empty() {
-                    relationships.insert(id, target);
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!(format!("relationships parse failed: {err}"))),
-            _ => {}
-        }
-    }
-    Ok(relationships)
-}
-
-fn list_xlsx_worksheet_files(entry_names: &[String]) -> Vec<String> {
-    let mut files = entry_names
-        .iter()
-        .filter(|name| {
-            let lower = name.to_ascii_lowercase();
-            lower.starts_with("xl/worksheets/") && lower.ends_with(".xml")
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    files.sort_by(|a, b| {
-        let a_index = sheet_index_from_path(a).unwrap_or(u32::MAX);
-        let b_index = sheet_index_from_path(b).unwrap_or(u32::MAX);
-        a_index.cmp(&b_index).then_with(|| a.cmp(b))
-    });
-    files
-}
-
-fn sheet_index_from_path(path: &str) -> Option<u32> {
-    let name = path.rsplit('/').next()?;
-    let name = name.strip_suffix(".xml")?;
-    let name = name.strip_prefix("sheet")?;
-    name.parse::<u32>().ok()
-}
-
-fn resolve_xlsx_sheet_path(
-    info: &XlsxSheetInfo,
-    relationships: &std::collections::HashMap<String, String>,
-    entry_names: &[String],
-    sheet_files: &[String],
-    index: usize,
-) -> Option<String> {
-    if let Some(ref rel_id) = info.rel_id {
-        if let Some(target) = relationships.get(rel_id) {
-            let normalized = normalize_xlsx_target(target);
-            if let Some(actual) = find_zip_entry(entry_names, &normalized) {
-                return Some(actual);
+fn rlsx_sheet_rows_to_matrix(rows: &[Vec<rlsx::Cell>]) -> Vec<Vec<String>> {
+    let mut output = Vec::new();
+    for row in rows {
+        let mut cells = Vec::new();
+        let mut max_col = 0usize;
+        let mut has_value = false;
+        for cell in row {
+            if let Some((_, col)) = parse_cell_ref(&cell.address) {
+                let value = rlsx_cell_value_to_string(&cell.value);
+                max_col = max_col.max(col);
+                cells.push((col, value));
+                has_value = true;
             }
         }
-    }
-    if let Some(sheet_id) = info.sheet_id {
-        let candidate = format!("xl/worksheets/sheet{sheet_id}.xml");
-        if let Some(actual) = find_zip_entry(entry_names, &candidate) {
-            return Some(actual);
+        if !has_value {
+            continue;
         }
-    }
-    sheet_files.get(index).cloned()
-}
-
-fn normalize_xlsx_target(target: &str) -> String {
-    if target.starts_with("/xl/") {
-        target.trim_start_matches('/').to_string()
-    } else if target.starts_with("xl/") {
-        target.to_string()
-    } else if target.starts_with("../") {
-        format!("xl/{}", target.trim_start_matches("../"))
-    } else {
-        format!("xl/{target}")
-    }
-}
-
-fn find_zip_entry(entry_names: &[String], path: &str) -> Option<String> {
-    entry_names
-        .iter()
-        .find(|name| name.eq_ignore_ascii_case(path))
-        .cloned()
-}
-
-fn derive_sheet_name(path: &str, index: usize) -> String {
-    let name = path
-        .rsplit('/')
-        .next()
-        .and_then(|file| file.strip_suffix(".xml"))
-        .unwrap_or(path);
-    if name.trim().is_empty() {
-        format!("Sheet {}", index + 1)
-    } else {
-        name.to_string()
-    }
-}
-
-fn read_xlsx_sheet_rows(data: &[u8], shared_strings: &[String]) -> Result<Vec<Vec<String>>> {
-    let mut reader = XmlReader::from_reader(Cursor::new(data));
-    reader.trim_text(false);
-    let mut buf = Vec::new();
-    let mut cells = Vec::new();
-    let mut max_row = 0usize;
-    let mut max_col = 0usize;
-
-    let mut cell_ref: Option<(usize, usize)> = None;
-    let mut cell_type: Option<String> = None;
-    let mut value_buf = String::new();
-    let mut inline_buf = String::new();
-    let mut in_value = false;
-    let mut in_inline = false;
-    let mut in_inline_t = false;
-
-    loop {
-        buf.clear();
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => match local_name(e.name().as_ref()) {
-                b"c" => {
-                    cell_ref = attr_value(&reader, e, b"r").and_then(|v| parse_cell_ref(&v));
-                    cell_type = attr_value(&reader, e, b"t");
-                    value_buf.clear();
-                    inline_buf.clear();
-                    in_value = false;
-                    in_inline = false;
-                    in_inline_t = false;
-                }
-                b"v" => {
-                    if cell_ref.is_some() {
-                        in_value = true;
-                        value_buf.clear();
-                    }
-                }
-                b"is" => {
-                    if cell_ref.is_some() {
-                        in_inline = true;
-                        inline_buf.clear();
-                    }
-                }
-                b"t" => {
-                    if in_inline {
-                        in_inline_t = true;
-                    }
-                }
-                _ => {}
-            },
-            Ok(Event::Text(t)) => {
-                let text = t
-                    .unescape()
-                    .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()));
-                if in_value {
-                    value_buf.push_str(&text);
-                } else if in_inline_t {
-                    inline_buf.push_str(&text);
-                }
+        let mut row_values = vec![String::new(); max_col + 1];
+        for (col, value) in cells {
+            if col < row_values.len() {
+                row_values[col] = value;
             }
-            Ok(Event::End(ref e)) => match local_name(e.name().as_ref()) {
-                b"v" => in_value = false,
-                b"t" => in_inline_t = false,
-                b"is" => {
-                    in_inline = false;
-                    if value_buf.is_empty() && !inline_buf.is_empty() {
-                        value_buf = inline_buf.clone();
-                    }
-                }
-                b"c" => {
-                    if let Some((row, col)) = cell_ref.take() {
-                        let raw = if value_buf.is_empty() {
-                            inline_buf.clone()
-                        } else {
-                            value_buf.clone()
-                        };
-                        let value =
-                            interpret_xlsx_cell_value(&raw, cell_type.as_deref(), shared_strings);
-                        if !value.is_empty() {
-                            cells.push(((row, col), value));
-                            max_row = max_row.max(row);
-                            max_col = max_col.max(col);
-                        }
-                    }
-                    cell_type = None;
-                }
-                _ => {}
-            },
-            Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!(format!("worksheet parse failed: {err}"))),
-            _ => {}
         }
+        output.push(row_values);
     }
+    output
+}
 
-    if cells.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut rows = vec![vec![String::new(); max_col + 1]; max_row + 1];
-    for ((row, col), value) in cells {
-        if row < rows.len() && col < rows[row].len() {
-            rows[row][col] = value;
+fn rlsx_cell_value_to_string(value: &RlsxCellValue) -> String {
+    match value {
+        RlsxCellValue::String(text) => text.clone(),
+        RlsxCellValue::Number(num) => num.to_string(),
+        RlsxCellValue::Bool(flag) => {
+            if *flag {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
         }
+        RlsxCellValue::Date(dt) => dt.to_rfc3339(),
+        RlsxCellValue::Empty => String::new(),
     }
-    Ok(rows)
 }
 
 fn parse_cell_ref(cell_ref: &str) -> Option<(usize, usize)> {
@@ -785,27 +506,6 @@ fn parse_cell_ref(cell_ref: &str) -> Option<(usize, usize)> {
         None
     } else {
         Some(((row - 1) as usize, (col - 1) as usize))
-    }
-}
-
-fn interpret_xlsx_cell_value(
-    raw: &str,
-    cell_type: Option<&str>,
-    shared_strings: &[String],
-) -> String {
-    let trimmed = raw.trim();
-    match cell_type {
-        Some("s") => trimmed
-            .parse::<usize>()
-            .ok()
-            .and_then(|idx| shared_strings.get(idx).cloned())
-            .unwrap_or_else(|| trimmed.to_string()),
-        Some("b") => match trimmed {
-            "0" => "FALSE".to_string(),
-            "1" => "TRUE".to_string(),
-            _ => trimmed.to_string(),
-        },
-        _ => raw.to_string(),
     }
 }
 
@@ -1283,6 +983,8 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
 fn parse_pptx_xml(xml: &str) -> Result<Vec<String>> {
     let mut reader = XmlReader::from_str(xml);
     reader.trim_text(true);
+    reader.check_end_names(false);
+    reader.expand_empty_elements(true);
     let mut buf = Vec::new();
     let mut paragraphs = Vec::new();
     let mut current = String::new();
@@ -1339,13 +1041,107 @@ fn parse_pptx_xml(xml: &str) -> Result<Vec<String>> {
                 }
             }
             Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!(err.to_string())),
+            Err(_) => break,
             _ => {}
         }
         buf.clear();
     }
 
     Ok(paragraphs)
+}
+
+fn parse_pptx_xml_fallback(xml: &str) -> Vec<String> {
+    let para_re = pptx_fallback_paragraph_regex();
+    let token_re = pptx_fallback_token_regex();
+    let mut paragraphs = Vec::new();
+    for caps in para_re.captures_iter(xml) {
+        let block = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let mut text = String::new();
+        for token in token_re.captures_iter(block) {
+            if let Some(raw) = token.name("text") {
+                text.push_str(&decode_xml_entities(raw.as_str()));
+            } else if token.name("br").is_some() {
+                text.push('\n');
+            } else if token.name("tab").is_some() {
+                text.push(' ');
+            }
+        }
+        let normalized = normalize_text(&text);
+        if !normalized.is_empty() {
+            paragraphs.push(normalized);
+        }
+    }
+    paragraphs
+}
+
+fn pptx_fallback_paragraph_regex() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r"(?s)<a:p\\b[^>]*>(.*?)</a:p>").expect("pptx paragraph regex")
+    })
+}
+
+fn pptx_fallback_token_regex() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?s)(?:<a:t\\b[^>]*>(?P<text>.*?)</a:t>)|(?P<br><a:br\\b[^>]*/?>)|(?P<tab><a:tab\\b[^>]*/?>)",
+        )
+        .expect("pptx token regex")
+    })
+}
+
+fn decode_xml_entities(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '&' {
+            out.push(ch);
+            continue;
+        }
+        let mut entity = String::new();
+        while let Some(next) = chars.next() {
+            if next == ';' {
+                break;
+            }
+            entity.push(next);
+        }
+        if entity.is_empty() {
+            out.push('&');
+            continue;
+        }
+        if let Some(decoded) = decode_xml_entity(&entity) {
+            out.push(decoded);
+        } else {
+            out.push('&');
+            out.push_str(&entity);
+            out.push(';');
+        }
+    }
+    out
+}
+
+fn decode_xml_entity(entity: &str) -> Option<char> {
+    match entity {
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "amp" => Some('&'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => {
+            if let Some(hex) = entity.strip_prefix("#x") {
+                u32::from_str_radix(hex, 16)
+                    .ok()
+                    .and_then(std::char::from_u32)
+            } else if let Some(dec) = entity.strip_prefix('#') {
+                dec.parse::<u32>().ok().and_then(std::char::from_u32)
+            } else {
+                None
+            }
+        }
+    }
 }
 
 fn parse_odt_xml(xml: &str) -> Result<Vec<String>> {
@@ -3302,6 +3098,29 @@ fn read_ole_stream(path: &Path, name: &str) -> Option<Vec<u8>> {
                 let mut data = Vec::new();
                 if stream.read_to_end(&mut data).is_ok() {
                     return Some(data);
+                }
+            }
+            let mut fallback_path = None;
+            let target = name.to_ascii_lowercase();
+            for entry in ole.walk() {
+                if !entry.is_stream() {
+                    continue;
+                }
+                let entry_name = entry.name();
+                if entry_name.eq_ignore_ascii_case(name) {
+                    fallback_path = Some(entry.path().to_path_buf());
+                    break;
+                }
+                if fallback_path.is_none() && entry_name.to_ascii_lowercase().contains(&target) {
+                    fallback_path = Some(entry.path().to_path_buf());
+                }
+            }
+            if let Some(path) = fallback_path {
+                if let Ok(mut stream) = ole.open_stream(path) {
+                    let mut data = Vec::new();
+                    if stream.read_to_end(&mut data).is_ok() {
+                        return Some(data);
+                    }
                 }
             }
         }
