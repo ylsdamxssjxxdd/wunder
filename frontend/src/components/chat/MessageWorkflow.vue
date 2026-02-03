@@ -6,18 +6,6 @@
       <span v-if="loading" class="workflow-loading"><span class="spinner" /></span>
       <span v-if="latestItem" class="workflow-latest" :title="latestTitle">{{ latestTitle }}</span>
       <span v-else class="workflow-spacer" />
-      <button
-        class="workflow-plan-btn"
-        type="button"
-        :class="{ 'is-active': planDialogVisible }"
-        :title="t('chat.workflow.plan.title')"
-        :aria-label="t('chat.workflow.plan.title')"
-        @click.stop="openPlanDialog"
-        @keydown.enter.stop.prevent="openPlanDialog"
-        @keydown.space.stop.prevent="openPlanDialog"
-      >
-        <i class="fa-solid fa-table-cells-large workflow-plan-icon" aria-hidden="true"></i>
-      </button>
     </summary>
     <div class="workflow-content">
       <div v-if="items.length === 0" class="workflow-empty">{{ t('chat.workflow.empty') }}</div>
@@ -47,29 +35,6 @@
     <div class="workflow-dialog-title">{{ dialogTitle }}</div>
     <pre class="workflow-dialog-detail">{{ dialogDetail }}</pre>
   </el-dialog>
-  <el-dialog
-    v-model="planDialogVisible"
-    :title="t('chat.workflow.plan.title')"
-    width="520px"
-    class="plan-dialog"
-    append-to-body
-  >
-    <div v-if="hasPlan" class="plan-board">
-      <div v-if="planExplanation" class="plan-explanation">{{ planExplanation }}</div>
-      <div class="plan-steps">
-        <div
-          v-for="(item, index) in plan.steps"
-          :key="`${index}-${item.step}`"
-          :class="['plan-step', `plan-step--${item.status}`]"
-        >
-          <span class="plan-index">{{ index + 1 }}</span>
-          <div class="plan-text">{{ item.step }}</div>
-          <span class="plan-status">{{ formatPlanStatus(item.status) }}</span>
-        </div>
-      </div>
-    </div>
-    <div v-else class="plan-empty">{{ t('chat.workflow.plan.empty') }}</div>
-  </el-dialog>
 </template>
 
 <script setup>
@@ -90,18 +55,9 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false
-  },
-  plan: {
-    type: Object,
-    default: null
-  },
-  planVisible: {
-    type: Boolean,
-    default: false
   }
 });
 
-const emit = defineEmits(['update:planVisible']);
 const { t } = useI18n();
 
 // 统计数量用于摘要展示
@@ -112,34 +68,16 @@ const latestItem = computed(() =>
 
 const dialogVisible = ref(false);
 const activeItem = ref(null);
-const planDialogVisible = computed({
-  get: () => props.planVisible,
-  set: (value) => emit('update:planVisible', value)
-});
-const planExplanation = computed(() => String(props.plan?.explanation || '').trim());
-const hasPlan = computed(
-  () => Array.isArray(props.plan?.steps) && props.plan.steps.length > 0
-);
 
 const openDetail = (item) => {
   activeItem.value = item || null;
   dialogVisible.value = true;
 };
 
-const openPlanDialog = () => {
-  planDialogVisible.value = true;
-};
-
 const getItemClasses = (item) => {
   if (!item?.isTool) return [];
   const category = item.toolCategory || 'default';
   return ['workflow-item--tool', `workflow-item--tool-${category}`];
-};
-
-const formatPlanStatus = (status) => {
-  if (status === 'completed') return t('chat.workflow.plan.status.completed');
-  if (status === 'in_progress') return t('chat.workflow.plan.status.inProgress');
-  return t('chat.workflow.plan.status.pending');
 };
 
 const dialogTitle = computed(() =>

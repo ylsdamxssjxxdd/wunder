@@ -79,6 +79,14 @@
   opacity: 0.75;
 }
 
+:root[data-user-theme='light'] .chat-shell .plan-tab {
+  box-shadow: none;
+}
+
+:root[data-user-theme='light'] .chat-shell .plan-tab:hover {
+  box-shadow: none;
+}
+
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-route {
   background: #ffffff;
   border-color: rgba(15, 23, 42, 0.1);
@@ -342,23 +350,6 @@
   background: rgba(15, 23, 42, 0.04);
   border-color: rgba(15, 23, 42, 0.12);
   color: var(--chat-text);
-}
-
-:root[data-user-theme='light'] .chat-shell .workflow-plan-btn {
-  color: rgba(59, 130, 246, 0.85);
-  border-color: rgba(59, 130, 246, 0.35);
-  background: rgba(59, 130, 246, 0.08);
-}
-
-:root[data-user-theme='light'] .chat-shell .workflow-plan-btn:hover {
-  color: #3b82f6;
-  border-color: rgba(59, 130, 246, 0.5);
-}
-
-:root[data-user-theme='light'] .chat-shell .workflow-plan-btn.is-active {
-  color: #94a3b8;
-  border-color: rgba(148, 163, 184, 0.6);
-  background: rgba(15, 23, 42, 0.04);
 }
 
 :root[data-user-theme='light'] .chat-shell .workflow-item {

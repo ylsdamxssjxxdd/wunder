@@ -4,6 +4,173 @@
   background: rgba(15, 23, 42, 0.6);
 }
 
+.chat-shell .composer-shell {
+  position: relative;
+}
+
+.chat-shell .plan-floating {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 6px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 6;
+  --plan-surface: var(--chat-card);
+  --plan-card: var(--chat-panel);
+  --plan-border: rgba(var(--chat-primary-rgb), 0.22);
+  --plan-badge-bg: rgba(var(--chat-primary-rgb), 0.08);
+  --plan-badge-border: rgba(var(--chat-primary-rgb), 0.2);
+}
+
+.chat-shell .plan-panel {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+
+.chat-shell .plan-panel.expanded {
+  max-height: 420px;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.chat-shell .plan-panel .plan-board {
+  max-height: 400px;
+  overflow: auto;
+}
+
+.chat-shell .plan-floating .plan-explanation {
+  background: var(--chat-panel);
+  border-color: var(--plan-border);
+}
+
+.chat-shell .plan-floating .plan-step {
+  border-color: var(--plan-border);
+}
+
+.chat-shell .plan-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px 11px;
+  min-width: 240px;
+  max-width: min(560px, calc(100vw - 48px));
+  border: 1px solid rgba(var(--chat-primary-rgb), 0.35);
+  background: linear-gradient(
+      135deg,
+      rgba(var(--chat-primary-rgb), 0.22),
+      rgba(var(--chat-accent-rgb), 0.18)
+    ),
+    var(--chat-panel);
+  color: var(--chat-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow:
+    0 8px 18px rgba(2, 6, 23, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(2, 6, 23, 0.28);
+  border-radius: 14px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.chat-shell .plan-tab:hover {
+  border-color: rgba(var(--chat-primary-rgb), 0.55);
+  box-shadow: 0 10px 22px rgba(var(--chat-primary-rgb), 0.14);
+}
+
+.chat-shell .plan-tab::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 14px;
+  background: linear-gradient(
+      160deg,
+      rgba(var(--chat-primary-rgb), 0.24),
+      rgba(var(--chat-accent-rgb), 0.12)
+    ),
+    rgba(255, 255, 255, 0.02);
+  opacity: 0.85;
+  z-index: 0;
+}
+
+.chat-shell .plan-tab::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+      120% 120% at 10% 0%,
+      rgba(255, 255, 255, 0.22),
+      transparent 45%
+    ),
+    radial-gradient(
+      120% 120% at 90% 0%,
+      rgba(255, 255, 255, 0.18),
+      transparent 46%
+    );
+  opacity: 0.45;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.chat-shell .plan-tab > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chat-shell .plan-tab-title {
+  flex-shrink: 0;
+  color: var(--chat-text);
+}
+
+.chat-shell .plan-tab-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--chat-border);
+  flex-shrink: 0;
+}
+
+.chat-shell .plan-tab-progress {
+  font-variant-numeric: tabular-nums;
+  color: var(--chat-muted);
+  flex-shrink: 0;
+}
+
+.chat-shell .plan-tab-step {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--chat-text);
+}
+
+.chat-shell .plan-tab-icon {
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chat-shell .plan-tab-icon.expanded {
+  transform: rotate(180deg);
+}
+
 .chat-shell .upload-preview {
   display: flex;
   flex-direction: column;

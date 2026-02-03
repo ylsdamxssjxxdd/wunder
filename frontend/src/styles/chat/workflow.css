@@ -31,40 +31,6 @@
   text-overflow: ellipsis;
 }
 
-.chat-shell .workflow-plan-btn {
-  border: 1px solid rgba(109, 213, 255, 0.4);
-  background: rgba(15, 23, 42, 0.35);
-  color: var(--chat-primary);
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.chat-shell .workflow-plan-btn:hover {
-  color: var(--chat-text);
-  border-color: rgba(109, 213, 255, 0.6);
-}
-
-.chat-shell .workflow-plan-btn.is-active {
-  color: var(--chat-muted);
-  border-color: rgba(148, 163, 184, 0.6);
-  background: rgba(148, 163, 184, 0.18);
-}
-
-.chat-shell .workflow-plan-icon {
-  width: 10px;
-  height: 10px;
-  font-size: 10px;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .chat-shell .message-workflow summary::marker {
   display: none;
 }

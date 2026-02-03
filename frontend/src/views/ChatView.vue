@@ -196,12 +196,8 @@
                   :loading="message.workflowStreaming"
                   :visible="
                     message.workflowStreaming ||
-                    (message.workflowItems && message.workflowItems.length > 0) ||
-                    hasPlan(message)
+                    (message.workflowItems && message.workflowItems.length > 0)
                   "
-                  :plan="message.plan"
-                  :plan-visible="message.planVisible"
-                  @update:plan-visible="(value) => (message.planVisible = value)"
                 />
                 <div
                   v-if="shouldShowMessageText(message)"
@@ -328,15 +324,22 @@
             :panel="activeInquiryPanel.panel"
             @update:selected="handleInquirySelection"
           />
-          <ChatComposer
-            :key="composerKey"
-            :loading="chatStore.loading"
-            :demo-mode="demoMode"
-            :inquiry-active="Boolean(activeInquiryPanel)"
-            :inquiry-selection="inquirySelection"
-            @send="handleComposerSend"
-            @stop="handleStop"
-          />
+          <div class="composer-shell">
+            <PlanPanel
+              v-if="activePlan"
+              :plan="activePlan"
+              v-model:expanded="planExpanded"
+            />
+            <ChatComposer
+              :key="composerKey"
+              :loading="chatStore.loading"
+              :demo-mode="demoMode"
+              :inquiry-active="Boolean(activeInquiryPanel)"
+              :inquiry-selection="inquirySelection"
+              @send="handleComposerSend"
+              @stop="handleStop"
+            />
+          </div>
         </section>
       </div>
     </div>
@@ -545,6 +548,7 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
+import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import { useAgentStore } from '@/stores/agents';
@@ -878,8 +882,22 @@ const shouldShowMessageText = (message) => {
   return Boolean(String(message.content || '').trim());
 };
 
-const hasPlan = (message) =>
-  Array.isArray(message?.plan?.steps) && message.plan.steps.length > 0;
+const hasPlanSteps = (plan) =>
+  Array.isArray(plan?.steps) && plan.steps.length > 0;
+
+const activePlanMessage = computed(() => {
+  for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
+    const message = chatStore.messages[i];
+    if (message?.role !== 'assistant') continue;
+    if (hasPlanSteps(message.plan)) {
+      return message;
+    }
+  }
+  return null;
+});
+
+const activePlan = computed(() => activePlanMessage.value?.plan || null);
+const planExpanded = ref(false);
 
 const markdownCache = new WeakMap();
 
@@ -1711,6 +1729,16 @@ watch(
     if (value !== oldValue) {
       clearWorkspaceResourceCache();
       scheduleWorkspaceResourceHydration();
+      planExpanded.value = false;
+    }
+  }
+);
+
+watch(
+  () => activePlan.value,
+  (value) => {
+    if (!value) {
+      planExpanded.value = false;
     }
   }
 );
