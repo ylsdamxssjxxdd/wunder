@@ -930,7 +930,7 @@ const clearWorkspaceCurrent = async () => {
   const display = displayPath.value;
   try {
     await ElMessageBox.confirm(
-      t('workspace.clear.confirm', { path: display }),
+      t('workspace.clear.confirm', { name: display }),
       t('workspace.clear.title'),
       {
         confirmButtonText: t('workspace.clear.action'),
