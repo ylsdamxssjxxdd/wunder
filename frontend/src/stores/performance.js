@@ -2,16 +2,23 @@ import { defineStore } from 'pinia';
 
 const PERFORMANCE_STORAGE_KEY = 'wille-performance-mode';
 const PERFORMANCE_MODES = ['low', 'high'];
+const DEFAULT_PERFORMANCE_MODE = 'high';
 
 const normalizePerformanceMode = (value) => {
   if (PERFORMANCE_MODES.includes(value)) {
     return value;
   }
-  return 'low';
+  return DEFAULT_PERFORMANCE_MODE;
 };
 
-const readPerformanceFromStorage = () =>
-  normalizePerformanceMode(localStorage.getItem(PERFORMANCE_STORAGE_KEY));
+const readPerformanceFromStorage = () => {
+  const stored = localStorage.getItem(PERFORMANCE_STORAGE_KEY);
+  const normalized = stored === 'low' ? DEFAULT_PERFORMANCE_MODE : normalizePerformanceMode(stored);
+  if (normalized !== stored) {
+    localStorage.setItem(PERFORMANCE_STORAGE_KEY, normalized);
+  }
+  return normalized;
+};
 
 const applyPerformanceToDocument = (mode) => {
   if (typeof document === 'undefined') return;

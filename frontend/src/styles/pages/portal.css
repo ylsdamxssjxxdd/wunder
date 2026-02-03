@@ -41,6 +41,7 @@
   justify-content: space-between;
   gap: 24px;
   padding: 16px 24px;
+  min-height: 64px;
   border-bottom: 1px solid var(--portal-border);
   background: linear-gradient(90deg, rgba(106, 217, 255, 0.12), rgba(180, 169, 255, 0.14));
   position: sticky;
@@ -58,6 +59,7 @@
   justify-content: space-between;
   padding: 10px 16px;
   gap: 16px;
+  min-height: 64px;
   background: linear-gradient(90deg, rgba(106, 217, 255, 0.16), rgba(180, 169, 255, 0.12));
   border-bottom: 1px solid var(--portal-border);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);

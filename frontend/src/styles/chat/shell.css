@@ -39,6 +39,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
+  min-height: 64px;
   background: linear-gradient(90deg, rgba(77, 216, 255, 0.16), rgba(155, 140, 254, 0.12));
   border-bottom: 1px solid var(--chat-border);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
