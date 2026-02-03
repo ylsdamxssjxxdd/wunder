@@ -126,9 +126,11 @@
 }
 
 :root[data-user-theme='light'] .tool-manager-page .user-tools-sidebar {
-  background: linear-gradient(180deg, #f8fafc, #eef2f7);
-  border-color: rgba(148, 163, 184, 0.4);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  background: linear-gradient(160deg, #ffffff 0%, #f1f5ff 45%, #e8efff 100%);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(59, 130, 246, 0.08);
 }
 
 :root[data-user-theme='light'] .tool-manager-page .user-tools-content {

@@ -170,9 +170,9 @@
 }
 
 .chat-shell .theme-toggle-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -253,9 +253,9 @@
 }
 
 .chat-shell .topbar-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -451,9 +451,9 @@
 }
 
 .chat-shell .workspace-icon {
-  width: 16px;
-  height: 16px;
-  font-size: 16px;
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -522,9 +522,9 @@
 }
 
 .chat-shell .workspace-search-icon {
-  width: 14px;
-  height: 14px;
-  font-size: 14px;
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -710,9 +710,9 @@
 }
 
 .chat-shell .workspace-caret-icon {
-  width: 14px;
-  height: 14px;
-  font-size: 14px;
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -721,13 +721,13 @@
 }
 
 .chat-shell .workspace-item-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: #0f172a;
   background: rgba(255, 255, 255, 0.08);
@@ -886,7 +886,7 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .workspace-dialog .el-dialog__header {

@@ -374,9 +374,9 @@
 }
 
 .portal-shell .theme-toggle-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -384,9 +384,9 @@
 }
 
 .portal-shell .topbar-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -476,9 +476,9 @@
 }
 
 .portal-search-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -863,9 +863,9 @@
 }
 
 .portal-card-icon-svg {
-  width: 22px;
-  height: 22px;
-  font-size: 22px;
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -873,9 +873,9 @@
 }
 
 .portal-card--compact .portal-card-icon-svg {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
 }
 
 .portal-card-badges {

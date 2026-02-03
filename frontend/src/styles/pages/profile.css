@@ -144,9 +144,9 @@
 }
 
 .profile-edit-icon {
-  width: 18px;
-  height: 18px;
-  font-size: 18px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -250,7 +250,7 @@
   background: rgba(255, 255, 255, 0.06);
   color: var(--portal-text, #e2e8f0);
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
