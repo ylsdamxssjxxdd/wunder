@@ -112,7 +112,7 @@ struct SendMessageRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatAttachment {
+pub(crate) struct ChatAttachment {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -373,7 +373,6 @@ async fn send_message(
     Json(payload): Json<SendMessageRequest>,
 ) -> Result<Response, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
-    let is_admin = UserStore::is_admin(&resolved.user);
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
         return Err(error_response(
@@ -381,108 +380,21 @@ async fn send_message(
             i18n::t("error.content_required"),
         ));
     }
-    let content = payload.content.trim().to_string();
-    if content.is_empty() {
+    if payload.content.trim().is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
         ));
     }
-    let now = now_ts();
-    let record = state
-        .user_store
-        .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let record = record.unwrap_or_else(|| crate::storage::ChatSessionRecord {
-        session_id: session_id.clone(),
-        user_id: resolved.user.user_id.clone(),
-        title: DEFAULT_SESSION_TITLE.to_string(),
-        created_at: now,
-        updated_at: now,
-        last_message_at: now,
-        agent_id: None,
-        tool_overrides: Vec::new(),
-        parent_session_id: None,
-        parent_message_id: None,
-        spawn_label: None,
-        spawned_by: None,
-    });
-    state
-        .user_store
-        .upsert_chat_session(&record)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-
-    finish_stale_waiting_sessions(
+    let request = build_chat_request(
         &state,
-        &resolved.user.user_id,
+        &resolved.user,
         &session_id,
-        record.agent_id.as_deref(),
-    );
-
-    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
-    let agent_record =
-        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
-    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    allowed = apply_tool_overrides(allowed, &overrides);
-    let tool_names = finalize_tool_names(allowed);
-    let agent_prompt = agent_record
-        .as_ref()
-        .map(|record| record.system_prompt.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    if should_auto_title(&record.title) {
-        if let Some(title) = build_session_title(&content) {
-            let _ = state.user_store.update_chat_session_title(
-                &resolved.user.user_id,
-                &session_id,
-                &title,
-                now,
-            );
-        }
-    }
-    let _ = state
-        .user_store
-        .touch_chat_session(&resolved.user.user_id, &session_id, now, now);
-
-    let attachments = payload
-        .attachments
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|item| {
-            item.content
-                .as_ref()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false)
-        })
-        .map(|item| AttachmentPayload {
-            name: item.name,
-            content: item.content,
-            content_type: item.mime_type,
-        })
-        .collect::<Vec<_>>();
-    let attachments = if attachments.is_empty() {
-        None
-    } else {
-        Some(attachments)
-    };
-
-    let request = WunderRequest {
-        user_id: resolved.user.user_id.clone(),
-        question: content,
-        tool_names,
-        skip_tool_calls: false,
-        stream: payload.stream.unwrap_or(true),
-        debug_payload: false,
-        session_id: Some(session_id.clone()),
-        agent_id: record.agent_id.clone(),
-        model_name: None,
-        language: Some(i18n::get_language()),
-        config_overrides: None,
-        agent_prompt,
-        attachments,
-        is_admin,
-    };
+        payload.content,
+        payload.stream.unwrap_or(true),
+        payload.attachments,
+    )
+    .await?;
 
     if request.stream {
         let stream = state
@@ -518,6 +430,122 @@ async fn send_message(
             .map_err(map_orchestrator_error)?;
         Ok(Json(json!({ "data": response })).into_response())
     }
+}
+
+pub(crate) async fn build_chat_request(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    session_id: &str,
+    content: String,
+    stream: bool,
+    attachments: Option<Vec<ChatAttachment>>,
+) -> Result<WunderRequest, Response> {
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let content = content.trim().to_string();
+    if content.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let now = now_ts();
+    let record = state
+        .user_store
+        .get_chat_session(&user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let record = record.unwrap_or_else(|| crate::storage::ChatSessionRecord {
+        session_id: session_id.clone(),
+        user_id: user.user_id.clone(),
+        title: DEFAULT_SESSION_TITLE.to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: None,
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    });
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    finish_stale_waiting_sessions(
+        state,
+        &user.user_id,
+        &session_id,
+        record.agent_id.as_deref(),
+    );
+
+    let user_context = build_user_tool_context(state, &user.user_id).await;
+    let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
+    let mut allowed = compute_allowed_tool_names(user, &user_context);
+    let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
+    allowed = apply_tool_overrides(allowed, &overrides);
+    let tool_names = finalize_tool_names(allowed);
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if should_auto_title(&record.title) {
+        if let Some(title) = build_session_title(&content) {
+            let _ =
+                state
+                    .user_store
+                    .update_chat_session_title(&user.user_id, &session_id, &title, now);
+        }
+    }
+    let _ = state
+        .user_store
+        .touch_chat_session(&user.user_id, &session_id, now, now);
+
+    let attachments = attachments
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| {
+            item.content
+                .as_ref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .map(|item| AttachmentPayload {
+            name: item.name,
+            content: item.content,
+            content_type: item.mime_type,
+        })
+        .collect::<Vec<_>>();
+    let attachments = if attachments.is_empty() {
+        None
+    } else {
+        Some(attachments)
+    };
+
+    Ok(WunderRequest {
+        user_id: user.user_id.clone(),
+        question: content,
+        tool_names,
+        skip_tool_calls: false,
+        stream,
+        debug_payload: false,
+        session_id: Some(session_id),
+        agent_id: record.agent_id.clone(),
+        model_name: None,
+        language: Some(i18n::get_language()),
+        config_overrides: None,
+        agent_prompt,
+        attachments,
+        is_admin: UserStore::is_admin(user),
+    })
 }
 
 async fn resume_session(

@@ -25,7 +25,11 @@
 }
 
 :root[data-user-theme='light'] .chat-shell .topbar {
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.14), rgba(124, 108, 255, 0.1));
+  background: linear-gradient(
+    90deg,
+    rgba(var(--chat-primary-rgb), 0.16),
+    rgba(var(--chat-accent-rgb), 0.12)
+  );
   border-bottom-color: var(--chat-border);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
@@ -62,6 +66,16 @@
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(124, 108, 255, 0.2));
   color: var(--chat-text);
   box-shadow: 0 10px 20px rgba(59, 130, 246, 0.18);
+}
+
+:root[data-user-theme='light'] .chat-shell .message-status.is-running {
+  color: #2563eb;
+  --agent-pulse-color: rgba(37, 99, 235, 0.55);
+}
+
+:root[data-user-theme='light'] .chat-shell .message-status.is-waiting {
+  color: #16a34a;
+  --agent-pulse-color: rgba(22, 163, 74, 0.4);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel {

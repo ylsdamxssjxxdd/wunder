@@ -1844,6 +1844,18 @@
 }
 ```
 
+### 4.2.2 WebSocket 流式响应（默认）
+
+- 说明：WebSocket 作为默认传输层，不改变事件语义与字段；事件仍与 SSE 保持一致（`event/id/data`）。
+- Endpoint（用户侧）：`/wunder/chat/ws`
+- Endpoint（统一入口，可选扩展）：`/wunder/ws`
+- 鉴权：
+  - 浏览器：Query 传 `access_token` 或同源 Cookie
+  - 非浏览器客户端：`Authorization: Bearer <token>`
+- 消息格式：JSON Envelope，服务端推送 `type=event`，payload 内含 `event/id/data`
+- 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
+- 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
+
 ### 4.3 非流式响应
 
 - 返回 JSON：

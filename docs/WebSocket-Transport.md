@@ -1,0 +1,248 @@
+# WebSocket 可选传输方案（用户侧前端）
+
+> 目标：默认使用 WebSocket 作为传输方式，同时保留 SSE 兼容通道，复用现有事件流与断线回放能力。
+
+## 1. 背景与目标
+
+- 现状：用户侧前端通过 HTTP + SSE 获取流式事件（`/wunder/chat/...`）。
+- 新增：提供 WebSocket 作为**默认传输**，提升双向实时交互能力，同时保留 SSE 作为兼容通道。
+- 约束：不破坏现有 SSE 行为与事件语义；事件类型、`event_id` 与断线回放逻辑保持一致。
+
+## 2. 总体设计（节点与边界）
+
+**关键节点**
+1. **WS Client（frontend）**：建立连接、发送 start/resume/cancel、消费事件流。
+2. **WS Gateway（Axum 路由层）**：鉴权、路由、握手升级、连接生命周期管理。
+3. **Session Dispatcher（WS 会话调度器）**：将 WS 消息转为 `WunderRequest`，启动 orchestrator 流式执行。
+4. **Orchestrator Stream**：复用 `orchestrator.stream()` 事件流。
+5. **Event Emitter / Monitor / Storage**：事件推送 + `stream_events` 落库 + 断线回放。
+6. **Resume Loader**：按 `after_event_id` 回放历史事件。
+
+**边界原则**
+- WS 仅替换“传输层”，业务语义与 SSE 完全一致。
+- 事件仍由 `EventEmitter` 统一生成与持久化。
+- 断线续传仍通过 `stream_events` 回放完成。
+
+## 3. 端点设计（建议）
+
+### 3.1 用户侧会话（主入口）
+- **WS Endpoint**：`/wunder/chat/ws`
+- 适用：用户侧前端聊天（当前 SSE 入口 `/wunder/chat/sessions/{session_id}/messages` 的替代传输）
+
+### 3.2 统一入口（可选扩展）
+- **WS Endpoint**：`/wunder/ws`
+- 适用：统一 `/wunder` 入口的 WS 版本（与 `/wunder` POST 语义一致）
+
+> 说明：`/wunder/chat/ws` 为优先实现路径，`/wunder/ws` 可后续补齐。
+
+## 4. 认证与握手
+
+**推荐策略（浏览器端）**
+- WebSocket 无法在浏览器原生 API 中设置 `Authorization` Header。
+- 方案 A（推荐）：使用 Query 参数传入 `access_token`  
+  `wss://host/wunder/chat/ws?access_token=...`
+- 方案 B：使用 Cookie（如前端已有同源会话 Cookie）
+- 方案 C：使用 `Sec-WebSocket-Protocol` 传递 token（需服务端解析）
+
+**非浏览器客户端**
+- 允许 `Authorization: Bearer <token>` Header
+
+**鉴权复用**
+- 复用现有 `resolve_user` / Bearer Token 鉴权逻辑。
+
+## 5. 协议设计（消息结构）
+
+统一使用 JSON Envelope（`session_id` 可放在 envelope 或 payload，服务端取其一）：
+
+```json
+{
+  "type": "start | resume | cancel | ping | event | error | ready | pong",
+  "request_id": "optional-uuid",
+  "session_id": "sess_xxx",
+  "payload": {}
+}
+```
+
+### 5.1 Client -> Server
+
+**start**
+```json
+{
+  "type": "start",
+  "request_id": "req_xxx",
+  "payload": {
+    "session_id": "sess_xxx",
+    "content": "用户输入",
+    "stream": true,
+    "attachments": []
+  }
+}
+```
+> 说明：当前仅支持 `session_id/content/stream/attachments`，其余字段保留为后续扩展。
+
+**resume**
+```json
+{
+  "type": "resume",
+  "request_id": "req_xxx",
+  "payload": {
+    "session_id": "sess_xxx",
+    "after_event_id": 123
+  }
+}
+```
+
+**cancel**
+```json
+{
+  "type": "cancel",
+  "payload": {
+    "session_id": "sess_xxx"
+  }
+}
+```
+
+**ping**
+```json
+{ "type": "ping", "payload": { "ts": 1730000000 } }
+```
+
+### 5.2 Server -> Client
+
+**ready**
+```json
+{
+  "type": "ready",
+  "payload": { "connection_id": "conn_xxx", "server_time": 1730000000 }
+}
+```
+
+**event（与 SSE 事件对齐）**
+```json
+{
+  "type": "event",
+  "request_id": "req_xxx",
+  "payload": {
+    "event": "llm_output_delta",
+    "id": "123",
+    "data": { "session_id": "sess_xxx", "timestamp": "...", "data": { "delta": "..." } }
+  }
+}
+```
+
+**error**
+```json
+{
+  "type": "error",
+  "request_id": "req_xxx",
+  "payload": { "code": "BAD_REQUEST", "message": "..." }
+}
+```
+
+**pong**
+```json
+{ "type": "pong", "payload": { "ts": 1730000001 } }
+```
+
+> 说明：`event` 内部字段与 SSE 完全一致（`event` / `id` / `data`），确保前端事件处理逻辑可复用。
+
+## 6. 状态机与节点流程
+
+### 6.1 连接状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> connecting
+  connecting --> ready: WS handshake + auth ok
+  ready --> streaming: start/resume accepted
+  streaming --> ready: final/error/cancel completed
+  ready --> closed: client close
+  streaming --> closed: server close / error
+```
+
+### 6.2 数据流节点
+
+```mermaid
+sequenceDiagram
+  participant C as WS Client
+  participant G as WS Gateway
+  participant D as Dispatcher
+  participant O as Orchestrator
+  participant E as EventEmitter
+  participant S as Storage/Monitor
+
+  C->>G: WS Handshake + Auth
+  G-->>C: ready
+  C->>D: start(session_id, content, ...)
+  D->>O: orchestrator.stream(request)
+  O->>E: emit events
+  E->>S: persist stream_events
+  E-->>C: event(...)
+  C->>D: cancel/resume (可选)
+  D->>O: cancel or resume logic
+  O-->>C: final/error
+```
+
+## 7. 断线续传策略
+
+- 仍以 `stream_events` 为唯一回放来源。
+- 客户端断线后，重连发送 `resume` + `after_event_id`（必须为正数）。
+- 服务端回放 `after_event_id` 之后事件，并继续推送后续实时事件。
+- `llm_output_delta` 合并逻辑保持一致（`event_id_start/event_id_end`）。
+
+## 8. 心跳与超时
+
+- 服务端当前**不主动发送**心跳；客户端可按需发送 `type=ping`（文本消息）或 WS Ping 帧，服务端会返回 `pong`。
+- 如需 keep-alive 与自动重连，可在前端扩展定时 `ping` 与重连策略。
+
+## 9. 并发与背压
+
+- 建议：**单连接单会话**，多会话需多连接（可后续扩展为多路复用）。
+- 事件同时落库 `stream_events`；连接异常或中断时，客户端可用 `resume` 回放补齐。
+- 复用现有 `STREAM_EVENT_QUEUE_SIZE` 与落库逻辑。
+
+## 10. 错误处理与兼容性
+
+- 服务端错误统一转为 `type=error` 事件。
+- WS 为默认传输，SSE 作为兼容 fallback。
+- 协议字段尽量与 SSE 事件语义一致，降低前端改造成本。
+
+## 11. 实施步骤（建议拆解）
+
+### 11.1 后端
+1. 新增 `src/api/chat_ws.rs`（或 `src/api/ws.rs`）：
+   - `WebSocketUpgrade` + 鉴权 + 生命周期管理
+   - 解析 `start/resume/cancel`
+2. 复用 `orchestrator.stream()` 进行事件推送：
+   - `StreamEvent` -> `event` 消息
+3. 复用 `stream_events` 回放：
+   - `resume` 时读取并推送回放事件
+4. 增加连接级状态管理：
+   - `ready/streaming` 状态
+   - 单连接并发控制（busy 时返回 error）
+
+### 11.2 前端
+1. 新增 `frontend/src/utils/ws.js`：
+   - 连接、消息分发、错误处理
+2. 增加传输选择开关（默认 WS，失败回退 SSE）：
+   - `transport: sse | ws | auto`
+3. 将 `consumeSseStream` 的事件解析逻辑复用到 WS 消息处理
+
+### 11.3 配置建议（可选）
+```yaml
+server:
+  stream_transport: ws   # ws | sse | auto
+```
+
+### 11.4 测试清单
+- WS 连接建立/鉴权失败
+- start 正常推流 + final
+- resume 回放 + 继续推送
+- cancel 中断
+- 弱网断连 + 自动重连
+- SSE 与 WS 并存（互不影响）
+
+## 12. 兼容性提示
+
+- 浏览器原生 WebSocket 不允许自定义 Header，需 `access_token` Query 或 Cookie。
+- 若后续启用多路复用，需引入 `request_id` 强关联，前端要能区分并行请求。

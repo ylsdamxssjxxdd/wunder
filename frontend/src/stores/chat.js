@@ -7,12 +7,14 @@ import {
   getSession,
   getSessionEvents,
   listSessions,
+  openChatSocket,
   resumeMessageStream,
   sendMessageStream,
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
 import { consumeSseStream } from '@/utils/sse';
+import { consumeWsStream } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
@@ -1305,12 +1307,40 @@ const resolveToolCategory = (toolName, payload) => {
 
 let resumeController = null;
 let sendController = null;
+let resumeSocket = null;
+let sendSocket = null;
 let stopRequested = false;
+
+const DEFAULT_STREAM_TRANSPORT = 'ws';
+
+const resolveStreamTransport = () => {
+  if (typeof WebSocket === 'undefined') {
+    return 'sse';
+  }
+  const stored = localStorage.getItem('chat_stream_transport');
+  if (stored === 'sse' || stored === 'ws') {
+    return stored;
+  }
+  return DEFAULT_STREAM_TRANSPORT;
+};
+
+const safeCloseSocket = (socket) => {
+  if (!socket) return;
+  try {
+    socket.close(1000, 'abort');
+  } catch (error) {
+    // ignore
+  }
+};
 
 const abortResumeStream = () => {
   if (resumeController) {
     resumeController.abort();
     resumeController = null;
+  }
+  if (resumeSocket) {
+    safeCloseSocket(resumeSocket);
+    resumeSocket = null;
   }
 };
 
@@ -1318,6 +1348,10 @@ const abortSendStream = () => {
   if (sendController) {
     sendController.abort();
     sendController = null;
+  }
+  if (sendSocket) {
+    safeCloseSocket(sendSocket);
+    sendSocket = null;
   }
 };
 
@@ -2354,27 +2388,61 @@ export const useChatStore = defineStore('chat', {
 
       try {
         sendController = new AbortController();
-        const response = await sendMessageStream(
-          this.activeSessionId,
-          {
-            content,
-            stream: true,
-            ...(attachments.length > 0 ? { attachments } : {})
-          },
-          {
-            signal: sendController.signal
-          }
-        );
-        if (!response.ok) {
-          const errorText = await readResponseError(response);
-          throw new Error(
-            errorText || t('chat.error.requestFailedWithStatus', { status: response.status })
-          );
-        }
-        await consumeSseStream(response, (eventType, dataText, eventId) => {
+        const payload = {
+          content,
+          stream: true,
+          ...(attachments.length > 0 ? { attachments } : {})
+        };
+        const onEvent = (eventType, dataText, eventId) => {
           assignStreamEventId(assistantMessage, eventId);
           processor.handleEvent(eventType, dataText);
-        });
+        };
+        const streamWithSse = async () => {
+          const response = await sendMessageStream(this.activeSessionId, payload, {
+            signal: sendController.signal
+          });
+          if (!response.ok) {
+            const errorText = await readResponseError(response);
+            throw new Error(
+              errorText || t('chat.error.requestFailedWithStatus', { status: response.status })
+            );
+          }
+          await consumeSseStream(response, onEvent);
+        };
+        const streamWithWs = async () => {
+          sendSocket = openChatSocket();
+          await consumeWsStream(
+            sendSocket,
+            onEvent,
+            {
+              signal: sendController.signal,
+              closeOnFinal: true,
+              onOpen: () => {
+                sendSocket.send(
+                  JSON.stringify({
+                    type: 'start',
+                    session_id: this.activeSessionId,
+                    payload
+                  })
+                );
+              }
+            }
+          );
+        };
+        const transport = resolveStreamTransport();
+        if (transport === 'ws') {
+          try {
+            await streamWithWs();
+          } catch (error) {
+            if (error?.phase === 'connect') {
+              await streamWithSse();
+            } else {
+              throw error;
+            }
+          }
+        } else {
+          await streamWithSse();
+        }
       } catch (error) {
         if (error?.name === 'AbortError' || stopRequested || pageUnloading) {
           if (!pageUnloading) {
@@ -2404,6 +2472,10 @@ export const useChatStore = defineStore('chat', {
         this.loading = false;
         processor.finalize();
         sendController = null;
+        if (sendSocket) {
+          safeCloseSocket(sendSocket);
+          sendSocket = null;
+        }
         stopRequested = false;
         syncDemoChatCache({
           sessions: this.sessions,
@@ -2440,20 +2512,59 @@ export const useChatStore = defineStore('chat', {
       let aborted = false;
       const afterEventId = normalizeStreamEventId(message.stream_event_id);
       try {
-        const response = await resumeMessageStream(sessionId, {
-          signal: resumeController.signal,
-          afterEventId
-        });
-        if (!response.ok) {
-          const errorText = await readResponseError(response);
-          throw new Error(
-            errorText || t('chat.error.resumeFailedWithStatus', { status: response.status })
-          );
-        }
-        await consumeSseStream(response, (eventType, dataText, eventId) => {
+        const onEvent = (eventType, dataText, eventId) => {
           assignStreamEventId(message, eventId);
           processor.handleEvent(eventType, dataText);
-        });
+        };
+        const streamWithSse = async () => {
+          const response = await resumeMessageStream(sessionId, {
+            signal: resumeController.signal,
+            afterEventId
+          });
+          if (!response.ok) {
+            const errorText = await readResponseError(response);
+            throw new Error(
+              errorText || t('chat.error.resumeFailedWithStatus', { status: response.status })
+            );
+          }
+          await consumeSseStream(response, onEvent);
+        };
+        const streamWithWs = async () => {
+          resumeSocket = openChatSocket();
+          await consumeWsStream(
+            resumeSocket,
+            onEvent,
+            {
+              signal: resumeController.signal,
+              closeOnFinal: true,
+              onOpen: () => {
+                resumeSocket.send(
+                  JSON.stringify({
+                    type: 'resume',
+                    session_id: sessionId,
+                    payload: {
+                      after_event_id: afterEventId
+                    }
+                  })
+                );
+              }
+            }
+          );
+        };
+        const transport = resolveStreamTransport();
+        if (transport === 'ws') {
+          try {
+            await streamWithWs();
+          } catch (error) {
+            if (error?.phase === 'connect') {
+              await streamWithSse();
+            } else {
+              throw error;
+            }
+          }
+        } else {
+          await streamWithSse();
+        }
       } catch (error) {
         if (error?.name === 'AbortError') {
           aborted = true;
@@ -2478,6 +2589,10 @@ export const useChatStore = defineStore('chat', {
         processor.finalize();
         if (!aborted) {
           resumeController = null;
+        }
+        if (resumeSocket) {
+          safeCloseSocket(resumeSocket);
+          resumeSocket = null;
         }
         this.scheduleSnapshot(true);
         emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });

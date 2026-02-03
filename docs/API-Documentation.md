@@ -573,6 +573,19 @@ Example payload:
 }
 ```
 
+### 4.2.2 WebSocket Streaming (Default)
+
+- WebSocket is the default streaming transport; SSE remains as a compatibility fallback.
+- Endpoints:
+  - User chat: `/wunder/chat/ws`
+  - Unified entry (optional): `/wunder/ws`
+- Auth:
+  - Browser: `access_token` in query string or same-origin cookie
+  - Non-browser: `Authorization: Bearer <token>`
+- Payloads keep the same `event/id/data` structure as SSE.
+- Resume: send `resume` with `after_event_id` to replay from `stream_events`.
+- Full protocol: `docs/WebSocket-Transport.md`
+
 ## 4.3 Non-stream response
 
 - JSON:

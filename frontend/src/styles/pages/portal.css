@@ -7,6 +7,8 @@
   --portal-muted: #94a3b8;
   --portal-primary: #6ad9ff;
   --portal-accent: #b4a9ff;
+  --portal-primary-rgb: 106, 217, 255;
+  --portal-accent-rgb: 180, 169, 255;
   --portal-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
   min-height: 100vh;
   height: 100vh;
@@ -28,6 +30,8 @@
   --portal-muted: #64748b;
   --portal-primary: #3b82f6;
   --portal-accent: #7c6cff;
+  --portal-primary-rgb: 59, 130, 246;
+  --portal-accent-rgb: 124, 108, 255;
   --portal-shadow: 0 16px 32px rgba(15, 23, 42, 0.1);
   background: radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.14), transparent 34%),
     radial-gradient(circle at 80% 0%, rgba(124, 108, 255, 0.14), transparent 38%),
@@ -35,15 +39,20 @@
   color: var(--portal-text);
 }
 
+
 .user-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 16px 24px;
+  gap: 16px;
+  padding: 10px 16px;
   min-height: 64px;
   border-bottom: 1px solid var(--portal-border);
-  background: linear-gradient(90deg, rgba(106, 217, 255, 0.12), rgba(180, 169, 255, 0.14));
+  background: linear-gradient(
+    90deg,
+    rgba(var(--portal-primary-rgb), 0.16),
+    rgba(var(--portal-accent-rgb), 0.12)
+  );
   position: sticky;
   top: 0;
   z-index: 10;
@@ -60,9 +69,18 @@
   padding: 10px 16px;
   gap: 16px;
   min-height: 64px;
-  background: linear-gradient(90deg, rgba(106, 217, 255, 0.16), rgba(180, 169, 255, 0.12));
+  background: linear-gradient(
+    90deg,
+    rgba(var(--portal-primary-rgb), 0.16),
+    rgba(var(--portal-accent-rgb), 0.12)
+  );
   border-bottom: 1px solid var(--portal-border);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28);
+}
+
+:root[data-user-theme='light'] .user-topbar,
+:root[data-user-theme='light'] .portal-shell .topbar {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
 .portal-shell .brand {

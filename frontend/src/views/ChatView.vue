@@ -155,6 +155,19 @@
                 <div class="message-header">
                   <div class="message-header-left">
                     <div class="message-role">
+                      <span
+                        v-if="message.role === 'assistant'"
+                        class="message-status"
+                        :class="[
+                          isAssistantStreaming(message) ? 'is-running' : 'is-waiting',
+                          isLatestAssistant(index) ? 'is-animated' : ''
+                        ]"
+                        aria-hidden="true"
+                      >
+                        <span
+                          :class="isAssistantStreaming(message) ? 'agent-running-dot' : 'agent-waiting-dot'"
+                        ></span>
+                      </span>
                       {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistant') }}
                     </div>
                     <MessageThinking
@@ -898,6 +911,17 @@ const activePlanMessage = computed(() => {
 
 const activePlan = computed(() => activePlanMessage.value?.plan || null);
 const planExpanded = ref(false);
+
+const latestAssistantIndex = computed(() => {
+  for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
+    if (chatStore.messages[i]?.role === 'assistant') {
+      return i;
+    }
+  }
+  return -1;
+});
+
+const isLatestAssistant = (index) => index === latestAssistantIndex.value;
 
 const markdownCache = new WeakMap();
 

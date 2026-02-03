@@ -24,8 +24,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 2px;
+  gap: 6px;
+  padding-top: 0;
 }
 
 .chat-shell .history-container.virtual {
@@ -33,7 +33,7 @@
 }
 
 .chat-shell .history-container.virtual .history-item {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .chat-shell .history-container.virtual .history-spacer {
@@ -42,17 +42,17 @@
 }
 
 .chat-shell .history-item {
-  padding: 8px 10px;
-  border-radius: 12px;
+  padding: 6px 8px;
+  border-radius: 10px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.04);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
-  min-height: 44px;
+  min-height: 38px;
   position: relative;
 }
 
@@ -87,8 +87,8 @@
 }
 
 .chat-shell .history-delete-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 8px;
   border: 1px solid rgba(248, 113, 113, 0.2);
   background: rgba(248, 113, 113, 0.12);
@@ -97,7 +97,7 @@
   align-items: center;
   justify-content: center;
   position: absolute;
-  right: 10px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%) scale(0.94);
   opacity: 0;

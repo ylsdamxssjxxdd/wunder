@@ -32,7 +32,7 @@
 ```text
 Web Debug UI / Client
   |
-  |  /wunder (SSE/Streaming)
+  |  /wunder (WS/SSE Streaming)
   v
 API Layer (Axum)
   |

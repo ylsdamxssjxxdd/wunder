@@ -8,6 +8,31 @@ const buildUrl = (path) => {
   return `${base.replace(/\/$/, '')}${path}`;
 };
 
+const resolveWsBase = () => {
+  const base = resolveApiBase() || api.defaults.baseURL || '';
+  const trimmed = base.replace(/\/$/, '');
+  if (!trimmed) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^http/i, 'ws');
+  }
+  if (trimmed.startsWith('/')) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}${trimmed}`;
+  }
+  return trimmed;
+};
+
+const buildWsUrl = (path, params) => {
+  const base = resolveWsBase();
+  const suffix = params?.toString();
+  if (!suffix) {
+    return `${base}${path}`;
+  }
+  return `${base}${path}?${suffix}`;
+};
+
 export const createSession = (payload) => api.post('/chat/sessions', payload);
 export const listSessions = (params) => api.get('/chat/sessions', { params });
 export const getSession = (id) => api.get(`/chat/sessions/${id}`);
@@ -57,3 +82,19 @@ export const resumeMessageStream = (id, options = {}) => {
 };
 
 export const cancelMessageStream = (id) => api.post(`/chat/sessions/${id}/cancel`);
+
+export const openChatSocket = (options = {}) => {
+  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const params = new URLSearchParams();
+  if (token) {
+    params.set('access_token', token);
+  }
+  if (options.params) {
+    Object.entries(options.params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      params.set(key, String(value));
+    });
+  }
+  const url = buildWsUrl('/chat/ws', params);
+  return new WebSocket(url);
+};

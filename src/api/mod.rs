@@ -5,6 +5,7 @@ pub(crate) mod attachment_convert;
 pub mod auth;
 pub mod channel;
 pub mod chat;
+pub mod chat_ws;
 pub mod core;
 pub mod doc2md;
 pub mod evaluation;
@@ -23,6 +24,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(auth::router())
         .merge(channel::router())
         .merge(chat::router())
+        .merge(chat_ws::router())
         .merge(core::router())
         .merge(doc2md::router())
         .merge(temp_dir::router())
