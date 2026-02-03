@@ -1,10 +1,11 @@
 ﻿<template>
-  <details v-if="visible" class="message-workflow" open>
+  <details v-if="visible" class="message-workflow">
     <summary>
       <span class="workflow-title">{{ t('chat.workflow.title') }}</span>
       <span v-if="count" class="workflow-count">{{ count }}</span>
       <span v-if="loading" class="workflow-loading"><span class="spinner" /></span>
-      <span class="workflow-spacer" />
+      <span v-if="latestItem" class="workflow-latest" :title="latestTitle">{{ latestTitle }}</span>
+      <span v-else class="workflow-spacer" />
       <button
         class="workflow-plan-btn"
         type="button"
@@ -105,6 +106,9 @@ const { t } = useI18n();
 
 // 统计数量用于摘要展示
 const count = computed(() => props.items.length);
+const latestItem = computed(() =>
+  props.items.length > 0 ? props.items[props.items.length - 1] : null
+);
 
 const dialogVisible = ref(false);
 const activeItem = ref(null);
@@ -199,4 +203,8 @@ const formatWorkflowTitle = (rawTitle) => {
   }
   return title;
 };
+
+const latestTitle = computed(() =>
+  latestItem.value ? formatWorkflowTitle(latestItem.value.title) : ''
+);
 </script>

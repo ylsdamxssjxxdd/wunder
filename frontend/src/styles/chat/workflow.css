@@ -19,6 +19,18 @@
   flex: 1 1 auto;
 }
 
+.chat-shell .workflow-latest {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--chat-text);
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chat-shell .workflow-plan-btn {
   border: 1px solid rgba(109, 213, 255, 0.4);
   background: rgba(15, 23, 42, 0.35);
