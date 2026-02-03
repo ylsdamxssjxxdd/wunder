@@ -367,6 +367,15 @@
   color: var(--chat-muted);
 }
 
+:root[data-user-theme='light'] .chat-shell .workflow-content {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+:root[data-user-theme='light'] .chat-shell .workflow-item:not(:last-child) {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
 :root[data-user-theme='light'] .chat-shell .workflow-item:hover {
   background: rgba(59, 130, 246, 0.08);
 }
