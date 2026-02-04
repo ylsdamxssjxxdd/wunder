@@ -875,8 +875,8 @@ const historyPaddingTop = computed(() =>
 const historyPaddingBottom = computed(() =>
   historyVirtual.value ? Math.max(0, (historyTotal.value - historyEndIndex.value) * HISTORY_ROW_HEIGHT) : 0
 );
-let pendingAutoScroll = false;
-let pendingAutoScrollCount = 0;
+  let pendingAssistantCenter = false;
+  let pendingAssistantCenterCount = 0;
 
 const resolveInitialSessionId = (agentId) => {
   const persisted = chatStore.getLastSessionId?.(agentId) || '';
@@ -1265,18 +1265,18 @@ const handleComposerSend = async ({ content, attachments }) => {
     }
   }
 
-  pendingAutoScroll = true;
-  pendingAutoScrollCount = chatStore.messages.length;
-  try {
-    await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
-  } catch (error) {
-    pendingAutoScroll = false;
-    pendingAutoScrollCount = 0;
-    throw error;
-  } finally {
-    inquirySelection.value = [];
-  }
-};
+    pendingAssistantCenter = true;
+    pendingAssistantCenterCount = chatStore.messages.length;
+    try {
+      await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
+    } catch (error) {
+      pendingAssistantCenter = false;
+      pendingAssistantCenterCount = 0;
+      throw error;
+    } finally {
+      inquirySelection.value = [];
+    }
+  };
 
 const handleStop = async () => {
   await chatStore.stopStream();
@@ -1784,12 +1784,22 @@ const buildMessageStatsEntries = (message) => {
 
 const shouldShowMessageStats = (message) => buildMessageStatsEntries(message).length > 0;
 
-const scrollMessagesToBottom = async () => {
-  await nextTick();
-  const container = messagesContainerRef.value;
-  if (!container) return;
-  container.scrollTop = container.scrollHeight;
-};
+  const scrollLatestAssistantToCenter = async () => {
+    await nextTick();
+    const container = messagesContainerRef.value;
+    if (!container) return;
+    const items = container.querySelectorAll('.message.from-ai');
+    if (!items.length) return;
+    const target = items[items.length - 1];
+    requestAnimationFrame(() => {
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const targetCenter = targetRect.top - containerRect.top + targetRect.height / 2;
+      const nextTop = container.scrollTop + targetCenter - container.clientHeight / 2;
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
+    });
+  };
 
 onMounted(async () => {
   await init();
@@ -1839,11 +1849,13 @@ watch(
 watch(
   () => chatStore.messages.length,
   (value) => {
-    if (!pendingAutoScroll) return;
-    if (value <= pendingAutoScrollCount) return;
-    pendingAutoScroll = false;
-    pendingAutoScrollCount = value;
-    scrollMessagesToBottom();
+    if (!pendingAssistantCenter) return;
+    if (value <= pendingAssistantCenterCount) return;
+    const lastMessage = chatStore.messages[value - 1];
+    if (lastMessage?.role !== 'assistant') return;
+    pendingAssistantCenter = false;
+    pendingAssistantCenterCount = value;
+    scrollLatestAssistantToCenter();
   }
 );
 
