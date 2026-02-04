@@ -33,11 +33,11 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 ### 2.2 启动服务
 x86
 ```bash
-docker compose -f docker-composex86.yml up
+docker compose -f docker-compose-x86.yml up
 ```
 arm
 ```bash
-docker compose -f docker-composearm.yml up
+docker compose -f docker-compose-arm.yml up
 ```
 首次启动会拉取基础镜像并编译依赖，可能需要较长时间。
 

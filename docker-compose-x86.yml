@@ -10,8 +10,8 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    image: ${IMAGE_NAME:-wunder-x86}
-    platform: ${PLATFORM:-linux/amd64}
+    image: wunder-x86
+    platform: linux/amd64
     working_dir: /app
     ports:
       - "${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
@@ -50,8 +50,8 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    image: ${IMAGE_NAME:-wunder-x86}
-    platform: ${PLATFORM:-linux/amd64}
+    image: wunder-x86
+    platform: linux/amd64
     working_dir: /app
     environment:
       - TZ=Asia/Shanghai
@@ -80,8 +80,8 @@ services:
     restart: always
 
   wunder_mcp:
-    image: ${IMAGE_NAME:-wunder-x86}
-    platform: ${PLATFORM:-linux/amd64}
+    image: wunder-x86
+    platform: linux/amd64
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -103,7 +103,7 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: ${PLATFORM:-linux/amd64}
+    platform: linux/amd64
     environment:
       - TZ=Asia/Shanghai
       - POSTGRES_DB=wunder
@@ -122,7 +122,7 @@ services:
 
   weaviate:
     image: semitechnologies/weaviate:1.27.0
-    platform: ${PLATFORM:-linux/amd64}
+    platform: linux/amd64
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -145,7 +145,7 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: ${PLATFORM:-linux/amd64}
+    platform: linux/amd64
     container_name: wunder-frontend
     working_dir: /app
     restart: no
@@ -167,7 +167,7 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
-    platform: ${PLATFORM:-linux/amd64}
+    platform: linux/amd64
     container_name: wunder-nginx
     environment:
       - TZ=Asia/Shanghai

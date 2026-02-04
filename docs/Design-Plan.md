@@ -193,8 +193,8 @@ wunder/
   docs/
   scripts/
   Dockerfile.rust
-  docker-composex86.yml
-  docker-composearm.yml
+  docker-compose-x86.yml
+  docker-compose-arm.yml
   Cargo.toml
 ```
 

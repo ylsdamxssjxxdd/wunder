@@ -33,11 +33,11 @@ Frontend API base: set `VITE_API_BASE` or `VITE_API_BASE_URL` in the repo root `
 ### 2.2 Start the service
 x86
 ```bash
-docker compose -f docker-composex86.yml up
+docker compose -f docker-compose-x86.yml up
 ```
 arm
 ```bash
-docker compose -f docker-composearm.yml up
+docker compose -f docker-compose-arm.yml up
 ```
 The first start pulls base images and builds dependencies, so it may take a while.
 

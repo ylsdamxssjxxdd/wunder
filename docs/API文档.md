@@ -5,7 +5,7 @@
 ### 4.0 实现说明
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
-- 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-composex86.yml`/`docker-composearm.yml`。
+- 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
 - MCP 服务容器：`wunder_mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。

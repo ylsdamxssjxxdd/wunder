@@ -1,0 +1,186 @@
+x-rust-build: &rust-build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
+
+services:
+  wunder_engine:
+    build: *rust-build
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    image: wunder-arm
+    platform: linux/arm64
+    working_dir: /app
+    ports:
+      - "${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
+    volumes:
+      - ./:/app
+      - wunder_workspaces:/workspaces
+      - ./fonts:/usr/share/fonts/wunder:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
+      - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder}
+      - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
+      - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
+      - WUNDER_PORT=${WUNDER_PORT:-18000}
+      - WUNDER_API_KEY=${WUNDER_API_KEY}
+      - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
+      - FONTCONFIG_FILE=/app/config/fonts.conf
+      - XDG_CACHE_HOME=/workspaces/.cache
+      - MATPLOTLIBRC=/app/config/matplotlibrc
+      - MPLCONFIGDIR=/workspaces/.matplotlib
+      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
+      - CARGO_TARGET_DIR=/app/target/arm64
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; echo "wunder-server missing or stale, waiting for sandbox build..." >&2; while true; do if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; sleep 1; done']
+    depends_on:
+      sandbox:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      weaviate:
+        condition: service_started
+    restart: always
+
+  sandbox:
+    build: *rust-build
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    image: wunder-arm
+    platform: linux/arm64
+    working_dir: /app
+    environment:
+      - TZ=Asia/Shanghai
+      - FONTCONFIG_FILE=/app/config/fonts.conf
+      - XDG_CACHE_HOME=/workspaces/.cache
+      - MATPLOTLIBRC=/app/config/matplotlibrc
+      - MPLCONFIGDIR=/workspaces/.matplotlib
+      - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
+      - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
+      - WUNDER_SERVER_MODE=sandbox
+      - WUNDER_HOST=0.0.0.0
+      - WUNDER_PORT=9001
+      - CARGO_HOME=/app/.cargo/arm64
+      - CARGO_TARGET_DIR=/app/target/arm64
+    volumes:
+      - ./:/app
+      - wunder_workspaces:/workspaces
+      - ./fonts:/usr/share/fonts/wunder:ro
+    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: always
+
+  wunder_mcp:
+    image: wunder-arm
+    platform: linux/arm64
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    working_dir: /app
+    volumes:
+      - ./:/app
+    ports:
+      - "${MCP_PORT:-9010}:${MCP_PORT:-9010}"
+    environment:
+      - TZ=Asia/Shanghai
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=${MCP_PORT:-9010}
+    command: ["bash", "-lc", "python3 -m mcp_server.main"]
+    restart: always
+
+  postgres:
+    image: postgres:16
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/arm64
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_DB=wunder
+      - POSTGRES_USER=wunder
+      - POSTGRES_PASSWORD=wunder
+    ports:
+      - "${WUNDER_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - wunder_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: always
+
+  weaviate:
+    image: semitechnologies/weaviate:1.27.0
+    platform: linux/arm64
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - TZ=Asia/Shanghai
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - DEFAULT_VECTORIZER_MODULE=none
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - ENABLE_MODULES=
+      - CLUSTER_HOSTNAME=node1
+    ports:
+      - "${WEAVIATE_PORT:-18003}:8080"
+    volumes:
+      - wunder_weaviate:/var/lib/weaviate
+    restart: always
+  wunder_frontend:
+    image: node:22.14
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/arm64
+    container_name: wunder-frontend
+    working_dir: /app
+    restart: no
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
+    environment:
+      - TZ=Asia/Shanghai
+      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
+      - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
+      - FRONTEND_PORT=${FRONTEND_PORT:-18001}
+      - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
+    # command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
+    command: sh -c "npm install && npm run build"
+
+  wunder_nginx:
+    image: nginx:latest
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/arm64
+    container_name: wunder-nginx
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      - wunder_engine
+    restart: always
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/public/config.json:/etc/wunder/config.json:ro
+    ports:
+      - "${NGINX_PORT:-18002}:80"
+
+volumes:
+  wunder_workspaces:
+  wunder_postgres:
+  wunder_weaviate:
