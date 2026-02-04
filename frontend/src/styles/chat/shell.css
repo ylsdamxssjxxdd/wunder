@@ -687,6 +687,16 @@
   padding: 4px;
 }
 
+.chat-shell .workspace-list > .workspace-empty {
+  color: var(--chat-primary, #6ad9ff);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: center;
+  margin: auto;
+  padding: 16px 20px;
+}
+
 .chat-shell .workspace-item {
   display: flex;
   align-items: center;
