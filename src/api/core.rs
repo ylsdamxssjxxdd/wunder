@@ -13,7 +13,7 @@ use crate::tools::{a2a_service_schema, builtin_tool_specs};
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
 use anyhow::Error;
-use axum::extract::{Multipart, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -26,6 +26,8 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tracing::error;
 
+const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder", post(wunder_entry))
@@ -34,7 +36,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/i18n", get(wunder_i18n))
         .route(
             "/wunder/attachments/convert",
-            post(wunder_attachment_convert),
+            post(wunder_attachment_convert)
+                .layer(DefaultBodyLimit::max(MAX_ATTACHMENT_UPLOAD_BYTES)),
         )
 }
 

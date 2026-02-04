@@ -110,11 +110,20 @@
                 :key="session.id"
                 :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '']"
                 @click="handleSelectSession(session.id)"
-              >
-                <div class="history-info">
-                  <div class="history-title-text">{{ formatTitle(session.title) }}</div>
-                  <span class="history-time">{{ formatTime(session.updated_at) }}</span>
-                </div>
+            >
+              <div class="history-info">
+                <span
+                  v-if="chatStore.isSessionLoading(session.id)"
+                  class="history-status"
+                  :title="t('chat.session.running')"
+                  :aria-label="t('chat.session.running')"
+                  role="status"
+                >
+                  <span class="agent-running-dot" aria-hidden="true"></span>
+                </span>
+                <div class="history-title-text">{{ formatTitle(session.title) }}</div>
+                <span class="history-time">{{ formatTime(session.updated_at) }}</span>
+              </div>
                 <button
                   class="history-delete-btn"
                   type="button"
@@ -524,6 +533,15 @@
               @click="handleSelectSession(session.id)"
             >
               <div class="history-info">
+                <span
+                  v-if="chatStore.isSessionLoading(session.id)"
+                  class="history-status"
+                  :title="t('chat.session.running')"
+                  :aria-label="t('chat.session.running')"
+                  role="status"
+                >
+                  <span class="agent-running-dot" aria-hidden="true"></span>
+                </span>
                 <div class="history-title-text">{{ formatTitle(session.title) }}</div>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>

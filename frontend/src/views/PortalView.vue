@@ -63,17 +63,18 @@
                     <div class="agent-card-desc">{{ t('portal.card.defaultDesc') }}</div>
                   </div>
                 </div>
-                <div
-                  v-if="isAgentRunning(DEFAULT_AGENT_KEY) || isAgentWaiting(DEFAULT_AGENT_KEY)"
-                  class="agent-card-status"
-                >
-                  <div v-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
+                <div class="agent-card-status">
                   <div v-if="isAgentWaiting(DEFAULT_AGENT_KEY)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
                     <span>{{ t('portal.card.waiting') }}</span>
+                  </div>
+                  <div v-else-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.running') }}</span>
+                  </div>
+                  <div v-else class="agent-card-idle">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">
@@ -106,17 +107,18 @@
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
-                <div
-                  v-if="isAgentRunning(agent.id) || isAgentWaiting(agent.id)"
-                  class="agent-card-status"
-                >
-                  <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
+                <div class="agent-card-status">
                   <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
                     <span>{{ t('portal.card.waiting') }}</span>
+                  </div>
+                  <div v-else-if="isAgentRunning(agent.id)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.running') }}</span>
+                  </div>
+                  <div v-else class="agent-card-idle">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">
@@ -181,17 +183,18 @@
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
-                <div
-                  v-if="isAgentRunning(agent.id) || isAgentWaiting(agent.id)"
-                  class="agent-card-status"
-                >
-                  <div v-if="isAgentRunning(agent.id)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
+                <div class="agent-card-status">
                   <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
                     <span class="agent-waiting-dot"></span>
                     <span>{{ t('portal.card.waiting') }}</span>
+                  </div>
+                  <div v-else-if="isAgentRunning(agent.id)" class="agent-card-running">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.running') }}</span>
+                  </div>
+                  <div v-else class="agent-card-idle">
+                    <span class="agent-running-dot"></span>
+                    <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta">

@@ -1306,6 +1306,7 @@ const resolveToolCategory = (toolName, payload) => {
 };
 
 const sessionRuntime = new Map();
+const sessionMessages = new Map();
 
 const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
 
@@ -1328,6 +1329,61 @@ const getRuntime = (sessionId) => {
   const key = resolveSessionKey(sessionId);
   if (!key) return null;
   return sessionRuntime.get(key) || null;
+};
+
+const getSessionMessages = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  return sessionMessages.get(key) || null;
+};
+
+const cacheSessionMessages = (sessionId, messages) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  sessionMessages.set(key, messages);
+};
+
+const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
+  if (!store || !Array.isArray(store.sessions)) return;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return;
+  const session = store.sessions.find((item) => String(item?.id || '').trim() === key);
+  if (!session) return;
+  const resolved = resolveTimestampIso(timestamp);
+  session.updated_at = resolved || new Date().toISOString();
+};
+
+const notifySessionSnapshot = (store, sessionId, messages, immediate = false) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  cacheSessionMessages(key, messages);
+  const activeKey = resolveSessionKey(store?.activeSessionId);
+  if (activeKey && activeKey === key) {
+    scheduleChatSnapshot(store, immediate);
+  }
+};
+
+const shouldPreferCachedMessages = (cached, server) => {
+  if (!Array.isArray(cached) || cached.length === 0) return false;
+  if (!Array.isArray(server) || server.length === 0) return true;
+  if (cached.some((message) => message?.stream_incomplete || message?.workflowStreaming)) {
+    return true;
+  }
+  const cachedLastAssistant = [...cached].reverse().find((message) => message?.role === 'assistant');
+  const serverLastAssistant = [...server].reverse().find((message) => message?.role === 'assistant');
+  if (cachedLastAssistant || serverLastAssistant) {
+    const cachedEventId = normalizeStreamEventId(cachedLastAssistant?.stream_event_id);
+    const serverEventId = normalizeStreamEventId(serverLastAssistant?.stream_event_id);
+    if (cachedEventId !== null && (serverEventId === null || cachedEventId > serverEventId)) {
+      return true;
+    }
+    const cachedContentLen = String(cachedLastAssistant?.content || '').length;
+    const serverContentLen = String(serverLastAssistant?.content || '').length;
+    if (cachedContentLen > serverContentLen) {
+      return true;
+    }
+  }
+  return cached.length > server.length;
 };
 
 const setSessionLoading = (store, sessionId, value) => {
@@ -2233,6 +2289,7 @@ export const useChatStore = defineStore('chat', {
     },
     openDraftSession(options = {}) {
       const currentSessionId = this.activeSessionId;
+      cacheSessionMessages(currentSessionId, this.messages);
       abortResumeStream(currentSessionId);
       abortSendStream(currentSessionId);
       const runtime = ensureRuntime(currentSessionId);
@@ -2264,6 +2321,8 @@ export const useChatStore = defineStore('chat', {
         createdAt: session.created_at,
         greeting: this.greetingOverride
       });
+      cacheSessionMessages(session.id, this.messages);
+      touchSessionUpdatedAt(this, session.id, session.updated_at || session.created_at);
       getSessionWorkflowState(session.id, { reset: true });
       persistActiveSession(session.id, session.agent_id);
       syncDemoChatCache({
@@ -2275,16 +2334,27 @@ export const useChatStore = defineStore('chat', {
     },
     async loadSessionDetail(sessionId) {
       const previousSessionId = this.activeSessionId;
+      if (previousSessionId && previousSessionId !== sessionId) {
+        cacheSessionMessages(previousSessionId, this.messages);
+      }
       abortResumeStream(previousSessionId);
       this.activeSessionId = sessionId;
+      const cachedSessionMessages = getSessionMessages(sessionId);
       const snapshot = this.getSnapshotForSession(sessionId);
-      if (snapshot?.messages?.length) {
+      if (cachedSessionMessages?.length) {
+        this.messages = ensureGreetingMessage(cachedSessionMessages, {
+          greeting: this.greetingOverride
+        });
+      } else if (snapshot?.messages?.length) {
         const cachedMessages = snapshot.messages
           .map((item) => normalizeSnapshotMessage(item))
           .filter(Boolean);
         this.messages = ensureGreetingMessage(cachedMessages, {
           greeting: this.greetingOverride
         });
+      }
+      if (cachedSessionMessages?.length || snapshot?.messages?.length) {
+        cacheSessionMessages(sessionId, this.messages);
       }
       const [sessionRes, eventsRes] = await Promise.all([
         getSession(sessionId),
@@ -2315,11 +2385,16 @@ export const useChatStore = defineStore('chat', {
         hydrateMessage(message, workflowState)
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
+      const finalCachedMessages = getSessionMessages(sessionId);
+      if (shouldPreferCachedMessages(finalCachedMessages, messages)) {
+        messages = finalCachedMessages;
+      }
       dismissStaleInquiryPanels(messages);
       this.messages = ensureGreetingMessage(messages, {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
+      cacheSessionMessages(sessionId, this.messages);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]
         .reverse()
@@ -2339,6 +2414,7 @@ export const useChatStore = defineStore('chat', {
       abortSendStream(targetId);
       setSessionLoading(this, targetId, false);
       sessionRuntime.delete(resolveSessionKey(targetId));
+      sessionMessages.delete(resolveSessionKey(targetId));
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       sessionWorkflowState.delete(String(targetId));
@@ -2406,6 +2482,8 @@ export const useChatStore = defineStore('chat', {
       const attachments = Array.isArray(options.attachments) ? options.attachments : [];
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
+      cacheSessionMessages(sessionId, this.messages);
+      touchSessionUpdatedAt(this, sessionId, userMessage.created_at);
 
       const activeSession = this.sessions.find((item) => item.id === sessionId);
       if (activeSession && shouldAutoTitle(activeSession.title)) {
@@ -2428,7 +2506,8 @@ export const useChatStore = defineStore('chat', {
       }
       this.messages.push(assistantMessageRaw);
       const assistantMessage = this.messages[this.messages.length - 1];
-      this.scheduleSnapshot(true);
+      const sessionMessagesRef = this.messages;
+      notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
 
       setSessionLoading(this, sessionId, true);
 
@@ -2436,7 +2515,7 @@ export const useChatStore = defineStore('chat', {
       const processor = createWorkflowProcessor(
         assistantMessage,
         workflowState,
-        () => this.scheduleSnapshot()
+        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
       );
 
       try {
@@ -2529,6 +2608,7 @@ export const useChatStore = defineStore('chat', {
         assistantMessage.stream_incomplete = false;
         setSessionLoading(this, sessionId, false);
         processor.finalize();
+        touchSessionUpdatedAt(this, sessionId, Date.now());
         if (runtime) {
           runtime.sendController = null;
           if (runtime.sendSocket) {
@@ -2540,9 +2620,9 @@ export const useChatStore = defineStore('chat', {
         syncDemoChatCache({
           sessions: this.sessions,
           sessionId,
-          messages: this.messages
+          messages: sessionMessagesRef
         });
-        this.scheduleSnapshot(true);
+        notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         emitWorkspaceRefresh({ sessionId, reason: 'message-finished' });
       }
     },
@@ -2568,9 +2648,15 @@ export const useChatStore = defineStore('chat', {
       setSessionLoading(this, sessionId, true);
       message.workflowStreaming = true;
       message.stream_incomplete = true;
-      this.scheduleSnapshot();
+      const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;
+      cacheSessionMessages(sessionId, sessionMessagesRef);
+      notifySessionSnapshot(this, sessionId, sessionMessagesRef);
       const workflowState = getSessionWorkflowState(sessionId);
-      const processor = createWorkflowProcessor(message, workflowState, () => this.scheduleSnapshot());
+      const processor = createWorkflowProcessor(
+        message,
+        workflowState,
+        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
+      );
       abortResumeStream(sessionId);
       const runtime = ensureRuntime(sessionId);
       if (runtime) {
@@ -2657,6 +2743,7 @@ export const useChatStore = defineStore('chat', {
         }
         setSessionLoading(this, sessionId, false);
         processor.finalize();
+        touchSessionUpdatedAt(this, sessionId, Date.now());
         if (runtime && !aborted) {
           runtime.resumeController = null;
         }
@@ -2664,7 +2751,7 @@ export const useChatStore = defineStore('chat', {
           safeCloseSocket(runtime.resumeSocket);
           runtime.resumeSocket = null;
         }
-        this.scheduleSnapshot(true);
+        notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });
       }
     }

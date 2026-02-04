@@ -12,7 +12,7 @@ use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
 use anyhow::Error;
-use axum::extract::{Multipart, Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -31,6 +31,7 @@ use uuid::Uuid;
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
+const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -69,7 +70,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/chat/attachments/convert",
-            post(chat_attachment_convert),
+            post(chat_attachment_convert).layer(DefaultBodyLimit::max(MAX_ATTACHMENT_UPLOAD_BYTES)),
         )
 }
 

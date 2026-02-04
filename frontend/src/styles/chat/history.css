@@ -69,6 +69,20 @@
   min-width: 0;
 }
 
+.chat-shell .history-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--chat-primary);
+  --agent-pulse-color: rgba(var(--chat-primary-rgb), 0.55);
+  flex-shrink: 0;
+}
+
+.chat-shell .history-status .agent-running-dot {
+  width: 6px;
+  height: 6px;
+}
+
 .chat-shell .history-title-text {
   font-size: 14px;
   color: var(--chat-text);
