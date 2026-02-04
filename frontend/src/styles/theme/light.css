@@ -190,7 +190,13 @@
 }
 
 :root[data-user-theme='light'] .chat-shell .workspace-list {
-  background: rgba(15, 23, 42, 0.03);
+  background: #f8fafc;
+  border-color: #c7d2fe;
+}
+
+:root[data-user-theme='light'] .chat-shell .workspace-list.dragover {
+  background: #e0edff;
+  border-color: #93c5fd;
 }
 
 :root[data-user-theme='light'] .chat-shell .workspace-upload-bar {
@@ -203,13 +209,13 @@
 }
 
 :root[data-user-theme='light'] .chat-shell .workspace-item.is-folder {
-  background: rgba(59, 130, 246, 0.08);
+  background: transparent;
 }
 
 :root[data-user-theme='light'] .chat-shell .workspace-item.active,
 :root[data-user-theme='light'] .chat-shell .workspace-item.is-selected {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.35);
+  background: #dbeafe;
+  border-color: transparent;
 }
 
 :root[data-user-theme='light'] .chat-shell .workspace-item.drop-target {

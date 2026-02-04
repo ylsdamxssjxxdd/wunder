@@ -121,7 +121,11 @@
               :class="['workspace-item-icon', getEntryIcon(item.entry).className]"
               :title="getEntryIcon(item.entry).label"
             >
-              {{ getEntryIcon(item.entry).text }}
+              <img
+                class="workspace-item-icon-img"
+                :src="getEntryIcon(item.entry).icon"
+                :alt="getEntryIcon(item.entry).label"
+              />
             </span>
             <div class="workspace-item-name">
               <input
@@ -273,6 +277,7 @@ import {
 } from '@/api/workspace';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
+import vscodeIconsTheme from '@/assets/vscode-icons-theme.json';
 
 const props = defineProps({
   agentId: {
@@ -325,6 +330,101 @@ const CODE_EXTENSIONS = new Set(['py', 'js', 'ts', 'css', 'html', 'htm', 'sh', '
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
+const WORKSPACE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}vscode-icons`;
+const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
+const WORKSPACE_FOLDER_ICON = `${WORKSPACE_DOC_ICON_BASE}/folder.png`;
+const WORKSPACE_ICON_PATH_RE = /^(\.\.\/|\.\/)+/;
+const ICON_DEFINITIONS = vscodeIconsTheme?.iconDefinitions || {};
+const FILE_EXTENSION_ICON_MAP = new Map(
+  Object.entries(vscodeIconsTheme?.fileExtensions || {}).map(([key, value]) => [
+    String(key).toLowerCase(),
+    value
+  ])
+);
+const FALLBACK_EXTENSION_ICON_ENTRIES = [
+  ['js', '_f_js'],
+  ['cjs', '_f_js'],
+  ['mjs', '_f_js'],
+  ['jsx', '_f_reactjs'],
+  ['ts', '_f_typescript'],
+  ['tsx', '_f_reactts'],
+  ['py', '_f_python'],
+  ['md', '_f_markdown'],
+  ['markdown', '_f_markdown'],
+  ['json', '_f_json'],
+  ['jsonc', '_f_json'],
+  ['yml', '_f_yaml'],
+  ['yaml', '_f_yaml'],
+  ['png', '_f_image'],
+  ['jpg', '_f_image'],
+  ['jpeg', '_f_image'],
+  ['gif', '_f_image'],
+  ['bmp', '_f_image'],
+  ['webp', '_f_image'],
+  ['svg', '_f_image'],
+  ['pdf', '_f_pdf'],
+  ['doc', '_f_word'],
+  ['docx', '_f_word'],
+  ['xls', '_f_excel'],
+  ['xlsx', '_f_excel'],
+  ['ppt', '_f_powerpoint'],
+  ['pptx', '_f_powerpoint'],
+  ['zip', '_f_zip'],
+  ['rar', '_f_zip'],
+  ['7z', '_f_zip'],
+  ['tar', '_f_zip'],
+  ['gz', '_f_zip'],
+  ['bz2', '_f_zip'],
+  ['mp3', '_f_audio'],
+  ['wav', '_f_audio'],
+  ['flac', '_f_audio'],
+  ['aac', '_f_audio'],
+  ['ogg', '_f_audio'],
+  ['m4a', '_f_audio'],
+  ['mp4', '_f_video'],
+  ['mov', '_f_video'],
+  ['avi', '_f_video'],
+  ['mkv', '_f_video'],
+  ['webm', '_f_video'],
+  ['txt', '_f_text'],
+  ['log', '_f_log'],
+  ['csv', '_f_text'],
+  ['tsv', '_f_text'],
+  ['toml', '_f_toml'],
+  ['ini', '_f_ini'],
+  ['css', '_f_css'],
+  ['scss', '_f_scss'],
+  ['less', '_f_less'],
+  ['html', '_f_html'],
+  ['htm', '_f_html'],
+  ['vue', '_f_vue'],
+  ['svelte', '_f_svelte'],
+  ['xml', '_f_xml'],
+  ['sh', '_f_shell'],
+  ['bash', '_f_shell'],
+  ['zsh', '_f_shell'],
+  ['bat', '_f_bat'],
+  ['ps1', '_f_powershell'],
+  ['sql', '_f_sql'],
+  ['rs', '_f_rust'],
+  ['go', '_f_go'],
+  ['java', '_f_java'],
+  ['kt', '_f_kotlin'],
+  ['swift', '_f_swift']
+];
+const FALLBACK_EXTENSION_ICON_MAP = new Map(
+  FALLBACK_EXTENSION_ICON_ENTRIES.filter(([, iconId]) => ICON_DEFINITIONS[iconId])
+);
+const FILE_NAME_ICON_MAP = new Map(
+  Object.entries(vscodeIconsTheme?.fileNames || {}).map(([key, value]) => [
+    String(key).toLowerCase(),
+    value
+  ])
+);
+const DEFAULT_FILE_ICON_ID = vscodeIconsTheme?.file || '';
+const ALLOWED_ICON_IDS = new Set(
+  [DEFAULT_FILE_ICON_ID, ...FALLBACK_EXTENSION_ICON_MAP.values()].filter(Boolean)
+);
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 // 沙盒容器上传总大小上限（对齐 Wunder 配置）
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -443,7 +543,7 @@ const displayEntries = computed(() => {
   }
   return result;
 });
-const WORKSPACE_ROW_HEIGHT = 36;
+const WORKSPACE_ROW_HEIGHT = 28;
 const WORKSPACE_OVERSCAN = 8;
 const workspaceVirtual = computed(() => displayEntries.value.length > 120);
 const workspaceViewportHeight = computed(() => listRef.value?.clientHeight || 0);
@@ -588,45 +688,86 @@ const isWorkspaceTextEditable = (entry) => {
   return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 };
 
+const normalizeIconKey = (value) => String(value || '').trim().toLowerCase();
+
+const resolveThemeIconPath = (iconId, fallbackId = DEFAULT_FILE_ICON_ID) => {
+  const resolvedId = iconId && ALLOWED_ICON_IDS.has(iconId) ? iconId : '';
+  const definition = resolvedId ? ICON_DEFINITIONS[resolvedId] : null;
+  const rawPath = definition?.iconPath || '';
+  if (rawPath) {
+    const normalized = rawPath.replace(WORKSPACE_ICON_PATH_RE, '');
+    return `${WORKSPACE_ICON_BASE}/${normalized}`;
+  }
+  if (fallbackId && fallbackId !== iconId) {
+    return resolveThemeIconPath(fallbackId, '');
+  }
+  return '';
+};
+
+const resolveFileIconId = (entry) => {
+  const nameKey = normalizeIconKey(entry?.name);
+  if (nameKey && FILE_NAME_ICON_MAP.has(nameKey)) {
+    return FILE_NAME_ICON_MAP.get(nameKey);
+  }
+  const extension = normalizeIconKey(getWorkspaceExtension(entry));
+  if (extension) {
+    if (FILE_EXTENSION_ICON_MAP.has(extension)) {
+      return FILE_EXTENSION_ICON_MAP.get(extension);
+    }
+    if (FALLBACK_EXTENSION_ICON_MAP.has(extension)) {
+      return FALLBACK_EXTENSION_ICON_MAP.get(extension);
+    }
+  }
+  return DEFAULT_FILE_ICON_ID;
+};
+
 const getEntryIcon = (entry) => {
   if (entry.type === 'dir') {
-    return { text: 'D', className: 'icon-folder', label: t('workspace.icon.folder') };
+    return {
+      icon: WORKSPACE_FOLDER_ICON,
+      className: 'icon-vscode',
+      label: t('workspace.icon.folder')
+    };
   }
+  const iconId = resolveFileIconId(entry);
+  const icon =
+    resolveThemeIconPath(iconId, DEFAULT_FILE_ICON_ID) ||
+    resolveThemeIconPath(DEFAULT_FILE_ICON_ID, '');
   const ext = getWorkspaceExtension(entry);
   if (IMAGE_EXTENSIONS.has(ext)) {
-    return { text: 'I', className: 'icon-image', label: t('workspace.icon.image') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.image') };
   }
   if (PDF_EXTENSIONS.has(ext)) {
-    return { text: 'P', className: 'icon-pdf', label: t('workspace.icon.pdf') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.pdf') };
   }
   if (OFFICE_WORD_EXTENSIONS.has(ext)) {
-    return { text: 'W', className: 'icon-word', label: t('workspace.icon.word') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.word') };
   }
   if (OFFICE_EXCEL_EXTENSIONS.has(ext)) {
-    return { text: 'X', className: 'icon-excel', label: t('workspace.icon.excel') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.excel') };
   }
   if (OFFICE_PPT_EXTENSIONS.has(ext)) {
-    return { text: 'P', className: 'icon-ppt', label: t('workspace.icon.ppt') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.ppt') };
   }
   if (ARCHIVE_EXTENSIONS.has(ext)) {
-    return { text: 'Z', className: 'icon-archive', label: t('workspace.icon.archive') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.archive') };
   }
   if (AUDIO_EXTENSIONS.has(ext)) {
-    return { text: 'A', className: 'icon-audio', label: t('workspace.icon.audio') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.audio') };
   }
   if (VIDEO_EXTENSIONS.has(ext)) {
-    return { text: 'V', className: 'icon-video', label: t('workspace.icon.video') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.video') };
   }
   if (CODE_EXTENSIONS.has(ext)) {
-    return { text: 'C', className: 'icon-code', label: t('workspace.icon.code') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.code') };
   }
   if (TEXT_EXTENSIONS.has(ext)) {
-    return { text: 'T', className: 'icon-text', label: t('workspace.icon.text') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.text') };
   }
   if (OFFICE_EXTENSIONS.has(ext)) {
-    return { text: 'O', className: 'icon-office', label: t('workspace.icon.office') };
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.office') };
   }
-  return { text: 'F', className: 'icon-file', label: t('workspace.icon.file') };
+  return { icon, className: 'icon-vscode', label: t('workspace.icon.file') };
 };
 
 const getEntryMeta = (entry) => {
