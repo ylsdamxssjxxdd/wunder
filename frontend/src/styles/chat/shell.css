@@ -68,6 +68,48 @@
   flex-wrap: wrap;
 }
 
+.chat-shell .transport-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--chat-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--chat-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+}
+
+.chat-shell .transport-status .transport-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-muted);
+}
+
+.chat-shell .transport-status:hover {
+  color: var(--chat-text);
+  border-color: rgba(var(--chat-primary-rgb), 0.4);
+}
+
+.chat-shell .transport-status:focus-visible {
+  outline: 2px solid rgba(var(--chat-primary-rgb), 0.6);
+  outline-offset: 2px;
+}
+
+.chat-shell .transport-status.ws .transport-dot {
+  background: var(--chat-primary);
+  box-shadow: 0 0 8px rgba(var(--chat-primary-rgb), 0.45);
+}
+
+.chat-shell .transport-status.sse .transport-dot {
+  background: var(--chat-accent);
+  box-shadow: 0 0 8px rgba(var(--chat-accent-rgb), 0.45);
+}
+
 .chat-shell .brand-mark {
   width: 36px;
   height: 36px;

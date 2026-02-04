@@ -774,6 +774,17 @@
   align-items: stretch;
 }
 
+.chat-shell .markdown-body .ai-resource-card.ai-resource-file {
+  width: fit-content;
+  display: inline-flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
 .chat-shell .markdown-body .ai-resource-card.ai-resource-image .ai-resource-header {
   max-width: 100%;
 }
@@ -848,26 +859,72 @@
 }
 
 .chat-shell .markdown-body .ai-resource-body.ai-resource-file {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  justify-content: flex-start;
+  padding-top: 6px;
+}
+
+.chat-shell .markdown-body .ai-resource-file-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(77, 216, 255, 0.22);
+}
+
+.chat-shell .markdown-body .ai-resource-file-title {
+  max-width: 220px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--chat-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-shell .markdown-body .ai-resource-file-meta {
+  max-width: 220px;
+  font-size: 11px;
+  color: var(--chat-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-shell .markdown-body .ai-resource-file-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 10px;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
   border: 1px solid rgba(77, 216, 255, 0.35);
   background: rgba(77, 216, 255, 0.12);
   color: var(--chat-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
   flex-shrink: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.chat-shell .markdown-body .ai-resource-file-icon-img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.chat-shell .markdown-body .ai-resource-file-icon:hover {
+  border-color: rgba(var(--chat-primary-rgb), 0.6);
+  color: var(--chat-primary);
+}
+
+.chat-shell .markdown-body .ai-resource-file-icon:focus-visible {
+  outline: 2px solid rgba(var(--chat-primary-rgb), 0.6);
+  outline-offset: 2px;
 }
 
 .chat-shell .markdown-body .ai-resource-file-info {

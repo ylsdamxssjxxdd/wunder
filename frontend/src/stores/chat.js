@@ -2230,7 +2230,8 @@ export const useChatStore = defineStore('chat', {
     loadingBySession: {},
     greetingOverride: '',
     draftAgentId: '',
-    draftToolOverrides: null
+    draftToolOverrides: null,
+    streamTransport: resolveStreamTransport()
   }),
   getters: {
     isSessionLoading: (state) => (sessionId) => {
@@ -2242,6 +2243,18 @@ export const useChatStore = defineStore('chat', {
   actions: {
     markPageUnloading() {
       pageUnloading = true;
+    },
+    setStreamTransport(transport) {
+      const next = transport === 'sse' ? 'sse' : 'ws';
+      localStorage.setItem('chat_stream_transport', next);
+      if (next === 'ws') {
+        wsUnavailableUntil = 0;
+      }
+      this.streamTransport = next;
+    },
+    toggleStreamTransport() {
+      const next = this.streamTransport === 'sse' ? 'ws' : 'sse';
+      this.setStreamTransport(next);
     },
     getPersistedState() {
       return readChatPersistState();
@@ -2579,12 +2592,14 @@ export const useChatStore = defineStore('chat', {
           });
         };
         const transport = resolveStreamTransport();
+        this.streamTransport = transport;
         if (transport === 'ws') {
           try {
             await streamWithWs();
           } catch (error) {
             if (error?.phase === 'connect') {
               markWsUnavailable();
+              this.streamTransport = 'sse';
               await streamWithSse();
             } else {
               throw error;
@@ -2715,12 +2730,14 @@ export const useChatStore = defineStore('chat', {
           });
         };
         const transport = afterEventId ? resolveStreamTransport() : 'sse';
+        this.streamTransport = transport;
         if (transport === 'ws') {
           try {
             await streamWithWs();
           } catch (error) {
             if (error?.phase === 'connect') {
               markWsUnavailable();
+              this.streamTransport = 'sse';
               await streamWithSse();
             } else {
               throw error;
