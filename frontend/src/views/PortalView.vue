@@ -77,9 +77,6 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
-                <div class="agent-card-meta">
-                  <span>{{ t('portal.card.defaultMeta') }}</span>
-                </div>
               </div>
               <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
@@ -121,29 +118,30 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
-                <div class="agent-card-meta">
-                  <span>{{ t('portal.card.tools', { count: agent.tool_names?.length || 0 }) }}</span>
-                  <span>{{ t('portal.card.updated', { time: formatTime(agent.updated_at) }) }}</span>
-                </div>
-                <div class="agent-card-actions">
-                  <button
-                    class="agent-card-icon-btn"
-                    type="button"
-                    :title="t('portal.agent.edit')"
-                    :aria-label="t('portal.agent.edit')"
-                    @click.stop="openEditDialog(agent)"
-                  >
-                    <i class="fa-solid fa-pen-to-square agent-card-icon" aria-hidden="true"></i>
-                  </button>
-                  <button
-                    class="agent-card-icon-btn danger"
-                    type="button"
-                    :title="t('portal.agent.delete')"
-                    :aria-label="t('portal.agent.delete')"
-                    @click.stop="confirmDelete(agent)"
-                  >
-                    <i class="fa-solid fa-trash-can agent-card-icon" aria-hidden="true"></i>
-                  </button>
+                <div class="agent-card-footer">
+                  <div class="agent-card-meta">
+                    <span>{{ formatTime(agent.updated_at) }}</span>
+                  </div>
+                  <div class="agent-card-actions">
+                    <button
+                      class="agent-card-icon-btn"
+                      type="button"
+                      :title="t('portal.agent.edit')"
+                      :aria-label="t('portal.agent.edit')"
+                      @click.stop="openEditDialog(agent)"
+                    >
+                      <i class="fa-solid fa-pen-to-square agent-card-icon" aria-hidden="true"></i>
+                    </button>
+                    <button
+                      class="agent-card-icon-btn danger"
+                      type="button"
+                      :title="t('portal.agent.delete')"
+                      :aria-label="t('portal.agent.delete')"
+                      @click.stop="confirmDelete(agent)"
+                    >
+                      <i class="fa-solid fa-trash-can agent-card-icon" aria-hidden="true"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -198,8 +196,7 @@
                   </div>
                 </div>
                 <div class="agent-card-meta">
-                  <span>{{ t('portal.card.tools', { count: agent.tool_names?.length || 0 }) }}</span>
-                  <span>{{ t('portal.card.updated', { time: formatTime(agent.updated_at) }) }}</span>
+                  <span>{{ formatTime(agent.updated_at) }}</span>
                 </div>
               </div>
             </div>

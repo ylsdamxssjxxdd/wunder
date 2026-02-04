@@ -134,6 +134,23 @@
   align-items: center;
 }
 
+.agent-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.agent-card-footer .agent-card-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-card-footer .agent-card-actions {
+  margin-top: 0;
+}
+
 .agent-card-actions {
   display: flex;
   gap: 8px;

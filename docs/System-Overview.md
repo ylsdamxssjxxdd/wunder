@@ -1,7 +1,7 @@
 # wunder System Overview
 
 ## 1. One-page summary
-wunder is an agent router: for developers, everything is an interface (API/config/tools); for LLMs, everything is a tool (callable, composable, governable). The system exposes a unified `/wunder` entry via Rust (Axum), supports both streaming SSE and non-streaming calls, and orchestrates LLMs, MCP, Skills, knowledge bases, and custom/shared tools into a reusable execution chain.
+wunder is an agent router: for developers, everything is an interface (API/config/tools); for LLMs, everything is a tool (callable, composable, governable). The system exposes a unified `/wunder` entry via Rust (Axum), supports streaming over WebSocket by default with SSE fallback (plus non-streaming calls), and orchestrates LLMs, MCP, Skills, knowledge bases, and custom/shared tools into a reusable execution chain.
 
 It also provides the A2A standard API at `/a2a` (JSON-RPC + SSE), and publishes AgentCard at `/.well-known/agent-card.json` for cross-system discovery.
 
@@ -23,7 +23,7 @@ Its core value:
 ### 2.1 Component diagram
 ```mermaid
 flowchart LR
-  Client[Client/Debug UI] -->|/wunder| API[Axum API Layer]
+  Client[Client/Debug UI] -->|/wunder (HTTP/SSE/WS)| API[Axum API Layer]
   API --> Orchestrator[Orchestrator Engine]
   Orchestrator --> Prompt[Prompt Builder]
   Orchestrator --> LLM[LLM Adapter]
@@ -40,7 +40,7 @@ flowchart LR
 ```
 
 ### 2.2 Module responsibilities
-- API layer (`src/api`): unified `/wunder` entry, A2A `/a2a`, and admin APIs for tools/workspaces/monitor.
+- API layer (`src/api`): unified `/wunder` entry, WS streaming endpoints (`/wunder/ws`, `/wunder/chat/ws`), A2A `/a2a`, and admin APIs for tools/workspaces/monitor.
 - Orchestrator (`src/orchestrator/`): orchestration, tool routing, SSE event streaming.
 - Tool layer (`src/services/tools.rs`): built-in tool specs and dispatcher.
 - Workspace (`src/services/workspace.rs`): per-user workspace file management.
@@ -69,7 +69,7 @@ sequenceDiagram
   O->>T: execute tools (built-in/MCP/skills/knowledge/custom)
   T-->>O: tool results
   O->>S: write chat/tool/monitor records
-  O-->>U: SSE events or final response
+  O-->>U: WebSocket/SSE events or final response
 ```
 
 Note: for registered users, each model call consumes one quota unit before invocation; if quota is exhausted the request is rejected with a quota error.
@@ -144,6 +144,8 @@ stateDiagram-v2
 
 ## 8. Ops & entrypoints
 - `/wunder`: unified call entry (stream/non-stream).
+- `/wunder/chat/ws`: WebSocket streaming for chat sessions.
+- `/wunder/ws`: unified WebSocket streaming entry (payload matches `/wunder`, forces `stream=true`).
 - `/a2a`: A2A JSON-RPC standard API (supports SSE streaming).
 - `/.well-known/agent-card.json`: A2A AgentCard discovery entry.
 - `/wunder/tools`: tool catalog (built-in/MCP/knowledge/skills/custom/shared).
