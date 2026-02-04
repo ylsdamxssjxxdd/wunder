@@ -580,9 +580,11 @@ Example payload:
   - User chat: `/wunder/chat/ws`
   - Unified entry: `/wunder/ws`
 - Auth:
-  - Browser: `access_token` in query string or same-origin cookie
+  - Browser: Prefer `Sec-WebSocket-Protocol` (`wunder`, `wunder-auth.<token>`); query `access_token` is compatibility-only
   - Non-browser: `Authorization: Bearer <token>`
 - Payloads keep the same `event/id/data` structure as SSE.
+- Slow client warning: when the client falls behind, server may emit `event=slow_client` so the UI can prompt a `resume`.
+- Multiplexing: one connection can run concurrent requests; set `request_id` and expect it back on `event/error`
 - `/wunder/ws` uses the same payload as `/wunder` POST (`user_id/question/...`) and forces `stream=true`.
 - Resume: send `resume` with `after_event_id` to replay from `stream_events`.
 - Full protocol: `docs/WebSocket-Transport.md`

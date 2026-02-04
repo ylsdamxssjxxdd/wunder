@@ -1,60 +1,58 @@
 ---
 name: PPTX生成
-description: "使用 PptxGenJS 通过直接绘制形状与文本来创建或更新 .pptx。适用于需要 JavaScript 脚本化生成 PPTX、希望可编程构建幻灯片、或明确要求避免 html2pptx/Playwright 的场景。"
+description: "使用 PptxGenJS 脚本化生成中文 PPTX（避免 HTML/Playwright），适用于创建或更新中文演示文稿/幻灯片/Deck，并希望基于多套模板快速产出一致版式的场景。"
 ---
 
-# PptxGenJS PPTX 生成
+# PptxGenJS 中文PPT生成
 
-## 概览
+## 概述
+- 用 PptxGenJS 直接绘制形状与文本生成 .pptx
+- 内置 4 套模板（general / modern / standard / swift）
+- 适合脚本化、可复现、可批量产出
 
-通过 PptxGenJS 直接在幻灯片上放置形状与文字，使用 Node.js 脚本生成 PPTX。
+## 模板清单与包含版式
+- `scripts/pptxgenjs-starter.js`（general）
+  - Intro / Agenda / Features / Metrics / Quote&Closing
+- `scripts/pptxgenjs-starter-modern.js`（modern）
+  - Intro / Problem / Solution / Market Size / Traction / Closing
+- `scripts/pptxgenjs-starter-standard.js`（standard）
+  - Intro / Outline / Bullet+Image / Metrics / Closing
+- `scripts/pptxgenjs-starter-swift.js`（swift）
+  - Intro / Contents / Feature Cards / Timeline / Metrics
 
-## 工作流
+## 推荐流程（更明确版）
+1. **需求收集**：主题、受众、目标、语言、页数、交付时间、图片/图标是否提供。
+2. **输出大纲**：每页 1 行（标题 + 目的），确认结构再开始绘制。
+3. **选模板**：根据风格选择脚本（general/modern/standard/swift）。
+4. **复制脚本**：把所选脚本复制为 `build.js`。
+5. **只改 DATA**：优先修改 `DATA` 区域，不动辅助函数。
+6. **生成 PPTX**：`node build.js` → `output.pptx`。
+7. **文本 QA**：`python -m markitdown output.pptx` 检查错字/缺页/顺序。
+8. **视觉 QA**：有 LibreOffice/Poppler 时转换图片逐页检查。
+9. **修复复检**：修改 `build.js` 后重新生成并复检。
 
-1. 需求收集与确认（必须先齐备）：主题/用途/受众/语言；画面比例（16:9 / 4:3）；风格与品牌规范（配色、字体、是否有 Logo/主色）；是否有图片/图标/插画/数据/图表（如没有，需确认是否使用占位与后续补图）；预计页数/时长；输出文件名与交付时间。
-2. 产出 PPT 大纲：按收集要素给出每页标题 + 关键要点 + 版式建议，确认页数与结构；未确认前不进入制作。
-3. 素材与参数准备：整理可用素材路径与图表数据，确定 `TEMPLATE_NAME`、主题色与字号；根据比例设置布局（16:9 或 4:3）。
-4. 按大纲制作脚本：复制技能包内的 `scripts/pptxgenjs-starter.js`（注意文件名）到工作目录并重命名为 `build.js`。
-   - 先用 `读取文件` 查看 `build.js`，仅修改 `OUTPUT_FILE`、`SLIDES`、`TEMPLATE_NAME` 与样式常量，避免改动 import/require 行。
-   - 修改 `SLIDES` 时请使用 `// CONTENT_START` 与 `// CONTENT_END` 之间的完整块作为 `old_string`，不要凭印象替换。
-   - 若用户指定文件名，优先改 `OUTPUT_FILE`，避免额外重命名步骤。
-   - 使用 `替换文本` 时必须检查 `replaced > 0`；若为 0，请先 `读取文件` 再改用 `编辑文件` 精确修改。
-   - 未提供图片时，使用占位块并在备注中列出待补图片清单。
-5. 运行 `node build.js` 生成 PPTX，并用 `列出文件` 确认输出文件存在。
-6. 打开 PPTX 复核版式、对齐、字号与图片，必要时微调后交付。
+## 编辑规则
+- **只改 DATA**：模板脚本已封装布局，优先改 `DATA`。
+- **输出文件名**：修改 `OUTPUT_FILE`，不要改 `writeFile` 结构。
+- **图片未提供**：保持 `null`，模板会生成占位图块。
+- **不要写 #**：颜色必须是 6 位十六进制且不带 `#`。
+- **不要复用 options**：PptxGenJS 会原地修改对象。
+- **列表必须 bullet**：使用 `bullet: true` + `breakLine: true`。
+- **文本对齐**：对齐到形状边缘时 `margin: 0`。
 
-## 脚本约定
+## 版式扩展方式（推荐）
+- 复制现有 slide 代码块，改标题与数据。
+- 需要新布局时：
+  1) 新建一个 `addXxx` 辅助函数
+  2) 在 `DATA` 中加入对应结构
+  3) 新增一个 slide block
 
-- `OUTPUT_FILE` 控制输出文件名（默认 `output.pptx`）。
-- 脚本直接写入 `OUTPUT_FILE`，请在 `build.js` 所在目录运行 `node build.js`。
-- `SLIDES` 为数组，每一项包含 `title` 与 `bullets`（字符串数组），可选 `chart` 对象用于图表。
-- `chart.type` 示例：`bar`/`line`/`pie`（对应 PptxGenJS ChartType）。
-- `chart.data` 为 `{ name, labels, values }` 数组。
-- `chart.options` 透传给 `slide.addChart` 的选项（可覆盖位置/图例等）。
-- `chart.colors` 可选颜色数组。
-- `chart.caption` 可选图表说明文字。
-- 同时包含 bullets 与 chart 时脚本自动上下分区，避免重叠。
-- 模板通过 `TEMPLATE_NAME` 选择：`report`（汇报默认）、`lecture`（授课）、`education`（教育）、`defense`（答辩）、`simple`（通用极简）。
-- 字体与颜色通过常量行配置：`FONT_CN`、`FONT_EN`、`TITLE_FONT_SIZE`、`BODY_FONT_SIZE`、`TITLE_COLOR`、`BODY_COLOR`、`ACCENT_COLOR`、`BG_COLOR`、`CARD_COLOR`、`MUTED_COLOR`、`HEADER_H`。
-- 修改样式时优先用 `替换文本` 精确替换上述常量行，避免按行号编辑。
+## 坐标与尺寸
+- 默认 `LAYOUT_16x9`，尺寸 10 x 5.625 英寸
+- 需要 4:3：改 `pptx.layout = "LAYOUT_4x3"` 并手动调整布局
 
-## 失败处理
-
-- 若执行 `node build.js` 提示 `pptxgen is not defined`，请恢复首行 `const pptxgen = require('pptxgenjs');`，不要改用其他 require 路径。
-- 建议仅替换 `CONTENT_START/END` 之间的块，避免影响脚本结构。
-
-## 布局与格式规则
-
-- 颜色使用不带 `#` 的十六进制（示例：`FF6F61`）。
-- 默认设置 `pptx.layout = 'LAYOUT_16x9'`，除非明确需要自定义尺寸。
-- 16:9 标准尺寸为 10 x 5.625 英寸，注意四边留白。
-- 中文默认使用 `FONT_CN`（黑体），英文默认使用 `FONT_EN`（Times New Roman）。
-- 标题位于顶部标题条（高度由 `HEADER_H` 控制），必要时调整 `TITLE_COLOR` 与 `TITLE_FONT_SIZE` 保证对比度。
-- 模板默认使用全幅内容区，不再额外绘制内容卡片，以避免挤压可用空间。
-- 绘制顺序：先背景，再内容块，再文本，避免遮挡与裁切。
-- 文本框保持在边距内，避免裁切。
-
-## 资源
-
-- `scripts/pptxgenjs-starter.js`：含辅助函数与示例的起步脚本。
-- `references/pptxgenjs-rules.md`：颜色、单位与布局的速记规则。
+## QA
+- 文本：`python -m markitdown output.pptx`
+- 视觉（有 LibreOffice + Poppler）：
+  - `soffice --headless --convert-to pdf output.pptx`
+  - `pdftoppm -jpeg -r 150 output.pdf slide`

@@ -188,6 +188,17 @@
                   <div v-if="message.role === 'assistant'" class="message-actions">
                     <div class="message-time">{{ formatTime(message.created_at) }}</div>
                     <button
+                      v-if="shouldShowResumeButton(message)"
+                      class="message-copy-btn message-resume-btn"
+                      type="button"
+                      :title="t('chat.message.resume')"
+                      :aria-label="t('chat.message.resume')"
+                      @click="handleResumeMessage(message)"
+                    >
+                      <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+                      <span>{{ t('chat.message.resume') }}</span>
+                    </button>
+                    <button
                       class="message-copy-btn"
                       type="button"
                       :title="t('chat.message.copy')"
@@ -1306,6 +1317,20 @@ const handleCopyMessage = async (message) => {
   } else {
     ElMessage.error(t('chat.message.copyFailed'));
   }
+};
+
+const shouldShowResumeButton = (message) => {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.workflowStreaming) return false;
+  return Boolean(message.slow_client);
+};
+
+const handleResumeMessage = async (message) => {
+  if (!message) return;
+  const sessionId = chatStore.activeSessionId;
+  if (!sessionId) return;
+  message.slow_client = false;
+  await chatStore.resumeStream(sessionId, message, { force: true });
 };
 
 const handleMessageClick = async (event) => {

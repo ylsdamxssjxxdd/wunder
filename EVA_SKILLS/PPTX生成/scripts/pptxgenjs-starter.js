@@ -1,366 +1,464 @@
-const pptxgen = require('pptxgenjs');
+const pptxgen = require("pptxgenjs");
 
-const SLIDE_W = 10;
-const SLIDE_H = 5.625;
-const HEADER_H = 0.35; // EDIT_HEADER_HEIGHT
+const pptx = new pptxgen();
+pptx.layout = "LAYOUT_16x9";
+pptx.author = "pptxgenjs-cn";
+pptx.title = "General 模板";
 
-const TITLE_COLOR = 'FFFFFF'; // EDIT_TITLE_COLOR
-const BODY_COLOR = '333333'; // EDIT_BODY_COLOR
-const ACCENT_COLOR = '2F5597'; // EDIT_ACCENT_COLOR
-const BG_COLOR = 'F7F9FC'; // EDIT_BG_COLOR
-const CARD_COLOR = 'FFFFFF'; // EDIT_CARD_COLOR
-const MUTED_COLOR = 'E6EEF7'; // EDIT_MUTED_COLOR
+const OUTPUT_FILE = "output.pptx";
 
-const FONT_CN = 'SimHei'; // EDIT_FONT_CN
-const FONT_EN = 'Times New Roman'; // EDIT_FONT_EN
-const TITLE_FONT_SIZE = 24; // EDIT_TITLE_SIZE
-const BODY_FONT_SIZE = 18; // EDIT_BODY_SIZE
-const TEMPLATE_NAME = 'report'; // EDIT_TEMPLATE_NAME: report/lecture/education/defense/simple
-const OUTPUT_FILE = 'output.pptx'; // EDIT_OUTPUT_FILE
-
-// CONTENT_START
-const SLIDES = [
-  {
-    title: 'Slide Title 1',
-    bullets: ['Bullet 1', 'Bullet 2', 'Bullet 3']
-  },
-  {
-    title: 'Slide Title 2',
-    bullets: ['Bullet 1', 'Bullet 2', 'Bullet 3'],
-    chart: {
-      type: 'bar',
-      data: [
-        {
-          name: 'Series A',
-          labels: ['Q1', 'Q2', 'Q3', 'Q4'],
-          values: [12, 19, 8, 15]
-        },
-        {
-          name: 'Series B',
-          labels: ['Q1', 'Q2', 'Q3', 'Q4'],
-          values: [10, 14, 11, 18]
-        }
-      ],
-      options: {
-        showLegend: true,
-        legendPos: 'r',
-        dataLabelPosition: 'outEnd'
-      },
-      caption: 'Sample chart with two series'
-    }
-  }
-];
-// CONTENT_END
-
-const RECT_SHAPE =
-  pptxgen.ShapeType && pptxgen.ShapeType.rect ? pptxgen.ShapeType.rect : 'rect';
-
-const CONTENT_TOP = HEADER_H + 0.35;
-const CONTENT_BOTTOM = 0.45;
-const CONTENT_H = SLIDE_H - CONTENT_TOP - CONTENT_BOTTOM;
-
-const TEMPLATES = {
-  report: {
-    bg: BG_COLOR,
-    accent: ACCENT_COLOR,
-    card: CARD_COLOR,
-    muted: MUTED_COLOR
-  },
-  lecture: {
-    bg: BG_COLOR,
-    accent: ACCENT_COLOR,
-    card: CARD_COLOR,
-    muted: MUTED_COLOR
-  },
-  education: {
-    bg: BG_COLOR,
-    accent: ACCENT_COLOR,
-    card: CARD_COLOR,
-    muted: MUTED_COLOR
-  },
-  defense: {
-    bg: 'FFFFFF',
-    accent: ACCENT_COLOR,
-    card: CARD_COLOR,
-    muted: MUTED_COLOR
-  },
-  simple: {
-    bg: 'FFFFFF',
-    accent: ACCENT_COLOR,
-    card: CARD_COLOR,
-    muted: MUTED_COLOR
-  }
+const THEME = {
+  heading: "111827",
+  body: "4B5563",
+  accent: "9333EA",
+  background: "FFFFFF",
+  soft: "F5F8FE",
+  line: "E5E7EB",
+  muted: "9CA3AF",
+  dark: "0F172A",
+  white: "FFFFFF",
 };
 
-const LAYOUTS = {
-  report: {
-    titleX: 0.7,
-    titleY: 0,
-    titleW: 8.6,
-    titleH: HEADER_H,
-    bodyX: 0.7,
-    bodyY: CONTENT_TOP,
-    bodyW: 8.6,
-    bodyH: CONTENT_H
-  },
-  lecture: {
-    titleX: 1.4,
-    titleY: 0,
-    titleW: 8.1,
-    titleH: HEADER_H,
-    bodyX: 1.4,
-    bodyY: CONTENT_TOP,
-    bodyW: 8.1,
-    bodyH: CONTENT_H
-  },
-  education: {
-    titleX: 0.7,
-    titleY: 0,
-    titleW: 8.6,
-    titleH: HEADER_H,
-    bodyX: 0.7,
-    bodyY: CONTENT_TOP,
-    bodyW: 8.6,
-    bodyH: CONTENT_H
-  },
-  defense: {
-    titleX: 0.7,
-    titleY: 0,
-    titleW: 8.6,
-    titleH: HEADER_H,
-    bodyX: 0.7,
-    bodyY: CONTENT_TOP,
-    bodyW: 8.6,
-    bodyH: CONTENT_H
-  },
-  simple: {
-    titleX: 0.7,
-    titleY: 0,
-    titleW: 8.6,
-    titleH: HEADER_H,
-    bodyX: 0.7,
-    bodyY: CONTENT_TOP,
-    bodyW: 8.6,
-    bodyH: CONTENT_H
-  }
+const FONTS = {
+  heading: "Trebuchet MS",
+  body: "Calibri",
 };
 
-function resolveTemplate(name) {
-  if (Object.prototype.hasOwnProperty.call(TEMPLATES, name)) {
-    return name;
-  }
-  return 'report';
+const makeShadow = () => ({
+  type: "outer",
+  color: "000000",
+  blur: 6,
+  offset: 2,
+  angle: 135,
+  opacity: 0.12,
+});
+
+function addTitle(slide, text, y = 0.6) {
+  slide.addText(text, {
+    x: 0.6,
+    y,
+    w: 8.8,
+    h: 0.6,
+    fontFace: FONTS.heading,
+    fontSize: 32,
+    color: THEME.heading,
+    bold: true,
+    margin: 0,
+  });
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x: 0.6,
+    y: y + 0.65,
+    w: 1.2,
+    h: 0.08,
+    fill: { color: THEME.accent },
+    line: { color: THEME.accent },
+  });
 }
 
-function addRect(slide, x, y, w, h, fillColor, lineColor) {
-  slide.addShape(RECT_SHAPE, {
+function addImageOrPlaceholder(slide, { path, x, y, w, h, label }) {
+  if (path) {
+    slide.addImage({ path, x, y, w, h });
+    return;
+  }
+  slide.addShape(pptx.shapes.RECTANGLE, {
     x,
     y,
     w,
     h,
-    fill: { color: fillColor },
-    line: { color: lineColor || fillColor }
+    fill: { color: THEME.soft },
+    line: { color: THEME.line, width: 1 },
+    shadow: makeShadow(),
+  });
+  slide.addText(label || "图片", {
+    x,
+    y: y + h / 2 - 0.2,
+    w,
+    h: 0.4,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.muted,
+    align: "center",
+    valign: "middle",
+    margin: 0,
   });
 }
 
-function isCjkChar(char) {
-  return /[\u2E80-\u2FFF\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(
-    char
-  );
-}
-
-function containsCjk(text) {
-  if (!text) {
-    return false;
-  }
-  return /[\u2E80-\u2FFF\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(
-    text
-  );
-}
-
-function resolveRunFont(char, fallbackFont) {
-  if (isCjkChar(char)) {
-    return FONT_CN;
-  }
-  if (/\s/.test(char)) {
-    return fallbackFont || FONT_EN;
-  }
-  return FONT_EN;
-}
-
-function buildTextRuns(text) {
-  if (!text) {
-    return [];
-  }
-  const runs = [];
-  let currentFont = null;
-  let buffer = '';
-  for (const char of text) {
-    const font = resolveRunFont(char, currentFont);
-    if (currentFont && font !== currentFont) {
-      runs.push({ text: buffer, options: { fontFace: currentFont } });
-      buffer = '';
-    }
-    currentFont = font;
-    buffer += char;
-  }
-  if (buffer) {
-    runs.push({ text: buffer, options: { fontFace: currentFont || FONT_EN } });
-  }
-  return runs;
-}
-
-function addBackground(slide, templateName, theme) {
-  addRect(slide, 0, 0, SLIDE_W, SLIDE_H, theme.bg);
-  addRect(slide, 0, 0, SLIDE_W, HEADER_H, theme.accent);
-  if (templateName === 'lecture') {
-    addRect(slide, 0, 0, 1.2, SLIDE_H, theme.accent);
-    return;
-  }
-  if (templateName === 'simple') {
-    addRect(slide, 0, 0, 0.15, SLIDE_H, theme.accent);
-    return;
-  }
-}
-
-function addTitle(slide, text, layout) {
-  const runs = buildTextRuns(text || '');
-  slide.addText(runs.length ? runs : text || '', {
-    x: layout.titleX,
-    y: layout.titleY,
-    w: layout.titleW,
-    h: layout.titleH,
-    fontSize: TITLE_FONT_SIZE,
+function addAgendaItem(slide, x, y, w, h, num, title, desc) {
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x,
+    y,
+    w,
+    h,
+    fill: { color: THEME.white },
+    line: { color: THEME.line, width: 1 },
+    shadow: makeShadow(),
+  });
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x: x + 0.2,
+    y: y + 0.2,
+    w: 0.5,
+    h: 0.5,
+    fill: { color: THEME.accent },
+    line: { color: THEME.accent },
+  });
+  slide.addText(String(num), {
+    x: x + 0.2,
+    y: y + 0.2,
+    w: 0.5,
+    h: 0.5,
+    fontFace: FONTS.heading,
+    fontSize: 14,
+    color: THEME.white,
     bold: true,
-    color: TITLE_COLOR,
-    valign: 'middle'
+    align: "center",
+    valign: "middle",
+    margin: 0,
+  });
+  slide.addText(title, {
+    x: x + 0.85,
+    y: y + 0.15,
+    w: w - 1.1,
+    h: 0.3,
+    fontFace: FONTS.heading,
+    fontSize: 14,
+    color: THEME.heading,
+    bold: true,
+    margin: 0,
+  });
+  slide.addText(desc, {
+    x: x + 0.85,
+    y: y + 0.5,
+    w: w - 1.1,
+    h: h - 0.7,
+    fontFace: FONTS.body,
+    fontSize: 11,
+    color: THEME.body,
+    margin: 0,
   });
 }
 
-function addBullets(slide, bullets, layout) {
-  if (!Array.isArray(bullets) || bullets.length === 0) {
-    return;
-  }
-  const lines = bullets.filter(Boolean).join('\n');
-  if (!lines) {
-    return;
-  }
-  const runs = buildTextRuns(lines);
-  slide.addText(runs.length ? runs : lines, {
-    x: layout.bodyX,
-    y: layout.bodyY,
-    w: layout.bodyW,
-    h: layout.bodyH,
-    fontSize: BODY_FONT_SIZE,
-    color: BODY_COLOR,
-    bullet: { type: 'bullet' },
-    lineSpacingMultiple: 1.2
+function addFeatureItem(slide, x, y, title, body, badge) {
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x,
+    y,
+    w: 0.45,
+    h: 0.45,
+    fill: { color: THEME.accent },
+    line: { color: THEME.accent },
+  });
+  slide.addText(badge, {
+    x,
+    y,
+    w: 0.45,
+    h: 0.45,
+    fontFace: FONTS.heading,
+    fontSize: 12,
+    color: THEME.white,
+    bold: true,
+    align: "center",
+    valign: "middle",
+    margin: 0,
+  });
+  slide.addText(title, {
+    x: x + 0.6,
+    y: y - 0.02,
+    w: 3.6,
+    h: 0.3,
+    fontFace: FONTS.heading,
+    fontSize: 15,
+    color: THEME.heading,
+    bold: true,
+    margin: 0,
+  });
+  slide.addText(body, {
+    x: x + 0.6,
+    y: y + 0.3,
+    w: 3.6,
+    h: 0.5,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.body,
+    margin: 0,
   });
 }
 
-function resolveChartType(pptx, type) {
-  if (pptx.ChartType && type && pptx.ChartType[type]) {
-    return pptx.ChartType[type];
-  }
-  return pptx.ChartType ? pptx.ChartType.bar : 'bar';
+function addMetricCard(slide, x, y, w, h, value, label) {
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x,
+    y,
+    w,
+    h,
+    fill: { color: THEME.soft },
+    line: { color: THEME.line, width: 1 },
+    shadow: makeShadow(),
+  });
+  slide.addText(value, {
+    x: x + 0.3,
+    y: y + 0.2,
+    w: w - 0.6,
+    h: 0.5,
+    fontFace: FONTS.heading,
+    fontSize: 26,
+    color: THEME.heading,
+    bold: true,
+    margin: 0,
+  });
+  slide.addText(label, {
+    x: x + 0.3,
+    y: y + 0.85,
+    w: w - 0.6,
+    h: 0.4,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.body,
+    margin: 0,
+  });
 }
 
-function addChart(slide, chart, pptx, layout, theme) {
-  if (!chart || !Array.isArray(chart.data) || chart.data.length === 0) {
-    return;
-  }
-  const chartHasCjk =
-    containsCjk(chart.caption) ||
-    chart.data.some((series) => {
-      if (containsCjk(series.name)) {
-        return true;
-      }
-      if (Array.isArray(series.labels)) {
-        return series.labels.some((label) =>
-          Array.isArray(label)
-            ? label.some((value) => containsCjk(value))
-            : containsCjk(label)
-        );
-      }
-      return false;
-    });
-  const chartFont = chartHasCjk ? FONT_CN : FONT_EN;
-  const showLegendDefault = chart.data.length > 1;
-  const baseOptions = {
-    x: layout.bodyX,
-    y: layout.bodyY,
-    w: layout.bodyW,
-    h: layout.bodyH,
-    chartColors: chart.colors || [theme.accent, '6FBF73', 'A7D8AB'],
-    showLegend: showLegendDefault,
-    legendPos: 'r',
-    catAxisLabelColor: BODY_COLOR,
-    valAxisLabelColor: BODY_COLOR,
-    catAxisLabelFontFace: chartFont,
-    valAxisLabelFontFace: chartFont,
-    legendFontFace: chartFont,
-    dataLabelColor: BODY_COLOR,
-    dataLabelFontFace: chartFont,
-    dataLabelFontSize: 11
-  };
-  const options = Object.assign(baseOptions, chart.options || {});
-  slide.addChart(resolveChartType(pptx, chart.type), chart.data, options);
-  if (chart.caption) {
-    const captionRuns = buildTextRuns(chart.caption);
-    slide.addText(captionRuns.length ? captionRuns : chart.caption, {
-      x: options.x,
-      y: options.y + options.h + 0.08,
-      w: options.w,
-      h: 0.3,
-      fontSize: 12,
-      color: BODY_COLOR
-    });
-  }
+// ====== 可改内容（优先修改 DATA） ======
+const DATA = {
+  title: "智能体（AI Agent）简介",
+  subtitle: "从感知到行动的自治系统",
+  tagline: "核心概念 · 能力构成 · 应用实践",
+  presenter: "你的名字",
+  date: "2026-02-04",
+  introImage: null,
+  agenda: [
+    { num: 1, title: "背景", desc: "问题与机会" },
+    { num: 2, title: "方案", desc: "核心能力与架构" },
+    { num: 3, title: "场景", desc: "落地与价值" },
+    { num: 4, title: "路线", desc: "里程碑与下一步" },
+  ],
+  featureImage: null,
+  features: [
+    { title: "可感知环境", body: "多模态输入解析，理解上下文", badge: "A" },
+    { title: "推理与规划", body: "目标拆解与路径选择", badge: "B" },
+    { title: "工具调用", body: "API/系统协作执行动作", badge: "C" },
+  ],
+  metrics: [
+    { value: "30%", label: "效率提升" },
+    { value: "2x", label: "吞吐提升" },
+    { value: "95%", label: "满意度目标" },
+  ],
+  quote: "技术只是手段，价值才是目的。",
+  quoteAuthor: "— 行业共识",
+  closing: "谢谢",
+};
+
+// Slide 1: Intro
+{
+  const slide = pptx.addSlide();
+  slide.background = { color: THEME.background };
+
+  addImageOrPlaceholder(slide, {
+    path: DATA.introImage,
+    x: 0.6,
+    y: 1.2,
+    w: 4.2,
+    h: 3.0,
+    label: "封面图",
+  });
+
+  slide.addText(DATA.title, {
+    x: 5.1,
+    y: 1.2,
+    w: 4.4,
+    h: 0.8,
+    fontFace: FONTS.heading,
+    fontSize: 34,
+    color: THEME.heading,
+    bold: true,
+    margin: 0,
+  });
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x: 5.1,
+    y: 2.05,
+    w: 1.2,
+    h: 0.08,
+    fill: { color: THEME.accent },
+    line: { color: THEME.accent },
+  });
+  slide.addText(DATA.subtitle, {
+    x: 5.1,
+    y: 2.3,
+    w: 4.4,
+    h: 0.4,
+    fontFace: FONTS.body,
+    fontSize: 16,
+    color: THEME.body,
+    margin: 0,
+  });
+  slide.addText(DATA.tagline, {
+    x: 5.1,
+    y: 2.8,
+    w: 4.4,
+    h: 0.4,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.muted,
+    margin: 0,
+  });
+
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x: 5.1,
+    y: 3.5,
+    w: 4.0,
+    h: 0.7,
+    fill: { color: THEME.soft },
+    line: { color: THEME.line, width: 1 },
+  });
+  slide.addText(`${DATA.presenter} · ${DATA.date}`, {
+    x: 5.3,
+    y: 3.7,
+    w: 3.6,
+    h: 0.3,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.heading,
+    margin: 0,
+  });
 }
 
-async function build() {
-  const pptx = new pptxgen();
-  pptx.layout = 'LAYOUT_16x9';
-  pptx.author = 'Wunder';
-  pptx.title = 'Generated PPTX';
+// Slide 2: Agenda
+{
+  const slide = pptx.addSlide();
+  slide.background = { color: THEME.background };
 
-  const templateKey = resolveTemplate(TEMPLATE_NAME);
-  const theme = TEMPLATES[templateKey];
-  const layout = LAYOUTS[templateKey];
+  addTitle(slide, "目录", 0.6);
 
-  SLIDES.forEach((item) => {
-    const slide = pptx.addSlide();
-    const hasBullets =
-      Array.isArray(item.bullets) && item.bullets.filter(Boolean).length > 0;
-    const hasChart = !!(
-      item.chart &&
-      Array.isArray(item.chart.data) &&
-      item.chart.data.length > 0
+  const cardW = 4.2;
+  const cardH = 1.2;
+  const gapX = 0.4;
+  const gapY = 0.4;
+  const startX = 0.6;
+  const startY = 1.6;
+
+  DATA.agenda.slice(0, 4).forEach((item, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    addAgendaItem(
+      slide,
+      startX + col * (cardW + gapX),
+      startY + row * (cardH + gapY),
+      cardW,
+      cardH,
+      item.num,
+      item.title,
+      item.desc
     );
-    addBackground(slide, templateKey, theme);
-    addTitle(slide, item.title || '', layout);
-    if (hasBullets && hasChart) {
-      const gap = 0.15;
-      const bulletHeight = Math.max(0.9, layout.bodyH * 0.4);
-      const bulletLayout = Object.assign({}, layout, { bodyH: bulletHeight });
-      const chartLayout = {
-        bodyX: layout.bodyX,
-        bodyY: layout.bodyY + bulletHeight + gap,
-        bodyW: layout.bodyW,
-        bodyH: layout.bodyH - bulletHeight - gap
-      };
-      addBullets(slide, item.bullets || [], bulletLayout);
-      addChart(slide, item.chart, pptx, chartLayout, theme);
-      return;
-    }
-    addBullets(slide, item.bullets || [], layout);
-    addChart(slide, item.chart, pptx, layout, theme);
   });
 
-  await pptx.writeFile({ fileName: OUTPUT_FILE });
+  slide.addText("建议按此结构组织全篇内容", {
+    x: 0.6,
+    y: 4.8,
+    w: 8.8,
+    h: 0.3,
+    fontFace: FONTS.body,
+    fontSize: 11,
+    color: THEME.muted,
+    margin: 0,
+  });
 }
 
-build().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Slide 3: Features
+{
+  const slide = pptx.addSlide();
+  slide.background = { color: THEME.background };
+
+  addTitle(slide, "关键特征", 0.6);
+
+  addImageOrPlaceholder(slide, {
+    path: DATA.featureImage,
+    x: 0.6,
+    y: 1.6,
+    w: 4.0,
+    h: 3.0,
+    label: "场景图",
+  });
+
+  const startX = 5.2;
+  const startY = 1.8;
+  const gap = 1.0;
+
+  DATA.features.slice(0, 3).forEach((f, i) => {
+    addFeatureItem(slide, startX, startY + i * gap, f.title, f.body, f.badge);
+  });
+}
+
+// Slide 4: Metrics
+{
+  const slide = pptx.addSlide();
+  slide.background = { color: THEME.background };
+
+  addTitle(slide, "关键指标", 0.6);
+
+  const cardW = 2.8;
+  const cardH = 1.5;
+  const gap = 0.4;
+  const startX = 0.6;
+  const y = 2.0;
+
+  DATA.metrics.slice(0, 3).forEach((m, i) => {
+    addMetricCard(slide, startX + i * (cardW + gap), y, cardW, cardH, m.value, m.label);
+  });
+
+  slide.addText("指标可替换为业务数据或阶段目标", {
+    x: 0.6,
+    y: 4.2,
+    w: 8.8,
+    h: 0.3,
+    fontFace: FONTS.body,
+    fontSize: 11,
+    color: THEME.muted,
+    margin: 0,
+  });
+}
+
+// Slide 5: Quote / Closing
+{
+  const slide = pptx.addSlide();
+  slide.background = { color: THEME.dark };
+
+  slide.addText(DATA.quote, {
+    x: 0.8,
+    y: 1.6,
+    w: 8.4,
+    h: 1.2,
+    fontFace: FONTS.heading,
+    fontSize: 30,
+    color: THEME.white,
+    bold: true,
+    margin: 0,
+  });
+  slide.addShape(pptx.shapes.RECTANGLE, {
+    x: 0.8,
+    y: 2.8,
+    w: 1.2,
+    h: 0.08,
+    fill: { color: THEME.accent },
+    line: { color: THEME.accent },
+  });
+  slide.addText(DATA.quoteAuthor, {
+    x: 0.8,
+    y: 3.1,
+    w: 4.0,
+    h: 0.3,
+    fontFace: FONTS.body,
+    fontSize: 12,
+    color: THEME.muted,
+    margin: 0,
+  });
+
+  slide.addText(DATA.closing, {
+    x: 0.8,
+    y: 4.6,
+    w: 3.0,
+    h: 0.4,
+    fontFace: FONTS.heading,
+    fontSize: 20,
+    color: THEME.white,
+    margin: 0,
+  });
+}
+
+pptx.writeFile({ fileName: OUTPUT_FILE });

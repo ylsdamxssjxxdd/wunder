@@ -146,6 +146,7 @@ stateDiagram-v2
 - `/wunder`: unified call entry (stream/non-stream).
 - `/wunder/chat/ws`: WebSocket streaming for chat sessions.
 - `/wunder/ws`: unified WebSocket streaming entry (payload matches `/wunder`, forces `stream=true`).
+- WebSocket streams are multiplexable via `request_id` on a single connection.
 - `/a2a`: A2A JSON-RPC standard API (supports SSE streaming).
 - `/.well-known/agent-card.json`: A2A AgentCard discovery entry.
 - `/wunder/tools`: tool catalog (built-in/MCP/knowledge/skills/custom/shared).

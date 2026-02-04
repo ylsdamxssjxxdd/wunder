@@ -171,6 +171,7 @@ export default {
   'chat.message.user': 'You',
   'chat.message.assistant': 'Agent',
   'chat.message.copy': 'Copy',
+  'chat.message.resume': 'Resume',
   'chat.message.copySuccess': 'Copied',
   'chat.message.copyFailed': 'Copy failed',
   'chat.message.copyEmpty': 'Nothing to copy',
@@ -405,6 +406,9 @@ export default {
   'chat.workflow.requestFailedDetail': 'Request failed. Please retry.',
   'chat.workflow.resumeFailed': 'Resume failed',
   'chat.workflow.resumeFailedDetail': 'Resume failed. Please retry.',
+  'chat.workflow.slowClient': 'Slow connection',
+  'chat.workflow.slowClientDetail':
+    'Connection is slow. Some incremental output may be dropped. Click “Resume” to fetch again. Queue remaining: {capacity}',
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.title': 'Workflow',
   'chat.workflow.toolCall': 'Tool call: {tool}',

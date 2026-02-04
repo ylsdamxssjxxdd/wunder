@@ -1850,9 +1850,11 @@
 - Endpoint（用户侧）：`/wunder/chat/ws`
 - Endpoint（统一入口）：`/wunder/ws`
 - 鉴权：
-  - 浏览器：Query 传 `access_token` 或同源 Cookie
+  - 浏览器：推荐 `Sec-WebSocket-Protocol` 传 token（`wunder`, `wunder-auth.<token>`），Query `access_token` 仅兼容
   - 非浏览器客户端：`Authorization: Bearer <token>`
 - 消息格式：JSON Envelope，服务端推送 `type=event`，payload 内含 `event/id/data`
+- 慢客户端告警：当客户端消费过慢导致队列压力时，服务端会发送 `event=slow_client`，前端可提示用户触发 `resume`
+- 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
 - `/wunder/ws` 的 `start` payload 与 `/wunder` POST 请求体一致（`user_id/question/...`），服务端会强制 `stream=true`
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
@@ -1981,7 +1983,6 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
-
 
 
 

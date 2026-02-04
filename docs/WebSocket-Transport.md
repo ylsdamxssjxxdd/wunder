@@ -1,4 +1,4 @@
-# WebSocket 可选传输方案（用户侧前端）
+﻿# WebSocket 可选传输方案（用户侧前端）
 
 > 目标：默认使用 WebSocket 作为传输方式，同时保留 SSE 兼容通道，复用现有事件流与断线回放能力。
 
@@ -36,13 +36,12 @@
 > 说明：`/wunder/chat/ws` 用于用户侧会话，`/wunder/ws` 主要面向统一 API 入口与服务端调用。
 
 ## 4. 认证与握手
-
 **推荐策略（浏览器端）**
 - WebSocket 无法在浏览器原生 API 中设置 `Authorization` Header。
-- 方案 A（推荐）：使用 Query 参数传入 `access_token`  
-  `wss://host/wunder/chat/ws?access_token=...`
-- 方案 B：使用 Cookie（如前端已有同源会话 Cookie）
-- 方案 C：使用 `Sec-WebSocket-Protocol` 传递 token（需服务端解析）
+- 方案 A（推荐）：使用 `Sec-WebSocket-Protocol` 传递 token（服务端解析，不落 URL）
+  - 例：`new WebSocket(url, ["wunder", "wunder-auth.<token>"])`
+- 方案 B：使用 Cookie（同源会话）
+- 方案 C（兼容）：Query 传 `access_token`（不推荐，可能被日志/代理记录）
 
 **非浏览器客户端**
 - 允许 `Authorization: Bearer <token>` Header
@@ -58,11 +57,13 @@
 ```json
 {
   "type": "start | resume | cancel | ping | event | error | ready | pong",
-  "request_id": "optional-uuid",
+  "request_id": "req_xxx",
   "session_id": "sess_xxx",
   "payload": {}
 }
 ```
+
+> 多路复用：同一连接可并发多个 start/resume，需为每个请求设置 `request_id`，服务端返回的 `event/error` 都会携带对应 `request_id`；未提供时服务端会自动生成并回传。
 
 ### 5.1 Client -> Server
 
@@ -121,6 +122,7 @@
   }
 }
 ```
+> 可选：携带 `request_id` 取消指定流；仅传 `session_id` 会取消该会话下的所有活跃流。
 
 **ping**
 ```json
@@ -150,6 +152,18 @@
 }
 ```
 
+**slow_client（慢客户端告警）**
+```json
+{
+  "type": "event",
+  "request_id": "req_xxx",
+  "payload": {
+    "event": "slow_client",
+    "data": { "reason": "queue_backpressure", "queue_capacity": 1, "ts": "..." }
+  }
+}
+```
+
 **error**
 ```json
 {
@@ -165,6 +179,7 @@
 ```
 
 > 说明：`event` 内部字段与 SSE 完全一致（`event` / `id` / `data`），确保前端事件处理逻辑可复用。
+> `slow_client` 表示客户端消费过慢导致队列压力，建议提示用户执行 `resume` 补齐。
 
 ## 6. 状态机与节点流程
 
@@ -217,9 +232,9 @@ sequenceDiagram
 
 ## 9. 并发与背压
 
-- 建议：**单连接单会话**，多会话需多连接（可后续扩展为多路复用）。
-- 事件同时落库 `stream_events`；连接异常或中断时，客户端可用 `resume` 回放补齐。
-- 复用现有 `STREAM_EVENT_QUEUE_SIZE` 与落库逻辑。
+- 默认支持**多路复用**：同一连接可并发多个会话/请求，通过 `request_id` 区分。
+- 事件仍落库 `stream_events`；连接异常或中断时，客户端可用 `resume` 回放补齐。
+- 复用现有 `STREAM_EVENT_QUEUE_SIZE` 与落库逻辑；单请求背压不影响其他请求。
 
 ## 10. 错误处理与兼容性
 
@@ -233,7 +248,6 @@ sequenceDiagram
 - `QUESTION_REQUIRED` / `CONTENT_REQUIRED`：问题或内容为空
 - `SESSION_REQUIRED` / `SESSION_NOT_FOUND`：缺少 session_id 或会话不存在
 - `AFTER_EVENT_ID_REQUIRED`：resume 缺少 after_event_id
-- `STREAM_BUSY`：连接已在执行流式请求
 - `PERMISSION_DENIED` / `UNAUTHORIZED`：会话不属于当前用户或鉴权失败
 - `UNSUPPORTED_TYPE`：未知消息类型
 - `INVALID_REQUEST`：请求体校验未通过（后端返回 BAD_REQUEST）
@@ -275,5 +289,5 @@ server:
 
 ## 12. 兼容性提示
 
-- 浏览器原生 WebSocket 不允许自定义 Header，需 `access_token` Query 或 Cookie。
-- 若后续启用多路复用，需引入 `request_id` 强关联，前端要能区分并行请求。
+- 浏览器原生 WebSocket 不允许自定义 Header，建议使用 `Sec-WebSocket-Protocol` 携带 token；Query 仅作为兼容方案。
+- 多路复用依赖 `request_id` 区分并行请求；前端需按 `request_id` 路由事件。
