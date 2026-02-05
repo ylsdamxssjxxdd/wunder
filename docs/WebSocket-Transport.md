@@ -56,7 +56,7 @@
 
 ```json
 {
-  "type": "start | resume | cancel | ping | event | error | ready | pong",
+  "type": "start | resume | watch | cancel | ping | event | error | ready | pong",
   "request_id": "req_xxx",
   "session_id": "sess_xxx",
   "payload": {}
@@ -112,6 +112,19 @@
   }
 }
 ```
+
+**watch**
+```json
+{
+  "type": "watch",
+  "request_id": "req_xxx",
+  "payload": {
+    "session_id": "sess_xxx",
+    "after_event_id": 123
+  }
+}
+```
+> 说明：用于持续订阅会话流事件，直到客户端主动 `cancel` 或断开连接。
 
 **cancel**
 ```json

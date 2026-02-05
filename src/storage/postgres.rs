@@ -4207,6 +4207,21 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
+    fn delete_cron_jobs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM cron_jobs WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn reset_cron_jobs_running(&self) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

@@ -45,6 +45,14 @@ struct WsResumePayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct WsWatchPayload {
+    #[serde(default)]
+    after_event_id: Option<i64>,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WsCancelPayload {
     #[serde(default)]
     session_id: Option<String>,
@@ -283,6 +291,58 @@ async fn handle_ws(
                                 Some(&request_id_cleanup),
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
+                                false,
+                            )
+                            .await;
+                            cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)
+                                .await;
+                        });
+                    }
+                    "watch" => {
+                        let request_id = resolve_request_id(envelope.request_id.as_deref());
+                        let payload = match parse_payload::<WsWatchPayload>(envelope.payload) {
+                            Ok(payload) => payload,
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    err.code(),
+                                    err.message(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let session_id =
+                            resolve_session_id(envelope.session_id, payload.session_id);
+                        let Some(session_id) = session_id.filter(|value| !value.trim().is_empty())
+                        else {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                "SESSION_REQUIRED",
+                                i18n::t("error.param_required"),
+                            )
+                            .await;
+                            continue;
+                        };
+                        let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
+                        let ws_tx_snapshot = ws_tx.clone();
+                        let state_snapshot = state.clone();
+                        let (cancel, task_id) =
+                            register_ws_task(&tasks, &request_id, Some(session_id.clone())).await;
+                        let tasks_cleanup = tasks.clone();
+                        let request_id_cleanup = request_id.clone();
+                        let task_id_cleanup = task_id.clone();
+                        tokio::spawn(async move {
+                            resume_stream_events(
+                                state_snapshot,
+                                session_id,
+                                after_event_id,
+                                Some(&request_id_cleanup),
+                                ws_tx_snapshot,
+                                Some(cancel.clone()),
+                                true,
                             )
                             .await;
                             cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)

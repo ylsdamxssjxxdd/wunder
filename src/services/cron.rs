@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
+use tokio_stream::StreamExt;
 use tracing::error;
 use uuid::Uuid;
 
@@ -974,7 +975,7 @@ impl CronRuntime {
             .await?;
         let retry_ms = self.config.cron.idle_retry_ms.max(200);
         loop {
-            match self.orchestrator.run(request.clone()).await {
+            match self.run_stream_request(request.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(err) => {
                     if is_user_busy(&err) {
@@ -985,6 +986,78 @@ impl CronRuntime {
                 }
             }
         }
+    }
+
+    async fn run_stream_request(
+        &self,
+        request: WunderRequest,
+    ) -> Result<crate::schemas::WunderResponse> {
+        let session_id = request
+            .session_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+        let stream = self.orchestrator.stream(request).await?;
+        tokio::pin!(stream);
+        let mut answer: Option<String> = None;
+        let mut usage: Option<crate::schemas::TokenUsage> = None;
+        let mut stop_reason: Option<String> = None;
+        let mut error_msg: Option<String> = None;
+        while let Some(item) = stream.next().await {
+            let event = match item {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            match event.event.as_str() {
+                "final" => {
+                    if let Some(payload) = event.data.get("data") {
+                        answer = payload
+                            .get("answer")
+                            .and_then(Value::as_str)
+                            .map(|text| text.to_string());
+                        usage = payload
+                            .get("usage")
+                            .cloned()
+                            .and_then(|value| serde_json::from_value(value).ok());
+                        stop_reason = payload
+                            .get("stop_reason")
+                            .and_then(Value::as_str)
+                            .map(|text| text.to_string());
+                    }
+                }
+                "error" => {
+                    if let Some(payload) = event.data.get("data") {
+                        if let Some(message) = payload
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                        {
+                            error_msg = Some(message.to_string());
+                        } else if let Some(message) = payload
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.trim().is_empty())
+                        {
+                            error_msg = Some(message.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(message) = error_msg {
+            return Err(anyhow!(message));
+        }
+        let Some(answer) = answer else {
+            return Err(anyhow!("stream finished without final response"));
+        };
+        Ok(crate::schemas::WunderResponse {
+            session_id,
+            answer,
+            usage,
+            stop_reason,
+            uid: None,
+            a2ui: None,
+        })
     }
 
     async fn build_request(
@@ -1064,7 +1137,7 @@ impl CronRuntime {
             question: message.to_string(),
             tool_names,
             skip_tool_calls: false,
-            stream: false,
+            stream: true,
             debug_payload: false,
             session_id: Some(cleaned_session.to_string()),
             agent_id: record.agent_id.clone(),
@@ -1096,7 +1169,7 @@ impl CronRuntime {
 
     async fn finish_job(
         &self,
-        mut job: CronJobRecord,
+        job: CronJobRecord,
         trigger: &str,
         status: &str,
         summary: &Option<String>,
@@ -1106,62 +1179,99 @@ impl CronRuntime {
     ) {
         let duration_ms = started.elapsed().as_millis() as i64;
         let now = now_ts();
-        let mut next_run_at = None;
-        if job.enabled {
-            next_run_at = compute_next_run_at(
-                &job.schedule_kind,
-                job.schedule_at.as_deref(),
-                job.schedule_every_ms,
-                job.schedule_cron.as_deref(),
-                job.schedule_tz.as_deref(),
-                job.created_at,
-                now,
-            );
-        }
-        if job.schedule_kind.eq_ignore_ascii_case("at") {
-            next_run_at = None;
-        }
-        job.running_at = None;
-        job.last_run_at = Some(start_ts);
-        job.last_status = Some(status.to_string());
-        job.last_error = error_msg.clone();
-        job.updated_at = now;
-        job.next_run_at = next_run_at;
-        if job.schedule_kind.eq_ignore_ascii_case("at") && status == "ok" {
-            job.enabled = false;
-        }
-
-        let run_record = CronRunRecord {
-            run_id: Uuid::new_v4().simple().to_string(),
-            job_id: job.job_id.clone(),
-            user_id: job.user_id.clone(),
-            session_id: Some(job.session_id.clone()),
-            agent_id: job.agent_id.clone(),
-            trigger: trigger.to_string(),
-            status: status.to_string(),
-            summary: summary.clone(),
-            error: error_msg.clone(),
-            duration_ms,
-            created_at: now,
-        };
-
         let storage = self.storage.clone();
         let job_clone = job.clone();
-        let should_delete = job.delete_after_run && status == "ok";
-        if let Err(err) = tokio::task::spawn_blocking(move || {
-            storage.insert_cron_run(&run_record)?;
-            if should_delete {
-                let _ = storage.delete_cron_job(&job_clone.user_id, &job_clone.job_id);
-            } else {
-                storage.upsert_cron_job(&job_clone)?;
-            }
-            Result::<()>::Ok(())
+        let trigger = trigger.to_string();
+        let status = status.to_string();
+        let summary = summary.clone();
+        let error_msg = error_msg.clone();
+        match tokio::task::spawn_blocking(move || {
+            persist_cron_run_and_update_job(
+                storage.as_ref(),
+                job_clone,
+                trigger,
+                status,
+                summary,
+                error_msg,
+                start_ts,
+                duration_ms,
+                now,
+            )
         })
         .await
         {
-            error!("failed to write cron run: {}", err);
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                error!("failed to write cron run: {}", err);
+            }
+            Err(err) => {
+                error!("failed to write cron run: {}", err);
+            }
         }
     }
+}
+
+#[doc(hidden)]
+pub fn persist_cron_run_and_update_job(
+    storage: &dyn StorageBackend,
+    job: CronJobRecord,
+    trigger: String,
+    status: String,
+    summary: Option<String>,
+    error_msg: Option<String>,
+    start_ts: f64,
+    duration_ms: i64,
+    now: f64,
+) -> Result<()> {
+    let run_record = CronRunRecord {
+        run_id: Uuid::new_v4().simple().to_string(),
+        job_id: job.job_id.clone(),
+        user_id: job.user_id.clone(),
+        session_id: Some(job.session_id.clone()),
+        agent_id: job.agent_id.clone(),
+        trigger,
+        status: status.clone(),
+        summary,
+        error: error_msg.clone(),
+        duration_ms,
+        created_at: now,
+    };
+    storage.insert_cron_run(&run_record)?;
+    if job.delete_after_run && status == "ok" {
+        let _ = storage.delete_cron_job(&job.user_id, &job.job_id);
+        return Ok(());
+    }
+    let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
+        return Ok(());
+    };
+    record.running_at = None;
+    record.last_run_at = Some(start_ts);
+    record.last_status = Some(status);
+    record.last_error = error_msg;
+    record.updated_at = now;
+    let mut next_run_at = None;
+    if record.enabled {
+        next_run_at = compute_next_run_at(
+            &record.schedule_kind,
+            record.schedule_at.as_deref(),
+            record.schedule_every_ms,
+            record.schedule_cron.as_deref(),
+            record.schedule_tz.as_deref(),
+            record.created_at,
+            now,
+        );
+    }
+    if record.schedule_kind.eq_ignore_ascii_case("at") {
+        next_run_at = None;
+    }
+    record.next_run_at = next_run_at;
+    if record.schedule_kind.eq_ignore_ascii_case("at")
+        && record.last_status.as_deref() == Some("ok")
+    {
+        record.enabled = false;
+    }
+    storage.upsert_cron_job(&record)?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Clone)]

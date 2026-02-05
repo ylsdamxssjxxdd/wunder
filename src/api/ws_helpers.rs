@@ -251,6 +251,7 @@ pub(crate) async fn resume_stream_events(
     request_id: Option<&str>,
     tx: WsSender,
     cancel: Option<CancellationToken>,
+    keep_alive: bool,
 ) {
     let workspace = state.workspace.clone();
     let monitor = state.monitor.clone();
@@ -266,6 +267,39 @@ pub(crate) async fn resume_stream_events(
         {
             return;
         }
+        let running = monitor
+            .get_record(&session_id)
+            .map(|record| {
+                record
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(|status| {
+                        status == MonitorState::STATUS_RUNNING
+                            || status == MonitorState::STATUS_CANCELLING
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if keep_alive && !running && last_event_id <= 0 {
+            idle_rounds = idle_rounds.saturating_add(1);
+            if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
+                let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
+                poll_interval = std::time::Duration::from_secs_f64(
+                    next.min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
+                );
+            }
+            if let Some(token) = cancel.as_ref() {
+                tokio::select! {
+                    _ = token.cancelled() => return,
+                    _ = tokio::time::sleep(poll_interval) => {}
+                }
+            } else {
+                tokio::time::sleep(poll_interval).await;
+            }
+            continue;
+        }
+
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
         let records = tokio::task::spawn_blocking(move || {
@@ -296,20 +330,7 @@ pub(crate) async fn resume_stream_events(
             progressed = true;
         }
         if !progressed {
-            let running = monitor
-                .get_record(&session_id)
-                .map(|record| {
-                    record
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .map(|status| {
-                            status == MonitorState::STATUS_RUNNING
-                                || status == MonitorState::STATUS_CANCELLING
-                        })
-                        .unwrap_or(false)
-                })
-                .unwrap_or(false);
-            if !running {
+            if !running && !keep_alive {
                 break;
             }
             idle_rounds = idle_rounds.saturating_add(1);

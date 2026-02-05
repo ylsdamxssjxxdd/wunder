@@ -328,10 +328,35 @@ async fn get_session_events(
         .get_record(&session_id)
         .map(|record| collect_session_event_rounds(&record))
         .unwrap_or_default();
+    let running = state
+        .monitor
+        .get_record(&session_id)
+        .map(|record| {
+            record
+                .get("status")
+                .and_then(Value::as_str)
+                .map(|status| {
+                    status == MonitorState::STATUS_RUNNING
+                        || status == MonitorState::STATUS_CANCELLING
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    let last_event_id = {
+        let storage = state.storage.clone();
+        let session_id = session_id.clone();
+        tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(0)
+    };
     Ok(Json(json!({
         "data": {
             "id": session_id,
-            "rounds": rounds
+            "rounds": rounds,
+            "running": running,
+            "last_event_id": last_event_id
         }
     })))
 }
@@ -357,6 +382,9 @@ async fn delete_session(
     state
         .workspace
         .purge_session_data(&resolved.user.user_id, &session_id);
+    let _ = state
+        .storage
+        .delete_cron_jobs_by_session(&resolved.user.user_id, &session_id);
     let _ = state
         .memory
         .delete_record(&resolved.user.user_id, &session_id);

@@ -357,6 +357,7 @@ async fn handle_ws(
                                 Some(&request_id_cleanup),
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
+                                false,
                             )
                             .await;
                             cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)

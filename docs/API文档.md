@@ -1656,8 +1656,9 @@
   - Query：`limit`（消息条数，可选）
   - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
-  - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）
+  - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）、`data.running`、`data.last_event_id`
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
+  - 会同时删除该会话关联的定时任务
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
   - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）
@@ -1868,6 +1869,7 @@
 - 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
 - `/wunder/ws` 的 `start` payload 与 `/wunder` POST 请求体一致（`user_id/question/...`），服务端会强制 `stream=true`
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
+- 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
 - 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
 
 ### 4.3 非流式响应
@@ -1994,4 +1996,3 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
-

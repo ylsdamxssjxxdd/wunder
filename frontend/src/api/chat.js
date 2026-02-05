@@ -86,7 +86,7 @@ export const sendMessageStream = (id, payload, options = {}) => {
 export const resumeMessageStream = (id, options = {}) => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   const params = new URLSearchParams();
-  if (Number.isFinite(options.afterEventId) && options.afterEventId > 0) {
+  if (Number.isFinite(options.afterEventId) && options.afterEventId >= 0) {
     params.set('after_event_id', String(options.afterEventId));
   }
   const suffix = params.toString();

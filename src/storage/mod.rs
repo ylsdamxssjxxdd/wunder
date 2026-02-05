@@ -634,6 +634,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Option<CronJobRecord>>;
     fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>>;
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64>;
+    fn delete_cron_jobs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn reset_cron_jobs_running(&self) -> Result<()>;
     fn count_running_cron_jobs(&self) -> Result<i64>;
     fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>>;

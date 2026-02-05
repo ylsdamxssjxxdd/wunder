@@ -1319,6 +1319,8 @@ const ensureRuntime = (sessionId) => {
       resumeController: null,
       sendRequestId: null,
       resumeRequestId: null,
+      watchController: null,
+      watchRequestId: null,
       stopRequested: false
     });
   }
@@ -1394,6 +1396,259 @@ const setSessionLoading = (store, sessionId, value) => {
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
+};
+
+let sessionWatchSessionId = '';
+
+const abortWatchStream = (sessionId) => {
+  const runtime = getRuntime(sessionId);
+  if (!runtime) return;
+  if (runtime.watchController) {
+    runtime.watchController.abort();
+    runtime.watchController = null;
+  }
+  runtime.watchRequestId = null;
+};
+
+const clearSessionWatcher = () => {
+  if (sessionWatchSessionId) {
+    abortWatchStream(sessionWatchSessionId);
+  }
+  sessionWatchSessionId = '';
+};
+
+const resolveMaxStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  let maxId = 0;
+  messages.forEach((message) => {
+    if (message?.role !== 'assistant') return;
+    const eventId = normalizeStreamEventId(message.stream_event_id);
+    if (eventId && eventId > maxId) {
+      maxId = eventId;
+    }
+  });
+  return maxId > 0 ? maxId : null;
+};
+
+const findPendingAssistantMessage = (messages) =>
+  Array.isArray(messages)
+    ? [...messages]
+        .reverse()
+        .find((message) => message?.role === 'assistant' && normalizeFlag(message.stream_incomplete))
+    : null;
+
+const ensurePendingAssistantMessage = (store, sessionId, messages, baseEventId) => {
+  if (!Array.isArray(messages)) return null;
+  const existing = findPendingAssistantMessage(messages);
+  if (existing) return existing;
+  const placeholder = {
+    ...buildMessage('assistant', ''),
+    workflowItems: [],
+    workflowStreaming: false,
+    stream_incomplete: true,
+    stream_event_id: baseEventId || 0,
+    stream_round: null
+  };
+  messages.push(placeholder);
+  notifySessionSnapshot(store, sessionId, messages, true);
+  return placeholder;
+};
+
+const resolveLastAssistantTimestampMs = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const timestamp = resolveTimestampMs(message.created_at);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return null;
+};
+
+const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
+
+const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
+  if (!Array.isArray(messages) || !content) return false;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'user') continue;
+    const lastContent = String(message.content || '');
+    if (lastContent !== content) {
+      return true;
+    }
+    const lastTimestamp = resolveTimestampMs(message.created_at);
+    if (!Number.isFinite(eventTimestampMs) || !Number.isFinite(lastTimestamp)) {
+      return false;
+    }
+    return Math.abs(eventTimestampMs - lastTimestamp) > WATCH_USER_MESSAGE_DEDUP_MS;
+  }
+  return true;
+};
+
+const insertWatchUserMessage = (store, sessionId, messages, content, eventTimestampMs, anchor) => {
+  if (!shouldInsertWatchUserMessage(messages, content, eventTimestampMs)) {
+    return;
+  }
+  const createdAt = Number.isFinite(eventTimestampMs)
+    ? new Date(eventTimestampMs).toISOString()
+    : undefined;
+  const userMessage = buildMessage('user', content, createdAt);
+  const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
+  if (anchorIndex >= 0) {
+    messages.splice(anchorIndex, 0, userMessage);
+  } else {
+    messages.push(userMessage);
+  }
+  touchSessionUpdatedAt(store, sessionId, eventTimestampMs ?? Date.now());
+  notifySessionSnapshot(store, sessionId, messages, true);
+};
+
+const startSessionWatcher = (store, sessionId) => {
+  clearSessionWatcher();
+  const key = resolveSessionKey(sessionId);
+  if (!key) return;
+  sessionWatchSessionId = key;
+  const runtime = ensureRuntime(key);
+  if (!runtime || runtime.sendController || runtime.resumeController) return;
+  runtime.watchController = new AbortController();
+  const controller = runtime.watchController;
+  const requestId = buildWsRequestId();
+  runtime.watchRequestId = requestId;
+  const sessionMessagesRef = getSessionMessages(key) || store.messages;
+  cacheSessionMessages(key, sessionMessagesRef);
+  const workflowState = getSessionWorkflowState(key);
+  const roundStates = new Map();
+  const completedRounds = new Set();
+  let lastEventId = resolveMaxStreamEventId(sessionMessagesRef) || 0;
+  const minEventTimestampMs =
+    lastEventId > 0 ? null : resolveLastAssistantTimestampMs(sessionMessagesRef);
+
+  const ensureRoundState = (roundNumber, eventTimestampMs) => {
+    if (!Number.isFinite(roundNumber) || roundNumber <= 0) return null;
+    if (completedRounds.has(roundNumber)) return null;
+    const existing = roundStates.get(roundNumber);
+    if (existing) return existing;
+    const createdAt = Number.isFinite(eventTimestampMs)
+      ? new Date(eventTimestampMs).toISOString()
+      : undefined;
+    const assistantMessage = {
+      ...buildMessage('assistant', '', createdAt),
+      workflowItems: [],
+      workflowStreaming: true,
+      stream_incomplete: true,
+      stream_event_id: lastEventId || 0,
+      stream_round: null
+    };
+    sessionMessagesRef.push(assistantMessage);
+    notifySessionSnapshot(store, key, sessionMessagesRef, true);
+    const processor = createWorkflowProcessor(
+      assistantMessage,
+      workflowState,
+      () => notifySessionSnapshot(store, key, sessionMessagesRef)
+    );
+    const state = { message: assistantMessage, processor, userInserted: false };
+    roundStates.set(roundNumber, state);
+    return state;
+  };
+
+  const finalizeRound = (roundNumber, aborted) => {
+    const state = roundStates.get(roundNumber);
+    if (!state) return;
+    state.processor.finalize();
+    if (!aborted) {
+      state.message.stream_incomplete = false;
+      state.message.workflowStreaming = false;
+    }
+    notifySessionSnapshot(store, key, sessionMessagesRef, true);
+    roundStates.delete(roundNumber);
+    completedRounds.add(roundNumber);
+  };
+
+  const finalizeAll = (aborted) => {
+    Array.from(roundStates.keys()).forEach((round) => finalizeRound(round, aborted));
+  };
+
+  const onEvent = (eventType, dataText, eventId) => {
+    const payload = safeJsonParse(dataText);
+    const data = payload?.data ?? payload;
+    if (eventType === 'slow_client' && !data) {
+      return;
+    }
+    const normalizedEventId = normalizeStreamEventId(eventId);
+    if (normalizedEventId !== null) {
+      if (normalizedEventId <= lastEventId) {
+        return;
+      }
+      lastEventId = normalizedEventId;
+    }
+    const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
+    if (
+      Number.isFinite(minEventTimestampMs) &&
+      Number.isFinite(eventTimestampMs) &&
+      eventTimestampMs <= minEventTimestampMs
+    ) {
+      return;
+    }
+    const roundNumber = normalizeStreamRound(
+      data?.user_round ??
+        payload?.user_round ??
+        data?.round ??
+        payload?.round
+    );
+    const stage = data?.stage ?? payload?.stage;
+    const isRoundStart = eventType === 'round_start' || (eventType === 'progress' && stage === 'start');
+    const state = ensureRoundState(roundNumber, eventTimestampMs);
+    if (isRoundStart && state) {
+      const question =
+        data?.question ??
+        payload?.question ??
+        data?.message ??
+        payload?.message ??
+        '';
+      if (!state.userInserted && typeof question === 'string' && question.trim()) {
+        insertWatchUserMessage(
+          store,
+          key,
+          sessionMessagesRef,
+          question.trim(),
+          eventTimestampMs,
+          state.message
+        );
+        state.userInserted = true;
+      }
+    }
+    if (!state) return;
+    state.message.workflowStreaming = true;
+    state.message.stream_incomplete = true;
+    assignStreamEventId(state.message, eventId);
+    state.processor.handleEvent(eventType, dataText);
+    if (eventType === 'final' || eventType === 'error') {
+      finalizeRound(roundNumber, false);
+    }
+  };
+
+  const baseEventId = lastEventId || 0;
+  chatWsClient
+    .request({
+      requestId,
+      sessionId: key,
+      message: {
+        type: 'watch',
+        request_id: requestId,
+        session_id: key,
+        payload: { after_event_id: baseEventId }
+      },
+      onEvent,
+      signal: controller.signal,
+      closeOnFinal: false
+    })
+    .catch((error) => {
+      if (error?.name === 'AbortError' || error?.phase === 'aborted') {
+        finalizeAll(true);
+        return;
+      }
+      finalizeAll(false);
+    });
 };
 
 const DEFAULT_STREAM_TRANSPORT = 'ws';
@@ -2243,6 +2498,7 @@ export const useChatStore = defineStore('chat', {
   actions: {
     markPageUnloading() {
       pageUnloading = true;
+      clearSessionWatcher();
     },
     setStreamTransport(transport) {
       const next = transport === 'sse' ? 'sse' : 'ws';
@@ -2321,6 +2577,7 @@ export const useChatStore = defineStore('chat', {
       cacheSessionMessages(currentSessionId, this.messages);
       abortResumeStream(currentSessionId);
       abortSendStream(currentSessionId);
+      clearSessionWatcher();
       const runtime = ensureRuntime(currentSessionId);
       if (runtime) {
         runtime.stopRequested = false;
@@ -2341,6 +2598,7 @@ export const useChatStore = defineStore('chat', {
     },
     async createSession(payload = {}) {
       abortResumeStream(this.activeSessionId);
+      clearSessionWatcher();
       const { data } = await createSession(payload);
       const session = data.data;
       this.sessions.unshift(session);
@@ -2359,6 +2617,7 @@ export const useChatStore = defineStore('chat', {
         sessionId: this.activeSessionId,
         messages: this.messages
       });
+      startSessionWatcher(this, session.id);
       return session;
     },
     async loadSessionDetail(sessionId) {
@@ -2367,6 +2626,7 @@ export const useChatStore = defineStore('chat', {
         cacheSessionMessages(previousSessionId, this.messages);
       }
       abortResumeStream(previousSessionId);
+      clearSessionWatcher();
       this.activeSessionId = sessionId;
       const cachedSessionMessages = getSessionMessages(sessionId);
       const snapshot = this.getSnapshotForSession(sessionId);
@@ -2432,11 +2692,15 @@ export const useChatStore = defineStore('chat', {
         this.resumeStream(sessionId, pendingMessage);
       }
       this.scheduleSnapshot(true);
+      startSessionWatcher(this, sessionId);
       return data.data;
     },
     async deleteSession(sessionId) {
       const targetId = sessionId || this.activeSessionId;
       if (!targetId) return;
+      if (resolveSessionKey(targetId) === resolveSessionKey(this.activeSessionId)) {
+        clearSessionWatcher();
+      }
       const targetSession = this.sessions.find((item) => item.id === targetId) || null;
       const targetAgentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
       abortResumeStream(targetId);
@@ -2489,6 +2753,7 @@ export const useChatStore = defineStore('chat', {
       const initialSessionId = this.activeSessionId;
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
+      abortWatchStream(initialSessionId);
       const initialRuntime = ensureRuntime(initialSessionId);
       if (initialRuntime) {
         initialRuntime.stopRequested = false;
@@ -2649,6 +2914,9 @@ export const useChatStore = defineStore('chat', {
         });
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         emitWorkspaceRefresh({ sessionId, reason: 'message-finished' });
+        if (this.activeSessionId === sessionId && !pageUnloading) {
+          startSessionWatcher(this, sessionId);
+        }
       }
     },
     async stopStream() {
@@ -2667,10 +2935,14 @@ export const useChatStore = defineStore('chat', {
         // 终止失败时仅记录状态，不影响前端中止动作
       }
       setSessionLoading(this, sessionId, false);
+      if (!pageUnloading) {
+        startSessionWatcher(this, sessionId);
+      }
     },
     async resumeStream(sessionId, message, options = {}) {
       const force = options.force === true;
       if (!message || (!message.stream_incomplete && !force)) return;
+      abortWatchStream(sessionId);
       setSessionLoading(this, sessionId, true);
       message.workflowStreaming = true;
       message.stream_incomplete = true;
@@ -2689,7 +2961,10 @@ export const useChatStore = defineStore('chat', {
         runtime.resumeController = new AbortController();
       }
       let aborted = false;
-      const afterEventId = normalizeStreamEventId(message.stream_event_id);
+      const forcedEventId = options.afterEventId;
+      const afterEventId = Number.isFinite(forcedEventId)
+        ? Number.parseInt(forcedEventId, 10)
+        : normalizeStreamEventId(message.stream_event_id);
       try {
         const onEvent = (eventType, dataText, eventId) => {
           assignStreamEventId(message, eventId);
@@ -2729,7 +3004,8 @@ export const useChatStore = defineStore('chat', {
             closeOnFinal: true
           });
         };
-        const transport = afterEventId ? resolveStreamTransport() : 'sse';
+        const hasAfterEventId = Number.isFinite(afterEventId);
+        const transport = hasAfterEventId ? resolveStreamTransport() : 'sse';
         this.streamTransport = transport;
         if (transport === 'ws') {
           try {
@@ -2777,6 +3053,9 @@ export const useChatStore = defineStore('chat', {
         }
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });
+        if (!aborted && this.activeSessionId === sessionId && !pageUnloading) {
+          startSessionWatcher(this, sessionId);
+        }
       }
     }
   }

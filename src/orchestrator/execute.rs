@@ -101,7 +101,8 @@ impl Orchestrator {
             let request_round = RoundInfo::user_only(user_round);
             let mut start_payload = json!({
                 "stage": "start",
-                "summary": i18n::t("monitor.summary.received")
+                "summary": i18n::t("monitor.summary.received"),
+                "question": question
             });
             if let Value::Object(ref mut map) = start_payload {
                 request_round.insert_into(map);
