@@ -956,7 +956,13 @@ async fn read_message(reader: &mut BufReader<tokio::process::ChildStdout>) -> Op
     let mut content_length = None;
     loop {
         let mut line = String::new();
-        let bytes = reader.read_line(&mut line).await.ok()?;
+        let bytes = match reader.read_line(&mut line).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("LSP read header failed: {err}");
+                return None;
+            }
+        };
         if bytes == 0 {
             return None;
         }
@@ -971,13 +977,29 @@ async fn read_message(reader: &mut BufReader<tokio::process::ChildStdout>) -> Op
             }
         }
     }
-    let length = content_length?;
+    let length = match content_length {
+        Some(value) => value,
+        None => {
+            warn!("LSP message missing content-length");
+            return None;
+        }
+    };
     let mut buffer = vec![0u8; length];
-    if reader.read_exact(&mut buffer).await.is_err() {
+    if let Err(err) = reader.read_exact(&mut buffer).await {
+        warn!("LSP read body failed: {err}");
         return None;
     }
     let text = String::from_utf8_lossy(&buffer);
-    serde_json::from_str::<Value>(&text).ok()
+    match serde_json::from_str::<Value>(&text) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            warn!(
+                "LSP message json parse failed: {err}, body={}",
+                truncate_text(&text, 512)
+            );
+            None
+        }
+    }
 }
 
 fn now_ts() -> f64 {
@@ -992,4 +1014,17 @@ fn now_ts_u64() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+fn truncate_text(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut output = text[..end].to_string();
+    output.push_str("...");
+    output
 }

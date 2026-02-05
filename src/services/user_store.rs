@@ -523,6 +523,10 @@ impl UserStore {
             .list_chat_sessions(user_id, agent_id, parent_session_id, offset, limit)
     }
 
+    pub fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>> {
+        self.storage.list_chat_session_agent_ids(user_id)
+    }
+
     pub fn update_chat_session_title(
         &self,
         user_id: &str,

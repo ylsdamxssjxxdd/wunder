@@ -596,6 +596,7 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>>;
     fn update_chat_session_title(
         &self,
         user_id: &str,

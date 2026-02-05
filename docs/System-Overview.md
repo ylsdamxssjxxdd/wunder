@@ -95,15 +95,20 @@ wunder abstracts all capabilities as "tools" and uses prompt injection + tool pr
 
 ### 5.2 Session management
 #### 5.2.1 Concurrency rules
-- One running session per user_id; conflicts return 429.
-- Per-user mutual exclusion via `session_locks` with TTL heartbeats (stored in the selected storage backend).
+- Session-level mutual exclusion via `session_locks` with TTL heartbeats (stored in the selected storage backend).
+- When `agent_queue.enabled=true`, busy requests are queued and emit `queued`; otherwise an explicit busy `session_id` returns 429 (`USER_BUSY`).
+- If `session_id` is omitted and the main session is busy, the server auto-forks a new session and continues.
+- `question_panel` puts the session into `waiting`, but the user’s follow-up selection continues immediately and is not treated as busy/queued.
 - Session status is recorded by Monitor and visible in admin APIs.
 
 #### 5.2.2 Session state machine
 ```mermaid
 stateDiagram-v2
   [*] --> running: register session
+  running --> waiting: question panel awaiting choice
+  waiting --> running: user selection
   running --> cancelling: cancel requested
+  waiting --> cancelling: cancel requested
   cancelling --> cancelled: interrupted
   running --> finished: final output
   running --> error: exception/timeout

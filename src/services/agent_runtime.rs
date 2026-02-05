@@ -587,9 +587,17 @@ impl AgentRuntime {
     async fn process_pending_tasks(&self) -> Result<()> {
         let pending = {
             let store = self.user_store.clone();
-            tokio::task::spawn_blocking(move || store.list_pending_agent_tasks(50))
-                .await
-                .unwrap_or_else(|_| Ok(Vec::new()))?
+            match tokio::task::spawn_blocking(move || store.list_pending_agent_tasks(50)).await {
+                Ok(Ok(items)) => items,
+                Ok(Err(err)) => {
+                    warn!("load pending agent tasks failed: {err}");
+                    Vec::new()
+                }
+                Err(err) => {
+                    warn!("load pending agent tasks join failed: {err}");
+                    Vec::new()
+                }
+            }
         };
         if pending.is_empty() {
             return Ok(());

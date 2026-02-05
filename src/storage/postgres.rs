@@ -3469,6 +3469,25 @@ impl StorageBackend for PostgresStorage {
         Ok((output, total))
     }
 
+    fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT DISTINCT agent_id FROM chat_sessions WHERE user_id = $1",
+            &[&cleaned_user],
+        )?;
+        let mut agent_ids = Vec::new();
+        for row in rows {
+            let agent_id: Option<String> = row.get(0);
+            agent_ids.push(agent_id.unwrap_or_default());
+        }
+        Ok(agent_ids)
+    }
+
     fn update_chat_session_title(
         &self,
         user_id: &str,

@@ -261,17 +261,38 @@ impl EventEmitter {
         let user_id = self.user_id.clone();
         let storage = storage.clone();
         let cleanup_cutoff = self.cleanup_cutoff();
+        let event_type = event_type.to_string();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let event_type = event_type.clone();
             handle.spawn_blocking(move || {
-                let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
+                if let Err(err) =
+                    storage.append_stream_event(&session_id, &user_id, event_id, &payload)
+                {
+                    warn!(
+                        "failed to persist stream event {event_type} for session {session_id}: {err}"
+                    );
+                }
                 if let Some(cutoff) = cleanup_cutoff {
-                    let _ = storage.delete_stream_events_before(cutoff);
+                    if let Err(err) = storage.delete_stream_events_before(cutoff) {
+                        warn!(
+                            "failed to cleanup stream events before {cutoff} for session {session_id}: {err}"
+                        );
+                    }
                 }
             });
         } else {
-            let _ = storage.append_stream_event(&session_id, &user_id, event_id, &payload);
+            if let Err(err) = storage.append_stream_event(&session_id, &user_id, event_id, &payload)
+            {
+                warn!(
+                    "failed to persist stream event {event_type} for session {session_id}: {err}"
+                );
+            }
             if let Some(cutoff) = cleanup_cutoff {
-                let _ = storage.delete_stream_events_before(cutoff);
+                if let Err(err) = storage.delete_stream_events_before(cutoff) {
+                    warn!(
+                        "failed to cleanup stream events before {cutoff} for session {session_id}: {err}"
+                    );
+                }
             }
         }
     }

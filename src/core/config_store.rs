@@ -1,15 +1,15 @@
-// 配置存储：加载基础配置与覆盖配置，支持运行时更新并写回覆盖文件。
+// Config store: load base config, apply overrides, and persist diffs.
 use crate::config::{load_base_config_value, load_config, Config};
 use crate::i18n;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_yaml::Value;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
 use tokio::sync::RwLock;
-use tracing::warn;
 
 #[derive(Clone)]
 pub struct ConfigStore {
@@ -61,17 +61,25 @@ impl ConfigStore {
         let diff_value = diff_yaml(&base_value, &updated_value);
         let target = self.override_path.clone();
         if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent).await.ok();
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!("create config override dir failed: {}", parent.display())
+            })?;
         }
         match diff_value {
             Some(value) => {
                 let text = serde_yaml::to_string(&value).unwrap_or_default();
-                if let Err(err) = tokio::fs::write(&target, text).await {
-                    warn!("写入覆盖配置失败: {}: {err}", target.display());
-                }
+                tokio::fs::write(&target, text).await.with_context(|| {
+                    format!("write override config failed: {}", target.display())
+                })?;
             }
             None => {
-                let _ = tokio::fs::remove_file(&target).await;
+                if let Err(err) = tokio::fs::remove_file(&target).await {
+                    if err.kind() != ErrorKind::NotFound {
+                        return Err(err).with_context(|| {
+                            format!("remove override config failed: {}", target.display())
+                        });
+                    }
+                }
             }
         }
         Ok(())

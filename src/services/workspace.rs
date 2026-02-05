@@ -110,7 +110,7 @@ impl StorageWriteQueue {
     fn new(storage: Arc<dyn StorageBackend>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(STORAGE_WRITE_QUEUE_SIZE);
         let worker_storage = storage.clone();
-        thread::Builder::new()
+        if let Err(err) = thread::Builder::new()
             .name("wunder-storage-writer".to_string())
             .spawn(move || {
                 while let Ok(task) = receiver.recv() {
@@ -119,7 +119,9 @@ impl StorageWriteQueue {
                     }
                 }
             })
-            .ok();
+        {
+            warn!("failed to spawn storage writer thread: {err}");
+        }
         Self { sender, storage }
     }
 
@@ -197,7 +199,9 @@ pub struct WorkspaceManager {
 impl WorkspaceManager {
     pub fn new(root: &str, storage: Arc<dyn StorageBackend>, retention_days: i64) -> Self {
         let retention_days = normalize_retention_days(retention_days);
-        let _ = storage.ensure_initialized();
+        if let Err(err) = storage.ensure_initialized() {
+            warn!("storage initialization failed: {err}");
+        }
         let write_queue = StorageWriteQueue::new(storage.clone());
         Self {
             root: PathBuf::from(root),

@@ -2367,6 +2367,36 @@ button.danger {
   grid-template-columns: minmax(320px, 520px) minmax(0, 1fr);
 }
 
+#usersPanel .management-list {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 12px;
+}
+
+#usersPanel .management-list .list-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#usersPanel .management-detail {
+  gap: 16px;
+}
+
+#usersPanel .management-detail .monitor-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 12px;
+}
+
+#usersPanel .management-detail .monitor-section-title {
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
 .user-table tbody tr.active {
   background: #eef2ff;
 }
@@ -2396,38 +2426,95 @@ button.danger {
 }
 
 #usersPanel .user-table {
-  border-collapse: separate;
-  border-spacing: 0 6px;
+  border-collapse: collapse;
+  border-spacing: 0;
 }
 
 #usersPanel .user-table thead th {
-  background: transparent;
+  background: #f8fafc;
 }
 
 #usersPanel .user-table tbody tr {
-  background: #f8fafc;
+  background: transparent;
   transition: background 0.2s ease;
 }
 
 #usersPanel .user-table tbody tr:hover {
-  background: #eef2ff;
+  background: #f1f5f9;
 }
 
 #usersPanel .user-table tbody td {
-  border-top: 1px solid #e5e7eb;
-  border-bottom: 1px solid #e5e7eb;
+  border-top: none;
+  border-bottom: 1px solid #e2e8f0;
 }
 
 #usersPanel .user-table tbody td:first-child {
-  border-left: 1px solid #e5e7eb;
-  border-radius: 10px 0 0 10px;
+  border-left: none;
+  border-radius: 0;
 }
 
 #usersPanel .user-table tbody td:last-child {
-  border-right: 1px solid #e5e7eb;
-  border-radius: 0 10px 10px 0;
-  padding-left: 4px;
-  padding-right: 4px;
+  border-right: none;
+  border-radius: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: visible;
+}
+
+#usersPanel .user-table th,
+#usersPanel .user-table td {
+  padding: 6px 8px;
+  height: 38px;
+}
+
+#usersPanel .monitor-table-scroll {
+  padding-right: 12px;
+  scrollbar-gutter: stable;
+}
+
+#memoryPanel .management-list {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 12px;
+}
+
+#memoryPanel .management-list .list-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#memoryPanel .management-detail {
+  gap: 16px;
+}
+
+#memoryPanel .management-detail .monitor-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  padding: 12px;
+}
+
+#memoryPanel .management-detail .monitor-section-title {
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+#memoryPanel .monitor-table th,
+#memoryPanel .monitor-table td {
+  padding: 6px 8px;
+  height: 38px;
+}
+
+#memoryPanel .monitor-table tbody td:last-child {
+  overflow: visible;
+}
+
+#memoryPanel .monitor-table-scroll {
+  padding-right: 12px;
+  scrollbar-gutter: stable;
 }
 
 .management-layout.memory-layout {

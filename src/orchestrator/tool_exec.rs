@@ -151,7 +151,9 @@ impl Orchestrator {
                 payload["tool_call_id"] = Value::String(cleaned.to_string());
             }
         }
-        let _ = self.workspace.append_chat(user_id, &payload);
+        if let Err(err) = self.workspace.append_chat(user_id, &payload) {
+            warn!("append chat failed for session {session_id} role {role}: {err}");
+        }
     }
 
     pub(super) fn build_tool_observation(
@@ -196,7 +198,9 @@ impl Orchestrator {
         if result.sandbox {
             payload["sandbox"] = Value::Bool(true);
         }
-        let _ = self.workspace.append_tool_log(user_id, &payload);
+        if let Err(err) = self.workspace.append_tool_log(user_id, &payload) {
+            warn!("append tool log failed for session {session_id} tool {tool_name}: {err}");
+        }
     }
 
     pub(super) fn finalize_tool_result(
@@ -270,7 +274,11 @@ impl Orchestrator {
                 );
                 map.insert("timestamp".to_string(), Value::String(timestamp.clone()));
             }
-            let _ = self.workspace.append_artifact_log(user_id, &entry);
+            if let Err(err) = self.workspace.append_artifact_log(user_id, &entry) {
+                warn!(
+                    "append artifact log failed for session {session_id} tool {tool_name}: {err}"
+                );
+            }
         }
     }
 

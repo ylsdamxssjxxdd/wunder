@@ -1,6 +1,9 @@
 ﻿stateDiagram-v2
   [*] --> running: 注册会话
+  running --> waiting: 问询面板等待选择
+  waiting --> running: 用户选择继续
   running --> cancelling: 请求取消
+  waiting --> cancelling: 请求取消
   cancelling --> cancelled: 中断完成
   running --> finished: 输出 final
   running --> error: 异常/超时

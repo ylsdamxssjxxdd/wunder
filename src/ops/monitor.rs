@@ -99,7 +99,7 @@ struct MonitorWriteQueue {
 impl MonitorWriteQueue {
     fn new(storage: Arc<dyn StorageBackend>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(MONITOR_WRITE_QUEUE_SIZE);
-        thread::Builder::new()
+        if let Err(err) = thread::Builder::new()
             .name("wunder-monitor-writer".to_string())
             .spawn(move || {
                 while let Ok(task) = receiver.recv() {
@@ -119,7 +119,9 @@ impl MonitorWriteQueue {
                     }
                 }
             })
-            .ok();
+        {
+            warn!("failed to spawn monitor writer thread: {err}");
+        }
         Self {
             sender,
             dropped: AtomicU64::new(0),
@@ -163,6 +165,7 @@ struct LlmRoundMetrics {
 struct SessionRecord {
     session_id: String,
     user_id: String,
+    agent_id: String,
     is_admin: bool,
     question: String,
     status: String,
@@ -184,6 +187,7 @@ impl SessionRecord {
     fn new(
         session_id: String,
         user_id: String,
+        agent_id: String,
         question: String,
         is_admin: bool,
         now: f64,
@@ -191,6 +195,7 @@ impl SessionRecord {
         Self {
             session_id,
             user_id,
+            agent_id,
             is_admin,
             question,
             status: MonitorState::STATUS_RUNNING.to_string(),
@@ -218,6 +223,7 @@ impl SessionRecord {
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
+            "agent_id": self.agent_id,
             "is_admin": self.is_admin,
             "question": self.question,
             "status": self.status,
@@ -237,6 +243,7 @@ impl SessionRecord {
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
+            "agent_id": self.agent_id,
             "question": self.question,
             "status": self.status,
             "stage": self.stage,
@@ -264,6 +271,11 @@ impl SessionRecord {
             .to_string();
         let user_id = payload
             .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let agent_id = payload
+            .get("agent_id")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
@@ -329,6 +341,7 @@ impl SessionRecord {
         Some(Self {
             session_id,
             user_id,
+            agent_id,
             is_admin,
             question,
             status,
@@ -452,7 +465,9 @@ impl MonitorState {
             .collect::<HashSet<_>>();
         let history_dir = PathBuf::from("data/historys/monitor");
         let workspace_root = PathBuf::from(workspace_root);
-        let _ = storage.ensure_initialized();
+        if let Err(err) = storage.ensure_initialized() {
+            warn!("monitor storage initialization failed: {err}");
+        }
         let write_queue = MonitorWriteQueue::new(storage.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -525,7 +540,14 @@ impl MonitorState {
         )
     }
 
-    pub fn register(&self, session_id: &str, user_id: &str, question: &str, is_admin: bool) -> i64 {
+    pub fn register(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+    ) -> i64 {
         self.run_guarded(
             "monitor.register",
             || 1,
@@ -536,6 +558,7 @@ impl MonitorState {
                     &mut sessions,
                     session_id,
                     user_id,
+                    agent_id,
                     question,
                     is_admin,
                     now,
@@ -1391,6 +1414,7 @@ impl MonitorState {
         sessions: &mut HashMap<String, SessionRecord>,
         session_id: &str,
         user_id: &str,
+        agent_id: &str,
         question: &str,
         is_admin: bool,
         now: f64,
@@ -1399,6 +1423,7 @@ impl MonitorState {
         if session_id.trim().is_empty() {
             return (None, 1);
         }
+        let cleaned_agent = agent_id.trim();
         {
             let mut forced = self.forced_cancelled.lock();
             forced.remove(session_id);
@@ -1407,6 +1432,9 @@ impl MonitorState {
             record.user_rounds += 1;
             record.question = question.to_string();
             record.is_admin = is_admin;
+            if !cleaned_agent.is_empty() {
+                record.agent_id = cleaned_agent.to_string();
+            }
             record.status = Self::STATUS_RUNNING.to_string();
             record.stage = "received".to_string();
             record.summary = i18n::t("monitor.summary.received");
@@ -1433,6 +1461,7 @@ impl MonitorState {
         let mut record = SessionRecord::new(
             session_id.to_string(),
             user_id.to_string(),
+            cleaned_agent.to_string(),
             question.to_string(),
             is_admin,
             now,

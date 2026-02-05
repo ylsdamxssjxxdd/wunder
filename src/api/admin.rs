@@ -4180,9 +4180,30 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         entry.tool_calls = *stats.get("tool_records").unwrap_or(&0);
     }
 
+    for (user_id, stats) in summary.iter_mut() {
+        if let Ok(agent_ids) = state.user_store.list_chat_session_agent_ids(user_id) {
+            for agent_id in agent_ids {
+                let agent_id = agent_id.trim();
+                if !agent_id.is_empty() {
+                    stats.agent_ids.insert(agent_id.to_string());
+                }
+            }
+        }
+        if let Ok(agents) = state.user_store.list_user_agents(user_id) {
+            for agent in agents {
+                let agent_id = agent.agent_id.trim();
+                if !agent_id.is_empty() {
+                    stats.agent_ids.insert(agent_id.to_string());
+                }
+            }
+        }
+        stats.agent_ids.insert("__default__".to_string());
+    }
+
     let mut users = summary
         .into_iter()
         .map(|(user_id, stats)| {
+            let agent_count = stats.agent_ids.len() as i64;
             json!({
                 "user_id": user_id,
                 "active_sessions": stats.active_sessions,
@@ -4191,7 +4212,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
                 "context_tokens": stats.context_tokens,
-                "agent_count": stats.agent_ids.len()
+                "agent_count": agent_count
             })
         })
         .collect::<Vec<_>>();

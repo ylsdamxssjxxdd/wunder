@@ -78,9 +78,9 @@ See `docs/API-Documentation.md`.
 
 - Input parsing, task planning, tool selection/execution.
 - Progress events are summarized to avoid leaking internal reasoning.
-- Global concurrency limit by `server.max_active_sessions`, overflow queues.
+- Global concurrency limit by `server.max_active_sessions`; when `agent_queue.enabled=true`, overflow requests are queued.
 - Admin settings can update `server.max_active_sessions` at runtime and persist overrides.
-- Per-user mutual exclusion via SQLite `session_locks` with TTL heartbeats.
+- Session-level mutual exclusion via `session_locks` with TTL heartbeats (storage-backed).
 - Max rounds by `llm.models.<name>.max_rounds` to prevent loops.
 - Each model call consumes one quota unit for registered users; quota usage is emitted as `quota_usage` events and overages short-circuit with 429.
 - SSE disconnect does not stop tasks; events still recorded.

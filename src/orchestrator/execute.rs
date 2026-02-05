@@ -95,9 +95,13 @@ impl Orchestrator {
                 }));
             }
 
-            let user_round = self
-                .monitor
-                .register(&session_id, &user_id, &question, is_admin);
+            let user_round = self.monitor.register(
+                &session_id,
+                &user_id,
+                prepared.agent_id.as_deref().unwrap_or(""),
+                &question,
+                is_admin,
+            );
             let request_round = RoundInfo::user_only(user_round);
             let mut start_payload = json!({
                 "stage": "start",

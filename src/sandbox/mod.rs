@@ -355,9 +355,31 @@ pub async fn execute_tool(
         };
 
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let parsed =
-            serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+        let body = match response.text().await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("sandbox response read failed for {endpoint}: {err}");
+                last_error = json!({
+                    "endpoint": endpoint,
+                    "status": status.as_u16(),
+                    "error": err.to_string(),
+                });
+                continue;
+            }
+        };
+        let parsed = match serde_json::from_str::<Value>(&body) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("sandbox response json parse failed for {endpoint}: {err}");
+                last_error = json!({
+                    "endpoint": endpoint,
+                    "status": status.as_u16(),
+                    "error": err.to_string(),
+                    "raw": truncate_text(&body, 2048),
+                });
+                continue;
+            }
+        };
         if !status.is_success() {
             last_error = json!({
                 "endpoint": endpoint,
@@ -425,6 +447,19 @@ fn replace_paths_in_value(value: &mut Value, from_root: &str, to_root: &str) {
         }
         _ => {}
     }
+}
+
+fn truncate_text(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut output = text[..end].to_string();
+    output.push_str("...");
+    output
 }
 
 #[cfg(test)]

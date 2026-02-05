@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
-use tracing::error;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
@@ -167,9 +167,17 @@ impl ChannelHub {
             .await?;
 
         for attachment in &message.attachments {
-            let _ = self
+            if let Err(err) = self
                 .save_media_asset(&message.channel, &message.account_id, attachment)
-                .await;
+                .await
+            {
+                warn!(
+                    "save channel media asset failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel,
+                    message.account_id,
+                    session_info.session_id
+                );
+            }
         }
 
         let media_processor = MediaProcessor::new(config.channels.media.clone());
@@ -182,9 +190,26 @@ impl ChannelHub {
             .process_inbound(&message, allow_vision)
             .await;
 
-        self.insert_channel_message(&message, &session_info.session_id, raw_payload)
+        if let Err(err) = self
+            .insert_channel_message(&message, &session_info.session_id, raw_payload)
             .await
-            .ok();
+        {
+            warn!(
+                "insert channel message failed: channel={}, account_id={}, session_id={}, error={err}",
+                message.channel,
+                message.account_id,
+                session_info.session_id
+            );
+            self.monitor.record_event(
+                &session_info.session_id,
+                "channel_message_save_error",
+                &json!({
+                    "channel": message.channel,
+                    "account_id": message.account_id,
+                    "error": err.to_string(),
+                }),
+            );
+        }
         if meta.get("asr").is_some() {
             self.monitor.record_event(
                 &session_info.session_id,
@@ -257,9 +282,17 @@ impl ChannelHub {
                 .synthesize_tts(&response.answer, session_info.tts_voice.as_deref())
                 .await
             {
-                let _ = self
+                if let Err(err) = self
                     .save_media_asset(&message.channel, &message.account_id, &attachment)
-                    .await;
+                    .await
+                {
+                    warn!(
+                        "save channel tts asset failed: channel={}, account_id={}, session_id={}, error={err}",
+                        message.channel,
+                        message.account_id,
+                        session_info.session_id
+                    );
+                }
                 outbound.attachments.push(attachment);
                 if let Some(session_id) = outbound
                     .meta
@@ -280,7 +313,12 @@ impl ChannelHub {
         if !resolve_outbox_config(config.channels.outbox.clone()).worker_enabled {
             let record = self.get_outbox(&outbox_id).await?;
             if let Some(record) = record {
-                let _ = self.deliver_outbox_record(&record).await;
+                if let Err(err) = self.deliver_outbox_record(&record).await {
+                    warn!(
+                        "deliver outbox failed (worker disabled): outbox_id={}, channel={}, account_id={}, error={err}",
+                        record.outbox_id, record.channel, record.account_id
+                    );
+                }
             }
         }
 
@@ -462,7 +500,8 @@ impl ChannelHub {
             .json(&payload)
             .send()
             .await?;
-        if response.status().is_success() {
+        let status = response.status();
+        if status.is_success() {
             self.update_outbox_status(record, "sent", None).await?;
             if let Some(session_id) = extract_session_id(&payload) {
                 self.monitor.record_event(
@@ -477,7 +516,11 @@ impl ChannelHub {
             }
             Ok(())
         } else {
-            Err(anyhow!("outbound delivery failed: {}", response.status()))
+            let body = match response.text().await {
+                Ok(value) => truncate_text(&value, 2048),
+                Err(err) => format!("(read body failed: {err})"),
+            };
+            Err(anyhow!("outbound delivery failed: {status} {body}"))
         }
     }
 
@@ -990,6 +1033,19 @@ fn extract_session_id(payload: &Value) -> Option<String> {
         .and_then(|meta| meta.get("session_id"))
         .and_then(Value::as_str)
         .map(|value| value.to_string())
+}
+
+fn truncate_text(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut output = text[..end].to_string();
+    output.push_str("...");
+    output
 }
 
 fn now_ts() -> f64 {

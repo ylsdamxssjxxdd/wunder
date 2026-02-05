@@ -56,10 +56,14 @@ impl RequestLimiter {
         let ttl = self.lock_ttl_s;
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn_blocking(move || {
-                let _ = storage.touch_session_lock(&session_id, ttl);
+                if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
+                    warn!("failed to touch session lock for {session_id}: {err}");
+                }
             });
         } else {
-            let _ = storage.touch_session_lock(&session_id, ttl);
+            if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
+                warn!("failed to touch session lock for {session_id}: {err}");
+            }
         }
     }
 
@@ -68,10 +72,14 @@ impl RequestLimiter {
         let session_id = session_id.to_string();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn_blocking(move || {
-                let _ = storage.release_session_lock(&session_id);
+                if let Err(err) = storage.release_session_lock(&session_id) {
+                    warn!("failed to release session lock for {session_id}: {err}");
+                }
             });
         } else {
-            let _ = storage.release_session_lock(&session_id);
+            if let Err(err) = storage.release_session_lock(&session_id) {
+                warn!("failed to release session lock for {session_id}: {err}");
+            }
         }
     }
 }

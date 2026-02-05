@@ -27,7 +27,10 @@
   - `model_name`: string, optional, model config name
   - `config_overrides`: object, optional, per-request config overrides
   - `attachments`: list, optional, attachments (Markdown files or data URL images)
-- Constraints: if a user already has a running session, returns 429.
+- Busy queue (when `agent_queue.enabled=true`): non-stream returns 202 (`data.queue_id`/`data.thread_id`/`data.session_id`), SSE/WS emits `queued`.
+- Busy response (when `agent_queue.enabled=false`): explicit `session_id` running/cancelling returns 429 (`detail.code=USER_BUSY`).
+- Note: if `session_id` is omitted and the main session is busy, the server auto-forks a new session and returns its `session_id` (main session stays unchanged).
+- Note: `question_panel` puts the session into `waiting`, but the user’s follow-up selection continues immediately and is not treated as busy/queued.
 - Constraints: registered users are quota-limited per model call; overages return 429 with `detail.code=USER_QUOTA_EXCEEDED`.
 - Global concurrency cap: `server.max_active_sessions`.
 

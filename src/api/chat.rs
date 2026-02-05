@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tracing::warn;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
@@ -282,10 +283,21 @@ async fn get_session(
     let limit = query
         .limit
         .unwrap_or_else(|| if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
-    let history = state
+    let mut history_incomplete = false;
+    let history = match state
         .workspace
         .load_history(&resolved.user.user_id, &session_id, limit)
-        .unwrap_or_default();
+    {
+        Ok(items) => items,
+        Err(err) => {
+            warn!(
+                "load history failed: user_id={}, session_id={}, error={err}",
+                resolved.user.user_id, session_id
+            );
+            history_incomplete = true;
+            Vec::new()
+        }
+    };
     let session_status = state.monitor.get_record(&session_id).and_then(|record| {
         record
             .get("status")
@@ -338,6 +350,7 @@ async fn get_session(
             "last_message_at": format_ts(record.last_message_at),
             "agent_id": record.agent_id,
             "tool_overrides": record.tool_overrides,
+            "history_incomplete": history_incomplete,
             "messages": messages
         }
     })))

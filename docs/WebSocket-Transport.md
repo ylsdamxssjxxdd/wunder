@@ -326,7 +326,7 @@ sequenceDiagram
    - `resume` 时读取并推送回放事件
 4. 增加连接级状态管理：
    - `ready/streaming` 状态
-   - 单连接并发控制（busy 时返回 error）
+   - 单连接并发控制（显式 busy `session_id` 按队列/USER_BUSY 处理；未传 `session_id` 自动分叉）
 
 ### 11.2 前端
 1. 新增 `frontend/src/utils/ws.js`：

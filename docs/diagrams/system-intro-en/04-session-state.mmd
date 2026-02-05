@@ -1,6 +1,9 @@
 ﻿stateDiagram-v2
   [*] --> running: register session
+  running --> waiting: question panel awaiting choice
+  waiting --> running: user selection
   running --> cancelling: cancel requested
+  waiting --> cancelling: cancel requested
   cancelling --> cancelled: interrupted
   running --> finished: final output
   running --> error: exception/timeout

@@ -125,7 +125,9 @@ impl MemoryStore {
     }
 
     pub fn set_enabled(&self, user_id: &str, enabled: bool) {
-        let _ = self.storage.set_memory_enabled(user_id, enabled);
+        if let Err(err) = self.storage.set_memory_enabled(user_id, enabled) {
+            warn!("memory set_enabled failed for {user_id}: {err}");
+        }
     }
 
     pub fn list_settings(&self) -> HashMap<String, MemorySetting> {
@@ -323,7 +325,7 @@ impl MemoryStore {
         error: &str,
         now_ts: Option<f64>,
     ) {
-        let _ = self.storage.upsert_memory_task_log(
+        if let Err(err) = self.storage.upsert_memory_task_log(
             user_id,
             session_id,
             task_id,
@@ -336,7 +338,9 @@ impl MemoryStore {
             result,
             error,
             now_ts,
-        );
+        ) {
+            warn!("memory upsert task log failed for {user_id}/{session_id}: {err}");
+        }
     }
 
     pub async fn upsert_task_log_async(
@@ -400,9 +404,12 @@ impl MemoryStore {
         }
         let now = now_ts.unwrap_or_else(|| now_ts_value());
         let max_records = max_records_override.unwrap_or(self.max_records);
-        let _ =
+        if let Err(err) =
             self.storage
-                .upsert_memory_record(user_id, session_id, &normalized, max_records, now);
+                .upsert_memory_record(user_id, session_id, &normalized, max_records, now)
+        {
+            warn!("memory upsert record failed for {user_id}/{session_id}: {err}");
+        }
         true
     }
 

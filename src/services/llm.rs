@@ -1,7 +1,7 @@
 // LLM 适配：支持 OpenAI 兼容的 Chat Completions 调用。
 use crate::config::LlmModelConfig;
 use crate::schemas::TokenUsage;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::header::HeaderMap;
 use reqwest::Client;
@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::future::Future;
 use std::time::Duration;
+use tracing::warn;
 use url::form_urlencoded::byte_serialize;
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -124,9 +125,30 @@ impl LlmClient {
             .send()
             .await?;
         let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
+        let body_text = response.text().await.context("read llm response body")?;
+        let body = match serde_json::from_str::<Value>(&body_text) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "LLM response json parse failed: {err}, body={}",
+                    truncate_text(&body_text, 2048)
+                );
+                Value::Null
+            }
+        };
         if !status.is_success() {
-            return Err(anyhow!("模型请求失败: {status} {body}"));
+            let detail = if body == Value::Null {
+                json!({ "raw": truncate_text(&body_text, 2048) })
+            } else {
+                body
+            };
+            return Err(anyhow!("LLM request failed: {status} {detail}"));
+        }
+        if body == Value::Null {
+            return Err(anyhow!(
+                "LLM response parse failed: {}",
+                truncate_text(&body_text, 2048)
+            ));
         }
         let message = body
             .get("choices")
@@ -190,13 +212,23 @@ impl LlmClient {
                 .await?;
             let status = response.status();
             if !status.is_success() {
-                let text = response.text().await.unwrap_or_default();
+                let text = match response.text().await {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "LLM stream request failed: {status} (read body failed: {err})"
+                        ));
+                    }
+                };
                 if usage_fallback && include_usage && matches!(status.as_u16(), 400 | 422) {
                     include_usage = false;
                     usage_fallback = false;
                     continue;
                 }
-                return Err(anyhow!("LLM stream request failed: {status} {text}"));
+                return Err(anyhow!(
+                    "LLM stream request failed: {status} {}",
+                    truncate_text(&text, 2048)
+                ));
             }
             let mut stream = response.bytes_stream();
             let mut buffer = String::new();
@@ -204,6 +236,7 @@ impl LlmClient {
             let mut reasoning_combined = String::new();
             let mut usage: Option<TokenUsage> = None;
             let mut tool_calls_accumulator: Vec<StreamToolCall> = Vec::new();
+            let mut saw_done = false;
             while let Some(item) = stream.next().await {
                 let bytes = item?;
                 let part = String::from_utf8_lossy(&bytes);
@@ -216,46 +249,55 @@ impl LlmClient {
                     }
                     let data = line.trim_start_matches("data:").trim();
                     if data == "[DONE]" {
-                        let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
-                        return Ok(LlmResponse {
-                            content: combined,
-                            reasoning: reasoning_combined,
-                            usage,
-                            tool_calls,
-                        });
+                        saw_done = true;
+                        break;
                     }
-                    if let Ok(payload) = serde_json::from_str::<Value>(data) {
-                        if let Some(new_usage) = normalize_usage(payload.get("usage")) {
-                            usage = Some(new_usage);
+                    match serde_json::from_str::<Value>(data) {
+                        Ok(payload) => {
+                            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+                                usage = Some(new_usage);
+                            }
+                            let delta = payload
+                                .get("choices")
+                                .and_then(|value| value.get(0))
+                                .and_then(|value| value.get("delta"))
+                                .cloned()
+                                .unwrap_or(Value::Null);
+                            let content_delta =
+                                delta.get("content").and_then(Value::as_str).unwrap_or("");
+                            let reasoning_delta = delta
+                                .get("reasoning_content")
+                                .or_else(|| delta.get("reasoning"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            update_stream_tool_calls(&mut tool_calls_accumulator, &delta);
+                            if !content_delta.is_empty() {
+                                combined.push_str(content_delta);
+                            }
+                            if !reasoning_delta.is_empty() {
+                                reasoning_combined.push_str(reasoning_delta);
+                            }
+                            if !content_delta.is_empty() || !reasoning_delta.is_empty() {
+                                on_delta(content_delta.to_string(), reasoning_delta.to_string())
+                                    .await?;
+                            }
                         }
-                        let delta = payload
-                            .get("choices")
-                            .and_then(|value| value.get(0))
-                            .and_then(|value| value.get("delta"))
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        let content_delta =
-                            delta.get("content").and_then(Value::as_str).unwrap_or("");
-                        let reasoning_delta = delta
-                            .get("reasoning_content")
-                            .or_else(|| delta.get("reasoning"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        update_stream_tool_calls(&mut tool_calls_accumulator, &delta);
-                        if !content_delta.is_empty() {
-                            combined.push_str(content_delta);
-                        }
-                        if !reasoning_delta.is_empty() {
-                            reasoning_combined.push_str(reasoning_delta);
-                        }
-                        if !content_delta.is_empty() || !reasoning_delta.is_empty() {
-                            on_delta(content_delta.to_string(), reasoning_delta.to_string())
-                                .await?;
+                        Err(err) => {
+                            warn!(
+                                "LLM stream json parse failed: {err}, data={}",
+                                truncate_text(data, 512)
+                            );
                         }
                     }
                 }
+                if saw_done {
+                    break;
+                }
             }
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
+            if !saw_done {
+                warn!("LLM stream ended without [DONE]");
+            }
             return Ok(LlmResponse {
                 content: combined,
                 reasoning: reasoning_combined,
@@ -400,9 +442,33 @@ pub async fn embed_texts(
         .send()
         .await?;
     let status = response.status();
-    let body: Value = response.json().await.unwrap_or(Value::Null);
+    let body_text = response
+        .text()
+        .await
+        .context("read embedding response body")?;
+    let body = match serde_json::from_str::<Value>(&body_text) {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(
+                "Embedding response json parse failed: {err}, body={}",
+                truncate_text(&body_text, 2048)
+            );
+            Value::Null
+        }
+    };
     if !status.is_success() {
-        return Err(anyhow!("embedding request failed: {status} {body}"));
+        let detail = if body == Value::Null {
+            json!({ "raw": truncate_text(&body_text, 2048) })
+        } else {
+            body
+        };
+        return Err(anyhow!("embedding request failed: {status} {detail}"));
+    }
+    if body == Value::Null {
+        return Err(anyhow!(
+            "embedding response parse failed: {}",
+            truncate_text(&body_text, 2048)
+        ));
     }
     let data = body
         .get("data")
@@ -629,6 +695,19 @@ fn round_f32(value: f32) -> f64 {
     const DECIMALS: i32 = 6;
     let factor = 10_f64.powi(DECIMALS);
     ((value as f64) * factor).round() / factor
+}
+
+fn truncate_text(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut output = text[..end].to_string();
+    output.push_str("...");
+    output
 }
 
 const PRIMARY_CONTEXT_KEYS: [&str; 10] = [
