@@ -70,68 +70,72 @@
                   </div>
                 </div>
                 <div v-if="!selectedJob" class="cron-empty">{{ t('cron.detail.empty') }}</div>
-                <div v-else class="cron-detail-grid">
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.schedule') }}</div>
-                    <div class="cron-detail-value">{{ formatSchedule(selectedJob) }}</div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.payload') }}</div>
-                    <div class="cron-detail-value pre">{{ payloadMessage }}</div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.nextRun') }}</div>
-                    <div class="cron-detail-value">
-                      {{ selectedJob.next_run_at_text || t('cron.status.noNext') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.lastRun') }}</div>
-                    <div class="cron-detail-value">
-                      {{ selectedJob.last_run_at_text || t('common.none') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.status') }}</div>
-                    <div class="cron-detail-value">{{ selectedJob.last_status || t('common.unknown') }}</div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.error') }}</div>
-                    <div class="cron-detail-value pre">
-                      {{ selectedJob.last_error || t('common.none') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.session') }}</div>
-                    <div class="cron-detail-value">{{ selectedJob.session_id || t('common.none') }}</div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.agent') }}</div>
-                    <div class="cron-detail-value">{{ selectedJob.agent_id || t('common.none') }}</div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.target') }}</div>
-                    <div class="cron-detail-value">
-                      {{ selectedJob.session_target || t('common.none') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.enabled') }}</div>
-                    <div class="cron-detail-value">
-                      {{ selectedJob.enabled ? t('common.yes') : t('common.no') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.deleteAfterRun') }}</div>
-                    <div class="cron-detail-value">
-                      {{ selectedJob.delete_after_run ? t('common.yes') : t('common.no') }}
-                    </div>
-                  </div>
-                  <div class="cron-detail-item">
-                    <div class="cron-detail-label">{{ t('cron.detail.dedupeKey') }}</div>
-                    <div class="cron-detail-value">{{ selectedJob.dedupe_key || t('common.none') }}</div>
-                  </div>
-                </div>
+                <table v-else class="cron-detail-table">
+                  <tbody>
+                    <tr>
+                      <th>{{ t('cron.detail.schedule') }}</th>
+                      <td class="cron-detail-value">{{ formatSchedule(selectedJob) }}</td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.payload') }}</th>
+                      <td class="cron-detail-value pre">{{ payloadMessage }}</td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.nextRun') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.next_run_at_text || t('cron.status.noNext') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.lastRun') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.last_run_at_text || t('common.none') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.status') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.last_status || t('common.unknown') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.error') }}</th>
+                      <td class="cron-detail-value pre">
+                        {{ selectedJob.last_error || t('common.none') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.session') }}</th>
+                      <td class="cron-detail-value">{{ selectedJob.session_id || t('common.none') }}</td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.agent') }}</th>
+                      <td class="cron-detail-value">{{ agentIdText }}</td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.target') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.session_target || t('common.none') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.enabled') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.enabled ? t('common.yes') : t('common.no') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.deleteAfterRun') }}</th>
+                      <td class="cron-detail-value">
+                        {{ selectedJob.delete_after_run ? t('common.yes') : t('common.no') }}
+                      </td>
+                    </tr>
+                    <tr>
+                      <th>{{ t('cron.detail.dedupeKey') }}</th>
+                      <td class="cron-detail-value">{{ selectedJob.dedupe_key || t('common.none') }}</td>
+                    </tr>
+                  </tbody>
+                </table>
                 <div class="cron-runs">
                   <div class="list-header">
                     <label>{{ t('cron.runs.title') }}</label>
@@ -194,6 +198,15 @@ const selectedJobId = ref('');
 const selectedJob = computed(
   () => jobs.value.find((job) => job.job_id === selectedJobId.value) || null
 );
+
+const agentIdText = computed(() => {
+  const agentId = selectedJob.value?.agent_id;
+  const cleaned = typeof agentId === 'string' ? agentId.trim() : '';
+  if (cleaned && cleaned !== '__default__' && cleaned !== 'default') {
+    return cleaned;
+  }
+  return t('cron.detail.agentDefault');
+});
 
 const payloadMessage = computed(() => {
   const payload = selectedJob.value?.payload;

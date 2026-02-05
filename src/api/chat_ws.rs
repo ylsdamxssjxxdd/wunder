@@ -1,8 +1,14 @@
 use crate::api::chat::{build_chat_request, ChatAttachment};
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
-    apply_ws_auth_headers, parse_payload, resolve_session_id, resume_stream_events, send_ws_error,
-    send_ws_event, send_ws_pong, send_ws_ready, WsEnvelope, WsQuery, WsSender,
+    apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
+    parse_payload, resolve_session_id, resume_stream_events, send_ws_error, send_ws_event,
+    send_ws_pong, send_ws_ready, ws_protocol_info, WsEnvelope, WsFeatures, WsPolicy, WsQuery,
+    WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
+};
+use crate::api::ws_log::{
+    log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
+    log_ws_parse_error, log_ws_ready, WsConnMeta,
 };
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
@@ -24,6 +30,8 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+const WS_ENDPOINT: &str = "/wunder/chat/ws";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/wunder/chat/ws", get(chat_ws))
@@ -66,6 +74,7 @@ struct WsStreamEntry {
     session_id: Option<String>,
     cancel: CancellationToken,
     task_id: String,
+    cancel_session: bool,
 }
 
 async fn chat_ws(
@@ -76,21 +85,29 @@ async fn chat_ws(
 ) -> Result<Response, Response> {
     let auth_headers = apply_ws_auth_headers(&headers, &query);
     let resolved = resolve_user(&state, &auth_headers, None).await?;
+    let has_protocol_token = has_ws_protocol_token(&headers);
+    let conn_meta = WsConnMeta::from_headers(&headers, has_protocol_token);
+    let connection_id = format!("ws_{}", Uuid::new_v4().simple());
     Ok(ws
         .protocols(["wunder"])
-        .on_upgrade(move |socket| handle_ws(socket, state, resolved.user)))
+        .max_message_size(WS_MAX_MESSAGE_BYTES)
+        .max_frame_size(WS_MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| {
+            handle_ws(socket, state, resolved.user, connection_id, conn_meta)
+        }))
 }
 
 async fn handle_ws(
     socket: WebSocket,
     state: Arc<AppState>,
     user: crate::storage::UserAccountRecord,
+    connection_id: String,
+    conn_meta: WsConnMeta,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(STREAM_EVENT_QUEUE_SIZE);
     let ws_tx = WsSender::new(out_tx.clone());
-    let connection_id = format!("ws_{}", Uuid::new_v4().simple());
-    let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
+    let started_at = std::time::Instant::now();
     let tasks: Arc<Mutex<HashMap<String, WsStreamEntry>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let writer = tokio::spawn(async move {
@@ -101,7 +118,35 @@ async fn handle_ws(
         }
     });
 
-    let _ = send_ws_ready(&ws_tx, &connection_id, now_ts).await;
+    log_ws_open(WS_ENDPOINT, &connection_id, &user.user_id, &conn_meta);
+    let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
+    let protocol = ws_protocol_info();
+    let policy = WsPolicy::default_policy();
+    let features = WsFeatures {
+        multiplex: true,
+        resume: true,
+        watch: true,
+        ping_pong: true,
+    };
+    let ready_payload = WsReadyPayload {
+        connection_id: connection_id.clone(),
+        server_time: now_ts,
+        protocol: protocol.clone(),
+        policy: policy.clone(),
+        features: features.clone(),
+    };
+    let _ = send_ws_ready(&ws_tx, None, ready_payload.clone()).await;
+    log_ws_ready(
+        WS_ENDPOINT,
+        &connection_id,
+        &user.user_id,
+        protocol.version,
+        protocol.min,
+        protocol.max,
+    );
+
+    let mut handshake_done = false;
+    let mut close_logged = false;
 
     while let Some(Ok(message)) = WsStreamExt::next(&mut ws_receiver).await {
         match message {
@@ -109,6 +154,12 @@ async fn handle_ws(
                 let envelope: WsEnvelope = match serde_json::from_str(&text) {
                     Ok(value) => value,
                     Err(err) => {
+                        log_ws_parse_error(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            &err.to_string(),
+                        );
                         let _ = send_ws_error(
                             &ws_tx,
                             None,
@@ -120,7 +171,99 @@ async fn handle_ws(
                     }
                 };
 
-                match envelope.kind.trim().to_ascii_lowercase().as_str() {
+                let kind = envelope.kind.trim().to_ascii_lowercase();
+                if !handshake_done && kind != "connect" && kind != "ping" {
+                    handshake_done = true;
+                    log_ws_handshake(
+                        WS_ENDPOINT,
+                        &connection_id,
+                        &user.user_id,
+                        WS_PROTOCOL_VERSION,
+                        WS_PROTOCOL_VERSION,
+                        true,
+                        None,
+                    );
+                }
+
+                match kind.as_str() {
+                    "connect" => {
+                        if handshake_done {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                envelope.request_id.as_deref(),
+                                "ALREADY_CONNECTED",
+                                "connection already initialized".to_string(),
+                            )
+                            .await;
+                            continue;
+                        }
+                        let request_id = resolve_request_id(envelope.request_id.as_deref());
+                        let payload = match parse_connect_payload(envelope.payload) {
+                            Ok(payload) => payload,
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    err.code(),
+                                    err.message(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        match negotiate_ws_protocol(&payload) {
+                            Ok(info) => {
+                                handshake_done = true;
+                                log_ws_handshake(
+                                    WS_ENDPOINT,
+                                    &connection_id,
+                                    &user.user_id,
+                                    info.client_min,
+                                    info.client_max,
+                                    false,
+                                    info.client.as_ref(),
+                                );
+                                let _ =
+                                    send_ws_ready(&ws_tx, Some(&request_id), ready_payload.clone())
+                                        .await;
+                                log_ws_ready(
+                                    WS_ENDPOINT,
+                                    &connection_id,
+                                    &user.user_id,
+                                    protocol.version,
+                                    protocol.min,
+                                    protocol.max,
+                                );
+                            }
+                            Err(err) => {
+                                log_ws_handshake_error(
+                                    WS_ENDPOINT,
+                                    &connection_id,
+                                    &user.user_id,
+                                    err.code(),
+                                    &err.message(),
+                                );
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    err.code(),
+                                    err.message(),
+                                )
+                                .await;
+                                let _ = out_tx.send(Message::Close(None)).await;
+                                close_logged = true;
+                                log_ws_close(
+                                    WS_ENDPOINT,
+                                    &connection_id,
+                                    &user.user_id,
+                                    None,
+                                    Some("handshake_failed"),
+                                    Some(started_at.elapsed().as_millis()),
+                                );
+                                break;
+                            }
+                        }
+                    }
                     "ping" => {
                         let _ = send_ws_pong(&ws_tx).await;
                     }
@@ -152,6 +295,14 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
+                        log_ws_message(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            "start",
+                            Some(&request_id),
+                            Some(&session_id),
+                        );
                         let stream = payload.stream.unwrap_or(true);
                         let request = match build_chat_request(
                             &state,
@@ -190,7 +341,7 @@ async fn handle_ws(
                             }
                         };
 
-                        let request = match outcome {
+                        let (request, lease) = match outcome {
                             AgentSubmitOutcome::Queued(info) => {
                                 let payload = json!({
                                     "queued": true,
@@ -215,17 +366,19 @@ async fn handle_ws(
                                 let _ = send_ws_event(&ws_tx, Some(&request_id), final_event).await;
                                 continue;
                             }
-                            AgentSubmitOutcome::Run(request) => request,
+                            AgentSubmitOutcome::Run(request, lease) => (request, lease),
                         };
 
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let (cancel, task_id) =
-                            register_ws_task(&tasks, &request_id, Some(session_id.clone())).await;
+                            register_ws_task(&tasks, &request_id, Some(session_id.clone()), true)
+                                .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         tokio::spawn(async move {
+                            let _lease = lease;
                             match state_snapshot.orchestrator.stream(request).await {
                                 Ok(stream) => {
                                     tokio::pin!(stream);
@@ -300,6 +453,14 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
+                        log_ws_message(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            "resume",
+                            Some(&request_id),
+                            Some(&session_id),
+                        );
                         let after_event_id = payload.after_event_id.unwrap_or(0);
                         if after_event_id <= 0 {
                             let _ = send_ws_error(
@@ -324,7 +485,8 @@ async fn handle_ws(
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let (cancel, task_id) =
-                            register_ws_task(&tasks, &request_id, Some(session_id.clone())).await;
+                            register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
+                                .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
@@ -371,11 +533,20 @@ async fn handle_ws(
                             .await;
                             continue;
                         };
+                        log_ws_message(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            "watch",
+                            Some(&request_id),
+                            Some(&session_id),
+                        );
                         let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let (cancel, task_id) =
-                            register_ws_task(&tasks, &request_id, Some(session_id.clone())).await;
+                            register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
+                                .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
@@ -425,18 +596,25 @@ async fn handle_ws(
                             .await;
                             continue;
                         }
-                        let mut cancel_session_id = session_id.clone();
+                        log_ws_message(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            "cancel",
+                            request_id.as_deref(),
+                            session_id.as_deref(),
+                        );
+                        let mut cancel_session_id = None;
                         {
                             let mut guard = tasks.lock().await;
                             if let Some(request_id) = request_id.as_deref() {
                                 if let Some(entry) = guard.remove(request_id) {
                                     entry.cancel.cancel();
-                                    if cancel_session_id.is_none() {
+                                    if entry.cancel_session {
                                         cancel_session_id = entry.session_id;
                                     }
                                 }
-                            }
-                            if let Some(session_id) = session_id.as_deref() {
+                            } else if let Some(session_id) = session_id.as_deref() {
                                 let targets = guard
                                     .iter()
                                     .filter_map(|(key, entry)| {
@@ -452,6 +630,7 @@ async fn handle_ws(
                                         entry.cancel.cancel();
                                     }
                                 }
+                                cancel_session_id = Some(session_id.to_string());
                             }
                         }
                         if let Some(session_id) = cancel_session_id {
@@ -474,7 +653,19 @@ async fn handle_ws(
             Message::Ping(payload) => {
                 let _ = out_tx.send(Message::Pong(payload)).await;
             }
-            Message::Close(_) => {
+            Message::Close(frame) => {
+                let (code, reason) = frame
+                    .map(|value| (Some(value.code), Some(value.reason.to_string())))
+                    .unwrap_or((None, None));
+                close_logged = true;
+                log_ws_close(
+                    WS_ENDPOINT,
+                    &connection_id,
+                    &user.user_id,
+                    code,
+                    reason.as_deref(),
+                    Some(started_at.elapsed().as_millis()),
+                );
                 break;
             }
             _ => {}
@@ -483,6 +674,16 @@ async fn handle_ws(
 
     drop(out_tx);
     let _ = writer.await;
+    if !close_logged {
+        log_ws_close(
+            WS_ENDPOINT,
+            &connection_id,
+            &user.user_id,
+            None,
+            Some("eof"),
+            Some(started_at.elapsed().as_millis()),
+        );
+    }
 }
 
 fn session_exists(state: &AppState, user_id: &str, session_id: &str) -> bool {
@@ -529,6 +730,7 @@ async fn register_ws_task(
     tasks: &Arc<Mutex<HashMap<String, WsStreamEntry>>>,
     request_id: &str,
     session_id: Option<String>,
+    cancel_session: bool,
 ) -> (CancellationToken, String) {
     let cancel = CancellationToken::new();
     let task_id = Uuid::new_v4().simple().to_string();
@@ -539,6 +741,7 @@ async fn register_ws_task(
             session_id,
             cancel: cancel.clone(),
             task_id: task_id.clone(),
+            cancel_session,
         },
     ) {
         entry.cancel.cancel();

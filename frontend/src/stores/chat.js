@@ -439,6 +439,7 @@ const resolvePersistedSessionId = (agentId) => {
 const CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
 const SNAPSHOT_FLUSH_MS = 400;
 const MAX_SNAPSHOT_MESSAGES = 50;
+const SNAPSHOT_MATCH_WINDOW_MS = 2000;
 let snapshotTimer = null;
 let pageUnloading = false;
 
@@ -511,19 +512,14 @@ const normalizeSnapshotMessage = (message) => {
 
 const buildSnapshotMessages = (messages = []) => {
   const sliced = messages.slice(-MAX_SNAPSHOT_MESSAGES);
-  let lastAssistantIndex = -1;
-  for (let i = sliced.length - 1; i >= 0; i -= 1) {
-    if (sliced[i]?.role === 'assistant') {
-      lastAssistantIndex = i;
-      break;
-    }
-  }
   return sliced
-    .map((message, index) => {
+    .map((message) => {
       const normalized = normalizeSnapshotMessage(message);
       if (!normalized) return null;
+      const hasWorkflowItems =
+        Array.isArray(normalized.workflowItems) && normalized.workflowItems.length > 0;
       const shouldKeepWorkflow =
-        index === lastAssistantIndex || normalized.stream_incomplete || normalized.workflowStreaming;
+        hasWorkflowItems || normalized.stream_incomplete || normalized.workflowStreaming;
       if (!shouldKeepWorkflow) {
         delete normalized.workflowItems;
       }
@@ -599,6 +595,165 @@ const scheduleChatSnapshot = (storeState, immediate = false) => {
   }, SNAPSHOT_FLUSH_MS);
 };
 
+const mergeSnapshotAssistant = (target, snapshot) => {
+  if (!target || target.role !== 'assistant' || !snapshot) return false;
+  const snapshotContent = String(snapshot.content || '');
+  const serverContent = String(target.content || '');
+  const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
+  const targetEventId = normalizeStreamEventId(target.stream_event_id);
+  const snapshotRound = normalizeStreamRound(snapshot.stream_round);
+  const targetRound = normalizeStreamRound(target.stream_round);
+  const snapshotPlan = normalizePlanPayload(snapshot.plan);
+  const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
+  const snapshotStats = normalizeMessageStats(snapshot.stats);
+  const hasWorkflowItems =
+    Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
+  const shouldMergeContent =
+    snapshotContent.length > serverContent.length ||
+    (snapshot.stream_incomplete && serverContent.length === 0);
+  const shouldMergeFlags = Boolean(
+    snapshot.stream_incomplete ||
+      snapshot.workflowStreaming ||
+      snapshot.reasoningStreaming ||
+      hasWorkflowItems ||
+      hasSnapshotPlan ||
+      snapshotRound !== null ||
+      snapshotEventId !== null ||
+      snapshot.questionPanel
+  );
+  if (!shouldMergeContent && !shouldMergeFlags && !snapshotStats) {
+    return false;
+  }
+  if (shouldMergeContent && snapshotContent) {
+    target.content = snapshotContent;
+  }
+  if (snapshot.reasoning) {
+    target.reasoning = snapshot.reasoning;
+  }
+  if (shouldMergeFlags) {
+    target.reasoningStreaming =
+      normalizeFlag(snapshot.reasoningStreaming) ||
+      normalizeFlag(target.reasoningStreaming);
+    if (hasWorkflowItems) {
+      const targetHasItems =
+        Array.isArray(target.workflowItems) && target.workflowItems.length > 0;
+      if (!targetHasItems || snapshot.workflowItems.length >= target.workflowItems.length) {
+        target.workflowItems = snapshot.workflowItems;
+      }
+    }
+    target.workflowStreaming =
+      normalizeFlag(snapshot.workflowStreaming) ||
+      normalizeFlag(target.workflowStreaming);
+    target.stream_incomplete =
+      normalizeFlag(snapshot.stream_incomplete) ||
+      normalizeFlag(target.stream_incomplete);
+    if (snapshotRound !== null && (targetRound === null || snapshotRound > targetRound)) {
+      target.stream_round = snapshotRound;
+    }
+    if (snapshotEventId !== null && (targetEventId === null || snapshotEventId > targetEventId)) {
+      target.stream_event_id = snapshotEventId;
+    }
+    const panel = normalizeInquiryPanelState(snapshot.questionPanel);
+    if (panel) {
+      target.questionPanel = panel;
+    }
+    if (snapshotPlan) {
+      target.plan = snapshotPlan;
+      target.planVisible =
+        Boolean(target.planVisible) || shouldAutoShowPlan(snapshotPlan, snapshot);
+    }
+  }
+  if (snapshotStats) {
+    target.stats = mergeMessageStats(target.stats, snapshotStats);
+  }
+  return true;
+};
+
+const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
+  if (!target || cursor < 0) return -1;
+  const targetEventId = normalizeStreamEventId(target.stream_event_id);
+  const targetRound = normalizeStreamRound(target.stream_round);
+  const targetTime = resolveTimestampMs(target.created_at);
+  const targetContent = normalizeAssistantContent(target.content || '');
+  let bestIndex = -1;
+  let bestDelta = Infinity;
+  for (let i = cursor; i >= 0; i -= 1) {
+    const snapshot = snapshotAssistants[i];
+    if (!snapshot) continue;
+    const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
+    if (targetEventId !== null && snapshotEventId !== null && snapshotEventId === targetEventId) {
+      return i;
+    }
+    const snapshotRound = normalizeStreamRound(snapshot.stream_round);
+    if (targetRound !== null && snapshotRound !== null && snapshotRound === targetRound) {
+      return i;
+    }
+    const snapshotTime = resolveTimestampMs(snapshot.created_at);
+    if (Number.isFinite(targetTime) && Number.isFinite(snapshotTime)) {
+      const delta = Math.abs(targetTime - snapshotTime);
+      if (delta <= SNAPSHOT_MATCH_WINDOW_MS && delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+        if (delta === 0) break;
+      }
+      continue;
+    }
+    if (targetContent) {
+      const snapshotContent = normalizeAssistantContent(snapshot.content || '');
+      if (
+        snapshotContent &&
+        (targetContent.includes(snapshotContent) || snapshotContent.includes(targetContent))
+      ) {
+        return i;
+      }
+    }
+  }
+  if (bestIndex >= 0) return bestIndex;
+  const isPendingTarget =
+    normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
+  if (isPendingTarget || !Number.isFinite(targetTime)) {
+    return cursor;
+  }
+  return -1;
+};
+
+const hasMatchingSnapshotAssistant = (messages, snapshotAssistant) => {
+  if (!snapshotAssistant || !Array.isArray(messages)) return false;
+  const snapshotEventId = normalizeStreamEventId(snapshotAssistant.stream_event_id);
+  const snapshotRound = normalizeStreamRound(snapshotAssistant.stream_round);
+  const snapshotTime = resolveTimestampMs(snapshotAssistant.created_at);
+  const snapshotContent = normalizeAssistantContent(snapshotAssistant.content || '');
+  return messages.some((message) => {
+    if (!message || message.role !== 'assistant') return false;
+    const messageEventId = normalizeStreamEventId(message.stream_event_id);
+    if (snapshotEventId !== null && messageEventId !== null && snapshotEventId === messageEventId) {
+      return true;
+    }
+    const messageRound = normalizeStreamRound(message.stream_round);
+    if (snapshotRound !== null && messageRound !== null && snapshotRound === messageRound) {
+      return true;
+    }
+    const messageTime = resolveTimestampMs(message.created_at);
+    if (
+      Number.isFinite(snapshotTime) &&
+      Number.isFinite(messageTime) &&
+      Math.abs(snapshotTime - messageTime) <= SNAPSHOT_MATCH_WINDOW_MS
+    ) {
+      return true;
+    }
+    if (snapshotContent) {
+      const messageContent = normalizeAssistantContent(message.content || '');
+      if (
+        messageContent &&
+        (messageContent.includes(snapshotContent) || snapshotContent.includes(messageContent))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+};
+
 const mergeSnapshotIntoMessages = (messages, snapshot) => {
   if (!snapshot || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
     return messages;
@@ -612,88 +767,32 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
   if (!snapshotMessages.length) {
     return messages;
   }
-  const snapshotLastAssistant = [...snapshotMessages]
-    .reverse()
-    .find((message) => message.role === 'assistant');
+  const snapshotAssistants = snapshotMessages.filter(
+    (message) => message.role === 'assistant' && !message.isGreeting
+  );
+  if (!snapshotAssistants.length) return messages;
+  let cursor = snapshotAssistants.length - 1;
+  for (let i = messages.length - 1; i >= 0 && cursor >= 0; i -= 1) {
+    const target = messages[i];
+    if (target?.role !== 'assistant') {
+      continue;
+    }
+    const matchIndex = findSnapshotAssistantIndex(target, snapshotAssistants, cursor);
+    if (matchIndex < 0) {
+      continue;
+    }
+    mergeSnapshotAssistant(target, snapshotAssistants[matchIndex]);
+    cursor = matchIndex - 1;
+  }
   const snapshotLastMessage = snapshotMessages[snapshotMessages.length - 1];
   const serverLastMessage = messages[messages.length - 1];
   if (
     serverLastMessage?.role === 'user' &&
     snapshotLastMessage?.role === 'assistant' &&
-    snapshotLastMessage.stream_incomplete
+    normalizeFlag(snapshotLastMessage.stream_incomplete) &&
+    !hasMatchingSnapshotAssistant(messages, snapshotLastMessage)
   ) {
     return [...messages, { ...snapshotLastMessage }];
-  }
-  if (!snapshotLastAssistant) return messages;
-  let lastAssistantIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i]?.role === 'assistant') {
-      lastAssistantIndex = i;
-      break;
-    }
-  }
-  if (lastAssistantIndex < 0) return messages;
-  const target = messages[lastAssistantIndex];
-  const snapshotContent = String(snapshotLastAssistant.content || '');
-  const serverContent = String(target.content || '');
-  const snapshotEventId = normalizeStreamEventId(snapshotLastAssistant.stream_event_id);
-  const targetEventId = normalizeStreamEventId(target.stream_event_id);
-  const snapshotRound = normalizeStreamRound(snapshotLastAssistant.stream_round);
-  const targetRound = normalizeStreamRound(target.stream_round);
-  const snapshotPlan = normalizePlanPayload(snapshotLastAssistant.plan);
-  const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
-  const snapshotStats = normalizeMessageStats(snapshotLastAssistant.stats);
-  const shouldMergeContent =
-    snapshotContent.length > serverContent.length ||
-    (snapshotLastAssistant.stream_incomplete && serverContent.length === 0);
-  const shouldMergeFlags = Boolean(
-    snapshotLastAssistant.stream_incomplete ||
-      snapshotLastAssistant.workflowStreaming ||
-      snapshotLastAssistant.reasoningStreaming ||
-      (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length > 0) ||
-      hasSnapshotPlan ||
-      snapshotRound !== null ||
-      snapshotEventId !== null
-  );
-  if (!shouldMergeContent && !shouldMergeFlags) {
-    return messages;
-  }
-  if (shouldMergeContent && snapshotContent) {
-    target.content = snapshotContent;
-  }
-  if (snapshotLastAssistant.reasoning) {
-    target.reasoning = snapshotLastAssistant.reasoning;
-  }
-  if (shouldMergeFlags) {
-    target.reasoningStreaming =
-      normalizeFlag(snapshotLastAssistant.reasoningStreaming) ||
-      normalizeFlag(target.reasoningStreaming);
-    if (Array.isArray(snapshotLastAssistant.workflowItems) && snapshotLastAssistant.workflowItems.length) {
-      target.workflowItems = snapshotLastAssistant.workflowItems;
-    }
-    target.workflowStreaming =
-      normalizeFlag(snapshotLastAssistant.workflowStreaming) ||
-      normalizeFlag(target.workflowStreaming);
-    target.stream_incomplete =
-      normalizeFlag(snapshotLastAssistant.stream_incomplete) ||
-      normalizeFlag(target.stream_incomplete);
-    if (snapshotRound !== null && targetRound === null) {
-      target.stream_round = snapshotRound;
-    }
-    if (snapshotRound !== null && targetRound !== null && snapshotRound > targetRound) {
-      target.stream_round = snapshotRound;
-    }
-    if (snapshotEventId !== null && (targetEventId === null || snapshotEventId > targetEventId)) {
-      target.stream_event_id = snapshotEventId;
-    }
-    if (snapshotPlan) {
-      target.plan = snapshotPlan;
-      target.planVisible =
-        Boolean(target.planVisible) || shouldAutoShowPlan(snapshotPlan, snapshotLastAssistant);
-    }
-  }
-  if (snapshotStats) {
-    target.stats = mergeMessageStats(target.stats, snapshotStats);
   }
   return messages;
 };
@@ -1542,6 +1641,31 @@ const startSessionWatcher = (store, sessionId) => {
     if (completedRounds.has(roundNumber)) return null;
     const existing = roundStates.get(roundNumber);
     if (existing) return existing;
+    const pendingCandidate = findPendingAssistantMessage(sessionMessagesRef);
+    if (pendingCandidate) {
+      const assignedRound = normalizeStreamRound(pendingCandidate.stream_round);
+      const alreadyTracked = Array.from(roundStates.values()).some(
+        (entry) => entry.message === pendingCandidate
+      );
+      if (!alreadyTracked && (assignedRound === null || assignedRound === roundNumber)) {
+        if (assignedRound === null) {
+          pendingCandidate.stream_round = roundNumber;
+        }
+        if (!pendingCandidate.created_at && Number.isFinite(eventTimestampMs)) {
+          pendingCandidate.created_at = new Date(eventTimestampMs).toISOString();
+        }
+        pendingCandidate.workflowStreaming = true;
+        pendingCandidate.stream_incomplete = true;
+        const processor = createWorkflowProcessor(
+          pendingCandidate,
+          workflowState,
+          () => notifySessionSnapshot(store, key, sessionMessagesRef)
+        );
+        const state = { message: pendingCandidate, processor, userInserted: false };
+        roundStates.set(roundNumber, state);
+        return state;
+      }
+    }
     const createdAt = Number.isFinite(eventTimestampMs)
       ? new Date(eventTimestampMs).toISOString()
       : undefined;
@@ -1551,7 +1675,7 @@ const startSessionWatcher = (store, sessionId) => {
       workflowStreaming: true,
       stream_incomplete: true,
       stream_event_id: lastEventId || 0,
-      stream_round: null
+      stream_round: roundNumber
     };
     sessionMessagesRef.push(assistantMessage);
     notifySessionSnapshot(store, key, sessionMessagesRef, true);
@@ -1583,6 +1707,9 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const onEvent = (eventType, dataText, eventId) => {
+    if (runtime.sendController || runtime.resumeController) {
+      return;
+    }
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
     if (eventType === 'slow_client' && !data) {
@@ -1950,7 +2077,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const resolveRound = (payload, data) => {
-    const roundValue = data?.round ?? payload?.round;
+    const roundValue =
+      data?.user_round ??
+      payload?.user_round ??
+      data?.model_round ??
+      payload?.model_round ??
+      data?.round ??
+      payload?.round;
     const roundNumber = Number(roundValue);
     if (Number.isFinite(roundNumber)) {
       updateRoundState(roundNumber);
@@ -2856,9 +2989,8 @@ export const useChatStore = defineStore('chat', {
         assistantMessage,
         workflowState,
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
-      let queued = false;
-
       );
+      let queued = false;
 
       try {
         if (runtime) {
@@ -2959,6 +3091,7 @@ export const useChatStore = defineStore('chat', {
             assistantMessage.content = t('chat.error.requestFailed');
           }
         }
+        this.dismissPendingInquiryPanel();
       } finally {
         assistantMessage.workflowStreaming = false;
         assistantMessage.stream_incomplete = queued ? true : false;

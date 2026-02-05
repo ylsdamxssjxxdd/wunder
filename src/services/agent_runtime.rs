@@ -10,7 +10,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
@@ -37,8 +37,34 @@ pub struct QueueInfo {
 
 #[derive(Debug, Clone)]
 pub enum AgentSubmitOutcome {
-    Run(WunderRequest),
+    Run(WunderRequest, Option<SessionLease>),
     Queued(QueueInfo),
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionLease {
+    session_id: String,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
+}
+
+impl SessionLease {
+    fn new(session_id: String, pending_sessions: Arc<StdMutex<HashSet<String>>>) -> Self {
+        Self {
+            session_id,
+            pending_sessions,
+        }
+    }
+}
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        if self.session_id.trim().is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.pending_sessions.lock() {
+            guard.remove(self.session_id.as_str());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -50,6 +76,7 @@ pub struct AgentRuntime {
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
     running_threads: Arc<Mutex<HashSet<String>>>,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl AgentRuntime {
@@ -68,6 +95,7 @@ impl AgentRuntime {
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             running_threads: Arc::new(Mutex::new(HashSet::new())),
+            pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
         })
     }
 
@@ -95,22 +123,22 @@ impl AgentRuntime {
             return Err(anyhow!(i18n::t("error.user_id_required")));
         }
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
+        let explicit_session = request
+            .session_id
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
         let mut session_id = request
             .session_id
             .clone()
             .filter(|value| !value.trim().is_empty());
+        let mut set_as_main = !explicit_session;
 
         if session_id.is_none() {
             let resolved = self
                 .resolve_or_create_main_session(&user_id, &agent_id)
                 .await?;
             session_id = Some(resolved);
-        }
-
-        if let Some(session_id) = session_id.as_ref() {
-            let _ = self
-                .set_main_session(&user_id, &agent_id, session_id, "user_message")
-                .await;
         }
 
         request.session_id = session_id.clone();
@@ -120,12 +148,46 @@ impl AgentRuntime {
             Some(agent_id.clone())
         };
 
-        if self.should_queue(&user_id, session_id.as_deref()).await {
-            let info = self.enqueue_task(&request, &agent_id, session_id.as_deref())?;
-            return Ok(AgentSubmitOutcome::Queued(info));
+        let mut lease = None;
+        let config = self.config_store.get().await;
+        if !explicit_session && set_as_main {
+            if let Some(current_session_id) = session_id.as_deref() {
+                if !config.agent_queue.enabled
+                    && !self.is_session_idle(&user_id, current_session_id).await
+                {
+                    let forked = self.create_isolated_session(&user_id, &agent_id)?;
+                    session_id = Some(forked);
+                    request.session_id = session_id.clone();
+                    set_as_main = false;
+                }
+            }
         }
 
-        Ok(AgentSubmitOutcome::Run(request))
+        if let Some(session_id) = session_id.as_ref() {
+            if set_as_main {
+                let _ = self
+                    .set_main_session(&user_id, &agent_id, session_id, "user_message")
+                    .await;
+            } else {
+                let _ = self.ensure_session_record(&user_id, session_id, &agent_id)?;
+            }
+        }
+
+        if config.agent_queue.enabled {
+            if let Some(session_id) = session_id.as_deref() {
+                if self.should_queue(&user_id, Some(session_id)).await {
+                    let info = self.enqueue_task(&request, &agent_id, Some(session_id))?;
+                    return Ok(AgentSubmitOutcome::Queued(info));
+                }
+                lease = self.try_acquire_session_lease(session_id).await;
+                if lease.is_none() {
+                    let info = self.enqueue_task(&request, &agent_id, Some(session_id))?;
+                    return Ok(AgentSubmitOutcome::Queued(info));
+                }
+            }
+        }
+
+        Ok(AgentSubmitOutcome::Run(request, lease))
     }
 
     pub async fn resolve_main_session_id(
@@ -177,18 +239,11 @@ impl AgentRuntime {
             .user_store
             .get_agent_thread(cleaned_user, cleaned_agent)?;
         let now = now_ts();
-        let (thread_id, created_at, status) = if let Some(record) = existing.as_ref() {
-            (
-                record.thread_id.clone(),
-                record.created_at,
-                record.status.clone(),
-            )
+        let thread_id = format!("thread_{cleaned_session}");
+        let (created_at, status) = if let Some(record) = existing.as_ref() {
+            (record.created_at, record.status.clone())
         } else {
-            (
-                format!("thread_{}", Uuid::new_v4().simple()),
-                now,
-                THREAD_STATUS_IDLE.to_string(),
-            )
+            (now, THREAD_STATUS_IDLE.to_string())
         };
         let next_status = if status.trim().is_empty() {
             THREAD_STATUS_IDLE.to_string()
@@ -241,23 +296,16 @@ impl AgentRuntime {
         let existing = self.user_store.get_agent_thread(user_id, agent_id)?;
         let now = now_ts();
         if let Some(record) = existing {
+            let cleaned_session = session_id.trim();
+            if !cleaned_session.is_empty() && record.session_id.trim() != cleaned_session {
+                return Ok(());
+            }
             let updated = AgentThreadRecord {
                 status: status.to_string(),
                 updated_at: now,
                 ..record
             };
             self.user_store.upsert_agent_thread(&updated)?;
-        } else if !session_id.trim().is_empty() {
-            let record = AgentThreadRecord {
-                thread_id: format!("thread_{}", Uuid::new_v4().simple()),
-                user_id: user_id.trim().to_string(),
-                agent_id: agent_id.trim().to_string(),
-                session_id: session_id.trim().to_string(),
-                status: status.to_string(),
-                created_at: now,
-                updated_at: now,
-            };
-            self.user_store.upsert_agent_thread(&record)?;
         }
         Ok(())
     }
@@ -323,6 +371,35 @@ impl AgentRuntime {
         Ok(session_id)
     }
 
+    fn create_isolated_session(&self, user_id: &str, agent_id: &str) -> Result<String> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Err(anyhow!(i18n::t("error.user_id_required")));
+        }
+        let now = now_ts();
+        let session_id = format!("sess_{}", Uuid::new_v4().simple());
+        let record = ChatSessionRecord {
+            session_id: session_id.clone(),
+            user_id: cleaned_user.to_string(),
+            title: DEFAULT_SESSION_TITLE.to_string(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: if agent_id.trim().is_empty() {
+                None
+            } else {
+                Some(agent_id.trim().to_string())
+            },
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        self.user_store.upsert_chat_session(&record)?;
+        Ok(session_id)
+    }
+
     fn ensure_session_record(
         &self,
         user_id: &str,
@@ -381,6 +458,22 @@ impl AgentRuntime {
         !self.is_session_idle(user_id, session_id).await
     }
 
+    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionLease> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+        let mut guard = self.pending_sessions.lock().ok()?;
+        if guard.contains(cleaned) {
+            return None;
+        }
+        guard.insert(cleaned.to_string());
+        Some(SessionLease::new(
+            cleaned.to_string(),
+            self.pending_sessions.clone(),
+        ))
+    }
+
     fn enqueue_task(
         &self,
         request: &WunderRequest,
@@ -390,15 +483,7 @@ impl AgentRuntime {
         let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) else {
             return Err(anyhow!(i18n::t("error.session_not_found")));
         };
-        let thread = self
-            .user_store
-            .get_agent_thread(&request.user_id, agent_id)
-            .ok()
-            .flatten();
-        let thread_id = thread
-            .as_ref()
-            .map(|record| record.thread_id.clone())
-            .unwrap_or_else(|| format!("thread_{}", Uuid::new_v4().simple()));
+        let thread_id = format!("thread_{session_id}");
         let now = now_ts();
         let mut payload = serde_json::to_value(request).unwrap_or(Value::Null);
         if let Value::Object(ref mut map) = payload {
@@ -452,19 +537,21 @@ impl AgentRuntime {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return false;
         }
+        if let Some(record) = self.monitor.get_record(cleaned_session) {
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+            {
+                return false;
+            }
+            if status == crate::monitor::MonitorState::STATUS_WAITING {
+                return true;
+            }
+        }
         if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
             if locks
                 .iter()
                 .any(|lock| lock.session_id.trim() == cleaned_session)
-            {
-                return false;
-            }
-        }
-        if let Some(record) = self.monitor.get_record(cleaned_session) {
-            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-            if status == crate::monitor::MonitorState::STATUS_RUNNING
-                || status == crate::monitor::MonitorState::STATUS_WAITING
-                || status == crate::monitor::MonitorState::STATUS_CANCELLING
             {
                 return false;
             }

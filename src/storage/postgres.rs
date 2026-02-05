@@ -379,8 +379,9 @@ impl PostgresStorage {
             )?;
         }
         let _ = conn.execute("DROP INDEX IF EXISTS idx_session_locks_user", &[]);
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_session_locks_user_agent", &[]);
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent \
+            "CREATE INDEX IF NOT EXISTS idx_session_locks_user_agent \
              ON session_locks (user_id, agent_id)",
             &[],
         )?;
@@ -580,7 +581,7 @@ impl StorageBackend for PostgresStorage {
                   updated_time DOUBLE PRECISION NOT NULL,
                   expires_at DOUBLE PRECISION NOT NULL
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent
+                CREATE INDEX IF NOT EXISTS idx_session_locks_user_agent
                   ON session_locks (user_id, agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_locks_expires
                   ON session_locks (expires_at);
@@ -1676,14 +1677,6 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
         tx.execute("DELETE FROM session_locks WHERE expires_at <= $1", &[&now])?;
-        let existing = tx.query_opt(
-            "SELECT session_id FROM session_locks WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
-            &[&cleaned_user, &cleaned_agent],
-        )?;
-        if existing.is_some() {
-            tx.commit()?;
-            return Ok(SessionLockStatus::UserBusy);
-        }
         let inserted = tx.execute(
             "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) \
              VALUES ($1, $2, $3, $4, $5, $6) \
@@ -1698,12 +1691,12 @@ impl StorageBackend for PostgresStorage {
             ],
         )?;
         if inserted == 0 {
-            let user_lock = tx.query_opt(
-                "SELECT session_id FROM session_locks WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
-                &[&cleaned_user, &cleaned_agent],
+            let session_lock = tx.query_opt(
+                "SELECT session_id FROM session_locks WHERE session_id = $1 LIMIT 1",
+                &[&cleaned_session],
             )?;
             tx.commit()?;
-            return Ok(if user_lock.is_some() {
+            return Ok(if session_lock.is_some() {
                 SessionLockStatus::UserBusy
             } else {
                 SessionLockStatus::SystemBusy

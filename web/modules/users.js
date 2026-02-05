@@ -183,6 +183,7 @@ const updateUserStatsPage = (delta) => {
 // 规范化用户统计数据，避免后端字段缺失导致渲染异常
 const normalizeUserStats = (item) => ({
   user_id: String(item?.user_id || ""),
+  agent_count: Number(item?.agent_count ?? item?.agentCount ?? 0),
   active_sessions: Number(item?.active_sessions) || 0,
   history_sessions: Number(item?.history_sessions) || 0,
   total_sessions: Number(item?.total_sessions) || 0,
@@ -195,6 +196,7 @@ const normalizeUserStats = (item) => ({
 const resolveAllUserStats = () => {
   const summary = {
     user_count: 0,
+    agent_count: 0,
     active_sessions: 0,
     history_sessions: 0,
     total_sessions: 0,
@@ -207,6 +209,7 @@ const resolveAllUserStats = () => {
   }
   summary.user_count = state.users.list.length;
   state.users.list.forEach((item) => {
+    summary.agent_count += Number(item?.agent_count) || 0;
     summary.active_sessions += Number(item?.active_sessions) || 0;
     summary.history_sessions += Number(item?.history_sessions) || 0;
     summary.total_sessions += Number(item?.total_sessions) || 0;
@@ -225,9 +228,8 @@ const renderUserDetailHeader = () => {
     elements.userDetailTitle.textContent = t("users.all");
     elements.userDetailMeta.textContent = t("users.detail.allMeta", {
       users: allStats.user_count,
-      sessions: allStats.total_sessions,
-      records: allStats.chat_records,
-      tools: allStats.tool_calls,
+      agents: allStats.agent_count,
+      threads: allStats.total_sessions,
       active: allStats.active_sessions,
       tokens: formatTokenCount(allStats.context_tokens),
     });
@@ -238,9 +240,8 @@ const renderUserDetailHeader = () => {
     elements.userDetailTitle.textContent = t("users.all");
     elements.userDetailMeta.textContent = t("users.detail.allMeta", {
       users: allStats.user_count,
-      sessions: allStats.total_sessions,
-      records: allStats.chat_records,
-      tools: allStats.tool_calls,
+      agents: allStats.agent_count,
+      threads: allStats.total_sessions,
       active: allStats.active_sessions,
       tokens: formatTokenCount(allStats.context_tokens),
     });
@@ -248,9 +249,8 @@ const renderUserDetailHeader = () => {
   }
   elements.userDetailTitle.textContent = user.user_id || "-";
   elements.userDetailMeta.textContent = t("users.detail.meta", {
-    sessions: user.total_sessions,
-    records: user.chat_records,
-    tools: user.tool_calls,
+    agents: user.agent_count,
+    threads: user.total_sessions,
     active: user.active_sessions,
     tokens: formatTokenCount(user.context_tokens),
   });
@@ -292,29 +292,17 @@ const renderUserStats = () => {
     const userCell = document.createElement("td");
     userCell.textContent = isAll ? t("users.all") : user.user_id || "-";
 
-    const chatCell = document.createElement("td");
-    const chatBtn = document.createElement("button");
-    chatBtn.type = "button";
-    chatBtn.className = "link-button";
-    chatBtn.textContent = `${user.chat_records}`;
-    chatBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (isAll) {
-        selectAllUsers();
-      } else {
-        selectUser(user.user_id);
-      }
-    });
-    chatCell.appendChild(chatBtn);
+    const agentCell = document.createElement("td");
+    agentCell.textContent = `${user.agent_count}`;
 
-    const sessionCell = document.createElement("td");
-    sessionCell.textContent = `${user.total_sessions}`;
-
-    const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(user.context_tokens);
+    const totalCell = document.createElement("td");
+    totalCell.textContent = `${user.total_sessions}`;
 
     const activeCell = document.createElement("td");
     activeCell.textContent = `${user.active_sessions}`;
+
+    const tokenCell = document.createElement("td");
+    tokenCell.textContent = formatTokenCount(user.context_tokens);
 
     const actionCell = document.createElement("td");
     if (isAll) {
@@ -340,10 +328,10 @@ const renderUserStats = () => {
     }
 
     row.appendChild(userCell);
-    row.appendChild(chatCell);
-    row.appendChild(sessionCell);
-    row.appendChild(tokenCell);
+    row.appendChild(agentCell);
+    row.appendChild(totalCell);
     row.appendChild(activeCell);
+    row.appendChild(tokenCell);
     row.appendChild(actionCell);
     row.addEventListener("click", () => {
       if (isAll) {
@@ -357,11 +345,10 @@ const renderUserStats = () => {
 
   renderRow(
     {
-      chat_records: allStats.chat_records,
       total_sessions: allStats.total_sessions,
-      tool_calls: allStats.tool_calls,
       active_sessions: allStats.active_sessions,
       context_tokens: allStats.context_tokens,
+      agent_count: allStats.agent_count,
     },
     { isAll: true }
   );

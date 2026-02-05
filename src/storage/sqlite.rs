@@ -261,8 +261,9 @@ impl SqliteStorage {
             )?;
         }
         conn.execute("DROP INDEX IF EXISTS idx_session_locks_user", [])?;
+        conn.execute("DROP INDEX IF EXISTS idx_session_locks_user_agent", [])?;
         conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent \
+            "CREATE INDEX IF NOT EXISTS idx_session_locks_user_agent \
              ON session_locks (user_id, agent_id)",
             [],
         )?;
@@ -374,7 +375,7 @@ impl StorageBackend for SqliteStorage {
               updated_time REAL NOT NULL,
               expires_at REAL NOT NULL
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_session_locks_user_agent
+            CREATE INDEX IF NOT EXISTS idx_session_locks_user_agent
               ON session_locks (user_id, agent_id);
             CREATE INDEX IF NOT EXISTS idx_session_locks_expires
               ON session_locks (expires_at);
@@ -1489,23 +1490,6 @@ impl StorageBackend for SqliteStorage {
             "DELETE FROM session_locks WHERE expires_at <= ?",
             params![now],
         )?;
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT session_id FROM session_locks WHERE user_id = ? AND agent_id = ? LIMIT 1",
-                params![cleaned_user, cleaned_agent],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if existing.is_some() {
-            tx.commit()?;
-            return Ok(SessionLockStatus::UserBusy);
-        }
-        let total: i64 =
-            tx.query_row("SELECT COUNT(*) FROM session_locks", [], |row| row.get(0))?;
-        if total >= max_sessions {
-            tx.commit()?;
-            return Ok(SessionLockStatus::SystemBusy);
-        }
         let insert = tx.execute(
             "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
             params![
@@ -1519,6 +1503,16 @@ impl StorageBackend for SqliteStorage {
         );
         match insert {
             Ok(_) => {
+                let total: i64 =
+                    tx.query_row("SELECT COUNT(*) FROM session_locks", [], |row| row.get(0))?;
+                if total > max_sessions {
+                    tx.execute(
+                        "DELETE FROM session_locks WHERE session_id = ?",
+                        params![cleaned_session],
+                    )?;
+                    tx.commit()?;
+                    return Ok(SessionLockStatus::SystemBusy);
+                }
                 tx.commit()?;
                 Ok(SessionLockStatus::Acquired)
             }
@@ -1526,7 +1520,7 @@ impl StorageBackend for SqliteStorage {
                 if matches!(err.code, ErrorCode::ConstraintViolation) =>
             {
                 tx.commit()?;
-                Ok(SessionLockStatus::SystemBusy)
+                Ok(SessionLockStatus::UserBusy)
             }
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if matches!(

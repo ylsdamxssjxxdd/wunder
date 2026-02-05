@@ -1,7 +1,7 @@
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
-    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER,
+    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE, STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER,
     STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR, STREAM_EVENT_RESUME_POLL_INTERVAL_S,
     STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S, STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK,
     STREAM_EVENT_SLOW_CLIENT_WARN_INTERVAL_S,
@@ -13,12 +13,17 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::header::SEC_WEBSOCKET_PROTOCOL;
 use axum::http::{HeaderMap, HeaderValue};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+pub(crate) const WS_PROTOCOL_VERSION: i32 = 1;
+pub(crate) const WS_PROTOCOL_MIN_VERSION: i32 = 1;
+pub(crate) const WS_PROTOCOL_MAX_VERSION: i32 = 1;
+pub(crate) const WS_MAX_MESSAGE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WsQuery {
@@ -40,6 +45,114 @@ pub(crate) struct WsEnvelope {
     pub session_id: Option<String>,
     #[serde(default)]
     pub payload: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub(crate) struct WsClientInfo {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub(crate) struct WsConnectPayload {
+    #[serde(default)]
+    pub protocol_version: Option<i32>,
+    #[serde(default)]
+    pub min_protocol_version: Option<i32>,
+    #[serde(default)]
+    pub max_protocol_version: Option<i32>,
+    #[serde(default)]
+    pub client: Option<WsClientInfo>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct WsProtocolInfo {
+    pub version: i32,
+    pub min: i32,
+    pub max: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct WsPolicy {
+    pub max_message_bytes: usize,
+    pub stream_queue_size: usize,
+    pub slow_client_queue_watermark: usize,
+    pub resume_poll_interval_s: f64,
+    pub resume_poll_max_interval_s: f64,
+    pub resume_poll_backoff_factor: f64,
+    pub resume_poll_backoff_after: usize,
+    pub stream_event_fetch_limit: i64,
+}
+
+impl WsPolicy {
+    pub(crate) fn default_policy() -> Self {
+        Self {
+            max_message_bytes: WS_MAX_MESSAGE_BYTES,
+            stream_queue_size: STREAM_EVENT_QUEUE_SIZE,
+            slow_client_queue_watermark: STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK,
+            resume_poll_interval_s: STREAM_EVENT_RESUME_POLL_INTERVAL_S,
+            resume_poll_max_interval_s: STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S,
+            resume_poll_backoff_factor: STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR,
+            resume_poll_backoff_after: STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER,
+            stream_event_fetch_limit: STREAM_EVENT_FETCH_LIMIT,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct WsFeatures {
+    pub multiplex: bool,
+    pub resume: bool,
+    pub watch: bool,
+    pub ping_pong: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct WsReadyPayload {
+    pub connection_id: String,
+    pub server_time: f64,
+    pub protocol: WsProtocolInfo,
+    pub policy: WsPolicy,
+    pub features: WsFeatures,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WsHandshakeInfo {
+    pub client: Option<WsClientInfo>,
+    pub client_min: i32,
+    pub client_max: i32,
+}
+
+#[derive(Debug)]
+pub(crate) enum WsHandshakeError {
+    InvalidRange { min: i32, max: i32 },
+    ProtocolMismatch { min: i32, max: i32, server: i32 },
+}
+
+impl WsHandshakeError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidRange { .. } => "INVALID_PROTOCOL_RANGE",
+            Self::ProtocolMismatch { .. } => "PROTOCOL_MISMATCH",
+        }
+    }
+
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::InvalidRange { min, max } => {
+                format!("invalid protocol range: min={min}, max={max}")
+            }
+            Self::ProtocolMismatch { min, max, server } => {
+                format!("protocol mismatch: server={server}, client_range={min}..{max}")
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -99,6 +212,54 @@ pub(crate) fn resolve_session_id(
                 }
             })
         })
+}
+
+pub(crate) fn ws_protocol_info() -> WsProtocolInfo {
+    WsProtocolInfo {
+        version: WS_PROTOCOL_VERSION,
+        min: WS_PROTOCOL_MIN_VERSION,
+        max: WS_PROTOCOL_MAX_VERSION,
+    }
+}
+
+pub(crate) fn parse_connect_payload(
+    payload: Option<Value>,
+) -> Result<WsConnectPayload, WsPayloadError> {
+    match payload {
+        Some(payload) => serde_json::from_value(payload)
+            .map_err(|err| WsPayloadError::Invalid(format!("invalid payload: {err}"))),
+        None => Ok(WsConnectPayload::default()),
+    }
+}
+
+pub(crate) fn negotiate_ws_protocol(
+    payload: &WsConnectPayload,
+) -> Result<WsHandshakeInfo, WsHandshakeError> {
+    let mut min = payload.min_protocol_version;
+    let mut max = payload.max_protocol_version;
+    if min.is_none() && max.is_none() {
+        if let Some(version) = payload.protocol_version {
+            min = Some(version);
+            max = Some(version);
+        }
+    }
+    let min = min.unwrap_or(WS_PROTOCOL_VERSION);
+    let max = max.unwrap_or(WS_PROTOCOL_VERSION);
+    if min <= 0 || max <= 0 || min > max {
+        return Err(WsHandshakeError::InvalidRange { min, max });
+    }
+    if WS_PROTOCOL_VERSION < min || WS_PROTOCOL_VERSION > max {
+        return Err(WsHandshakeError::ProtocolMismatch {
+            min,
+            max,
+            server: WS_PROTOCOL_VERSION,
+        });
+    }
+    Ok(WsHandshakeInfo {
+        client: payload.client.clone(),
+        client_min: min,
+        client_max: max,
+    })
 }
 
 #[derive(Debug)]
@@ -165,14 +326,10 @@ fn try_send_text(sender: &WsSender, text: String) -> Result<(), ()> {
 
 pub(crate) async fn send_ws_ready(
     tx: &WsSender,
-    connection_id: &str,
-    now_ts: f64,
+    request_id: Option<&str>,
+    payload: WsReadyPayload,
 ) -> Result<(), ()> {
-    let payload = json!({
-        "connection_id": connection_id,
-        "server_time": now_ts,
-    });
-    send_ws_message(tx, "ready", None, Some(payload)).await
+    send_ws_message(tx, "ready", request_id, Some(json!(payload))).await
 }
 
 pub(crate) async fn send_ws_pong(tx: &WsSender) -> Result<(), ()> {
@@ -353,6 +510,10 @@ pub(crate) async fn resume_stream_events(
             poll_interval = base_interval;
         }
     }
+}
+
+pub(crate) fn has_ws_protocol_token(headers: &HeaderMap) -> bool {
+    extract_ws_protocol_token(headers).is_some()
 }
 
 fn extract_ws_protocol_token(headers: &HeaderMap) -> Option<String> {

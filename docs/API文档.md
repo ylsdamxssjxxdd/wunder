@@ -1869,6 +1869,7 @@
   - 浏览器：推荐 `Sec-WebSocket-Protocol` 传 token（`wunder`, `wunder-auth.<token>`），Query `access_token` 仅兼容
   - 非浏览器客户端：`Authorization: Bearer <token>`
 - 消息格式：JSON Envelope，服务端推送 `type=event`，payload 内含 `event/id/data`
+- 应用层握手：连接建立后服务端发送 `ready`（含 `protocol`/`policy`）；客户端建议先发送 `connect` 携带协议版本与客户端信息，不兼容会返回 `error` 并关闭连接；未发送 `connect` 时按默认协议版本处理
 - 慢客户端告警：当客户端消费过慢导致队列压力时，服务端会发送 `event=slow_client`，前端可提示用户触发 `resume`
 - 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送

@@ -41,29 +41,29 @@
                 <i class="fa-solid fa-heart"></i>
                 <span data-i18n="panel.monitor">内部状态</span>
               </button>
-              <button id="navUsers" class="nav-btn">
-                <i class="fa-solid fa-robot"></i>
-                <span data-i18n="panel.users">线程管理</span>
-              </button>
-              <button id="navUserAccounts" class="nav-btn">
-                <i class="fa-solid fa-user-gear"></i>
-                <span data-i18n="panel.userAccounts">用户管理</span>
-              </button>
-              <button id="navOrgUnits" class="nav-btn">
-                <i class="fa-solid fa-sitemap"></i>
-                <span data-i18n="panel.orgUnits">单位管理</span>
-              </button>
-              <button id="navMemory" class="nav-btn">
-                <i class="fa-solid fa-brain"></i>
-                <span data-i18n="panel.memory">记忆管理</span>
+              <button id="navSettings" class="nav-btn">
+                <i class="fa-solid fa-gear"></i>
+                <span data-i18n="panel.settings">系统设置</span>
               </button>
               <button id="navLlm" class="nav-btn">
                 <i class="fa-solid fa-sliders"></i>
                 <span data-i18n="panel.llm">模型配置</span>
               </button>
-              <button id="navSettings" class="nav-btn">
-                <i class="fa-solid fa-gear"></i>
-                <span data-i18n="panel.settings">系统设置</span>
+              <button id="navOrgUnits" class="nav-btn">
+                <i class="fa-solid fa-sitemap"></i>
+                <span data-i18n="panel.orgUnits">单位管理</span>
+              </button>
+              <button id="navUserAccounts" class="nav-btn">
+                <i class="fa-solid fa-user-gear"></i>
+                <span data-i18n="panel.userAccounts">用户管理</span>
+              </button>
+              <button id="navUsers" class="nav-btn">
+                <i class="fa-solid fa-robot"></i>
+                <span data-i18n="panel.users">线程管理</span>
+              </button>
+              <button id="navMemory" class="nav-btn">
+                <i class="fa-solid fa-brain"></i>
+                <span data-i18n="panel.memory">记忆管理</span>
               </button>
             </div>
           </div>
@@ -421,7 +421,7 @@
               </div>
             </div>
             <div class="tips" data-i18n="users.tip">
-              统计各用户历史对话记录、会话与工具调用次数，点击历史对话记录可查看该用户全部会话。
+              统计各用户线程与上下文占用情况。
             </div>
             <div class="management-layout user-layout">
               <div class="management-list">
@@ -433,19 +433,19 @@
                     <table class="monitor-table user-table">
                       <colgroup>
                         <col class="col-user-id" />
-                        <col class="col-chat" />
-                        <col class="col-session" />
-                        <col class="col-tool" />
+                        <col class="col-agent" />
+                        <col class="col-total" />
                         <col class="col-active" />
+                        <col class="col-context" />
                         <col class="col-action" />
                       </colgroup>
                       <thead>
                         <tr>
                           <th data-i18n="users.table.user">用户</th>
-                          <th data-i18n="users.table.records">历史对话记录</th>
-                          <th data-i18n="users.table.sessions">会话次数</th>
-                          <th data-i18n="users.table.tokens">Token 占用</th>
-                          <th data-i18n="users.table.active">活动线程</th>
+                          <th data-i18n="users.table.agents">智能体数</th>
+                          <th data-i18n="users.table.totalThreads">总线程数</th>
+                          <th data-i18n="users.table.active">活动线程数</th>
+                          <th data-i18n="users.table.context">上下文</th>
                           <th data-i18n="users.table.actions">操作</th>
                         </tr>
                       </thead>

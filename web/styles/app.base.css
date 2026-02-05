@@ -2375,15 +2375,11 @@ button.danger {
   width: 26%;
 }
 
-.user-table col.col-chat {
-  width: 14%;
+.user-table col.col-agent {
+  width: 12%;
 }
 
-.user-table col.col-session {
-  width: 14%;
-}
-
-.user-table col.col-tool {
+.user-table col.col-total {
   width: 14%;
 }
 
@@ -2391,15 +2387,45 @@ button.danger {
   width: 12%;
 }
 
+.user-table col.col-context {
+  width: 14%;
+}
+
 .user-table col.col-action {
-  width: 24%;
+  width: 22%;
 }
 
-#usersPanel .user-table col.col-action {
-  width: 24%;
+#usersPanel .user-table {
+  border-collapse: separate;
+  border-spacing: 0 6px;
 }
 
-#usersPanel .user-table td:last-child {
+#usersPanel .user-table thead th {
+  background: transparent;
+}
+
+#usersPanel .user-table tbody tr {
+  background: #f8fafc;
+  transition: background 0.2s ease;
+}
+
+#usersPanel .user-table tbody tr:hover {
+  background: #eef2ff;
+}
+
+#usersPanel .user-table tbody td {
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#usersPanel .user-table tbody td:first-child {
+  border-left: 1px solid #e5e7eb;
+  border-radius: 10px 0 0 10px;
+}
+
+#usersPanel .user-table tbody td:last-child {
+  border-right: 1px solid #e5e7eb;
+  border-radius: 0 10px 10px 0;
   padding-left: 4px;
   padding-right: 4px;
 }

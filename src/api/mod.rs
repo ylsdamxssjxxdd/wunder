@@ -17,6 +17,7 @@ pub mod user_context;
 pub mod user_tools;
 pub mod workspace;
 pub(crate) mod ws_helpers;
+pub(crate) mod ws_log;
 
 use crate::state::AppState;
 use axum::Router;

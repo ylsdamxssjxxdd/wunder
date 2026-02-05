@@ -845,9 +845,76 @@ pub async fn execute_builtin_tool(
                 payload,
             )
             .await
+            .map(compact_cron_tool_result)
         }
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
+}
+
+fn compact_cron_tool_result(value: Value) -> Value {
+    let action = value
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut output = json!({ "action": action });
+    if let Some(removed) = value.get("removed") {
+        output["removed"] = removed.clone();
+    }
+    if let Some(queued) = value.get("queued") {
+        output["queued"] = queued.clone();
+    }
+    if let Some(reason) = value.get("reason") {
+        output["reason"] = reason.clone();
+    }
+    if let Some(deduped) = value.get("deduped") {
+        output["deduped"] = deduped.clone();
+    }
+    if let Some(job) = value.get("job") {
+        output["job"] = compact_cron_job(job);
+    }
+    if let Some(jobs) = value.get("jobs") {
+        output["jobs"] = compact_cron_jobs(jobs);
+    }
+    output
+}
+
+fn compact_cron_jobs(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return Value::Array(Vec::new());
+    };
+    let jobs = items.iter().map(compact_cron_job).collect::<Vec<_>>();
+    Value::Array(jobs)
+}
+
+fn compact_cron_job(job: &Value) -> Value {
+    let schedule = job.get("schedule").and_then(Value::as_object);
+    let schedule = json!({
+        "kind": schedule.and_then(|map| map.get("kind")).cloned().unwrap_or(Value::Null),
+        "at": schedule.and_then(|map| map.get("at")).cloned().unwrap_or(Value::Null),
+        "every_ms": schedule.and_then(|map| map.get("every_ms")).cloned().unwrap_or(Value::Null),
+        "cron": schedule.and_then(|map| map.get("cron")).cloned().unwrap_or(Value::Null),
+        "tz": schedule.and_then(|map| map.get("tz")).cloned().unwrap_or(Value::Null)
+    });
+    let next_run = job
+        .get("next_run_at_text")
+        .cloned()
+        .or_else(|| job.get("next_run_at").cloned())
+        .unwrap_or(Value::Null);
+    let last_run = job
+        .get("last_run_at_text")
+        .cloned()
+        .or_else(|| job.get("last_run_at").cloned())
+        .unwrap_or(Value::Null);
+    json!({
+        "job_id": job.get("job_id").cloned().unwrap_or(Value::Null),
+        "name": job.get("name").cloned().unwrap_or(Value::Null),
+        "enabled": job.get("enabled").cloned().unwrap_or(Value::Null),
+        "schedule": schedule,
+        "next_run_at": next_run,
+        "last_run_at": last_run,
+        "last_status": job.get("last_status").cloned().unwrap_or(Value::Null)
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1298,15 +1365,6 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     let _ = context
         .storage
         .touch_chat_session(user_id, &session_id, now, now);
-    if let Some(monitor) = context.monitor.as_ref() {
-        finish_stale_waiting_sessions(
-            monitor,
-            &context.storage,
-            user_id,
-            &session_id,
-            record.agent_id.as_deref(),
-        );
-    }
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: message,
@@ -1888,50 +1946,6 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     let mut output = trimmed.chars().take(max_chars).collect::<String>();
     output.push_str("...");
     output
-}
-
-fn finish_stale_waiting_sessions(
-    monitor: &MonitorState,
-    storage: &Arc<dyn StorageBackend>,
-    user_id: &str,
-    current_session_id: &str,
-    agent_id: Option<&str>,
-) {
-    let normalized_agent = agent_id.unwrap_or("").trim();
-    if user_id.trim().is_empty() {
-        return;
-    }
-    let sessions = monitor.list_sessions(true);
-    for session in sessions {
-        let status = session.get("status").and_then(Value::as_str).unwrap_or("");
-        if status != MonitorState::STATUS_WAITING {
-            continue;
-        }
-        let session_user = session.get("user_id").and_then(Value::as_str).unwrap_or("");
-        if session_user != user_id {
-            continue;
-        }
-        let session_id = session
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if session_id.is_empty() || session_id == current_session_id {
-            continue;
-        }
-        let matches_agent = match storage.get_chat_session(user_id, &session_id) {
-            Ok(Some(record)) => {
-                let record_agent = record.agent_id.unwrap_or_default();
-                record_agent.trim() == normalized_agent
-            }
-            Ok(None) => normalized_agent.is_empty(),
-            Err(_) => false,
-        };
-        if matches_agent {
-            monitor.mark_finished(&session_id);
-        }
-    }
 }
 
 fn collect_user_allowed_tools(context: &ToolContext<'_>, user_id: &str) -> Result<HashSet<String>> {

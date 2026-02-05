@@ -112,7 +112,16 @@
               @scroll="handleHistoryScroll"
             >
               <div
-                v-if="historyPaddingTop"
+                v-if="!historySessions.length"
+                class="history-empty"
+                :title="t('chat.history.empty')"
+                :aria-label="t('chat.history.empty')"
+                role="status"
+              >
+                <i class="fa-solid fa-inbox history-empty-icon" aria-hidden="true"></i>
+              </div>
+              <div
+                v-if="historyPaddingTop && historySessions.length"
                 class="history-spacer"
                 :style="{ height: `${historyPaddingTop}px` }"
               ></div>
@@ -134,8 +143,14 @@
                 </span>
                 <div class="history-title-text">
                   <span class="history-title-name">{{ formatTitle(session.title) }}</span>
+                  <span
+                    v-if="session.is_main"
+                    class="history-main-badge"
+                    :title="t('chat.history.main')"
+                    :aria-label="t('chat.history.main')"
+                    role="img"
+                  ></span>
                 </div>
-                <span v-if="session.is_main" class="history-main-badge">{{ t('chat.history.main') }}</span>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>
                 <div class="history-actions">
@@ -161,7 +176,7 @@
                 </div>
               </div>
               <div
-                v-if="historyPaddingBottom"
+                v-if="historyPaddingBottom && historySessions.length"
                 class="history-spacer"
                 :style="{ height: `${historyPaddingBottom}px` }"
               ></div>
@@ -559,7 +574,16 @@
             @scroll="handleHistoryScroll"
           >
             <div
-              v-if="historyPaddingTop"
+              v-if="!historySessions.length"
+              class="history-empty"
+              :title="t('chat.history.empty')"
+              :aria-label="t('chat.history.empty')"
+              role="status"
+            >
+              <i class="fa-solid fa-inbox history-empty-icon" aria-hidden="true"></i>
+            </div>
+            <div
+              v-if="historyPaddingTop && historySessions.length"
               class="history-spacer"
               :style="{ height: `${historyPaddingTop}px` }"
             ></div>
@@ -581,8 +605,14 @@
                 </span>
                 <div class="history-title-text">
                   <span class="history-title-name">{{ formatTitle(session.title) }}</span>
+                  <span
+                    v-if="session.is_main"
+                    class="history-main-badge"
+                    :title="t('chat.history.main')"
+                    :aria-label="t('chat.history.main')"
+                    role="img"
+                  ></span>
                 </div>
-                <span v-if="session.is_main" class="history-main-badge">{{ t('chat.history.main') }}</span>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>
                 <div class="history-actions">
@@ -608,7 +638,7 @@
                 </div>
             </div>
             <div
-              v-if="historyPaddingBottom"
+              v-if="historyPaddingBottom && historySessions.length"
               class="history-spacer"
               :style="{ height: `${historyPaddingBottom}px` }"
             ></div>

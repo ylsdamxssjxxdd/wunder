@@ -9,6 +9,7 @@ export const state = {
     activePanel: "monitor",
     debugSessionId: "",
     debugSessionStatus: "",
+    debugSessionPinned: false,
     debugEventCursor: 0,
     debugRestored: false,
     debugStreaming: false,

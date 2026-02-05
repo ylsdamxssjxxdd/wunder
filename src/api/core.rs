@@ -89,29 +89,33 @@ async fn wunder_entry(
                 Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
         }
-        AgentSubmitOutcome::Run(request) => {
+        AgentSubmitOutcome::Run(request, lease) => {
             if request.stream {
                 let stream = state
                     .orchestrator
                     .stream(request)
                     .await
                     .map_err(map_orchestrator_error)?;
-                let mapped = stream.map(|event| match event {
-                    Ok(event) => {
-                        let mut builder = Event::default()
-                            .event(event.event)
-                            .data(event.data.to_string());
-                        if let Some(id) = event.id {
-                            builder = builder.id(id);
+                let lease_guard = lease;
+                let mapped = stream.map(move |event| {
+                    let _keep = &lease_guard;
+                    match event {
+                        Ok(event) => {
+                            let mut builder = Event::default()
+                                .event(event.event)
+                                .data(event.data.to_string());
+                            if let Some(id) = event.id {
+                                builder = builder.id(id);
+                            }
+                            Ok::<Event, std::convert::Infallible>(builder)
                         }
-                        Ok::<Event, std::convert::Infallible>(builder)
-                    }
-                    Err(err) => {
-                        error!("sse stream error: {err}");
-                        let payload = json!({ "event": "error", "message": err.to_string() });
-                        Ok::<Event, std::convert::Infallible>(
-                            Event::default().event("error").data(payload.to_string()),
-                        )
+                        Err(err) => {
+                            error!("sse stream error: {err}");
+                            let payload = json!({ "event": "error", "message": err.to_string() });
+                            Ok::<Event, std::convert::Infallible>(
+                                Event::default().event("error").data(payload.to_string()),
+                            )
+                        }
                     }
                 });
                 let sse = Sse::new(mapped)

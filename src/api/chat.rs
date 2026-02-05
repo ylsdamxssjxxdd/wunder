@@ -493,28 +493,32 @@ async fn send_message(
                 Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
         }
-        AgentSubmitOutcome::Run(request) => {
+        AgentSubmitOutcome::Run(request, lease) => {
             if request.stream {
                 let stream = state
                     .orchestrator
                     .stream(request)
                     .await
                     .map_err(map_orchestrator_error)?;
-                let mapped = stream.map(|event| match event {
-                    Ok(event) => {
-                        let mut builder = Event::default()
-                            .event(event.event)
-                            .data(event.data.to_string());
-                        if let Some(id) = event.id {
-                            builder = builder.id(id);
+                let lease_guard = lease;
+                let mapped = stream.map(move |event| {
+                    let _keep = &lease_guard;
+                    match event {
+                        Ok(event) => {
+                            let mut builder = Event::default()
+                                .event(event.event)
+                                .data(event.data.to_string());
+                            if let Some(id) = event.id {
+                                builder = builder.id(id);
+                            }
+                            Ok::<Event, std::convert::Infallible>(builder)
                         }
-                        Ok::<Event, std::convert::Infallible>(builder)
-                    }
-                    Err(err) => {
-                        let payload = json!({ "event": "error", "message": err.to_string() });
-                        Ok::<Event, std::convert::Infallible>(
-                            Event::default().event("error").data(payload.to_string()),
-                        )
+                        Err(err) => {
+                            let payload = json!({ "event": "error", "message": err.to_string() });
+                            Ok::<Event, std::convert::Infallible>(
+                                Event::default().event("error").data(payload.to_string()),
+                            )
+                        }
                     }
                 });
                 let sse = Sse::new(mapped)
@@ -578,13 +582,6 @@ pub(crate) async fn build_chat_request(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-
-    finish_stale_waiting_sessions(
-        state,
-        &user.user_id,
-        &session_id,
-        record.agent_id.as_deref(),
-    );
 
     let user_context = build_user_tool_context(state, &user.user_id).await;
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
@@ -1104,50 +1101,6 @@ fn filter_history_messages(mut history: Vec<Value>, preserve_last_assistant: boo
         })
         .map(|(_, item)| item)
         .collect()
-}
-
-fn finish_stale_waiting_sessions(
-    state: &AppState,
-    user_id: &str,
-    current_session_id: &str,
-    agent_id: Option<&str>,
-) {
-    let normalized_agent = agent_id.unwrap_or("").trim();
-    if user_id.trim().is_empty() {
-        return;
-    }
-    let sessions = state.monitor.list_sessions(true);
-    for session in sessions {
-        let status = session.get("status").and_then(Value::as_str).unwrap_or("");
-        if status != MonitorState::STATUS_WAITING {
-            continue;
-        }
-        let session_user = session.get("user_id").and_then(Value::as_str).unwrap_or("");
-        if session_user != user_id {
-            continue;
-        }
-        let session_id = session
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if session_id.is_empty() || session_id == current_session_id {
-            continue;
-        }
-        let matches_agent = match state.user_store.get_chat_session(user_id, &session_id) {
-            Ok(Some(record)) => {
-                let record_agent = record.agent_id.unwrap_or_default();
-                record_agent.trim() == normalized_agent
-            }
-            Ok(None) => normalized_agent.is_empty(),
-            Err(_) => false,
-        };
-        if !matches_agent {
-            continue;
-        }
-        state.monitor.mark_finished(&session_id);
-    }
 }
 
 fn is_tool_call_meta(item: &Value) -> bool {

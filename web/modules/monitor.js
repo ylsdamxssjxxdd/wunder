@@ -907,6 +907,17 @@ const resolveToolIcon = (name, category) => {
     return "fa-code";
   }
   if (
+    matchesToolKeyword(lowerName, normalizedName, "\u5b9a\u65f6\u4efb\u52a1") ||
+    matchesToolKeyword(lowerName, normalizedName, "\u8ba1\u5212\u4efb\u52a1") ||
+    matchesToolKeyword(lowerName, normalizedName, "cron") ||
+    matchesToolKeyword(lowerName, normalizedName, "schedule") ||
+    matchesToolKeyword(lowerName, normalizedName, "scheduled") ||
+    matchesToolKeyword(lowerName, normalizedName, "timer") ||
+    matchesToolKeyword(lowerName, normalizedName, "schedule_task")
+  ) {
+    return "fa-clock";
+  }
+  if (
     matchesToolKeyword(lowerName, normalizedName, "\u641c\u7d22") ||
     matchesToolKeyword(lowerName, normalizedName, "\u68c0\u7d22") ||
     matchesToolKeyword(lowerName, normalizedName, "search") ||

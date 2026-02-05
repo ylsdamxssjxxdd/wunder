@@ -4131,6 +4131,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         context_tokens: i64,
         chat_records: i64,
         tool_calls: i64,
+        agent_ids: HashSet<String>,
     }
 
     state.monitor.warm_history(true);
@@ -4155,6 +4156,16 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
             .or_else(|| session.get("context_tokens"))
             .and_then(Value::as_i64)
             .unwrap_or(0);
+        let agent_id = session
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if agent_id.is_empty() {
+            entry.agent_ids.insert("__default__".to_string());
+        } else {
+            entry.agent_ids.insert(agent_id.to_string());
+        }
         let status = session.get("status").and_then(Value::as_str).unwrap_or("");
         if active_statuses.contains(status) {
             entry.active_sessions += 1;
@@ -4179,7 +4190,8 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "total_sessions": stats.total_sessions,
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
-                "context_tokens": stats.context_tokens
+                "context_tokens": stats.context_tokens,
+                "agent_count": stats.agent_ids.len()
             })
         })
         .collect::<Vec<_>>();

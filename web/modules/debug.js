@@ -160,6 +160,22 @@ const formatStabilityTimestamp = () => {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 };
 
+const buildDebugSessionId = (prefix = "debug") => {
+  const rand = Math.random().toString(36).slice(2, 6);
+  return `${prefix}_${formatStabilityTimestamp()}_${rand}`;
+};
+
+const ensureDebugSessionId = (options = {}) => {
+  const current = String(elements.sessionId?.value || "").trim();
+  if (current) {
+    return current;
+  }
+  const prefix = typeof options.prefix === "string" && options.prefix.trim() ? options.prefix.trim() : "debug";
+  const next = buildDebugSessionId(prefix);
+  updateSessionId(next, { pin: true, persist: true });
+  return next;
+};
+
 const applyStabilityTemplate = (text, context) => {
   const raw = String(text ?? "");
   return raw
@@ -354,7 +370,7 @@ const runStabilitySequence = async () => {
   let sessionId = String(elements.sessionId?.value || "").trim();
   if (!sessionId) {
     sessionId = `stability_${formatStabilityTimestamp()}`;
-    updateSessionId(sessionId);
+    updateSessionId(sessionId, { pin: true });
   }
   syncDebugInputs();
 
@@ -1831,12 +1847,18 @@ const formatEventTime = (value) => {
 };
 
 // 更新会话 ID 并同步存储，确保刷新后能恢复
-const updateSessionId = (sessionId) => {
+const updateSessionId = (sessionId, options = {}) => {
   const trimmed = String(sessionId || "").trim();
   if (!trimmed) {
     return;
   }
-  if (elements.sessionId && elements.sessionId.value !== trimmed) {
+  const pin = options.pin === true;
+  const persist =
+    typeof options.persist === "boolean" ? options.persist : Boolean(state.runtime.debugSessionPinned || pin);
+  if (pin) {
+    state.runtime.debugSessionPinned = true;
+  }
+  if (persist && elements.sessionId && elements.sessionId.value !== trimmed) {
     elements.sessionId.value = trimmed;
   }
   if (state.runtime.debugSessionId !== trimmed) {
@@ -1844,7 +1866,9 @@ const updateSessionId = (sessionId) => {
     state.runtime.debugEventCursor = 0;
     state.runtime.debugRestored = false;
   }
-  writeDebugState({ sessionId: trimmed });
+  if (persist) {
+    writeDebugState({ sessionId: trimmed });
+  }
   syncCompactionButton();
 };
 
@@ -3291,7 +3315,7 @@ const applyStoredDebugInputs = () => {
     elements.debugModelName.value = stored.modelName;
   }
   if (stored.sessionId) {
-    updateSessionId(stored.sessionId);
+    updateSessionId(stored.sessionId, { pin: true });
   }
   return stored;
 };
@@ -3379,7 +3403,7 @@ const renderDebugHistoryList = (sessions, options = {}) => {
       if (elements.question) {
         elements.question.value = session?.question || "";
       }
-      updateSessionId(sessionId);
+      updateSessionId(sessionId, { pin: true });
       state.runtime.debugEventCursor = 0;
       state.runtime.debugRestored = false;
       syncDebugInputs();
@@ -3790,6 +3814,7 @@ const handleSend = async () => {
   }
 
   let payload = null;
+  const sessionId = ensureDebugSessionId();
   try {
     try {
       await ensureToolSelectionLoaded();
@@ -3798,6 +3823,9 @@ const handleSend = async () => {
       applyPromptToolError(error.message);
     }
     payload = buildPayload();
+    if (sessionId) {
+      payload.session_id = sessionId;
+    }
   } catch (error) {
     appendLog(error.message);
     return;
@@ -3815,10 +3843,12 @@ const handleSend = async () => {
     state.runtime.debugRestored = false;
     state.runtime.debugSessionStatus = "";
     state.runtime.debugSessionId = "";
+    state.runtime.debugSessionPinned = false;
     writeDebugState({ sessionId: "" });
   } else {
     const sessionChanged = requestedSessionId !== previousSessionId;
-    updateSessionId(requestedSessionId);
+    state.runtime.debugSessionPinned = true;
+    updateSessionId(requestedSessionId, { pin: true });
     if (sessionChanged || !state.runtime.debugRestored) {
       await restoreDebugPanel({ refresh: true, syncInputs: false });
     }
@@ -3911,6 +3941,7 @@ const resetDebugSessionState = () => {
   }
   state.runtime.debugSessionId = "";
   state.runtime.debugSessionStatus = "";
+  state.runtime.debugSessionPinned = false;
   state.runtime.debugEventCursor = 0;
   state.runtime.debugRestored = false;
   state.runtime.debugSyncAfterStream = false;
@@ -3971,6 +4002,8 @@ export const initDebugPanel = () => {
     }
     syncTimer = setTimeout(() => {
       syncTimer = null;
+      const sessionValue = String(elements.sessionId?.value || "").trim();
+      state.runtime.debugSessionPinned = Boolean(sessionValue);
       syncDebugInputs();
     }, 200);
   };

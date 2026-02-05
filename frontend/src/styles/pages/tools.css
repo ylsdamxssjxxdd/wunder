@@ -323,26 +323,25 @@
   color: #fca5a5;
 }
 
-.cron-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+.cron-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
 }
 
-.cron-detail-item {
-  background: var(--portal-card);
-  border: 1px solid var(--portal-border);
-  border-radius: 12px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 72px;
+.cron-detail-table th,
+.cron-detail-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--portal-border);
+  vertical-align: top;
 }
 
-.cron-detail-label {
+.cron-detail-table th {
+  width: 140px;
   font-size: 12px;
   color: var(--portal-muted);
+  font-weight: 600;
 }
 
 .cron-detail-value {
@@ -365,6 +364,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .cron-run-item {
@@ -412,10 +414,6 @@
 
   .cron-sidebar {
     width: 100%;
-  }
-
-  .cron-detail-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

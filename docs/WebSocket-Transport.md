@@ -50,13 +50,19 @@
 **鉴权复用**
 - 复用现有 `resolve_user` / Bearer Token 鉴权逻辑。
 
+**应用层握手（新增）**
+- 连接建立后服务端会发送 `ready`，其中包含 `protocol`（协议版本）与 `policy`（传输策略）。
+- 客户端建议发送 `type=connect` 进行协议协商，携带 `protocol_version` 或 `min_protocol_version/max_protocol_version` 与客户端信息。
+- 若协议不兼容，服务端返回 `error` 并关闭连接。
+- 兼容旧客户端：未发送 `connect` 时服务端按默认协议版本处理，但仍会下发 `ready`；推荐新客户端显式 `connect`，后续可升级为强制握手。
+
 ## 5. 协议设计（消息结构）
 
 统一使用 JSON Envelope（`session_id` 可放在 envelope 或 payload，服务端取其一）：
 
 ```json
 {
-  "type": "start | resume | watch | cancel | ping | event | error | ready | pong",
+  "type": "connect | start | resume | watch | cancel | ping | event | error | ready | pong",
   "request_id": "req_xxx",
   "session_id": "sess_xxx",
   "payload": {}
@@ -66,6 +72,24 @@
 > 多路复用：同一连接可并发多个 start/resume，需为每个请求设置 `request_id`，服务端返回的 `event/error` 都会携带对应 `request_id`；未提供时服务端会自动生成并回传。
 
 ### 5.1 Client -> Server
+
+**connect**
+```json
+{
+  "type": "connect",
+  "request_id": "req_xxx",
+  "payload": {
+    "protocol_version": 1,
+    "client": {
+      "name": "frontend",
+      "version": "1.0.0",
+      "platform": "web",
+      "mode": "chat"
+    }
+  }
+}
+```
+> 说明：`protocol_version` 可替换为 `min_protocol_version/max_protocol_version`；服务端会校验范围并在不兼容时返回 `error`。未发送 `connect` 时会按默认协议版本处理。
 
 **start**
 ```json
@@ -135,7 +159,7 @@
   }
 }
 ```
-> 可选：携带 `request_id` 取消指定流；仅传 `session_id` 会取消该会话下的所有活跃流。
+> 可选：携带 `request_id` 取消该 request 的流；若该流来自 `start`，会同步标记会话取消（`resume/watch` 仅停止流）。仅传 `session_id` 会取消该会话下的所有活跃流并标记会话取消。若同时提供，以 `request_id` 为准。
 
 **ping**
 ```json
@@ -148,7 +172,27 @@
 ```json
 {
   "type": "ready",
-  "payload": { "connection_id": "conn_xxx", "server_time": 1730000000 }
+  "payload": {
+    "connection_id": "conn_xxx",
+    "server_time": 1730000000,
+    "protocol": { "version": 1, "min": 1, "max": 1 },
+    "policy": {
+      "max_message_bytes": 524288,
+      "stream_queue_size": 256,
+      "slow_client_queue_watermark": 2,
+      "resume_poll_interval_s": 0.08,
+      "resume_poll_max_interval_s": 0.8,
+      "resume_poll_backoff_factor": 1.6,
+      "resume_poll_backoff_after": 3,
+      "stream_event_fetch_limit": 200
+    },
+    "features": {
+      "multiplex": true,
+      "resume": true,
+      "watch": true,
+      "ping_pong": true
+    }
+  }
 }
 ```
 
@@ -201,7 +245,7 @@
 ```mermaid
 stateDiagram-v2
   [*] --> connecting
-  connecting --> ready: WS handshake + auth ok
+  connecting --> ready: WS handshake + auth + protocol ok
   ready --> streaming: start/resume accepted
   streaming --> ready: final/error/cancel completed
   ready --> closed: client close
@@ -220,7 +264,9 @@ sequenceDiagram
   participant S as Storage/Monitor
 
   C->>G: WS Handshake + Auth
-  G-->>C: ready
+  G-->>C: ready (protocol/policy)
+  C->>G: connect (protocol/client info)
+  G-->>C: ready (ack, optional)
   C->>D: start(session_id, content, ...)
   D->>O: orchestrator.stream(request)
   O->>E: emit events
@@ -258,6 +304,9 @@ sequenceDiagram
 **常见错误码（code）**
 - `INVALID_JSON`：消息无法解析为 JSON Envelope
 - `PAYLOAD_REQUIRED` / `INVALID_PAYLOAD`：payload 缺失或结构不合法
+- `INVALID_PROTOCOL_RANGE`：协议版本范围不合法
+- `PROTOCOL_MISMATCH`：协议版本不兼容
+- `ALREADY_CONNECTED`：重复握手/连接已初始化
 - `QUESTION_REQUIRED` / `CONTENT_REQUIRED`：问题或内容为空
 - `SESSION_REQUIRED` / `SESSION_NOT_FOUND`：缺少 session_id 或会话不存在
 - `AFTER_EVENT_ID_REQUIRED`：resume 缺少 after_event_id
