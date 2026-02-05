@@ -156,6 +156,36 @@ pub struct ChatSessionRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct AgentThreadRecord {
+    pub thread_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTaskRecord {
+    pub task_id: String,
+    pub thread_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub request_payload: Value,
+    pub request_id: Option<String>,
+    pub retry_count: i64,
+    pub retry_at: f64,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub started_at: Option<f64>,
+    pub finished_at: Option<f64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ChannelAccountRecord {
     pub channel: String,
     pub account_id: String,
@@ -405,6 +435,31 @@ pub trait StorageBackend: Send + Sync {
     fn release_session_lock(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
+
+    fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()>;
+    fn get_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<Option<AgentThreadRecord>>;
+    fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64>;
+
+    fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
+    fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
+    fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
+    fn list_agent_tasks_by_thread(
+        &self,
+        thread_id: &str,
+        status: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>>;
+    fn update_agent_task_status(
+        &self,
+        task_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        started_at: Option<f64>,
+        finished_at: Option<f64>,
+        last_error: Option<&str>,
+        updated_at: f64,
+    ) -> Result<()>;
 
     fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()>;
     fn get_vector_document(

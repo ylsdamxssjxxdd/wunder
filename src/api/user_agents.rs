@@ -29,6 +29,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/agents/{agent_id}",
             get(get_agent).put(update_agent).delete(delete_agent),
         )
+        .route(
+            "/wunder/agents/{agent_id}/default-session",
+            get(get_default_session).post(set_default_session),
+        )
 }
 
 async fn list_agents(
@@ -325,6 +329,120 @@ async fn delete_agent(
     Ok(Json(json!({ "data": { "id": cleaned } })))
 }
 
+async fn get_default_session(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let normalized_agent = normalize_agent_id(&agent_id);
+    if !normalized_agent.is_empty() {
+        let record = state
+            .user_store
+            .get_user_agent_by_id(&normalized_agent)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let Some(record) = record else {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        };
+        let access = state
+            .user_store
+            .get_user_agent_access(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
+    }
+    let record = state
+        .user_store
+        .get_agent_thread(&user_id, &normalized_agent)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let session_id = record.as_ref().map(|item| item.session_id.clone());
+    Ok(Json(json!({
+        "data": {
+            "agent_id": normalized_agent,
+            "session_id": session_id,
+        }
+    })))
+}
+
+async fn set_default_session(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Json(payload): Json<DefaultSessionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let normalized_agent = normalize_agent_id(&agent_id);
+    if !normalized_agent.is_empty() {
+        let record = state
+            .user_store
+            .get_user_agent_by_id(&normalized_agent)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let Some(record) = record else {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        };
+        let access = state
+            .user_store
+            .get_user_agent_access(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
+    }
+    let session_id = payload.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let session_record = state
+        .user_store
+        .get_chat_session(&user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(session_record) = session_record else {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        ));
+    };
+    let session_agent = session_record.agent_id.clone().unwrap_or_default();
+    if session_agent.trim() != normalized_agent {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+    let record = state
+        .agent_runtime
+        .set_main_session(&user_id, &normalized_agent, &session_id, "manual")
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "agent_id": record.agent_id,
+            "session_id": record.session_id,
+            "thread_id": record.thread_id,
+            "status": record.status,
+            "updated_at": format_ts(record.updated_at),
+        }
+    })))
+}
+
 fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
     json!({
         "id": record.agent_id,
@@ -554,6 +672,18 @@ fn preset_agents() -> Vec<PresetAgent> {
     ]
 }
 
+fn normalize_agent_id(raw: &str) -> String {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return "".to_string();
+    }
+    let lowered = cleaned.to_ascii_lowercase();
+    if lowered == "__default__" || lowered == "default" {
+        return "".to_string();
+    }
+    cleaned.to_string()
+}
+
 fn build_icon_payload(name: &str, color: &str) -> String {
     serde_json::json!({ "name": name, "color": color }).to_string()
 }
@@ -577,6 +707,11 @@ struct AgentCreateRequest {
     status: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DefaultSessionRequest {
+    session_id: String,
 }
 
 #[derive(Debug, Deserialize)]

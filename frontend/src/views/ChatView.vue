@@ -119,7 +119,7 @@
               <div
                 v-for="session in historySessions"
                 :key="session.id"
-                :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '']"
+                :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '', session.is_main ? 'is-main' : '']"
                 @click="handleSelectSession(session.id)"
             >
               <div class="history-info">
@@ -132,18 +132,33 @@
                 >
                   <span class="agent-running-dot" aria-hidden="true"></span>
                 </span>
-                <div class="history-title-text">{{ formatTitle(session.title) }}</div>
+                <div class="history-title-text">
+                  <span class="history-title-name">{{ formatTitle(session.title) }}</span>
+                </div>
+                <span v-if="session.is_main" class="history-main-badge">{{ t('chat.history.main') }}</span>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>
-                <button
-                  class="history-delete-btn"
-                  type="button"
-                  :title="t('chat.history.delete')"
-                  :aria-label="t('chat.history.delete')"
-                  @click.stop="handleDeleteSession(session.id)"
-                >
-                  <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
-                </button>
+                <div class="history-actions">
+                  <button
+                    v-if="!session.is_main"
+                    class="history-main-btn"
+                    type="button"
+                    :title="t('chat.history.setMain')"
+                    :aria-label="t('chat.history.setMain')"
+                    @click.stop="handleSetMainSession(session)"
+                  >
+                    <i class="fa-solid fa-star history-main-icon" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    class="history-delete-btn"
+                    type="button"
+                    :title="t('chat.history.delete')"
+                    :aria-label="t('chat.history.delete')"
+                    @click.stop="handleDeleteSession(session.id)"
+                  >
+                    <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
+                  </button>
+                </div>
               </div>
               <div
                 v-if="historyPaddingBottom"
@@ -551,7 +566,7 @@
             <div
               v-for="session in historySessions"
               :key="session.id"
-              :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '']"
+              :class="['history-item', session.id === chatStore.activeSessionId ? 'active' : '', session.is_main ? 'is-main' : '']"
               @click="handleSelectSession(session.id)"
             >
               <div class="history-info">
@@ -564,18 +579,33 @@
                 >
                   <span class="agent-running-dot" aria-hidden="true"></span>
                 </span>
-                <div class="history-title-text">{{ formatTitle(session.title) }}</div>
+                <div class="history-title-text">
+                  <span class="history-title-name">{{ formatTitle(session.title) }}</span>
+                </div>
+                <span v-if="session.is_main" class="history-main-badge">{{ t('chat.history.main') }}</span>
                 <span class="history-time">{{ formatTime(session.updated_at) }}</span>
               </div>
-                <button
-                  class="history-delete-btn"
-                  type="button"
-                  :title="t('chat.history.delete')"
-                  :aria-label="t('chat.history.delete')"
-                  @click.stop="handleDeleteSession(session.id)"
-                >
-                  <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
-                </button>
+                <div class="history-actions">
+                  <button
+                    v-if="!session.is_main"
+                    class="history-main-btn"
+                    type="button"
+                    :title="t('chat.history.setMain')"
+                    :aria-label="t('chat.history.setMain')"
+                    @click.stop="handleSetMainSession(session)"
+                  >
+                    <i class="fa-solid fa-star history-main-icon" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    class="history-delete-btn"
+                    type="button"
+                    :title="t('chat.history.delete')"
+                    :aria-label="t('chat.history.delete')"
+                    @click.stop="handleDeleteSession(session.id)"
+                  >
+                    <i class="fa-solid fa-trash-can history-delete-icon" aria-hidden="true"></i>
+                  </button>
+                </div>
             </div>
             <div
               v-if="historyPaddingBottom"
@@ -879,6 +909,10 @@ const historyPaddingBottom = computed(() =>
   let pendingAssistantCenterCount = 0;
 
 const resolveInitialSessionId = (agentId) => {
+  const mainSession = chatStore.sessions.find((session) => session.is_main);
+  if (mainSession?.id) {
+    return mainSession.id;
+  }
   const persisted = chatStore.getLastSessionId?.(agentId) || '';
   if (persisted && chatStore.sessions.some((session) => session.id === persisted)) {
     return persisted;
@@ -942,6 +976,12 @@ const handleDeleteSession = async (sessionId) => {
     return;
   }
   await chatStore.deleteSession(sessionId);
+};
+
+const handleSetMainSession = async (session) => {
+  const sessionId = session?.id;
+  if (!sessionId) return;
+  await chatStore.setMainSession(sessionId);
 };
 
 const shouldShowMessageText = (message) => {

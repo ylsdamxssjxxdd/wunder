@@ -47,6 +47,8 @@ pub struct Config {
     pub channels: ChannelsConfig,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    #[serde(default)]
+    pub agent_queue: AgentQueueConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -121,6 +123,45 @@ pub struct LlmConfig {
     pub default: String,
     #[serde(default)]
     pub models: HashMap<String, LlmModelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentQueueConfig {
+    #[serde(default = "default_agent_queue_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_agent_queue_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+    #[serde(default = "default_agent_queue_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_agent_queue_task_ttl_s")]
+    pub task_ttl_s: u64,
+}
+
+impl Default for AgentQueueConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_agent_queue_enabled(),
+            poll_interval_ms: default_agent_queue_poll_interval_ms(),
+            max_retries: default_agent_queue_max_retries(),
+            task_ttl_s: default_agent_queue_task_ttl_s(),
+        }
+    }
+}
+
+fn default_agent_queue_enabled() -> bool {
+    true
+}
+
+fn default_agent_queue_poll_interval_ms() -> u64 {
+    1500
+}
+
+fn default_agent_queue_max_retries() -> u32 {
+    2
+}
+
+fn default_agent_queue_task_ttl_s() -> u64 {
+    24 * 60 * 60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

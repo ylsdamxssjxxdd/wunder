@@ -8,6 +8,7 @@ use crate::orchestrator_constants::{
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
+use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
@@ -194,7 +195,19 @@ async fn create_session(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": session_payload(&record) })))
+    let is_main = state
+        .agent_runtime
+        .set_main_session(
+            &resolved.user.user_id,
+            record.agent_id.as_deref().unwrap_or(""),
+            &session_id,
+            "create",
+        )
+        .await
+        .is_ok();
+    Ok(Json(
+        json!({ "data": session_payload_with_main(&record, is_main) }),
+    ))
 }
 
 async fn list_sessions(
@@ -216,7 +229,32 @@ async fn list_sessions(
             limit,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let items = sessions.iter().map(session_payload).collect::<Vec<_>>();
+    let mut main_map: HashMap<String, Option<String>> = HashMap::new();
+    for record in &sessions {
+        let agent_key = record.agent_id.clone().unwrap_or_default();
+        if main_map.contains_key(&agent_key) {
+            continue;
+        }
+        let main = state
+            .user_store
+            .get_agent_thread(&resolved.user.user_id, &agent_key)
+            .ok()
+            .flatten()
+            .map(|item| item.session_id);
+        main_map.insert(agent_key, main);
+    }
+    let items = sessions
+        .iter()
+        .map(|record| {
+            let agent_key = record.agent_id.clone().unwrap_or_default();
+            let is_main = main_map
+                .get(&agent_key)
+                .and_then(|value| value.as_ref())
+                .map(|session_id| session_id == &record.session_id)
+                .unwrap_or(false);
+            session_payload_with_main(record, is_main)
+        })
+        .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "total": total, "items": items } })))
 }
 
@@ -424,40 +462,73 @@ async fn send_message(
         payload.attachments,
     )
     .await?;
+    let wants_stream = request.stream;
+    let outcome = state
+        .agent_runtime
+        .submit_user_request(request)
+        .await
+        .map_err(|err| {
+            orchestrator_error_response(
+                StatusCode::BAD_REQUEST,
+                json!({"code": "INVALID_REQUEST", "message": err.to_string()}),
+            )
+        })?;
 
-    if request.stream {
-        let stream = state
-            .orchestrator
-            .stream(request)
-            .await
-            .map_err(map_orchestrator_error)?;
-        let mapped = stream.map(|event| match event {
-            Ok(event) => {
-                let mut builder = Event::default()
-                    .event(event.event)
-                    .data(event.data.to_string());
-                if let Some(id) = event.id {
-                    builder = builder.id(id);
-                }
-                Ok::<Event, std::convert::Infallible>(builder)
+    match outcome {
+        AgentSubmitOutcome::Queued(info) => {
+            let payload = json!({
+                "queued": true,
+                "queue_id": info.task_id,
+                "thread_id": info.thread_id,
+                "session_id": info.session_id,
+            });
+            if wants_stream {
+                let mapped = tokio_stream::iter(vec![Ok::<Event, std::convert::Infallible>(
+                    Event::default().event("queued").data(payload.to_string()),
+                )]);
+                let sse = Sse::new(mapped)
+                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+                Ok(sse.into_response())
+            } else {
+                Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
-            Err(err) => {
-                let payload = json!({ "event": "error", "message": err.to_string() });
-                Ok::<Event, std::convert::Infallible>(
-                    Event::default().event("error").data(payload.to_string()),
-                )
+        }
+        AgentSubmitOutcome::Run(request) => {
+            if request.stream {
+                let stream = state
+                    .orchestrator
+                    .stream(request)
+                    .await
+                    .map_err(map_orchestrator_error)?;
+                let mapped = stream.map(|event| match event {
+                    Ok(event) => {
+                        let mut builder = Event::default()
+                            .event(event.event)
+                            .data(event.data.to_string());
+                        if let Some(id) = event.id {
+                            builder = builder.id(id);
+                        }
+                        Ok::<Event, std::convert::Infallible>(builder)
+                    }
+                    Err(err) => {
+                        let payload = json!({ "event": "error", "message": err.to_string() });
+                        Ok::<Event, std::convert::Infallible>(
+                            Event::default().event("error").data(payload.to_string()),
+                        )
+                    }
+                });
+                let sse = Sse::new(mapped)
+                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+                Ok(sse.into_response())
+            } else {
+                let response = state
+                    .orchestrator
+                    .run(request)
+                    .await
+                    .map_err(map_orchestrator_error)?;
+                Ok(Json(json!({ "data": response })).into_response())
             }
-        });
-        let sse = Sse::new(mapped)
-            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-        Ok(sse.into_response())
-    } else {
-        let response = state
-            .orchestrator
-            .run(request)
-            .await
-            .map_err(map_orchestrator_error)?;
-        Ok(Json(json!({ "data": response })).into_response())
+        }
     }
 }
 
@@ -1280,6 +1351,14 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "spawn_label": record.spawn_label,
         "spawned_by": record.spawned_by,
     })
+}
+
+fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main: bool) -> Value {
+    let mut payload = session_payload(record);
+    if let Value::Object(ref mut map) = payload {
+        map.insert("is_main".to_string(), json!(is_main));
+    }
+    payload
 }
 
 fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {

@@ -1,8 +1,8 @@
 use crate::org_units;
 use crate::storage::{
-    ChatSessionRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenRecord,
-    UserToolAccessRecord,
+    AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, OrgUnitRecord, SessionLockRecord,
+    SessionRunRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
+    UserTokenRecord, UserToolAccessRecord,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -583,6 +583,67 @@ impl UserStore {
 
     pub fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {
         self.storage.list_session_locks_by_user(user_id)
+    }
+
+    pub fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()> {
+        self.storage.upsert_agent_thread(record)
+    }
+
+    pub fn get_agent_thread(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<Option<AgentThreadRecord>> {
+        self.storage.get_agent_thread(user_id, agent_id)
+    }
+
+    pub fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64> {
+        self.storage.delete_agent_thread(user_id, agent_id)
+    }
+
+    pub fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()> {
+        self.storage.insert_agent_task(record)
+    }
+
+    pub fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>> {
+        self.storage.get_agent_task(task_id)
+    }
+
+    pub fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
+        self.storage.list_pending_agent_tasks(limit)
+    }
+
+    pub fn list_agent_tasks_by_thread(
+        &self,
+        thread_id: &str,
+        status: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.storage
+            .list_agent_tasks_by_thread(thread_id, status, limit)
+    }
+
+    pub fn update_agent_task_status(
+        &self,
+        task_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        started_at: Option<f64>,
+        finished_at: Option<f64>,
+        last_error: Option<&str>,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.storage.update_agent_task_status(
+            task_id,
+            status,
+            retry_count,
+            retry_at,
+            started_at,
+            finished_at,
+            last_error,
+            updated_at,
+        )
     }
 }
 

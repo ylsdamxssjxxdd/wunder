@@ -6,6 +6,8 @@ use crate::api::ws_helpers::{
 };
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
+use crate::schemas::StreamEvent;
+use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -15,6 +17,7 @@ use axum::{routing::get, Router};
 use chrono::Utc;
 use futures::{SinkExt, StreamExt as WsStreamExt};
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -171,6 +174,48 @@ async fn handle_ws(
                                 .await;
                                 continue;
                             }
+                        };
+
+                        let outcome = match state.agent_runtime.submit_user_request(request).await {
+                            Ok(outcome) => outcome,
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    "BAD_REQUEST",
+                                    err.to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+
+                        let request = match outcome {
+                            AgentSubmitOutcome::Queued(info) => {
+                                let payload = json!({
+                                    "queued": true,
+                                    "queue_id": info.task_id,
+                                    "thread_id": info.thread_id,
+                                    "session_id": info.session_id,
+                                });
+                                let queued_event = StreamEvent {
+                                    event: "queued".to_string(),
+                                    data: payload.clone(),
+                                    id: None,
+                                    timestamp: Some(Utc::now()),
+                                };
+                                let _ =
+                                    send_ws_event(&ws_tx, Some(&request_id), queued_event).await;
+                                let final_event = StreamEvent {
+                                    event: "final".to_string(),
+                                    data: payload,
+                                    id: None,
+                                    timestamp: Some(Utc::now()),
+                                };
+                                let _ = send_ws_event(&ws_tx, Some(&request_id), final_event).await;
+                                continue;
+                            }
+                            AgentSubmitOutcome::Run(request) => request,
                         };
 
                         let ws_tx_snapshot = ws_tx.clone();

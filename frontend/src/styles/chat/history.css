@@ -86,10 +86,16 @@
 .chat-shell .history-title-text {
   font-size: 14px;
   color: var(--chat-text);
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-shell .history-title-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -110,19 +116,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%) scale(0.94);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.chat-shell .history-item:hover .history-delete-btn {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(-50%) scale(1);
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
 }
 
 .chat-shell .history-delete-btn:hover {
@@ -141,3 +135,67 @@
   pointer-events: none;
 }
 
+
+.chat-shell .history-item.is-main {
+  border-color: rgba(var(--chat-primary-rgb), 0.4);
+  box-shadow: 0 0 0 1px rgba(var(--chat-primary-rgb), 0.12);
+}
+
+.chat-shell .history-main-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--chat-primary);
+  border: 1px solid rgba(var(--chat-primary-rgb), 0.35);
+  background: rgba(var(--chat-primary-rgb), 0.12);
+  padding: 2px 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.chat-shell .history-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.96);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.chat-shell .history-item:hover .history-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+
+.chat-shell .history-main-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.chat-shell .history-main-btn:hover {
+  border-color: rgba(250, 204, 21, 0.6);
+  color: #fde68a;
+}
+
+.chat-shell .history-main-icon {
+  width: 12px;
+  height: 12px;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}

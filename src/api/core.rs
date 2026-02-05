@@ -7,6 +7,7 @@ use crate::schemas::{
     AvailableToolsResponse, I18nConfigResponse, SharedToolSpec, ToolSpec, WunderPromptRequest,
     WunderPromptResponse, WunderRequest,
 };
+use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
@@ -14,10 +15,10 @@ use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
 use anyhow::Error;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
+use axum::{routing::get, routing::post, Json, Router};
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -58,40 +59,73 @@ async fn wunder_entry(
     {
         request.language = Some(i18n::get_language());
     }
-    if request.stream {
-        let stream = state
-            .orchestrator
-            .stream(request)
-            .await
-            .map_err(map_orchestrator_error)?;
-        let mapped = stream.map(|event| match event {
-            Ok(event) => {
-                let mut builder = Event::default()
-                    .event(event.event)
-                    .data(event.data.to_string());
-                if let Some(id) = event.id {
-                    builder = builder.id(id);
-                }
-                Ok::<Event, std::convert::Infallible>(builder)
+    let wants_stream = request.stream;
+    let outcome = state
+        .agent_runtime
+        .submit_user_request(request)
+        .await
+        .map_err(|err| {
+            orchestrator_error_response(
+                StatusCode::BAD_REQUEST,
+                json!({"code": "INVALID_REQUEST", "message": err.to_string()}),
+            )
+        })?;
+    match outcome {
+        AgentSubmitOutcome::Queued(info) => {
+            let payload = json!({
+                "queued": true,
+                "queue_id": info.task_id,
+                "thread_id": info.thread_id,
+                "session_id": info.session_id,
+            });
+            if wants_stream {
+                let mapped = tokio_stream::iter(vec![Ok::<Event, std::convert::Infallible>(
+                    Event::default().event("queued").data(payload.to_string()),
+                )]);
+                let sse = Sse::new(mapped)
+                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+                Ok(sse.into_response())
+            } else {
+                Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
-            Err(err) => {
-                error!("sse stream error: {err}");
-                let payload = json!({ "event": "error", "message": err.to_string() });
-                Ok::<Event, std::convert::Infallible>(
-                    Event::default().event("error").data(payload.to_string()),
-                )
+        }
+        AgentSubmitOutcome::Run(request) => {
+            if request.stream {
+                let stream = state
+                    .orchestrator
+                    .stream(request)
+                    .await
+                    .map_err(map_orchestrator_error)?;
+                let mapped = stream.map(|event| match event {
+                    Ok(event) => {
+                        let mut builder = Event::default()
+                            .event(event.event)
+                            .data(event.data.to_string());
+                        if let Some(id) = event.id {
+                            builder = builder.id(id);
+                        }
+                        Ok::<Event, std::convert::Infallible>(builder)
+                    }
+                    Err(err) => {
+                        error!("sse stream error: {err}");
+                        let payload = json!({ "event": "error", "message": err.to_string() });
+                        Ok::<Event, std::convert::Infallible>(
+                            Event::default().event("error").data(payload.to_string()),
+                        )
+                    }
+                });
+                let sse = Sse::new(mapped)
+                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
+                Ok(sse.into_response())
+            } else {
+                let response = state
+                    .orchestrator
+                    .run(request)
+                    .await
+                    .map_err(map_orchestrator_error)?;
+                Ok(Json(response).into_response())
             }
-        });
-        let sse = Sse::new(mapped)
-            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-        Ok(sse.into_response())
-    } else {
-        let response = state
-            .orchestrator
-            .run(request)
-            .await
-            .map_err(map_orchestrator_error)?;
-        Ok(Json(response).into_response())
+        }
     }
 }
 

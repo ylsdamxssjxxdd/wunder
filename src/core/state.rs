@@ -11,6 +11,7 @@ use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
+use crate::services::agent_runtime::AgentRuntime;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
 use crate::throughput::ThroughputManager;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub workspace: Arc<WorkspaceManager>,
     pub monitor: Arc<MonitorState>,
     pub orchestrator: Arc<Orchestrator>,
+    pub agent_runtime: Arc<AgentRuntime>,
     pub lsp_manager: Arc<LspManager>,
     pub memory: Arc<MemoryStore>,
     pub skills: Arc<RwLock<SkillRegistry>>,
@@ -79,6 +81,13 @@ impl AppState {
             lsp_manager.clone(),
             storage.clone(),
         ));
+        let agent_runtime = AgentRuntime::new(
+            config_store.clone(),
+            user_store.clone(),
+            monitor.clone(),
+            orchestrator.clone(),
+        );
+        agent_runtime.clone().start();
         let memory = Arc::new(MemoryStore::new(storage.clone()));
         let channels = Arc::new(ChannelHub::new(
             config_store.clone(),
@@ -111,6 +120,7 @@ impl AppState {
             workspace,
             monitor,
             orchestrator,
+            agent_runtime,
             lsp_manager,
             memory,
             skills,

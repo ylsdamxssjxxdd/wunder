@@ -1,4 +1,5 @@
 pub mod a2a_store;
+pub mod agent_runtime;
 pub mod attachment;
 pub mod cron;
 pub mod doc2md;

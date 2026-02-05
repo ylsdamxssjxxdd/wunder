@@ -1,11 +1,12 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
-    ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, MediaAssetRecord,
-    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
-    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
+    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChatSessionRecord,
+    CronJobRecord, CronRunRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -583,6 +584,41 @@ impl StorageBackend for PostgresStorage {
                   ON session_locks (user_id, agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_locks_expires
                   ON session_locks (expires_at);
+                CREATE TABLE IF NOT EXISTS agent_threads (
+                  thread_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  agent_id TEXT NOT NULL DEFAULT '',
+                  session_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  UNIQUE(user_id, agent_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_threads_user
+                  ON agent_threads (user_id);
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                  task_id TEXT PRIMARY KEY,
+                  thread_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  agent_id TEXT NOT NULL DEFAULT '',
+                  session_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  request_payload TEXT NOT NULL,
+                  request_id TEXT,
+                  retry_count BIGINT NOT NULL DEFAULT 0,
+                  retry_at DOUBLE PRECISION NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  started_at DOUBLE PRECISION,
+                  finished_at DOUBLE PRECISION,
+                  last_error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_tasks_thread_status
+                  ON agent_tasks (thread_id, status, retry_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_tasks_status
+                  ON agent_tasks (status, retry_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_tasks_user
+                  ON agent_tasks (user_id, agent_id);
                 CREATE TABLE IF NOT EXISTS stream_events (
                   session_id TEXT NOT NULL,
                   event_id BIGINT NOT NULL,
@@ -1754,6 +1790,261 @@ impl StorageBackend for PostgresStorage {
             });
         }
         Ok(output)
+    }
+
+    fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = record.user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO agent_threads (thread_id, user_id, agent_id, session_id, status, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (user_id, agent_id) DO UPDATE SET thread_id = EXCLUDED.thread_id, session_id = EXCLUDED.session_id, \
+             status = EXCLUDED.status, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.thread_id,
+                &cleaned_user,
+                &record.agent_id.trim(),
+                &record.session_id,
+                &record.status,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<Option<AgentThreadRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(None);
+        }
+        let cleaned_agent = agent_id.trim();
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT thread_id, user_id, agent_id, session_id, status, created_at, updated_at \
+             FROM agent_threads WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
+            &[&cleaned_user, &cleaned_agent],
+        )?;
+        Ok(row.map(|row| AgentThreadRecord {
+            thread_id: row.get(0),
+            user_id: row.get(1),
+            agent_id: row.get(2),
+            session_id: row.get(3),
+            status: row.get(4),
+            created_at: row.get(5),
+            updated_at: row.get(6),
+        }))
+    }
+
+    fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let cleaned_agent = agent_id.trim();
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM agent_threads WHERE user_id = $1 AND agent_id = $2",
+            &[&cleaned_user, &cleaned_agent],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = record.user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(());
+        }
+        let payload =
+            serde_json::to_string(&record.request_payload).unwrap_or_else(|_| "{}".to_string());
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO agent_tasks (task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
+             ON CONFLICT (task_id) DO UPDATE SET status = EXCLUDED.status, request_payload = EXCLUDED.request_payload, \
+             request_id = EXCLUDED.request_id, retry_count = EXCLUDED.retry_count, retry_at = EXCLUDED.retry_at, updated_at = EXCLUDED.updated_at, \
+             started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at, last_error = EXCLUDED.last_error",
+            &[
+                &record.task_id,
+                &record.thread_id,
+                &cleaned_user,
+                &record.agent_id.trim(),
+                &record.session_id,
+                &record.status,
+                &payload,
+                &record.request_id,
+                &record.retry_count,
+                &record.retry_at,
+                &record.created_at,
+                &record.updated_at,
+                &record.started_at,
+                &record.finished_at,
+                &record.last_error,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
+             FROM agent_tasks WHERE task_id = $1 LIMIT 1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| {
+            let raw_payload: String = row.get(6);
+            let payload = serde_json::from_str(&raw_payload).unwrap_or(Value::Null);
+            AgentTaskRecord {
+                task_id: row.get(0),
+                thread_id: row.get(1),
+                user_id: row.get(2),
+                agent_id: row.get(3),
+                session_id: row.get(4),
+                status: row.get(5),
+                request_payload: payload,
+                request_id: row.get(7),
+                retry_count: row.get(8),
+                retry_at: row.get(9),
+                created_at: row.get(10),
+                updated_at: row.get(11),
+                started_at: row.get(12),
+                finished_at: row.get(13),
+                last_error: row.get(14),
+            }
+        }))
+    }
+
+    fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
+        self.ensure_initialized()?;
+        let now = Self::now_ts();
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
+             FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= $1 \
+             ORDER BY retry_at ASC, created_at ASC LIMIT $2",
+            &[&now, &limit.max(1)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let raw_payload: String = row.get(6);
+                let payload = serde_json::from_str(&raw_payload).unwrap_or(Value::Null);
+                AgentTaskRecord {
+                    task_id: row.get(0),
+                    thread_id: row.get(1),
+                    user_id: row.get(2),
+                    agent_id: row.get(3),
+                    session_id: row.get(4),
+                    status: row.get(5),
+                    request_payload: payload,
+                    request_id: row.get(7),
+                    retry_count: row.get(8),
+                    retry_at: row.get(9),
+                    created_at: row.get(10),
+                    updated_at: row.get(11),
+                    started_at: row.get(12),
+                    finished_at: row.get(13),
+                    last_error: row.get(14),
+                }
+            })
+            .collect())
+    }
+
+    fn list_agent_tasks_by_thread(
+        &self,
+        thread_id: &str,
+        status: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_thread = thread_id.trim();
+        if cleaned_thread.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = if let Some(status) = status.filter(|value| !value.trim().is_empty()) {
+            conn.query(
+                "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
+                 FROM agent_tasks WHERE thread_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3",
+                &[&cleaned_thread, &status.trim(), &limit.max(1)],
+            )?
+        } else {
+            conn.query(
+                "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
+                 FROM agent_tasks WHERE thread_id = $1 ORDER BY created_at DESC LIMIT $2",
+                &[&cleaned_thread, &limit.max(1)],
+            )?
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let raw_payload: String = row.get(6);
+                let payload = serde_json::from_str(&raw_payload).unwrap_or(Value::Null);
+                AgentTaskRecord {
+                    task_id: row.get(0),
+                    thread_id: row.get(1),
+                    user_id: row.get(2),
+                    agent_id: row.get(3),
+                    session_id: row.get(4),
+                    status: row.get(5),
+                    request_payload: payload,
+                    request_id: row.get(7),
+                    retry_count: row.get(8),
+                    retry_at: row.get(9),
+                    created_at: row.get(10),
+                    updated_at: row.get(11),
+                    started_at: row.get(12),
+                    finished_at: row.get(13),
+                    last_error: row.get(14),
+                }
+            })
+            .collect())
+    }
+
+    fn update_agent_task_status(
+        &self,
+        task_id: &str,
+        status: &str,
+        retry_count: i64,
+        retry_at: f64,
+        started_at: Option<f64>,
+        finished_at: Option<f64>,
+        last_error: Option<&str>,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "UPDATE agent_tasks SET status = $1, retry_count = $2, retry_at = $3, started_at = $4, finished_at = $5, last_error = $6, updated_at = $7 WHERE task_id = $8",
+            &[
+                &status,
+                &retry_count,
+                &retry_at,
+                &started_at,
+                &finished_at,
+                &last_error,
+                &updated_at,
+                &cleaned,
+            ],
+        )?;
+        Ok(())
     }
 
     fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64> {

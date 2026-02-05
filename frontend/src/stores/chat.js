@@ -13,6 +13,7 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
+import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -406,6 +407,19 @@ const persistActiveSession = (sessionId, agentId) => {
     draft: false,
     lastSessionByAgent: updateAgentSessionMap(current.lastSessionByAgent, agentId, cleanedSessionId)
   }));
+};
+
+const applyMainSession = (sessions, agentId, sessionId) => {
+  const normalizedAgent = String(agentId || '').trim();
+  const normalizedSessionId = String(sessionId || '').trim();
+  return sessions.map((session) => {
+    const sessionAgentId = String(session.agent_id || '').trim();
+    const isMatch = normalizedAgent ? sessionAgentId === normalizedAgent : !sessionAgentId;
+    if (!isMatch) return session;
+    const isMain = Boolean(normalizedSessionId && session.id === normalizedSessionId);
+    if (session.is_main === isMain) return session;
+    return { ...session, is_main: isMain };
+  });
 };
 
 const persistDraftSession = () => {
@@ -2602,6 +2616,7 @@ export const useChatStore = defineStore('chat', {
       const { data } = await createSession(payload);
       const session = data.data;
       this.sessions.unshift(session);
+      this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
       this.messages = ensureGreetingMessage([], {
@@ -2620,6 +2635,18 @@ export const useChatStore = defineStore('chat', {
       startSessionWatcher(this, session.id);
       return session;
     },
+    async setMainSession(sessionId) {
+      const targetId = sessionId || this.activeSessionId;
+      if (!targetId) return null;
+      const targetSession = this.sessions.find((item) => item.id === targetId) || null;
+      const agentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
+      const apiAgentId = agentId || DEFAULT_AGENT_KEY;
+      await setDefaultSession(apiAgentId, { session_id: targetId });
+      this.sessions = applyMainSession(this.sessions, agentId, targetId);
+      persistAgentSession(agentId, targetId);
+      return targetId;
+    },
+
     async loadSessionDetail(sessionId) {
       const previousSessionId = this.activeSessionId;
       if (previousSessionId && previousSessionId !== sessionId) {
@@ -2710,6 +2737,21 @@ export const useChatStore = defineStore('chat', {
       sessionMessages.delete(resolveSessionKey(targetId));
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
+      if (targetSession?.is_main) {
+        const fallback = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        const apiAgentId = targetAgentId || DEFAULT_AGENT_KEY;
+        if (fallback) {
+          await setDefaultSession(apiAgentId, { session_id: fallback.id });
+          this.sessions = applyMainSession(this.sessions, targetAgentId, fallback.id);
+          persistAgentSession(targetAgentId, fallback.id);
+        } else {
+          this.sessions = applyMainSession(this.sessions, targetAgentId, '');
+          persistAgentSession(targetAgentId, '');
+        }
+      }
       sessionWorkflowState.delete(String(targetId));
       removeDemoChatSession(targetId);
       clearChatSnapshot(targetId);
@@ -2780,10 +2822,14 @@ export const useChatStore = defineStore('chat', {
       touchSessionUpdatedAt(this, sessionId, userMessage.created_at);
 
       const activeSession = this.sessions.find((item) => item.id === sessionId);
-      if (activeSession && shouldAutoTitle(activeSession.title)) {
-        const autoTitle = buildSessionTitle(content);
-        if (autoTitle) {
-          activeSession.title = autoTitle;
+      if (activeSession) {
+        this.sessions = applyMainSession(this.sessions, activeSession.agent_id, sessionId);
+        persistAgentSession(activeSession.agent_id, sessionId);
+        if (shouldAutoTitle(activeSession.title)) {
+          const autoTitle = buildSessionTitle(content);
+          if (autoTitle) {
+            activeSession.title = autoTitle;
+          }
         }
       }
 
@@ -2810,6 +2856,8 @@ export const useChatStore = defineStore('chat', {
         assistantMessage,
         workflowState,
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
+      let queued = false;
+
       );
 
       try {
@@ -2822,6 +2870,21 @@ export const useChatStore = defineStore('chat', {
           ...(attachments.length > 0 ? { attachments } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
+          const payload = safeJsonParse(dataText);
+          const queuedFlag =
+            eventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
+          if (queuedFlag) {
+            if (!queued) {
+              queued = true;
+              assistantMessage.workflowItems.push(
+                buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending')
+              );
+              notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+            }
+            assistantMessage.stream_incomplete = true;
+            assistantMessage.workflowStreaming = true;
+            return;
+          }
           assignStreamEventId(assistantMessage, eventId);
           processor.handleEvent(eventType, dataText);
         };
@@ -2898,7 +2961,7 @@ export const useChatStore = defineStore('chat', {
         }
       } finally {
         assistantMessage.workflowStreaming = false;
-        assistantMessage.stream_incomplete = false;
+        assistantMessage.stream_incomplete = queued ? true : false;
         setSessionLoading(this, sessionId, false);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());

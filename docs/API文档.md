@@ -44,8 +44,8 @@
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
-- 约束：同一 `user_id + agent_id` 若已有运行中的会话，接口返回 429 并提示稍后再试（未传 `agent_id` 时按 user_id 互斥）。
 - 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
+- 忙时队列：非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`），SSE/WS 返回 `queued` 事件
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
 - 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
@@ -1360,7 +1360,6 @@
   - `request_timeout_s`：单次请求超时（可选，<=0 表示不启用）
 - 说明：
   - 服务端按 `concurrency_list` 顺序逐档压测，每个档位只发送一轮并发请求。
-  - 请求固定使用 `stream=true`，工具清单使用管理员默认配置（不传 `tool_names`）。
   - 压测问题使用内置题库（50 条），每次请求随机抽取。
   - 并发上限仍受 `server.max_active_sessions` 影响，超过上限会在服务端排队。
 - 返回（JSON）：`ThroughputSnapshot`
@@ -1648,10 +1647,10 @@
 
 - `POST /wunder/chat/sessions`：创建会话
   - 入参（JSON）：`title`（可选）、`agent_id`（可选）
-  - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides/parent_session_id/parent_message_id/spawn_label/spawned_by）
+- 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides/parent_session_id/parent_message_id/spawn_label/spawned_by/is_main）
 - `GET /wunder/chat/sessions`：会话列表
   - Query：`page`/`page_size` 或 `offset`/`limit`，可选 `agent_id`（空值表示通用聊天，省略表示不过滤），可选 `parent_session_id`（或 `parent_id`/`parentId`/`parentSessionId`）
-  - 返回：`data.total`、`data.items`
+- 返回：`data.total`、`data.items`（每项含 is_main 标记主线程）
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
   - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
@@ -1663,7 +1662,6 @@
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
   - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
-  - `stream=true` 返回 `text/event-stream`；非流式返回 `data.answer`/`data.session_id`/`data.usage`
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
@@ -1704,6 +1702,12 @@
   - 返回：`data`（同智能体详情）
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
+- `GET /wunder/agents/{agent_id}/default-session`：获取智能体主线程会话
+  - 返回：`data.agent_id`、`data.session_id`
+- `POST /wunder/agents/{agent_id}/default-session`：设置智能体主线程会话
+  - 入参（JSON）：`session_id`
+  - 返回：`data.agent_id`、`data.session_id`、`data.thread_id`、`data.status`、`data.updated_at`
+  - 说明：默认入口使用 `agent_id=__default__`
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
@@ -1867,7 +1871,6 @@
 - 消息格式：JSON Envelope，服务端推送 `type=event`，payload 内含 `event/id/data`
 - 慢客户端告警：当客户端消费过慢导致队列压力时，服务端会发送 `event=slow_client`，前端可提示用户触发 `resume`
 - 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
-- `/wunder/ws` 的 `start` payload 与 `/wunder` POST 请求体一致（`user_id/question/...`），服务端会强制 `stream=true`
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
 - 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
