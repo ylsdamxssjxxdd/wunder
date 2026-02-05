@@ -4,6 +4,7 @@ use crate::a2a_store::A2aStore;
 use crate::channels::ChannelHub;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
+use crate::cron::CronScheduler;
 use crate::evaluation_runner::EvaluationManager;
 use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
@@ -37,6 +38,7 @@ pub struct AppState {
     pub evaluation: EvaluationManager,
     pub storage: Arc<dyn StorageBackend>,
     pub channels: Arc<ChannelHub>,
+    pub cron: Arc<CronScheduler>,
 }
 
 impl AppState {
@@ -85,6 +87,15 @@ impl AppState {
             user_store.clone(),
             monitor.clone(),
         ));
+        let cron = CronScheduler::new(
+            config_store.clone(),
+            storage.clone(),
+            orchestrator.clone(),
+            user_store.clone(),
+            user_tool_manager.clone(),
+            skills.clone(),
+        );
+        cron.start();
         let throughput = ThroughputManager::new();
         let evaluation = EvaluationManager::new(
             config_store.clone(),
@@ -110,6 +121,7 @@ impl AppState {
             evaluation,
             storage,
             channels,
+            cron,
         })
     }
 

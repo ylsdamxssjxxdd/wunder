@@ -1,4 +1,5 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
+#![cfg_attr(test, allow(dead_code))]
 mod api;
 mod channels;
 mod core;
@@ -17,8 +18,8 @@ pub use core::{
 pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, attachment, doc2md, history, knowledge, llm, mcp, memory, org_units, prompting,
-    skills, tools, user_access, user_store, user_tools, vector_knowledge, workspace,
+    a2a_store, attachment, cron, doc2md, history, knowledge, llm, mcp, memory, org_units,
+    prompting, skills, tools, user_access, user_store, user_tools, vector_knowledge, workspace,
 };
 
 use axum::body::Body;

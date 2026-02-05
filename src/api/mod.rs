@@ -8,6 +8,7 @@ pub mod chat;
 pub mod chat_ws;
 pub mod core;
 pub mod core_ws;
+pub mod cron;
 pub mod doc2md;
 pub mod evaluation;
 pub mod temp_dir;
@@ -29,6 +30,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(chat_ws::router())
         .merge(core_ws::router())
         .merge(core::router())
+        .merge(cron::router())
         .merge(doc2md::router())
         .merge(temp_dir::router())
         .merge(workspace::router())

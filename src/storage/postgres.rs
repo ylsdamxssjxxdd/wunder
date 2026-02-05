@@ -2,10 +2,10 @@ use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChatSessionRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChannelSessionRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, MediaAssetRecord,
+    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
+    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -90,6 +90,14 @@ struct PgTx<'a> {
 impl PgTx<'_> {
     fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
         Ok(self.storage.block_on(self.tx.execute(query, params))??)
+    }
+
+    fn query(
+        &mut self,
+        query: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<Vec<tokio_postgres::Row>> {
+        Ok(self.storage.block_on(self.tx.query(query, params))??)
     }
 
     fn query_one(
@@ -218,6 +226,13 @@ impl PostgresStorage {
 
     fn string_list_to_json(list: &[String]) -> String {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn json_value_or_null(value: Option<String>) -> Value {
+        value
+            .as_deref()
+            .and_then(Self::json_from_str)
+            .unwrap_or(Value::Null)
     }
 
     fn conn(&self) -> Result<PgConn<'_>> {
@@ -748,6 +763,56 @@ impl StorageBackend for PostgresStorage {
                   ON session_runs (user_id, updated_time);
                 CREATE INDEX IF NOT EXISTS idx_session_runs_parent
                   ON session_runs (parent_session_id, updated_time);
+                CREATE TABLE IF NOT EXISTS cron_jobs (
+                  job_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  agent_id TEXT,
+                  name TEXT,
+                  session_target TEXT NOT NULL,
+                  payload TEXT NOT NULL,
+                  deliver TEXT,
+                  enabled INTEGER NOT NULL,
+                  delete_after_run INTEGER NOT NULL,
+                  schedule_kind TEXT NOT NULL,
+                  schedule_at TEXT,
+                  schedule_every_ms BIGINT,
+                  schedule_cron TEXT,
+                  schedule_tz TEXT,
+                  dedupe_key TEXT,
+                  next_run_at DOUBLE PRECISION,
+                  running_at DOUBLE PRECISION,
+                  last_run_at DOUBLE PRECISION,
+                  last_status TEXT,
+                  last_error TEXT,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_user
+                  ON cron_jobs (user_id, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_next
+                  ON cron_jobs (enabled, next_run_at);
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_dedupe
+                  ON cron_jobs (user_id, dedupe_key);
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_session
+                  ON cron_jobs (user_id, session_id);
+                CREATE TABLE IF NOT EXISTS cron_runs (
+                  run_id TEXT PRIMARY KEY,
+                  job_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  session_id TEXT,
+                  agent_id TEXT,
+                  trigger TEXT,
+                  status TEXT,
+                  summary TEXT,
+                  error TEXT,
+                  duration_ms BIGINT,
+                  created_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_job
+                  ON cron_runs (job_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_user
+                  ON cron_runs (user_id, created_at);
                 CREATE TABLE IF NOT EXISTS channel_accounts (
                   channel TEXT NOT NULL,
                   account_id TEXT NOT NULL,
@@ -3927,6 +3992,381 @@ impl StorageBackend for PostgresStorage {
             error: row.get(12),
             updated_time: row.get::<_, Option<f64>>(13).unwrap_or(0.0),
         }))
+    }
+
+    fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let payload = Self::json_to_string(&record.payload);
+        let deliver = record.deliver.as_ref().map(Self::json_to_string);
+        let enabled = if record.enabled { 1 } else { 0 };
+        let delete_after = if record.delete_after_run { 1 } else { 0 };
+        conn.execute(
+            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
+             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, last_run_at, \
+             last_status, last_error, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) \
+             ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, \
+             name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, \
+             enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, \
+             schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, \
+             schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, \
+             running_at = EXCLUDED.running_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, \
+             last_error = EXCLUDED.last_error, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.job_id,
+                &record.user_id,
+                &record.session_id,
+                &record.agent_id,
+                &record.name,
+                &record.session_target,
+                &payload,
+                &deliver,
+                &enabled,
+                &delete_after,
+                &record.schedule_kind,
+                &record.schedule_at,
+                &record.schedule_every_ms,
+                &record.schedule_cron,
+                &record.schedule_tz,
+                &record.dedupe_key,
+                &record.next_run_at,
+                &record.running_at,
+                &record.last_run_at,
+                &record.last_status,
+                &record.last_error,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_job = job_id.trim();
+        if cleaned_user.is_empty() || cleaned_job.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
+             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
+             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
+            &[&cleaned_user, &cleaned_job],
+        )?;
+        Ok(row.map(|row| {
+            let payload_text: Option<String> = row.get(6);
+            let deliver_text: Option<String> = row.get(7);
+            let enabled: Option<i32> = row.get(8);
+            let delete_after: Option<i32> = row.get(9);
+            CronJobRecord {
+                job_id: row.get(0),
+                user_id: row.get(1),
+                session_id: row.get(2),
+                agent_id: row.get(3),
+                name: row.get(4),
+                session_target: row.get(5),
+                payload: Self::json_value_or_null(payload_text),
+                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+                enabled: enabled.unwrap_or(0) != 0,
+                delete_after_run: delete_after.unwrap_or(0) != 0,
+                schedule_kind: row.get(10),
+                schedule_at: row.get(11),
+                schedule_every_ms: row.get(12),
+                schedule_cron: row.get(13),
+                schedule_tz: row.get(14),
+                dedupe_key: row.get(15),
+                next_run_at: row.get(16),
+                running_at: row.get(17),
+                last_run_at: row.get(18),
+                last_status: row.get(19),
+                last_error: row.get(20),
+                created_at: row.get(21),
+                updated_at: row.get(22),
+            }
+        }))
+    }
+
+    fn get_cron_job_by_dedupe_key(
+        &self,
+        user_id: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<CronJobRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_key = dedupe_key.trim();
+        if cleaned_user.is_empty() || cleaned_key.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
+             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
+             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1 AND dedupe_key = $2 LIMIT 1",
+            &[&cleaned_user, &cleaned_key],
+        )?;
+        Ok(row.map(|row| {
+            let payload_text: Option<String> = row.get(6);
+            let deliver_text: Option<String> = row.get(7);
+            let enabled: Option<i32> = row.get(8);
+            let delete_after: Option<i32> = row.get(9);
+            CronJobRecord {
+                job_id: row.get(0),
+                user_id: row.get(1),
+                session_id: row.get(2),
+                agent_id: row.get(3),
+                name: row.get(4),
+                session_target: row.get(5),
+                payload: Self::json_value_or_null(payload_text),
+                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+                enabled: enabled.unwrap_or(0) != 0,
+                delete_after_run: delete_after.unwrap_or(0) != 0,
+                schedule_kind: row.get(10),
+                schedule_at: row.get(11),
+                schedule_every_ms: row.get(12),
+                schedule_cron: row.get(13),
+                schedule_tz: row.get(14),
+                dedupe_key: row.get(15),
+                next_run_at: row.get(16),
+                running_at: row.get(17),
+                last_run_at: row.get(18),
+                last_status: row.get(19),
+                last_error: row.get(20),
+                created_at: row.get(21),
+                updated_at: row.get(22),
+            }
+        }))
+    }
+
+    fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let mut sql = String::from(
+            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
+             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
+             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1",
+        );
+        if !include_disabled {
+            sql.push_str(" AND enabled = 1");
+        }
+        sql.push_str(" ORDER BY updated_at DESC");
+        let rows = conn.query(&sql, &[&cleaned_user])?;
+        let mut output = Vec::new();
+        for row in rows {
+            let payload_text: Option<String> = row.get(6);
+            let deliver_text: Option<String> = row.get(7);
+            let enabled: Option<i32> = row.get(8);
+            let delete_after: Option<i32> = row.get(9);
+            output.push(CronJobRecord {
+                job_id: row.get(0),
+                user_id: row.get(1),
+                session_id: row.get(2),
+                agent_id: row.get(3),
+                name: row.get(4),
+                session_target: row.get(5),
+                payload: Self::json_value_or_null(payload_text),
+                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+                enabled: enabled.unwrap_or(0) != 0,
+                delete_after_run: delete_after.unwrap_or(0) != 0,
+                schedule_kind: row.get(10),
+                schedule_at: row.get(11),
+                schedule_every_ms: row.get(12),
+                schedule_cron: row.get(13),
+                schedule_tz: row.get(14),
+                dedupe_key: row.get(15),
+                next_run_at: row.get(16),
+                running_at: row.get(17),
+                last_run_at: row.get(18),
+                last_status: row.get(19),
+                last_error: row.get(20),
+                created_at: row.get(21),
+                updated_at: row.get(22),
+            });
+        }
+        Ok(output)
+    }
+
+    fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_job = job_id.trim();
+        if cleaned_user.is_empty() || cleaned_job.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
+            &[&cleaned_user, &cleaned_job],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn reset_cron_jobs_running(&self) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "UPDATE cron_jobs SET running_at = NULL WHERE running_at IS NOT NULL",
+            &[],
+        )?;
+        Ok(())
+    }
+
+    fn count_running_cron_jobs(&self) -> Result<i64> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let total: i64 = conn
+            .query_one(
+                "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL",
+                &[],
+            )?
+            .get(0);
+        Ok(total)
+    }
+
+    fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>> {
+        self.ensure_initialized()?;
+        let limit = limit.max(0);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let rows = tx.query(
+            "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= $1 \
+             AND (running_at IS NULL) ORDER BY next_run_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED",
+            &[&now, &limit],
+        )?;
+        let ids = rows
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            tx.commit()?;
+            return Ok(Vec::new());
+        }
+        for id in &ids {
+            tx.execute(
+                "UPDATE cron_jobs SET running_at = $1, updated_at = $2 WHERE job_id = $3",
+                &[&now, &now, id],
+            )?;
+        }
+        let rows = tx.query(
+            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
+             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
+             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE job_id = ANY($1)",
+            &[&ids],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            let payload_text: Option<String> = row.get(6);
+            let deliver_text: Option<String> = row.get(7);
+            let enabled: Option<i32> = row.get(8);
+            let delete_after: Option<i32> = row.get(9);
+            output.push(CronJobRecord {
+                job_id: row.get(0),
+                user_id: row.get(1),
+                session_id: row.get(2),
+                agent_id: row.get(3),
+                name: row.get(4),
+                session_target: row.get(5),
+                payload: Self::json_value_or_null(payload_text),
+                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+                enabled: enabled.unwrap_or(0) != 0,
+                delete_after_run: delete_after.unwrap_or(0) != 0,
+                schedule_kind: row.get(10),
+                schedule_at: row.get(11),
+                schedule_every_ms: row.get(12),
+                schedule_cron: row.get(13),
+                schedule_tz: row.get(14),
+                dedupe_key: row.get(15),
+                next_run_at: row.get(16),
+                running_at: row.get(17),
+                last_run_at: row.get(18),
+                last_status: row.get(19),
+                last_error: row.get(20),
+                created_at: row.get(21),
+                updated_at: row.get(22),
+            });
+        }
+        tx.commit()?;
+        Ok(output)
+    }
+
+    fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO cron_runs (run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            &[
+                &record.run_id,
+                &record.job_id,
+                &record.user_id,
+                &record.session_id,
+                &record.agent_id,
+                &record.trigger,
+                &record.status,
+                &record.summary,
+                &record.error,
+                &record.duration_ms,
+                &record.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_cron_runs(
+        &self,
+        user_id: &str,
+        job_id: &str,
+        limit: i64,
+    ) -> Result<Vec<CronRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_job = job_id.trim();
+        if cleaned_user.is_empty() || cleaned_job.is_empty() {
+            return Ok(Vec::new());
+        }
+        let safe_limit = limit.max(1).min(200);
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at \
+             FROM cron_runs WHERE user_id = $1 AND job_id = $2 ORDER BY created_at DESC LIMIT $3",
+            &[&cleaned_user, &cleaned_job, &safe_limit],
+        )?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(CronRunRecord {
+                run_id: row.get(0),
+                job_id: row.get(1),
+                user_id: row.get(2),
+                session_id: row.get(3),
+                agent_id: row.get(4),
+                trigger: row.get(5),
+                status: row.get(6),
+                summary: row.get(7),
+                error: row.get(8),
+                duration_ms: row.get::<_, Option<i64>>(9).unwrap_or(0),
+                created_at: row.get::<_, Option<f64>>(10).unwrap_or(0.0),
+            });
+        }
+        Ok(output)
+    }
+
+    fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > $1",
+            &[&now],
+        )?;
+        Ok(row.and_then(|row| row.get::<_, Option<f64>>(0)))
     }
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {

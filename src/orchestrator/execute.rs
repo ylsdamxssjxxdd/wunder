@@ -389,7 +389,7 @@ impl Orchestrator {
                     config: &config,
                     a2a_store: &self.a2a_store,
                     skills: &skills_snapshot,
-                    user_tool_manager: Some(self.user_tool_manager.as_ref()),
+                    user_tool_manager: Some(self.user_tool_manager.clone()),
                     user_tool_bindings: Some(&user_tool_bindings),
                     user_tool_store: Some(self.user_tool_manager.store()),
                     allow_roots: Some(tool_roots.allow_roots.clone()),

@@ -289,6 +289,48 @@ pub struct SessionRunRecord {
     pub updated_time: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct CronJobRecord {
+    pub job_id: String,
+    pub user_id: String,
+    pub session_id: String,
+    pub agent_id: Option<String>,
+    pub name: Option<String>,
+    pub session_target: String,
+    pub payload: Value,
+    pub deliver: Option<Value>,
+    pub enabled: bool,
+    pub delete_after_run: bool,
+    pub schedule_kind: String,
+    pub schedule_at: Option<String>,
+    pub schedule_every_ms: Option<i64>,
+    pub schedule_cron: Option<String>,
+    pub schedule_tz: Option<String>,
+    pub dedupe_key: Option<String>,
+    pub next_run_at: Option<f64>,
+    pub running_at: Option<f64>,
+    pub last_run_at: Option<f64>,
+    pub last_status: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CronRunRecord {
+    pub run_id: String,
+    pub job_id: String,
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub trigger: String,
+    pub status: String,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub duration_ms: i64,
+    pub created_at: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionLockStatus {
     Acquired,
@@ -582,6 +624,23 @@ pub trait StorageBackend: Send + Sync {
 
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
+
+    fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()>;
+    fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>>;
+    fn get_cron_job_by_dedupe_key(
+        &self,
+        user_id: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<CronJobRecord>>;
+    fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>>;
+    fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64>;
+    fn reset_cron_jobs_running(&self) -> Result<()>;
+    fn count_running_cron_jobs(&self) -> Result<i64>;
+    fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>>;
+    fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()>;
+    fn list_cron_runs(&self, user_id: &str, job_id: &str, limit: i64)
+        -> Result<Vec<CronRunRecord>>;
+    fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>>;
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>>;
     fn set_user_tool_access(

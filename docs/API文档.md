@@ -488,6 +488,17 @@
   - `supported_languages`：支持语言列表
   - `aliases`：语言别名映射
 
+### 4.1.2.30 `/wunder/cron/*`
+
+- 说明：定时任务管理（用户侧）。
+- `GET /wunder/cron/list`：列出当前用户的定时任务
+  - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status 等）
+- `GET /wunder/cron/runs?job_id=...&limit=...`：查询任务运行记录
+  - 返回：`data.runs`
+- `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行
+  - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
+  - 返回：`data` 中包含 action 结果与 job 信息
+
 ### 4.1.3 `/wunder/admin/mcp`
 
 - 方法：`GET/POST`
@@ -994,7 +1005,7 @@
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
-- 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`。
+- 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
 
 ### 4.1.25 `/wunder/admin/tools`
@@ -1983,6 +1994,4 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
-
-
 

@@ -5,6 +5,7 @@ use crate::config::{
     is_debug_log_level, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
+use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::knowledge;
@@ -22,6 +23,7 @@ use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
     ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentAccessRecord, UserAgentRecord,
 };
+use crate::user_store::UserStore;
 use crate::user_tools::{
     UserToolAlias, UserToolBindings, UserToolKind, UserToolManager, UserToolStore,
 };
@@ -42,7 +44,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, RwLock};
 use tokio::time::{sleep, timeout};
 use tracing::warn;
 use url::Url;
@@ -105,7 +107,7 @@ pub struct ToolContext<'a> {
     pub config: &'a Config,
     pub a2a_store: &'a A2aStore,
     pub skills: &'a SkillRegistry,
-    pub user_tool_manager: Option<&'a UserToolManager>,
+    pub user_tool_manager: Option<Arc<UserToolManager>>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
     pub allow_roots: Option<Arc<Vec<PathBuf>>>,
@@ -212,6 +214,53 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     "multiple": {"type": "boolean", "description": t("tool.spec.question_panel.args.multiple")}
                 },
                 "required": ["routes"]
+            }),
+        },
+        ToolSpec {
+            name: "定时任务".to_string(),
+            description: t("tool.spec.schedule_task.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.schedule_task.args.action"),
+                        "enum": ["add", "update", "remove", "enable", "disable", "get", "list", "run"]
+                    },
+                    "job": {
+                        "type": "object",
+                        "description": t("tool.spec.schedule_task.args.job"),
+                        "properties": {
+                            "job_id": {"type": "string", "description": t("tool.spec.schedule_task.args.job.job_id")},
+                            "name": {"type": "string", "description": t("tool.spec.schedule_task.args.job.name")},
+                            "schedule": {
+                                "type": "object",
+                                "description": t("tool.spec.schedule_task.args.job.schedule"),
+                                "properties": {
+                                    "kind": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.kind"), "enum": ["at", "every", "cron"]},
+                                    "at": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.at")},
+                                    "every_ms": {"type": "integer", "description": t("tool.spec.schedule_task.args.job.schedule.every_ms"), "minimum": 1000},
+                                    "cron": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.cron")},
+                                    "tz": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.tz")}
+                                },
+                                "required": ["kind"]
+                            },
+                            "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
+                            "payload": {
+                                "type": "object",
+                                "description": t("tool.spec.schedule_task.args.job.payload"),
+                                "properties": {
+                                    "message": {"type": "string", "description": t("tool.spec.schedule_task.args.job.payload.message")}
+                                }
+                            },
+                            "deliver": {"type": "object", "description": t("tool.spec.schedule_task.args.job.deliver")},
+                            "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")},
+                            "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
+                            "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
+                        }
+                    }
+                },
+                "required": ["action"]
             }),
         },
         ToolSpec {
@@ -447,6 +496,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("update_plan".to_string(), "计划面板".to_string());
     map.insert("question_panel".to_string(), "问询面板".to_string());
     map.insert("ask_panel".to_string(), "问询面板".to_string());
+    map.insert("schedule_task".to_string(), "定时任务".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -773,6 +823,29 @@ pub async fn execute_builtin_tool(
         ),
         "计划面板" => execute_plan_tool(context, args).await,
         "问询面板" => execute_question_panel_tool(context, args).await,
+        "定时任务" => {
+            let payload: CronActionRequest =
+                serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+            let user_tool_manager = context
+                .user_tool_manager
+                .clone()
+                .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
+            let user_store = Arc::new(UserStore::new(context.storage.clone()));
+            let skills = Arc::new(RwLock::new(context.skills.clone()));
+            handle_cron_action(
+                context.config.clone(),
+                context.storage.clone(),
+                context.orchestrator.clone(),
+                user_store,
+                user_tool_manager,
+                skills,
+                context.user_id,
+                Some(context.session_id),
+                context.agent_id,
+                payload,
+            )
+            .await
+        }
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
 }
@@ -2024,6 +2097,7 @@ async fn execute_user_skill(
 ) -> Result<Value> {
     let manager = context
         .user_tool_manager
+        .as_ref()
         .ok_or_else(|| anyhow!(i18n::t("tool.invoke.user_skill_not_loaded")))?;
     let bindings = context
         .user_tool_bindings

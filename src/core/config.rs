@@ -24,6 +24,8 @@ pub struct Config {
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
+    pub cron: CronConfig,
+    #[serde(default)]
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub mcp: McpConfig,
@@ -165,6 +167,29 @@ pub struct LlmModelConfig {
 pub struct ToolsConfig {
     #[serde(default)]
     pub builtin: BuiltinToolsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, deserialize_with = "deserialize_usize_from_any")]
+    pub max_concurrent_runs: usize,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub poll_interval_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub idle_retry_ms: u64,
+}
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_concurrent_runs: 1,
+            poll_interval_ms: 1000,
+            idle_retry_ms: 2000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -661,6 +686,60 @@ where
     }
 
     deserializer.deserialize_any(U16Visitor)
+}
+
+fn deserialize_u64_from_any<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct U64Visitor;
+
+    impl<'de> Visitor<'de> for U64Visitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("u64 or numeric string")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if value < 0 {
+                return Err(E::custom("u64 must be non-negative"));
+            }
+            Ok(value as u64)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(E::custom("u64 string is empty"));
+            }
+            trimmed
+                .parse::<u64>()
+                .map_err(|_| E::custom("invalid u64 string"))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
+
+    deserializer.deserialize_any(U64Visitor)
 }
 
 fn deserialize_usize_from_any<'de, D>(deserializer: D) -> Result<usize, D::Error>

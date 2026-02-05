@@ -1,5 +1,6 @@
 pub mod a2a_store;
 pub mod attachment;
+pub mod cron;
 pub mod doc2md;
 pub mod history;
 pub mod knowledge;
