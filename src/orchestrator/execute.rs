@@ -202,7 +202,12 @@ impl Orchestrator {
                 None,
             );
 
-            let max_rounds = llm_config.max_rounds.unwrap_or(1).max(1) as i64;
+            let max_rounds = if is_admin {
+                None
+            } else {
+                Some(llm_config.max_rounds.unwrap_or(1).max(1) as i64)
+            };
+            let mut reached_max_rounds = false;
             let mut round_usage = TokenUsage {
                 input: 0,
                 output: 0,
@@ -216,7 +221,15 @@ impl Orchestrator {
             let mut last_request_messages: Option<Vec<Value>> = None;
             let mut last_round_info = request_round;
 
-            for model_round in 1..=max_rounds {
+            let mut model_round = 0_i64;
+            loop {
+                if let Some(max_rounds) = max_rounds {
+                    if model_round >= max_rounds {
+                        reached_max_rounds = true;
+                        break;
+                    }
+                }
+                model_round += 1;
                 let round_info = RoundInfo::new(user_round, model_round);
                 last_round_info = round_info;
                 self.ensure_not_cancelled(&session_id)?;
@@ -666,14 +679,14 @@ impl Orchestrator {
             if answer.is_empty() {
                 if let Some((content, _)) = last_response.as_ref() {
                     answer = self.resolve_final_answer(content);
-                    if stop_reason.is_none() {
+                    if stop_reason.is_none() && reached_max_rounds {
                         stop_reason = Some("max_rounds".to_string());
                     }
                 }
             }
             if answer.is_empty() {
                 answer = i18n::t("error.max_rounds_no_final_answer");
-                if stop_reason.is_none() {
+                if stop_reason.is_none() && reached_max_rounds {
                     stop_reason = Some("max_rounds".to_string());
                 }
             }

@@ -7,23 +7,9 @@
           <div class="brand-meta">
             <div class="brand-title-row">
               <div class="brand-title">{{ t('chat.title') }}</div>
-              <button
-                class="transport-status"
-                :class="streamTransport"
-                :title="streamTransportToggleTitle"
-                type="button"
-                :aria-label="streamTransportToggleTitle"
-                @click="toggleStreamTransport"
-              >
-                <span class="transport-dot" aria-hidden="true"></span>
-                <span class="transport-text">{{ streamTransportLabel }}</span>
-              </button>
-              <div v-if="activeAgentLabel" class="agent-pill">
-                <span class="agent-pill-label">{{ t('chat.currentAgent') }}</span>
-                <span class="agent-pill-name">{{ activeAgentLabel }}</span>
-              </div>
             </div>
             <div class="brand-sub">
+              <span v-if="activeAgentSubtitle" class="brand-subtitle">{{ activeAgentSubtitle }}</span>
               <span v-if="demoMode" class="demo-badge">{{ t('user.demoMode') }}</span>
             </div>
           </div>
@@ -687,21 +673,6 @@ const currentUserUnitLabel = computed(() => {
   const unit = currentUser.value?.unit;
   return unit?.path_name || unit?.pathName || unit?.name || currentUser.value?.unit_id || '-';
 });
-const streamTransport = computed(() =>
-  chatStore.streamTransport === 'sse' ? 'sse' : 'ws'
-);
-const streamTransportLabel = computed(() =>
-  streamTransport.value === 'sse' ? t('chat.transport.sse') : t('chat.transport.ws')
-);
-const streamTransportNextLabel = computed(() =>
-  streamTransport.value === 'sse' ? t('chat.transport.ws') : t('chat.transport.sse')
-);
-const streamTransportToggleTitle = computed(() =>
-  t('chat.transport.toggle', { transport: streamTransportNextLabel.value })
-);
-const toggleStreamTransport = () => {
-  chatStore.toggleStreamTransport();
-};
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (demoMode.value ? '/demo' : '/app'));
@@ -835,6 +806,15 @@ const activeAgent = computed(() =>
 const activeAgentLabel = computed(
   () => activeAgent.value?.name || activeAgentId.value || ''
 );
+const activeAgentSubtitle = computed(() => {
+  if (activeAgentLabel.value) {
+    return activeAgentLabel.value;
+  }
+  if (!activeAgentId.value) {
+    return t('portal.card.defaultTitle');
+  }
+  return '';
+});
 const greetingOverride = computed(() => {
   const desc = String(activeAgent.value?.description || '').trim();
   return desc;

@@ -49,7 +49,7 @@ export default {
   'portal.section.count': '{count} total',
   'portal.card.createTitle': 'Create Agent App',
   'portal.card.createDesc': 'Quickly assemble your capabilities',
-  'portal.card.defaultTitle': 'General Chat',
+  'portal.card.defaultTitle': 'General App',
   'portal.card.defaultDesc': 'Default chat capability, start anytime',
   'portal.card.defaultMeta': 'Default Entry',
   'portal.card.running': 'Running',
@@ -129,7 +129,7 @@ export default {
   'cron.detail.status': 'Last Status',
   'cron.detail.session': 'Session ID',
   'cron.detail.agent': 'Agent ID',
-  'cron.detail.agentDefault': 'Default chat',
+  'cron.detail.agentDefault': 'General App',
   'cron.detail.target': 'Session Target',
   'cron.detail.enabled': 'Enabled',
   'cron.detail.deleteAfterRun': 'Delete After Run',
@@ -870,5 +870,8 @@ export default {
   'workspace.upload.progress.loading': 'Uploading...',
   'workspace.upload.progress.partial': 'Partially uploaded',
   'workspace.upload.success': 'Upload succeeded',
-  'workspace.upload.tooLarge': 'File too large'
+  'workspace.upload.tooLarge': 'File too large',
+  'system.maintenance.title': 'Under maintenance',
+  'system.maintenance.desc': 'The service is temporarily unavailable. Please try again later.',
+  'system.maintenance.status': 'Status code: {status}'
 };

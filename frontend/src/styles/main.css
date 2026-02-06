@@ -8,6 +8,7 @@
 @import "./pages/agents.css";
 @import "./pages/tools.css";
 @import "./pages/admin.css";
+@import "./pages/maintenance.css";
 @import "./chat/shell.css";
 @import "./chat/history.css";
 @import "./chat/messages.css";

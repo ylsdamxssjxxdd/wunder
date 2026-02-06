@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   'language.zh-CN': '简体中文',
   'language.en-US': 'English',
   'common.loading': '加载中...',
@@ -49,7 +49,7 @@ export default {
   'portal.section.count': '共 {count} 个',
   'portal.card.createTitle': '新建智能体应用',
   'portal.card.createDesc': '快速组装你的专属能力',
-  'portal.card.defaultTitle': '通用聊天',
+  'portal.card.defaultTitle': '通用应用',
   'portal.card.defaultDesc': '默认聊天能力，随时开启新对话',
   'portal.card.defaultMeta': '默认入口',
   'portal.card.running': '运行中',
@@ -129,7 +129,7 @@ export default {
   'cron.detail.status': '最近状态',
   'cron.detail.session': '会话 ID',
   'cron.detail.agent': '智能体 ID',
-  'cron.detail.agentDefault': '通用聊天',
+  'cron.detail.agentDefault': '通用应用',
   'cron.detail.target': '会话类型',
   'cron.detail.enabled': '启用状态',
   'cron.detail.deleteAfterRun': '执行后删除',
@@ -869,5 +869,8 @@ export default {
   'workspace.upload.progress.loading': '上传中...',
   'workspace.upload.progress.partial': '部分上传成功',
   'workspace.upload.success': '上传成功',
-  'workspace.upload.tooLarge': '文件过大'
+  'workspace.upload.tooLarge': '文件过大',
+  'system.maintenance.title': '服务维护中',
+  'system.maintenance.desc': '后端服务暂时不可用，请稍后再试。',
+  'system.maintenance.status': '状态码：{status}'
 };

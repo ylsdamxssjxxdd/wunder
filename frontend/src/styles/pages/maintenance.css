@@ -1,0 +1,29 @@
+:root {
+  --maintenance-bg: rgba(244, 246, 251, 0.95);
+  --maintenance-card: #ffffff;
+  --maintenance-border: rgba(15, 23, 42, 0.12);
+  --maintenance-text: #0f172a;
+  --maintenance-muted: rgba(71, 85, 105, 0.8);
+  --maintenance-icon-bg: rgba(248, 113, 113, 0.12);
+  --maintenance-icon-color: #ef4444;
+}
+
+:root[data-user-theme='dark'] {
+  --maintenance-bg: rgba(9, 15, 28, 0.92);
+  --maintenance-card: #0f1c33;
+  --maintenance-border: rgba(148, 163, 184, 0.24);
+  --maintenance-text: #e2e8f0;
+  --maintenance-muted: rgba(226, 232, 240, 0.68);
+  --maintenance-icon-bg: rgba(248, 113, 113, 0.18);
+  --maintenance-icon-color: #f87171;
+}
+
+:root[data-user-theme='light'] {
+  --maintenance-bg: rgba(244, 246, 251, 0.95);
+  --maintenance-card: #ffffff;
+  --maintenance-border: rgba(15, 23, 42, 0.12);
+  --maintenance-text: #0f172a;
+  --maintenance-muted: rgba(71, 85, 105, 0.8);
+  --maintenance-icon-bg: rgba(248, 113, 113, 0.12);
+  --maintenance-icon-color: #ef4444;
+}

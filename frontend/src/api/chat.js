@@ -2,6 +2,7 @@ import api from './http';
 
 import { getDemoToken, isDemoMode } from '@/utils/demo';
 import { resolveApiBase } from '@/config/runtime';
+import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
 const buildUrl = (path) => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
@@ -54,6 +55,28 @@ const buildWsProtocols = (token, options = {}) => {
   return protocols.length ? protocols : null;
 };
 
+const handleStreamResponse = (response) => {
+  if (response?.ok) {
+    clearMaintenance();
+    return response;
+  }
+  const status = response?.status;
+  if (isMaintenanceStatus(status)) {
+    markMaintenance({ status, reason: 'http' });
+  } else if (status) {
+    clearMaintenance();
+  }
+  return response;
+};
+
+const handleStreamError = (error) => {
+  if (error?.name === 'AbortError') {
+    throw error;
+  }
+  markMaintenance({ reason: error?.name || error?.message || 'network' });
+  throw error;
+};
+
 export const createSession = (payload) => api.post('/chat/sessions', payload);
 export const listSessions = (params) => api.get('/chat/sessions', { params });
 export const getSession = (id) => api.get(`/chat/sessions/${id}`);
@@ -80,7 +103,9 @@ export const sendMessageStream = (id, payload, options = {}) => {
     },
     body: JSON.stringify(payload),
     signal: options.signal
-  });
+  })
+    .then(handleStreamResponse)
+    .catch(handleStreamError);
 };
 
 export const resumeMessageStream = (id, options = {}) => {
@@ -99,7 +124,9 @@ export const resumeMessageStream = (id, options = {}) => {
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
     signal: options.signal
-  });
+  })
+    .then(handleStreamResponse)
+    .catch(handleStreamError);
 };
 
 export const cancelMessageStream = (id) => api.post(`/chat/sessions/${id}/cancel`);
