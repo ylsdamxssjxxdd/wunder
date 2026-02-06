@@ -547,6 +547,36 @@ impl Orchestrator {
                             round_info.insert_into(map);
                         }
                         emitter.emit("tool_result", tool_result_payload).await;
+                        if let Some(tree_version) = result
+                            .meta
+                            .as_ref()
+                            .and_then(|meta| meta.get("workspace_version"))
+                            .and_then(|value| {
+                                value.as_u64().or_else(|| {
+                                    value
+                                        .as_i64()
+                                        .and_then(|val| if val >= 0 { Some(val as u64) } else { None })
+                                })
+                            })
+                        {
+                            let agent_id = prepared
+                                .agent_id
+                                .clone()
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string();
+                            let mut workspace_payload = json!({
+                                "workspace_id": prepared.workspace_id.clone(),
+                                "agent_id": if agent_id.is_empty() { Value::Null } else { Value::String(agent_id) },
+                                "tree_version": tree_version,
+                                "tool": name,
+                                "reason": "tool_result",
+                            });
+                            if let Value::Object(ref mut map) = workspace_payload {
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("workspace_update", workspace_payload).await;
+                        }
 
                         let question_panel_meta = if question_panel_finished {
                             let mut panel = result.data.clone();
@@ -795,6 +825,8 @@ impl Orchestrator {
             async move {
                 let PlannedToolCall { call, name } = planned;
                 let args = call.arguments.clone();
+                let workspace_version_before =
+                    tool_context.workspace.get_tree_version(tool_context.workspace_id);
                 let policy_decision = crate::exec_policy::evaluate_tool_call(
                     tool_context.config,
                     &name,
@@ -875,6 +907,12 @@ impl Orchestrator {
                         }
                     }
                 };
+                let workspace_version_after =
+                    tool_context.workspace.get_tree_version(tool_context.workspace_id);
+                if workspace_version_after > workspace_version_before {
+                    result.insert_meta("workspace_version", json!(workspace_version_after));
+                    result.insert_meta("workspace_changed", Value::Bool(true));
+                }
                 result = orchestrator.finalize_tool_result(result, started_at, is_admin);
                 Ok(ToolExecutionOutcome { call, name, result })
             }

@@ -1079,6 +1079,7 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .workspace-dialog .workspace-btn.secondary {
@@ -1086,9 +1087,49 @@
   color: var(--chat-text);
 }
 
+.workspace-dialog .workspace-btn:not(:disabled):hover {
+  border-color: rgba(77, 216, 255, 0.55);
+  background: linear-gradient(135deg, rgba(77, 216, 255, 0.45), rgba(155, 140, 254, 0.35));
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+}
+
+.workspace-dialog .workspace-btn.secondary:not(:disabled):hover {
+  border-color: rgba(148, 163, 184, 0.55);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.workspace-dialog .workspace-btn:not(:disabled):active {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.15);
+}
+
+.workspace-dialog .workspace-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(77, 216, 255, 0.35);
+}
+
 .workspace-dialog .workspace-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+:root[data-user-theme='dark'] .workspace-dialog .workspace-btn:not(.secondary),
+.theme-dark .workspace-dialog .workspace-btn:not(.secondary) {
+  border-color: rgba(114, 242, 255, 0.5);
+  background: linear-gradient(135deg, rgba(114, 242, 255, 0.55), rgba(176, 166, 255, 0.45));
+}
+
+:root[data-user-theme='dark'] .workspace-dialog .workspace-btn:not(.secondary):not(:disabled):hover,
+.theme-dark .workspace-dialog .workspace-btn:not(.secondary):not(:disabled):hover {
+  border-color: rgba(114, 242, 255, 0.7);
+  background: linear-gradient(135deg, rgba(114, 242, 255, 0.7), rgba(176, 166, 255, 0.55));
+  box-shadow: 0 0 0 1px rgba(114, 242, 255, 0.35);
+}
+
+:root[data-user-theme='dark'] .workspace-dialog .workspace-btn:not(.secondary):not(:disabled):active,
+.theme-dark .workspace-dialog .workspace-btn:not(.secondary):not(:disabled):active {
+  border-color: rgba(114, 242, 255, 0.8);
+  box-shadow: 0 0 0 1px rgba(114, 242, 255, 0.2);
 }
 
 .workspace-preview-title {

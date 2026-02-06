@@ -2369,6 +2369,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         break;
       }
+      case 'workspace_update': {
+        const sessionId = payload?.session_id ?? payload?.sessionId ?? null;
+        const agentId = data?.agent_id ?? data?.agentId ?? '';
+        const treeVersion = data?.tree_version ?? data?.treeVersion ?? null;
+        emitWorkspaceRefresh({
+          sessionId,
+          agentId,
+          treeVersion,
+          reason: data?.reason || 'workspace_update'
+        });
+        break;
+      }
       case 'plan_update': {
         const normalized = applyPlanUpdate(assistantMessage, data);
         if (normalized) {
@@ -3109,7 +3121,6 @@ export const useChatStore = defineStore('chat', {
           messages: sessionMessagesRef
         });
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-        emitWorkspaceRefresh({ sessionId, reason: 'message-finished' });
         if (this.activeSessionId === sessionId && !pageUnloading) {
           startSessionWatcher(this, sessionId);
         }
@@ -3248,7 +3259,6 @@ export const useChatStore = defineStore('chat', {
           runtime.resumeRequestId = null;
         }
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-        emitWorkspaceRefresh({ sessionId, reason: aborted ? 'message-aborted' : 'message-finished' });
         if (!aborted && this.activeSessionId === sessionId && !pageUnloading) {
           startSessionWatcher(this, sessionId);
         }

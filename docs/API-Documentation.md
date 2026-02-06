@@ -557,6 +557,7 @@
 - `event: tool_call`: tool call info
 - `event: tool_output_delta`: tool output streaming chunk (`data.tool`/`data.command`/`data.stream`/`data.delta`; currently only for local built-in `execute_command`, not sandboxed)
 - `event: tool_result`: tool execution result
+- `event: workspace_update`: workspace change event (`data.workspace_id/agent_id/tree_version/tool/reason`)
 - `event: compaction`: context compaction info
 - `event: final`: final response
 - `event: error`: error info

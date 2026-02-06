@@ -937,6 +937,13 @@ const findWorkspaceEntry = (entries, targetPath) => {
   return null;
 };
 
+const resolveWorkspaceEntryName = (path) => {
+  const entry = findWorkspaceEntry(state.entries, path);
+  if (entry?.name) return entry.name;
+  const fallback = String(path || '').split('/').pop();
+  return fallback || t('common.unknown');
+};
+
 const attachWorkspaceChildren = (entries, targetPath, children) => {
   const target = findWorkspaceEntry(entries, targetPath);
   if (!target || target.type !== 'dir') return false;
@@ -1334,6 +1341,10 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     loadWorkspace({ resetExpanded: true, resetSearch: true });
     return;
   }
+  if (isWorkspaceTextEditable(entry)) {
+    openEditor(entry);
+    return;
+  }
   openPreview(entry);
 };
 
@@ -1471,9 +1482,11 @@ const notifyBatchResult = (payload, actionLabel) => {
 const deleteWorkspaceSelection = async () => {
   const selectedPaths = getWorkspaceSelectionPaths();
   if (!selectedPaths.length) return;
+  const singleName =
+    selectedPaths.length === 1 ? resolveWorkspaceEntryName(selectedPaths[0]) : '';
   const confirmed = await confirmAction(
     selectedPaths.length === 1
-      ? t('workspace.delete.confirm.single')
+      ? t('workspace.delete.confirm.single', { name: singleName })
       : t('workspace.delete.confirm.multi', { count: selectedPaths.length })
   );
   if (!confirmed) return;
@@ -2127,7 +2140,13 @@ const handleGlobalScroll = () => {
 
 onMounted(async () => {
   await loadWorkspace();
-  stopWorkspaceRefreshListener = onWorkspaceRefresh(() => scheduleWorkspaceAutoRefresh());
+  stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
+    const detail = event?.detail || {};
+    const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+    const currentAgentId = normalizedAgentId.value;
+    if (eventAgentId && eventAgentId !== currentAgentId) return;
+    scheduleWorkspaceAutoRefresh();
+  });
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('scroll', handleGlobalScroll, true);
   window.addEventListener('resize', closeContextMenu);

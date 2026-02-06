@@ -1834,6 +1834,7 @@
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果（data.meta.duration_ms/truncated/output_chars/exit_code/policy）
+- `event: workspace_update`：工作区变更事件（data.workspace_id/agent_id/tree_version/tool/reason）
 - `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
 - `event: question_panel`：问询面板更新（`data.question` 可选，`data.routes` 为路线数组，包含 `label`/`description`/`recommended`/`selected`）
   - 说明：当 `stop_reason=question_panel` 时会话进入 `waiting`，但后续用户选择仍会立即继续处理（不会触发忙时队列）。
