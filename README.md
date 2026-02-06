@@ -13,6 +13,8 @@ wunder 是一个多用户智能体调度平台，可灵活对接大模型 API、
 
 wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 
+<img width="700" height="380" alt="ayanami" src="https://github.com/user-attachments/assets/8ef1f7f9-f563-4253-8663-238c831d1aa3" />
+
 ## 用户侧功能与使用
 ### 用户侧功能
 - 聊天页默认入口，支持流式过程与最终回复展示。
