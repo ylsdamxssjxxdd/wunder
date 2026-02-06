@@ -11,6 +11,7 @@ pub mod core_ws;
 pub mod cron;
 pub mod doc2md;
 pub mod evaluation;
+pub mod external_links;
 pub mod gateway_ws;
 pub mod temp_dir;
 pub mod user_agents;
@@ -40,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(workspace::router())
         .merge(admin::router())
         .merge(evaluation::router())
+        .merge(external_links::router())
         .merge(user_tools::router())
         .merge(user_agents::router())
         .merge(user_channels::router())

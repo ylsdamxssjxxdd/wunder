@@ -4,11 +4,11 @@ use crate::i18n;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
     ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
-    ChatSessionRecord, CronJobRecord, CronRunRecord, GatewayClientRecord, GatewayNodeRecord,
-    GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus,
-    SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
-    VectorDocumentSummaryRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
+    GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -120,7 +120,29 @@ impl SqliteStorage {
             .collect()
     }
 
+    fn parse_i32_list(value: Option<String>) -> Vec<i32> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<i32>>(trimmed) {
+            return items.into_iter().filter(|item| *item > 0).collect();
+        }
+        trimmed
+            .split(',')
+            .filter_map(|item| item.trim().parse::<i32>().ok())
+            .filter(|item| *item > 0)
+            .collect()
+    }
+
     fn string_list_to_json(list: &[String]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn i32_list_to_json(list: &[i32]) -> String {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -534,6 +556,20 @@ impl StorageBackend for SqliteStorage {
               ON org_units (parent_id);
             CREATE INDEX IF NOT EXISTS idx_org_units_path
               ON org_units (path);
+            CREATE TABLE IF NOT EXISTS external_links (
+              link_id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              url TEXT NOT NULL,
+              icon TEXT NOT NULL,
+              allowed_levels TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_external_links_order
+              ON external_links (enabled, sort_order, updated_at);
             CREATE TABLE IF NOT EXISTS user_tokens (
               token TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -3174,6 +3210,100 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let affected = conn.execute("DELETE FROM org_units WHERE unit_id = ?", params![cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_external_link(&self, record: &ExternalLinkRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let allowed_levels = Self::i32_list_to_json(&record.allowed_levels);
+        conn.execute(
+            "INSERT INTO external_links (link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at) \n             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \n             ON CONFLICT(link_id) DO UPDATE SET title = excluded.title, description = excluded.description, \n             url = excluded.url, icon = excluded.icon, allowed_levels = excluded.allowed_levels, \n             sort_order = excluded.sort_order, enabled = excluded.enabled, updated_at = excluded.updated_at",
+            params![
+                record.link_id,
+                record.title,
+                record.description,
+                record.url,
+                record.icon,
+                allowed_levels,
+                record.sort_order,
+                if record.enabled { 1 } else { 0 },
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_external_link(&self, link_id: &str) -> Result<Option<ExternalLinkRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = link_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n                 FROM external_links WHERE link_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(ExternalLinkRecord {
+                        link_id: row.get(0)?,
+                        title: row.get(1)?,
+                        description: row.get(2)?,
+                        url: row.get(3)?,
+                        icon: row.get(4)?,
+                        allowed_levels: Self::parse_i32_list(row.get::<_, Option<String>>(5)?),
+                        sort_order: row.get(6)?,
+                        enabled: row.get::<_, i64>(7)? != 0,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_external_links(&self, include_disabled: bool) -> Result<Vec<ExternalLinkRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let sql = if include_disabled {
+            "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n             FROM external_links ORDER BY sort_order ASC, updated_at DESC, link_id ASC"
+        } else {
+            "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n             FROM external_links WHERE enabled = 1 ORDER BY sort_order ASC, updated_at DESC, link_id ASC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ExternalLinkRecord {
+                    link_id: row.get(0)?,
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    url: row.get(3)?,
+                    icon: row.get(4)?,
+                    allowed_levels: Self::parse_i32_list(row.get::<_, Option<String>>(5)?),
+                    sort_order: row.get(6)?,
+                    enabled: row.get::<_, i64>(7)? != 0,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<ExternalLinkRecord>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_external_link(&self, link_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = link_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM external_links WHERE link_id = ?",
+            params![cleaned],
+        )?;
         Ok(affected as i64)
     }
 

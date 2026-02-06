@@ -1,6 +1,8 @@
 use crate::channels::binding::{resolve_binding, BindingResolution};
+use crate::channels::feishu;
 use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
+use crate::channels::qqbot;
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
 use crate::channels::whatsapp_cloud;
@@ -588,6 +590,56 @@ impl ChannelHub {
                     }
                     return Ok(());
                 }
+            }
+        }
+        if record
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            if let Some(feishu_cfg) = account_cfg.feishu.as_ref() {
+                let outbound: ChannelOutboundMessage =
+                    serde_json::from_value(record.payload.clone())
+                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+                feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
+                self.update_outbox_status(record, "sent", None).await?;
+                if let Some(session_id) = extract_session_id(&record.payload) {
+                    self.monitor.record_event(
+                        &session_id,
+                        "channel_outbound",
+                        &json!({
+                            "channel": record.channel,
+                            "account_id": record.account_id,
+                            "outbox_id": record.outbox_id,
+                        }),
+                    );
+                }
+                return Ok(());
+            }
+        }
+        if record
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(qqbot::QQBOT_CHANNEL)
+        {
+            if let Some(qqbot_cfg) = account_cfg.qqbot.as_ref() {
+                let outbound: ChannelOutboundMessage =
+                    serde_json::from_value(record.payload.clone())
+                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+                qqbot::send_outbound(&self.http, &outbound, qqbot_cfg).await?;
+                self.update_outbox_status(record, "sent", None).await?;
+                if let Some(session_id) = extract_session_id(&record.payload) {
+                    self.monitor.record_event(
+                        &session_id,
+                        "channel_outbound",
+                        &json!({
+                            "channel": record.channel,
+                            "account_id": record.account_id,
+                            "outbox_id": record.outbox_id,
+                        }),
+                    );
+                }
+                return Ok(());
             }
         }
         let outbound_url = account_cfg

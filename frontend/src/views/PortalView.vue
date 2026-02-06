@@ -201,6 +201,49 @@
               </div>
             </div>
           </section>
+          <section class="portal-section portal-section--apps">
+            <div class="portal-section-header">
+              <div>
+                <div class="portal-section-title">{{ t('portal.section.moreApps') }}</div>
+                <div class="portal-section-desc">{{ t('portal.section.moreAppsDesc') }}</div>
+              </div>
+              <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredExternalLinks.length }) }}</div>
+            </div>
+            <div class="agent-grid portal-agent-grid">
+              <div v-if="externalLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
+              <div v-else-if="!filteredExternalLinks.length" class="agent-empty">
+                {{ normalizedQuery ? t('portal.external.searchEmpty') : t('portal.external.empty') }}
+              </div>
+              <template v-else>
+                <div
+                  v-for="link in filteredExternalLinks"
+                  :key="link.link_id"
+                  class="agent-card agent-card--compact agent-card--clickable"
+                  role="button"
+                  tabindex="0"
+                  @click="openExternalApp(link)"
+                  @keydown.enter="openExternalApp(link)"
+                >
+                  <div class="agent-card-head">
+                    <div class="agent-card-default-icon" aria-hidden="true">
+                      <i
+                        class="agent-card-default-icon-svg"
+                        :class="['fa-solid', resolveExternalIcon(link.icon)]"
+                        aria-hidden="true"
+                      ></i>
+                    </div>
+                    <div class="agent-card-head-text">
+                      <div class="agent-card-title">{{ link.title }}</div>
+                      <div class="agent-card-desc">{{ link.description || t('portal.agent.noDesc') }}</div>
+                    </div>
+                  </div>
+                  <div class="agent-card-meta">
+                    <span>{{ getExternalHost(link.url) }}</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </section>
         </div>
       </section>
     </main>
@@ -386,6 +429,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
+import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
@@ -406,6 +450,8 @@ const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref([]);
 const waitingAgentIds = ref([]);
+const externalLinks = ref([]);
+const externalLoading = ref(false);
 const avatarPanelVisible = ref(true);
 const customColor = ref('');
 let runningTimer = null;
@@ -670,6 +716,7 @@ onMounted(() => {
   }
   agentStore.loadAgents();
   loadCatalog();
+  loadExternalApps();
   loadRunningAgents();
   runningTimer = window.setInterval(loadRunningAgents, RUNNING_REFRESH_MS);
 });
@@ -693,6 +740,17 @@ const filteredSharedAgents = computed(() => {
   const query = normalizedQuery.value;
   if (!query) return sharedAgents.value;
   return sharedAgents.value.filter((agent) => matchesQuery(agent, query));
+});
+const filteredExternalLinks = computed(() => {
+  const query = normalizedQuery.value;
+  if (!query) return externalLinks.value;
+  return externalLinks.value.filter((link) => {
+    const source = [link?.title, link?.description, link?.url]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return source.includes(query);
+  });
 });
 
 const runningAgentSet = computed(() => new Set(runningAgentIds.value));
@@ -811,6 +869,49 @@ const resetForm = () => {
   avatarPanelVisible.value = true;
   applyDefaultTools();
   editingId.value = '';
+};
+
+const normalizeExternalLink = (item) => ({
+  link_id: String(item?.link_id || '').trim(),
+  title: String(item?.title || '').trim(),
+  description: String(item?.description || '').trim(),
+  url: String(item?.url || '').trim(),
+  icon: String(item?.icon || '').trim(),
+  sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : 0
+});
+
+const resolveExternalIcon = (icon) => {
+  const cleaned = String(icon || '').trim();
+  if (!cleaned) return 'fa-globe';
+  const match = cleaned.split(/\s+/).find((part) => part.startsWith('fa-'));
+  return match || 'fa-globe';
+};
+
+const getExternalHost = (url) => {
+  const value = String(url || '').trim();
+  if (!value) return '-';
+  try {
+    const parsed = new URL(value);
+    return parsed.host || value;
+  } catch (error) {
+    return value;
+  }
+};
+
+const loadExternalApps = async () => {
+  externalLoading.value = true;
+  try {
+    const { data } = await fetchExternalLinks();
+    const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+    externalLinks.value = items
+      .map(normalizeExternalLink)
+      .filter((item) => item.link_id && item.title && item.url)
+      .sort((left, right) => left.sort_order - right.sort_order);
+  } catch (error) {
+    externalLinks.value = [];
+  } finally {
+    externalLoading.value = false;
+  }
 };
 
 const loadCatalog = async () => {
@@ -952,6 +1053,12 @@ const enterAgent = (agent) => {
 
 const enterDefaultChat = () => {
   router.push({ path: `${basePath.value}/chat`, query: { entry: 'default' } });
+};
+
+const openExternalApp = (link) => {
+  const linkId = String(link?.link_id || '').trim();
+  if (!linkId) return;
+  router.push(basePath.value + '/external/' + encodeURIComponent(linkId));
 };
 
 const formatTime = (value) => {

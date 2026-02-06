@@ -57,6 +57,10 @@
                 <i class="fa-solid fa-user-gear"></i>
                 <span data-i18n="panel.userAccounts">用户管理</span>
               </button>
+              <button id="navExternalLinks" class="nav-btn">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                <span data-i18n="panel.externalLinks">外链管理</span>
+              </button>
               <button id="navUsers" class="nav-btn">
                 <i class="fa-solid fa-robot"></i>
                 <span data-i18n="panel.users">线程管理</span>
@@ -659,6 +663,93 @@
                   </button>
                   <button id="userAccountNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                     下一页
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="externalLinksPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="externalLinks.title">External Links</h1>
+            <div class="header-actions">
+              <button id="externalLinkRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">Refresh</span>
+              </button>
+              <button id="externalLinkCreateBtn" class="btn-with-icon">
+                <i class="fa-solid fa-plus"></i>
+                <span data-i18n="externalLinks.action.create">New Link</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="externalLinks.tip">
+            Configure external apps shown on the world page and control access by org level.
+          </div>
+          <div class="management-layout external-links-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label data-i18n="externalLinks.list.title">Link List</label>
+              </div>
+              <div id="externalLinkList" class="external-link-list"></div>
+            </div>
+            <div class="management-detail external-link-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="externalLinkDetailTitle" class="detail-title" data-i18n="externalLinks.detail.empty">
+                    No link selected
+                  </div>
+                  <div id="externalLinkDetailMeta" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="externalLinkDeleteBtn" class="danger btn-with-icon" type="button">
+                    <i class="fa-solid fa-trash"></i>
+                    <span data-i18n="common.delete">Delete</span>
+                  </button>
+                </div>
+              </div>
+              <div class="form-section">
+                <div class="form-row">
+                  <label for="externalLinkFormTitle" data-i18n="externalLinks.form.title">App Name</label>
+                  <input id="externalLinkFormTitle" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="externalLinkFormUrl" data-i18n="externalLinks.form.url">URL</label>
+                  <input id="externalLinkFormUrl" type="url" placeholder="https://" />
+                </div>
+                <div class="form-row">
+                  <label for="externalLinkFormIcon" data-i18n="externalLinks.form.icon">Icon</label>
+                  <input id="externalLinkFormIcon" type="text" placeholder="fa-globe" />
+                </div>
+                <div class="form-row">
+                  <label for="externalLinkFormDescription" data-i18n="externalLinks.form.description">Description</label>
+                  <textarea id="externalLinkFormDescription" rows="3"></textarea>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="externalLinks.form.levels">Access Levels</label>
+                  <div class="external-link-levels">
+                    <label><input id="externalLinkLevel1" type="checkbox" value="1" /> <span data-i18n="externalLinks.level.1">Level 1</span></label>
+                    <label><input id="externalLinkLevel2" type="checkbox" value="2" /> <span data-i18n="externalLinks.level.2">Level 2</span></label>
+                    <label><input id="externalLinkLevel3" type="checkbox" value="3" /> <span data-i18n="externalLinks.level.3">Level 3</span></label>
+                    <label><input id="externalLinkLevel4" type="checkbox" value="4" /> <span data-i18n="externalLinks.level.4">Level 4</span></label>
+                  </div>
+                  <div class="muted" data-i18n="externalLinks.form.levelsHint">Leave unchecked to allow all levels</div>
+                </div>
+                <div class="form-row">
+                  <label for="externalLinkFormSortOrder" data-i18n="externalLinks.form.sortOrder">Sort Order</label>
+                  <input id="externalLinkFormSortOrder" type="number" step="1" />
+                </div>
+                <div class="form-row external-link-enabled-row">
+                  <label for="externalLinkFormEnabled" data-i18n="externalLinks.form.enabled">Status</label>
+                  <label class="switch-label">
+                    <input id="externalLinkFormEnabled" type="checkbox" />
+                    <span data-i18n="externalLinks.status.enabled">Enabled</span>
+                  </label>
+                </div>
+                <div class="form-row">
+                  <button id="externalLinkSaveBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span data-i18n="common.save">Save</span>
                   </button>
                 </div>
               </div>

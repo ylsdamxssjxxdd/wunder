@@ -57,6 +57,32 @@ pub struct WhatsappCloudConfig {
     pub api_version: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeishuConfig {
+    #[serde(default, alias = "appId")]
+    pub app_id: Option<String>,
+    #[serde(default, alias = "appSecret")]
+    pub app_secret: Option<String>,
+    #[serde(default, alias = "verifyToken", alias = "verificationToken")]
+    pub verification_token: Option<String>,
+    #[serde(default, alias = "encryptKey")]
+    pub encrypt_key: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default, alias = "receiveIdType")]
+    pub receive_id_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QqBotConfig {
+    #[serde(default, alias = "appId")]
+    pub app_id: Option<String>,
+    #[serde(default, alias = "clientSecret")]
+    pub client_secret: Option<String>,
+    #[serde(default, alias = "markdownSupport")]
+    pub markdown_support: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
     pub channel: String,
@@ -127,6 +153,10 @@ pub struct ChannelAccountConfig {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub whatsapp_cloud: Option<WhatsappCloudConfig>,
+    #[serde(default)]
+    pub feishu: Option<FeishuConfig>,
+    #[serde(default)]
+    pub qqbot: Option<QqBotConfig>,
 }
 
 impl ChannelAccountConfig {

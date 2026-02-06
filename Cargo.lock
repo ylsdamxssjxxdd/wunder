@@ -3799,12 +3799,14 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 name = "wunder-server"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "anyhow",
  "argon2",
  "axum",
  "base64",
  "bytes",
  "calamine",
+ "cbc",
  "cfb",
  "chrono",
  "chrono-tz",

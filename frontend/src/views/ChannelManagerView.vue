@@ -227,6 +227,11 @@ const CHANNEL_META = {
     descKey: 'channels.provider.feishu.desc',
     defaultPeerKind: 'user'
   },
+  qqbot: {
+    labelKey: 'channels.provider.qqbot',
+    descKey: 'channels.provider.qqbot.desc',
+    defaultPeerKind: 'user'
+  },
   telegram: {
     labelKey: 'channels.provider.telegram',
     descKey: 'channels.provider.telegram.desc',

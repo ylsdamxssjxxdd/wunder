@@ -3,11 +3,11 @@ use crate::i18n;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
     ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
-    ChatSessionRecord, CronJobRecord, CronRunRecord, GatewayClientRecord, GatewayNodeRecord,
-    GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus,
-    SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
-    VectorDocumentSummaryRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
+    GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -226,7 +226,29 @@ impl PostgresStorage {
             .collect()
     }
 
+    fn parse_i32_list(value: Option<String>) -> Vec<i32> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<i32>>(trimmed) {
+            return items.into_iter().filter(|item| *item > 0).collect();
+        }
+        trimmed
+            .split(',')
+            .filter_map(|item| item.trim().parse::<i32>().ok())
+            .filter(|item| *item > 0)
+            .collect()
+    }
+
     fn string_list_to_json(list: &[String]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn i32_list_to_json(list: &[i32]) -> String {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 
@@ -742,6 +764,20 @@ impl StorageBackend for PostgresStorage {
                   ON org_units (parent_id);
                 CREATE INDEX IF NOT EXISTS idx_org_units_path
                   ON org_units (path);
+                CREATE TABLE IF NOT EXISTS external_links (
+                  link_id TEXT PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  description TEXT NOT NULL,
+                  url TEXT NOT NULL,
+                  icon TEXT NOT NULL,
+                  allowed_levels TEXT NOT NULL,
+                  sort_order BIGINT NOT NULL DEFAULT 0,
+                  enabled INTEGER NOT NULL DEFAULT 1,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_external_links_order
+                  ON external_links (enabled, sort_order, updated_at);
                 CREATE TABLE IF NOT EXISTS user_tokens (
                   token TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -3301,6 +3337,97 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM org_units WHERE unit_id = $1", &[&cleaned])?;
+        Ok(affected as i64)
+    }
+
+    fn upsert_external_link(&self, record: &ExternalLinkRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let allowed_levels = Self::i32_list_to_json(&record.allowed_levels);
+        conn.execute(
+            "INSERT INTO external_links (link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at) \n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \n             ON CONFLICT(link_id) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description, \n             url = EXCLUDED.url, icon = EXCLUDED.icon, allowed_levels = EXCLUDED.allowed_levels, \n             sort_order = EXCLUDED.sort_order, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.link_id,
+                &record.title,
+                &record.description,
+                &record.url,
+                &record.icon,
+                &allowed_levels,
+                &record.sort_order,
+                &(if record.enabled { 1_i32 } else { 0_i32 }),
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_external_link(&self, link_id: &str) -> Result<Option<ExternalLinkRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = link_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n             FROM external_links WHERE link_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| ExternalLinkRecord {
+            link_id: row.get(0),
+            title: row.get(1),
+            description: row.get(2),
+            url: row.get(3),
+            icon: row.get(4),
+            allowed_levels: Self::parse_i32_list(row.get::<_, Option<String>>(5)),
+            sort_order: row.get(6),
+            enabled: row.get::<_, i32>(7) != 0,
+            created_at: row.get(8),
+            updated_at: row.get(9),
+        }))
+    }
+
+    fn list_external_links(&self, include_disabled: bool) -> Result<Vec<ExternalLinkRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = if include_disabled {
+            conn.query(
+                "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n                 FROM external_links ORDER BY sort_order ASC, updated_at DESC, link_id ASC",
+                &[],
+            )?
+        } else {
+            conn.query(
+                "SELECT link_id, title, description, url, icon, allowed_levels, sort_order, enabled, created_at, updated_at \n                 FROM external_links WHERE enabled = 1 ORDER BY sort_order ASC, updated_at DESC, link_id ASC",
+                &[],
+            )?
+        };
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(ExternalLinkRecord {
+                link_id: row.get(0),
+                title: row.get(1),
+                description: row.get(2),
+                url: row.get(3),
+                icon: row.get(4),
+                allowed_levels: Self::parse_i32_list(row.get::<_, Option<String>>(5)),
+                sort_order: row.get(6),
+                enabled: row.get::<_, i32>(7) != 0,
+                created_at: row.get(8),
+                updated_at: row.get(9),
+            });
+        }
+        Ok(output)
+    }
+
+    fn delete_external_link(&self, link_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = link_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected =
+            conn.execute("DELETE FROM external_links WHERE link_id = $1", &[&cleaned])?;
         Ok(affected as i64)
     }
 

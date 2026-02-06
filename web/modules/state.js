@@ -38,6 +38,7 @@ export const state = {
     monitor: false,
     users: false,
     userAccounts: false,
+    externalLinks: false,
     orgUnits: false,
     memory: false,
     channels: false,
@@ -225,6 +226,12 @@ export const state = {
       total: 0,
     },
     toolAccess: {},
+  },
+  externalLinks: {
+    list: [],
+    selectedId: "",
+    loaded: false,
+    loading: false,
   },
   orgUnits: {
     list: [],

@@ -28,8 +28,8 @@ use crate::vector_knowledge;
 use crate::{
     org_units,
     storage::{
-        ChannelAccountRecord, ChannelBindingRecord, GatewayNodeRecord, GatewayNodeTokenRecord,
-        OrgUnitRecord, StorageBackend, UserAccountRecord,
+        ChannelAccountRecord, ChannelBindingRecord, ExternalLinkRecord, GatewayNodeRecord,
+        GatewayNodeTokenRecord, OrgUnitRecord, StorageBackend, UserAccountRecord,
     },
 };
 use anyhow::anyhow;
@@ -244,6 +244,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/org_units/{unit_id}",
             patch(admin_org_units_update).delete(admin_org_units_delete),
+        )
+        .route(
+            "/wunder/admin/external_links",
+            get(admin_external_links_list).post(admin_external_links_upsert),
+        )
+        .route(
+            "/wunder/admin/external_links/{link_id}",
+            delete(admin_external_links_delete),
         )
         .route(
             "/wunder/admin/user_accounts",
@@ -3625,6 +3633,97 @@ async fn admin_org_units_delete(
     Ok(Json(json!({ "data": { "unit_id": cleaned } })))
 }
 
+async fn admin_external_links_list(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let records = state
+        .storage
+        .list_external_links(true)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let items = records
+        .iter()
+        .map(external_link_payload)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_external_links_upsert(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalLinkUpsertRequest>,
+) -> Result<Json<Value>, Response> {
+    let title = payload.title.trim();
+    let description = payload.description.trim();
+    let url = payload.url.trim();
+    if title.is_empty() || url.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let parsed_url = Url::parse(url)
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "外链 URL 格式无效".to_string()))?;
+    if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "外链 URL 仅支持 http/https".to_string(),
+        ));
+    }
+    let link_id = payload
+        .link_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("ext_{}", Uuid::new_v4().simple()));
+    let now = now_ts();
+    let existing = state
+        .storage
+        .get_external_link(&link_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let created_at = existing
+        .as_ref()
+        .map(|record| record.created_at)
+        .unwrap_or(now);
+    let allowed_levels = normalize_external_link_levels(payload.allowed_levels.unwrap_or_default());
+    let sort_order = payload.sort_order.unwrap_or(0);
+    let icon = normalize_external_link_icon(payload.icon.as_deref());
+    let record = ExternalLinkRecord {
+        link_id: link_id.clone(),
+        title: title.to_string(),
+        description: description.to_string(),
+        url: parsed_url.to_string(),
+        icon,
+        allowed_levels,
+        sort_order,
+        enabled: payload.enabled.unwrap_or(true),
+        created_at,
+        updated_at: now,
+    };
+    state
+        .storage
+        .upsert_external_link(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": external_link_payload(&record) })))
+}
+
+async fn admin_external_links_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath(link_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = link_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    state
+        .storage
+        .delete_external_link(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "link_id": cleaned } })))
+}
+
 async fn admin_user_accounts_list(
     State(state): State<Arc<AppState>>,
     headers: AxumHeaderMap,
@@ -4696,6 +4795,55 @@ fn org_unit_payload(record: &OrgUnitRecord) -> Value {
     })
 }
 
+fn external_link_payload(record: &ExternalLinkRecord) -> Value {
+    json!({
+        "link_id": record.link_id,
+        "title": record.title,
+        "description": record.description,
+        "url": record.url,
+        "icon": record.icon,
+        "allowed_levels": record.allowed_levels,
+        "sort_order": record.sort_order,
+        "enabled": record.enabled,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn normalize_external_link_levels(levels: Vec<i32>) -> Vec<i32> {
+    let mut items = levels
+        .into_iter()
+        .filter(|level| (1..=MAX_ORG_UNIT_LEVEL).contains(level))
+        .collect::<Vec<_>>();
+    items.sort_unstable();
+    items.dedup();
+    items
+}
+
+fn normalize_external_link_icon(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or_default().trim();
+    if cleaned.is_empty() {
+        return "fa-globe".to_string();
+    }
+    let normalized = cleaned
+        .trim_start_matches("fa-solid")
+        .trim_start_matches(' ')
+        .trim();
+    if normalized.is_empty() {
+        return "fa-globe".to_string();
+    }
+    let icon = normalized
+        .split_whitespace()
+        .find(|part| part.starts_with("fa-"))
+        .unwrap_or(normalized)
+        .to_string();
+    if icon.starts_with("fa-") {
+        icon
+    } else {
+        "fa-globe".to_string()
+    }
+}
+
 fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
     raw.map(|value| value.trim())
         .filter(|value| !value.is_empty())
@@ -5726,6 +5874,24 @@ struct OrgUnitUpdateRequest {
     sort_order: Option<i64>,
     #[serde(default)]
     leader_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalLinkUpsertRequest {
+    #[serde(default)]
+    link_id: Option<String>,
+    title: String,
+    #[serde(default)]
+    description: String,
+    url: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    allowed_levels: Option<Vec<i32>>,
+    #[serde(default)]
+    sort_order: Option<i64>,
+    #[serde(default)]
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]

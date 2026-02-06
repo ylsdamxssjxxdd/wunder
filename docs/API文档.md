@@ -22,7 +22,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理；生产端口默认 18002，开发端口默认 18001。
+- User frontend default entry is `/app/chat`; world page entry is `/home` (actual route `/app/home`); external app detail route is `/app/external/:linkId` (demo route `/demo/external/:linkId`). External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001.
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
@@ -1670,6 +1670,48 @@
   - 当前入站媒体消息会保留 `meta.media` 与提示文本，附件下载需后续扩展（Cloud 媒体 URL 需要鉴权）。
   - 建议先通过管理员接口创建 `whatsapp` 渠道账户，再完成 Meta Webhook 订阅。
 
+### 4.1.54.3 `/wunder/channel/feishu/webhook`（飞书/多维表）
+
+- 方法：`POST`
+- 鉴权：
+  - 若账号配置了 `feishu.verification_token`，URL 验证阶段会校验 payload `token`
+  - 若账号配置了 `feishu.encrypt_key` 且请求头携带 `x-lark-signature`，会执行签名校验
+- Query：
+  - `account_id`：可选，覆盖渠道账号（默认尝试从 `header.app_id` 推断）
+- Header：
+  - `x-channel-account`：可选，覆盖 account_id
+  - `x-lark-request-timestamp` / `x-lark-request-nonce` / `x-lark-signature`：签名校验用
+- URL 验证：payload 包含 `challenge` 时返回 `{ "challenge": "..." }`
+- 消息回调：
+  - 当前支持解析 `event.message`（text/image/file/audio/media）
+  - 生成标准 `ChannelMessage` 进入主链路：`user_id -> agent_id -> session_id -> agent_loop`
+- 加密回调：
+  - 当 payload 包含 `encrypt` 且账号配置了 `feishu.encrypt_key` 时，服务端会先解密再按事件处理
+  - 解密流程遵循飞书事件订阅 AES-CBC + PKCS7 规范（IV 前置、网络字节序长度字段）
+- 出站投递：
+  - 当 `ChannelAccount.config.feishu.app_id/app_secret` 可用时，使用飞书 OpenAPI 直接发送文本
+  - 默认 `receive_id_type=chat_id`（可通过 `feishu.receive_id_type` 覆盖）
+
+### 4.1.54.4 `/wunder/channel/qqbot/webhook`（QQ Bot）
+
+- 方法：`POST`
+- 鉴权：可选（由 `inbound_token` 统一控制）
+- Query：
+  - `account_id`：可选，覆盖渠道账号（默认尝试从 payload `app_id/appid` 推断）
+- Header：
+  - `x-channel-account`：可选，覆盖 account_id
+- 入参（JSON）：
+  - 支持直接消息对象，或 `{ d: ... }` 包装体
+  - 识别字段：`content`、`id/msg_id`、`author.member_openid/author.id`、`group_openid`
+- 路由规则：
+  - 有 `group_openid` -> `peer.kind=group`
+  - 否则 -> `peer.kind=user`
+- 出站投递：
+  - 当 `ChannelAccount.config.qqbot.app_id/client_secret` 可用时，调用 QQ Bot API 直连发送
+  - `peer.kind=user` -> `/v2/users/{openid}/messages`
+  - `peer.kind=group` -> `/v2/groups/{group_openid}/messages`
+  - `peer.kind=channel` -> `/channels/{channel_id}/messages`
+
 ### 4.1.55 `/wunder/chat/*`
 
 - `POST /wunder/chat/sessions`：创建会话
@@ -1796,6 +1838,48 @@
 - `sort_order`：同级排序
 - `leader_ids`：负责人用户 ID 列表
 - `created_at`/`updated_at`：时间戳（秒）
+
+### 4.1.58.1 `/wunder/admin/external_links/*`
+
+- `GET /wunder/admin/external_links`
+  - Returns: `data.items` (ExternalLink list, includes enabled and disabled items)
+- `POST /wunder/admin/external_links`
+  - JSON body:
+    - `link_id`: optional; update when provided, auto-generate `ext_{uuid}` when omitted
+    - `title`: required app name
+    - `description`: optional description
+    - `url`: required, only `http`/`https` allowed
+    - `icon`: optional, defaults to `fa-globe`
+    - `allowed_levels`: optional `1~4` integer array; empty array means visible to all levels
+    - `sort_order`: optional, defaults to `0`
+    - `enabled`: optional, defaults to `true`
+  - Returns: `data` (ExternalLink)
+- `DELETE /wunder/admin/external_links/{link_id}`
+  - Returns: `data.link_id`
+- Notes: admin-only endpoints used by the admin "External Link Management" panel.
+
+#### ExternalLink
+
+- `link_id`: link identifier
+- `title`: app name
+- `description`: description
+- `url`: target URL
+- `icon`: Font Awesome icon class (for example `fa-globe`)
+- `allowed_levels`: allowed org levels (empty means all)
+- `sort_order`: sort value (ascending)
+- `enabled`: enable status
+- `created_at`/`updated_at`: unix timestamp (seconds)
+
+### 4.1.58.2 `/wunder/external_links`
+
+- `GET /wunder/external_links`
+  - Auth: user token (`Authorization: Bearer <user_token>`)
+  - Query: `link_id` (optional, exact filter)
+  - Returns: `data.items` (ExternalLink list filtered by current user's org level), `data.user_level`
+- Filter rules:
+  - `enabled=false` items are not returned
+  - Empty `allowed_levels` means visible to all levels
+  - Non-empty `allowed_levels` means only matching levels can see the item
 
 ### 4.1.59 `/wunder/admin/channels/*`
 

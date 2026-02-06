@@ -1,3 +1,5 @@
+use crate::channels::feishu;
+use crate::channels::qqbot;
 use crate::channels::types::ChannelAccountConfig;
 use crate::channels::whatsapp_cloud;
 use crate::channels::ChannelMessage;
@@ -36,6 +38,8 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/channel/whatsapp/webhook",
             get(whatsapp_webhook_verify).post(whatsapp_webhook),
         )
+        .route("/wunder/channel/feishu/webhook", post(feishu_webhook))
+        .route("/wunder/channel/qqbot/webhook", post(qqbot_webhook))
         .route("/wunder/channel/{provider}/webhook", post(channel_webhook))
 }
 
@@ -76,13 +80,13 @@ async fn whatsapp_webhook_verify(
             "missing hub.challenge",
         ));
     }
-    let configs = load_whatsapp_account_configs(&state).await?;
+    let configs = load_account_configs_by_channel(&state, whatsapp_cloud::WHATSAPP_CHANNEL).await?;
     let allowed = configs.iter().any(|config| {
         config
             .whatsapp_cloud
             .as_ref()
             .and_then(|cfg| cfg.verify_token.as_deref())
-            .map(|value| value.trim())
+            .map(str::trim)
             .filter(|value| !value.is_empty())
             == Some(token.as_str())
     });
@@ -144,12 +148,7 @@ async fn whatsapp_webhook(
             )
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
-        return Ok(Json(json!({ "data": {
-            "accepted": result.accepted,
-            "session_ids": result.session_ids,
-            "outbox_ids": result.outbox_ids,
-            "errors": result.errors,
-        }})));
+        return Ok(success_response(result));
     }
 
     let messages = parse_channel_messages(payload.clone())?;
@@ -168,12 +167,181 @@ async fn whatsapp_webhook(
         )
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
-    Ok(Json(json!({ "data": {
-        "accepted": result.accepted,
-        "session_ids": result.session_ids,
-        "outbox_ids": result.outbox_ids,
-        "errors": result.errors,
-    }})))
+    Ok(success_response(result))
+}
+
+async fn feishu_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<WebhookQuery>,
+    body: Bytes,
+) -> Result<Json<Value>, Response> {
+    let payload: Value = serde_json::from_slice(&body)
+        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "invalid json payload"))?;
+    let account_id =
+        resolve_channel_account_id(&headers, &query, feishu::FEISHU_CHANNEL, &payload).await?;
+    let account =
+        load_account_by_channel_and_id(&state, feishu::FEISHU_CHANNEL, &account_id).await?;
+    let config = ChannelAccountConfig::from_value(&account.config);
+    let feishu_cfg = config
+        .feishu
+        .as_ref()
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "missing feishu config"))?;
+
+    if let Some(challenge) = feishu::challenge_response(&payload) {
+        let verify_ok = feishu_cfg
+            .verification_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|token| feishu::verify_challenge_token(&payload, token))
+            .unwrap_or(true);
+        if !verify_ok {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "feishu token mismatch",
+            ));
+        }
+        return Ok(Json(challenge));
+    }
+
+    if let (Some(encrypt_key), Some(timestamp), Some(nonce), Some(sign)) = (
+        feishu_cfg
+            .encrypt_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        header_string(&headers, "x-lark-request-timestamp"),
+        header_string(&headers, "x-lark-request-nonce"),
+        header_string(&headers, "x-lark-signature"),
+    ) {
+        if !feishu::verify_sign(encrypt_key, &timestamp, &nonce, &body, &sign) {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid feishu signature",
+            ));
+        }
+    }
+
+    let resolved_payload =
+        feishu::decrypt_event_if_needed(payload.clone(), feishu_cfg.encrypt_key.as_deref())
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+    let messages = feishu::extract_inbound_messages(&resolved_payload, &account_id, Some("user"))
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+
+    let result = state
+        .channels
+        .handle_inbound(
+            feishu::FEISHU_CHANNEL,
+            &headers,
+            messages,
+            Some(resolved_payload),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+    Ok(success_response(result))
+}
+
+async fn qqbot_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<WebhookQuery>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, Response> {
+    let account_id =
+        resolve_channel_account_id(&headers, &query, qqbot::QQBOT_CHANNEL, &payload).await?;
+    let message = payload
+        .get("message")
+        .or_else(|| payload.get("d"))
+        .unwrap_or(&payload)
+        .clone();
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let message_id = message
+        .get("id")
+        .or_else(|| message.get("msg_id"))
+        .and_then(Value::as_str)
+        .map(|value| value.to_string());
+    let sender_id = message
+        .get("author")
+        .and_then(|value| {
+            value
+                .get("member_openid")
+                .or_else(|| value.get("id"))
+                .or_else(|| value.get("user_openid"))
+        })
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let group_openid = message
+        .get("group_openid")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let peer_kind = if group_openid.is_some() {
+        "group"
+    } else {
+        "user"
+    };
+    let peer_id = group_openid.clone().unwrap_or_else(|| sender_id.clone());
+    if peer_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid qqbot payload: missing peer id",
+        ));
+    }
+    let ts = message
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp_millis() as f64 / 1000.0);
+
+    let normalized = ChannelMessage {
+        channel: qqbot::QQBOT_CHANNEL.to_string(),
+        account_id,
+        peer: crate::channels::types::ChannelPeer {
+            kind: peer_kind.to_string(),
+            id: peer_id,
+            name: None,
+        },
+        thread: None,
+        message_id,
+        sender: if sender_id.is_empty() {
+            None
+        } else {
+            Some(crate::channels::types::ChannelSender {
+                id: sender_id,
+                name: message
+                    .get("author")
+                    .and_then(|value| value.get("username"))
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string()),
+            })
+        },
+        message_type: "text".to_string(),
+        text: Some(content),
+        attachments: Vec::new(),
+        location: None,
+        ts,
+        meta: Some(payload.clone()),
+    };
+
+    let result = state
+        .channels
+        .handle_inbound(
+            qqbot::QQBOT_CHANNEL,
+            &headers,
+            vec![normalized],
+            Some(payload),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+    Ok(success_response(result))
 }
 
 async fn channel_webhook(
@@ -199,12 +367,7 @@ async fn channel_webhook(
         .handle_inbound(&provider, &headers, messages, raw_payload)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
-    Ok(Json(json!({ "data": {
-        "accepted": result.accepted,
-        "session_ids": result.session_ids,
-        "outbox_ids": result.outbox_ids,
-        "errors": result.errors,
-    }})))
+    Ok(success_response(result))
 }
 
 fn parse_channel_messages(payload: Value) -> Result<Vec<ChannelMessage>, Response> {
@@ -252,6 +415,15 @@ fn apply_overrides(
     messages
 }
 
+fn success_response(result: crate::channels::service::ChannelHandleResult) -> Json<Value> {
+    Json(json!({ "data": {
+        "accepted": result.accepted,
+        "session_ids": result.session_ids,
+        "outbox_ids": result.outbox_ids,
+        "errors": result.errors,
+    }}))
+}
+
 fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
     headers
         .get(key)
@@ -264,12 +436,14 @@ fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "detail": { "message": message } }))).into_response()
 }
 
-async fn load_whatsapp_account_configs(
+async fn load_account_configs_by_channel(
     state: &Arc<AppState>,
+    channel: &str,
 ) -> Result<Vec<ChannelAccountConfig>, Response> {
     let storage = state.storage.clone();
+    let channel = channel.to_string();
     let records = tokio::task::spawn_blocking(move || {
-        storage.list_channel_accounts(Some(whatsapp_cloud::WHATSAPP_CHANNEL), Some("active"))
+        storage.list_channel_accounts(Some(channel.as_str()), Some("active"))
     })
     .await
     .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "storage error"))?
@@ -280,8 +454,78 @@ async fn load_whatsapp_account_configs(
         .collect())
 }
 
+async fn load_account_by_channel_and_id(
+    state: &Arc<AppState>,
+    channel: &str,
+    account_id: &str,
+) -> Result<crate::storage::ChannelAccountRecord, Response> {
+    let storage = state.storage.clone();
+    let channel = channel.to_string();
+    let account_id = account_id.to_string();
+    let record =
+        tokio::task::spawn_blocking(move || storage.get_channel_account(&channel, &account_id))
+            .await
+            .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "storage error"))?
+            .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+    let record = record
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "channel account not found"))?;
+    if record.status.trim().to_ascii_lowercase() != "active" {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "channel account disabled",
+        ));
+    }
+    Ok(record)
+}
+
+async fn resolve_channel_account_id(
+    headers: &HeaderMap,
+    query: &WebhookQuery,
+    channel: &str,
+    payload: &Value,
+) -> Result<String, Response> {
+    if let Some(value) = query
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(value.to_string());
+    }
+    if let Some(value) = header_string(headers, "x-channel-account") {
+        return Ok(value);
+    }
+    if channel.eq_ignore_ascii_case(feishu::FEISHU_CHANNEL) {
+        if let Some(app_id) = payload
+            .get("header")
+            .and_then(|value| value.get("app_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(app_id.to_string());
+        }
+    }
+    if channel.eq_ignore_ascii_case(qqbot::QQBOT_CHANNEL) {
+        if let Some(app_id) = payload
+            .get("app_id")
+            .or_else(|| payload.get("appid"))
+            .or_else(|| payload.get("d").and_then(|value| value.get("app_id")))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(app_id.to_string());
+        }
+    }
+    Err(error_response(
+        StatusCode::BAD_REQUEST,
+        "missing account_id",
+    ))
+}
+
 async fn load_whatsapp_app_secrets(state: &Arc<AppState>) -> Result<Vec<String>, Response> {
-    let configs = load_whatsapp_account_configs(state).await?;
+    let configs = load_account_configs_by_channel(state, whatsapp_cloud::WHATSAPP_CHANNEL).await?;
     let mut secrets = Vec::new();
     for config in configs {
         if let Some(secret) = config

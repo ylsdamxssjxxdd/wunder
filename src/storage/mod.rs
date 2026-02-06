@@ -113,6 +113,20 @@ pub struct UserAgentAccessRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExternalLinkRecord {
+    pub link_id: String,
+    pub title: String,
+    pub description: String,
+    pub url: String,
+    pub icon: String,
+    pub allowed_levels: Vec<i32>,
+    pub sort_order: i64,
+    pub enabled: bool,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct VectorDocumentRecord {
     pub doc_id: String,
     pub owner_id: String,
@@ -628,6 +642,11 @@ pub trait StorageBackend: Send + Sync {
     fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>>;
     fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()>;
     fn delete_org_unit(&self, unit_id: &str) -> Result<i64>;
+
+    fn upsert_external_link(&self, record: &ExternalLinkRecord) -> Result<()>;
+    fn get_external_link(&self, link_id: &str) -> Result<Option<ExternalLinkRecord>>;
+    fn list_external_links(&self, include_disabled: bool) -> Result<Vec<ExternalLinkRecord>>;
+    fn delete_external_link(&self, link_id: &str) -> Result<i64>;
 
     fn create_user_token(&self, record: &UserTokenRecord) -> Result<()>;
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;

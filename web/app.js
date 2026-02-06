@@ -39,6 +39,7 @@ import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=2026011
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260211-01";
+import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260206-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260210-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260206-01";
 import {
@@ -151,6 +152,7 @@ const panelMap = {
 
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
+  externalLinks: { panel: elements.externalLinksPanel, nav: elements.navExternalLinks },
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
@@ -432,6 +434,18 @@ const bindNavigation = () => {
         state.panelLoaded.userAccounts = true;
       } catch (error) {
         appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
+      }
+    }
+  });
+
+  elements.navExternalLinks.addEventListener("click", async () => {
+    switchPanel("externalLinks");
+    if (!state.panelLoaded.externalLinks) {
+      try {
+        await loadExternalLinks({ silent: true });
+        state.panelLoaded.externalLinks = true;
+      } catch (error) {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.externalLinks"), message: error.message }));
       }
     }
   });
@@ -1044,6 +1058,7 @@ const bootstrap = async () => {
 
   initUserManagementPanel();
   initUserAccountsPanel();
+  initExternalLinksPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
 
@@ -1155,6 +1170,16 @@ const bootstrap = async () => {
     loadUserAccounts().catch((error) => {
 
       appendLog(t("app.panelLoadFailed", { panel: t("panel.userAccounts"), message: error.message }));
+
+    });
+
+  }
+
+  if (initialPanel === "externalLinks") {
+
+    loadExternalLinks({ silent: true }).catch((error) => {
+
+      appendLog(t("app.panelLoadFailed", { panel: t("panel.externalLinks"), message: error.message }));
 
     });
 

@@ -6,6 +6,7 @@ import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
 import ChatView from '@/views/ChatView.vue';
 import PortalView from '@/views/PortalView.vue';
+import ExternalAppView from '@/views/ExternalAppView.vue';
 import WorkspaceView from '@/views/WorkspaceView.vue';
 import SettingsView from '@/views/SettingsView.vue';
 import ProfileView from '@/views/ProfileView.vue';
@@ -49,6 +50,7 @@ const routes = [
     redirect: '/app/chat',
     children: [
       { path: 'home', name: 'home', component: PortalView },
+      { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
       { path: 'tools', name: 'tools', component: ToolManagerView },
       { path: 'cron', name: 'cron', component: CronManagerView },
       { path: 'channels', name: 'channels', component: ChannelManagerView },
@@ -65,6 +67,7 @@ const routes = [
     redirect: '/demo/chat',
     children: [
       { path: 'home', name: 'demo-home', component: PortalView, meta: { demo: true } },
+      { path: 'external/:linkId', name: 'demo-external-app', component: ExternalAppView, meta: { demo: true } },
       { path: 'tools', name: 'demo-tools', component: ToolManagerView, meta: { demo: true } },
       { path: 'cron', name: 'demo-cron', component: CronManagerView, meta: { demo: true } },
       { path: 'channels', name: 'demo-channels', component: ChannelManagerView, meta: { demo: true } },
