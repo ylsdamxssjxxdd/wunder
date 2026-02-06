@@ -196,6 +196,37 @@ channels:
 - 群聊/单聊识别
 - 语音/图片/位置映射
 
+### 6.5 WhatsApp（Cloud API / Web）落地要点
+- **Cloud API（优先）**：
+  - `GET /wunder/channel/whatsapp/webhook` 支持订阅校验（`hub.verify_token`）
+  - `POST /wunder/channel/whatsapp/webhook` 解析 Cloud Webhook payload
+  - `X-Hub-Signature-256` 在配置 `whatsapp_cloud.app_secret` 后强校验
+  - 出站优先直连 Graph API（`whatsapp_cloud.access_token`）
+  - 账号维度：`account_id=phone_number_id`，一号一账户
+- **WhatsApp Web（可选，后续接入 Baileys）**：
+  - 以“渠道适配器”方式运行（独立 Node 进程），通过 `/wunder/channel/whatsapp/webhook` 入站 + `outbound_url` 出站
+  - 保持与 Cloud API 一致的 `ChannelMessage`/`ChannelOutboundMessage` 数据结构
+
+---
+
+## 7. 前端设计建议（管理端 + 用户端）
+
+### 7.1 管理端（web/ 管理后台）
+- **渠道总览页**：卡片式展示（WhatsApp/Telegram/Feishu/WeChat），显示状态、账号数、最近心跳。
+- **WhatsApp 配置页**：
+  - 基础信息：`phone_number_id`、`access_token`、`verify_token`、`app_secret`、`api_version`
+  - 安全策略：allow/deny 列表、session_strategy、default_agent_id、tool_overrides
+  - Webhook URL 一键复制 + 校验提示（验证成功/失败）
+  - 出站健康检查按钮（发送测试消息）
+- **绑定策略页**：
+  - 规则表格：`peer_kind/peer_id` → `agent_id`
+  - 一键导入/导出 CSV（便于批量接入）
+
+### 7.2 用户端（frontend）
+- **会话视角统一**：WhatsApp 进入“通用智能体应用”主线程（`channels.session_strategy=main_thread`）。
+- **会话标签**：在消息气泡或会话标题处标记“来源渠道”（如 WhatsApp）。
+- **多渠道通知**：可选开关“仅保留主线程对话/为群聊分叉会话”。
+
 ---
 
 ## 7. 设备/节点接入方案

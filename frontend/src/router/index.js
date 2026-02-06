@@ -11,6 +11,7 @@ import SettingsView from '@/views/SettingsView.vue';
 import ProfileView from '@/views/ProfileView.vue';
 import ToolManagerView from '@/views/ToolManagerView.vue';
 import CronManagerView from '@/views/CronManagerView.vue';
+import ChannelManagerView from '@/views/ChannelManagerView.vue';
 import AdminLoginView from '@/views/AdminLoginView.vue';
 import AdminUsersView from '@/views/AdminUsersView.vue';
 import AdminAgentsView from '@/views/AdminAgentsView.vue';
@@ -50,6 +51,7 @@ const routes = [
       { path: 'home', name: 'home', component: PortalView },
       { path: 'tools', name: 'tools', component: ToolManagerView },
       { path: 'cron', name: 'cron', component: CronManagerView },
+      { path: 'channels', name: 'channels', component: ChannelManagerView },
       { path: 'chat', name: 'chat', component: ChatView },
       { path: 'workspace', name: 'workspace', component: WorkspaceView },
       { path: 'settings', name: 'settings', component: SettingsView },
@@ -65,6 +67,7 @@ const routes = [
       { path: 'home', name: 'demo-home', component: PortalView, meta: { demo: true } },
       { path: 'tools', name: 'demo-tools', component: ToolManagerView, meta: { demo: true } },
       { path: 'cron', name: 'demo-cron', component: CronManagerView, meta: { demo: true } },
+      { path: 'channels', name: 'demo-channels', component: ChannelManagerView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: ChatView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: WorkspaceView, meta: { demo: true } },
       { path: 'settings', name: 'demo-settings', component: SettingsView, meta: { demo: true } },

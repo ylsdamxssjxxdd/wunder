@@ -4,6 +4,7 @@ pub mod outbox;
 pub mod rate_limit;
 pub mod service;
 pub mod types;
+pub mod whatsapp_cloud;
 
 pub use service::ChannelHub;
 pub use types::ChannelMessage;

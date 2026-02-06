@@ -40,6 +40,7 @@ import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modul
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260211-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260210-01";
+import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260206-01";
 import {
 
   initMemoryPanel,
@@ -153,6 +154,7 @@ const panelMap = {
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
+  channels: { panel: elements.channelsPanel, nav: elements.navChannels },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
@@ -468,6 +470,18 @@ const bindNavigation = () => {
 
     }
 
+  });
+
+  elements.navChannels.addEventListener("click", async () => {
+    switchPanel("channels");
+    if (!state.panelLoaded.channels) {
+      try {
+        await loadChannelAccounts();
+        state.panelLoaded.channels = true;
+      } catch (error) {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.channels"), message: error.message }));
+      }
+    }
   });
 
   // 点击侧边栏标题进入系统介绍面板
@@ -1031,6 +1045,7 @@ const bootstrap = async () => {
   initUserManagementPanel();
   initUserAccountsPanel();
   initOrgUnitsPanel();
+  initChannelsPanel();
 
   initMemoryPanel();
 

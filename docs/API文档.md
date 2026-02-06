@@ -5,7 +5,7 @@
 ### 4.0 实现说明
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
-- 运行与热重载环境建议使用 `Dockerfile.rust` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
+- 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
 - MCP 服务容器：`wunder_mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
@@ -17,11 +17,12 @@
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
+- 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理。
+- 用户端前端默认入口为 `/app/chat` 聊天页，功能广场入口为 `/home`（实际路由 `/app/home`），外链入口由 `frontend/src/config/external-links.js` 统一管理；生产端口默认 18002，开发端口默认 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
@@ -1647,6 +1648,28 @@
 - `ts`：时间戳（可选）
 - `meta`：扩展字段（可选）
 
+### 4.1.54.2 `/wunder/channel/whatsapp/webhook`（WhatsApp Cloud）
+
+- 方法：`GET/POST`
+- `GET`（订阅校验）：
+  - Query：`hub.mode=subscribe`、`hub.verify_token`、`hub.challenge`
+  - 返回：`hub.challenge`
+  - 校验规则：在 `channels.accounts` 中查找 `whatsapp_cloud.verify_token` 匹配成功即通过。
+- `POST`（消息回调）：
+  - 入参：WhatsApp Cloud Webhook 原始 payload（`object=whatsapp_business_account`）
+  - Header：`X-Hub-Signature-256`（可选；当 `whatsapp_cloud.app_secret` 配置存在时强制校验）
+  - 账号识别：默认使用 `metadata.phone_number_id` 作为 `account_id`，可通过 Query `account_id` 或 `x-channel-account` 覆盖。
+  - 出站投递：当 `whatsapp_cloud.access_token` 可用时直接走 Cloud API；否则回退到 `outbound_url`。
+- 配置（ChannelAccount.config）：
+  - `whatsapp_cloud.phone_number_id`
+  - `whatsapp_cloud.access_token`
+  - `whatsapp_cloud.verify_token`
+  - `whatsapp_cloud.app_secret`
+  - `whatsapp_cloud.api_version`（默认 `v20.0`）
+- 说明：
+  - 当前入站媒体消息会保留 `meta.media` 与提示文本，附件下载需后续扩展（Cloud 媒体 URL 需要鉴权）。
+  - 建议先通过管理员接口创建 `whatsapp` 渠道账户，再完成 Meta Webhook 订阅。
+
 ### 4.1.55 `/wunder/chat/*`
 
 - `POST /wunder/chat/sessions`：创建会话
@@ -1828,6 +1851,22 @@
 - `tool_overrides`：默认工具覆盖（可选）
 - `agent_id`：默认路由 agent_id（可选）
 
+### 4.1.60 `/wunder/channels/*`
+
+- 说明：用户侧自助绑定渠道账号与对端会话，需携带用户鉴权（Authorization）。
+- `GET /wunder/channels/accounts`
+  - Query：`channel`（可选）
+  - 返回：`data.items`（channel/account_id/status/created_at/updated_at，仅返回 active）
+- `GET /wunder/channels/bindings`
+  - Query：`channel`、`account_id`、`peer_kind`、`peer_id`
+  - 返回：`data.items`（binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at）与 `data.total`
+- `POST /wunder/channels/bindings`
+  - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`、`agent_id`（可选）、`tool_overrides`（可选）、`priority`（可选）、`enabled`（可选）
+  - 返回：绑定记录（含 `binding_id`）
+  - 说明：会同步写入 channel_user_bindings；`binding_id` 按 user_id + channel + account + peer 生成。
+- `DELETE /wunder/channels/bindings/{channel}/{account_id}/{peer_kind}/{peer_id}`
+  - 返回：`data.deleted_bindings`、`data.deleted_user_bindings`
+
 ### 4.2 流式响应（SSE）
 
 - 响应类型：`text/event-stream`
@@ -1878,7 +1917,7 @@
 }
 ```
 
-### 4.1.60 `/wunder/admin/gateway/*`
+### 4.1.61 `/wunder/admin/gateway/*`
 
 - `GET /wunder/admin/gateway/status`
   - 返回：`enabled/protocol_version/state_version/connections/nodes_total/nodes_online`

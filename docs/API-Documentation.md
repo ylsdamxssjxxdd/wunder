@@ -7,10 +7,10 @@
 - Routes are split by `src/api` modules (core/admin/workspace/user_tools/a2a) and share unified builders in Rust.
 - Tool list and prompt injection share the same tool spec builder to stay consistent.
 - Startup optimization: MCP, monitor, and orchestrator are lazily initialized; first calls may have cold-start delay.
-- Lightweight entry: use `uvicorn app.asgi:app`; control warmup via `WUNDER_LAZY_WARMUP_S`.
 - Config layering: base `config/wunder.yaml` (`WUNDER_CONFIG_PATH` to override); admin updates go to `data/config/wunder.override.yaml` (`WUNDER_CONFIG_OVERRIDE_PATH`).
 - Auth: all `/wunder` and `/wunder/mcp` require `X-API-Key` or `Authorization: Bearer <key>`; key in `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
+- Frontends: admin debug UI on `http://127.0.0.1:18000`, debug frontend on `http://127.0.0.1:18001` (Vite), user frontend on `http://127.0.0.1:18002` (Nginx).
 - Registered users have daily request quotas (tiered by access level), reset at midnight; each model call consumes one unit and overages return 429. Virtual user IDs are not quota-limited.
 - i18n: send `X-Wunder-Language` or `Accept-Language` (also `lang`/`language` query). Supported languages come from `i18n.supported_languages`. Responses include `Content-Language`, and system prompts/messages follow it.
 

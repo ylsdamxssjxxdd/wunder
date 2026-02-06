@@ -4,6 +4,7 @@
 
 - Build a Rust (Axum)-based agent orchestration system that integrates LLMs, MCP, and Skills.
 - Expose `/wunder` as a unified entry, accepting user id and question, streaming intermediate progress and final responses.
+- Provide user and admin frontends with separated dev/prod entrypoints (default: admin 18000, debug 18001, user 18002).
 - Support multi-user concurrency with persistent workspaces per user id.
 - Registered users are governed by daily request quotas (tiered by access level), reset at midnight; each model call consumes one unit and overages are rejected.
 - Centralized configuration for LLM APIs, MCP tools, and Skills.
@@ -150,6 +151,7 @@ See `docs/API-Documentation.md`.
 
 - A simple web UI to test `/wunder` streaming and non-stream APIs.
 - Static assets served at `/` by default.
+- Default admin debug UI runs on port 18000 (served by the Rust service).
 - System intro panel embeds `/wunder/ppt` (and `/wunder/ppt-en`).
 - UI includes user_id/session_id/question, event log, prompt viewer.
 - MCP/Skills/Built-in tools/Knowledge management panels.
@@ -192,7 +194,7 @@ wunder/
   data/               # overrides/logs/user tools
   docs/
   scripts/
-  Dockerfile.rust
+  Dockerfile
   docker-compose-x86.yml
   docker-compose-arm.yml
   Cargo.toml

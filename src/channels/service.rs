@@ -3,6 +3,7 @@ use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
+use crate::channels::whatsapp_cloud;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -561,6 +562,34 @@ impl ChannelHub {
             .load_channel_account(&record.channel, &record.account_id, &config)
             .await?;
         let account_cfg = ChannelAccountConfig::from_value(&account.config);
+        if record.channel.trim().eq_ignore_ascii_case("whatsapp") {
+            if let Some(wa_cfg) = account_cfg.whatsapp_cloud.as_ref() {
+                let has_token = wa_cfg
+                    .access_token
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false);
+                if has_token {
+                    let outbound: ChannelOutboundMessage =
+                        serde_json::from_value(record.payload.clone())
+                            .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+                    whatsapp_cloud::send_outbound(&self.http, &outbound, wa_cfg).await?;
+                    self.update_outbox_status(record, "sent", None).await?;
+                    if let Some(session_id) = extract_session_id(&record.payload) {
+                        self.monitor.record_event(
+                            &session_id,
+                            "channel_outbound",
+                            &json!({
+                                "channel": record.channel,
+                                "account_id": record.account_id,
+                                "outbox_id": record.outbox_id,
+                            }),
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+        }
         let outbound_url = account_cfg
             .outbound_url
             .as_ref()

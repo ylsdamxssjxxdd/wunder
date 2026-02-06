@@ -43,6 +43,20 @@ pub struct ChannelLocation {
     pub address: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WhatsappCloudConfig {
+    #[serde(default)]
+    pub phone_number_id: Option<String>,
+    #[serde(default)]
+    pub access_token: Option<String>,
+    #[serde(default)]
+    pub verify_token: Option<String>,
+    #[serde(default)]
+    pub app_secret: Option<String>,
+    #[serde(default)]
+    pub api_version: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
     pub channel: String,
@@ -111,6 +125,8 @@ pub struct ChannelAccountConfig {
     pub tool_overrides: Vec<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub whatsapp_cloud: Option<WhatsappCloudConfig>,
 }
 
 impl ChannelAccountConfig {

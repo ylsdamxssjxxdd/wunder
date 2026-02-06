@@ -40,6 +40,7 @@ export const state = {
     userAccounts: false,
     orgUnits: false,
     memory: false,
+    channels: false,
     throughput: false,
     performance: false,
     evaluation: false,
@@ -74,7 +75,15 @@ export const state = {
     selectedIndex: -1,
     saveVersion: 0,
   },
+  channels: {
+    accounts: [],
+    selectedIndex: -1,
+    saveVersion: 0,
+  },
   a2aServiceModal: {
+    index: null,
+  },
+  channelAccountModal: {
     index: null,
   },
   mcpModal: {

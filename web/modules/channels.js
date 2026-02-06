@@ -1,0 +1,290 @@
+import { elements } from "./elements.js?v=20260118-07";
+import { state } from "./state.js";
+import { getWunderBase } from "./api.js";
+import { isPlainObject } from "./utils.js?v=20251229-02";
+import { notify } from "./notify.js";
+import { appendLog } from "./log.js?v=20260108-02";
+import { t } from "./i18n.js?v=20260118-07";
+
+const normalizeChannelAccount = (record) => {
+  const channel = String(record?.channel || "").trim();
+  const account_id = String(record?.account_id || "").trim();
+  const status = String(record?.status || "active").trim() || "active";
+  const config = isPlainObject(record?.config) ? record.config : {};
+  return {
+    channel,
+    account_id,
+    status,
+    config,
+    created_at: record?.created_at,
+    updated_at: record?.updated_at,
+  };
+};
+
+const isAccountActive = (record) => record?.status?.trim().toLowerCase() === "active";
+
+const renderChannelAccountDetail = () => {
+  const account = state.channels.accounts[state.channels.selectedIndex];
+  if (!account) {
+    elements.channelAccountDetailTitle.textContent = t("channels.detail.empty");
+    elements.channelAccountDetailMeta.textContent = "";
+    if (elements.channelAccountDetailConfig) {
+      elements.channelAccountDetailConfig.textContent = "";
+    }
+    elements.channelAccountEnabled.checked = false;
+    elements.channelAccountEnabled.disabled = true;
+    elements.channelAccountEditBtn.disabled = true;
+    elements.channelAccountDeleteBtn.disabled = true;
+    return;
+  }
+  const label = `${account.channel} / ${account.account_id}`;
+  elements.channelAccountDetailTitle.textContent = label;
+  const meta = [
+    isAccountActive(account) ? t("channels.status.active") : t("channels.status.disabled"),
+  ];
+  if (account.updated_at) {
+    meta.push(`updated: ${account.updated_at}`);
+  }
+  elements.channelAccountDetailMeta.textContent = meta.join(" | ");
+  elements.channelAccountEnabled.checked = isAccountActive(account);
+  elements.channelAccountEnabled.disabled = false;
+  elements.channelAccountEditBtn.disabled = false;
+  elements.channelAccountDeleteBtn.disabled = false;
+  if (elements.channelAccountDetailConfig) {
+    const json = JSON.stringify(account.config || {}, null, 2);
+    elements.channelAccountDetailConfig.textContent = json;
+  }
+};
+
+const renderChannelAccountList = () => {
+  elements.channelAccountList.textContent = "";
+  if (!state.channels.accounts.length) {
+    elements.channelAccountList.textContent = t("channels.list.empty");
+    renderChannelAccountDetail();
+    return;
+  }
+  state.channels.accounts.forEach((account, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "list-item";
+    if (index === state.channels.selectedIndex) {
+      item.classList.add("active");
+    }
+    const title = `${account.channel} / ${account.account_id}`;
+    const statusText = isAccountActive(account)
+      ? t("channels.status.active")
+      : t("channels.status.disabled");
+    item.innerHTML = `<div>${title}</div><small>${statusText}</small>`;
+    item.addEventListener("click", () => {
+      state.channels.selectedIndex = index;
+      renderChannelAccountList();
+      renderChannelAccountDetail();
+    });
+    elements.channelAccountList.appendChild(item);
+  });
+  renderChannelAccountDetail();
+};
+
+const loadChannelAccounts = async () => {
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/admin/channels/accounts`);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  const items = Array.isArray(result?.data?.items) ? result.data.items : [];
+  state.channels.accounts = items.map(normalizeChannelAccount);
+  state.channels.selectedIndex = state.channels.accounts.length ? 0 : -1;
+  renderChannelAccountList();
+  renderChannelAccountDetail();
+};
+
+const parseConfigInput = () => {
+  const raw = String(elements.channelAccountConfig.value || "").trim();
+  if (!raw) {
+    return { ok: true, value: {} };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isPlainObject(parsed)) {
+      return { ok: false, error: t("channels.error.configObject") };
+    }
+    return { ok: true, value: parsed };
+  } catch (error) {
+    return { ok: false, error: t("channels.error.configInvalid") };
+  }
+};
+
+const openChannelAccountModal = (index) => {
+  state.channelAccountModal.index = index;
+  const account = index !== null ? state.channels.accounts[index] : null;
+  elements.channelAccountModalTitle.textContent =
+    index === null ? t("channels.modal.addTitle") : t("channels.modal.editTitle");
+  elements.channelAccountChannel.value = account?.channel || "";
+  elements.channelAccountId.value = account?.account_id || "";
+  elements.channelAccountStatus.value = account?.status || "active";
+  elements.channelAccountChannel.disabled = index !== null;
+  elements.channelAccountId.disabled = index !== null;
+  elements.channelAccountConfig.value = account
+    ? JSON.stringify(account.config || {}, null, 2)
+    : "{}";
+  elements.channelAccountConfigError.textContent = "";
+  elements.channelAccountModal.classList.add("active");
+};
+
+const closeChannelAccountModal = () => {
+  elements.channelAccountModal.classList.remove("active");
+};
+
+const saveChannelAccount = async () => {
+  const channel = String(elements.channelAccountChannel.value || "").trim();
+  const account_id = String(elements.channelAccountId.value || "").trim();
+  if (!channel || !account_id) {
+    notify(t("channels.error.required"), "warn");
+    return;
+  }
+  const configResult = parseConfigInput();
+  if (!configResult.ok) {
+    elements.channelAccountConfigError.textContent = configResult.error;
+    return;
+  }
+  const payload = {
+    channel,
+    account_id,
+    status: String(elements.channelAccountStatus.value || "active"),
+    config: configResult.value,
+  };
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/admin/channels/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  const record = normalizeChannelAccount(result?.data || payload);
+  const existingIndex = state.channels.accounts.findIndex(
+    (item) => item.channel === record.channel && item.account_id === record.account_id
+  );
+  if (existingIndex >= 0) {
+    state.channels.accounts[existingIndex] = record;
+    state.channels.selectedIndex = existingIndex;
+  } else {
+    state.channels.accounts.push(record);
+    state.channels.selectedIndex = state.channels.accounts.length - 1;
+  }
+  renderChannelAccountList();
+  renderChannelAccountDetail();
+};
+
+const deleteChannelAccount = async () => {
+  const account = state.channels.accounts[state.channels.selectedIndex];
+  if (!account) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/channels/accounts/${encodeURIComponent(
+    account.channel
+  )}/${encodeURIComponent(account.account_id)}`;
+  const response = await fetch(endpoint, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  state.channels.accounts.splice(state.channels.selectedIndex, 1);
+  state.channels.selectedIndex = state.channels.accounts.length ? 0 : -1;
+  renderChannelAccountList();
+  renderChannelAccountDetail();
+};
+
+const toggleChannelAccountEnabled = async () => {
+  const account = state.channels.accounts[state.channels.selectedIndex];
+  if (!account) {
+    return;
+  }
+  const nextEnabled = elements.channelAccountEnabled.checked;
+  const nextStatus = nextEnabled ? "active" : "disabled";
+  if (account.status === nextStatus) {
+    return;
+  }
+  const payload = {
+    channel: account.channel,
+    account_id: account.account_id,
+    status: nextStatus,
+    config: account.config || {},
+  };
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/admin/channels/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  account.status = nextStatus;
+  renderChannelAccountList();
+  renderChannelAccountDetail();
+};
+
+export const initChannelsPanel = () => {
+  elements.channelsRefreshBtn.addEventListener("click", async () => {
+    try {
+      await loadChannelAccounts();
+      notify(t("channels.toast.refreshSuccess"), "success");
+    } catch (error) {
+      notify(t("channels.toast.loadFailed", { message: error.message || "-" }), "error");
+    }
+  });
+  elements.channelAccountAddBtn.addEventListener("click", () => openChannelAccountModal(null));
+  elements.channelAccountEditBtn.addEventListener("click", () => {
+    if (state.channels.selectedIndex < 0) {
+      return;
+    }
+    openChannelAccountModal(state.channels.selectedIndex);
+  });
+  elements.channelAccountDeleteBtn.addEventListener("click", async () => {
+    if (state.channels.selectedIndex < 0) {
+      return;
+    }
+    try {
+      await deleteChannelAccount();
+      notify(t("channels.toast.deleteSuccess"), "success");
+      appendLog(t("channels.toast.deleteSuccess"));
+    } catch (error) {
+      notify(t("channels.toast.deleteFailed", { message: error.message || "-" }), "error");
+    }
+  });
+  elements.channelAccountEnabled.addEventListener("change", async () => {
+    try {
+      await toggleChannelAccountEnabled();
+      notify(t("channels.toast.saveSuccess"), "success");
+    } catch (error) {
+      notify(t("channels.toast.saveFailed", { message: error.message || "-" }), "error");
+      renderChannelAccountDetail();
+    }
+  });
+  elements.channelAccountModalSave.addEventListener("click", async () => {
+    try {
+      await saveChannelAccount();
+      notify(t("channels.toast.saveSuccess"), "success");
+      appendLog(t("channels.toast.saveSuccess"));
+      closeChannelAccountModal();
+    } catch (error) {
+      notify(t("channels.toast.saveFailed", { message: error.message || "-" }), "error");
+    }
+  });
+  elements.channelAccountModalCancel.addEventListener("click", closeChannelAccountModal);
+  elements.channelAccountModalClose.addEventListener("click", closeChannelAccountModal);
+  elements.channelAccountModal.addEventListener("click", (event) => {
+    if (event.target === elements.channelAccountModal) {
+      closeChannelAccountModal();
+    }
+  });
+  elements.channelAccountConfig.addEventListener("input", () => {
+    elements.channelAccountConfigError.textContent = "";
+  });
+};
+
+export { loadChannelAccounts };

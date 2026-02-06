@@ -16,6 +16,9 @@ dashmap = "5"
 futures = "0.3"
 mime = "0.3"
 parking_lot = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 rmcp = { version = "0.12.0", default-features = false, features = [
   "auth",
   "base64",
