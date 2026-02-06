@@ -6,6 +6,7 @@ use crate::config::{
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
 use crate::cron::{handle_cron_action, CronActionRequest};
+use crate::gateway::{GatewayHub, GatewayNodeInvokeRequest};
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::knowledge;
@@ -107,6 +108,7 @@ pub struct ToolContext<'a> {
     pub config: &'a Config,
     pub a2a_store: &'a A2aStore,
     pub skills: &'a SkillRegistry,
+    pub gateway: Option<Arc<GatewayHub>>,
     pub user_tool_manager: Option<Arc<UserToolManager>>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
@@ -482,6 +484,21 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 "required": ["action"]
             }),
         },
+        ToolSpec {
+            name: "节点调用".to_string(),
+            description: t("tool.spec.node_invoke.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string", "description": t("tool.spec.node_invoke.args.node_id")},
+                    "command": {"type": "string", "description": t("tool.spec.node_invoke.args.command")},
+                    "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")},
+                    "metadata": {"type": "object", "description": t("tool.spec.node_invoke.args.metadata")}
+                },
+                "required": ["node_id", "command"]
+            }),
+        },
     ]
 }
 
@@ -511,6 +528,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("edit_file".to_string(), "编辑文件".to_string());
     map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
+    map.insert("node.invoke".to_string(), "节点调用".to_string());
+    map.insert("node_invoke".to_string(), "节点调用".to_string());
     map
 }
 
@@ -816,6 +835,7 @@ pub async fn execute_builtin_tool(
         "编辑文件" => edit_file(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
+        "节点调用" => execute_node_invoke(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(
@@ -1126,6 +1146,52 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
         "routes": routes,
         "multiple": payload.multiple
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeInvokeArgs {
+    node_id: String,
+    command: String,
+    #[serde(default)]
+    args: Option<Value>,
+    #[serde(default)]
+    timeout_s: Option<f64>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
+async fn execute_node_invoke(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: NodeInvokeArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let gateway = context
+        .gateway
+        .clone()
+        .ok_or_else(|| anyhow!("gateway not available"))?;
+    let timeout_s = payload.timeout_s.unwrap_or(30.0);
+    let result = gateway
+        .invoke_node(GatewayNodeInvokeRequest {
+            node_id: payload.node_id.clone(),
+            command: payload.command.clone(),
+            args: payload.args.clone(),
+            timeout_s,
+            metadata: payload.metadata.clone(),
+        })
+        .await?;
+    if result.ok {
+        Ok(json!({
+            "node_id": payload.node_id,
+            "command": payload.command,
+            "result": result.payload
+        }))
+    } else {
+        let message = result
+            .error
+            .as_ref()
+            .and_then(|value| value.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("node invoke failed");
+        Err(anyhow!(message.to_string()))
+    }
 }
 
 #[derive(Debug, Deserialize)]

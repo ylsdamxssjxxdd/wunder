@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::cron::CronScheduler;
 use crate::evaluation_runner::EvaluationManager;
+use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
@@ -40,6 +41,7 @@ pub struct AppState {
     pub evaluation: EvaluationManager,
     pub storage: Arc<dyn StorageBackend>,
     pub channels: Arc<ChannelHub>,
+    pub gateway: Arc<GatewayHub>,
     pub cron: Arc<CronScheduler>,
 }
 
@@ -70,6 +72,7 @@ impl AppState {
         user_store
             .ensure_default_admin()
             .context("Failed to ensure default admin account")?;
+        let gateway = Arc::new(GatewayHub::new(storage.clone()));
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
             config.clone(),
@@ -80,6 +83,7 @@ impl AppState {
             user_tool_manager.clone(),
             lsp_manager.clone(),
             storage.clone(),
+            gateway.clone(),
         ));
         let agent_runtime = AgentRuntime::new(
             config_store.clone(),
@@ -93,6 +97,7 @@ impl AppState {
             config_store.clone(),
             storage.clone(),
             orchestrator.clone(),
+            agent_runtime.clone(),
             user_store.clone(),
             monitor.clone(),
         ));
@@ -131,6 +136,7 @@ impl AppState {
             evaluation,
             storage,
             channels,
+            gateway,
             cron,
         })
     }

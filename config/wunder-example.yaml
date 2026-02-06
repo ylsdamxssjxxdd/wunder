@@ -1,7 +1,7 @@
 server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
-  host: ${WUNDER_HOST} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
-  port: ${WUNDER_PORT} # 服务监听端口（可用 WUNDER_PORT 覆盖）
-  mode: ${WUNDER_SERVER_MODE} # 服务模式：API=api，沙盒服务=sandbox
+  host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
+  port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
+  mode: ${WUNDER_SERVER_MODE:-api} # 服务模式：API=api，沙盒服务=sandbox
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 300 # 全局最大并发会话数，超过后请求排队
 
@@ -43,7 +43,7 @@ mcp: # MCP 工具配置
   timeout_s: 1200 # MCP 调用超时（秒），避免外部服务长期阻塞
   servers: # MCP 服务列表
     - name: wunder # MCP 服务名称（用于 server@tool 标识）
-      endpoint: http://127.0.0.1:${WUNDER_PORT}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
+      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/wunder/mcp # MCP 服务地址（自托管服务默认指向当前 API）
       allow_tools: # 允许调用的工具白名单（为空表示全部）
         - excute
         - doc2md
@@ -77,7 +77,7 @@ a2a: # A2A 配置
   timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表
     - name: wunder # A2A 服务名称（工具名为 a2a@name）
-      endpoint: http://127.0.0.1:${WUNDER_PORT}/a2a # A2A JSON-RPC 端点
+      endpoint: http://127.0.0.1:${WUNDER_PORT:-8000}/a2a # A2A JSON-RPC 端点
       service_type: internal # internal 表示 Wunder 内部 A2A
       user_id: demo_user # 内部 A2A 需固定 user_id，挂载工具后无需模型传入
       enabled: false # 是否启用该服务
@@ -85,6 +85,60 @@ a2a: # A2A 配置
       description: wunder 默认 A2A 服务，用于内部协作 # 服务描述
       display_name: Wunder 内部 # 展示名称
       headers: {} # 请求附加 Headers
+channels: # Channel ingress & multimodal config
+  enabled: false # Enable channel ingress layer
+  allow_unknown_accounts: true # Allow unknown account inbound
+  session_strategy: main_thread # main_thread | per_peer | hybrid
+  default_agent_id: null # Default routed agent_id
+  default_tool_overrides: [] # Default tool overrides
+  rate_limit: # Channel rate limits
+    default_qps: 5
+    default_concurrency: 2
+    by_channel: {}
+  outbox: # Outbound queue
+    worker_enabled: true
+    poll_interval_ms: 500
+    max_batch: 50
+    max_retries: 5
+    retry_base_s: 2
+    retry_max_s: 60
+  media: # Multimodal processing
+    asr:
+      enabled: false
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${WUNDER_ASR_API_KEY:-}
+      model: whisper-1
+      timeout_s: 30
+      max_bytes: 26214400
+    tts:
+      enabled: false
+      provider: openai
+      base_url: https://api.openai.com/v1
+      api_key: ${WUNDER_TTS_API_KEY:-}
+      model: gpt-4o-mini-tts
+      voice: alloy
+      format: mp3
+      timeout_s: 30
+      max_chars: 2000
+    ocr:
+      enabled: false
+      endpoint: ${WUNDER_OCR_ENDPOINT:-}
+      api_key: ${WUNDER_OCR_API_KEY:-}
+      timeout_s: 15
+      prompt: null
+    geocode:
+      enabled: false
+      endpoint: ${WUNDER_GEOCODE_ENDPOINT:-}
+      api_key: ${WUNDER_GEOCODE_API_KEY:-}
+      timeout_s: 10
+gateway: # Gateway control plane config
+  enabled: true # Enable gateway WS control plane
+  auth_token: ${WUNDER_GATEWAY_TOKEN:-} # Shared token for operator/channel access
+  protocol_version: 1 # Gateway protocol version
+  allow_unpaired_nodes: false # Allow nodes without tokens
+  node_token_required: false # Require node token on connect
+  allow_gateway_token_for_nodes: false # Allow gateway token to satisfy node auth
 skills: # Skills 技能配置
   paths: # 技能扫描路径列表（支持相对路径）
     - ./skills
@@ -96,6 +150,7 @@ skills: # Skills 技能配置
 tools: # 内置工具配置
   builtin:
     enabled: # 启用的内置工具名称列表
+      - 定时任务       # 定时任务管理工具
       - 最终回复       # 输出最终回答的终止工具
       - 问询面板       # 向用户展示路线选择面板
       - 执行命令       # 执行系统命令（受 allow_commands 控制）
@@ -106,8 +161,14 @@ tools: # 内置工具配置
       - 技能调用       # 按技能名返回 SKILL.md 与目录结构
       - 写入文件       # 写入文件内容
       - 替换文本       # 批量替换文本
-      - 编辑文件       # 结构化编辑文件
+      - 编辑文件       # 结构化编辑文件      
+      - 节点调用       # 调用已接入的网关节点
 
+cron: # 定时任务配置
+  enabled: true
+  max_concurrent_runs: 1
+  poll_interval_ms: 1000
+  idle_retry_ms: 2000
 knowledge: # 字面知识库配置
   bases: # 知识库列表
     - name: 公司制度知识库 # 知识库名称（作为工具名）
@@ -115,8 +176,16 @@ knowledge: # 字面知识库配置
       root: ./knowledge/plan # 知识库根目录（Markdown 文档所在目录）
       enabled: true # 是否启用该知识库
 
+
+vector_store: # 向量数据库配置
+  weaviate:
+    url: ${WUNDER_WEAVIATE_URL:-http://weaviate:8080}
+    api_key: ${WUNDER_WEAVIATE_API_KEY:-}
+    timeout_s: 30
+    batch_size: 64
+
 workspace: # 工作区配置
-  root: ${WUNDER_WORKSPACE_ROOT} # 工作区根目录（按 user_id 划分子目录）
+  root: ${WUNDER_WORKSPACE_ROOT:-./workspaces} # 工作区根目录（按 user_id 划分子目录）
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
@@ -124,9 +193,9 @@ storage: # 存储配置
   backend: auto # auto | sqlite | postgres
   db_path: ./data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）
   postgres:
-    dsn: ${WUNDER_POSTGRES_DSN} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
+    dsn: ${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@127.0.0.1:5432/wunder} # PostgreSQL DSN（宿主机运行默认走 127.0.0.1；容器内请通过环境变量覆盖为 postgres）
     connect_timeout_s: 5 # PostgreSQL 连接超时（秒）
-    pool_size: ${WUNDER_POSTGRES_POOL_SIZE} # PostgreSQL 连接池大小（并发高时可上调）
+    pool_size: ${WUNDER_POSTGRES_POOL_SIZE:-64} # PostgreSQL 连接池大小（并发高时可上调）
 
 observability: # 可观测性配置
   log_level: ${WUNDER_LOG_LEVEL} # 日志级别（DEBUG/INFO/WARNING/ERROR）
@@ -138,7 +207,7 @@ observability: # 可观测性配置
 
 sandbox: # 沙盒执行配置
   mode: sandbox # 沙盒模式（local/sandbox）
-  endpoint: ${WUNDER_SANDBOX_ENDPOINT} # 沙盒服务地址（可通过环境变量覆盖）
+  endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
   container_root: /workspaces # 容器内项目根目录
   network: bridge # 容器网络模式（bridge/host）
   readonly_rootfs: true # 是否以只读根文件系统运行容器

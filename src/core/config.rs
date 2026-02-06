@@ -46,6 +46,8 @@ pub struct Config {
     #[serde(default)]
     pub channels: ChannelsConfig,
     #[serde(default)]
+    pub gateway: GatewayConfig,
+    #[serde(default)]
     pub sandbox: SandboxConfig,
     #[serde(default)]
     pub agent_queue: AgentQueueConfig,
@@ -482,6 +484,8 @@ pub struct ChannelsConfig {
     pub enabled: bool,
     #[serde(default)]
     pub allow_unknown_accounts: bool,
+    #[serde(default = "default_channel_session_strategy")]
+    pub session_strategy: String,
     #[serde(default)]
     pub default_agent_id: Option<String>,
     #[serde(default)]
@@ -494,6 +498,35 @@ pub struct ChannelsConfig {
     pub media: ChannelMediaConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default = "default_gateway_protocol_version")]
+    pub protocol_version: i32,
+    #[serde(default)]
+    pub allow_unpaired_nodes: bool,
+    #[serde(default)]
+    pub node_token_required: bool,
+    #[serde(default)]
+    pub allow_gateway_token_for_nodes: bool,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auth_token: None,
+            protocol_version: default_gateway_protocol_version(),
+            allow_unpaired_nodes: false,
+            node_token_required: false,
+            allow_gateway_token_for_nodes: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelRateLimitConfig {
     #[serde(default)]
@@ -502,6 +535,14 @@ pub struct ChannelRateLimitConfig {
     pub default_concurrency: u32,
     #[serde(default)]
     pub by_channel: HashMap<String, ChannelRateLimitOverride>,
+}
+
+fn default_channel_session_strategy() -> String {
+    "main_thread".to_string()
+}
+
+fn default_gateway_protocol_version() -> i32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

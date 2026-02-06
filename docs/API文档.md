@@ -90,6 +90,7 @@
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
+- 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），用于通过网关调用已连接的节点能力。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -1793,6 +1794,15 @@
 - `DELETE /wunder/admin/channels/bindings/{binding_id}`
   - 返回：`data.deleted`
 
+- `GET /wunder/admin/channels/user_bindings`
+  - Query：`channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`、`offset`、`limit`
+  - 返回：`data.items`（channel/account_id/peer_kind/peer_id/user_id/created_at/updated_at）与 `data.total`
+- `POST /wunder/admin/channels/user_bindings`
+  - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`
+  - 返回：绑定记录
+- `DELETE /wunder/admin/channels/user_bindings/{channel}/{account_id}/{peer_kind}/{peer_id}`
+  - 返回：`data.deleted`
+
 - `GET /wunder/admin/channels/sessions`
   - Query：`channel`、`account_id`、`peer_id`、`session_id`、`offset`、`limit`
   - 返回：`data.items`（channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at）与 `data.total`
@@ -1800,6 +1810,9 @@
 - `POST /wunder/admin/channels/test`
   - 入参：`message`（ChannelMessage）
   - 返回：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
+
+补充说明：
+- `channels.session_strategy`：`main_thread`/`per_peer`/`hybrid`，控制渠道消息是否进入主线程（默认 `main_thread`）。
 
 #### ChannelAccount.config 字段
 
@@ -1865,6 +1878,33 @@
 }
 ```
 
+### 4.1.60 `/wunder/admin/gateway/*`
+
+- `GET /wunder/admin/gateway/status`
+  - 返回：`enabled/protocol_version/state_version/connections/nodes_total/nodes_online`
+- `GET /wunder/admin/gateway/presence`
+  - 返回：`data.items`（连接快照）
+- `GET /wunder/admin/gateway/clients`
+  - Query：`status`
+  - 返回：`data.items`（connection_id/role/user_id/node_id/scopes/caps/commands/status/connected_at/last_seen_at）
+- `GET /wunder/admin/gateway/nodes`
+  - Query：`status`
+  - 返回：`data.items`（node_id/name/device_fingerprint/status/caps/commands/permissions/metadata/created_at/updated_at/last_seen_at）
+- `POST /wunder/admin/gateway/nodes`
+  - 入参：`node_id`（可选）、`name`、`status`、`device_fingerprint`、`metadata`
+  - 返回：节点记录
+- `GET /wunder/admin/gateway/node_tokens`
+  - Query：`node_id`、`status`
+  - 返回：`data.items`（token/node_id/status/created_at/updated_at/last_used_at）
+- `POST /wunder/admin/gateway/node_tokens`
+  - 入参：`node_id`（可选）、`status`（可选，默认 active）
+  - 返回：节点 token 记录（包含 `token`）
+- `DELETE /wunder/admin/gateway/node_tokens/{token}`
+  - 返回：`data.removed`
+- `POST /wunder/admin/gateway/invoke`
+  - 入参：`node_id`、`command`、`args`（可选）、`timeout_s`（可选）、`metadata`（可选）
+  - 返回：`data.ok/data.payload/data.error`
+
 ### 4.2.2 WebSocket 流式响应（默认）
 
 - 说明：WebSocket 作为默认传输层，不改变事件语义与字段；事件仍与 SSE 保持一致（`event/id/data`）。
@@ -1880,6 +1920,15 @@
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
 - 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
+
+### 4.2.3 Gateway WebSocket 控制面
+
+- Endpoint：`/wunder/gateway/ws`
+- 角色：`operator`/`node`/`channel`，通过 `connect` 的 `role` 参数声明。
+- 鉴权：`connect.params.auth.token` 对应 `gateway.auth_token`；节点可提供 `auth.node_token`（由管理端签发）。
+- 首帧必须 `connect`（`type=req`），携带协议版本范围、角色、能力（`caps/commands`）与设备信息。
+- 服务端返回 `type=res` + `hello-ok`，包含 `protocol/policy/presence/stateVersion`。
+- 节点执行由网关发起 `type=req` + `method=node.invoke`，节点返回 `type=res`。
 
 ### 4.3 非流式响应
 

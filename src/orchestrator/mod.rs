@@ -2,6 +2,7 @@
 use crate::a2a_store::A2aStore;
 use crate::config::{is_debug_log_level, Config, LlmModelConfig};
 use crate::config_store::ConfigStore;
+use crate::gateway::GatewayHub;
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::llm::{
@@ -91,6 +92,7 @@ pub struct Orchestrator {
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
     a2a_store: Arc<A2aStore>,
+    gateway: Arc<GatewayHub>,
     skills: Arc<RwLock<SkillRegistry>>,
     user_tool_manager: Arc<UserToolManager>,
     lsp_manager: Arc<LspManager>,
@@ -112,6 +114,7 @@ impl Orchestrator {
         user_tool_manager: Arc<UserToolManager>,
         lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
+        gateway: Arc<GatewayHub>,
     ) -> Self {
         let memory_store = Arc::new(MemoryStore::new(storage.clone()));
         Self {
@@ -119,6 +122,7 @@ impl Orchestrator {
             workspace,
             monitor,
             a2a_store,
+            gateway,
             skills,
             user_tool_manager,
             lsp_manager,

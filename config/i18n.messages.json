@@ -1583,6 +1583,30 @@
     "en-US": "Action to perform: list/history/send/spawn.",
     "zh-CN": "操作类型：list/history/send/spawn。"
   },
+  "tool.spec.node_invoke.description": {
+    "en-US": "Invoke a command on a connected gateway node.",
+    "zh-CN": "调用已接入的网关节点执行指令。"
+  },
+  "tool.spec.node_invoke.args.node_id": {
+    "en-US": "Target node_id to invoke.",
+    "zh-CN": "要调用的 node_id。"
+  },
+  "tool.spec.node_invoke.args.command": {
+    "en-US": "Command name to execute on the node.",
+    "zh-CN": "节点执行的命令名称。"
+  },
+  "tool.spec.node_invoke.args.args": {
+    "en-US": "Optional command arguments payload.",
+    "zh-CN": "可选的命令参数 Payload。"
+  },
+  "tool.spec.node_invoke.args.timeout": {
+    "en-US": "Optional timeout (seconds).",
+    "zh-CN": "可选，超时秒数。"
+  },
+  "tool.spec.node_invoke.args.metadata": {
+    "en-US": "Optional metadata for node invocation.",
+    "zh-CN": "可选，节点调用的元数据。"
+  },
   "tool.spec.sessions_list.description": {
     "en-US": "List chat sessions for the current user.",
     "zh-CN": "列出当前用户的会话。"

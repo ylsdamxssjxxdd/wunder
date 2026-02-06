@@ -7,6 +7,7 @@ use crate::config::{ChannelRateLimitConfig, Config};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::services::agent_runtime::AgentRuntime;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
     ChannelSessionRecord, ChatSessionRecord, StorageBackend, UserAgentRecord,
@@ -24,6 +25,33 @@ use uuid::Uuid;
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "Channel Session";
+const SESSION_STRATEGY_MAIN_THREAD: &str = "main_thread";
+const SESSION_STRATEGY_PER_PEER: &str = "per_peer";
+const SESSION_STRATEGY_HYBRID: &str = "hybrid";
+
+#[derive(Debug, Clone, Copy)]
+enum ChannelSessionStrategy {
+    MainThread,
+    PerPeer,
+    Hybrid,
+}
+
+impl ChannelSessionStrategy {
+    fn from_config(config: &Config) -> Self {
+        match config
+            .channels
+            .session_strategy
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            SESSION_STRATEGY_PER_PEER => Self::PerPeer,
+            SESSION_STRATEGY_HYBRID => Self::Hybrid,
+            SESSION_STRATEGY_MAIN_THREAD => Self::MainThread,
+            _ => Self::MainThread,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ChannelInboundResult {
@@ -44,6 +72,7 @@ pub struct ChannelHub {
     config_store: crate::config_store::ConfigStore,
     storage: Arc<dyn StorageBackend>,
     orchestrator: Arc<Orchestrator>,
+    agent_runtime: Arc<AgentRuntime>,
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     rate_limiter: ChannelRateLimiter,
@@ -55,6 +84,7 @@ impl ChannelHub {
         config_store: crate::config_store::ConfigStore,
         storage: Arc<dyn StorageBackend>,
         orchestrator: Arc<Orchestrator>,
+        agent_runtime: Arc<AgentRuntime>,
         user_store: Arc<UserStore>,
         monitor: Arc<MonitorState>,
     ) -> Self {
@@ -62,6 +92,7 @@ impl ChannelHub {
             config_store,
             storage,
             orchestrator,
+            agent_runtime,
             user_store,
             monitor,
             rate_limiter: ChannelRateLimiter::new(),
@@ -156,6 +187,16 @@ impl ChannelHub {
             &config,
         );
 
+        let session_strategy = ChannelSessionStrategy::from_config(&config);
+        let bound_user_id = self
+            .get_channel_user_binding(
+                &message.channel,
+                &message.account_id,
+                &message.peer.kind,
+                &message.peer.id,
+            )
+            .await?
+            .map(|record| record.user_id);
         let session_info = self
             .resolve_channel_session(
                 &message,
@@ -163,6 +204,8 @@ impl ChannelHub {
                 &tool_names,
                 account_cfg.tts_enabled,
                 account_cfg.tts_voice.as_deref(),
+                session_strategy,
+                bound_user_id,
             )
             .await?;
 
@@ -367,6 +410,8 @@ impl ChannelHub {
         tool_overrides: &[String],
         tts_enabled: Option<bool>,
         tts_voice: Option<&str>,
+        session_strategy: ChannelSessionStrategy,
+        bound_user_id: Option<String>,
     ) -> Result<ChannelSessionInfo> {
         let channel = message.channel.clone();
         let account_id = message.account_id.clone();
@@ -387,38 +432,74 @@ impl ChannelHub {
             .map(|value| value.to_string())
             .or_else(|| existing.as_ref().and_then(|r| r.tts_voice.clone()));
         let now = now_ts();
-        let user_id = if let Some(record) = existing.as_ref() {
-            record.user_id.clone()
+        let user_id = bound_user_id
+            .or_else(|| existing.as_ref().map(|record| record.user_id.clone()))
+            .unwrap_or_else(|| {
+                format!(
+                    "chan:{}:{}:{}:{}",
+                    channel.to_lowercase(),
+                    account_id.to_lowercase(),
+                    peer_kind.to_lowercase(),
+                    peer_id
+                )
+            });
+        let cleaned_agent = agent_id.map(|value| value.trim()).unwrap_or("");
+        let agent_value = if cleaned_agent.is_empty() {
+            None
         } else {
-            format!(
-                "chan:{}:{}:{}:{}",
-                channel.to_lowercase(),
-                account_id.to_lowercase(),
-                peer_kind.to_lowercase(),
-                peer_id
-            )
+            Some(cleaned_agent.to_string())
         };
-        let session_id = if let Some(record) = existing.as_ref() {
+        let use_main_thread = matches!(session_strategy, ChannelSessionStrategy::MainThread)
+            || (matches!(session_strategy, ChannelSessionStrategy::Hybrid)
+                && is_direct_peer(&peer_kind));
+        let session_id = if use_main_thread {
+            if let Some(existing_main) = self
+                .agent_runtime
+                .resolve_main_session_id(&user_id, cleaned_agent)
+                .await?
+            {
+                existing_main
+            } else {
+                self.agent_runtime
+                    .resolve_or_create_main_session_id(&user_id, cleaned_agent)
+                    .await?
+            }
+        } else if let Some(record) = existing.as_ref() {
             record.session_id.clone()
         } else {
             format!("sess_{}", Uuid::new_v4().simple())
         };
-        let title = message
+
+        let existing_chat = self.get_chat_session(&user_id, &session_id).await?;
+        let mut title = message
             .peer
             .name
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(DEFAULT_SESSION_TITLE)
             .to_string();
+        let mut resolved_tool_overrides = tool_overrides.to_vec();
+        let mut created_at = existing.as_ref().map(|r| r.created_at).unwrap_or(now);
+        if let Some(chat_record) = existing_chat.as_ref() {
+            if use_main_thread {
+                if !chat_record.title.trim().is_empty() {
+                    title = chat_record.title.clone();
+                }
+                if !chat_record.tool_overrides.is_empty() {
+                    resolved_tool_overrides = chat_record.tool_overrides.clone();
+                }
+            }
+            created_at = chat_record.created_at;
+        }
         let chat_record = ChatSessionRecord {
             session_id: session_id.clone(),
             user_id: user_id.clone(),
             title,
-            created_at: existing.as_ref().map(|r| r.created_at).unwrap_or(now),
+            created_at,
             updated_at: now,
             last_message_at: now,
-            agent_id: agent_id.map(|value| value.to_string()),
-            tool_overrides: tool_overrides.to_vec(),
+            agent_id: agent_value.clone(),
+            tool_overrides: resolved_tool_overrides,
             parent_session_id: None,
             parent_message_id: None,
             spawn_label: None,
@@ -433,7 +514,7 @@ impl ChannelHub {
             peer_id,
             thread_id,
             session_id: session_id.clone(),
-            agent_id: agent_id.map(|value| value.to_string()),
+            agent_id: agent_value,
             user_id: user_id.clone(),
             tts_enabled,
             tts_voice: tts_voice.clone(),
@@ -663,6 +744,25 @@ impl ChannelHub {
             .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
+    async fn get_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<Option<crate::storage::ChannelUserBindingRecord>> {
+        let storage = self.storage.clone();
+        let channel = channel.to_string();
+        let account_id = account_id.to_string();
+        let peer_kind = peer_kind.to_string();
+        let peer_id = peer_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            storage.get_channel_user_binding(&channel, &account_id, &peer_kind, &peer_id)
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))
+    }
+
     async fn get_channel_session(
         &self,
         channel: &str,
@@ -688,6 +788,19 @@ impl ChannelHub {
         })
         .await
         .unwrap_or_else(|err| Err(anyhow!(err)))
+    }
+
+    async fn get_chat_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>> {
+        let user_store = self.user_store.clone();
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        tokio::task::spawn_blocking(move || user_store.get_chat_session(&user_id, &session_id))
+            .await
+            .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     async fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
@@ -847,6 +960,13 @@ fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()>
         };
     }
     Ok(())
+}
+
+fn is_direct_peer(kind: &str) -> bool {
+    matches!(
+        kind.trim().to_ascii_lowercase().as_str(),
+        "dm" | "direct" | "single" | "user"
+    )
 }
 
 fn validate_inbound_account(

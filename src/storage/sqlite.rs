@@ -3,11 +3,12 @@ use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
-    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChatSessionRecord,
-    CronJobRecord, CronRunRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, GatewayClientRecord, GatewayNodeRecord,
+    GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus,
+    SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -668,6 +669,18 @@ impl StorageBackend for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_channel_bindings_match
               ON channel_bindings (channel, account_id, peer_kind, peer_id, priority);
+            CREATE TABLE IF NOT EXISTS channel_user_bindings (
+              channel TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              peer_kind TEXT NOT NULL,
+              peer_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY (channel, account_id, peer_kind, peer_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_channel_user_bindings_user
+              ON channel_user_bindings (user_id);
             CREATE TABLE IF NOT EXISTS channel_sessions (
               channel TEXT NOT NULL,
               account_id TEXT NOT NULL,
@@ -728,6 +741,49 @@ impl StorageBackend for SqliteStorage {
               ON channel_outbox (status, retry_at);
             CREATE INDEX IF NOT EXISTS idx_channel_outbox_peer
               ON channel_outbox (channel, account_id, peer_id);
+            CREATE TABLE IF NOT EXISTS gateway_clients (
+              connection_id TEXT PRIMARY KEY,
+              role TEXT NOT NULL,
+              user_id TEXT,
+              node_id TEXT,
+              scopes TEXT,
+              caps TEXT,
+              commands TEXT,
+              client_info TEXT,
+              status TEXT NOT NULL,
+              connected_at REAL NOT NULL,
+              last_seen_at REAL NOT NULL,
+              disconnected_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_gateway_clients_status
+              ON gateway_clients (status, role);
+            CREATE INDEX IF NOT EXISTS idx_gateway_clients_node
+              ON gateway_clients (node_id, status);
+            CREATE TABLE IF NOT EXISTS gateway_nodes (
+              node_id TEXT PRIMARY KEY,
+              name TEXT,
+              device_fingerprint TEXT,
+              status TEXT NOT NULL,
+              caps TEXT,
+              commands TEXT,
+              permissions TEXT,
+              metadata TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_seen_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_gateway_nodes_status
+              ON gateway_nodes (status);
+            CREATE TABLE IF NOT EXISTS gateway_node_tokens (
+              token TEXT PRIMARY KEY,
+              node_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_used_at REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_gateway_node_tokens_node
+              ON gateway_node_tokens (node_id, status);
             CREATE TABLE IF NOT EXISTS media_assets (
               asset_id TEXT PRIMARY KEY,
               kind TEXT NOT NULL,
@@ -3626,6 +3682,173 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
+    fn upsert_channel_user_binding(&self, record: &ChannelUserBindingRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO channel_user_bindings (channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(channel, account_id, peer_kind, peer_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at",
+            params![
+                record.channel,
+                record.account_id,
+                record.peer_kind,
+                record.peer_id,
+                record.user_id,
+                record.created_at,
+                record.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<Option<ChannelUserBindingRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at \
+                 FROM channel_user_bindings WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ?",
+                params![channel, account_id, peer_kind, peer_id],
+                |row| {
+                    Ok(ChannelUserBindingRecord {
+                        channel: row.get(0)?,
+                        account_id: row.get(1)?,
+                        peer_kind: row.get(2)?,
+                        peer_id: row.get(3)?,
+                        user_id: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_channel_user_bindings(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        peer_kind: Option<&str>,
+        peer_id: Option<&str>,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChannelUserBindingRecord>, i64)> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("channel = ?".to_string());
+            params_list.push(SqlValue::from(channel.to_string()));
+        }
+        if let Some(account_id) = account_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("account_id = ?".to_string());
+            params_list.push(SqlValue::from(account_id.to_string()));
+        }
+        if let Some(peer_kind) = peer_kind
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("peer_kind = ?".to_string());
+            params_list.push(SqlValue::from(peer_kind.to_string()));
+        }
+        if let Some(peer_id) = peer_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("peer_id = ?".to_string());
+            params_list.push(SqlValue::from(peer_id.to_string()));
+        }
+        if let Some(user_id) = user_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("user_id = ?".to_string());
+            params_list.push(SqlValue::from(user_id.to_string()));
+        }
+        let mut query =
+            "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings"
+                .to_string();
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let offset_value = offset.max(0);
+        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
+        params_list.push(SqlValue::from(limit_value));
+        params_list.push(SqlValue::from(offset_value));
+        query.push_str(" LIMIT ? OFFSET ?");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            Ok(ChannelUserBindingRecord {
+                channel: row.get(0)?,
+                account_id: row.get(1)?,
+                peer_kind: row.get(2)?,
+                peer_id: row.get(3)?,
+                user_id: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        let mut count_query = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
+        if !filters.is_empty() {
+            count_query.push_str(" WHERE ");
+            count_query.push_str(&filters.join(" AND "));
+        }
+        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
+        let total: i64 = conn.query_row(&count_query, count_params, |row| row.get(0))?;
+        Ok((output, total))
+    }
+
+    fn delete_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        let cleaned_kind = peer_kind.trim();
+        let cleaned_peer = peer_id.trim();
+        if cleaned_channel.is_empty()
+            || cleaned_account.is_empty()
+            || cleaned_kind.is_empty()
+            || cleaned_peer.is_empty()
+        {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_user_bindings WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ?",
+            params![cleaned_channel, cleaned_account, cleaned_kind, cleaned_peer],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
@@ -4007,6 +4230,326 @@ impl StorageBackend for SqliteStorage {
             params![status, retry_count, retry_at, last_error, updated_at, delivered_at, cleaned],
         )?;
         Ok(())
+    }
+
+    fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let scopes = if record.scopes.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.scopes))
+        };
+        let caps = if record.caps.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.caps))
+        };
+        let commands = if record.commands.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.commands))
+        };
+        let client_info = record.client_info.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO gateway_clients (connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(connection_id) DO UPDATE SET role = excluded.role, user_id = excluded.user_id, node_id = excluded.node_id, scopes = excluded.scopes, \
+             caps = excluded.caps, commands = excluded.commands, client_info = excluded.client_info, status = excluded.status, last_seen_at = excluded.last_seen_at, \
+             disconnected_at = excluded.disconnected_at",
+            params![
+                record.connection_id,
+                record.role,
+                record.user_id,
+                record.node_id,
+                scopes,
+                caps,
+                commands,
+                client_info,
+                record.status,
+                record.connected_at,
+                record.last_seen_at,
+                record.disconnected_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut query = "SELECT connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at FROM gateway_clients".to_string();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            query.push_str(" WHERE status = ?");
+            params_list.push(SqlValue::from(status.to_string()));
+        }
+        query.push_str(" ORDER BY last_seen_at DESC");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let scopes: Option<String> = row.get(4)?;
+            let caps: Option<String> = row.get(5)?;
+            let commands: Option<String> = row.get(6)?;
+            let client_info: Option<String> = row.get(7)?;
+            Ok(GatewayClientRecord {
+                connection_id: row.get(0)?,
+                role: row.get(1)?,
+                user_id: row.get(2)?,
+                node_id: row.get(3)?,
+                scopes: Self::parse_string_list(scopes),
+                caps: Self::parse_string_list(caps),
+                commands: Self::parse_string_list(commands),
+                client_info: client_info
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                status: row.get(8)?,
+                connected_at: row.get(9)?,
+                last_seen_at: row.get(10)?,
+                disconnected_at: row.get(11)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn upsert_gateway_node(&self, record: &GatewayNodeRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let caps = if record.caps.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.caps))
+        };
+        let commands = if record.commands.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.commands))
+        };
+        let permissions = record.permissions.as_ref().map(Self::json_to_string);
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO gateway_nodes (node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(node_id) DO UPDATE SET name = excluded.name, device_fingerprint = excluded.device_fingerprint, status = excluded.status, caps = excluded.caps, \
+             commands = excluded.commands, permissions = excluded.permissions, metadata = excluded.metadata, updated_at = excluded.updated_at, last_seen_at = excluded.last_seen_at",
+            params![
+                record.node_id,
+                record.name,
+                record.device_fingerprint,
+                record.status,
+                caps,
+                commands,
+                permissions,
+                metadata,
+                record.created_at,
+                record.updated_at,
+                record.last_seen_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_gateway_node(&self, node_id: &str) -> Result<Option<GatewayNodeRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = node_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes WHERE node_id = ?",
+                params![cleaned],
+                |row| {
+                    let caps: Option<String> = row.get(4)?;
+                    let commands: Option<String> = row.get(5)?;
+                    let permissions: Option<String> = row.get(6)?;
+                    let metadata: Option<String> = row.get(7)?;
+                    Ok(GatewayNodeRecord {
+                        node_id: row.get(0)?,
+                        name: row.get(1)?,
+                        device_fingerprint: row.get(2)?,
+                        status: row.get(3)?,
+                        caps: Self::parse_string_list(caps),
+                        commands: Self::parse_string_list(commands),
+                        permissions: permissions
+                            .as_deref()
+                            .and_then(|text| Self::json_from_str(text)),
+                        metadata: metadata
+                            .as_deref()
+                            .and_then(|text| Self::json_from_str(text)),
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        last_seen_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_gateway_nodes(&self, status: Option<&str>) -> Result<Vec<GatewayNodeRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut query = "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes".to_string();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            query.push_str(" WHERE status = ?");
+            params_list.push(SqlValue::from(status.to_string()));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            let caps: Option<String> = row.get(4)?;
+            let commands: Option<String> = row.get(5)?;
+            let permissions: Option<String> = row.get(6)?;
+            let metadata: Option<String> = row.get(7)?;
+            Ok(GatewayNodeRecord {
+                node_id: row.get(0)?,
+                name: row.get(1)?,
+                device_fingerprint: row.get(2)?,
+                status: row.get(3)?,
+                caps: Self::parse_string_list(caps),
+                commands: Self::parse_string_list(commands),
+                permissions: permissions
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                metadata: metadata
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                last_seen_at: row.get(10)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn upsert_gateway_node_token(&self, record: &GatewayNodeTokenRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO gateway_node_tokens (token, node_id, status, created_at, updated_at, last_used_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(token) DO UPDATE SET node_id = excluded.node_id, status = excluded.status, updated_at = excluded.updated_at, last_used_at = excluded.last_used_at",
+            params![
+                record.token,
+                record.node_id,
+                record.status,
+                record.created_at,
+                record.updated_at,
+                record.last_used_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_gateway_node_token(&self, token: &str) -> Result<Option<GatewayNodeTokenRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens WHERE token = ?",
+                params![cleaned],
+                |row| {
+                    Ok(GatewayNodeTokenRecord {
+                        token: row.get(0)?,
+                        node_id: row.get(1)?,
+                        status: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                        last_used_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_gateway_node_tokens(
+        &self,
+        node_id: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<GatewayNodeTokenRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut query =
+            "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens"
+                .to_string();
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        if let Some(node_id) = node_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("node_id = ?".to_string());
+            params_list.push(SqlValue::from(node_id.to_string()));
+        }
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push("status = ?".to_string());
+            params_list.push(SqlValue::from(status.to_string()));
+        }
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
+            Ok(GatewayNodeTokenRecord {
+                token: row.get(0)?,
+                node_id: row.get(1)?,
+                status: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                last_used_at: row.get(5)?,
+            })
+        })?;
+        let mut output = Vec::new();
+        for row in rows {
+            if let Ok(record) = row {
+                output.push(record);
+            }
+        }
+        Ok(output)
+    }
+
+    fn delete_gateway_node_token(&self, token: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM gateway_node_tokens WHERE token = ?",
+            params![cleaned],
+        )?;
+        Ok(affected as i64)
     }
 
     fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()> {

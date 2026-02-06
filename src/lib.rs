@@ -3,6 +3,7 @@
 mod api;
 mod channels;
 mod core;
+mod gateway;
 mod lsp;
 mod ops;
 mod orchestrator;

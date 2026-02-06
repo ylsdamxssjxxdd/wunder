@@ -213,6 +213,14 @@ impl AgentRuntime {
         Ok(None)
     }
 
+    pub async fn resolve_or_create_main_session_id(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<String> {
+        self.resolve_or_create_main_session(user_id, agent_id).await
+    }
+
     pub async fn set_main_session(
         &self,
         user_id: &str,

@@ -211,6 +211,17 @@ pub struct ChannelBindingRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChannelUserBindingRecord {
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: String,
+    pub peer_id: String,
+    pub user_id: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct ChannelSessionRecord {
     pub channel: String,
     pub account_id: String,
@@ -260,6 +271,47 @@ pub struct ChannelOutboxRecord {
     pub created_at: f64,
     pub updated_at: f64,
     pub delivered_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GatewayClientRecord {
+    pub connection_id: String,
+    pub role: String,
+    pub user_id: Option<String>,
+    pub node_id: Option<String>,
+    pub scopes: Vec<String>,
+    pub caps: Vec<String>,
+    pub commands: Vec<String>,
+    pub client_info: Option<Value>,
+    pub status: String,
+    pub connected_at: f64,
+    pub last_seen_at: f64,
+    pub disconnected_at: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GatewayNodeRecord {
+    pub node_id: String,
+    pub name: Option<String>,
+    pub device_fingerprint: Option<String>,
+    pub status: String,
+    pub caps: Vec<String>,
+    pub commands: Vec<String>,
+    pub permissions: Option<Value>,
+    pub metadata: Option<Value>,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub last_seen_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct GatewayNodeTokenRecord {
+    pub token: String,
+    pub node_id: String,
+    pub status: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub last_used_at: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -630,6 +682,32 @@ pub trait StorageBackend: Send + Sync {
     fn list_channel_bindings(&self, channel: Option<&str>) -> Result<Vec<ChannelBindingRecord>>;
     fn delete_channel_binding(&self, binding_id: &str) -> Result<i64>;
 
+    fn upsert_channel_user_binding(&self, record: &ChannelUserBindingRecord) -> Result<()>;
+    fn get_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<Option<ChannelUserBindingRecord>>;
+    fn list_channel_user_bindings(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        peer_kind: Option<&str>,
+        peer_id: Option<&str>,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChannelUserBindingRecord>, i64)>;
+    fn delete_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<i64>;
+
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()>;
     fn get_channel_session(
         &self,
@@ -670,6 +748,22 @@ pub trait StorageBackend: Send + Sync {
         delivered_at: Option<f64>,
         updated_at: f64,
     ) -> Result<()>;
+
+    fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()>;
+    fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>>;
+
+    fn upsert_gateway_node(&self, record: &GatewayNodeRecord) -> Result<()>;
+    fn get_gateway_node(&self, node_id: &str) -> Result<Option<GatewayNodeRecord>>;
+    fn list_gateway_nodes(&self, status: Option<&str>) -> Result<Vec<GatewayNodeRecord>>;
+
+    fn upsert_gateway_node_token(&self, record: &GatewayNodeTokenRecord) -> Result<()>;
+    fn get_gateway_node_token(&self, token: &str) -> Result<Option<GatewayNodeTokenRecord>>;
+    fn list_gateway_node_tokens(
+        &self,
+        node_id: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<GatewayNodeTokenRecord>>;
+    fn delete_gateway_node_token(&self, token: &str) -> Result<i64>;
 
     fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()>;
     fn get_media_asset(&self, asset_id: &str) -> Result<Option<MediaAssetRecord>>;

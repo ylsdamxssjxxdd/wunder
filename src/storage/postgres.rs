@@ -2,11 +2,12 @@ use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
-    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChatSessionRecord,
-    CronJobRecord, CronRunRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, GatewayClientRecord, GatewayNodeRecord,
+    GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus,
+    SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -876,6 +877,18 @@ impl StorageBackend for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_channel_bindings_match
                   ON channel_bindings (channel, account_id, peer_kind, peer_id, priority);
+                CREATE TABLE IF NOT EXISTS channel_user_bindings (
+                  channel TEXT NOT NULL,
+                  account_id TEXT NOT NULL,
+                  peer_kind TEXT NOT NULL,
+                  peer_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (channel, account_id, peer_kind, peer_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_channel_user_bindings_user
+                  ON channel_user_bindings (user_id);
                 CREATE TABLE IF NOT EXISTS channel_sessions (
                   channel TEXT NOT NULL,
                   account_id TEXT NOT NULL,
@@ -936,6 +949,49 @@ impl StorageBackend for PostgresStorage {
                   ON channel_outbox (status, retry_at);
                 CREATE INDEX IF NOT EXISTS idx_channel_outbox_peer
                   ON channel_outbox (channel, account_id, peer_id);
+                CREATE TABLE IF NOT EXISTS gateway_clients (
+                  connection_id TEXT PRIMARY KEY,
+                  role TEXT NOT NULL,
+                  user_id TEXT,
+                  node_id TEXT,
+                  scopes TEXT,
+                  caps TEXT,
+                  commands TEXT,
+                  client_info TEXT,
+                  status TEXT NOT NULL,
+                  connected_at DOUBLE PRECISION NOT NULL,
+                  last_seen_at DOUBLE PRECISION NOT NULL,
+                  disconnected_at DOUBLE PRECISION
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_clients_status
+                  ON gateway_clients (status, role);
+                CREATE INDEX IF NOT EXISTS idx_gateway_clients_node
+                  ON gateway_clients (node_id, status);
+                CREATE TABLE IF NOT EXISTS gateway_nodes (
+                  node_id TEXT PRIMARY KEY,
+                  name TEXT,
+                  device_fingerprint TEXT,
+                  status TEXT NOT NULL,
+                  caps TEXT,
+                  commands TEXT,
+                  permissions TEXT,
+                  metadata TEXT,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  last_seen_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_nodes_status
+                  ON gateway_nodes (status);
+                CREATE TABLE IF NOT EXISTS gateway_node_tokens (
+                  token TEXT PRIMARY KEY,
+                  node_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  last_used_at DOUBLE PRECISION
+                );
+                CREATE INDEX IF NOT EXISTS idx_gateway_node_tokens_node
+                  ON gateway_node_tokens (node_id, status);
                 CREATE TABLE IF NOT EXISTS media_assets (
                   asset_id TEXT PRIMARY KEY,
                   kind TEXT NOT NULL,
@@ -3732,6 +3788,169 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
+    fn upsert_channel_user_binding(&self, record: &ChannelUserBindingRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO channel_user_bindings (channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7) \
+             ON CONFLICT(channel, account_id, peer_kind, peer_id) DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = EXCLUDED.updated_at",
+            &[
+                &record.channel,
+                &record.account_id,
+                &record.peer_kind,
+                &record.peer_id,
+                &record.user_id,
+                &record.created_at,
+                &record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<Option<ChannelUserBindingRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn
+            .query_opt(
+                "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at \
+                 FROM channel_user_bindings WHERE channel = $1 AND account_id = $2 AND peer_kind = $3 AND peer_id = $4",
+                &[&channel, &account_id, &peer_kind, &peer_id],
+            )?
+            .map(|row| ChannelUserBindingRecord {
+                channel: row.get(0),
+                account_id: row.get(1),
+                peer_kind: row.get(2),
+                peer_id: row.get(3),
+                user_id: row.get(4),
+                created_at: row.get::<_, Option<f64>>(5).unwrap_or(0.0),
+                updated_at: row.get::<_, Option<f64>>(6).unwrap_or(0.0),
+            });
+        Ok(row)
+    }
+
+    fn list_channel_user_bindings(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        peer_kind: Option<&str>,
+        peer_id: Option<&str>,
+        user_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChannelUserBindingRecord>, i64)> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut filters = Vec::new();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        if let Some(channel) = channel
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            params.push(Box::new(channel.to_string()));
+            filters.push(format!("channel = ${}", params.len()));
+        }
+        if let Some(account_id) = account_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            params.push(Box::new(account_id.to_string()));
+            filters.push(format!("account_id = ${}", params.len()));
+        }
+        if let Some(peer_kind) = peer_kind
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            params.push(Box::new(peer_kind.to_string()));
+            filters.push(format!("peer_kind = ${}", params.len()));
+        }
+        if let Some(peer_id) = peer_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            params.push(Box::new(peer_id.to_string()));
+            filters.push(format!("peer_id = ${}", params.len()));
+        }
+        if let Some(user_id) = user_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            params.push(Box::new(user_id.to_string()));
+            filters.push(format!("user_id = ${}", params.len()));
+        }
+        let mut query = "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings".to_string();
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let offset_value = offset.max(0);
+        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
+        params.push(Box::new(offset_value));
+        params.push(Box::new(limit_value));
+        query.push_str(&format!(
+            " OFFSET ${} LIMIT ${}",
+            params.len() - 1,
+            params.len()
+        ));
+        let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.query(&query, &params_refs)?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(ChannelUserBindingRecord {
+                channel: row.get(0),
+                account_id: row.get(1),
+                peer_kind: row.get(2),
+                peer_id: row.get(3),
+                user_id: row.get(4),
+                created_at: row.get::<_, Option<f64>>(5).unwrap_or(0.0),
+                updated_at: row.get::<_, Option<f64>>(6).unwrap_or(0.0),
+            });
+        }
+        let mut count_query = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
+        if !filters.is_empty() {
+            count_query.push_str(" WHERE ");
+            count_query.push_str(&filters.join(" AND "));
+        }
+        let count_params: Vec<&(dyn ToSql + Sync)> = params_refs[..params_refs.len() - 2].to_vec();
+        let total_row = conn.query_one(&count_query, &count_params)?;
+        let total: i64 = total_row.get(0);
+        Ok((output, total))
+    }
+
+    fn delete_channel_user_binding(
+        &self,
+        channel: &str,
+        account_id: &str,
+        peer_kind: &str,
+        peer_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        let cleaned_kind = peer_kind.trim();
+        let cleaned_peer = peer_id.trim();
+        if cleaned_channel.is_empty()
+            || cleaned_account.is_empty()
+            || cleaned_kind.is_empty()
+            || cleaned_peer.is_empty()
+        {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_user_bindings WHERE channel = $1 AND account_id = $2 AND peer_kind = $3 AND peer_id = $4",
+            &[&cleaned_channel, &cleaned_account, &cleaned_kind, &cleaned_peer],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
@@ -4099,6 +4318,306 @@ impl StorageBackend for PostgresStorage {
             &[&status, &retry_count, &retry_at, &last_error, &updated_at, &delivered_at, &cleaned],
         )?;
         Ok(())
+    }
+
+    fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let scopes = if record.scopes.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.scopes))
+        };
+        let caps = if record.caps.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.caps))
+        };
+        let commands = if record.commands.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.commands))
+        };
+        let client_info = record.client_info.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO gateway_clients (connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
+             ON CONFLICT(connection_id) DO UPDATE SET role = EXCLUDED.role, user_id = EXCLUDED.user_id, node_id = EXCLUDED.node_id, scopes = EXCLUDED.scopes, \
+             caps = EXCLUDED.caps, commands = EXCLUDED.commands, client_info = EXCLUDED.client_info, status = EXCLUDED.status, last_seen_at = EXCLUDED.last_seen_at, \
+             disconnected_at = EXCLUDED.disconnected_at",
+            &[
+                &record.connection_id,
+                &record.role,
+                &record.user_id,
+                &record.node_id,
+                &scopes,
+                &caps,
+                &commands,
+                &client_info,
+                &record.status,
+                &record.connected_at,
+                &record.last_seen_at,
+                &record.disconnected_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut query = "SELECT connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at FROM gateway_clients".to_string();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            query.push_str(" WHERE status = $1");
+            params.push(Box::new(status.to_string()));
+        }
+        query.push_str(" ORDER BY last_seen_at DESC");
+        let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.query(&query, &params_refs)?;
+        let mut output = Vec::new();
+        for row in rows {
+            let scopes: Option<String> = row.get(4);
+            let caps: Option<String> = row.get(5);
+            let commands: Option<String> = row.get(6);
+            let client_info: Option<String> = row.get(7);
+            output.push(GatewayClientRecord {
+                connection_id: row.get(0),
+                role: row.get(1),
+                user_id: row.get(2),
+                node_id: row.get(3),
+                scopes: Self::parse_string_list(scopes),
+                caps: Self::parse_string_list(caps),
+                commands: Self::parse_string_list(commands),
+                client_info: client_info
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                status: row.get(8),
+                connected_at: row.get(9),
+                last_seen_at: row.get(10),
+                disconnected_at: row.get(11),
+            });
+        }
+        Ok(output)
+    }
+
+    fn upsert_gateway_node(&self, record: &GatewayNodeRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let caps = if record.caps.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.caps))
+        };
+        let commands = if record.commands.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.commands))
+        };
+        let permissions = record.permissions.as_ref().map(Self::json_to_string);
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
+        conn.execute(
+            "INSERT INTO gateway_nodes (node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) \
+             ON CONFLICT(node_id) DO UPDATE SET name = EXCLUDED.name, device_fingerprint = EXCLUDED.device_fingerprint, status = EXCLUDED.status, caps = EXCLUDED.caps, \
+             commands = EXCLUDED.commands, permissions = EXCLUDED.permissions, metadata = EXCLUDED.metadata, updated_at = EXCLUDED.updated_at, last_seen_at = EXCLUDED.last_seen_at",
+            &[
+                &record.node_id,
+                &record.name,
+                &record.device_fingerprint,
+                &record.status,
+                &caps,
+                &commands,
+                &permissions,
+                &metadata,
+                &record.created_at,
+                &record.updated_at,
+                &record.last_seen_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_gateway_node(&self, node_id: &str) -> Result<Option<GatewayNodeRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = node_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes WHERE node_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| {
+            let caps: Option<String> = row.get(4);
+            let commands: Option<String> = row.get(5);
+            let permissions: Option<String> = row.get(6);
+            let metadata: Option<String> = row.get(7);
+            GatewayNodeRecord {
+                node_id: row.get(0),
+                name: row.get(1),
+                device_fingerprint: row.get(2),
+                status: row.get(3),
+                caps: Self::parse_string_list(caps),
+                commands: Self::parse_string_list(commands),
+                permissions: permissions
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                metadata: metadata
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                created_at: row.get(8),
+                updated_at: row.get(9),
+                last_seen_at: row.get(10),
+            }
+        }))
+    }
+
+    fn list_gateway_nodes(&self, status: Option<&str>) -> Result<Vec<GatewayNodeRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut query = "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes".to_string();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            query.push_str(" WHERE status = $1");
+            params.push(Box::new(status.to_string()));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.query(&query, &params_refs)?;
+        let mut output = Vec::new();
+        for row in rows {
+            let caps: Option<String> = row.get(4);
+            let commands: Option<String> = row.get(5);
+            let permissions: Option<String> = row.get(6);
+            let metadata: Option<String> = row.get(7);
+            output.push(GatewayNodeRecord {
+                node_id: row.get(0),
+                name: row.get(1),
+                device_fingerprint: row.get(2),
+                status: row.get(3),
+                caps: Self::parse_string_list(caps),
+                commands: Self::parse_string_list(commands),
+                permissions: permissions
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                metadata: metadata
+                    .as_deref()
+                    .and_then(|text| Self::json_from_str(text)),
+                created_at: row.get(8),
+                updated_at: row.get(9),
+                last_seen_at: row.get(10),
+            });
+        }
+        Ok(output)
+    }
+
+    fn upsert_gateway_node_token(&self, record: &GatewayNodeTokenRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO gateway_node_tokens (token, node_id, status, created_at, updated_at, last_used_at) \
+             VALUES ($1,$2,$3,$4,$5,$6) \
+             ON CONFLICT(token) DO UPDATE SET node_id = EXCLUDED.node_id, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at, last_used_at = EXCLUDED.last_used_at",
+            &[
+                &record.token,
+                &record.node_id,
+                &record.status,
+                &record.created_at,
+                &record.updated_at,
+                &record.last_used_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_gateway_node_token(&self, token: &str) -> Result<Option<GatewayNodeTokenRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens WHERE token = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| GatewayNodeTokenRecord {
+            token: row.get(0),
+            node_id: row.get(1),
+            status: row.get(2),
+            created_at: row.get(3),
+            updated_at: row.get(4),
+            last_used_at: row.get(5),
+        }))
+    }
+
+    fn list_gateway_node_tokens(
+        &self,
+        node_id: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<GatewayNodeTokenRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut query =
+            "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens"
+                .to_string();
+        let mut filters = Vec::new();
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+        if let Some(node_id) = node_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push(format!("node_id = ${}", params.len() + 1));
+            params.push(Box::new(node_id.to_string()));
+        }
+        if let Some(status) = status
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            filters.push(format!("status = ${}", params.len() + 1));
+            params.push(Box::new(status.to_string()));
+        }
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" ORDER BY updated_at DESC");
+        let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.query(&query, &params_refs)?;
+        let mut output = Vec::new();
+        for row in rows {
+            output.push(GatewayNodeTokenRecord {
+                token: row.get(0),
+                node_id: row.get(1),
+                status: row.get(2),
+                created_at: row.get(3),
+                updated_at: row.get(4),
+                last_used_at: row.get(5),
+            });
+        }
+        Ok(output)
+    }
+
+    fn delete_gateway_node_token(&self, token: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "DELETE FROM gateway_node_tokens WHERE token = $1",
+            &[&cleaned],
+        )?;
+        Ok(affected as i64)
     }
 
     fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()> {
