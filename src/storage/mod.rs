@@ -30,6 +30,14 @@ pub(crate) const TOOL_LOG_EXCLUDED_NAMES: &[&str] = &[
     "performance_log",
 ];
 
+pub const DEFAULT_SANDBOX_CONTAINER_ID: i32 = 1;
+pub const MIN_SANDBOX_CONTAINER_ID: i32 = 1;
+pub const MAX_SANDBOX_CONTAINER_ID: i32 = 10;
+
+pub fn normalize_sandbox_container_id(value: i32) -> i32 {
+    value.clamp(MIN_SANDBOX_CONTAINER_ID, MAX_SANDBOX_CONTAINER_ID)
+}
+
 #[derive(Debug, Clone)]
 pub struct UserAccountRecord {
     pub user_id: String,
@@ -100,6 +108,7 @@ pub struct UserAgentRecord {
     pub is_shared: bool,
     pub status: String,
     pub icon: Option<String>,
+    pub sandbox_container_id: i32,
     pub created_at: f64,
     pub updated_at: f64,
 }
@@ -853,5 +862,33 @@ pub fn build_storage(config: &StorageConfig) -> Result<Arc<dyn StorageBackend>> 
             config.postgres.pool_size,
         )?)),
         other => Err(anyhow!("未知存储后端: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_sandbox_container_id, DEFAULT_SANDBOX_CONTAINER_ID, MAX_SANDBOX_CONTAINER_ID,
+        MIN_SANDBOX_CONTAINER_ID,
+    };
+
+    #[test]
+    fn normalize_sandbox_container_id_clamps_to_range() {
+        assert_eq!(
+            normalize_sandbox_container_id(MIN_SANDBOX_CONTAINER_ID - 1),
+            MIN_SANDBOX_CONTAINER_ID
+        );
+        assert_eq!(
+            normalize_sandbox_container_id(MAX_SANDBOX_CONTAINER_ID + 1),
+            MAX_SANDBOX_CONTAINER_ID
+        );
+    }
+
+    #[test]
+    fn normalize_sandbox_container_id_keeps_default_in_range() {
+        assert_eq!(
+            normalize_sandbox_container_id(DEFAULT_SANDBOX_CONTAINER_ID),
+            DEFAULT_SANDBOX_CONTAINER_ID
+        );
     }
 }

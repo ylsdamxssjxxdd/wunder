@@ -1,57 +1,74 @@
 <template>
-  <div class="portal-shell external-app-shell">
-    <UserTopbar :title="pageTitle" :subtitle="t('portal.external.embedSubtitle')" :hide-chat="true" />
-    <main class="external-app-main">
-      <div class="external-app-toolbar">
-        <button class="topbar-panel-btn" type="button" @click="goHome">
-          <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
-          <span>{{ t('portal.external.back') }}</span>
-        </button>
-        <div class="external-app-meta">
-          <div class="external-app-name">{{ pageTitle }}</div>
-          <a
-            v-if="currentLink?.url"
-            :href="currentLink.url"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="external-app-origin"
-          >
-            {{ currentLink.url }}
-          </a>
-        </div>
-      </div>
-      <div class="external-app-frame-wrap">
-        <div v-if="loading" class="agent-empty">{{ t('portal.section.loading') }}</div>
-        <div v-else-if="errorMessage" class="agent-empty">{{ errorMessage }}</div>
-        <iframe
-          v-else-if="currentLink"
-          :src="currentLink.url"
-          class="external-app-frame"
-          referrerpolicy="no-referrer"
-        ></iframe>
-      </div>
-    </main>
+  <div class="external-app-page">
+    <iframe
+      v-if="currentLink && !errorMessage"
+      :src="currentLink.url"
+      class="external-app-frame"
+      referrerpolicy="no-referrer"
+    ></iframe>
+    <div v-if="loading" class="external-app-overlay">{{ t('portal.section.loading') }}</div>
+    <div v-else-if="errorMessage" class="external-app-overlay is-error">{{ errorMessage }}</div>
+    <button
+      class="external-world-fab"
+      :class="{ 'is-dragging': isDraggingFab }"
+      type="button"
+      :title="t('portal.external.back')"
+      :aria-label="t('portal.external.back')"
+      :style="floatingButtonStyle"
+      @pointerdown="handleFabPointerDown"
+      @click="handleFabClick"
+    >
+      <i class="fa-solid fa-earth-asia" aria-hidden="true"></i>
+    </button>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { fetchExternalLinks } from '@/api/externalLinks';
-import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 
+const FAB_SIZE = 48;
+const FAB_MARGIN = 12;
+const DRAG_THRESHOLD = 6;
+
 const loading = ref(false);
 const currentLink = ref(null);
 const errorMessage = ref('');
+const isDraggingFab = ref(false);
+const suppressFabClick = ref(false);
+const fabPosition = ref({ x: 16, y: 16 });
+
+let dragPointerId = null;
+let dragStartClientX = 0;
+let dragStartClientY = 0;
+let dragStartFabX = 0;
+let dragStartFabY = 0;
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
-const pageTitle = computed(() => currentLink.value?.title || t('portal.external.embedTitle'));
+const floatingButtonStyle = computed(() => ({
+  left: `${fabPosition.value.x}px`,
+  top: `${fabPosition.value.y}px`
+}));
+
+const clampFabPosition = (x, y) => {
+  const maxX = Math.max(FAB_MARGIN, window.innerWidth - FAB_SIZE - FAB_MARGIN);
+  const maxY = Math.max(FAB_MARGIN, window.innerHeight - FAB_SIZE - FAB_MARGIN);
+  return {
+    x: Math.min(Math.max(x, FAB_MARGIN), maxX),
+    y: Math.min(Math.max(y, FAB_MARGIN), maxY)
+  };
+};
+
+const setFabPosition = (x, y) => {
+  fabPosition.value = clampFabPosition(x, y);
+};
 
 const loadLink = async () => {
   const linkId = String(route.params.linkId || '').trim();
@@ -81,7 +98,75 @@ const goHome = () => {
   router.push(basePath.value + '/home');
 };
 
-onMounted(loadLink);
+const handleFabPointerDown = (event) => {
+  if (typeof event.button === 'number' && event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  isDraggingFab.value = true;
+  suppressFabClick.value = false;
+  dragPointerId = event.pointerId;
+  dragStartClientX = event.clientX;
+  dragStartClientY = event.clientY;
+  dragStartFabX = fabPosition.value.x;
+  dragStartFabY = fabPosition.value.y;
+};
+
+const handleFabPointerMove = (event) => {
+  if (!isDraggingFab.value || dragPointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  const deltaX = event.clientX - dragStartClientX;
+  const deltaY = event.clientY - dragStartClientY;
+  if (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD) {
+    suppressFabClick.value = true;
+  }
+  setFabPosition(dragStartFabX + deltaX, dragStartFabY + deltaY);
+};
+
+const stopFabDragging = (pointerId = null) => {
+  if (!isDraggingFab.value) {
+    return;
+  }
+  if (pointerId !== null && dragPointerId !== pointerId) {
+    return;
+  }
+  isDraggingFab.value = false;
+  dragPointerId = null;
+};
+
+const handleFabPointerUp = (event) => {
+  stopFabDragging(event.pointerId);
+};
+
+const handleFabClick = () => {
+  if (suppressFabClick.value) {
+    suppressFabClick.value = false;
+    return;
+  }
+  goHome();
+};
+
+const handleWindowResize = () => {
+  setFabPosition(fabPosition.value.x, fabPosition.value.y);
+};
+
+onMounted(() => {
+  loadLink();
+  window.addEventListener('pointermove', handleFabPointerMove, { passive: false });
+  window.addEventListener('pointerup', handleFabPointerUp);
+  window.addEventListener('pointercancel', handleFabPointerUp);
+  window.addEventListener('resize', handleWindowResize);
+  handleWindowResize();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', handleFabPointerMove);
+  window.removeEventListener('pointerup', handleFabPointerUp);
+  window.removeEventListener('pointercancel', handleFabPointerUp);
+  window.removeEventListener('resize', handleWindowResize);
+});
 
 watch(
   () => route.params.linkId,

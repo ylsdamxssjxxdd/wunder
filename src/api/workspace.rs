@@ -55,7 +55,7 @@ async fn workspace_list(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let _root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -109,7 +109,7 @@ async fn workspace_content(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let _root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -242,7 +242,7 @@ async fn workspace_search(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -372,7 +372,7 @@ async fn workspace_upload(
     .await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(Some(raw_agent_id.as_str()));
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -487,7 +487,7 @@ async fn workspace_dir(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -537,7 +537,7 @@ async fn workspace_move(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -627,7 +627,7 @@ async fn workspace_copy(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -702,7 +702,7 @@ async fn workspace_batch(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -875,7 +875,7 @@ async fn workspace_file_update(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -925,7 +925,7 @@ async fn workspace_archive(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -1001,7 +1001,7 @@ async fn workspace_download(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1046,7 +1046,7 @@ async fn workspace_delete(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = state.workspace.scoped_user_id(&user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1141,6 +1141,18 @@ fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
     value
         .map(|raw| raw.trim())
         .filter(|trimmed| !trimmed.is_empty())
+}
+
+fn resolve_workspace_id(state: &AppState, user_id: &str, agent_id: Option<&str>) -> String {
+    if let Some(container_id) = state
+        .user_store
+        .resolve_agent_sandbox_container_id(agent_id)
+    {
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, container_id);
+    }
+    state.workspace.scoped_user_id(user_id, agent_id)
 }
 
 fn format_modified_time(metadata: &std::fs::Metadata) -> String {

@@ -150,17 +150,46 @@
                   </div>
                   <div v-if="runsLoading" class="cron-empty">{{ t('common.loading') }}</div>
                   <div v-else-if="!runs.length" class="cron-empty">{{ t('cron.runs.empty') }}</div>
-                  <div v-else class="cron-run-list">
-                    <div v-for="run in runs" :key="run.run_id" class="cron-run-item">
-                      <div class="cron-run-main">
-                        <div class="cron-run-status">
-                          {{ formatRunStatus(run.status) }}
+                  <div v-else class="cron-run-layout">
+                    <div class="cron-run-list">
+                      <button
+                        v-for="run in runs"
+                        :key="run.run_id"
+                        class="cron-run-item"
+                        :class="{ active: selectedRunId === run.run_id }"
+                        type="button"
+                        @click="selectedRunId = run.run_id"
+                      >
+                        <div class="cron-run-main">
+                          <div class="cron-run-status">{{ formatRunStatus(run.status) }}</div>
+                          <div class="cron-run-time">{{ formatRunTime(run) }}</div>
                         </div>
-                        <div class="cron-run-time">{{ run.created_at_text || run.created_at }}</div>
-                      </div>
-                      <div class="cron-run-summary">
-                        {{ run.summary || run.error || t('common.none') }}
-                      </div>
+                        <div class="cron-run-summary">
+                          {{ run.summary || run.error || t('common.none') }}
+                        </div>
+                      </button>
+                    </div>
+                    <div class="cron-run-detail">
+                      <div v-if="!selectedRun" class="cron-empty">{{ t('cron.run.detail.empty') }}</div>
+                      <template v-else>
+                        <div class="cron-run-detail-title">{{ t('cron.run.detail.title') }}</div>
+                        <div class="cron-run-detail-grid">
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.status') }}</div>
+                          <div class="cron-run-detail-value">{{ formatRunStatus(selectedRun.status) }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.trigger') }}</div>
+                          <div class="cron-run-detail-value">{{ formatRunTrigger(selectedRun.trigger) }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.createdAt') }}</div>
+                          <div class="cron-run-detail-value">{{ formatRunTime(selectedRun) }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.duration') }}</div>
+                          <div class="cron-run-detail-value">{{ formatDuration(selectedRun.duration_ms) }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.id') }}</div>
+                          <div class="cron-run-detail-value break">{{ selectedRun.run_id || t('common.none') }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.summary') }}</div>
+                          <div class="cron-run-detail-value break">{{ selectedRun.summary || t('common.none') }}</div>
+                          <div class="cron-run-detail-label">{{ t('cron.run.detail.error') }}</div>
+                          <div class="cron-run-detail-value break">{{ selectedRun.error || t('common.none') }}</div>
+                        </div>
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -176,7 +205,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessageBox } from 'element-plus';
 
 import {
   fetchCronJobs,
@@ -197,10 +226,12 @@ const runs = ref([]);
 const loading = ref(false);
 const runsLoading = ref(false);
 const selectedJobId = ref('');
+const selectedRunId = ref('');
 
 const selectedJob = computed(
   () => jobs.value.find((job) => job.job_id === selectedJobId.value) || null
 );
+const selectedRun = computed(() => runs.value.find((run) => run.run_id === selectedRunId.value) || null);
 
 const contextAgentId = computed(() => {
   const raw = String(route.query.agent_id || '').trim();
@@ -243,6 +274,50 @@ const resolveErrorMessage = (error) =>
   error?.message ||
   t('cron.action.failed');
 
+const formatTime = (value) => {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  const pad = (part) => String(part).padStart(2, '0');
+  return (
+    String(parsed.getFullYear()) +
+    '-' +
+    pad(parsed.getMonth() + 1) +
+    '-' +
+    pad(parsed.getDate()) +
+    ' ' +
+    pad(parsed.getHours()) +
+    ':' +
+    pad(parsed.getMinutes())
+  );
+};
+
+const formatRunTime = (run) => run?.created_at_text || formatTime(run?.created_at) || '-';
+
+const formatDuration = (durationMs) => {
+  if (durationMs === null || durationMs === undefined || Number.isNaN(Number(durationMs))) {
+    return '-';
+  }
+  return String(Number(durationMs)) + ' ms';
+};
+
+const formatRunTrigger = (trigger) => {
+  if (trigger === 'manual') {
+    return t('cron.run.trigger.manual');
+  }
+  if (trigger === 'schedule') {
+    return t('cron.run.trigger.schedule');
+  }
+  if (trigger === 'api') {
+    return t('cron.run.trigger.api');
+  }
+  return trigger || t('common.unknown');
+};
+
 const loadJobs = async () => {
   loading.value = true;
   try {
@@ -252,6 +327,7 @@ const loadJobs = async () => {
     jobs.value = Array.isArray(items) ? items : [];
     if (!jobs.value.length) {
       selectedJobId.value = '';
+      selectedRunId.value = '';
       runs.value = [];
       return;
     }
@@ -267,6 +343,7 @@ const loadJobs = async () => {
 
 const loadRuns = async (jobId) => {
   if (!jobId) {
+    selectedRunId.value = '';
     runs.value = [];
     return;
   }
@@ -276,6 +353,13 @@ const loadRuns = async (jobId) => {
     const { data } = await fetchCronRuns(jobId, params);
     const items = data?.data?.runs || [];
     runs.value = Array.isArray(items) ? items : [];
+    if (!runs.value.length) {
+      selectedRunId.value = '';
+      return;
+    }
+    if (!selectedRunId.value || !runs.value.find((run) => run.run_id === selectedRunId.value)) {
+      selectedRunId.value = runs.value[0].run_id;
+    }
   } catch (error) {
     showApiError(error, resolveErrorMessage(error));
   } finally {
@@ -298,6 +382,7 @@ const refreshRuns = async () => {
 
 const selectJob = async (job) => {
   selectedJobId.value = job.job_id;
+  selectedRunId.value = '';
   await loadRuns(job.job_id);
 };
 

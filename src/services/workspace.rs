@@ -1,7 +1,9 @@
 // 工作区管理：路径校验、文件读写、目录操作与压缩打包。
 use crate::i18n;
 use crate::path_utils::is_within_root;
-use crate::storage::StorageBackend;
+use crate::storage::{
+    normalize_sandbox_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
+};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use dashmap::DashMap;
@@ -295,6 +297,15 @@ impl WorkspaceManager {
             }
             scoped
         }
+    }
+
+    pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let container_id = normalize_sandbox_container_id(sandbox_container_id);
+        if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
+            return safe_user;
+        }
+        format!("{safe_user}__c__{container_id}")
     }
 
     pub fn scoped_user_id_variants(&self, user_id: &str, agent_id: Option<&str>) -> Vec<String> {

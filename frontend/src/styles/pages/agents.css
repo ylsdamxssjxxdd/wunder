@@ -134,6 +134,12 @@
   align-items: center;
 }
 
+
+.agent-card-meta--updated {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
 .agent-card-footer {
   display: flex;
   align-items: center;
@@ -647,6 +653,21 @@
 
 .agent-share-row span {
   color: var(--portal-muted);
+}
+
+.agent-sandbox-select {
+  width: 138px;
+}
+
+.agent-sandbox-select .el-select__wrapper {
+  min-height: 32px;
+  background: rgba(9, 14, 26, 0.7);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-user-theme='light'] .agent-sandbox-select .el-select__wrapper {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.14);
 }
 
 .agent-share-card {

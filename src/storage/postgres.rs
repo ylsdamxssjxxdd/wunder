@@ -1,13 +1,13 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord, ChannelBindingRecord,
-    ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
-    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
-    GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord,
+    ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord,
+    ChannelUserBindingRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord,
+    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
+    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -424,6 +424,12 @@ impl PostgresStorage {
         if !columns.contains("is_shared") {
             conn.execute(
                 "ALTER TABLE user_agents ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0",
+                &[],
+            )?;
+        }
+        if !columns.contains("sandbox_container_id") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN sandbox_container_id INTEGER NOT NULL DEFAULT 1",
                 &[],
             )?;
         }
@@ -1069,6 +1075,7 @@ impl StorageBackend for PostgresStorage {
                   is_shared INTEGER NOT NULL DEFAULT 0,
                   status TEXT NOT NULL,
                   icon TEXT,
+                  sandbox_container_id INTEGER NOT NULL DEFAULT 1,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL
                 );
@@ -5454,12 +5461,13 @@ impl StorageBackend for PostgresStorage {
             Some(Self::string_list_to_json(&record.tool_names))
         };
         let is_shared = if record.is_shared { 1 } else { 0 };
+        let sandbox_container_id = normalize_sandbox_container_id(record.sandbox_container_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+            "INSERT INTO user_agents (agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, name = EXCLUDED.name, description = EXCLUDED.description, \
              system_prompt = EXCLUDED.system_prompt, tool_names = EXCLUDED.tool_names, access_level = EXCLUDED.access_level, \
-             is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, updated_at = EXCLUDED.updated_at",
+             is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at",
             &[
                 &record.agent_id,
                 &record.user_id,
@@ -5471,6 +5479,7 @@ impl StorageBackend for PostgresStorage {
                 &is_shared,
                 &record.status,
                 &record.icon,
+                &sandbox_container_id,
                 &record.created_at,
                 &record.updated_at,
             ],
@@ -5487,7 +5496,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at \
              FROM user_agents WHERE user_id = $1 AND agent_id = $2",
             &[&cleaned_user, &cleaned_agent],
         )?;
@@ -5502,8 +5511,9 @@ impl StorageBackend for PostgresStorage {
             is_shared: row.get::<_, i32>(7) != 0,
             status: row.get(8),
             icon: row.get(9),
-            created_at: row.get(10),
-            updated_at: row.get(11),
+            sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(10)),
+            created_at: row.get(11),
+            updated_at: row.get(12),
         }))
     }
 
@@ -5515,7 +5525,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at \
              FROM user_agents WHERE agent_id = $1",
             &[&cleaned_agent],
         )?;
@@ -5530,8 +5540,9 @@ impl StorageBackend for PostgresStorage {
             is_shared: row.get::<_, i32>(7) != 0,
             status: row.get(8),
             icon: row.get(9),
-            created_at: row.get(10),
-            updated_at: row.get(11),
+            sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(10)),
+            created_at: row.get(11),
+            updated_at: row.get(12),
         }))
     }
 
@@ -5543,7 +5554,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at \
              FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
@@ -5560,8 +5571,9 @@ impl StorageBackend for PostgresStorage {
                 is_shared: row.get::<_, i32>(7) != 0,
                 status: row.get(8),
                 icon: row.get(9),
-                created_at: row.get(10),
-                updated_at: row.get(11),
+                sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(10)),
+                created_at: row.get(11),
+                updated_at: row.get(12),
             });
         }
         Ok(output)
@@ -5575,7 +5587,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, created_at, updated_at \
+            "SELECT agent_id, user_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at \
              FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
@@ -5592,8 +5604,9 @@ impl StorageBackend for PostgresStorage {
                 is_shared: row.get::<_, i32>(7) != 0,
                 status: row.get(8),
                 icon: row.get(9),
-                created_at: row.get(10),
-                updated_at: row.get(11),
+                sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(10)),
+                created_at: row.get(11),
+                updated_at: row.get(12),
             });
         }
         Ok(output)

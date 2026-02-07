@@ -32,6 +32,10 @@ const SESSION_STRATEGY_MAIN_THREAD: &str = "main_thread";
 const SESSION_STRATEGY_PER_PEER: &str = "per_peer";
 const SESSION_STRATEGY_HYBRID: &str = "hybrid";
 
+fn channels_runtime_enabled(config: &Config) -> bool {
+    config.channels.enabled || config.gateway.enabled
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ChannelSessionStrategy {
     MainThread,
@@ -149,7 +153,7 @@ impl ChannelHub {
         raw_payload: Option<Value>,
     ) -> Result<ChannelInboundResult> {
         let config = self.config_store.get().await;
-        if !config.channels.enabled {
+        if !channels_runtime_enabled(&config) {
             return Err(anyhow!("channels disabled"));
         }
         normalize_message(provider, &mut message)?;
@@ -720,7 +724,7 @@ impl ChannelHub {
     async fn outbox_loop(&self) {
         loop {
             let config = self.config_store.get().await;
-            if !config.channels.enabled {
+            if !channels_runtime_enabled(&config) {
                 sleep(Duration::from_millis(1000)).await;
                 continue;
             }

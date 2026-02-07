@@ -144,6 +144,15 @@
             <input v-model="form.is_shared" type="checkbox" />
             <span>{{ t('portal.agent.share.label') }}</span>
           </label>
+          <label class="feature-window-inline-field">
+            <span>{{ t('portal.agent.sandbox.title') }}</span>
+            <select v-model.number="form.sandbox_container_id" class="feature-window-select">
+              <option v-for="id in sandboxContainerOptions" :key="id" :value="id">
+                {{ t('portal.agent.sandbox.option', { id }) }}
+              </option>
+            </select>
+          </label>
+          <div class="feature-window-hint">{{ t('portal.agent.sandbox.hint') }}</div>
         </div>
       </template>
     </div>
@@ -247,12 +256,21 @@ const avatarColorOptions = [
   '#f87171'
 ];
 
+const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
+
+const normalizeSandboxContainerId = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+};
+
 const form = reactive({
   name: '',
   description: '',
   is_shared: false,
   system_prompt: '',
   tool_names: [],
+  sandbox_container_id: 1,
   icon_name: DEFAULT_ICON_NAME,
   icon_color: ''
 });
@@ -442,6 +460,7 @@ const loadAgent = async () => {
     form.is_shared = Boolean(agent.is_shared);
     form.system_prompt = agent.system_prompt || '';
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+    form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     applyIconToForm(agent.icon);
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
@@ -473,6 +492,7 @@ const saveAgent = async () => {
       is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       icon: iconPayload
     };
     await agentStore.updateAgent(normalizedAgentId.value, payload);
@@ -876,6 +896,31 @@ watch(
   align-items: center;
   gap: 8px;
   font-size: 12px;
+}
+
+.feature-window-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.feature-window-inline-field > span {
+  color: var(--fw-muted);
+}
+
+.feature-window-select {
+  border: 1px solid var(--fw-border);
+  border-radius: 8px;
+  background: var(--fw-control-bg);
+  color: var(--fw-text);
+  padding: 5px 8px;
+  min-width: 132px;
+}
+
+.feature-window-select:focus-visible {
+  outline: 2px solid var(--fw-focus-ring);
+  outline-offset: 1px;
 }
 
 .feature-window-tool-panel {

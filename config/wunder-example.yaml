@@ -85,8 +85,8 @@ a2a: # A2A 配置
       description: wunder 默认 A2A 服务，用于内部协作 # 服务描述
       display_name: Wunder 内部 # 展示名称
       headers: {} # 请求附加 Headers
-channels: # Channel ingress & multimodal config
-  enabled: false # Enable channel ingress layer
+channels: # 渠道业务层配置（账号绑定/会话路由/出站队列/多模态）
+  enabled: true # 建议与 gateway.enabled 联动开启；仅关闭时会禁用渠道业务能力
   allow_unknown_accounts: true # Allow unknown account inbound
   session_strategy: main_thread # main_thread | per_peer | hybrid
   default_agent_id: null # Default routed agent_id
@@ -132,8 +132,8 @@ channels: # Channel ingress & multimodal config
       endpoint: ${WUNDER_GEOCODE_ENDPOINT:-}
       api_key: ${WUNDER_GEOCODE_API_KEY:-}
       timeout_s: 10
-gateway: # Gateway control plane config
-  enabled: true # Enable gateway WS control plane
+gateway: # 网关控制层配置（节点接入/控制面 WS）
+  enabled: true # 建议与 channels.enabled 联动开启；仅开启网关不代表关闭渠道业务配置
   auth_token: ${WUNDER_GATEWAY_TOKEN:-} # Shared token for operator/channel access
   protocol_version: 1 # Gateway protocol version
   allow_unpaired_nodes: false # Allow nodes without tokens

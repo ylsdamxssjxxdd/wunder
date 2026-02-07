@@ -1,8 +1,9 @@
 use crate::org_units;
 use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, OrgUnitRecord, SessionLockRecord,
-    SessionRunRecord, StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
-    UserTokenRecord, UserToolAccessRecord,
+    normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChatSessionRecord,
+    OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord,
+    DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -575,6 +576,16 @@ impl UserStore {
 
     pub fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
         self.storage.get_user_agent_by_id(agent_id)
+    }
+
+    pub fn resolve_agent_sandbox_container_id(&self, agent_id: Option<&str>) -> Option<i32> {
+        let cleaned = agent_id.map(str::trim).filter(|value| !value.is_empty())?;
+        let record = self.storage.get_user_agent_by_id(cleaned).ok().flatten()?;
+        Some(normalize_sandbox_container_id(record.sandbox_container_id))
+    }
+
+    pub fn default_sandbox_container_id(&self) -> i32 {
+        DEFAULT_SANDBOX_CONTAINER_ID
     }
 
     pub fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {

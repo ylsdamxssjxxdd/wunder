@@ -69,7 +69,7 @@ async fn list_channel_accounts(
 ) -> Result<Json<Value>, Response> {
     let _resolved = resolve_user(&state, &headers, None).await?;
     let config = state.config_store.get().await;
-    if !config.channels.enabled {
+    if !config.channels.enabled && !config.gateway.enabled {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "channels disabled".to_string(),
@@ -199,7 +199,7 @@ async fn upsert_channel_binding(
         ));
     }
     let config = state.config_store.get().await;
-    if !config.channels.enabled {
+    if !config.channels.enabled && !config.gateway.enabled {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "channels disabled".to_string(),

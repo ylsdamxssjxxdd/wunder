@@ -73,10 +73,60 @@
             <div class="feature-window-runs-title">{{ t('cron.runs.title') }}</div>
             <div v-if="runsLoading" class="feature-window-empty">{{ t('common.loading') }}</div>
             <div v-else-if="!runs.length" class="feature-window-empty">{{ t('cron.runs.empty') }}</div>
-            <div v-else class="feature-window-runs">
-              <div v-for="run in runs" :key="run.run_id" class="feature-window-run-item">
-                <span>{{ formatRunStatus(run.status) }}</span>
-                <span>{{ formatTime(run.started_at) || '-' }}</span>
+            <div v-else class="feature-window-runs-layout">
+              <div class="feature-window-runs">
+                <button
+                  v-for="run in runs"
+                  :key="run.run_id"
+                  class="feature-window-run-item"
+                  :class="{ active: selectedRunId === run.run_id }"
+                  type="button"
+                  @click="selectedRunId = run.run_id"
+                >
+                  <div class="feature-window-run-head">
+                    <span>{{ formatRunStatus(run.status) }}</span>
+                    <span>{{ formatRunTime(run) }}</span>
+                  </div>
+                  <div class="feature-window-run-summary">
+                    {{ run.summary || run.error || t('common.none') }}
+                  </div>
+                </button>
+              </div>
+              <div class="feature-window-run-detail">
+                <div v-if="!selectedRun" class="feature-window-empty">
+                  {{ t('cron.run.detail.empty') }}
+                </div>
+                <template v-else>
+                  <div class="feature-window-run-detail-title">{{ t('cron.run.detail.title') }}</div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.status') }}</div>
+                    <div>{{ formatRunStatus(selectedRun.status) }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.trigger') }}</div>
+                    <div>{{ formatRunTrigger(selectedRun.trigger) }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.createdAt') }}</div>
+                    <div>{{ formatRunTime(selectedRun) }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.duration') }}</div>
+                    <div>{{ formatDuration(selectedRun.duration_ms) }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.id') }}</div>
+                    <div class="feature-window-break">{{ selectedRun.run_id || t('common.none') }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.summary') }}</div>
+                    <div class="feature-window-break">{{ selectedRun.summary || t('common.none') }}</div>
+                  </div>
+                  <div class="feature-window-kv">
+                    <div>{{ t('cron.run.detail.error') }}</div>
+                    <div class="feature-window-break">{{ selectedRun.error || t('common.none') }}</div>
+                  </div>
+                </template>
               </div>
             </div>
           </template>
@@ -88,7 +138,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessageBox } from 'element-plus';
 
 import { fetchCronJobs, fetchCronRuns, disableCronJob, enableCronJob, removeCronJob, runCronJob } from '@/api/cron';
 import { useI18n } from '@/i18n';
@@ -126,8 +176,10 @@ const runs = ref([]);
 const loading = ref(false);
 const runsLoading = ref(false);
 const selectedJobId = ref('');
+const selectedRunId = ref('');
 
 const selectedJob = computed(() => jobs.value.find((job) => job.job_id === selectedJobId.value) || null);
+const selectedRun = computed(() => runs.value.find((run) => run.run_id === selectedRunId.value) || null);
 const payloadText = computed(() => {
   const payload = selectedJob.value?.payload;
   if (!payload) return t('common.none');
@@ -188,6 +240,22 @@ const formatRunStatus = (status) => {
   return status || t('common.unknown');
 };
 
+const formatRunTime = (run) => run?.created_at_text || formatTime(run?.created_at) || '-';
+
+const formatDuration = (durationMs) => {
+  if (durationMs === null || durationMs === undefined || Number.isNaN(Number(durationMs))) {
+    return '-';
+  }
+  return String(Number(durationMs)) + ' ms';
+};
+
+const formatRunTrigger = (trigger) => {
+  if (trigger === 'manual') return t('cron.run.trigger.manual');
+  if (trigger === 'schedule') return t('cron.run.trigger.schedule');
+  if (trigger === 'api') return t('cron.run.trigger.api');
+  return trigger || t('common.unknown');
+};
+
 const loadJobs = async () => {
   loading.value = true;
   try {
@@ -197,6 +265,7 @@ const loadJobs = async () => {
     jobs.value = items;
     if (!items.length) {
       selectedJobId.value = '';
+      selectedRunId.value = '';
       runs.value = [];
       return;
     }
@@ -212,6 +281,7 @@ const loadJobs = async () => {
 
 const loadRuns = async (jobId) => {
   if (!jobId) {
+    selectedRunId.value = '';
     runs.value = [];
     return;
   }
@@ -219,7 +289,15 @@ const loadRuns = async (jobId) => {
   try {
     const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
     const { data } = await fetchCronRuns(jobId, params);
-    runs.value = Array.isArray(data?.data?.runs) ? data.data.runs : [];
+    const items = Array.isArray(data?.data?.runs) ? data.data.runs : [];
+    runs.value = items;
+    if (!items.length) {
+      selectedRunId.value = '';
+      return;
+    }
+    if (!selectedRunId.value || !items.find((run) => run.run_id === selectedRunId.value)) {
+      selectedRunId.value = items[0].run_id;
+    }
   } catch (error) {
     showApiError(error, resolveError(error));
   } finally {
@@ -234,6 +312,7 @@ const refreshAll = async () => {
 
 const selectJob = async (job) => {
   selectedJobId.value = job.job_id;
+  selectedRunId.value = '';
   await loadRuns(job.job_id);
 };
 
@@ -564,12 +643,20 @@ watch(
   color: var(--fw-muted);
 }
 
+.feature-window-runs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
 .feature-window-runs {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
   min-height: 0;
+  max-height: 230px;
   overflow: auto;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
@@ -578,12 +665,54 @@ watch(
 .feature-window-run-item {
   border: 1px solid var(--fw-border-soft);
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 8px;
   background: var(--fw-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fw-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.feature-window-run-item.active {
+  border-color: var(--fw-accent-border);
+  box-shadow: inset 0 0 0 1px var(--fw-accent-shadow);
+}
+
+.feature-window-run-head {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  color: var(--fw-muted);
+}
+
+.feature-window-run-summary {
+  color: var(--fw-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.feature-window-run-detail {
+  border: 1px solid var(--fw-border-soft);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--fw-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.feature-window-run-detail-title {
   font-size: 12px;
+  font-weight: 700;
+  color: var(--fw-muted);
 }
 
 .feature-window-empty {
@@ -600,6 +729,14 @@ watch(
 
   .feature-window-list {
     max-height: 30vh;
+  }
+
+  .feature-window-runs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-window-runs {
+    max-height: 20vh;
   }
 }
 </style>

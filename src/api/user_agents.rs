@@ -3,6 +3,7 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::state::AppState;
+use crate::storage::{normalize_sandbox_container_id, DEFAULT_SANDBOX_CONTAINER_ID};
 use crate::user_access::{
     build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
     is_agent_allowed,
@@ -222,6 +223,11 @@ async fn create_agent(
     let status = normalize_agent_status(payload.status.as_deref());
     let is_shared = payload.is_shared.unwrap_or(false);
     let now = now_ts();
+    let sandbox_container_id = normalize_sandbox_container_id(
+        payload
+            .sandbox_container_id
+            .unwrap_or(DEFAULT_SANDBOX_CONTAINER_ID),
+    );
     let record = crate::storage::UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
         user_id: user_id.clone(),
@@ -233,6 +239,7 @@ async fn create_agent(
         is_shared,
         status,
         icon: payload.icon,
+        sandbox_container_id,
         created_at: now,
         updated_at: now,
     };
@@ -292,6 +299,9 @@ async fn update_agent(
     }
     if payload.icon.is_some() {
         record.icon = payload.icon;
+    }
+    if let Some(sandbox_container_id) = payload.sandbox_container_id {
+        record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
     }
     record.updated_at = now_ts();
     state
@@ -454,6 +464,7 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
+        "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
     })
@@ -623,6 +634,7 @@ async fn ensure_preset_agents(
             is_shared: false,
             status: "active".to_string(),
             icon: Some(build_icon_payload(preset.icon_name, preset.icon_color)),
+            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
             created_at: now,
             updated_at: now,
         };
@@ -707,6 +719,8 @@ struct AgentCreateRequest {
     status: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -730,4 +744,6 @@ struct AgentUpdateRequest {
     status: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: Option<i32>,
 }

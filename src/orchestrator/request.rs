@@ -17,7 +17,7 @@ impl Orchestrator {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string());
-        let workspace_id = self.workspace.scoped_user_id(&user_id, agent_id.as_deref());
+        let workspace_id = self.resolve_workspace_id(&user_id, agent_id.as_deref());
         if let Err(err) = self.workspace.ensure_user_root(&workspace_id) {
             return Err(OrchestratorError::internal(format!(
                 "failed to prepare workspace: {err}"
@@ -66,6 +66,18 @@ impl Orchestrator {
             language,
             is_admin: request.is_admin,
         })
+    }
+
+    pub(crate) fn resolve_workspace_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
+        let agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty());
+        if let Some(agent_id) = agent_id {
+            if let Ok(Some(record)) = self.storage.get_user_agent_by_id(agent_id) {
+                return self
+                    .workspace
+                    .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+            }
+        }
+        self.workspace.scoped_user_id(user_id, agent_id)
     }
 
     pub async fn run(&self, request: WunderRequest) -> Result<WunderResponse> {

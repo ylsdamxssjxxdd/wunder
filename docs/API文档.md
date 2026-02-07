@@ -56,7 +56,7 @@
   - `stream`：布尔，可选，是否流式输出（默认 true）
   - `debug_payload`：布尔，可选，调试用，开启后会保留模型请求体用于事件与日志记录（默认 false）
   - `session_id`：字符串，可选，指定会话标识
-  - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与工作区隔离）
+  - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与沙盒容器工作区路由）
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
@@ -815,11 +815,11 @@
 
 ### 4.1.12 `/wunder/workspace`
 
-- 说明：所有 workspace 接口支持可选 `agent_id`，用于按智能体应用划分工作区；未传或为空时使用默认用户工作区。
+- 说明：所有 workspace 接口支持可选 `agent_id`。若该智能体已配置 `sandbox_container_id`（1~10），则按“用户 + 容器编号”路由工作区；未传 `agent_id`、找不到智能体或历史兼容场景时，仍回退到默认用户工作区/旧路由策略。
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识
-  - `agent_id`：智能体应用 id（可选，未传或为空表示默认工作区）
+  - `agent_id`：智能体应用 id（可选；已配置容器时按容器路由，未传或为空表示默认工作区）
   - `path`：相对路径（可选，默认根目录）
   - `refresh_tree`：是否刷新工作区树缓存（默认 false）
   - `keyword`：名称关键字过滤（可选）
@@ -1771,7 +1771,7 @@
 ### 4.1.56 `/wunder/agents`
 
 - `GET /wunder/agents`：智能体列表
-  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/created_at/updated_at）
+  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表
   - 返回：`data.total`、`data.items`（同上）
 - `GET /wunder/agents/running`：当前运行中的智能体会话锁 + 问询面板待选择状态
@@ -1779,12 +1779,12 @@
   - `is_default`：表示通用聊天（无 agent_id 的默认入口会话）
   - `state`：`running` | `waiting`，`pending_question` 表示存在待选择问询面板
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`icon`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`icon`/`sandbox_container_id`（可选）
   - 返回：`data`（同智能体详情）
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
@@ -1798,6 +1798,7 @@
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
+  - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
 
 ### 4.1.57 `/wunder/admin/user_accounts/*`
 

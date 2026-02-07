@@ -849,9 +849,12 @@ async fn system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
-    let workspace_id = state
-        .workspace
-        .scoped_user_id(&resolved.user.user_id, payload.agent_id.as_deref());
+    let workspace_id = resolve_agent_workspace_id(
+        &state,
+        &resolved.user.user_id,
+        payload.agent_id.as_deref(),
+        agent_record.as_ref(),
+    );
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -918,9 +921,11 @@ async fn session_system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
-    let workspace_id = state.workspace.scoped_user_id(
+    let workspace_id = resolve_agent_workspace_id(
+        &state,
         &resolved.user.user_id,
         record.agent_id.as_deref().or(payload.agent_id.as_deref()),
+        agent_record.as_ref(),
     );
     let prompt = state
         .orchestrator
@@ -980,9 +985,12 @@ async fn update_session_tools(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
-    let workspace_id = state
-        .workspace
-        .scoped_user_id(&resolved.user.user_id, record.agent_id.as_deref());
+    let workspace_id = resolve_agent_workspace_id(
+        &state,
+        &resolved.user.user_id,
+        record.agent_id.as_deref(),
+        agent_record.as_ref(),
+    );
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -1400,6 +1408,28 @@ fn resolve_agent_tool_defaults(agent: Option<&crate::storage::UserAgentRecord>) 
     agent
         .map(|record| record.tool_names.clone())
         .unwrap_or_default()
+}
+
+fn resolve_agent_workspace_id(
+    state: &AppState,
+    user_id: &str,
+    agent_id: Option<&str>,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+) -> String {
+    if let Some(record) = agent_record {
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+    }
+    if let Some(container_id) = state
+        .user_store
+        .resolve_agent_sandbox_container_id(agent_id)
+    {
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, container_id);
+    }
+    state.workspace.scoped_user_id(user_id, agent_id)
 }
 
 fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {

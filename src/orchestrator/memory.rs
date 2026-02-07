@@ -733,7 +733,7 @@ impl Orchestrator {
             Some(&user_tool_bindings),
         );
         let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
-        let workspace_id = self.workspace.scoped_user_id(user_id, agent_id);
+        let workspace_id = self.resolve_workspace_id(user_id, agent_id);
         let mut system_prompt = self
             .resolve_session_prompt(
                 &config,

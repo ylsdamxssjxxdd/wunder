@@ -64,9 +64,12 @@
               @click.stop="toggleFeatureMenu"
             >
               <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
-              <span class="topbar-panel-text">{{ t('chat.features') }}</span>
             </button>
             <div v-if="featureMenuVisible" class="topbar-feature-menu">
+              <div class="topbar-feature-transport" :class="featureTransportClass">
+                <span class="topbar-feature-transport-dot" aria-hidden="true"></span>
+                <span>{{ featureTransportText }}</span>
+              </div>
               <button class="topbar-feature-item" type="button" @click="handleFeatureAction('cron')">
                 <i class="fa-solid fa-clock topbar-icon" aria-hidden="true"></i>
                 <span>{{ t('chat.features.cron') }}</span>
@@ -656,6 +659,13 @@ const currentUserUnitLabel = computed(() => {
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => (demoMode.value ? '/demo' : '/app'));
+const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
+const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
+const featureTransportText = computed(() =>
+  t('chat.transport.current', {
+    transport: t(featureTransport.value === 'sse' ? 'chat.transport.sse' : 'chat.transport.ws')
+  })
+);
 const draftKey = ref(0);
 const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
@@ -929,7 +939,7 @@ const handleActiveAgentDeleted = (deletedAgentId) => {
   const target = String(deletedAgentId || '').trim();
   if (!target) return;
   if (target !== String(activeAgentId.value || '').trim()) return;
-  router.replace({ path: basePath.value + '/chat', query: { entry: 'default' } });
+  router.replace(basePath.value + '/home');
 };
 
 const deleteActiveAgent = async () => {

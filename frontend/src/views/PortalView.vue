@@ -118,7 +118,7 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
-                <div class="agent-card-meta">
+                <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
                 </div>
               </div>
@@ -173,7 +173,7 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
-                <div class="agent-card-meta">
+                <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
                 </div>
               </div>
@@ -356,6 +356,21 @@
                   <el-switch v-model="form.is_shared" />
                   <span>{{ t('portal.agent.share.label') }}</span>
                 </div>
+              </div>
+              <div class="agent-share-card">
+                <div class="agent-share-title">{{ t('portal.agent.sandbox.title') }}</div>
+                <div class="agent-share-row">
+                  <span>{{ t('portal.agent.sandbox.label') }}</span>
+                  <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
+                    <el-option
+                      v-for="id in sandboxContainerOptions"
+                      :key="id"
+                      :label="t('portal.agent.sandbox.option', { id })"
+                      :value="id"
+                    />
+                  </el-select>
+                </div>
+                <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
               </div>
             </div>
           </el-form-item>
@@ -574,12 +589,21 @@ const avatarColorOptions = [
   '#f87171'
 ];
 
+const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
+
+const normalizeSandboxContainerId = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+};
+
 const form = reactive({
   name: '',
   description: '',
   is_shared: false,
   tool_names: [],
   system_prompt: '',
+  sandbox_container_id: 1,
   icon_name: DEFAULT_ICON_NAME,
   icon_color: ''
 });
@@ -843,6 +867,7 @@ const resetForm = () => {
   form.description = '';
   form.is_shared = false;
   form.system_prompt = '';
+  form.sandbox_container_id = 1;
   form.icon_name = DEFAULT_ICON_NAME;
   form.icon_color = '';
   customColor.value = '';
@@ -995,6 +1020,7 @@ const openEditDialog = async (agent) => {
   form.is_shared = Boolean(agent.is_shared);
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
+  form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
   applyIconToForm(agent.icon);
   avatarPanelVisible.value = true;
   editingId.value = agent.id;
@@ -1025,6 +1051,7 @@ const saveAgent = async () => {
       is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       icon: iconPayload
     };
     if (editingId.value) {

@@ -212,15 +212,17 @@
 }
 
 .chat-shell .topbar-feature-btn {
-  min-width: 88px;
+  min-width: 34px;
+  padding: 5px 8px;
   justify-content: center;
+  gap: 0;
 }
 
 .chat-shell .topbar-feature-menu {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 170px;
+  min-width: 220px;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -230,6 +232,36 @@
   background: #101b31;
   box-shadow: 0 14px 28px rgba(6, 12, 24, 0.42);
   z-index: 24;
+}
+
+.chat-shell .topbar-feature-transport {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--chat-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chat-shell .topbar-feature-transport-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-muted);
+}
+
+.chat-shell .topbar-feature-transport.ws .topbar-feature-transport-dot {
+  background: var(--chat-primary);
+  box-shadow: 0 0 8px rgba(var(--chat-primary-rgb), 0.45);
+}
+
+.chat-shell .topbar-feature-transport.sse .topbar-feature-transport-dot {
+  background: var(--chat-accent);
+  box-shadow: 0 0 8px rgba(var(--chat-accent-rgb), 0.45);
 }
 
 .chat-shell .topbar-feature-item {
