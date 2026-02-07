@@ -1584,16 +1584,20 @@
     "zh-CN": "操作类型：list/history/send/spawn。"
   },
   "tool.spec.node_invoke.description": {
-    "en-US": "Invoke a command on a connected gateway node.",
-    "zh-CN": "调用已接入的网关节点执行指令。"
+    "en-US": "List connected gateway nodes or invoke a command on a node.",
+    "zh-CN": "列出已接入的网关节点，或调用节点执行指令。"
+  },
+  "tool.spec.node_invoke.args.action": {
+    "en-US": "Action type: list to discover nodes, invoke to execute a node command.",
+    "zh-CN": "操作类型：list 用于列出可用节点，invoke 用于执行节点命令。"
   },
   "tool.spec.node_invoke.args.node_id": {
-    "en-US": "Target node_id to invoke.",
-    "zh-CN": "要调用的 node_id。"
+    "en-US": "Target node_id (required when action=invoke).",
+    "zh-CN": "目标 node_id（action=invoke 时必填）。"
   },
   "tool.spec.node_invoke.args.command": {
-    "en-US": "Command name to execute on the node.",
-    "zh-CN": "节点执行的命令名称。"
+    "en-US": "Node command name (required when action=invoke).",
+    "zh-CN": "节点命令名称（action=invoke 时必填）。"
   },
   "tool.spec.node_invoke.args.args": {
     "en-US": "Optional command arguments payload.",

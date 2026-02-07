@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use tracing::warn;
 use zip::ZipArchive;
 
 #[derive(Debug, Clone)]
@@ -1051,8 +1052,12 @@ fn parse_pptx_xml(xml: &str) -> Result<Vec<String>> {
 }
 
 fn parse_pptx_xml_fallback(xml: &str) -> Vec<String> {
-    let para_re = pptx_fallback_paragraph_regex();
-    let token_re = pptx_fallback_token_regex();
+    let Some(para_re) = pptx_fallback_paragraph_regex() else {
+        return Vec::new();
+    };
+    let Some(token_re) = pptx_fallback_token_regex() else {
+        return Vec::new();
+    };
     let mut paragraphs = Vec::new();
     for caps in para_re.captures_iter(xml) {
         let block = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
@@ -1074,23 +1079,34 @@ fn parse_pptx_xml_fallback(xml: &str) -> Vec<String> {
     paragraphs
 }
 
-fn pptx_fallback_paragraph_regex() -> &'static regex::Regex {
+fn pptx_fallback_paragraph_regex() -> Option<&'static regex::Regex> {
     use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        regex::Regex::new(r"(?s)<a:p\\b[^>]*>(.*?)</a:p>").expect("pptx paragraph regex")
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    RE.get_or_init(|| match regex::Regex::new(r"(?s)<a:p\b[^>]*>(.*?)</a:p>") {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            warn!("pptx paragraph regex init failed: {err}");
+            None
+        }
     })
+    .as_ref()
 }
 
-fn pptx_fallback_token_regex() -> &'static regex::Regex {
+fn pptx_fallback_token_regex() -> Option<&'static regex::Regex> {
     use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
     RE.get_or_init(|| {
-        regex::Regex::new(
-            r"(?s)(?:<a:t\\b[^>]*>(?P<text>.*?)</a:t>)|(?P<br><a:br\\b[^>]*/?>)|(?P<tab><a:tab\\b[^>]*/?>)",
-        )
-        .expect("pptx token regex")
+        match regex::Regex::new(
+            r"(?s)(?:<a:t\b[^>]*>(?P<text>.*?)</a:t>)|(?P<br><a:br\b[^>]*/?>)|(?P<tab><a:tab\b[^>]*/?>)",
+        ) {
+            Ok(regex) => Some(regex),
+            Err(err) => {
+                warn!("pptx token regex init failed: {err}");
+                None
+            }
+        }
     })
+    .as_ref()
 }
 
 fn decode_xml_entities(input: &str) -> String {

@@ -154,6 +154,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useThemeStore } from '@/stores/theme';
 import { isDemoMode } from '@/utils/demo';
+import { showApiError } from '@/utils/apiError';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -255,7 +256,7 @@ const saveProfile = async () => {
     editDialogVisible.value = false;
     ElMessage.success(t('profile.edit.saved'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail?.message || t('profile.edit.saveFailed'));
+    showApiError(error, t('profile.edit.saveFailed'));
   } finally {
     editSaving.value = false;
   }

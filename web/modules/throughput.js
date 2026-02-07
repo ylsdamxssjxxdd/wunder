@@ -6,6 +6,7 @@ import { notify } from "./notify.js";
 import { escapeHtml, formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { t } from "./i18n.js?v=20260124-01";
+import { resolveApiErrorMessage } from "./api-error.js";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";
 const MAX_CONCURRENCY = 500;
@@ -1334,18 +1335,8 @@ const loadCurveReport = async (runId, options = {}) => {
   }
 };
 
-const parseErrorMessage = async (response) => {
-  try {
-    const payload = await response.json();
-    return payload?.detail?.message || payload?.message || "";
-  } catch (error) {
-    try {
-      return await response.text();
-    } catch (innerError) {
-      return "";
-    }
-  }
-};
+const parseErrorMessage = async (response) =>
+  resolveApiErrorMessage(response, t("common.requestFailed", { status: response.status }));
 
 const openHistoryModal = async () => {
   if (!elements.throughputHistoryModal) {
@@ -2425,7 +2416,6 @@ export const initThroughputPanel = async () => {
   resetCharts();
   await loadThroughputStatus({ silent: true });
 };
-
 
 
 

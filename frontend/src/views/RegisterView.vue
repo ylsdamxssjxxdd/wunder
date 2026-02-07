@@ -50,6 +50,7 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { fetchOrgUnits } from '@/api/auth';
+import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -98,7 +99,7 @@ const handleRegister = async () => {
     });
     router.push('/app/chat');
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('auth.register.error'));
+    showApiError(error, t('auth.register.error'));
   }
 };
 

@@ -3,7 +3,7 @@ use crate::state::AppState;
 use crate::storage::{ExternalLinkRecord, UserAccountRecord};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -90,5 +90,5 @@ fn external_link_payload(record: &ExternalLinkRecord) -> Value {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }

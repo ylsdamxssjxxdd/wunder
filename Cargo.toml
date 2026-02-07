@@ -62,3 +62,6 @@ shell-words = "1"
 rlsx = "1.0.1"
 aes = "0.8"
 cbc = "0.1"
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"

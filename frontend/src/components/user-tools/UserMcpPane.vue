@@ -290,6 +290,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserMcpServers, fetchUserMcpTools, saveUserMcpServers } from '@/api/userTools';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const props = defineProps({
   visible: {
@@ -529,7 +530,7 @@ const loadServers = async () => {
     selectedIndex.value = servers.value.length ? 0 : -1;
     loaded.value = true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('userTools.mcp.loadFailed'));
+    showApiError(error, t('userTools.mcp.loadFailed'));
   } finally {
     loading.value = false;
   }
@@ -575,7 +576,7 @@ const saveServers = async () => {
       return;
     }
     emitStatus(t('userTools.saveFailed', { message: error.message || t('common.requestFailed') }));
-    ElMessage.error(error.response?.data?.detail || t('userTools.mcp.saveFailed'));
+    showApiError(error, t('userTools.mcp.saveFailed'));
   } finally {
     if (currentVersion === saveVersion.value) {
       saving.value = false;

@@ -490,13 +490,27 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.node_invoke.args.action"),
+                        "enum": ["list", "invoke"]
+                    },
                     "node_id": {"type": "string", "description": t("tool.spec.node_invoke.args.node_id")},
                     "command": {"type": "string", "description": t("tool.spec.node_invoke.args.command")},
                     "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")},
                     "metadata": {"type": "object", "description": t("tool.spec.node_invoke.args.metadata")}
                 },
-                "required": ["node_id", "command"]
+                "anyOf": [
+                    {"required": ["action"]},
+                    {"required": ["node_id", "command"]}
+                ],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "invoke"}}},
+                        "then": {"required": ["node_id", "command"]}
+                    }
+                ]
             }),
         },
     ]
@@ -1148,10 +1162,20 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
     }))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeInvokeAction {
+    List,
+    Invoke,
+}
+
 #[derive(Debug, Deserialize)]
 struct NodeInvokeArgs {
-    node_id: String,
-    command: String,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    node_id: Option<String>,
+    #[serde(default)]
+    command: Option<String>,
     #[serde(default)]
     args: Option<Value>,
     #[serde(default)]
@@ -1163,24 +1187,119 @@ struct NodeInvokeArgs {
 async fn execute_node_invoke(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: NodeInvokeArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    match resolve_node_invoke_action(&payload)? {
+        NodeInvokeAction::List => execute_node_list(context).await,
+        NodeInvokeAction::Invoke => execute_node_invoke_action(context, payload).await,
+    }
+}
+
+fn resolve_node_invoke_action(payload: &NodeInvokeArgs) -> Result<NodeInvokeAction> {
+    if let Some(action) = payload.action.as_deref() {
+        let action = action.trim();
+        if action.is_empty() {
+            return Err(anyhow!("节点调用 action 不能为空"));
+        }
+        let normalized = action.to_ascii_lowercase();
+        return match normalized.as_str() {
+            "list" | "ls" | "列表" | "列出" => Ok(NodeInvokeAction::List),
+            "invoke" | "call" | "调用" => Ok(NodeInvokeAction::Invoke),
+            _ => Err(anyhow!("未知节点调用 action: {action}")),
+        };
+    }
+    let has_node_id = payload
+        .node_id
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_command = payload
+        .command
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if has_node_id && has_command {
+        Ok(NodeInvokeAction::Invoke)
+    } else {
+        Err(anyhow!(
+            "节点调用缺少 action，支持 list/invoke；兼容模式下需提供 node_id 与 command"
+        ))
+    }
+}
+
+async fn execute_node_list(context: &ToolContext<'_>) -> Result<Value> {
     let gateway = context
         .gateway
         .clone()
         .ok_or_else(|| anyhow!("gateway not available"))?;
+    let snapshot = gateway.snapshot().await;
+    let mut nodes = Vec::new();
+    for item in snapshot.items {
+        if !item.role.eq_ignore_ascii_case("node") {
+            continue;
+        }
+        let Some(node_id) = normalize_optional_string(item.node_id) else {
+            continue;
+        };
+        nodes.push(json!({
+            "node_id": node_id,
+            "connection_id": item.connection_id,
+            "scopes": item.scopes,
+            "caps": item.caps,
+            "commands": item.commands,
+            "connected_at": item.connected_at,
+            "last_seen_at": item.last_seen_at,
+            "client": item.client
+        }));
+    }
+    nodes.sort_by(|left, right| {
+        let left_node = left.get("node_id").and_then(Value::as_str).unwrap_or("");
+        let right_node = right.get("node_id").and_then(Value::as_str).unwrap_or("");
+        left_node.cmp(right_node).then_with(|| {
+            let left_connection = left
+                .get("connection_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let right_connection = right
+                .get("connection_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            left_connection.cmp(right_connection)
+        })
+    });
+    Ok(json!({
+        "action": "list",
+        "state_version": snapshot.state_version,
+        "count": nodes.len(),
+        "nodes": nodes
+    }))
+}
+
+async fn execute_node_invoke_action(
+    context: &ToolContext<'_>,
+    payload: NodeInvokeArgs,
+) -> Result<Value> {
+    let gateway = context
+        .gateway
+        .clone()
+        .ok_or_else(|| anyhow!("gateway not available"))?;
+    let node_id = normalize_optional_string(payload.node_id)
+        .ok_or_else(|| anyhow!("节点调用 invoke 需要 node_id"))?;
+    let command = normalize_optional_string(payload.command)
+        .ok_or_else(|| anyhow!("节点调用 invoke 需要 command"))?;
     let timeout_s = payload.timeout_s.unwrap_or(30.0);
     let result = gateway
         .invoke_node(GatewayNodeInvokeRequest {
-            node_id: payload.node_id.clone(),
-            command: payload.command.clone(),
-            args: payload.args.clone(),
+            node_id: node_id.clone(),
+            command: command.clone(),
+            args: payload.args,
             timeout_s,
-            metadata: payload.metadata.clone(),
+            metadata: payload.metadata,
         })
         .await?;
     if result.ok {
         Ok(json!({
-            "node_id": payload.node_id,
-            "command": payload.command,
+            "action": "invoke",
+            "node_id": node_id,
+            "command": command,
             "result": result.payload
         }))
     } else {

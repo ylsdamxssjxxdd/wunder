@@ -10,6 +10,7 @@ pub mod core;
 pub mod core_ws;
 pub mod cron;
 pub mod doc2md;
+pub(crate) mod errors;
 pub mod evaluation;
 pub mod external_links;
 pub mod gateway_ws;

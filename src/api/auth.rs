@@ -6,7 +6,7 @@ use crate::storage::OrgUnitRecord;
 use crate::user_store::UserStore;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -314,7 +314,7 @@ fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 fn now_ts() -> f64 {

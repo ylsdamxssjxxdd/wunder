@@ -3,14 +3,13 @@ use crate::state::AppState;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query};
 use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use chrono::{DateTime, Local};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -450,7 +449,7 @@ fn cleanup_temp_files(pending: &[PendingUpload], dir: Option<&PathBuf>) {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 #[derive(Debug, Deserialize)]

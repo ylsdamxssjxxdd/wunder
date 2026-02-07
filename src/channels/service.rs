@@ -647,16 +647,16 @@ impl ChannelHub {
             .as_ref()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
-        if outbound_url.is_none() {
+        let Some(outbound_url) = outbound_url else {
             self.update_outbox_status(record, "sent", None).await?;
             return Ok(());
-        }
+        };
         let payload = record.payload.clone();
         let headers = build_outbound_headers(&account_cfg)?;
         let timeout = account_cfg.timeout_s.unwrap_or(10);
         let response = self
             .http
-            .post(outbound_url.unwrap())
+            .post(outbound_url)
             .headers(headers)
             .timeout(Duration::from_secs(timeout.max(1)))
             .json(&payload)

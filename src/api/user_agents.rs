@@ -10,7 +10,7 @@ use crate::user_access::{
 use anyhow::Result;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -689,7 +689,7 @@ fn build_icon_payload(name: &str, color: &str) -> String {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 #[derive(Debug, Deserialize)]

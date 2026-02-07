@@ -30,6 +30,21 @@
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
 
+### 4.0.1 统一错误响应（HTTP）
+
+- HTTP 错误统一返回 JSON 结构：
+  - `ok`：固定为 `false`
+  - `error.code`：稳定错误码（例如 `BAD_REQUEST` / `UNAUTHORIZED` / `NOT_FOUND` / `INTERNAL_ERROR`）
+  - `error.message`：人类可读错误信息
+  - `error.status`：HTTP 状态码数值
+  - `error.hint`：可执行的排障提示
+  - `error.trace_id`：请求级追踪 ID，同时通过响应头 `x-trace-id` 返回
+  - `error.timestamp`：UNIX 时间戳（秒，浮点）
+- 兼容历史客户端（4.0.1 之前依赖旧格式）时仍保留 `detail.message`。
+- 响应头同步返回：
+  - `x-trace-id`：与 `error.trace_id` 一致
+  - `x-error-code`：与 `error.code` 一致
+
 ### 4.1 `/wunder` 请求
 
 - 方法：`POST`
@@ -91,7 +106,9 @@
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
-- 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），用于通过网关调用已连接的节点能力。
+- 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
+- `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
+- 兼容旧入参：未传 `action` 但同时提供 `node_id + command` 时仍按 `invoke` 处理。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
@@ -1596,7 +1613,7 @@
   - 鉴权：Bearer Token
   - 入参（JSON）：`username`（可选）、`email`（可选）、`unit_id`（可选）
   - 返回（JSON）：`data`（UserProfile）
-- 错误返回：`detail.message`
+- 错误返回：统一结构见“4.0.1 统一错误响应（HTTP）”；兼容字段仍保留 `detail.message`。
 
 #### UserProfile
 
@@ -1864,7 +1881,7 @@
 - `title`: app name
 - `description`: description
 - `url`: target URL
-- `icon`: Font Awesome icon class (for example `fa-globe`)
+- `icon`: Font Awesome icon config; supports plain class string (`fa-globe`) or JSON string (`{"name":"fa-globe","color":"#2563eb"}`)
 - `allowed_levels`: allowed org levels (empty means all)
 - `sort_order`: sort value (ascending)
 - `enabled`: enable status
@@ -2040,18 +2057,25 @@
 - 应用层握手：连接建立后服务端发送 `ready`（含 `protocol`/`policy`）；客户端建议先发送 `connect` 携带协议版本与客户端信息，不兼容会返回 `error` 并关闭连接；未发送 `connect` 时按默认协议版本处理
 - 慢客户端告警：当客户端消费过慢导致队列压力时，服务端会发送 `event=slow_client`，前端可提示用户触发 `resume`
 - 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
+- `type=error` 统一错误载荷字段：`code`/`message`/`status`/`hint`/`trace_id`/`timestamp`。
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
 - 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
 
-### 4.2.3 Gateway WebSocket 控制面
+### 4.2.3 Gateway WebSocket Control Plane
 
-- Endpoint：`/wunder/gateway/ws`
-- 角色：`operator`/`node`/`channel`，通过 `connect` 的 `role` 参数声明。
-- 鉴权：`connect.params.auth.token` 对应 `gateway.auth_token`；节点可提供 `auth.node_token`（由管理端签发）。
-- 首帧必须 `connect`（`type=req`），携带协议版本范围、角色、能力（`caps/commands`）与设备信息。
-- 服务端返回 `type=res` + `hello-ok`，包含 `protocol/policy/presence/stateVersion`。
-- 节点执行由网关发起 `type=req` + `method=node.invoke`，节点返回 `type=res`。
+- Endpoint: `/wunder/gateway/ws`
+- Roles: `operator`/`node`/`channel`, declared via `connect.role`.
+- Auth: `connect.params.auth.token` maps to `gateway.auth_token`; nodes can additionally provide `auth.node_token` issued by admin APIs.
+- Handshake requirement: first frame must be `type=req` + `method=connect`, and handshake must finish within `10s`, otherwise server returns `HANDSHAKE_TIMEOUT` and closes.
+- Payload validation: gateway envelope and `connect.params` both reject unknown fields; `req` requires non-empty `id/method`; `res` requires non-empty `id` and explicit `ok`.
+- Origin validation: when `Origin` header exists, it must be same-host (loopback exception) or be explicitly listed in `gateway.allowed_origins`.
+- Trusted proxy behavior: `X-Forwarded-For/X-Real-IP` is trusted only when remote address is in `gateway.trusted_proxies`; resolved client IP is returned as `hello-ok.payload.client_ip`.
+- Server `hello-ok` payload includes `protocol/policy/presence/stateVersion/server_time/client_ip`.
+- Runtime events: gateway emits periodic `gateway.tick` (policy interval) and `gateway.health` (every 60s with `connections/nodes_online/stateVersion`).
+- Error observability: when `res.ok=false`, `error` includes `code/message/status/hint/trace_id/timestamp` for cross-end tracing.
+- Slow client governance: presence/event fan-out uses non-blocking send; repeatedly backpressured clients are evicted and a fresh `gateway.presence.update` is broadcast.
+- `node.invoke` response correlation is strictly validated by `request_id + connection_id + node_id` to prevent cross-connection spoofing.
 
 ### 4.3 非流式响应
 
@@ -2173,6 +2197,7 @@
   - `SendStreamingMessage` 返回 `text/event-stream`
   - SSE data 内容为 A2A StreamResponse（`task`/`statusUpdate`/`artifactUpdate`）
   - `statusUpdate.final=true` 表示任务结束
+- 错误观测：JSON-RPC 错误除标准 `error.code/error.message` 外，`error.data` 统一补充 `error_code/status/hint/trace_id/timestamp`，并保留业务字段（如 `taskId/quota/detail`）。
 
 ## 5. 附录：辅助脚本
 

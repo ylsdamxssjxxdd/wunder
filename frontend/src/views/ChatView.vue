@@ -55,15 +55,44 @@
           >
             <i class="fa-solid fa-earth-asia topbar-icon" aria-hidden="true"></i>
           </button>
-          <button
-            class="topbar-icon-btn"
-            type="button"
-            :title="t('chat.toolAdjust')"
-            :aria-label="t('chat.toolAdjust')"
-            @click="openSessionTools"
-          >
-            <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
-          </button>
+          <div ref="featureMenuRef" class="topbar-feature-menu-wrap">
+            <button
+              class="topbar-panel-btn topbar-feature-btn"
+              type="button"
+              :title="t('chat.features')"
+              :aria-label="t('chat.features')"
+              @click.stop="toggleFeatureMenu"
+            >
+              <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
+              <span class="topbar-panel-text">{{ t('chat.features') }}</span>
+            </button>
+            <div v-if="featureMenuVisible" class="topbar-feature-menu">
+              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('cron')">
+                <i class="fa-solid fa-clock topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.cron') }}</span>
+              </button>
+              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('channels')">
+                <i class="fa-solid fa-share-nodes topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.channels') }}</span>
+              </button>
+              <button
+                class="topbar-feature-item"
+                type="button"
+                @click="handleFeatureAction('agent-settings')"
+              >
+                <i class="fa-solid fa-pen-to-square topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.agentSettings') }}</span>
+              </button>
+              <button
+                class="topbar-feature-item topbar-feature-item-danger"
+                type="button"
+                @click="handleFeatureAction('agent-delete')"
+              >
+                <i class="fa-solid fa-trash-can topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.agentDelete') }}</span>
+              </button>
+            </div>
+          </div>
           <ThemeToggle />
           <div class="topbar-user">
             <button
@@ -430,66 +459,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="sessionToolsVisible"
-      class="session-tools-dialog"
-      width="780px"
-      top="8vh"
-      :show-close="false"
-      :close-on-click-modal="false"
-      append-to-body
-    >
-      <template #header>
-        <div class="system-prompt-header">
-          <div class="system-prompt-title">{{ t('chat.sessionTools.title') }}</div>
-          <button class="icon-btn" type="button" @click="closeSessionTools">×</button>
-        </div>
-      </template>
-      <div class="session-tools-body">
-        <div class="session-tools-bar">
-          <div class="session-tools-meta">
-            {{ t('chat.sessionTools.summary', { available: availableToolCount, selected: sessionToolSelectionCount }) }}
-          </div>
-        </div>
-        <div v-if="sessionToolsDisabled" class="session-tools-muted">
-          {{ t('chat.sessionTools.none') }}
-        </div>
-        <div v-else class="session-tools-groups">
-          <div v-if="!filteredToolGroups.length" class="session-tools-empty">
-            {{ t('chat.sessionTools.empty') }}
-          </div>
-          <div v-for="group in filteredToolGroups" :key="group.label" class="session-tools-group">
-            <div class="session-tools-group-title">{{ group.label }}</div>
-            <div class="session-tools-items">
-              <label
-                v-for="tool in group.items"
-                :key="tool.name"
-                class="session-tools-item"
-              >
-                <input
-                  type="checkbox"
-                  :checked="isSessionToolSelected(tool.name)"
-                  @change="toggleSessionTool(tool.name, $event.target.checked)"
-                />
-                <div class="session-tools-item-info">
-                  <div class="session-tools-item-name">{{ tool.name }}</div>
-                  <div class="session-tools-item-desc">
-                    {{ tool.description || t('chat.ability.noDesc') }}
-                  </div>
-                </div>
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="resetSessionTools">{{ t('chat.sessionTools.reset') }}</el-button>
-        <el-button @click="closeSessionTools">{{ t('chat.sessionTools.cancel') }}</el-button>
-        <el-button type="primary" :loading="sessionToolsSaving" @click="saveSessionTools">
-          {{ t('chat.sessionTools.apply') }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <FeatureCronDialog v-model="cronDialogVisible" :agent-id="activeAgentId" />
+    <FeatureChannelDialog v-model="channelDialogVisible" :agent-id="activeAgentId" />
+    <FeatureAgentSettingsDialog
+      v-model="agentSettingsVisible"
+      :agent-id="activeAgentId"
+      @deleted="handleActiveAgentDeleted"
+    />
 
     <el-dialog
       v-model="imagePreviewVisible"
@@ -644,6 +620,9 @@ import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt } from '@/api/chat'
 import { downloadWunderWorkspaceFile } from '@/api/workspace';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
+import FeatureAgentSettingsDialog from '@/components/chat/FeatureAgentSettingsDialog.vue';
+import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
+import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
@@ -661,6 +640,7 @@ import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const route = useRoute();
@@ -693,15 +673,15 @@ const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
 const workspaceDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
+const featureMenuVisible = ref(false);
+const featureMenuRef = ref(null);
+const cronDialogVisible = ref(false);
+const channelDialogVisible = ref(false);
+const agentSettingsVisible = ref(false);
 const isCompactLayout = ref(false);
 const promptToolSummary = ref(null);
 const toolSummaryLoading = ref(false);
 const toolSummaryError = ref('');
-const sessionToolsVisible = ref(false);
-const sessionToolsSaving = ref(false);
-const sessionToolSearch = ref('');
-const sessionToolSelection = ref(new Set());
-const sessionToolsDisabled = ref(false);
 const abilityTooltipRef = ref(null);
 const abilityTooltipVisible = ref(false);
 const abilityTooltipOptions = {
@@ -722,20 +702,6 @@ const normalizeToolItemName = (item) => {
   if (!item) return '';
   if (typeof item === 'string') return item;
   return item.name || item.tool_name || item.toolName || item.id || '';
-};
-
-const normalizeToolItem = (item) => {
-  if (!item) return null;
-  if (typeof item === 'string') {
-    const name = item.trim();
-    return name ? { name, description: '' } : null;
-  }
-  const name = String(item.name || '').trim();
-  if (!name) return null;
-  return {
-    name,
-    description: String(item.description || '').trim()
-  };
 };
 
 const buildAllowedToolSet = (summary) => {
@@ -803,6 +769,7 @@ const activeAgentId = computed(
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
+const canManageActiveAgent = computed(() => Boolean(String(activeAgentId.value || '').trim()));
 const activeAgentLabel = computed(
   () => activeAgent.value?.name || activeAgentId.value || ''
 );
@@ -839,43 +806,6 @@ const abilitySummary = computed(() => collectAbilityDetails(effectiveToolSummary
 const hasAbilitySummary = computed(
   () => abilitySummary.value.tools.length > 0 || abilitySummary.value.skills.length > 0
 );
-const availableToolCount = computed(() => buildAllowedToolSet(promptToolSummary.value).size);
-const sessionToolSelectionCount = computed(() =>
-  sessionToolsDisabled.value ? 0 : sessionToolSelection.value.size
-);
-const sessionToolGroups = computed(() => {
-  const summary = promptToolSummary.value || {};
-  const buildGroup = (labelKey, list) => ({
-    label: t(labelKey),
-    items: (Array.isArray(list) ? list : []).map(normalizeToolItem).filter(Boolean)
-  });
-  return [
-    buildGroup('portal.agent.tools.group.builtin', summary.builtin_tools),
-    buildGroup('portal.agent.tools.group.mcp', summary.mcp_tools),
-    buildGroup('portal.agent.tools.group.a2a', summary.a2a_tools),
-    buildGroup('portal.agent.tools.group.knowledge', summary.knowledge_tools),
-    buildGroup('portal.agent.tools.group.user', summary.user_tools),
-    buildGroup('portal.agent.tools.group.shared', summary.shared_tools),
-    buildGroup('portal.agent.tools.group.skills', summary.skills)
-  ].filter((group) => group.items.length > 0);
-});
-const filteredToolGroups = computed(() => {
-  const keyword = sessionToolSearch.value.trim().toLowerCase();
-  if (!keyword) {
-    return sessionToolGroups.value;
-  }
-  return sessionToolGroups.value
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => {
-        const name = String(item.name || '').toLowerCase();
-        const desc = String(item.description || '').toLowerCase();
-        return name.includes(keyword) || desc.includes(keyword);
-      })
-    }))
-    .filter((group) => group.items.length > 0);
-});
-
 const HISTORY_ROW_HEIGHT = 52;
 const HISTORY_OVERSCAN = 6;
 const historySourceSessions = computed(() => {
@@ -965,7 +895,102 @@ const handleOpenProfile = () => {
 };
 
 const handleOpenPortal = () => {
-  router.push(`${basePath.value}/home`);
+  router.push(basePath.value + '/home');
+};
+
+const closeFeatureMenu = () => {
+  featureMenuVisible.value = false;
+};
+
+const toggleFeatureMenu = () => {
+  featureMenuVisible.value = !featureMenuVisible.value;
+};
+
+const openCronDialog = () => {
+  cronDialogVisible.value = true;
+};
+
+const openChannelDialog = () => {
+  channelDialogVisible.value = true;
+};
+
+const openAgentSettingsDialog = async () => {
+  if (!canManageActiveAgent.value) {
+    ElMessage.warning(t('chat.features.agentMissing'));
+    return;
+  }
+  if (activeAgentId.value && !activeAgent.value) {
+    await agentStore.getAgent(activeAgentId.value).catch(() => null);
+  }
+  agentSettingsVisible.value = true;
+};
+
+const handleActiveAgentDeleted = (deletedAgentId) => {
+  const target = String(deletedAgentId || '').trim();
+  if (!target) return;
+  if (target !== String(activeAgentId.value || '').trim()) return;
+  router.replace({ path: basePath.value + '/chat', query: { entry: 'default' } });
+};
+
+const deleteActiveAgent = async () => {
+  if (!canManageActiveAgent.value) {
+    ElMessage.warning(t('chat.features.agentMissing'));
+    return;
+  }
+  const agentId = String(activeAgentId.value || '').trim();
+  if (!agentId) return;
+  const agent = activeAgent.value || (await agentStore.getAgent(agentId).catch(() => null));
+  const agentName = String(agent?.name || agentId).trim();
+  try {
+    await ElMessageBox.confirm(
+      t('portal.agent.deleteConfirm', { name: agentName }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('portal.agent.delete'),
+        cancelButtonText: t('portal.agent.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch (error) {
+    return;
+  }
+  try {
+    await agentStore.deleteAgent(agentId);
+    ElMessage.success(t('portal.agent.deleteSuccess'));
+    handleActiveAgentDeleted(agentId);
+  } catch (error) {
+    showApiError(error, t('portal.agent.deleteFailed'));
+  }
+};
+
+const handleFeatureAction = async (action) => {
+  const target = String(action || '').trim();
+  if (!target) return;
+  closeFeatureMenu();
+  if (target === 'cron') {
+    openCronDialog();
+    return;
+  }
+  if (target === 'channels') {
+    openChannelDialog();
+    return;
+  }
+  if (target === 'agent-settings') {
+    await openAgentSettingsDialog();
+    return;
+  }
+  if (target === 'agent-delete') {
+    await deleteActiveAgent();
+  }
+};
+
+const handleFeatureMenuClickOutside = (event) => {
+  const root = featureMenuRef.value;
+  if (!root) return;
+  const target = event.target;
+  if (target instanceof Node && !root.contains(target)) {
+    closeFeatureMenu();
+  }
 };
 
 const handleSelectSession = async (sessionId) => {
@@ -1562,7 +1587,7 @@ const openPromptPreview = async () => {
     const responsePayload = promptResult?.data?.data || {};
     promptPreviewContent.value = responsePayload.prompt || '';
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('chat.systemPromptFailed'));
+    showApiError(error, t('chat.systemPromptFailed'));
     promptPreviewContent.value = '';
   } finally {
     promptPreviewLoading.value = false;
@@ -1571,105 +1596,6 @@ const openPromptPreview = async () => {
 
 const closePromptPreview = () => {
   promptPreviewVisible.value = false;
-};
-
-const buildDefaultToolSet = () => {
-  const allowedSet = buildAllowedToolSet(promptToolSummary.value);
-  const defaultSet = new Set();
-  const agentTools = activeAgent.value?.tool_names || [];
-  if (agentTools.length > 0) {
-    agentTools.forEach((name) => {
-      if (allowedSet.has(name)) {
-        defaultSet.add(name);
-      }
-    });
-  } else {
-    allowedSet.forEach((name) => defaultSet.add(name));
-  }
-  return { allowedSet, defaultSet };
-};
-
-const openSessionTools = async () => {
-  await loadToolSummary();
-  if (activeAgentId.value && !activeAgent.value) {
-    await agentStore.getAgent(activeAgentId.value);
-  }
-  const { allowedSet, defaultSet } = buildDefaultToolSet();
-  const overrides =
-    activeSession.value?.tool_overrides ||
-    (Array.isArray(chatStore.draftToolOverrides) ? chatStore.draftToolOverrides : []);
-  if (overrides.includes(TOOL_OVERRIDE_NONE)) {
-    sessionToolsDisabled.value = true;
-    sessionToolSelection.value = new Set(defaultSet);
-  } else if (overrides.length > 0) {
-    sessionToolsDisabled.value = false;
-    sessionToolSelection.value = new Set(
-      overrides.filter((name) => allowedSet.has(name))
-    );
-  } else {
-    sessionToolsDisabled.value = false;
-    sessionToolSelection.value = new Set(defaultSet);
-  }
-  sessionToolSearch.value = '';
-  sessionToolsVisible.value = true;
-};
-
-const closeSessionTools = () => {
-  sessionToolsVisible.value = false;
-};
-
-const isSessionToolSelected = (name) => sessionToolSelection.value.has(name);
-
-const toggleSessionTool = (name, checked) => {
-  if (sessionToolsDisabled.value) return;
-  const next = new Set(sessionToolSelection.value);
-  if (checked) {
-    next.add(name);
-  } else {
-    next.delete(name);
-  }
-  sessionToolSelection.value = next;
-};
-
-const resetSessionTools = () => {
-  const { defaultSet } = buildDefaultToolSet();
-  sessionToolsDisabled.value = false;
-  sessionToolSelection.value = new Set(defaultSet);
-  if (!chatStore.activeSessionId) {
-    chatStore.setDraftToolOverrides([]);
-  }
-};
-
-const saveSessionTools = async () => {
-  const { allowedSet, defaultSet } = buildDefaultToolSet();
-  let overrides = [];
-  if (sessionToolsDisabled.value) {
-    overrides = [TOOL_OVERRIDE_NONE];
-  } else {
-    const selection = Array.from(sessionToolSelection.value).filter((name) =>
-      allowedSet.has(name)
-    );
-    const selectionSet = new Set(selection);
-    const isDefault =
-      selectionSet.size === defaultSet.size &&
-      Array.from(defaultSet).every((name) => selectionSet.has(name));
-    overrides = isDefault ? [] : selection.sort();
-  }
-  if (!chatStore.activeSessionId) {
-    chatStore.setDraftToolOverrides(overrides);
-    closeSessionTools();
-    ElMessage.success(t('chat.sessionSaved'));
-    return;
-  }
-  sessionToolsSaving.value = true;
-  try {
-    await chatStore.updateSessionTools(chatStore.activeSessionId, overrides);
-    closeSessionTools();
-  } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('chat.sessionToolFailed'));
-  } finally {
-    sessionToolsSaving.value = false;
-  }
 };
 
 const parseTimeValue = (value) => {
@@ -1860,12 +1786,14 @@ onMounted(async () => {
   window.addEventListener('resize', updateCompactLayout);
   window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('visibilitychange', flushChatSnapshot);
+  document.addEventListener('click', handleFeatureMenuClickOutside);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateCompactLayout);
   window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('visibilitychange', flushChatSnapshot);
+  document.removeEventListener('click', handleFeatureMenuClickOutside);
   if (stopWorkspaceRefreshListener) {
     stopWorkspaceRefreshListener();
     stopWorkspaceRefreshListener = null;
@@ -1981,6 +1909,13 @@ watch(
     if (value === oldValue) return;
     if (routeEntry.value === 'default') return;
     await openAgentSession(value);
+  }
+);
+
+watch(
+  () => route.fullPath,
+  () => {
+    closeFeatureMenu();
   }
 );
 

@@ -45,10 +45,6 @@
                 <i class="fa-solid fa-gear"></i>
                 <span data-i18n="panel.settings">系统设置</span>
               </button>
-              <button id="navLlm" class="nav-btn">
-                <i class="fa-solid fa-sliders"></i>
-                <span data-i18n="panel.llm">模型配置</span>
-              </button>
               <button id="navOrgUnits" class="nav-btn">
                 <i class="fa-solid fa-sitemap"></i>
                 <span data-i18n="panel.orgUnits">单位管理</span>
@@ -61,8 +57,21 @@
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 <span data-i18n="panel.externalLinks">外链管理</span>
               </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="agent">
+            <button class="nav-group-btn" type="button">
+              <i class="fa-solid fa-robot"></i>
+              <span data-i18n="sidebar.group.agent">智能体</span>
+              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
+            </button>
+            <div class="nav-children">
+              <button id="navLlm" class="nav-btn">
+                <i class="fa-solid fa-sliders"></i>
+                <span data-i18n="panel.llm">模型配置</span>
+              </button>
               <button id="navUsers" class="nav-btn">
-                <i class="fa-solid fa-robot"></i>
+                <i class="fa-solid fa-code-branch"></i>
                 <span data-i18n="panel.users">线程管理</span>
               </button>
               <button id="navMemory" class="nav-btn">
@@ -73,34 +82,9 @@
                 <i class="fa-solid fa-link"></i>
                 <span data-i18n="panel.channels">渠道管理</span>
               </button>
-            </div>
-          </div>
-          <div class="nav-group" data-group="tools">
-            <button class="nav-group-btn" type="button">
-              <i class="fa-solid fa-toolbox"></i>
-              <span data-i18n="sidebar.group.tools">工具</span>
-              <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
-            </button>
-            <div class="nav-children">
               <button id="navBuiltin" class="nav-btn">
-                <i class="fa-solid fa-tools"></i>
-                <span data-i18n="panel.builtin">内置工具</span>
-              </button>
-              <button id="navMcp" class="nav-btn">
-                <i class="fa-solid fa-plug"></i>
-                <span data-i18n="panel.mcp">MCP 服务</span>
-              </button>
-              <button id="navKnowledge" class="nav-btn">
-                <i class="fa-solid fa-book"></i>
-                <span data-i18n="panel.knowledge">知识库</span>
-              </button>
-              <button id="navA2aServices" class="nav-btn">
-                <i class="fa-solid fa-diagram-project"></i>
-                <span data-i18n="panel.a2aServices">A2A 服务</span>
-              </button>
-              <button id="navSkills" class="nav-btn">
-                <i class="fa-solid fa-wand-magic-sparkles"></i>
-                <span data-i18n="panel.skills">技能管理</span>
+                <i class="fa-solid fa-toolbox"></i>
+                <span data-i18n="panel.toolManager">工具管理</span>
               </button>
             </div>
           </div>
@@ -686,14 +670,14 @@
           <div class="tips" data-i18n="externalLinks.tip">
             Configure external apps shown on the world page and control access by org level.
           </div>
-          <div class="management-layout external-links-layout">
-            <div class="management-list">
+          <div class="management-layout external-links-layout external-links-layout--pro">
+            <div class="management-list external-links-list-pane">
               <div class="list-header">
                 <label data-i18n="externalLinks.list.title">Link List</label>
               </div>
               <div id="externalLinkList" class="external-link-list"></div>
             </div>
-            <div class="management-detail external-link-detail">
+            <div class="management-detail external-link-detail external-links-detail-pane">
               <div class="detail-header">
                 <div>
                   <div id="externalLinkDetailTitle" class="detail-title" data-i18n="externalLinks.detail.empty">
@@ -717,9 +701,25 @@
                   <label for="externalLinkFormUrl" data-i18n="externalLinks.form.url">URL</label>
                   <input id="externalLinkFormUrl" type="url" placeholder="https://" />
                 </div>
-                <div class="form-row">
-                  <label for="externalLinkFormIcon" data-i18n="externalLinks.form.icon">Icon</label>
-                  <input id="externalLinkFormIcon" type="text" placeholder="fa-globe" />
+                <div class="form-row form-row--icon">
+                  <label for="externalLinkIconTrigger" data-i18n="externalLinks.form.icon">Icon</label>
+                  <div class="external-link-icon-field">
+                    <div class="external-link-icon-input-wrap">
+                      <input id="externalLinkFormIcon" type="hidden" value="fa-globe" />
+                      <button id="externalLinkIconTrigger" class="external-link-icon-trigger" type="button">
+                        <span id="externalLinkIconPreview" class="external-link-icon-preview" aria-hidden="true">
+                          <i class="fa-solid fa-globe"></i>
+                        </span>
+                        <span class="external-link-icon-trigger-text">
+                          <span data-i18n="externalLinks.form.iconPick">Pick Icon</span>
+                          <span id="externalLinkIconName" class="external-link-icon-name">fa-globe</span>
+                        </span>
+                      </button>
+                    </div>
+                    <div class="muted external-link-icon-hint" data-i18n="externalLinks.form.iconHint">
+                      Click the icon button to open popup and pick icon color.
+                    </div>
+                  </div>
                 </div>
                 <div class="form-row">
                   <label for="externalLinkFormDescription" data-i18n="externalLinks.form.description">Description</label>
@@ -756,6 +756,51 @@
             </div>
           </div>
         </section>
+        <div id="externalLinkIconModal" class="modal">
+          <div class="modal-card external-link-icon-modal-card">
+            <div class="modal-header">
+              <div class="detail-title" data-i18n="externalLinks.iconModal.title">Pick Icon</div>
+              <button id="externalLinkIconModalClose" class="icon-btn" type="button">&times;</button>
+            </div>
+            <div class="modal-body external-link-icon-modal-body">
+              <div class="external-link-icon-modal-preview-wrap">
+                <span id="externalLinkIconModalPreview" class="external-link-icon-modal-preview" aria-hidden="true">
+                  <i class="fa-solid fa-globe"></i>
+                </span>
+                <span class="muted" data-i18n="externalLinks.iconModal.previewHint">Preview</span>
+              </div>
+              <div class="form-row">
+                <label for="externalLinkIconColorInput" data-i18n="externalLinks.form.iconColor">Color</label>
+                <div class="external-link-color-row">
+                  <input id="externalLinkIconColorInput" type="color" value="#2563eb" />
+                  <input id="externalLinkIconColorText" type="text" placeholder="#2563eb" />
+                  <button id="externalLinkIconColorReset" class="secondary" type="button" data-i18n="externalLinks.iconModal.reset">
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <div class="form-row">
+                <label data-i18n="externalLinks.iconModal.icons">Icons</label>
+                <div
+                  id="externalLinkIconPicker"
+                  class="external-link-icon-picker external-link-icon-picker--modal"
+                  role="listbox"
+                  aria-label="External link icon picker"
+                ></div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="externalLinkIconModalCancel" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i>
+                <span data-i18n="common.cancel">Cancel</span>
+              </button>
+              <button id="externalLinkIconModalApply" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-check"></i>
+                <span data-i18n="externalLinks.iconModal.apply">Apply</span>
+              </button>
+            </div>
+          </div>
+        </div>
         <section id="orgUnitsPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="orgUnits.title">单位管理</h1>
@@ -1857,14 +1902,14 @@
           <div class="tips" data-i18n="channels.tip">
             维护开放给用户的渠道账号，支持停用或更新渠道配置（如 token、Webhook 信息）。
           </div>
-          <div class="management-layout">
-            <div class="management-list">
+          <div class="management-layout channels-management-layout">
+            <div class="management-list channels-list-pane">
               <div class="list-header">
                 <label data-i18n="channels.list.title">渠道列表</label>
               </div>
               <div id="channelAccountList" class="list-body"></div>
             </div>
-            <div class="management-detail">
+            <div class="management-detail channels-detail-pane">
               <div class="detail-header">
                 <div>
                   <div
@@ -1902,14 +1947,51 @@
         </section>
         <section id="builtinPanel" class="panel">
           <div class="list-header">
-            <h1 data-i18n="builtin.title">内置工具</h1>
+            <h1 data-i18n="panel.toolManager">工具管理</h1>
             <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
               <i class="fa-solid fa-arrows-rotate"></i>
               <span data-i18n="builtin.refresh">刷新工具</span>
             </button>
           </div>
-          <div class="tips" data-i18n="builtin.tip">
-            勾选后将注入系统提示词，不勾选则不加入。
+          <div class="tips" data-i18n="toolManager.tip">
+            统一入口管理内置工具、MCP、知识库、A2A 服务与技能配置。
+          </div>
+          <div class="tool-manager-shortcuts">
+            <button id="toolManagerOpenBuiltin" class="secondary btn-with-icon tool-manager-shortcut" type="button" data-tool-panel="builtin" aria-pressed="false">
+              <i class="fa-solid fa-tools"></i>
+              <span data-i18n="panel.builtin">内置工具</span>
+            </button>
+            <button id="toolManagerOpenMcp" class="secondary btn-with-icon tool-manager-shortcut" type="button" data-tool-panel="mcp" aria-pressed="false">
+              <i class="fa-solid fa-plug"></i>
+              <span data-i18n="panel.mcp">MCP 服务</span>
+            </button>
+            <button
+              id="toolManagerOpenKnowledge"
+              class="secondary btn-with-icon tool-manager-shortcut"
+              type="button"
+              data-tool-panel="knowledge"
+              aria-pressed="false"
+            >
+              <i class="fa-solid fa-book"></i>
+              <span data-i18n="panel.knowledge">知识库</span>
+            </button>
+            <button
+              id="toolManagerOpenA2aServices"
+              class="secondary btn-with-icon tool-manager-shortcut"
+              type="button"
+              data-tool-panel="a2aServices"
+              aria-pressed="false"
+            >
+              <i class="fa-solid fa-diagram-project"></i>
+              <span data-i18n="panel.a2aServices">A2A 服务</span>
+            </button>
+            <button id="toolManagerOpenSkills" class="secondary btn-with-icon tool-manager-shortcut" type="button" data-tool-panel="skills" aria-pressed="false">
+              <i class="fa-solid fa-wand-magic-sparkles"></i>
+              <span data-i18n="panel.skills">技能管理</span>
+            </button>
+          </div>
+          <div class="tool-manager-shortcuts-hint" data-i18n="toolManager.shortcutHint">
+            点击上方子模块可切换到对应配置页面；当前列表用于内置工具启停。
           </div>
           <div class="skills-panel">
             <div id="builtinToolsList" class="tool-list"></div>
@@ -3350,7 +3432,8 @@
         <div class="modal-body">
           <div class="form-row">
             <label for="channelAccountChannel" data-i18n="channels.field.channel">渠道</label>
-            <input id="channelAccountChannel" type="text" placeholder="whatsapp" />
+            <select id="channelAccountChannel"></select>
+            <div class="muted" data-i18n="channels.field.channelHint">请选择系统支持的渠道</div>
           </div>
           <div class="form-row">
             <label for="channelAccountId" data-i18n="channels.field.account">账号</label>

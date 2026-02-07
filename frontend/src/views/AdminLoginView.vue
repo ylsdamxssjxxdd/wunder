@@ -26,6 +26,7 @@ import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
+import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -48,7 +49,7 @@ const handleLogin = async () => {
     }
     router.push('/admin/users');
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.login.error'));
+    showApiError(error, t('admin.login.error'));
   }
 };
 </script>

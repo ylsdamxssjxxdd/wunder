@@ -118,6 +118,7 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 ## 脚本说明
 - `scripts/update_feature_log.py`：写入 `docs/功能迭代.md`
 - `EVA_SKILLS/wunder-agent-dev/scripts/gateway_smoke_test.py`：网关节点回路测试
+- EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py：管理端导航与 i18n 一致性检查
 
 ## 交付自检清单
 - [ ] 变更范围与主链路一致
@@ -125,3 +126,19 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - [ ] 迭代记录已写入
 - [ ] 格式化与基础回归通过
 - [ ] 联调脚本跑通
+
+
+## 近期补充经验（网关与前端重构）
+- 网关联调建议固定顺序：先确认网关开关与鉴权配置，再重启 docker compose，最后跑节点回路脚本。
+- 渠道入站建议统一走“解析 -> 归一化 -> 绑定路由 -> 主链路投递”，避免每个渠道重复造轮子。
+- 未命中渠道绑定时，建议默认回落到通用应用主线程，避免消息被吞。
+- 管理端导航改造为“系统/智能体/调试/文档”后，工具入口建议收敛到单入口，再用快捷按钮跳转子模块。
+- 多面板共用同一导航高亮时，需要在切面板逻辑里先清空全部 active，再设置当前 active。
+- 导航改造后的高频漏改点是四个文件：web/index.html、web/modules/elements.js、web/app.js、web/modules/i18n.js。
+- i18n 新键必须同步中英文，至少覆盖：分组名、面板名、提示语。
+- CLI 环境下不要用 shell 调 apply_patch，直接用编辑器或脚本改文件。
+
+### 管理端导航一致性检查脚本
+- 新增脚本：EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py
+- 用途：快速检查导航分组、工具快捷入口、JS 绑定和 i18n 键是否一致。
+- 运行方式：python3 EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py

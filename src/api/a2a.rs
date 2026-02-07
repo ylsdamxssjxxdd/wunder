@@ -565,13 +565,59 @@ fn jsonrpc_result(id: Value, result: Value) -> Response {
     Json(json!({ "jsonrpc": JSONRPC_VERSION, "id": id, "result": result })).into_response()
 }
 
-fn jsonrpc_error(id: Value, code: i64, message: String, data: Option<Value>) -> Response {
-    let mut error = json!({ "code": code, "message": message });
-    if let Some(extra) = data {
-        if let Value::Object(ref mut map) = error {
-            map.insert("data".to_string(), extra);
-        }
+fn a2a_error_code(code: i64) -> &'static str {
+    match code {
+        JSONRPC_PARSE_ERROR => "INVALID_JSON",
+        JSONRPC_INVALID_REQUEST => "INVALID_REQUEST",
+        JSONRPC_METHOD_NOT_FOUND => "METHOD_NOT_FOUND",
+        JSONRPC_INVALID_PARAMS => "INVALID_PARAMS",
+        JSONRPC_INTERNAL_ERROR => "INTERNAL_ERROR",
+        A2A_TASK_NOT_FOUND => "TASK_NOT_FOUND",
+        A2A_TASK_NOT_CANCELABLE => "TASK_NOT_CANCELABLE",
+        A2A_PUSH_NOT_SUPPORTED => "PUSH_NOT_SUPPORTED",
+        A2A_CONTENT_TYPE_NOT_SUPPORTED => "CONTENT_TYPE_NOT_SUPPORTED",
+        A2A_QUOTA_EXCEEDED => "USER_QUOTA_EXCEEDED",
+        A2A_VERSION_NOT_SUPPORTED => "VERSION_NOT_SUPPORTED",
+        _ => "REQUEST_ERROR",
     }
+}
+
+fn jsonrpc_error_data(extra: Option<Value>, meta: &crate::api::errors::ErrorMeta) -> Value {
+    let mut data = match extra {
+        Some(Value::Object(map)) => map,
+        Some(value) => {
+            let mut map = Map::new();
+            map.insert("detail".to_string(), value);
+            map
+        }
+        None => Map::new(),
+    };
+    data.entry("error_code".to_string())
+        .or_insert_with(|| json!(meta.code.clone()));
+    data.entry("status".to_string())
+        .or_insert_with(|| json!(meta.status));
+    data.entry("hint".to_string())
+        .or_insert_with(|| json!(meta.hint.clone()));
+    data.entry("trace_id".to_string())
+        .or_insert_with(|| json!(meta.trace_id.clone()));
+    data.entry("timestamp".to_string())
+        .or_insert_with(|| json!(meta.timestamp));
+    Value::Object(data)
+}
+
+fn jsonrpc_error(id: Value, code: i64, message: String, data: Option<Value>) -> Response {
+    let api_code = a2a_error_code(code);
+    let meta = crate::api::errors::build_error_meta(
+        crate::api::errors::status_for_error_code(api_code),
+        Some(api_code),
+        message.clone(),
+        crate::api::errors::hint_for_error_code(api_code),
+    );
+    let error = json!({
+        "code": code,
+        "message": message,
+        "data": jsonrpc_error_data(data, &meta),
+    });
     Json(json!({ "jsonrpc": JSONRPC_VERSION, "id": id, "error": error })).into_response()
 }
 
@@ -1923,4 +1969,62 @@ fn record_updated_time(record: &Value) -> f64 {
         }
     }
     0.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn jsonrpc_error_appends_observability_fields() {
+        let response = jsonrpc_error(
+            json!("req-1"),
+            JSONRPC_INVALID_PARAMS,
+            "invalid params".to_string(),
+            Some(json!({ "parameter": "message" })),
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let payload: Value = serde_json::from_slice(&body).expect("parse response json");
+        let data = payload
+            .get("error")
+            .and_then(|value| value.get("data"))
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        assert_eq!(data["parameter"], json!("message"));
+        assert_eq!(data["error_code"], json!("INVALID_PARAMS"));
+        assert_eq!(data["status"], json!(400));
+        assert!(data["hint"].as_str().unwrap_or_default().len() > 5);
+        assert!(data["trace_id"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("err_"));
+        assert!(data["timestamp"].as_f64().unwrap_or_default() > 0.0);
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_error_keeps_business_fields() {
+        let response = jsonrpc_error(
+            json!("req-2"),
+            A2A_TASK_NOT_FOUND,
+            "task missing".to_string(),
+            Some(json!({ "taskId": "task_123" })),
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let payload: Value = serde_json::from_slice(&body).expect("parse response json");
+        let data = payload
+            .get("error")
+            .and_then(|value| value.get("data"))
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        assert_eq!(data["taskId"], json!("task_123"));
+        assert_eq!(data["error_code"], json!("TASK_NOT_FOUND"));
+        assert_eq!(data["status"], json!(404));
+    }
 }

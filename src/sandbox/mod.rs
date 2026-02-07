@@ -152,11 +152,12 @@ fn replace_root_in_text(text: &str, from_root: &str, to_root: &str) -> String {
         let (before, after) = rest.split_at(index);
         output.push_str(before);
         let remainder = &after[from_root.len()..];
-        let boundary = remainder.is_empty()
-            || matches!(
-                remainder.chars().next().unwrap(),
+        let boundary = remainder.chars().next().is_none_or(|ch| {
+            matches!(
+                ch,
                 '/' | '\\' | '"' | '\'' | ' ' | '\n' | '\r' | '\t' | ')' | ']' | '}' | ';' | ','
-            );
+            )
+        });
         if boundary {
             output.push_str(to_root);
         } else {

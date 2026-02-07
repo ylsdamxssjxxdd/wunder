@@ -433,7 +433,7 @@ fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
 }
 
 fn error_response(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 async fn load_account_configs_by_channel(

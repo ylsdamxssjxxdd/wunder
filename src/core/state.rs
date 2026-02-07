@@ -73,6 +73,9 @@ impl AppState {
             .ensure_default_admin()
             .context("Failed to ensure default admin account")?;
         let gateway = Arc::new(GatewayHub::new(storage.clone()));
+        if tokio::runtime::Handle::try_current().is_ok() {
+            gateway.clone().spawn_maintenance();
+        }
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
             config.clone(),

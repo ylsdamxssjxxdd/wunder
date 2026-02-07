@@ -5,14 +5,13 @@ use crate::workspace::WorkspaceEntry;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use chrono::{DateTime, Local};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -1326,7 +1325,7 @@ fn percent_encode(value: &str) -> String {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 #[derive(Debug, Deserialize)]
 struct WorkspaceListQuery {

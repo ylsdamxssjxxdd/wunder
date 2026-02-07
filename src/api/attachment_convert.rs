@@ -2,11 +2,12 @@ use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_
 use crate::i18n;
 use axum::extract::Multipart;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
+use tracing::warn;
 use uuid::Uuid;
 
 pub(crate) struct AttachmentConversion {
@@ -44,8 +45,9 @@ pub(crate) async fn convert_multipart_list(
 pub(crate) fn build_conversion_payload(conversions: Vec<AttachmentConversion>) -> Value {
     let mut conversions = conversions;
     if conversions.len() == 1 {
-        let conversion = conversions.pop().unwrap();
-        return conversion_to_json(conversion);
+        if let Some(conversion) = conversions.pop() {
+            return conversion_to_json(conversion);
+        }
     }
     let items = conversions
         .into_iter()
@@ -129,7 +131,13 @@ async fn convert_multipart_field(
         })
     }
     .await;
-    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    if let Err(err) = tokio::fs::remove_dir_all(&temp_dir).await {
+        warn!(
+            "attachment convert temp cleanup failed: {}, {}",
+            temp_dir.display(),
+            err
+        );
+    }
     result
 }
 
@@ -175,9 +183,5 @@ async fn save_multipart_field(
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (
-        status,
-        axum::Json(json!({ "detail": { "message": message } })),
-    )
-        .into_response()
+    crate::api::errors::error_response(status, message)
 }

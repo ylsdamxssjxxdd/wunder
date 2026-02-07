@@ -617,14 +617,10 @@ struct StreamToolCall {
 }
 
 fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, delta: &Value) {
-    let tool_calls = match delta.get("tool_calls").or_else(|| delta.get("tool_call")) {
+    let tool_calls_raw = delta.get("tool_calls").or_else(|| delta.get("tool_call"));
+    let tool_calls = match tool_calls_raw {
         Some(Value::Array(items)) => Some(items.as_slice()),
-        Some(Value::Object(_)) => Some(std::slice::from_ref(
-            delta
-                .get("tool_calls")
-                .or_else(|| delta.get("tool_call"))
-                .unwrap(),
-        )),
+        Some(Value::Object(_)) => tool_calls_raw.map(std::slice::from_ref),
         _ => None,
     };
     if let Some(items) = tool_calls {

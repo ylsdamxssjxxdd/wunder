@@ -59,6 +59,7 @@ import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsCatalog, saveUserSharedTools } from '@/api/userTools';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const sharedTools = ref([]);
 const selectedSet = ref(new Set());
@@ -129,7 +130,7 @@ const persistSelection = () => {
     } catch (error) {
       if (currentVersion !== saveVersion.value) return;
       updateStatus(t('userTools.shared.saveFailed'));
-      ElMessage.error(error.response?.data?.detail || t('userTools.shared.saveFailed'));
+      showApiError(error, t('userTools.shared.saveFailed'));
     }
   }, 400);
 };
@@ -182,7 +183,7 @@ const loadSharedTools = async () => {
       return;
     }
     updateStatus(t('userTools.shared.loadFailed'));
-    ElMessage.error(error.response?.data?.detail || t('userTools.shared.loadFailed'));
+    showApiError(error, t('userTools.shared.loadFailed'));
   } finally {
     if (currentVersion === loadVersion.value) {
       loading.value = false;

@@ -132,6 +132,7 @@ import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.v
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const toolCatalog = ref(null);
 const activeTab = ref('system');
@@ -178,7 +179,7 @@ const loadCatalog = async () => {
     const { data } = await fetchUserToolsCatalog();
     toolCatalog.value = data?.data || null;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('toolManager.loadFailed'));
+    showApiError(error, t('toolManager.loadFailed'));
   }
 };
 

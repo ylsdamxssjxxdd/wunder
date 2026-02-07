@@ -4,8 +4,7 @@ use crate::state::AppState;
 use crate::storage::UserAccountRecord;
 use crate::user_store::UserStore;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use axum::response::Response;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct ResolvedUser {
@@ -65,11 +64,7 @@ pub async fn resolve_user(
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (
-        status,
-        axum::Json(json!({ "detail": { "message": message } })),
-    )
-        .into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 fn build_virtual_user(user_id: &str) -> UserAccountRecord {

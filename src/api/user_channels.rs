@@ -4,7 +4,7 @@ use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{
     routing::{delete, get},
     Json, Router,
@@ -375,7 +375,7 @@ fn peer_key(channel: &str, account_id: &str, peer_kind: &str, peer_id: &str) -> 
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 fn now_ts() -> f64 {

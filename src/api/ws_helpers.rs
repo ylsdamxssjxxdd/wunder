@@ -384,10 +384,14 @@ pub(crate) async fn send_ws_error(
     code: &str,
     message: String,
 ) -> Result<(), ()> {
-    let payload = json!({
-        "code": code,
-        "message": message,
-    });
+    let status = crate::api::errors::status_for_error_code(code);
+    let payload = crate::api::errors::build_error_meta(
+        status,
+        Some(code),
+        message,
+        crate::api::errors::hint_for_error_code(code),
+    )
+    .to_value();
     send_ws_message(tx, "error", request_id, Some(payload)).await
 }
 

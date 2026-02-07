@@ -28,6 +28,7 @@ import { ElMessage } from 'element-plus';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
+import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -47,7 +48,7 @@ const handleLogin = async () => {
     await authStore.login(form);
     router.push('/app/chat');
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('auth.login.error'));
+    showApiError(error, t('auth.login.error'));
   }
 };
 

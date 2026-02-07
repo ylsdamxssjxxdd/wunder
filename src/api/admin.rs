@@ -35,7 +35,7 @@ use crate::{
 use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{
     routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
 };
@@ -4825,7 +4825,36 @@ fn normalize_external_link_icon(raw: Option<&str>) -> String {
     if cleaned.is_empty() {
         return "fa-globe".to_string();
     }
-    let normalized = cleaned
+
+    let mut icon_name = normalize_external_icon_name(cleaned);
+    let mut icon_color = None;
+
+    if cleaned.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
+            if let Some(name) = value.get("name").and_then(Value::as_str) {
+                icon_name = normalize_external_icon_name(name);
+            }
+            icon_color = value
+                .get("color")
+                .and_then(Value::as_str)
+                .and_then(normalize_external_icon_color);
+        }
+    }
+
+    if let Some(color) = icon_color {
+        json!({
+            "name": icon_name,
+            "color": color,
+        })
+        .to_string()
+    } else {
+        icon_name
+    }
+}
+
+fn normalize_external_icon_name(raw: &str) -> String {
+    let normalized = raw
+        .trim()
         .trim_start_matches("fa-solid")
         .trim_start_matches(' ')
         .trim();
@@ -4835,13 +4864,24 @@ fn normalize_external_link_icon(raw: Option<&str>) -> String {
     let icon = normalized
         .split_whitespace()
         .find(|part| part.starts_with("fa-"))
-        .unwrap_or(normalized)
-        .to_string();
+        .unwrap_or(normalized);
     if icon.starts_with("fa-") {
-        icon
+        icon.to_string()
     } else {
         "fa-globe".to_string()
     }
+}
+
+fn normalize_external_icon_color(raw: &str) -> Option<String> {
+    let cleaned = raw.trim().trim_start_matches('#');
+    let expanded = match cleaned.len() {
+        3 if cleaned.chars().all(|ch| ch.is_ascii_hexdigit()) => {
+            cleaned.chars().flat_map(|ch| [ch, ch]).collect::<String>()
+        }
+        6 if cleaned.chars().all(|ch| ch.is_ascii_hexdigit()) => cleaned.to_string(),
+        _ => return None,
+    };
+    Some(format!("#{}", expanded.to_ascii_lowercase()))
 }
 
 fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
@@ -5504,7 +5544,7 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 fn build_header_map(headers: Option<HashMap<String, String>>) -> Result<HeaderMap, Response> {

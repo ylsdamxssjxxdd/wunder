@@ -1,20 +1,23 @@
+use crate::config::GatewayConfig;
 use crate::gateway::{
     now_ts, GatewayClientMeta, GatewayConnectParams, GatewayHub, GatewayRole,
-    GATEWAY_MAX_MESSAGE_BYTES,
+    GATEWAY_HANDSHAKE_TIMEOUT_MS, GATEWAY_MAX_MESSAGE_BYTES,
 };
 use crate::i18n;
 use crate::state::AppState;
 use crate::storage::GatewayNodeTokenRecord;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::extract::{ConnectInfo, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, Router};
 use futures::{SinkExt, StreamExt as WsStreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::time::{timeout_at, Duration, Instant};
 use uuid::Uuid;
 
 const GATEWAY_ENDPOINT: &str = "/wunder/gateway/ws";
@@ -30,6 +33,7 @@ struct GatewayWsQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GatewayEnvelope {
     #[serde(rename = "type")]
     kind: String,
@@ -50,6 +54,15 @@ struct GatewayEnvelope {
     event: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct GatewayRequestMeta {
+    host: Option<String>,
+    origin: Option<String>,
+    forwarded_for: Option<String>,
+    real_ip: Option<String>,
+    remote_addr: Option<String>,
+}
+
 #[derive(Debug)]
 struct GatewayHandshakeError {
     code: &'static str,
@@ -68,6 +81,8 @@ impl GatewayHandshakeError {
 async fn gateway_ws(
     State(state): State<Arc<AppState>>,
     Query(query): Query<GatewayWsQuery>,
+    headers: HeaderMap,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, Response> {
     let config = state.config_store.get().await;
@@ -75,11 +90,20 @@ async fn gateway_ws(
         return Err((StatusCode::NOT_FOUND, "gateway disabled").into_response());
     }
     let connection_id = format!("gw_{}", Uuid::new_v4().simple());
+    let request_meta = GatewayRequestMeta {
+        host: header_value(&headers, "host"),
+        origin: header_value(&headers, "origin"),
+        forwarded_for: header_value(&headers, "x-forwarded-for"),
+        real_ip: header_value(&headers, "x-real-ip"),
+        remote_addr: Some(remote_addr.to_string()),
+    };
     Ok(ws
         .protocols(["wunder-gateway"])
         .max_message_size(GATEWAY_MAX_MESSAGE_BYTES)
         .max_frame_size(GATEWAY_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_gateway_ws(socket, state, connection_id, query)))
+        .on_upgrade(move |socket| {
+            handle_gateway_ws(socket, state, connection_id, query, request_meta)
+        }))
 }
 
 async fn handle_gateway_ws(
@@ -87,6 +111,7 @@ async fn handle_gateway_ws(
     state: Arc<AppState>,
     connection_id: String,
     query: GatewayWsQuery,
+    request_meta: GatewayRequestMeta,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(64);
@@ -112,7 +137,28 @@ async fn handle_gateway_ws(
         .await;
 
     let mut connected: Option<GatewayClientMeta> = None;
-    while let Some(Ok(message)) = WsStreamExt::next(&mut ws_receiver).await {
+    let handshake_deadline = Instant::now() + Duration::from_millis(GATEWAY_HANDSHAKE_TIMEOUT_MS);
+    loop {
+        let next_message = if connected.is_some() {
+            WsStreamExt::next(&mut ws_receiver).await
+        } else {
+            match timeout_at(handshake_deadline, WsStreamExt::next(&mut ws_receiver)).await {
+                Ok(frame) => frame,
+                Err(_) => {
+                    let _ = send_gateway_error(
+                        &out_tx,
+                        None,
+                        "HANDSHAKE_TIMEOUT",
+                        "connect handshake timeout".to_string(),
+                    )
+                    .await;
+                    break;
+                }
+            }
+        };
+        let Some(Ok(message)) = next_message else {
+            break;
+        };
         match message {
             Message::Text(text) => {
                 let envelope: GatewayEnvelope = match serde_json::from_str(&text) {
@@ -135,17 +181,50 @@ async fn handle_gateway_ws(
 
                 match kind.as_str() {
                     "req" => {
+                        let request_id = match normalize_request_id(envelope.id.as_deref()) {
+                            Some(value) => value,
+                            None => {
+                                let _ = send_gateway_error(
+                                    &out_tx,
+                                    None,
+                                    "INVALID_REQUEST",
+                                    "request id required".to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
                         let method = envelope
                             .method
                             .as_deref()
                             .unwrap_or("")
                             .trim()
                             .to_ascii_lowercase();
+                        if method.is_empty() {
+                            let _ = send_gateway_error(
+                                &out_tx,
+                                Some(&request_id),
+                                "INVALID_REQUEST",
+                                "method required".to_string(),
+                            )
+                            .await;
+                            continue;
+                        }
+                        if connected.is_none() && method != "connect" {
+                            let _ = send_gateway_error(
+                                &out_tx,
+                                Some(&request_id),
+                                "INVALID_HANDSHAKE",
+                                "first request must be connect".to_string(),
+                            )
+                            .await;
+                            break;
+                        }
                         if method == "connect" {
                             if connected.is_some() {
                                 let _ = send_gateway_error(
                                     &out_tx,
-                                    envelope.id.as_deref(),
+                                    Some(&request_id),
                                     "ALREADY_CONNECTED",
                                     "connection already initialized".to_string(),
                                 )
@@ -157,9 +236,10 @@ async fn handle_gateway_ws(
                                 &hub,
                                 &connection_id,
                                 &out_tx,
-                                envelope.id.as_deref(),
+                                Some(&request_id),
                                 envelope.params,
                                 &query,
+                                &request_meta,
                             )
                             .await
                             {
@@ -169,7 +249,7 @@ async fn handle_gateway_ws(
                                 Err(err) => {
                                     let _ = send_gateway_error(
                                         &out_tx,
-                                        envelope.id.as_deref(),
+                                        Some(&request_id),
                                         err.code,
                                         err.message,
                                     )
@@ -186,28 +266,53 @@ async fn handle_gateway_ws(
                                 "stateVersion": snapshot.state_version,
                                 "items": snapshot.items
                             });
-                            let _ = send_gateway_ok(&out_tx, envelope.id.as_deref(), payload).await;
+                            let _ = send_gateway_ok(&out_tx, Some(&request_id), payload).await;
                             continue;
                         }
 
                         let _ = send_gateway_error(
                             &out_tx,
-                            envelope.id.as_deref(),
+                            Some(&request_id),
                             "UNSUPPORTED_METHOD",
                             format!("unsupported method: {method}"),
                         )
                         .await;
                     }
                     "res" => {
-                        if let Some(req_id) = envelope.id.as_deref() {
-                            hub.handle_response(
-                                req_id,
-                                envelope.ok.unwrap_or(false),
-                                envelope.payload,
-                                envelope.error,
+                        let request_id = match normalize_request_id(envelope.id.as_deref()) {
+                            Some(value) => value,
+                            None => {
+                                let _ = send_gateway_error(
+                                    &out_tx,
+                                    None,
+                                    "INVALID_RESPONSE",
+                                    "response id required".to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let Some(ok) = envelope.ok else {
+                            let _ = send_gateway_error(
+                                &out_tx,
+                                Some(&request_id),
+                                "INVALID_RESPONSE",
+                                "response ok field required".to_string(),
                             )
                             .await;
-                        }
+                            continue;
+                        };
+                        let source_node_id =
+                            connected.as_ref().and_then(|meta| meta.node_id.as_deref());
+                        hub.handle_response(
+                            &request_id,
+                            &connection_id,
+                            source_node_id,
+                            ok,
+                            envelope.payload,
+                            envelope.error,
+                        )
+                        .await;
                     }
                     "event" => {
                         // Ignore unrecognized events from clients for now.
@@ -242,6 +347,7 @@ async fn handle_gateway_ws(
         .await;
     }
 
+    drop(out_tx);
     let _ = writer.await;
 }
 
@@ -253,6 +359,7 @@ async fn handle_connect(
     request_id: Option<&str>,
     params: Option<Value>,
     query: &GatewayWsQuery,
+    request_meta: &GatewayRequestMeta,
 ) -> Result<GatewayClientMeta, GatewayHandshakeError> {
     let payload: GatewayConnectParams = match params {
         Some(value) => serde_json::from_value(value)
@@ -260,6 +367,8 @@ async fn handle_connect(
         None => GatewayConnectParams::default(),
     };
     let config = state.config_store.get().await;
+    validate_request_origin(request_meta, &config.gateway)?;
+    let client_ip = resolve_client_ip(request_meta, &config.gateway.trusted_proxies);
     let server_version = config.gateway.protocol_version;
     let (min_protocol, max_protocol) = resolve_protocol_range(&payload, server_version)?;
     let role = GatewayRole::from_str(payload.role.as_deref().unwrap_or(""));
@@ -277,10 +386,13 @@ async fn handle_connect(
         let provided = auth
             .token
             .as_deref()
-            .or_else(|| query.token.as_deref())
+            .or(query.token.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        if provided != Some(expected) {
+        let authorized = provided
+            .map(|provided_token| secure_compare(provided_token, expected))
+            .unwrap_or(false);
+        if !authorized {
             return Err(GatewayHandshakeError::new(
                 "UNAUTHORIZED",
                 i18n::t("error.permission_denied"),
@@ -347,6 +459,18 @@ async fn handle_connect(
             .as_ref()
             .and_then(|device| device.name.clone());
     }
+    if client_info
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(GatewayHandshakeError::new(
+            "CLIENT_ID_REQUIRED",
+            "client id required",
+        ));
+    }
 
     let now = now_ts();
     let meta = GatewayClientMeta {
@@ -386,7 +510,8 @@ async fn handle_connect(
         "policy": policy,
         "presence": snapshot.items,
         "stateVersion": snapshot.state_version,
-        "server_time": now
+        "server_time": now,
+        "client_ip": client_ip
     });
     send_gateway_ok(out_tx, request_id, payload).await?;
     hub.broadcast_event(
@@ -455,14 +580,19 @@ async fn send_gateway_error(
     code: &str,
     message: String,
 ) -> Result<(), GatewayHandshakeError> {
+    let status = crate::api::errors::status_for_error_code(code);
+    let error = crate::api::errors::build_error_meta(
+        status,
+        Some(code),
+        message,
+        crate::api::errors::hint_for_error_code(code),
+    )
+    .to_value();
     let message = json!({
         "type": "res",
         "id": request_id,
         "ok": false,
-        "error": {
-            "code": code,
-            "message": message
-        }
+        "error": error
     });
     tx.send(Message::Text(message.to_string().into()))
         .await
@@ -482,4 +612,170 @@ async fn send_gateway_event(
     tx.send(Message::Text(message.to_string().into()))
         .await
         .map_err(|_| GatewayHandshakeError::new("CONNECTION_CLOSED", "connection closed"))
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_request_id(request_id: Option<&str>) -> Option<String> {
+    request_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn secure_compare(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let max_len = left_bytes.len().max(right_bytes.len());
+    let mut diff = left_bytes.len() ^ right_bytes.len();
+    for idx in 0..max_len {
+        let left_byte = left_bytes.get(idx).copied().unwrap_or_default();
+        let right_byte = right_bytes.get(idx).copied().unwrap_or_default();
+        diff |= (left_byte ^ right_byte) as usize;
+    }
+    diff == 0
+}
+
+fn validate_request_origin(
+    request_meta: &GatewayRequestMeta,
+    config: &GatewayConfig,
+) -> Result<(), GatewayHandshakeError> {
+    let Some(origin_raw) = request_meta
+        .origin
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let origin = origin_raw.to_ascii_lowercase();
+    let origin_host = parse_origin_host(&origin)
+        .ok_or_else(|| GatewayHandshakeError::new("INVALID_ORIGIN", "invalid origin"))?;
+    let request_host = request_meta
+        .host
+        .as_deref()
+        .and_then(extract_host_name)
+        .unwrap_or_default();
+    if !request_host.is_empty() && origin_host == request_host {
+        return Ok(());
+    }
+    if !request_host.is_empty() && is_loopback_host(&origin_host) && is_loopback_host(&request_host)
+    {
+        return Ok(());
+    }
+
+    let origin_allowed = config.allowed_origins.iter().any(|allowed| {
+        let normalized = allowed.trim().to_ascii_lowercase();
+        !normalized.is_empty() && normalized == origin
+    });
+    if origin_allowed {
+        return Ok(());
+    }
+
+    Err(GatewayHandshakeError::new(
+        "ORIGIN_NOT_ALLOWED",
+        "origin not allowed",
+    ))
+}
+
+fn resolve_client_ip(
+    request_meta: &GatewayRequestMeta,
+    trusted_proxies: &[String],
+) -> Option<String> {
+    let remote_ip = request_meta
+        .remote_addr
+        .as_deref()
+        .and_then(parse_socket_ip)
+        .or_else(|| request_meta.real_ip.as_deref().and_then(parse_ip_literal));
+    let remote_ip = remote_ip?;
+
+    let trusted_proxy = is_trusted_proxy(remote_ip, trusted_proxies);
+    if trusted_proxy {
+        if let Some(forwarded) = request_meta
+            .forwarded_for
+            .as_deref()
+            .and_then(parse_forwarded_for_ip)
+        {
+            return Some(forwarded.to_string());
+        }
+        if let Some(real_ip) = request_meta.real_ip.as_deref().and_then(parse_ip_literal) {
+            return Some(real_ip.to_string());
+        }
+    }
+
+    Some(remote_ip.to_string())
+}
+
+fn parse_origin_host(origin: &str) -> Option<String> {
+    url::Url::parse(origin)
+        .ok()?
+        .host_str()
+        .map(|host| host.to_ascii_lowercase())
+}
+
+fn extract_host_name(raw: &str) -> Option<String> {
+    let lowered = raw.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return None;
+    }
+    if lowered.starts_with('[') {
+        let end = lowered.find(']')?;
+        return Some(lowered[1..end].to_string());
+    }
+    Some(lowered.split(':').next().unwrap_or_default().to_string())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+fn parse_socket_ip(raw: &str) -> Option<IpAddr> {
+    raw.parse::<SocketAddr>()
+        .map(|addr| addr.ip())
+        .or_else(|_| raw.parse::<IpAddr>())
+        .ok()
+}
+
+fn parse_ip_literal(raw: &str) -> Option<IpAddr> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let literal = if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    };
+    literal.parse::<IpAddr>().ok()
+}
+
+fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
+    let first = raw.split(',').next()?.trim();
+    let first = first.strip_prefix("for=").unwrap_or(first);
+    parse_ip_literal(first)
+}
+
+fn is_trusted_proxy(remote_ip: IpAddr, trusted_proxies: &[String]) -> bool {
+    trusted_proxies.iter().any(|entry| {
+        let candidate = entry.trim();
+        if candidate.eq_ignore_ascii_case("loopback") {
+            return remote_ip.is_loopback();
+        }
+        candidate
+            .parse::<IpAddr>()
+            .map(|ip| ip == remote_ip)
+            .unwrap_or(false)
+    })
 }

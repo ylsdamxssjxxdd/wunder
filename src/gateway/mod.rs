@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::time::{timeout, Duration};
@@ -17,6 +17,9 @@ pub const GATEWAY_PROTOCOL_VERSION: i32 = 1;
 pub const GATEWAY_PROTOCOL_MIN_VERSION: i32 = 1;
 pub const GATEWAY_PROTOCOL_MAX_VERSION: i32 = 1;
 pub const GATEWAY_MAX_MESSAGE_BYTES: usize = 512 * 1024;
+pub const GATEWAY_HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
+pub const GATEWAY_HEALTH_INTERVAL_MS: u64 = 60_000;
+const GATEWAY_SLOW_CLIENT_THRESHOLD: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +51,7 @@ impl GatewayRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayClientInfo {
     #[serde(default)]
     pub id: Option<String>,
@@ -60,6 +64,7 @@ pub struct GatewayClientInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayAuthParams {
     #[serde(default, alias = "token")]
     pub token: Option<String>,
@@ -68,6 +73,7 @@ pub struct GatewayAuthParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayDeviceInfo {
     #[serde(default)]
     pub id: Option<String>,
@@ -78,6 +84,7 @@ pub struct GatewayDeviceInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayConnectParams {
     #[serde(default, alias = "protocolVersion", alias = "protocol_version")]
     pub protocol_version: Option<i32>,
@@ -184,6 +191,13 @@ pub struct GatewayClientMeta {
 struct GatewayClientState {
     meta: GatewayClientMeta,
     sender: mpsc::Sender<Message>,
+    slow_hits: u32,
+}
+
+struct PendingGatewayInvoke {
+    tx: oneshot::Sender<GatewayInvokeResult>,
+    node_id: String,
+    connection_id: String,
 }
 
 struct GatewayState {
@@ -204,8 +218,9 @@ impl GatewayState {
 pub struct GatewayHub {
     storage: Arc<dyn StorageBackend>,
     state: Arc<RwLock<GatewayState>>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<GatewayInvokeResult>>>>,
+    pending: Arc<Mutex<HashMap<String, PendingGatewayInvoke>>>,
     state_version: Arc<AtomicU64>,
+    maintenance_started: Arc<AtomicBool>,
 }
 
 impl GatewayHub {
@@ -215,6 +230,7 @@ impl GatewayHub {
             state: Arc::new(RwLock::new(GatewayState::new())),
             pending: Arc::new(Mutex::new(HashMap::new())),
             state_version: Arc::new(AtomicU64::new(1)),
+            maintenance_started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -233,6 +249,43 @@ impl GatewayHub {
         }
     }
 
+    pub fn spawn_maintenance(self: Arc<Self>) {
+        if self
+            .maintenance_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        let tick_interval_ms = Self::default_policy().tick_interval_ms;
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(tick_interval_ms));
+            tick.tick().await;
+            let mut health =
+                tokio::time::interval(Duration::from_millis(GATEWAY_HEALTH_INTERVAL_MS));
+            health.tick().await;
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        let payload = json!({ "ts": (now_ts() * 1000.0).round() });
+                        self.broadcast_event("gateway.tick", payload, None).await;
+                    }
+                    _ = health.tick() => {
+                        let snapshot = self.snapshot().await;
+                        let online_nodes = snapshot.items.iter().filter(|item| item.role == "node").count();
+                        let payload = json!({
+                            "connections": snapshot.items.len(),
+                            "nodes_online": online_nodes,
+                            "stateVersion": snapshot.state_version,
+                            "ts": now_ts(),
+                        });
+                        self.broadcast_event("gateway.health", payload, Some(snapshot.state_version)).await;
+                    }
+                }
+            }
+        });
+    }
+
     pub async fn register_client(
         &self,
         meta: GatewayClientMeta,
@@ -249,6 +302,7 @@ impl GatewayHub {
             GatewayClientState {
                 meta: meta.clone(),
                 sender,
+                slow_hits: 0,
             },
         );
         let version = self.bump_state_version();
@@ -261,25 +315,33 @@ impl GatewayHub {
     }
 
     pub async fn unregister_client(&self, connection_id: &str) -> Option<GatewayPresenceSnapshot> {
-        let mut state = self.state.write().await;
-        let removed = state.clients.remove(connection_id);
-        if let Some(removed) = removed {
+        let (removed, snapshot) = {
+            let mut state = self.state.write().await;
+            let removed = state.clients.remove(connection_id)?;
             if let Some(node_id) = removed.meta.node_id.as_ref() {
-                state.node_index.remove(node_id);
+                let mapped_to_connection = state
+                    .node_index
+                    .get(node_id)
+                    .is_some_and(|mapped| mapped == connection_id);
+                if mapped_to_connection {
+                    state.node_index.remove(node_id);
+                }
             }
             let version = self.bump_state_version();
             let snapshot = build_snapshot_locked(&state, version);
-            let _ = self.persist_client_record(
-                &removed.meta,
-                "disconnected",
-                Some(removed.meta.last_seen_at),
-            );
-            if removed.meta.role == GatewayRole::Node {
-                let _ = self.persist_node_record(&removed.meta, "offline");
-            }
-            return Some(snapshot);
+            (removed, snapshot)
+        };
+
+        self.fail_pending_for_connection(connection_id).await;
+        let _ = self.persist_client_record(
+            &removed.meta,
+            "disconnected",
+            Some(removed.meta.last_seen_at),
+        );
+        if removed.meta.role == GatewayRole::Node {
+            let _ = self.persist_node_record(&removed.meta, "offline");
         }
-        None
+        Some(snapshot)
     }
 
     pub async fn snapshot(&self) -> GatewayPresenceSnapshot {
@@ -289,51 +351,40 @@ impl GatewayHub {
     }
 
     pub async fn broadcast_event(&self, event: &str, payload: Value, state_version: Option<u64>) {
-        let senders = {
-            let state = self.state.read().await;
-            state
-                .clients
-                .values()
-                .map(|client| client.sender.clone())
-                .collect::<Vec<_>>()
-        };
-        let event_payload = if let Some(version) = state_version {
-            json!({
-                "type": "event",
-                "event": event,
-                "payload": payload,
-                "stateVersion": version
-            })
-        } else {
-            json!({
-                "type": "event",
-                "event": event,
-                "payload": payload
-            })
-        };
-        let message = Message::Text(event_payload.to_string().into());
-        for sender in senders {
-            let _ = sender.send(message.clone()).await;
-        }
+        let message = Self::build_event_message(event, payload, state_version);
+        let slow_connections = self.broadcast_raw(message).await;
+        self.evict_slow_clients(slow_connections).await;
     }
 
     pub async fn touch_client(&self, connection_id: &str, last_seen_at: f64) {
         let mut state = self.state.write().await;
         if let Some(client) = state.clients.get_mut(connection_id) {
             client.meta.last_seen_at = last_seen_at;
+            client.slow_hits = 0;
         }
     }
 
     pub async fn handle_response(
         &self,
         request_id: &str,
+        source_connection_id: &str,
+        source_node_id: Option<&str>,
         ok: bool,
         payload: Option<Value>,
         error: Option<Value>,
     ) {
         let mut pending = self.pending.lock().await;
-        if let Some(tx) = pending.remove(request_id) {
-            let _ = tx.send(GatewayInvokeResult { ok, payload, error });
+        let Some(entry) = pending.get(request_id) else {
+            return;
+        };
+        if entry.connection_id != source_connection_id {
+            return;
+        }
+        if source_node_id != Some(entry.node_id.as_str()) {
+            return;
+        }
+        if let Some(entry) = pending.remove(request_id) {
+            let _ = entry.tx.send(GatewayInvokeResult { ok, payload, error });
         }
     }
 
@@ -341,7 +392,7 @@ impl GatewayHub {
         &self,
         request: GatewayNodeInvokeRequest,
     ) -> Result<GatewayInvokeResult> {
-        let sender = {
+        let (sender, connection_id) = {
             let state = self.state.read().await;
             let conn_id = state
                 .node_index
@@ -351,14 +402,21 @@ impl GatewayHub {
                 .clients
                 .get(conn_id)
                 .ok_or_else(|| anyhow!("node not connected: {}", request.node_id))?;
-            client.sender.clone()
+            (client.sender.clone(), conn_id.clone())
         };
 
         let request_id = format!("gwreq_{}", Uuid::new_v4().simple());
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
-            pending.insert(request_id.clone(), tx);
+            pending.insert(
+                request_id.clone(),
+                PendingGatewayInvoke {
+                    tx,
+                    node_id: request.node_id.clone(),
+                    connection_id,
+                },
+            );
         }
 
         let params = json!({
@@ -393,6 +451,98 @@ impl GatewayHub {
                 Err(anyhow!("node invoke timeout"))
             }
         }
+    }
+
+    async fn broadcast_raw(&self, message: Message) -> Vec<String> {
+        let mut state = self.state.write().await;
+        let mut slow_connections = Vec::new();
+        for (connection_id, client) in state.clients.iter_mut() {
+            match client.sender.try_send(message.clone()) {
+                Ok(_) => {
+                    client.slow_hits = 0;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    client.slow_hits += 1;
+                    if client.slow_hits >= GATEWAY_SLOW_CLIENT_THRESHOLD {
+                        slow_connections.push(connection_id.clone());
+                    }
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    slow_connections.push(connection_id.clone());
+                }
+            }
+        }
+        slow_connections
+    }
+
+    async fn evict_slow_clients(&self, mut connection_ids: Vec<String>) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        connection_ids.sort();
+        connection_ids.dedup();
+        let mut latest_snapshot = None;
+        for connection_id in connection_ids {
+            if let Some(snapshot) = self.unregister_client(&connection_id).await {
+                latest_snapshot = Some(snapshot);
+            }
+        }
+        if let Some(snapshot) = latest_snapshot {
+            let presence_payload = json!({
+                "stateVersion": snapshot.state_version,
+                "items": snapshot.items
+            });
+            let message = Self::build_event_message(
+                "gateway.presence.update",
+                presence_payload,
+                Some(snapshot.state_version),
+            );
+            let _ = self.broadcast_raw(message).await;
+        }
+    }
+
+    async fn fail_pending_for_connection(&self, connection_id: &str) {
+        let mut pending = self.pending.lock().await;
+        let request_ids = pending
+            .iter()
+            .filter_map(|(request_id, entry)| {
+                if entry.connection_id == connection_id {
+                    Some(request_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for request_id in request_ids {
+            if let Some(entry) = pending.remove(&request_id) {
+                let _ = entry.tx.send(GatewayInvokeResult {
+                    ok: false,
+                    payload: None,
+                    error: Some(json!({
+                        "code": "NODE_DISCONNECTED",
+                        "message": "node disconnected before response"
+                    })),
+                });
+            }
+        }
+    }
+
+    fn build_event_message(event: &str, payload: Value, state_version: Option<u64>) -> Message {
+        let event_payload = if let Some(version) = state_version {
+            json!({
+                "type": "event",
+                "event": event,
+                "payload": payload,
+                "stateVersion": version
+            })
+        } else {
+            json!({
+                "type": "event",
+                "event": event,
+                "payload": payload
+            })
+        };
+        Message::Text(event_payload.to_string().into())
     }
 
     fn bump_state_version(&self) -> u64 {

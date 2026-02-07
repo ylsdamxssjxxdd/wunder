@@ -5,6 +5,7 @@ import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20251227-13";
 import { buildHeadingHighlightHtml, escapeHtml, formatTimestamp } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260118-07";
+import { resolveApiErrorMessage } from "./api-error.js";
 
 const knowledgeModal = document.getElementById("knowledgeModal");
 const knowledgeModalTitle = document.getElementById("knowledgeModalTitle");
@@ -1689,33 +1690,11 @@ const normalizeUploadExtension = (filename) => {
 };
 
 const resolveUploadErrorMessage = async (response) => {
-  let message = "";
-  try {
-    const text = await response.text();
-    if (text) {
-      try {
-        const data = JSON.parse(text);
-        const detail = data?.detail;
-        if (typeof detail === "string") {
-          message = detail.trim();
-        } else if (detail && typeof detail.message === "string") {
-          message = detail.message.trim();
-        } else if (typeof data?.message === "string") {
-          message = data.message.trim();
-        } else {
-          message = text.trim();
-        }
-      } catch {
-        message = text.trim();
-      }
-    }
-  } catch {
-    message = "";
-  }
-  if (!message) {
-    const statusText = response.statusText || "";
-    message = statusText ? `${response.status} ${statusText}` : String(response.status || "");
-  }
+  const statusText = response && response.statusText ? response.statusText : "";
+  const fallback = statusText
+    ? String(response.status || "") + " " + statusText
+    : String((response && response.status) || "");
+  const message = await resolveApiErrorMessage(response, fallback || "request_failed");
   return message || "request_failed";
 };
 
@@ -2295,7 +2274,6 @@ export const initKnowledgePanel = () => {
     }
   });
 };
-
 
 
 

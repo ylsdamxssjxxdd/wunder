@@ -98,6 +98,7 @@ import { ElMessage } from 'element-plus';
 import { useI18n } from '@/i18n';
 import { useAdminStore } from '@/stores/admin';
 import WunderToolTable from '@/components/admin/WunderToolTable.vue';
+import { showApiError } from '@/utils/apiError';
 
 const adminStore = useAdminStore();
 const { t } = useI18n();
@@ -132,7 +133,7 @@ const loadSettings = async () => {
     const data = await adminStore.loadWunderSettings();
     applySettings(data);
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.agents.loadFailed'));
+    showApiError(error, t('admin.agents.loadFailed'));
   }
 };
 
@@ -141,7 +142,7 @@ const loadTools = async () => {
   try {
     await adminStore.loadWunderTools();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.agents.toolsFailed'));
+    showApiError(error, t('admin.agents.toolsFailed'));
   } finally {
     toolsLoading.value = false;
   }
@@ -155,7 +156,7 @@ const saveSettings = async () => {
     await loadTools();
     ElMessage.success(t('admin.agents.saveSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.agents.saveFailed'));
+    showApiError(error, t('admin.agents.saveFailed'));
   } finally {
     saving.value = false;
   }

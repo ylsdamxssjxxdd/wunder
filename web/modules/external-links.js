@@ -12,6 +12,38 @@ const LEVEL_FIELDS = [
   { level: 4, key: "externalLinkLevel4" },
 ];
 
+const ICON_OPTIONS = [
+  "fa-globe",
+  "fa-book-open",
+  "fa-graduation-cap",
+  "fa-briefcase",
+  "fa-chart-line",
+  "fa-shop",
+  "fa-comments",
+  "fa-headset",
+  "fa-cloud",
+  "fa-rocket",
+  "fa-compass",
+  "fa-lightbulb",
+  "fa-code",
+  "fa-gears",
+  "fa-shield-halved",
+  "fa-life-ring",
+  "fa-bolt",
+  "fa-link",
+  "fa-desktop",
+  "fa-screwdriver-wrench",
+];
+
+const DEFAULT_ICON_NAME = "fa-globe";
+const DEFAULT_ICON_COLOR = "#2563eb";
+const META_SEPARATOR = " | ";
+
+const iconModalState = {
+  name: DEFAULT_ICON_NAME,
+  color: "",
+};
+
 const ensureExternalLinksState = () => {
   if (!state.externalLinks) {
     state.externalLinks = {
@@ -39,6 +71,18 @@ const ensureExternalLinkElements = () => {
     "externalLinkFormTitle",
     "externalLinkFormUrl",
     "externalLinkFormIcon",
+    "externalLinkIconTrigger",
+    "externalLinkIconPreview",
+    "externalLinkIconName",
+    "externalLinkIconModal",
+    "externalLinkIconModalClose",
+    "externalLinkIconModalCancel",
+    "externalLinkIconModalApply",
+    "externalLinkIconModalPreview",
+    "externalLinkIconPicker",
+    "externalLinkIconColorInput",
+    "externalLinkIconColorText",
+    "externalLinkIconColorReset",
     "externalLinkFormDescription",
     "externalLinkFormSortOrder",
     "externalLinkFormEnabled",
@@ -66,29 +110,100 @@ const normalizeLevels = (levels) => {
   return Array.from(new Set(output));
 };
 
-const normalizeIcon = (icon) => {
+const normalizeIconName = (icon) => {
   const cleaned = String(icon || "").trim();
   if (!cleaned) {
-    return "fa-globe";
+    return DEFAULT_ICON_NAME;
   }
   const match = cleaned.split(/\s+/).find((part) => part.startsWith("fa-"));
-  return match || "fa-globe";
+  return match || DEFAULT_ICON_NAME;
 };
 
-const normalizeExternalLink = (item) => ({
-  link_id: String(item?.link_id || item?.id || "").trim(),
-  title: String(item?.title || "").trim(),
-  description: String(item?.description || "").trim(),
-  url: String(item?.url || "").trim(),
-  icon: normalizeIcon(item?.icon),
-  allowed_levels: normalizeLevels(item?.allowed_levels),
-  sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : 0,
-  enabled: item?.enabled !== false,
-  updated_at: Number(item?.updated_at || 0),
-});
+const normalizeColor = (color) => {
+  const cleaned = String(color || "").trim();
+  if (!cleaned) {
+    return "";
+  }
+  const match = cleaned.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!match) {
+    return "";
+  }
+  let hex = match[1].toLowerCase();
+  if (hex.length === 3) {
+    hex = hex
+      .split("")
+      .map((part) => part + part)
+      .join("");
+  }
+  return "#" + hex;
+};
+
+const parseIconConfig = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return { name: DEFAULT_ICON_NAME, color: "" };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") {
+      return { name: normalizeIconName(parsed), color: "" };
+    }
+    if (parsed && typeof parsed === "object") {
+      return {
+        name: normalizeIconName(parsed.name),
+        color: normalizeColor(parsed.color),
+      };
+    }
+  } catch (error) {
+    // Fall back to plain icon string.
+  }
+  return {
+    name: normalizeIconName(raw),
+    color: "",
+  };
+};
+
+const serializeIconConfig = (config) => {
+  const name = normalizeIconName(config?.name);
+  const color = normalizeColor(config?.color);
+  if (!color) {
+    return name;
+  }
+  return JSON.stringify({ name, color });
+};
+
+const normalizeExternalLink = (item) => {
+  const iconConfig = parseIconConfig(item?.icon);
+  return {
+    link_id: String(item?.link_id || item?.id || "").trim(),
+    title: String(item?.title || "").trim(),
+    description: String(item?.description || "").trim(),
+    url: String(item?.url || "").trim(),
+    icon: serializeIconConfig(iconConfig),
+    icon_name: iconConfig.name,
+    icon_color: iconConfig.color,
+    allowed_levels: normalizeLevels(item?.allowed_levels),
+    sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : 0,
+    enabled: item?.enabled !== false,
+    updated_at: Number(item?.updated_at || 0),
+  };
+};
 
 const resolveSelectedLink = () =>
   state.externalLinks.list.find((item) => item.link_id === state.externalLinks.selectedId) || null;
+
+const getHostLabel = (url) => {
+  const cleaned = String(url || "").trim();
+  if (!cleaned) {
+    return "-";
+  }
+  try {
+    const parsed = new URL(cleaned);
+    return parsed.host || cleaned;
+  } catch (error) {
+    return cleaned;
+  }
+};
 
 const setLevelChecks = (levels) => {
   const selected = new Set(normalizeLevels(levels));
@@ -101,23 +216,93 @@ const setLevelChecks = (levels) => {
 const readLevelChecks = () =>
   LEVEL_FIELDS.filter((item) => elements[item.key].checked).map((item) => item.level);
 
+const setFormIconConfig = (config) => {
+  elements.externalLinkFormIcon.value = normalizeIconName(config?.name);
+  const normalizedColor = normalizeColor(config?.color);
+  elements.externalLinkFormIcon.dataset.color = normalizedColor;
+};
+
+const getFormIconConfig = () => ({
+  name: normalizeIconName(elements.externalLinkFormIcon.value),
+  color: normalizeColor(elements.externalLinkFormIcon.dataset.color),
+});
+
+const applyPreview = (container, config) => {
+  if (!container) {
+    return;
+  }
+  const name = normalizeIconName(config?.name);
+  const color = normalizeColor(config?.color);
+  let iconNode = container.querySelector("i");
+  if (!iconNode) {
+    iconNode = document.createElement("i");
+    container.appendChild(iconNode);
+  }
+  iconNode.className = "fa-solid " + name;
+  container.style.color = color || "";
+};
+
+const syncIconPreview = () => {
+  const config = getFormIconConfig();
+  applyPreview(elements.externalLinkIconPreview, config);
+  if (elements.externalLinkIconName) {
+    elements.externalLinkIconName.textContent = config.name;
+    elements.externalLinkIconName.style.color = config.color || "";
+  }
+};
+
+const syncIconPickerSelection = (activeName) => {
+  const name = normalizeIconName(activeName);
+  const options = elements.externalLinkIconPicker.querySelectorAll(".external-link-icon-option");
+  options.forEach((node) => {
+    node.classList.toggle("is-active", node.dataset.icon === name);
+  });
+};
+
+const syncModalPreview = () => {
+  applyPreview(elements.externalLinkIconModalPreview, {
+    name: iconModalState.name,
+    color: iconModalState.color,
+  });
+  syncIconPickerSelection(iconModalState.name);
+};
+
+const syncColorInputsFromState = () => {
+  elements.externalLinkIconColorInput.value = iconModalState.color || DEFAULT_ICON_COLOR;
+  elements.externalLinkIconColorText.value = iconModalState.color || "";
+};
+
 const fillForm = (item) => {
   elements.externalLinkFormTitle.value = item?.title || "";
   elements.externalLinkFormUrl.value = item?.url || "";
-  elements.externalLinkFormIcon.value = item?.icon || "fa-globe";
+  setFormIconConfig({ name: item?.icon_name || DEFAULT_ICON_NAME, color: item?.icon_color || "" });
   elements.externalLinkFormDescription.value = item?.description || "";
   elements.externalLinkFormSortOrder.value = Number.isFinite(Number(item?.sort_order))
     ? String(Math.floor(Number(item.sort_order)))
     : "0";
   elements.externalLinkFormEnabled.checked = item ? item.enabled !== false : true;
   setLevelChecks(item?.allowed_levels || []);
+  syncIconPreview();
+};
+
+const renderListEmptyState = () => {
+  const empty = document.createElement("div");
+  empty.className = "external-link-list-empty";
+  const icon = document.createElement("i");
+  icon.className = "fa-solid fa-arrow-up-right-from-square";
+  icon.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = t("externalLinks.list.empty");
+  empty.appendChild(icon);
+  empty.appendChild(text);
+  return empty;
 };
 
 const renderExternalLinkList = () => {
   const list = elements.externalLinkList;
   list.textContent = "";
   if (!state.externalLinks.list.length) {
-    list.textContent = t("externalLinks.list.empty");
+    list.appendChild(renderListEmptyState());
     return;
   }
   const fragment = document.createDocumentFragment();
@@ -131,9 +316,16 @@ const renderExternalLinkList = () => {
 
     const title = document.createElement("div");
     title.className = "external-link-item-title";
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "external-link-item-icon";
     const icon = document.createElement("i");
-    icon.className = "fa-solid " + normalizeIcon(item.icon);
-    title.appendChild(icon);
+    icon.className = "fa-solid " + normalizeIconName(item.icon_name);
+    if (item.icon_color) {
+      icon.style.color = item.icon_color;
+    }
+    iconWrap.appendChild(icon);
+    title.appendChild(iconWrap);
+
     const titleText = document.createElement("span");
     titleText.textContent = item.title || "-";
     title.appendChild(titleText);
@@ -145,7 +337,7 @@ const renderExternalLinkList = () => {
       item.allowed_levels.length > 0
         ? item.allowed_levels.map((level) => t("externalLinks.level." + level)).join(" / ")
         : t("externalLinks.level.all");
-    meta.textContent = (item.url || "-") + " · " + levelLabel;
+    meta.textContent = [getHostLabel(item.url), levelLabel].join(META_SEPARATOR);
     row.appendChild(meta);
 
     if (!item.enabled) {
@@ -174,8 +366,13 @@ const renderExternalLinkDetail = () => {
     fillForm(null);
     return;
   }
+  const levelLabel =
+    selected.allowed_levels.length > 0
+      ? selected.allowed_levels.map((level) => t("externalLinks.level." + level)).join(" / ")
+      : t("externalLinks.level.all");
+  const statusLabel = selected.enabled ? t("externalLinks.status.enabled") : t("externalLinks.status.disabled");
   elements.externalLinkDetailTitle.textContent = selected.title || t("externalLinks.detail.empty");
-  elements.externalLinkDetailMeta.textContent = selected.url || "";
+  elements.externalLinkDetailMeta.textContent = [selected.url || "-", levelLabel, statusLabel].join(META_SEPARATOR);
   elements.externalLinkDeleteBtn.disabled = false;
   fillForm(selected);
 };
@@ -192,7 +389,7 @@ const collectFormPayload = () => {
     title,
     description: elements.externalLinkFormDescription.value.trim(),
     url,
-    icon: normalizeIcon(elements.externalLinkFormIcon.value),
+    icon: serializeIconConfig(getFormIconConfig()),
     allowed_levels: readLevelChecks(),
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
     enabled: Boolean(elements.externalLinkFormEnabled.checked),
@@ -230,6 +427,7 @@ export const loadExternalLinks = async (options = {}) => {
       .map(normalizeExternalLink)
       .filter((item) => item.link_id)
       .sort((left, right) => left.sort_order - right.sort_order || right.updated_at - left.updated_at);
+
     const preferredId = String(options.selectedId || "").trim();
     if (preferredId && state.externalLinks.list.some((item) => item.link_id === preferredId)) {
       state.externalLinks.selectedId = preferredId;
@@ -239,6 +437,7 @@ export const loadExternalLinks = async (options = {}) => {
     ) {
       state.externalLinks.selectedId = state.externalLinks.list[0]?.link_id || "";
     }
+
     state.externalLinks.loaded = true;
     renderExternalLinkList();
     renderExternalLinkDetail();
@@ -298,6 +497,113 @@ const createExternalLink = () => {
   elements.externalLinkFormTitle.focus();
 };
 
+const renderIconPicker = () => {
+  const picker = elements.externalLinkIconPicker;
+  if (!picker) {
+    return;
+  }
+  if (picker.dataset.rendered === "1") {
+    syncIconPickerSelection(iconModalState.name);
+    return;
+  }
+  picker.textContent = "";
+  const fragment = document.createDocumentFragment();
+  ICON_OPTIONS.forEach((iconName) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "external-link-icon-option";
+    option.dataset.icon = iconName;
+    option.title = iconName;
+    option.setAttribute("aria-label", iconName);
+
+    const icon = document.createElement("i");
+    icon.className = "fa-solid " + iconName;
+    icon.setAttribute("aria-hidden", "true");
+    option.appendChild(icon);
+
+    option.addEventListener("click", () => {
+      iconModalState.name = iconName;
+      syncModalPreview();
+    });
+
+    fragment.appendChild(option);
+  });
+  picker.appendChild(fragment);
+  picker.dataset.rendered = "1";
+  syncIconPickerSelection(iconModalState.name);
+};
+
+const openIconModal = () => {
+  const formIcon = getFormIconConfig();
+  iconModalState.name = formIcon.name;
+  iconModalState.color = formIcon.color;
+  renderIconPicker();
+  syncColorInputsFromState();
+  syncModalPreview();
+  elements.externalLinkIconModal.classList.add("active");
+};
+
+const closeIconModal = () => {
+  elements.externalLinkIconModal.classList.remove("active");
+};
+
+const applyIconModal = () => {
+  setFormIconConfig({ name: iconModalState.name, color: iconModalState.color });
+  syncIconPreview();
+  closeIconModal();
+};
+
+const bindIconControls = () => {
+  if (elements.externalLinkIconTrigger.dataset.bound === "1") {
+    return;
+  }
+  elements.externalLinkIconTrigger.dataset.bound = "1";
+
+  elements.externalLinkIconTrigger.addEventListener("click", openIconModal);
+  elements.externalLinkIconModalClose.addEventListener("click", closeIconModal);
+  elements.externalLinkIconModalCancel.addEventListener("click", closeIconModal);
+  elements.externalLinkIconModalApply.addEventListener("click", applyIconModal);
+
+  elements.externalLinkIconModal.addEventListener("click", (event) => {
+    if (event.target === elements.externalLinkIconModal) {
+      closeIconModal();
+    }
+  });
+
+  elements.externalLinkIconColorInput.addEventListener("input", () => {
+    iconModalState.color = normalizeColor(elements.externalLinkIconColorInput.value);
+    syncColorInputsFromState();
+    syncModalPreview();
+  });
+
+  elements.externalLinkIconColorText.addEventListener("input", () => {
+    const cleaned = String(elements.externalLinkIconColorText.value || "").trim();
+    if (!cleaned) {
+      iconModalState.color = "";
+      syncColorInputsFromState();
+      syncModalPreview();
+      return;
+    }
+    const normalized = normalizeColor(cleaned);
+    if (!normalized) {
+      return;
+    }
+    iconModalState.color = normalized;
+    syncColorInputsFromState();
+    syncModalPreview();
+  });
+
+  elements.externalLinkIconColorText.addEventListener("blur", () => {
+    syncColorInputsFromState();
+  });
+
+  elements.externalLinkIconColorReset.addEventListener("click", () => {
+    iconModalState.color = "";
+    syncColorInputsFromState();
+    syncModalPreview();
+  });
+};
+
 export const initExternalLinksPanel = () => {
   ensureExternalLinksState();
   if (!ensureExternalLinkElements()) {
@@ -306,6 +612,7 @@ export const initExternalLinksPanel = () => {
   if (elements.externalLinkRefreshBtn.dataset.bound === "1") {
     return;
   }
+
   elements.externalLinkRefreshBtn.dataset.bound = "1";
   elements.externalLinkRefreshBtn.addEventListener("click", () => {
     loadExternalLinks();
@@ -313,6 +620,9 @@ export const initExternalLinksPanel = () => {
   elements.externalLinkCreateBtn.addEventListener("click", createExternalLink);
   elements.externalLinkSaveBtn.addEventListener("click", saveExternalLink);
   elements.externalLinkDeleteBtn.addEventListener("click", deleteExternalLink);
+
+  bindIconControls();
+  renderIconPicker();
   renderExternalLinkDetail();
   appendLog(t("externalLinks.init"));
 };

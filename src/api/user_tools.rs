@@ -23,7 +23,7 @@ use crate::user_tools::{UserKnowledgeBase, UserMcpServer, UserToolsPayload};
 use crate::vector_knowledge;
 use axum::extract::{Multipart, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -2419,7 +2419,7 @@ fn list_markdown_files(root: &Path) -> Vec<String> {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
 
 fn parse_header_map(value: Option<Value>) -> HashMap<String, String> {

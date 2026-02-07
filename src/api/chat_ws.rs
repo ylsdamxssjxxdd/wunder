@@ -316,10 +316,11 @@ async fn handle_ws(
                         {
                             Ok(request) => request,
                             Err(response) => {
+                                let error_code = resolve_ws_error_code(&response);
                                 let _ = send_ws_error(
                                     &ws_tx,
                                     Some(&request_id),
-                                    map_ws_error_code(response.status()),
+                                    error_code.as_str(),
                                     extract_error_message(response),
                                 )
                                 .await;
@@ -697,19 +698,37 @@ fn session_exists(state: &AppState, user_id: &str, session_id: &str) -> bool {
 
 fn extract_error_message(response: Response) -> String {
     let status = response.status();
-    if status == StatusCode::UNAUTHORIZED {
-        return i18n::t("error.auth_required");
+    let code = response_error_code(&response)
+        .unwrap_or_else(|| map_ws_error_code_by_status(status).to_string());
+    match code.as_str() {
+        "AUTH_REQUIRED" | "UNAUTHORIZED" => i18n::t("error.auth_required"),
+        "SESSION_NOT_FOUND" => i18n::t("error.session_not_found"),
+        "USER_QUOTA_EXCEEDED" => i18n::t("error.user_quota_exceeded"),
+        _ => i18n::t("error.content_required"),
     }
-    if status == StatusCode::NOT_FOUND {
-        return i18n::t("error.session_not_found");
-    }
-    i18n::t("error.content_required")
 }
 
-fn map_ws_error_code(status: StatusCode) -> &'static str {
+fn resolve_ws_error_code(response: &Response) -> String {
+    response_error_code(response)
+        .unwrap_or_else(|| map_ws_error_code_by_status(response.status()).to_string())
+}
+
+fn response_error_code(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get(crate::api::errors::ERROR_CODE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn map_ws_error_code_by_status(status: StatusCode) -> &'static str {
     match status {
         StatusCode::UNAUTHORIZED => "AUTH_REQUIRED",
+        StatusCode::FORBIDDEN => "PERMISSION_DENIED",
         StatusCode::NOT_FOUND => "SESSION_NOT_FOUND",
+        StatusCode::TOO_MANY_REQUESTS => "RATE_LIMITED",
         StatusCode::BAD_REQUEST => "INVALID_REQUEST",
         _ => "BAD_REQUEST",
     }

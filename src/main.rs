@@ -36,6 +36,7 @@ use futures::FutureExt;
 use shutdown::shutdown_signal;
 use state::AppState;
 use std::any::Any as StdAny;
+use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +59,11 @@ async fn main() -> anyhow::Result<()> {
             .layer(from_fn(panic_guard));
         let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
         info!("Sandbox 服务已启动: http://{addr}");
-        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+        let server = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal());
         if let Err(err) = server.await {
             warn!("Sandbox 服务退出异常: {err}");
         }
@@ -89,7 +94,11 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
     info!("Rust API 服务已启动: http://{addr}");
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal());
     if let Err(err) = server.await {
         warn!("服务退出异常: {err}");
     }
@@ -391,11 +400,6 @@ fn resolve_language_from_request(request: &Request<Body>) -> String {
     i18n::resolve_language(candidates.iter().map(|value| value.as_str()))
 }
 
-fn auth_error(status: StatusCode, message: &str) -> Response<Body> {
-    let payload = serde_json::json!({ "detail": { "message": message } });
-    Response::builder()
-        .status(status)
-        .header("content-type", "application/json; charset=utf-8")
-        .body(Body::from(payload.to_string()))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
+fn auth_error(status: StatusCode, message: &str) -> Response {
+    api::errors::error_response(status, message)
 }

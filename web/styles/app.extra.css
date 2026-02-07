@@ -21,7 +21,40 @@
   opacity: 1;
   transition: opacity 0.2s ease, transform 0.2s ease;
   transform: translateY(0);
+  pointer-events: auto;
 }
+
+.toast-message {
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.toast-meta {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.toast-action {
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  background: transparent;
+  color: #fff;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toast-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.88;
+}
+
 
 .toast.hide {
   opacity: 0;

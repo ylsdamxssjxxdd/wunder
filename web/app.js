@@ -164,15 +164,15 @@ const panelMap = {
 
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
 
-  mcp: { panel: elements.mcpPanel, nav: elements.navMcp },
+  mcp: { panel: elements.mcpPanel, nav: elements.navBuiltin },
 
   lsp: { panel: elements.lspPanel, nav: elements.navLsp },
 
-  a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navA2aServices },
+  a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navBuiltin },
 
-  skills: { panel: elements.skillsPanel, nav: elements.navSkills },
+  skills: { panel: elements.skillsPanel, nav: elements.navBuiltin },
 
-  knowledge: { panel: elements.knowledgePanel, nav: elements.navKnowledge },
+  knowledge: { panel: elements.knowledgePanel, nav: elements.navBuiltin },
 
   throughput: { panel: elements.throughputPanel, nav: elements.navThroughput },
 
@@ -190,6 +190,23 @@ const panelMap = {
 
   apiDocs: { panel: elements.apiDocsPanel, nav: elements.navApiDocs },
 
+};
+
+const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "a2aServices", "skills"]);
+
+const syncToolManagerShortcutState = (activePanel) => {
+  const currentPanel = TOOL_MANAGER_PANELS.has(activePanel) ? activePanel : "";
+  const shortcutButtons = document.querySelectorAll(".tool-manager-shortcut[data-tool-panel]");
+  shortcutButtons.forEach((button) => {
+    const isActive = button.dataset.toolPanel === currentPanel;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    if (isActive) {
+      button.setAttribute("aria-current", "true");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
 };
 
 const setNavGroupExpanded = (group, expanded) => {
@@ -287,27 +304,37 @@ const expandActiveNavGroupOnly = () => {
 
 
 const switchPanel = (panel) => {
+  if (!panelMap[panel]) {
+    return;
+  }
+
   const previousPanel = state.runtime.activePanel;
+  const navButtons = new Set();
+
+  Object.values(panelMap).forEach((entry) => {
+    if (entry.nav) {
+      navButtons.add(entry.nav);
+    }
+  });
 
   Object.keys(panelMap).forEach((key) => {
-
     const entry = panelMap[key];
-
     const isActive = key === panel;
-
-    entry.panel.classList.toggle("active", isActive);
-
-    if (entry.nav) {
-
-      entry.nav.classList.toggle("active", isActive);
-
+    if (entry.panel) {
+      entry.panel.classList.toggle("active", isActive);
     }
-
   });
+
+  navButtons.forEach((button) => button.classList.remove("active"));
+  const activeNav = panelMap[panel].nav;
+  if (activeNav) {
+    activeNav.classList.add("active");
+  }
 
   updateNavGroupState();
 
   state.runtime.activePanel = panel;
+  syncToolManagerShortcutState(panel);
 
   if (previousPanel === "lsp" && panel !== "lsp") {
     onLspPanelDeactivate();
@@ -538,7 +565,7 @@ const bindNavigation = () => {
 
   });
 
-  elements.navA2aServices.addEventListener("click", async () => {
+  const openA2aServicesPanel = async () => {
 
     switchPanel("a2aServices");
 
@@ -562,11 +589,9 @@ const bindNavigation = () => {
 
     }
 
-  });
+  };
 
-  elements.navSettings.addEventListener("click", () => switchPanel("settings"));
-
-  elements.navMcp.addEventListener("click", async () => {
+  const openMcpPanel = async () => {
 
     switchPanel("mcp");
 
@@ -590,35 +615,9 @@ const bindNavigation = () => {
 
     }
 
-  });
+  };
 
-  elements.navLsp.addEventListener("click", async () => {
-
-    switchPanel("lsp");
-
-    if (!state.panelLoaded.lsp) {
-
-      try {
-
-        await loadLspConfig();
-
-        state.panelLoaded.lsp = true;
-
-      } catch (error) {
-
-        elements.lspStatusList.textContent = t("common.loadFailedWithMessage", {
-
-          message: error.message,
-
-        });
-
-      }
-
-    }
-
-  });
-
-  elements.navBuiltin.addEventListener("click", async () => {
+  const openBuiltinPanel = async () => {
 
     switchPanel("builtin");
 
@@ -642,9 +641,9 @@ const bindNavigation = () => {
 
     }
 
-  });
+  };
 
-  elements.navSkills.addEventListener("click", async () => {
+  const openSkillsPanel = async () => {
 
     switchPanel("skills");
 
@@ -668,9 +667,9 @@ const bindNavigation = () => {
 
     }
 
-  });
+  };
 
-  elements.navKnowledge.addEventListener("click", async () => {
+  const openKnowledgePanel = async () => {
 
     switchPanel("knowledge");
 
@@ -694,7 +693,152 @@ const bindNavigation = () => {
 
     }
 
-  });
+  };
+
+  const toolManagerOpeners = {
+    builtin: openBuiltinPanel,
+    mcp: openMcpPanel,
+    knowledge: openKnowledgePanel,
+    a2aServices: openA2aServicesPanel,
+    skills: openSkillsPanel,
+  };
+
+  const toolShortcutIdMap = {
+    toolManagerOpenBuiltin: "builtin",
+    toolManagerOpenMcp: "mcp",
+    toolManagerOpenKnowledge: "knowledge",
+    toolManagerOpenA2aServices: "a2aServices",
+    toolManagerOpenSkills: "skills",
+  };
+
+  const ensureToolManagerShortcutMirrors = () => {
+    const sourcePanel = elements.builtinPanel;
+    if (!sourcePanel) {
+      return;
+    }
+    const sourceShortcuts = sourcePanel.querySelector(".tool-manager-shortcuts");
+    if (!sourceShortcuts) {
+      return;
+    }
+    sourceShortcuts.querySelectorAll(".tool-manager-shortcut").forEach((button) => {
+      const panelKey = button.dataset.toolPanel || toolShortcutIdMap[button.id];
+      if (panelKey) {
+        button.dataset.toolPanel = panelKey;
+      }
+    });
+    const sourceButtons = Array.from(
+      sourceShortcuts.querySelectorAll(".tool-manager-shortcut[data-tool-panel]")
+    );
+    if (!sourceButtons.length) {
+      return;
+    }
+    const sourceHint = sourcePanel.querySelector(".tool-manager-shortcuts-hint");
+    const mirrorTargets = [
+      elements.mcpPanel,
+      elements.knowledgePanel,
+      elements.a2aServicesPanel,
+      elements.skillsPanel,
+    ];
+    mirrorTargets.forEach((panel) => {
+      if (!panel || panel.querySelector('.tool-manager-shortcuts[data-tool-shortcuts="mirrored"]')) {
+        return;
+      }
+      const mirroredShortcuts = document.createElement("div");
+      mirroredShortcuts.className = "tool-manager-shortcuts tool-manager-shortcuts--embedded";
+      mirroredShortcuts.dataset.toolShortcuts = "mirrored";
+      sourceButtons.forEach((sourceButton) => {
+        const clone = sourceButton.cloneNode(true);
+        clone.removeAttribute("id");
+        clone.removeAttribute("aria-current");
+        clone.setAttribute("aria-pressed", "false");
+        clone.dataset.toolPanel = sourceButton.dataset.toolPanel;
+        mirroredShortcuts.appendChild(clone);
+      });
+      const anchor = panel.querySelector(".tips");
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(mirroredShortcuts, anchor.nextSibling);
+      } else {
+        panel.insertBefore(mirroredShortcuts, panel.firstChild);
+      }
+      if (sourceHint) {
+        const hintClone = sourceHint.cloneNode(true);
+        hintClone.dataset.toolShortcuts = "mirrored";
+        mirroredShortcuts.insertAdjacentElement("afterend", hintClone);
+      }
+    });
+  };
+
+  const bindToolManagerShortcutButtons = () => {
+    document.querySelectorAll(".tool-manager-shortcut[data-tool-panel]").forEach((button) => {
+      if (button.dataset.bound === "1") {
+        return;
+      }
+      const targetPanel = button.dataset.toolPanel;
+      const opener = toolManagerOpeners[targetPanel];
+      if (!opener) {
+        return;
+      }
+      button.dataset.bound = "1";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        opener();
+      });
+    });
+    syncToolManagerShortcutState(state.runtime.activePanel);
+  };
+
+  ensureToolManagerShortcutMirrors();
+  bindToolManagerShortcutButtons();
+
+  if (elements.navA2aServices) {
+    elements.navA2aServices.addEventListener("click", openA2aServicesPanel);
+  }
+
+  elements.navSettings.addEventListener("click", () => switchPanel("settings"));
+
+  if (elements.navMcp) {
+    elements.navMcp.addEventListener("click", openMcpPanel);
+  }
+
+  if (elements.navLsp) {
+    elements.navLsp.addEventListener("click", async () => {
+
+      switchPanel("lsp");
+
+      if (!state.panelLoaded.lsp) {
+
+        try {
+
+          await loadLspConfig();
+
+          state.panelLoaded.lsp = true;
+
+        } catch (error) {
+
+          elements.lspStatusList.textContent = t("common.loadFailedWithMessage", {
+
+            message: error.message,
+
+          });
+
+        }
+
+      }
+
+    });
+  }
+
+  if (elements.navBuiltin) {
+    elements.navBuiltin.addEventListener("click", openBuiltinPanel);
+  }
+
+  if (elements.navSkills) {
+    elements.navSkills.addEventListener("click", openSkillsPanel);
+  }
+
+  if (elements.navKnowledge) {
+    elements.navKnowledge.addEventListener("click", openKnowledgePanel);
+  }
 
   elements.navLlm.addEventListener("click", async () => {
 

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <header class="user-topbar topbar">
     <div class="brand">
       <div class="brand-mark">AI</div>
@@ -124,8 +124,6 @@ const navItems = computed(() => {
   const items = [
     { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-earth-asia' },
     { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-toolbox' },
-    { key: 'nav.cron', label: t('nav.cron'), path: `${basePath.value}/cron`, icon: 'fa-clock' },
-    { key: 'nav.channels', label: t('nav.channels'), path: `${basePath.value}/channels`, icon: 'fa-share-nodes' },
     { key: 'nav.chat', label: t('nav.chat'), path: `${basePath.value}/chat`, icon: 'fa-comment-dots' }
   ];
   return props.hideChat ? items.filter((item) => item.key !== 'nav.chat') : items;

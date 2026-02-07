@@ -589,7 +589,10 @@ impl ThroughputManager {
             )
             .await;
         });
-        Ok(state.active.as_ref().map(ActiveRun::snapshot).unwrap())
+        match state.active.as_ref().map(ActiveRun::snapshot) {
+            Some(snapshot) => Ok(snapshot),
+            None => Err("throughput run start failed: active snapshot missing".to_string()),
+        }
     }
 
     pub async fn stop(&self) -> Result<ThroughputSnapshot, String> {

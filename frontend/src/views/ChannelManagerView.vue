@@ -183,8 +183,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { useRoute } from 'vue-router';
 
 import {
   deleteChannelBinding,
@@ -195,8 +196,10 @@ import {
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
+import { showApiError } from '@/utils/apiError';
 
 const { t } = useI18n();
+const route = useRoute();
 const agentStore = useAgentStore();
 const accounts = ref([]);
 const bindings = ref([]);
@@ -250,6 +253,14 @@ const selectedAccount = computed(
   () => accounts.value.find((item) => item.key === selectedKey.value) || null
 );
 
+const contextAgentId = computed(() => {
+  const raw = String(route.query.agent_id || '').trim();
+  if (!raw || raw === '__default__' || raw === 'default') {
+    return '';
+  }
+  return raw;
+});
+
 const agentOptions = computed(() => {
   const options = [];
   const append = (agent, suffix) => {
@@ -278,11 +289,14 @@ const agentNameMap = computed(() => {
 const filteredBindings = computed(() => {
   if (!selectedAccount.value) return [];
   return bindings.value
-    .filter(
-      (binding) =>
+    .filter((binding) => {
+      const sameAccount =
         binding.channel === selectedAccount.value.channel &&
-        binding.account_id === selectedAccount.value.account_id
-    )
+        binding.account_id === selectedAccount.value.account_id;
+      if (!sameAccount) return false;
+      if (!contextAgentId.value) return true;
+      return String(binding.agent_id || '').trim() === contextAgentId.value;
+    })
     .map((binding) => ({
       ...binding,
       agentLabel:
@@ -341,7 +355,7 @@ const loadAccounts = async () => {
       resetForm();
     }
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail?.message || t('channels.loadFailed'));
+    showApiError(error, t('channels.loadFailed'));
   } finally {
     loading.value = false;
   }
@@ -350,13 +364,14 @@ const loadAccounts = async () => {
 const loadBindings = async () => {
   bindingLoading.value = true;
   try {
-    const { data } = await listChannelBindings();
+    const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
+    const { data } = await listChannelBindings(params);
     const items = data?.data?.items || [];
     bindings.value = items
       .map((item) => normalizeBinding(item))
       .filter(Boolean);
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail?.message || t('channels.bindings.loadFailed'));
+    showApiError(error, t('channels.bindings.loadFailed'));
   } finally {
     bindingLoading.value = false;
   }
@@ -376,7 +391,7 @@ const resetForm = () => {
   const account = selectedAccount.value;
   form.peer_kind = account?.defaultPeerKind || 'dm';
   form.peer_id = '';
-  form.agent_id = '';
+  form.agent_id = contextAgentId.value || '';
 };
 
 const saveBinding = async () => {
@@ -402,7 +417,7 @@ const saveBinding = async () => {
     ElMessage.success(t('channels.bind.success'));
     await loadBindings();
   } catch (error) {
-    ElMessage.error(error?.response?.data?.detail?.message || t('channels.bind.failed'));
+    showApiError(error, t('channels.bind.failed'));
   } finally {
     bindingSaving.value = false;
   }
@@ -425,7 +440,7 @@ const removeBinding = async (binding) => {
     await loadBindings();
   } catch (error) {
     if (error === 'cancel' || error === 'close') return;
-    ElMessage.error(error?.response?.data?.detail?.message || t('channels.unbind.failed'));
+    showApiError(error, t('channels.unbind.failed'));
   }
 };
 
@@ -433,4 +448,12 @@ onMounted(async () => {
   await agentStore.loadAgents();
   await refreshAll();
 });
+
+watch(
+  () => contextAgentId.value,
+  () => {
+    resetForm();
+    loadBindings();
+  }
+);
 </script>

@@ -151,6 +151,7 @@ import {
   saveUserSkills,
   uploadUserSkillZip
 } from '@/api/userTools';
+import { showApiError } from '@/utils/apiError';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -453,7 +454,7 @@ const loadSkills = async ({ refreshDetail } = {}) => {
     showEditorMessage('');
     refreshFileTreeMessage();
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, t('userTools.skills.loadFailed')));
+    showApiError(error, t('userTools.skills.loadFailed'));
   } finally {
     loading.value = false;
   }
@@ -470,7 +471,7 @@ const saveSkills = async () => {
     emitStatus(t('userTools.autoSaved'));
   } catch (error) {
     emitStatus(t('userTools.saveFailed', { message: error.message || t('common.requestFailed') }));
-    ElMessage.error(resolveErrorMessage(error, t('userTools.skills.saveFailed')));
+    showApiError(error, t('userTools.skills.saveFailed'));
   }
 };
 
@@ -521,7 +522,7 @@ const handleUpload = async () => {
     await loadSkills({ refreshDetail: true });
     ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, t('userTools.skills.upload.failed')));
+    showApiError(error, t('userTools.skills.upload.failed'));
   }
 };
 
@@ -530,7 +531,7 @@ const reloadSkills = async () => {
     await loadSkills({ refreshDetail: true });
     ElMessage.success(t('userTools.skills.refresh.success'));
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, t('userTools.skills.refresh.failed')));
+    showApiError(error, t('userTools.skills.refresh.failed'));
   }
 };
 

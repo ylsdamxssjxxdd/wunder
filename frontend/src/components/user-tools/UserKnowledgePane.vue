@@ -501,6 +501,7 @@ import {
   uploadUserKnowledgeFile
 } from '@/api/userTools';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const props = defineProps({
   visible: {
@@ -1025,7 +1026,7 @@ const loadConfig = async () => {
       await loadFiles();
     }
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('knowledge.refreshFailed', { message: error.message || '' }));
+    showApiError(error, t('knowledge.refreshFailed', { message: error.message || '' }));
   } finally {
     loading.value = false;
   }

@@ -512,6 +512,10 @@ pub struct GatewayConfig {
     pub node_token_required: bool,
     #[serde(default)]
     pub allow_gateway_token_for_nodes: bool,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for GatewayConfig {
@@ -523,6 +527,8 @@ impl Default for GatewayConfig {
             allow_unpaired_nodes: false,
             node_token_required: false,
             allow_gateway_token_for_nodes: false,
+            allowed_origins: Vec::new(),
+            trusted_proxies: Vec::new(),
         }
     }
 }

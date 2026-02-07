@@ -174,7 +174,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -185,10 +186,12 @@ import {
   removeCronJob,
   runCronJob
 } from '@/api/cron';
+import { showApiError } from '@/utils/apiError';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 
 const { t } = useI18n();
+const route = useRoute();
 const jobs = ref([]);
 const runs = ref([]);
 const loading = ref(false);
@@ -198,6 +201,14 @@ const selectedJobId = ref('');
 const selectedJob = computed(
   () => jobs.value.find((job) => job.job_id === selectedJobId.value) || null
 );
+
+const contextAgentId = computed(() => {
+  const raw = String(route.query.agent_id || '').trim();
+  if (!raw || raw === '__default__' || raw === 'default') {
+    return '';
+  }
+  return raw;
+});
 
 const agentIdText = computed(() => {
   const agentId = selectedJob.value?.agent_id;
@@ -235,7 +246,8 @@ const resolveErrorMessage = (error) =>
 const loadJobs = async () => {
   loading.value = true;
   try {
-    const { data } = await fetchCronJobs();
+    const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
+    const { data } = await fetchCronJobs(params);
     const items = data?.data?.jobs || [];
     jobs.value = Array.isArray(items) ? items : [];
     if (!jobs.value.length) {
@@ -247,7 +259,7 @@ const loadJobs = async () => {
       selectedJobId.value = jobs.value[0].job_id;
     }
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error));
+    showApiError(error, resolveErrorMessage(error));
   } finally {
     loading.value = false;
   }
@@ -260,11 +272,12 @@ const loadRuns = async (jobId) => {
   }
   runsLoading.value = true;
   try {
-    const { data } = await fetchCronRuns(jobId);
+    const params = contextAgentId.value ? { agent_id: contextAgentId.value } : undefined;
+    const { data } = await fetchCronRuns(jobId, params);
     const items = data?.data?.runs || [];
     runs.value = Array.isArray(items) ? items : [];
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error));
+    showApiError(error, resolveErrorMessage(error));
   } finally {
     runsLoading.value = false;
   }
@@ -288,13 +301,26 @@ const selectJob = async (job) => {
   await loadRuns(job.job_id);
 };
 
+const buildJobPayload = (job) => {
+  const payload = { job_id: job.job_id };
+  const resolvedAgentId =
+    String(job?.agent_id || '').trim() || String(contextAgentId.value || '').trim();
+  if (resolvedAgentId && resolvedAgentId !== '__default__' && resolvedAgentId !== 'default') {
+    payload.agent_id = resolvedAgentId;
+  }
+  return payload;
+};
+
 const toggleEnable = async () => {
   const job = selectedJob.value;
   if (!job) {
     return;
   }
   try {
-    const payload = { action: job.enabled ? 'disable' : 'enable', job: { job_id: job.job_id } };
+    const payload = {
+      action: job.enabled ? 'disable' : 'enable',
+      job: buildJobPayload(job)
+    };
     if (job.enabled) {
       await disableCronJob(payload);
     } else {
@@ -302,7 +328,7 @@ const toggleEnable = async () => {
     }
     await refreshAll();
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error));
+    showApiError(error, resolveErrorMessage(error));
   }
 };
 
@@ -317,13 +343,13 @@ const runJob = async () => {
       cancelButtonText: t('common.cancel'),
       type: 'warning'
     });
-    await runCronJob({ action: 'run', job: { job_id: job.job_id } });
+    await runCronJob({ action: 'run', job: buildJobPayload(job) });
     await refreshAll();
   } catch (error) {
     if (error === 'cancel' || error === 'close') {
       return;
     }
-    ElMessage.error(resolveErrorMessage(error));
+    showApiError(error, resolveErrorMessage(error));
   }
 };
 
@@ -338,13 +364,13 @@ const deleteJob = async () => {
       cancelButtonText: t('common.cancel'),
       type: 'warning'
     });
-    await removeCronJob({ action: 'remove', job: { job_id: job.job_id } });
+    await removeCronJob({ action: 'remove', job: buildJobPayload(job) });
     await refreshAll();
   } catch (error) {
     if (error === 'cancel' || error === 'close') {
       return;
     }
-    ElMessage.error(resolveErrorMessage(error));
+    showApiError(error, resolveErrorMessage(error));
   }
 };
 
@@ -380,4 +406,11 @@ const formatRunStatus = (status) => {
 onMounted(async () => {
   await refreshAll();
 });
+
+watch(
+  () => contextAgentId.value,
+  () => {
+    refreshAll();
+  }
+);
 </script>

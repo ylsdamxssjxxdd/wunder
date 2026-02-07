@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260124-01";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
+import { resolveApiErrorMessage } from "./api-error.js";
 
 const PERFORMANCE_STATE_KEY = "wunder_performance_state";
 const DEFAULT_CONFIG = {
@@ -346,18 +347,8 @@ const buildSequence = (maxConcurrency, step) => {
   return sequence;
 };
 
-const parseErrorMessage = async (response) => {
-  try {
-    const payload = await response.json();
-    return payload?.detail?.message || payload?.message || "";
-  } catch (error) {
-    try {
-      return await response.text();
-    } catch (innerError) {
-      return "";
-    }
-  }
-};
+const parseErrorMessage = async (response) =>
+  resolveApiErrorMessage(response, t("common.requestFailed", { status: response.status }));
 
 const fetchSample = async (concurrency, signal) => {
   const wunderBase = getWunderBase();
@@ -725,5 +716,4 @@ export const initPerformancePanel = () => {
   setIndicatorStatus(indicatorStatus);
   renderAll();
 };
-
 

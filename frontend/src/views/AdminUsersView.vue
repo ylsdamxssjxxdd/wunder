@@ -138,6 +138,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import { useAdminStore } from '@/stores/admin';
+import { showApiError } from '@/utils/apiError';
 
 const adminStore = useAdminStore();
 const { t } = useI18n();
@@ -197,7 +198,7 @@ const submit = async () => {
     form.access_level = 'A';
     ElMessage.success(t('admin.users.createSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.createFailed'));
+    showApiError(error, t('admin.users.createFailed'));
   }
 };
 
@@ -205,7 +206,7 @@ const updateStatus = async (row) => {
   try {
     await adminStore.updateUser(row.id, { status: row.status });
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.updateFailed'));
+    showApiError(error, t('admin.users.updateFailed'));
   }
 };
 
@@ -213,7 +214,7 @@ const updateLevel = async (row) => {
   try {
     await adminStore.updateUser(row.id, { access_level: row.access_level });
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.updateFailed'));
+    showApiError(error, t('admin.users.updateFailed'));
   }
 };
 
@@ -243,7 +244,7 @@ const handleResetPassword = async (row) => {
     resetPasswords[row.id] = '';
     ElMessage.success(t('admin.users.resetPassword.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.resetPassword.failed'));
+    showApiError(error, t('admin.users.resetPassword.failed'));
   } finally {
     resetLoading[row.id] = false;
   }
@@ -286,7 +287,7 @@ const openToolDialog = async (user) => {
     }
     syncToolForm();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.loadFailed'));
+    showApiError(error, t('admin.users.loadFailed'));
   } finally {
     toolDialogLoading.value = false;
   }
@@ -305,7 +306,7 @@ const saveToolAccess = async () => {
     });
     ElMessage.success(t('admin.users.saveSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('admin.users.saveFailed'));
+    showApiError(error, t('admin.users.saveFailed'));
   }
 };
 

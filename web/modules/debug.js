@@ -10,6 +10,7 @@ import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
+import { resolveApiErrorMessage } from "./api-error.js";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
@@ -3607,46 +3608,11 @@ export const toggleDebugPolling = (enabled) => {
   });
 };
 
-const extractErrorMessage = (payload) => {
-  if (!payload) {
-    return "";
-  }
-  const detail = payload.detail;
-  if (detail) {
-    if (typeof detail === "string") {
-      return detail;
-    }
-    if (detail.message) {
-      return detail.message;
-    }
-    if (detail.error) {
-      return detail.error;
-    }
-    if (detail.detail?.message) {
-      return detail.detail.message;
-    }
-  }
-  return payload.message || payload.error || "";
-};
-
 const readErrorMessage = async (response) => {
   if (!response) {
     return "";
   }
-  try {
-    const text = await response.text();
-    if (!text) {
-      return "";
-    }
-    try {
-      const payload = JSON.parse(text);
-      return extractErrorMessage(payload) || text;
-    } catch (error) {
-      return text;
-    }
-  } catch (error) {
-    return "";
-  }
+  return resolveApiErrorMessage(response, "");
 };
 
 const handleManualCompaction = async () => {
@@ -4158,5 +4124,4 @@ export const initDebugPanel = () => {
   updateModelOutputPreviewButton(outputState);
   updatePlanBoardButton();
 };
-
 

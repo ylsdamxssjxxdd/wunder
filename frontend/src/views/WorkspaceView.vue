@@ -34,6 +34,7 @@ import WorkspaceTree from '@/components/WorkspaceTree.vue';
 import { useWorkspaceStore } from '@/stores/workspace';
 import { downloadWunderWorkspaceFile } from '@/api/workspace';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const workspaceStore = useWorkspaceStore();
 const activeFile = ref(null);
@@ -56,7 +57,7 @@ const createFolder = async () => {
     await workspaceStore.createFolder({ name: `${t('workspace.panel.newFolder')}-${Date.now()}` });
     ElMessage.success(t('workspace.panel.folderCreated'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.panel.createFailed'));
+    showApiError(error, t('workspace.panel.createFailed'));
   }
 };
 
@@ -65,7 +66,7 @@ const handleUpload = async (file) => {
   await workspaceStore.uploadFile(file, workspaceStore.activePath);
   ElMessage.success(t('workspace.panel.uploadSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.panel.uploadFailed'));
+    showApiError(error, t('workspace.panel.uploadFailed'));
   }
 };
 

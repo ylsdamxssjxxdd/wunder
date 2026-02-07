@@ -193,5 +193,5 @@ fn dimension_label(dimension: EvaluationDimension) -> &'static str {
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }

@@ -81,6 +81,7 @@ import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsCatalog, saveUserSharedTools } from '@/api/userTools';
 import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
 
 const props = defineProps({
   modelValue: {
@@ -172,7 +173,7 @@ const saveSharedToolSelection = async () => {
     const payload = Array.from(selectedSet.value);
     await saveUserSharedTools({ shared_tools: payload });
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('userTools.shared.saveFailed'));
+    showApiError(error, t('userTools.shared.saveFailed'));
   }
 };
 
@@ -203,7 +204,7 @@ const loadSharedTools = async () => {
     statusMessage.value = t('userTools.shared.loadFailedWithMessage', {
       message: error.message || t('common.requestFailed')
     });
-    ElMessage.error(error.response?.data?.detail || t('userTools.shared.loadFailed'));
+    showApiError(error, t('userTools.shared.loadFailed'));
   } finally {
     if (currentVersion === loadVersion.value) {
       loading.value = false;

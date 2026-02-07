@@ -278,6 +278,7 @@ import {
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import vscodeIconsTheme from '@/assets/vscode-icons-theme.json';
+import { showApiError } from '@/utils/apiError';
 
 const props = defineProps({
   agentId: {
@@ -1056,7 +1057,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     await hydrateExpandedEntries();
     return true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.loadFailed'));
+    showApiError(error, t('workspace.loadFailed'));
     state.entries = [];
     return false;
   } finally {
@@ -1086,7 +1087,7 @@ const loadWorkspaceSearch = async () => {
     state.searchMode = true;
     return true;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.searchFailed'));
+    showApiError(error, t('workspace.searchFailed'));
     state.entries = [];
     return false;
   } finally {
@@ -1165,7 +1166,7 @@ const toggleWorkspaceDirectory = async (entry) => {
   } catch (error) {
     state.expanded.delete(entry.path);
     state.expanded = new Set(state.expanded);
-    ElMessage.error(error.response?.data?.detail || t('workspace.expandFailed'));
+    showApiError(error, t('workspace.expandFailed'));
   }
 };
 
@@ -1213,7 +1214,7 @@ const clearWorkspaceCurrent = async () => {
     notifyBatchResult(response.data, t('workspace.action.clear'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.clear.failed'));
+    showApiError(error, t('workspace.clear.failed'));
   }
 };
 
@@ -1299,7 +1300,7 @@ const handleUploadInput = async (event) => {
     await uploadWorkspaceFiles(files, state.path);
     ElMessage.success(t('workspace.upload.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || error.message || t('workspace.upload.failed'));
+    showApiError(error, error.message || t('workspace.upload.failed'));
   }
 };
 
@@ -1456,7 +1457,7 @@ const finishWorkspaceRename = async (entry, nextName) => {
       await reloadWorkspaceView();
       ElMessage.success(t('workspace.rename.success'));
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || t('workspace.rename.failed'));
+      showApiError(error, t('workspace.rename.failed'));
     } finally {
       state.renamingValue = '';
     }
@@ -1497,7 +1498,7 @@ const deleteWorkspaceSelection = async () => {
     notifyBatchResult(response.data, t('common.delete'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.delete.failed'));
+    showApiError(error, t('workspace.delete.failed'));
   }
 };
 
@@ -1526,7 +1527,7 @@ const deleteWorkspaceSelection = async () => {
       notifyBatchResult(response.data, t('workspace.action.move'));
       await reloadWorkspaceView();
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
+      showApiError(error, t('workspace.move.failed'));
     }
   };
 
@@ -1555,7 +1556,7 @@ const deleteWorkspaceSelection = async () => {
       notifyBatchResult(response.data, t('workspace.action.copy'));
       await reloadWorkspaceView();
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || t('workspace.copy.failed'));
+      showApiError(error, t('workspace.copy.failed'));
     }
   };
 
@@ -1586,7 +1587,7 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
     await reloadWorkspaceView();
     ElMessage.success(t('workspace.move.success', { target: targetDir || '/' }));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
+    showApiError(error, t('workspace.move.failed'));
   }
 };
 
@@ -1609,7 +1610,7 @@ const createWorkspaceFile = async () => {
     await reloadWorkspaceView();
     ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.createFile.failed'));
+    showApiError(error, t('workspace.createFile.failed'));
   }
 };
 
@@ -1629,7 +1630,7 @@ const createWorkspaceFolder = async () => {
     await reloadWorkspaceView();
     ElMessage.success(t('workspace.createFolder.success'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.createFolder.failed'));
+    showApiError(error, t('workspace.createFolder.failed'));
   }
 };
 
@@ -1896,7 +1897,7 @@ const handleItemDrop = async (event, entry) => {
       notifyBatchResult(response.data, t('workspace.move.toFolder', { name: entry.name || t('workspace.meta.folder') }));
       await reloadWorkspaceView();
     } catch (error) {
-      ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
+      showApiError(error, t('workspace.move.failed'));
     }
     return;
   }
@@ -1946,7 +1947,7 @@ const handleUpDrop = async (event) => {
     notifyBatchResult(response.data, t('workspace.action.moveToParent'));
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.move.failed'));
+    showApiError(error, t('workspace.move.failed'));
   }
 };
 
@@ -2124,7 +2125,7 @@ const saveEditor = async () => {
     closeEditor();
     await reloadWorkspaceView();
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('workspace.editor.saveFailed'));
+    showApiError(error, t('workspace.editor.saveFailed'));
   }
 };
 

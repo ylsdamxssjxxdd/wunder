@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="portal-shell">
     <UserTopbar :title="t('portal.title')" :subtitle="t('portal.subtitle')" :hide-chat="true" />
     <main class="portal-content">
@@ -118,30 +118,8 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
-                <div class="agent-card-footer">
-                  <div class="agent-card-meta">
-                    <span>{{ formatTime(agent.updated_at) }}</span>
-                  </div>
-                  <div class="agent-card-actions">
-                    <button
-                      class="agent-card-icon-btn"
-                      type="button"
-                      :title="t('portal.agent.edit')"
-                      :aria-label="t('portal.agent.edit')"
-                      @click.stop="openEditDialog(agent)"
-                    >
-                      <i class="fa-solid fa-pen-to-square agent-card-icon" aria-hidden="true"></i>
-                    </button>
-                    <button
-                      class="agent-card-icon-btn danger"
-                      type="button"
-                      :title="t('portal.agent.delete')"
-                      :aria-label="t('portal.agent.delete')"
-                      @click.stop="confirmDelete(agent)"
-                    >
-                      <i class="fa-solid fa-trash-can agent-card-icon" aria-hidden="true"></i>
-                    </button>
-                  </div>
+                <div class="agent-card-meta">
+                  <span>{{ formatTime(agent.updated_at) }}</span>
                 </div>
               </div>
             </div>
@@ -229,6 +207,7 @@
                       <i
                         class="agent-card-default-icon-svg"
                         :class="['fa-solid', resolveExternalIcon(link.icon)]"
+                        :style="resolveExternalIconStyle(link.icon)"
                         aria-hidden="true"
                       ></i>
                     </div>
@@ -435,6 +414,7 @@ import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
+import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const route = useRoute();
@@ -871,6 +851,46 @@ const resetForm = () => {
   editingId.value = '';
 };
 
+const normalizeHexColor = (value) => {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+  const matched = cleaned.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!matched) return '';
+  let hex = matched[1].toLowerCase();
+  if (hex.length === 3) {
+    hex = hex
+      .split('')
+      .map((part) => part + part)
+      .join('');
+  }
+  return '#' + hex;
+};
+
+const resolveExternalIconConfig = (icon) => {
+  const raw = String(icon || '').trim();
+  if (!raw) {
+    return { name: 'fa-globe', color: '' };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const name = String(parsed?.name || '').trim();
+      const match = name.split(/\s+/).find((part) => part.startsWith('fa-'));
+      return {
+        name: match || 'fa-globe',
+        color: normalizeHexColor(parsed?.color)
+      };
+    }
+  } catch (error) {
+    // Fallback to plain icon name.
+  }
+  const match = raw.split(/\s+/).find((part) => part.startsWith('fa-'));
+  return {
+    name: match || 'fa-globe',
+    color: ''
+  };
+};
+
 const normalizeExternalLink = (item) => ({
   link_id: String(item?.link_id || '').trim(),
   title: String(item?.title || '').trim(),
@@ -880,11 +900,11 @@ const normalizeExternalLink = (item) => ({
   sort_order: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : 0
 });
 
-const resolveExternalIcon = (icon) => {
-  const cleaned = String(icon || '').trim();
-  if (!cleaned) return 'fa-globe';
-  const match = cleaned.split(/\s+/).find((part) => part.startsWith('fa-'));
-  return match || 'fa-globe';
+const resolveExternalIcon = (icon) => resolveExternalIconConfig(icon).name;
+
+const resolveExternalIconStyle = (icon) => {
+  const color = resolveExternalIconConfig(icon).color;
+  return color ? { color } : {};
 };
 
 const getExternalHost = (url) => {
@@ -920,7 +940,7 @@ const loadCatalog = async () => {
     const { data } = await fetchUserToolsCatalog();
     toolCatalog.value = data?.data || null;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('portal.agent.tools.loadFailed'));
+    showApiError(error, t('portal.agent.tools.loadFailed'));
   } finally {
     toolLoading.value = false;
   }
@@ -1016,7 +1036,7 @@ const saveAgent = async () => {
     }
     dialogVisible.value = false;
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('portal.agent.saveFailed'));
+    showApiError(error, t('portal.agent.saveFailed'));
   } finally {
     saving.value = false;
   }
@@ -1041,7 +1061,7 @@ const confirmDelete = async (agent) => {
     await agentStore.deleteAgent(agent.id);
     ElMessage.success(t('portal.agent.deleteSuccess'));
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || t('portal.agent.deleteFailed'));
+    showApiError(error, t('portal.agent.deleteFailed'));
   }
 };
 

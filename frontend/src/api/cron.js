@@ -1,8 +1,8 @@
 import api from './http';
 
 export const fetchCronJobs = (params) => api.get('/cron/list', { params });
-export const fetchCronRuns = (job_id, limit) =>
-  api.get('/cron/runs', { params: { job_id, limit } });
+export const fetchCronRuns = (job_id, params = {}) =>
+  api.get('/cron/runs', { params: { job_id, ...(params || {}) } });
 
 export const addCronJob = (payload) => api.post('/cron/add', payload);
 export const updateCronJob = (payload) => api.post('/cron/update', payload);

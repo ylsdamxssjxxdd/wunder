@@ -1,6 +1,7 @@
 import { elements } from "./elements.js?v=20260124-01";
 import { getWunderBase } from "./api.js";
 import { t } from "./i18n.js?v=20260124-01";
+import { resolveApiErrorMessage } from "./api-error.js";
 
 const AUTH_STORAGE_KEY = "wunder_admin_auth";
 
@@ -114,18 +115,8 @@ export const applyAuthHeaders = (headers) => {
   }
 };
 
-const parseErrorMessage = async (response) => {
-  try {
-    const data = await response.json();
-    const message = data?.detail?.message;
-    if (message) {
-      return message;
-    }
-  } catch (error) {
-    // Ignore parse errors and fall back to status.
-  }
-  return t("auth.login.error.status", { status: response.status });
-};
+const parseErrorMessage = async (response) =>
+  resolveApiErrorMessage(response, t("auth.login.error.status", { status: response.status }));
 
 const validateToken = async (token) => {
   const wunderBase = getWunderBase();
@@ -279,5 +270,4 @@ export const initAdminAuth = async () => {
   }
   await waitForLogin();
 };
-
 

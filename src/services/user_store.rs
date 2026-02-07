@@ -11,6 +11,7 @@ use argon2::password_hash::{
 use argon2::Argon2;
 use serde::Serialize;
 use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
 
 const DEFAULT_TOKEN_TTL_S: i64 = 7 * 24 * 3600;
@@ -154,12 +155,15 @@ impl UserStore {
     }
 
     pub fn verify_password(hash: &str, password: &str) -> bool {
-        let parsed = PasswordHash::new(hash);
-        if parsed.is_err() {
-            return false;
-        }
+        let parsed = match PasswordHash::new(hash) {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("password hash parse failed: {err}");
+                return false;
+            }
+        };
         Argon2::default()
-            .verify_password(password.trim().as_bytes(), &parsed.unwrap())
+            .verify_password(password.trim().as_bytes(), &parsed)
             .is_ok()
     }
 
@@ -675,4 +679,21 @@ fn normalize_demo_seed(value: Option<&str>) -> String {
         cleaned
     };
     cleaned.chars().take(24).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UserStore;
+
+    #[test]
+    fn verify_password_invalid_hash_returns_false() {
+        assert!(!UserStore::verify_password("invalid-hash", "secret"));
+    }
+
+    #[test]
+    fn verify_password_checks_expected_password() {
+        let hash = UserStore::hash_password("secret").expect("hash password");
+        assert!(UserStore::verify_password(&hash, "secret"));
+        assert!(!UserStore::verify_password(&hash, "wrong"));
+    }
 }

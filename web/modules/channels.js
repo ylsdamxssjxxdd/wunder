@@ -6,6 +6,126 @@ import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { t } from "./i18n.js?v=20260118-07";
 
+const SUPPORTED_CHANNELS = [
+  { value: "", labelKey: "channels.support.select", placeholder: true },
+  { value: "whatsapp", labelKey: "channels.support.whatsapp" },
+  { value: "feishu", labelKey: "channels.support.feishu" },
+  { value: "qqbot", labelKey: "channels.support.qqbot" },
+  { value: "wechat", labelKey: "channels.support.wechat" },
+  { value: "telegram", labelKey: "channels.support.telegram" },
+];
+
+const CHANNEL_ACCOUNT_PLACEHOLDER = {
+  whatsapp: "phone_number_id",
+  feishu: "cli_xxx",
+  qqbot: "app_id",
+  wechat: "wechat_account",
+  telegram: "bot_id",
+};
+
+const buildChannelConfigTemplate = (channel) => {
+  switch (channel) {
+    case "whatsapp":
+      return {
+        inbound_token: "replace-with-inbound-token",
+        whatsapp_cloud: {
+          phone_number_id: "",
+          access_token: "",
+          verify_token: "",
+          app_secret: "",
+          api_version: "v20.0",
+        },
+      };
+    case "feishu":
+      return {
+        inbound_token: "replace-with-inbound-token",
+        feishu: {
+          app_id: "",
+          app_secret: "",
+          verification_token: "",
+          encrypt_key: "",
+          domain: "open.feishu.cn",
+          receive_id_type: "chat_id",
+        },
+      };
+    case "qqbot":
+      return {
+        inbound_token: "replace-with-inbound-token",
+        qqbot: {
+          app_id: "",
+          client_secret: "",
+          markdown_support: false,
+        },
+      };
+    case "wechat":
+      return {
+        inbound_token: "replace-with-inbound-token",
+        outbound_url: "",
+      };
+    case "telegram":
+      return {
+        inbound_token: "replace-with-inbound-token",
+        outbound_url: "",
+      };
+    default:
+      return {};
+  }
+};
+
+const updateAccountIdPlaceholder = (channel) => {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  const placeholder = CHANNEL_ACCOUNT_PLACEHOLDER[normalizedChannel] || "account_id";
+  elements.channelAccountId.placeholder = placeholder;
+};
+
+const applyChannelTemplateIfNeeded = () => {
+  if (state.channelAccountModal.index !== null) {
+    return;
+  }
+  const channel = String(elements.channelAccountChannel.value || "")
+    .trim()
+    .toLowerCase();
+  updateAccountIdPlaceholder(channel);
+  if (!channel) {
+    elements.channelAccountConfig.value = "{}";
+    return;
+  }
+  const template = buildChannelConfigTemplate(channel);
+  elements.channelAccountConfig.value = JSON.stringify(template, null, 2);
+  elements.channelAccountConfigError.textContent = "";
+};
+
+const renderChannelOptions = (selectedChannel, includeUnknown = false) => {
+  const select = elements.channelAccountChannel;
+  if (!select) {
+    return;
+  }
+  const normalizedSelected = String(selectedChannel || "").trim().toLowerCase();
+  const options = [...SUPPORTED_CHANNELS];
+  if (
+    includeUnknown &&
+    normalizedSelected &&
+    !options.some((item) => item.value === normalizedSelected)
+  ) {
+    options.push({ value: normalizedSelected, label: normalizedSelected });
+  }
+  select.textContent = "";
+  const available = new Set();
+  options.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.labelKey ? t(item.labelKey) : item.label || item.value;
+    option.disabled = Boolean(item.placeholder);
+    select.appendChild(option);
+    available.add(item.value);
+  });
+  if (normalizedSelected && available.has(normalizedSelected)) {
+    select.value = normalizedSelected;
+  } else {
+    select.value = "";
+  }
+};
+
 const normalizeChannelAccount = (record) => {
   const channel = String(record?.channel || "").trim();
   const account_id = String(record?.account_id || "").trim();
@@ -120,14 +240,18 @@ const openChannelAccountModal = (index) => {
   const account = index !== null ? state.channels.accounts[index] : null;
   elements.channelAccountModalTitle.textContent =
     index === null ? t("channels.modal.addTitle") : t("channels.modal.editTitle");
-  elements.channelAccountChannel.value = account?.channel || "";
+  renderChannelOptions(account?.channel || "", index !== null);
   elements.channelAccountId.value = account?.account_id || "";
   elements.channelAccountStatus.value = account?.status || "active";
   elements.channelAccountChannel.disabled = index !== null;
   elements.channelAccountId.disabled = index !== null;
+  updateAccountIdPlaceholder(account?.channel || "");
   elements.channelAccountConfig.value = account
     ? JSON.stringify(account.config || {}, null, 2)
     : "{}";
+  if (index === null) {
+    applyChannelTemplateIfNeeded();
+  }
   elements.channelAccountConfigError.textContent = "";
   elements.channelAccountModal.classList.add("active");
 };
@@ -137,7 +261,9 @@ const closeChannelAccountModal = () => {
 };
 
 const saveChannelAccount = async () => {
-  const channel = String(elements.channelAccountChannel.value || "").trim();
+  const channel = String(elements.channelAccountChannel.value || "")
+    .trim()
+    .toLowerCase();
   const account_id = String(elements.channelAccountId.value || "").trim();
   if (!channel || !account_id) {
     notify(t("channels.error.required"), "warn");
@@ -284,6 +410,9 @@ export const initChannelsPanel = () => {
   });
   elements.channelAccountConfig.addEventListener("input", () => {
     elements.channelAccountConfigError.textContent = "";
+  });
+  elements.channelAccountChannel.addEventListener("change", () => {
+    applyChannelTemplateIfNeeded();
   });
 };
 

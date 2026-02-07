@@ -572,10 +572,10 @@ impl AgentRuntime {
             let mut guard = self.queue_rx.lock().await;
             guard.take()
         };
-        if rx.is_none() {
+        let Some(mut rx) = rx.take() else {
+            warn!("agent queue loop skipped: receiver already taken");
             return;
-        }
-        let mut rx = rx.take().unwrap();
+        };
         loop {
             let config = self.config_store.get().await;
             let poll_interval = config.agent_queue.poll_interval_ms.max(200);

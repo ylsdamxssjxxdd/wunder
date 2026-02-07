@@ -1614,9 +1614,24 @@ fn map_orchestrator_error(err: Error) -> Response {
 }
 
 fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
-    (status, Json(json!({ "detail": payload }))).into_response()
+    let code = payload
+        .get("code")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let message = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("request failed")
+        .to_string();
+    crate::api::errors::error_response_with_detail(
+        status,
+        code.as_deref(),
+        message,
+        None,
+        Some(payload),
+    )
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
-    (status, Json(json!({ "detail": { "message": message } }))).into_response()
+    crate::api::errors::error_response(status, message)
 }
