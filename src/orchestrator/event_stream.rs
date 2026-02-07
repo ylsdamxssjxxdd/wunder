@@ -348,18 +348,16 @@ impl EventEmitter {
         }
         if let Some(queue) = &self.queue {
             match queue.try_send(StreamSignal::Event(event.clone())) {
-                Ok(_) => return,
+                Ok(_) => (),
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     if !persisted {
                         self.record_overflow(event).await;
                     }
-                    return;
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     if !persisted {
                         self.record_overflow(event).await;
                     }
-                    return;
                 }
             }
         }
@@ -381,11 +379,9 @@ impl EventEmitter {
             .cloned()
             .unwrap_or_else(|| event.data.clone());
         let timestamp = event.timestamp.unwrap_or_else(Utc::now);
-        if event.event == "llm_output_delta" {
-            if self.delta_buffer.is_some() {
-                self.buffer_delta(event_id, &raw_data);
-                return;
-            }
+        if event.event == "llm_output_delta" && self.delta_buffer.is_some() {
+            self.buffer_delta(event_id, &raw_data);
+            return;
         }
         self.persist_stream_event(event_id, &event.event, raw_data, timestamp);
     }
@@ -488,8 +484,8 @@ impl Orchestrator {
                     Some(StreamSignal::Event(event)) => {
                         let event_id = parse_stream_event_id(&event);
                         if let Some(event_id) = event_id {
-                            if event_id > last_event_id + 1 {
-                                if !drain_until(
+                            if event_id > last_event_id + 1
+                                && !drain_until(
                                     storage.clone(),
                                     &session_id,
                                     &mut last_event_id,
@@ -498,9 +494,8 @@ impl Orchestrator {
                                     &emitter,
                                 )
                                 .await
-                                {
-                                    return;
-                                }
+                            {
+                                return;
                             }
                             if event_id <= last_event_id {
                                 continue;
@@ -677,9 +672,7 @@ fn filter_delta_segments(data: &Value, after_event_id: i64) -> Option<Value> {
         last_event_id = Some(event_id);
     }
 
-    let Some(start_event_id) = first_event_id else {
-        return None;
-    };
+    let start_event_id = first_event_id?;
 
     let mut new_inner = serde_json::Map::new();
     for (key, value) in inner_obj {

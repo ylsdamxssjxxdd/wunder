@@ -68,9 +68,11 @@ const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
 
+type ToolEventCallback = dyn Fn(&str, Value) + Send + Sync;
+
 #[derive(Clone)]
 pub struct ToolEventEmitter {
-    callback: Arc<dyn Fn(&str, Value) + Send + Sync>,
+    callback: Arc<ToolEventCallback>,
     stream: bool,
 }
 
@@ -970,7 +972,7 @@ fn normalize_plan_status(value: Option<&str>) -> String {
     if raw.is_empty() {
         return "pending".to_string();
     }
-    let normalized = raw.replace('-', "_").replace(' ', "_");
+    let normalized = raw.replace(['-', ' '], "_");
     match normalized.as_str() {
         "pending" => "pending".to_string(),
         "in_progress" | "inprogress" => "in_progress".to_string(),
@@ -2677,9 +2679,7 @@ fn resolve_query_text(args: &Value) -> Option<String> {
 }
 
 fn extract_limit(args: &Value) -> Option<usize> {
-    let Some(value) = args.get("limit") else {
-        return None;
-    };
+    let value = args.get("limit")?;
     if let Some(num) = value.as_u64() {
         return Some(num as usize);
     }
@@ -3358,7 +3358,7 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
                 if pair.len() < 2 {
                     continue;
                 }
-                let Some(start) = pair.get(0).and_then(parse_line_number) else {
+                let Some(start) = pair.first().and_then(parse_line_number) else {
                     continue;
                 };
                 let Some(end) = pair.get(1).and_then(parse_line_number) else {
@@ -3703,8 +3703,8 @@ fn read_files_inner(
             }
             let last = end.min(lines.len());
             let mut slice_lines = Vec::new();
-            for idx in (start - 1)..last {
-                slice_lines.push(format!("{}: {}", idx + 1, lines[idx]));
+            for (idx, line) in lines.iter().enumerate().take(last).skip(start - 1) {
+                slice_lines.push(format!("{}: {}", idx + 1, line));
             }
             file_output.push(slice_lines.join("\n"));
         }
@@ -4033,7 +4033,7 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
     let path = path.to_string();
     let content = content.to_string();
-    let bytes = content.as_bytes().len();
+    let bytes = content.len();
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
@@ -4700,8 +4700,8 @@ async fn a2a_observe_snapshot(
 
     let pending = tasks
         .iter()
+        .filter(|&item| !item.is_done())
         .cloned()
-        .filter(|item| !item.is_done())
         .collect::<Vec<_>>();
     Ok(A2aObserveSnapshot { tasks, pending })
 }

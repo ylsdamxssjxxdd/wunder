@@ -27,7 +27,7 @@ pub async fn resolve_user(
         .unwrap_or(false);
 
     let config = state.config_store.get().await;
-    let api_key_valid = config.api_key().as_ref().map_or(false, |expected| {
+    let api_key_valid = config.api_key().as_ref().is_some_and(|expected| {
         guard_auth::extract_api_key(headers)
             .map(|value| value == *expected)
             .unwrap_or(false)

@@ -1,5 +1,6 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
 #![cfg_attr(test, allow(dead_code))]
+#![allow(clippy::too_many_arguments, clippy::result_large_err)]
 mod api;
 mod channels;
 mod core;
@@ -201,7 +202,7 @@ fn build_cors(config: &Config) -> CorsLayer {
         .as_ref()
         .map(|value| value.iter().map(|item| item.as_str()).collect::<Vec<_>>())
     {
-        Some(origins) if origins.iter().any(|value| *value == "*") => {
+        Some(origins) if origins.contains(&"*") => {
             cors = cors.allow_origin(Any);
         }
         Some(origins) => {
@@ -224,7 +225,7 @@ fn build_cors(config: &Config) -> CorsLayer {
         .as_ref()
         .map(|value| value.iter().map(|item| item.as_str()).collect::<Vec<_>>())
     {
-        Some(methods) if methods.iter().any(|value| *value == "*") => {
+        Some(methods) if methods.contains(&"*") => {
             cors = cors.allow_methods(Any);
         }
         Some(methods) => {
@@ -247,7 +248,7 @@ fn build_cors(config: &Config) -> CorsLayer {
         .as_ref()
         .map(|value| value.iter().map(|item| item.as_str()).collect::<Vec<_>>())
     {
-        Some(headers) if headers.iter().any(|value| *value == "*") => {
+        Some(headers) if headers.contains(&"*") => {
             cors = cors.allow_headers(Any);
         }
         Some(headers) => {
@@ -324,7 +325,7 @@ async fn api_key_guard(
     }
 
     let message = i18n::t("error.api_key_invalid");
-    return Ok(auth_error(StatusCode::UNAUTHORIZED, &message));
+    Ok(auth_error(StatusCode::UNAUTHORIZED, &message))
 }
 
 async fn language_guard(
@@ -390,10 +391,8 @@ fn resolve_language_from_request(request: &Request<Body>) -> String {
     }
     if let Some(query) = request.uri().query() {
         for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
-            if key == "lang" || key == "language" {
-                if !value.trim().is_empty() {
-                    candidates.push(value.to_string());
-                }
+            if (key == "lang" || key == "language") && !value.trim().is_empty() {
+                candidates.push(value.to_string());
             }
         }
     }

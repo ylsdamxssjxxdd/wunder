@@ -631,7 +631,7 @@ fn ensure_a2a_version(headers: &HeaderMap) -> Result<(), A2AError> {
     if version.is_empty() {
         return Ok(());
     }
-    let normalized = version.trim_start_matches(|ch| ch == 'v' || ch == 'V');
+    let normalized = version.trim_start_matches(['v', 'V']);
     if normalized != A2A_PROTOCOL_VERSION {
         return Err(A2AError::version_not_supported(&version));
     }
@@ -1687,9 +1687,7 @@ fn build_status_from_record(record: &Value, session_id: &str) -> Value {
             Some(value.trim().to_string())
         }
     } else {
-        raw_ts
-            .and_then(Value::as_f64)
-            .and_then(|value| format_timestamp(value))
+        raw_ts.and_then(Value::as_f64).and_then(format_timestamp)
     };
     let timestamp = timestamp.unwrap_or_else(local_now);
     let message_text = if summary.trim().is_empty() {

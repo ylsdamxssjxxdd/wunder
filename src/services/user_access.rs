@@ -94,10 +94,8 @@ pub fn is_agent_allowed(
     access: Option<&UserAgentAccessRecord>,
     agent: &UserAgentRecord,
 ) -> bool {
-    if agent.user_id != user.user_id {
-        if !agent.is_shared {
-            return false;
-        }
+    if agent.user_id != user.user_id && !agent.is_shared {
+        return false;
     }
     if let Some(access) = access {
         if !access.blocked_agent_ids.is_empty()

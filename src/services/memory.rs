@@ -402,7 +402,7 @@ impl MemoryStore {
         if normalized.is_empty() {
             return false;
         }
-        let now = now_ts.unwrap_or_else(|| now_ts_value());
+        let now = now_ts.unwrap_or_else(now_ts_value);
         let max_records = max_records_override.unwrap_or(self.max_records);
         if let Err(err) =
             self.storage
@@ -635,7 +635,7 @@ fn parse_task_request(payload_text: &str) -> HashMap<String, Value> {
         return HashMap::new();
     }
     match serde_json::from_str::<Value>(trimmed) {
-        Ok(Value::Object(map)) => map.into_iter().map(|(k, v)| (k, v)).collect(),
+        Ok(Value::Object(map)) => map.into_iter().collect(),
         _ => HashMap::new(),
     }
 }

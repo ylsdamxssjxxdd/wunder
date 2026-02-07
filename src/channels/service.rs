@@ -762,7 +762,7 @@ impl ChannelHub {
                                         "channel": record.channel,
                                         "account_id": record.account_id,
                                         "outbox_id": record.outbox_id,
-                                        "error": error_text.unwrap_or_default(),
+                                        "error": error_text.as_deref().unwrap_or_default(),
                                     }),
                                 );
                             }
@@ -1205,16 +1205,14 @@ fn resolve_allow_vision(config: &Config, model_name: Option<&str>) -> bool {
 
 fn build_outbound_headers(config: &ChannelAccountConfig) -> Result<ReqHeaderMap> {
     let mut headers = ReqHeaderMap::new();
-    if let Some(value) = config.outbound_headers.as_ref() {
-        if let Value::Object(map) = value {
-            for (key, value) in map {
-                let Some(text) = value.as_str() else {
-                    continue;
-                };
-                let name = HeaderName::from_bytes(key.as_bytes())?;
-                let value = HeaderValue::from_str(text)?;
-                headers.insert(name, value);
-            }
+    if let Some(Value::Object(map)) = config.outbound_headers.as_ref() {
+        for (key, value) in map {
+            let Some(text) = value.as_str() else {
+                continue;
+            };
+            let name = HeaderName::from_bytes(key.as_bytes())?;
+            let value = HeaderValue::from_str(text)?;
+            headers.insert(name, value);
         }
     }
     if let Some(token) = config

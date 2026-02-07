@@ -90,6 +90,7 @@ async fn wunder_entry(
             }
         }
         AgentSubmitOutcome::Run(request, lease) => {
+            let request = *request;
             if request.stream {
                 let stream = state
                     .orchestrator
@@ -458,10 +459,7 @@ fn collect_user_mcp_tools<F>(
             allow_tools
         };
         if shared_only {
-            enabled_names = enabled_names
-                .into_iter()
-                .filter(|name| shared_tools.contains(name))
-                .collect();
+            enabled_names.retain(|name| shared_tools.contains(name));
         }
         if enabled_names.is_empty() {
             continue;
@@ -505,15 +503,15 @@ fn collect_user_skill_tools<F>(
         .skills
         .enabled
         .iter()
+        .filter(|&name| !name.trim().is_empty())
         .cloned()
-        .filter(|name| !name.trim().is_empty())
         .collect();
     let shared_set: HashSet<String> = payload
         .skills
         .shared
         .iter()
+        .filter(|&name| !name.trim().is_empty())
         .cloned()
-        .filter(|name| !name.trim().is_empty())
         .collect();
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];

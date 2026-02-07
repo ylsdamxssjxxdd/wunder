@@ -71,9 +71,8 @@ fn parse_env_prefix(parts: &[String]) -> (Vec<(String, String)>, usize) {
 }
 
 fn parse_env_assignment(part: &str) -> Option<(String, String)> {
-    let mut split = part.splitn(2, '=');
-    let key = split.next()?;
-    let value = split.next()?;
+    let (key, value) = part.split_once('=')?;
+
     if is_valid_env_key(key) {
         Some((key.to_string(), value.to_string()))
     } else {

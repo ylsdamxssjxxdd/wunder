@@ -277,8 +277,8 @@ impl UserToolStore {
                 return cache
                     .payloads
                     .iter()
+                    .filter(|&item| item.user_id != exclude_user_id)
                     .cloned()
-                    .filter(|item| item.user_id != exclude_user_id)
                     .collect();
             }
         }
@@ -653,17 +653,12 @@ impl UserToolManager {
                             allow_tools
                         };
                         if shared_only {
-                            enabled_names = enabled_names
-                                .into_iter()
-                                .filter(|name| shared_tools.contains(name))
-                                .collect();
+                            enabled_names.retain(|name| shared_tools.contains(name));
                         }
                         if enabled_names.is_empty() {
                             continue;
                         }
-                        let owner_map = mcp_servers
-                            .entry(owner_id.to_string())
-                            .or_insert_with(HashMap::new);
+                        let owner_map = mcp_servers.entry(owner_id.to_string()).or_default();
                         owner_map
                             .entry(server_name.to_string())
                             .or_insert_with(|| user_mcp_to_config(server));

@@ -65,8 +65,7 @@ fn find_json_end(text: &str, start: usize) -> Option<usize> {
     let mut stack: Vec<u8> = Vec::new();
     let mut in_string = false;
     let mut escape = false;
-    for index in start..bytes.len() {
-        let ch = bytes[index];
+    for (index, &ch) in bytes.iter().enumerate().skip(start) {
         if in_string {
             if escape {
                 escape = false;
@@ -529,8 +528,8 @@ pub(super) fn collect_tool_calls_from_output(
     if let Some(payload) = tool_calls_payload {
         calls.extend(normalize_tool_calls(payload.clone()));
     }
-    let calls = dedupe_tool_calls(calls);
-    calls
+
+    dedupe_tool_calls(calls)
 }
 
 pub(super) fn collect_tool_calls_from_payload(payload: &Value) -> Vec<ToolCall> {

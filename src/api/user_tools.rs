@@ -1401,10 +1401,13 @@ async fn user_knowledge_chunk_embed(
                 chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
             };
             let timeout_s = embed_config.timeout_s.unwrap_or(120);
-            let vectors =
-                vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
-                    .await
-                    .map_err(vector_error_response)?;
+            let vectors = vector_knowledge::embed_chunks(
+                &embed_config,
+                std::slice::from_ref(&vector_chunk),
+                timeout_s,
+            )
+            .await
+            .map_err(vector_error_response)?;
             let client = vector_knowledge::resolve_weaviate_client(&config)
                 .map_err(vector_error_response)?;
             let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
@@ -1580,7 +1583,7 @@ async fn user_knowledge_test(
         let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
             .await
             .map_err(vector_error_response)?;
-        let vector = vectors.get(0).ok_or_else(|| {
+        let vector = vectors.first().ok_or_else(|| {
             error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
         })?;
         let top_k = payload
@@ -2185,7 +2188,7 @@ async fn convert_upload_to_markdown(
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+    if content.len() > MAX_KNOWLEDGE_CONTENT_BYTES {
         return Err(error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
             i18n::t("tool.read.too_large"),
@@ -2313,7 +2316,7 @@ async fn persist_knowledge_upload(
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+    if content.len() > MAX_KNOWLEDGE_CONTENT_BYTES {
         return Err(error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
             i18n::t("tool.read.too_large"),

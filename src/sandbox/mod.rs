@@ -16,7 +16,7 @@ use url::Url;
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
 fn normalize_endpoint(raw: &str) -> Option<String> {
@@ -133,8 +133,7 @@ fn strip_root_prefix<'a>(value: &'a str, root: &str) -> Option<&'a str> {
     if value == root {
         return Some("");
     }
-    if value.starts_with(root) {
-        let remainder = &value[root.len()..];
+    if let Some(remainder) = value.strip_prefix(root) {
         if remainder.starts_with('/') || remainder.starts_with('\\') {
             return Some(remainder);
         }

@@ -579,13 +579,11 @@ async fn workspace_move(
             ));
         }
     }
-    if source_path.is_dir() {
-        if destination_path.strip_prefix(&source_path).is_ok() {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                i18n::t("workspace.error.move_to_self_or_child"),
-            ));
-        }
+    if source_path.is_dir() && destination_path.strip_prefix(&source_path).is_ok() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.move_to_self_or_child"),
+        ));
     }
     tokio::fs::rename(&source_path, &destination_path)
         .await
@@ -823,7 +821,7 @@ async fn workspace_batch(
             let target_path = target_path.clone();
             tokio::task::spawn_blocking(move || copy_dir_all(&source_path, &target_path))
                 .await
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))
+                .map_err(|err| io::Error::other(err.to_string()))
                 .and_then(|result| result)
         } else {
             tokio::fs::copy(&source_path, &target_path)
@@ -1219,7 +1217,7 @@ fn build_archive(archive_path: &Path, target: &Path, base_root: &Path) -> Result
     write_archive_entries(&mut zip, target, base_root, options)?;
     zip.finish()
         .map(|_| ())
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))
+        .map_err(|err| io::Error::other(err.to_string()))
 }
 
 fn write_archive_entries(

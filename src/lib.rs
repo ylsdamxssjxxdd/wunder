@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::too_many_arguments, clippy::result_large_err)]
 // Library entrypoint for integration tests and internal reuse.
 mod api;
 mod channels;

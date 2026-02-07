@@ -75,7 +75,7 @@ impl Orchestrator {
     ) -> Result<(String, LlmModelConfig), OrchestratorError> {
         let name = model_name
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| config.llm.default.as_str());
+            .unwrap_or(config.llm.default.as_str());
         if let Some(configured) = config
             .llm
             .models
@@ -343,7 +343,6 @@ impl Orchestrator {
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
-                let round_info = round_info;
                 let on_delta = move |delta: String, reasoning_delta: String| {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);

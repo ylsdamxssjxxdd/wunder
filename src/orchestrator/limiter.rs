@@ -60,10 +60,8 @@ impl RequestLimiter {
                     warn!("failed to touch session lock for {session_id}: {err}");
                 }
             });
-        } else {
-            if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
-                warn!("failed to touch session lock for {session_id}: {err}");
-            }
+        } else if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
+            warn!("failed to touch session lock for {session_id}: {err}");
         }
     }
 
@@ -76,10 +74,8 @@ impl RequestLimiter {
                     warn!("failed to release session lock for {session_id}: {err}");
                 }
             });
-        } else {
-            if let Err(err) = storage.release_session_lock(&session_id) {
-                warn!("failed to release session lock for {session_id}: {err}");
-            }
+        } else if let Err(err) = storage.release_session_lock(&session_id) {
+            warn!("failed to release session lock for {session_id}: {err}");
         }
     }
 }

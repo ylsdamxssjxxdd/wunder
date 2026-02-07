@@ -1122,7 +1122,7 @@ impl StorageBackend for PostgresStorage {
                 }
                 Err(err) => {
                     if attempts >= 5 {
-                        return Err(err.into());
+                        return Err(err);
                     }
                     std::thread::sleep(Duration::from_secs(1));
                 }
@@ -2920,21 +2920,21 @@ impl StorageBackend for PostgresStorage {
             Ok(conn.execute(&sql, &[&cutoff, &admin_ids])? as i64)
         };
         let chat = delete_with_filter("DELETE FROM chat_history WHERE created_time < $1", false)?;
-        results.insert("chat_history".to_string(), chat as i64);
+        results.insert("chat_history".to_string(), chat);
         let tool = delete_with_filter("DELETE FROM tool_logs WHERE created_time < $1", false)?;
-        results.insert("tool_logs".to_string(), tool as i64);
+        results.insert("tool_logs".to_string(), tool);
         let artifact =
             delete_with_filter("DELETE FROM artifact_logs WHERE created_time < $1", false)?;
-        results.insert("artifact_logs".to_string(), artifact as i64);
+        results.insert("artifact_logs".to_string(), artifact);
         let monitor =
             delete_with_filter("DELETE FROM monitor_sessions WHERE updated_time < $1", true)?;
-        results.insert("monitor_sessions".to_string(), monitor as i64);
+        results.insert("monitor_sessions".to_string(), monitor);
         let stream =
             delete_with_filter("DELETE FROM stream_events WHERE created_time < $1", false)?;
-        results.insert("stream_events".to_string(), stream as i64);
+        results.insert("stream_events".to_string(), stream);
         let session_runs =
             delete_with_filter("DELETE FROM session_runs WHERE updated_time < $1", false)?;
-        results.insert("session_runs".to_string(), session_runs as i64);
+        results.insert("session_runs".to_string(), session_runs);
         Ok(results)
     }
 
@@ -3590,7 +3590,7 @@ impl StorageBackend for PostgresStorage {
         let agent_id = agent_id.map(|value| value.trim());
         match agent_id {
             None => {}
-            Some(value) if value.is_empty() => {
+            Some("") => {
                 conditions.push("(agent_id IS NULL OR agent_id = '')".to_string());
             }
             Some(value) => {
@@ -4526,9 +4526,7 @@ impl StorageBackend for PostgresStorage {
                 scopes: Self::parse_string_list(scopes),
                 caps: Self::parse_string_list(caps),
                 commands: Self::parse_string_list(commands),
-                client_info: client_info
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
+                client_info: client_info.as_deref().and_then(Self::json_from_str),
                 status: row.get(8),
                 connected_at: row.get(9),
                 last_seen_at: row.get(10),
@@ -4598,12 +4596,8 @@ impl StorageBackend for PostgresStorage {
                 status: row.get(3),
                 caps: Self::parse_string_list(caps),
                 commands: Self::parse_string_list(commands),
-                permissions: permissions
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
-                metadata: metadata
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
+                permissions: permissions.as_deref().and_then(Self::json_from_str),
+                metadata: metadata.as_deref().and_then(Self::json_from_str),
                 created_at: row.get(8),
                 updated_at: row.get(9),
                 last_seen_at: row.get(10),
@@ -4639,12 +4633,8 @@ impl StorageBackend for PostgresStorage {
                 status: row.get(3),
                 caps: Self::parse_string_list(caps),
                 commands: Self::parse_string_list(commands),
-                permissions: permissions
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
-                metadata: metadata
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
+                permissions: permissions.as_deref().and_then(Self::json_from_str),
+                metadata: metadata.as_deref().and_then(Self::json_from_str),
                 created_at: row.get(8),
                 updated_at: row.get(9),
                 last_seen_at: row.get(10),
@@ -5304,7 +5294,7 @@ impl StorageBackend for PostgresStorage {
         if cleaned_user.is_empty() || cleaned_job.is_empty() {
             return Ok(Vec::new());
         }
-        let safe_limit = limit.max(1).min(200);
+        let safe_limit = limit.clamp(1, 200);
         let mut conn = self.conn()?;
         let rows = conn.query(
             "SELECT run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at \

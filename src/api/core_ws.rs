@@ -415,7 +415,7 @@ async fn handle_ws(
                                 let _ = send_ws_event(&ws_tx, Some(&request_id), final_event).await;
                                 continue;
                             }
-                            AgentSubmitOutcome::Run(request, lease) => (request, lease),
+                            AgentSubmitOutcome::Run(request, lease) => (*request, lease),
                         };
 
                         let session_id_for_task = request.session_id.clone();

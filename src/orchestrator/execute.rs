@@ -378,7 +378,6 @@ impl Orchestrator {
                 let tool_event_emitter = ToolEventEmitter::new(
                     {
                         let emitter = emitter.clone();
-                        let round_info = round_info;
                         move |event_type, mut data| {
                             let emitter = emitter.clone();
                             let event_name = event_type.to_string();
@@ -821,8 +820,6 @@ impl Orchestrator {
         let parallelism = resolve_tool_parallelism(calls.len());
         let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
             let orchestrator = self;
-            let tool_context = tool_context;
-            let allowed_tool_names = allowed_tool_names;
             async move {
                 let PlannedToolCall { call, name } = planned;
                 let args = call.arguments.clone();

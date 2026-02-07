@@ -153,11 +153,9 @@ fn sniff_office_extension(path: &Path, extension: &str) -> (String, Vec<String>)
                 effective = inferred.to_string();
             }
         }
-    } else if container == OfficeContainer::Ole {
-        if normalized == ".docx" {
-            warnings.push("file header indicates legacy .doc format; treating as .doc".to_string());
-            effective = ".doc".to_string();
-        }
+    } else if container == OfficeContainer::Ole && normalized == ".docx" {
+        warnings.push("file header indicates legacy .doc format; treating as .doc".to_string());
+        effective = ".doc".to_string();
     }
 
     (effective, warnings)
@@ -173,13 +171,12 @@ fn sniff_office_container(path: &Path) -> OfficeContainer {
         Ok(size) => size,
         Err(_) => return OfficeContainer::Unknown,
     };
-    if read_len >= 4 {
-        if header.starts_with(b"PK\x03\x04")
+    if read_len >= 4
+        && (header.starts_with(b"PK\x03\x04")
             || header.starts_with(b"PK\x05\x06")
-            || header.starts_with(b"PK\x07\x08")
-        {
-            return OfficeContainer::Zip;
-        }
+            || header.starts_with(b"PK\x07\x08"))
+    {
+        return OfficeContainer::Zip;
     }
     if read_len >= 8 && header == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
         return OfficeContainer::Ole;
@@ -915,19 +912,17 @@ fn parse_docx_xml(xml: &str) -> Result<String> {
                         }
                     }
                     b"tr" => {
-                        if in_table {
-                            if !current_row.is_empty() {
-                                if table_alignments.len() < current_row.len() {
-                                    table_alignments.resize(current_row.len(), None);
-                                }
-                                for (idx, align) in current_row_alignments.iter().enumerate() {
-                                    if table_alignments[idx].is_none() && align.is_some() {
-                                        table_alignments[idx] = *align;
-                                        table_has_alignment = true;
-                                    }
-                                }
-                                table_rows.push(std::mem::take(&mut current_row));
+                        if in_table && !current_row.is_empty() {
+                            if table_alignments.len() < current_row.len() {
+                                table_alignments.resize(current_row.len(), None);
                             }
+                            for (idx, align) in current_row_alignments.iter().enumerate() {
+                                if table_alignments[idx].is_none() && align.is_some() {
+                                    table_alignments[idx] = *align;
+                                    table_has_alignment = true;
+                                }
+                            }
+                            table_rows.push(std::mem::take(&mut current_row));
                         }
                     }
                     b"tbl" => {
@@ -1118,7 +1113,7 @@ fn decode_xml_entities(input: &str) -> String {
             continue;
         }
         let mut entity = String::new();
-        while let Some(next) = chars.next() {
+        for next in chars.by_ref() {
             if next == ';' {
                 break;
             }
@@ -1233,10 +1228,8 @@ fn parse_odp_xml(xml: &str) -> Result<Vec<Vec<String>>> {
             Ok(Event::Start(ref e)) => {
                 let name = e.name();
                 let (prefix, local) = split_tag_name(name.as_ref());
-                if prefix == Some(b"draw") && local == b"page" {
-                    if !current_slide.is_empty() {
-                        slides.push(std::mem::take(&mut current_slide));
-                    }
+                if prefix == Some(b"draw") && local == b"page" && !current_slide.is_empty() {
+                    slides.push(std::mem::take(&mut current_slide));
                 }
                 if prefix == Some(b"text") && (local == b"p" || local == b"h") {
                     current.clear();
@@ -1454,7 +1447,7 @@ fn label_docx_prelude(items: &[PreludeParagraph]) -> Vec<String> {
 }
 
 fn strip_heading_numbering(level: usize, text: &str) -> String {
-    if level < 2 || level > 5 {
+    if !(2..=5).contains(&level) {
         return text.to_string();
     }
     let trimmed = text.trim_start();
@@ -1589,8 +1582,7 @@ fn is_chinese_numeral(ch: char) -> bool {
 
 fn normalize_label_line(label: &str, text: &str) -> String {
     if has_label_prefix(text, label) {
-        let rest =
-            text[label.len()..].trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+        let rest = text[label.len()..].trim_start_matches([':', '：', ' ']);
         if rest.is_empty() {
             return format!("{label}：");
         }
@@ -1612,7 +1604,7 @@ fn normalize_signer_line(text: &str) -> String {
     let trimmed = text.trim();
     let rest = trimmed
         .trim_start_matches("签发人")
-        .trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+        .trim_start_matches([':', '：', ' ']);
     if rest.is_empty() {
         "签发人：".to_string()
     } else {
@@ -1645,7 +1637,7 @@ fn looks_like_urgency(text: &str) -> bool {
 fn attachment_list_next_index(text: &str) -> Option<usize> {
     let trimmed = text.trim_start();
     let rest = trimmed.strip_prefix("附件")?;
-    let rest = rest.trim_start_matches(|ch| ch == ':' || ch == '：' || ch == ' ');
+    let rest = rest.trim_start_matches([':', '：', ' ']);
     let rest = rest.trim_start();
     if rest.is_empty() {
         return None;
@@ -2249,7 +2241,7 @@ fn decode_simple_range(word_stream: &[u8], fc_min: u32, fc_mac: u32) -> String {
     if span < 4 {
         return String::new();
     }
-    if span % 2 != 0 {
+    if !span.is_multiple_of(2) {
         span -= 1;
     }
     let slice = &word_stream[fc_min as usize..fc_min as usize + span];
@@ -2291,7 +2283,7 @@ fn expand_flattened_tab_rows(tokens: &[String]) -> Option<Vec<Vec<String>>> {
     let mut best_columns = 0usize;
     let mut best_score = 0.0f64;
     for candidate in 2..=max_columns {
-        if tokens.len() % candidate != 0 {
+        if !tokens.len().is_multiple_of(candidate) {
             continue;
         }
         let rows = tokens.len() / candidate;
@@ -2404,9 +2396,7 @@ fn normalize_word_text(raw: &str) -> String {
                 if let Some(last) = field_instruction_stack.last_mut() {
                     if !*last {
                         *last = true;
-                        if pending_instruction_fields > 0 {
-                            pending_instruction_fields -= 1;
-                        }
+                        pending_instruction_fields = pending_instruction_fields.saturating_sub(1);
                     }
                 }
             }
@@ -2426,9 +2416,7 @@ fn normalize_word_text(raw: &str) -> String {
                 if run == 1 {
                     cleaned.push(b'\t');
                 } else if run > 1 {
-                    for _ in 0..run.saturating_sub(1) {
-                        cleaned.push(b'\t');
-                    }
+                    cleaned.extend(std::iter::repeat_n(b'\t', run.saturating_sub(1)));
                     cleaned.push(b'\n');
                 }
                 continue;
@@ -2568,7 +2556,7 @@ fn is_ppt_text_record_type(record_type: u16) -> bool {
 }
 
 fn looks_utf16_text_payload(payload: &[u8]) -> bool {
-    if payload.len() < 4 || payload.len() % 2 != 0 {
+    if payload.len() < 4 || !payload.len().is_multiple_of(2) {
         return false;
     }
     let char_count = payload.len() / 2;
@@ -2603,7 +2591,7 @@ fn looks_latin_text_payload(payload: &[u8]) -> bool {
     let printable = payload
         .iter()
         .filter(|&&byte| {
-            (byte >= 32 && byte <= 126) || byte == b'\r' || byte == b'\n' || byte == b'\t'
+            (32..=126).contains(&byte) || byte == b'\r' || byte == b'\n' || byte == b'\t'
         })
         .count();
     printable * 2 >= payload.len()
@@ -2691,10 +2679,7 @@ fn collect_ppt_text_records(
             slides.push(PptTextBucket::default());
             let new_index = slides.len().saturating_sub(1);
             collect_ppt_text_records(data, body_start, size, slides, loose, Some(new_index));
-            if slides
-                .last()
-                .map_or(false, |bucket| bucket.lines.is_empty())
-            {
+            if slides.last().is_some_and(|bucket| bucket.lines.is_empty()) {
                 slides.pop();
             }
         } else if rec_ver == 0x000F && size > 0 {
@@ -3184,7 +3169,7 @@ fn parse_outline_level<B: std::io::BufRead>(
         if local == b"outline-level" {
             if let Ok(value) = attr.decode_and_unescape_value(reader) {
                 if let Ok(level) = value.parse::<usize>() {
-                    return Some(level.max(1).min(6));
+                    return Some(level.clamp(1, 6));
                 }
             }
         }

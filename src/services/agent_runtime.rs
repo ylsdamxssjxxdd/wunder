@@ -37,7 +37,7 @@ pub struct QueueInfo {
 
 #[derive(Debug, Clone)]
 pub enum AgentSubmitOutcome {
-    Run(WunderRequest, Option<SessionLease>),
+    Run(Box<WunderRequest>, Option<SessionLease>),
     Queued(QueueInfo),
 }
 
@@ -187,7 +187,7 @@ impl AgentRuntime {
             }
         }
 
-        Ok(AgentSubmitOutcome::Run(request, lease))
+        Ok(AgentSubmitOutcome::Run(Box::new(request), lease))
     }
 
     pub async fn resolve_main_session_id(
@@ -324,9 +324,8 @@ impl AgentRuntime {
         status: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>> {
-        Ok(self
-            .user_store
-            .list_agent_tasks_by_thread(thread_id, status, limit)?)
+        self.user_store
+            .list_agent_tasks_by_thread(thread_id, status, limit)
     }
 
     pub fn cancel_task(&self, task_id: &str) -> Result<()> {
@@ -775,7 +774,7 @@ impl AgentRuntime {
         if next_retry > max_retries {
             return self.fail_task(task, message, TASK_STATUS_DEAD);
         }
-        let delay = 1.5_f64.powi(next_retry as i32).max(1.0).min(30.0);
+        let delay = 1.5_f64.powi(next_retry as i32).clamp(1.0, 30.0);
         let now = now_ts();
         self.user_store.update_agent_task_status(
             &task.task_id,

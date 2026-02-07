@@ -52,10 +52,7 @@ async fn list_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
-    let items = filtered
-        .iter()
-        .map(|record| agent_payload(record))
-        .collect::<Vec<_>>();
+    let items = filtered.iter().map(agent_payload).collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))
@@ -76,10 +73,7 @@ async fn list_shared_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
-    let items = filtered
-        .iter()
-        .map(|record| agent_payload(record))
-        .collect::<Vec<_>>();
+    let items = filtered.iter().map(agent_payload).collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))

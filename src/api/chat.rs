@@ -282,7 +282,7 @@ async fn get_session(
 
     let limit = query
         .limit
-        .unwrap_or_else(|| if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
+        .unwrap_or(if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
     let mut history_incomplete = false;
     let history = match state
         .workspace
@@ -329,15 +329,13 @@ async fn get_session(
                 "created_at": format_ts(now_ts()),
                 "stream_incomplete": true,
             }));
-        } else if let Some(target) = messages.iter_mut().rev().find(|item| {
+        } else if let Some(Value::Object(map)) = messages.iter_mut().rev().find(|item| {
             item.get("role")
                 .and_then(Value::as_str)
                 .map(|value| value == "assistant")
                 .unwrap_or(false)
         }) {
-            if let Value::Object(ref mut map) = target {
-                map.insert("stream_incomplete".to_string(), json!(true));
-            }
+            map.insert("stream_incomplete".to_string(), json!(true));
         }
     }
 
@@ -507,6 +505,7 @@ async fn send_message(
             }
         }
         AgentSubmitOutcome::Run(request, lease) => {
+            let request = *request;
             if request.stream {
                 let stream = state
                     .orchestrator
@@ -744,8 +743,7 @@ async fn resume_session(
                 }
             }
         });
-        let stream =
-            ReceiverStream::new(event_rx).map(|event| Ok::<Event, std::convert::Infallible>(event));
+        let stream = ReceiverStream::new(event_rx).map(Ok::<Event, std::convert::Infallible>);
         let sse = Sse::new(stream)
             .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
         return Ok(sse.into_response());
@@ -785,9 +783,7 @@ async fn resume_session(
                         continue;
                     }
                     let data = event.get("data").cloned().unwrap_or(Value::Null);
-                    let builder = Event::default()
-                        .event(event_type.to_string())
-                        .data(data.to_string());
+                    let builder = Event::default().event(event_type).data(data.to_string());
                     if event_tx.send(builder).await.is_err() {
                         return;
                     }
@@ -800,8 +796,7 @@ async fn resume_session(
             tokio::time::sleep(poll_interval).await;
         }
     });
-    let stream =
-        ReceiverStream::new(event_rx).map(|event| Ok::<Event, std::convert::Infallible>(event));
+    let stream = ReceiverStream::new(event_rx).map(Ok::<Event, std::convert::Infallible>);
     let sse =
         Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
     Ok(sse.into_response())
@@ -1338,11 +1333,11 @@ fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main
 fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
     if let (Some(page), Some(size)) = (query.page, query.page_size) {
         let safe_page = page.max(1);
-        let safe_size = size.max(1).min(200);
+        let safe_size = size.clamp(1, 200);
         return ((safe_page - 1) * safe_size, safe_size);
     }
     let offset = query.offset.unwrap_or(0).max(0);
-    let limit = query.limit.unwrap_or(50).max(1).min(200);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
     (offset, limit)
 }
 
@@ -1533,10 +1528,10 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
         if round <= 0 {
             return;
         }
-        if !grouped.contains_key(&round) {
+        grouped.entry(round).or_insert_with(|| {
             order.push(round);
-            grouped.insert(round, Vec::new());
-        }
+            Vec::new()
+        });
         *current_round = Some(round);
     };
     for event in events {

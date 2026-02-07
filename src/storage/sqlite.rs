@@ -157,10 +157,8 @@ impl SqliteStorage {
         let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
+        for name in rows.flatten() {
+            columns.insert(name);
         }
         let mut quota_added = false;
         if !columns.contains("daily_quota") {
@@ -192,10 +190,8 @@ impl SqliteStorage {
         let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
+        for name in rows.flatten() {
+            columns.insert(name);
         }
         if !columns.contains("unit_id") {
             conn.execute("ALTER TABLE user_accounts ADD COLUMN unit_id TEXT", [])?;
@@ -228,10 +224,8 @@ impl SqliteStorage {
         let mut stmt = conn.prepare("PRAGMA table_info(chat_sessions)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
+        for name in rows.flatten() {
+            columns.insert(name);
         }
         if !columns.contains("agent_id") {
             conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", [])?;
@@ -272,10 +266,8 @@ impl SqliteStorage {
         let mut stmt = conn.prepare("PRAGMA table_info(session_locks)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
+        for name in rows.flatten() {
+            columns.insert(name);
         }
         if !columns.contains("agent_id") {
             conn.execute(
@@ -297,10 +289,8 @@ impl SqliteStorage {
         let mut stmt = conn.prepare("PRAGMA table_info(user_agents)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         let mut columns = HashSet::new();
-        for name in rows {
-            if let Ok(name) = name {
-                columns.insert(name);
-            }
+        for name in rows.flatten() {
+            columns.insert(name);
         }
         if !columns.contains("is_shared") {
             conn.execute(
@@ -2838,17 +2828,17 @@ impl StorageBackend for SqliteStorage {
             Ok(conn.execute(&sql, params_from_iter(params))? as i64)
         };
         let chat = hookup_delete("chat_history", "created_time", false)?;
-        results.insert("chat_history".to_string(), chat as i64);
+        results.insert("chat_history".to_string(), chat);
         let tool = hookup_delete("tool_logs", "created_time", false)?;
-        results.insert("tool_logs".to_string(), tool as i64);
+        results.insert("tool_logs".to_string(), tool);
         let artifact = hookup_delete("artifact_logs", "created_time", false)?;
-        results.insert("artifact_logs".to_string(), artifact as i64);
+        results.insert("artifact_logs".to_string(), artifact);
         let monitor = hookup_delete("monitor_sessions", "COALESCE(updated_time, 0)", true)?;
-        results.insert("monitor_sessions".to_string(), monitor as i64);
+        results.insert("monitor_sessions".to_string(), monitor);
         let stream = hookup_delete("stream_events", "created_time", false)?;
-        results.insert("stream_events".to_string(), stream as i64);
+        results.insert("stream_events".to_string(), stream);
         let session_runs = hookup_delete("session_runs", "COALESCE(updated_time, 0)", false)?;
-        results.insert("session_runs".to_string(), session_runs as i64);
+        results.insert("session_runs".to_string(), session_runs);
         Ok(results)
     }
 
@@ -3013,8 +3003,7 @@ impl StorageBackend for SqliteStorage {
             }
         }
         if let Some(unit_ids) = unit_ids.filter(|ids| !ids.is_empty()) {
-            let placeholders = std::iter::repeat("?")
-                .take(unit_ids.len())
+            let placeholders = std::iter::repeat_n("?", unit_ids.len())
                 .collect::<Vec<_>>()
                 .join(", ");
             conditions.push(format!("unit_id IN ({placeholders})"));
@@ -3474,7 +3463,7 @@ impl StorageBackend for SqliteStorage {
         let agent_id = agent_id.map(|value| value.trim());
         let (agent_clause, agent_params) = match agent_id {
             None => ("".to_string(), Vec::new()),
-            Some(value) if value.is_empty() => (
+            Some("") => (
                 " AND (agent_id IS NULL OR agent_id = '')".to_string(),
                 Vec::new(),
             ),
@@ -3712,10 +3701,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -3797,10 +3784,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -3944,10 +3929,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         let mut count_query = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
         if !filters.is_empty() {
@@ -4141,10 +4124,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
 
         let mut count_query = "SELECT COUNT(*) FROM channel_sessions".to_string();
@@ -4236,10 +4217,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -4338,10 +4317,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -4439,9 +4416,7 @@ impl StorageBackend for SqliteStorage {
                 scopes: Self::parse_string_list(scopes),
                 caps: Self::parse_string_list(caps),
                 commands: Self::parse_string_list(commands),
-                client_info: client_info
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
+                client_info: client_info.as_deref().and_then(Self::json_from_str),
                 status: row.get(8)?,
                 connected_at: row.get(9)?,
                 last_seen_at: row.get(10)?,
@@ -4449,10 +4424,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -4519,10 +4492,10 @@ impl StorageBackend for SqliteStorage {
                         commands: Self::parse_string_list(commands),
                         permissions: permissions
                             .as_deref()
-                            .and_then(|text| Self::json_from_str(text)),
+                            .and_then(Self::json_from_str),
                         metadata: metadata
                             .as_deref()
-                            .and_then(|text| Self::json_from_str(text)),
+                            .and_then(Self::json_from_str),
                         created_at: row.get(8)?,
                         updated_at: row.get(9)?,
                         last_seen_at: row.get(10)?,
@@ -4559,22 +4532,16 @@ impl StorageBackend for SqliteStorage {
                 status: row.get(3)?,
                 caps: Self::parse_string_list(caps),
                 commands: Self::parse_string_list(commands),
-                permissions: permissions
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
-                metadata: metadata
-                    .as_deref()
-                    .and_then(|text| Self::json_from_str(text)),
+                permissions: permissions.as_deref().and_then(Self::json_from_str),
+                metadata: metadata.as_deref().and_then(Self::json_from_str),
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
                 last_seen_at: row.get(10)?,
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -4667,10 +4634,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -4829,10 +4794,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -5111,10 +5074,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -5241,10 +5202,8 @@ impl StorageBackend for SqliteStorage {
                     updated_at: row.get(22)?,
                 })
             })?;
-            for row in rows {
-                if let Ok(record) = row {
-                    output.push(record);
-                }
+            for record in rows.flatten() {
+                output.push(record);
             }
         }
         tx.commit()?;
@@ -5286,7 +5245,7 @@ impl StorageBackend for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_job.is_empty() {
             return Ok(Vec::new());
         }
-        let safe_limit = limit.max(1).min(200);
+        let safe_limit = limit.clamp(1, 200);
         let conn = self.open()?;
         let mut stmt = conn.prepare(
             "SELECT run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at \
@@ -5308,10 +5267,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(record) = row {
-                output.push(record);
-            }
+        for record in rows.flatten() {
+            output.push(record);
         }
         Ok(output)
     }
@@ -5742,10 +5699,8 @@ impl StorageBackend for SqliteStorage {
             })
         })?;
         let mut output = Vec::new();
-        for row in rows {
-            if let Ok(item) = row {
-                output.push(item);
-            }
+        for item in rows.flatten() {
+            output.push(item);
         }
         Ok(output)
     }

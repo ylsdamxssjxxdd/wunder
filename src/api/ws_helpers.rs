@@ -177,7 +177,7 @@ pub(crate) fn apply_ws_auth_headers(headers: &HeaderMap, query: &WsQuery) -> Hea
             query
                 .access_token
                 .as_deref()
-                .or_else(|| query.token.as_deref())
+                .or(query.token.as_deref())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| value.to_string())

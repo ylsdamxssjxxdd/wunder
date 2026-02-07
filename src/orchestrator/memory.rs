@@ -503,9 +503,7 @@ impl Orchestrator {
         let summary_limit =
             HistoryManager::get_auto_compact_limit(&summary_config).unwrap_or(limit);
         if estimate_messages_tokens(&summary_input) > summary_limit {
-            let per_message_limit = summary_limit
-                .min(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS)
-                .max(1);
+            let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
             summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
             summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
         }
@@ -852,9 +850,7 @@ impl Orchestrator {
         &self,
         attachments: Option<&[AttachmentPayload]>,
     ) -> Option<Vec<AttachmentPayload>> {
-        let Some(attachments) = attachments else {
-            return None;
-        };
+        let attachments = attachments?;
         if attachments.is_empty() {
             return None;
         }

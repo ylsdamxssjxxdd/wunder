@@ -367,7 +367,7 @@ async fn handle_ws(
                                 let _ = send_ws_event(&ws_tx, Some(&request_id), final_event).await;
                                 continue;
                             }
-                            AgentSubmitOutcome::Run(request, lease) => (request, lease),
+                            AgentSubmitOutcome::Run(request, lease) => (*request, lease),
                         };
 
                         let ws_tx_snapshot = ws_tx.clone();

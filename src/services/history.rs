@@ -386,8 +386,8 @@ fn parse_timestamp(value: Option<&Value>) -> Option<f64> {
             if cleaned.is_empty() {
                 return None;
             }
-            let normalized = if cleaned.ends_with('Z') {
-                format!("{}+00:00", &cleaned[..cleaned.len() - 1])
+            let normalized = if let Some(prefix) = cleaned.strip_suffix('Z') {
+                format!("{prefix}+00:00")
             } else {
                 cleaned.to_string()
             };

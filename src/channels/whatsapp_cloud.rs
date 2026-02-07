@@ -184,13 +184,12 @@ pub fn extract_inbound_messages(
                     .as_ref()
                     .map(|value| value.trim().is_empty())
                     .unwrap_or(true)
-                {
-                    if matches!(
+                    && matches!(
                         message_type.as_str(),
                         "image" | "audio" | "video" | "document" | "sticker"
-                    ) {
-                        text = Some(format!("[WhatsApp {} message]", message_type.as_str()));
-                    }
+                    )
+                {
+                    text = Some(format!("[WhatsApp {} message]", message_type.as_str()));
                 }
 
                 let mut meta = json!({

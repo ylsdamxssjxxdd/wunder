@@ -476,9 +476,7 @@ async fn run_evaluation(ctx: EvaluationRunContext) {
             }
         }
 
-        let dim_entry = dimension_stats
-            .entry(case.dimension)
-            .or_insert_with(DimensionAccumulator::default);
+        let dim_entry = dimension_stats.entry(case.dimension).or_default();
         dim_entry.case_count += 1;
         match status {
             CaseStatus::Passed => {

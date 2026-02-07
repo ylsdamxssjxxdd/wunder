@@ -945,7 +945,7 @@ fn yaml_to_json(value: &serde_yaml::Value) -> Result<Value> {
 
 async fn send_message(writer: &mut tokio::process::ChildStdin, payload: &Value) -> Result<()> {
     let body = serde_json::to_string(payload)?;
-    let header = format!("Content-Length: {}\r\n\r\n", body.as_bytes().len());
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
     writer.write_all(header.as_bytes()).await?;
     writer.write_all(body.as_bytes()).await?;
     writer.flush().await?;

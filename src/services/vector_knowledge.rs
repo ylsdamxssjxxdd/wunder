@@ -1072,7 +1072,7 @@ impl WeaviateClient {
             return Ok(deleted);
         }
         let mut total = 0;
-        let limit = self.batch_size.max(64).min(2048);
+        let limit = self.batch_size.clamp(64, 2048);
         loop {
             let ids = self
                 .list_chunk_ids(owner_id, base_name, embedding_model, doc_id, limit)

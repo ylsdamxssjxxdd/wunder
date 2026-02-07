@@ -133,7 +133,7 @@ impl MonitorWriteQueue {
             Ok(()) => {}
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
                 let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
-                if dropped == 1 || dropped % 1000 == 0 {
+                if dropped == 1 || dropped.is_multiple_of(1000) {
                     warn!("monitor write queue full, dropped {dropped} records");
                 }
             }
@@ -1081,9 +1081,9 @@ impl MonitorState {
             memory_available: available,
             process_rss,
             process_cpu_percent: process_cpu,
-            load_avg_1: load_avg.one as f64,
-            load_avg_5: load_avg.five as f64,
-            load_avg_15: load_avg.fifteen as f64,
+            load_avg_1: load_avg.one,
+            load_avg_5: load_avg.five,
+            load_avg_15: load_avg.fifteen,
             disk_total,
             disk_used,
             disk_free,
@@ -1873,7 +1873,7 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
         .or(earliest_output_ts);
     if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
         let observed_duration = (first_output_ts - start_ts).max(0.0);
-        if prefill_duration_s.map_or(true, |provided| observed_duration > provided) {
+        if prefill_duration_s.is_none_or(|provided| observed_duration > provided) {
             prefill_duration_s = Some(observed_duration);
             prefill_speed_lower_bound = true;
         }
@@ -1920,12 +1920,8 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
             .map(|value| value.max(0.0))
             .or_else(|| {
                 decode_metrics.and_then(|metrics| {
-                    let Some(first_output_ts) = metrics.first_output_ts else {
-                        return None;
-                    };
-                    let Some(last_output_ts) = metrics.last_output_ts else {
-                        return None;
-                    };
+                    let first_output_ts = metrics.first_output_ts?;
+                    let last_output_ts = metrics.last_output_ts?;
                     Some((last_output_ts - first_output_ts).max(0.0))
                 })
             });

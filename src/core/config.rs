@@ -417,12 +417,7 @@ pub fn normalize_knowledge_base_type(value: Option<&str>) -> KnowledgeBaseType {
     if raw.is_empty() {
         return KnowledgeBaseType::Literal;
     }
-    match raw
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .replace(' ', "_")
-        .as_str()
-    {
+    match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "vector" | "embedding" => KnowledgeBaseType::Vector,
         _ => KnowledgeBaseType::Literal,
     }

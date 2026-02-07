@@ -716,7 +716,7 @@ async fn admin_mcp_tools(
         tool_specs: Vec::new(),
     };
     let timeout_s = if config.mcp.timeout_s > 0 {
-        config.mcp.timeout_s.max(10).min(300)
+        config.mcp.timeout_s.clamp(10, 300)
     } else {
         120
     };
@@ -1259,7 +1259,7 @@ async fn admin_skills_update(
     let paths_changed = payload
         .paths
         .as_ref()
-        .map_or(false, |paths| *paths != previous.skills.paths);
+        .is_some_and(|paths| *paths != previous.skills.paths);
     if !enabled_added.is_empty() || !enabled_removed.is_empty() || paths_changed {
         info!(
             "技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, paths_changed={paths_changed}",
@@ -1368,8 +1368,8 @@ async fn admin_skills_delete(
         .skills
         .enabled
         .iter()
+        .filter(|&value| value != name)
         .cloned()
-        .filter(|value| value != name)
         .collect();
     if cleaned_enabled != config.skills.enabled {
         let updated = state
@@ -1920,7 +1920,7 @@ async fn admin_knowledge_test(
         let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
             .await
             .map_err(vector_error_response)?;
-        let vector = vectors.get(0).ok_or_else(|| {
+        let vector = vectors.first().ok_or_else(|| {
             error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
         })?;
         let top_k = payload
@@ -2185,10 +2185,13 @@ async fn admin_knowledge_chunk_embed(
                 chunk_id: vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
             };
             let timeout_s = embed_config.timeout_s.unwrap_or(120);
-            let vectors =
-                vector_knowledge::embed_chunks(&embed_config, &[vector_chunk.clone()], timeout_s)
-                    .await
-                    .map_err(vector_error_response)?;
+            let vectors = vector_knowledge::embed_chunks(
+                &embed_config,
+                std::slice::from_ref(&vector_chunk),
+                timeout_s,
+            )
+            .await
+            .map_err(vector_error_response)?;
             let client = vector_knowledge::resolve_weaviate_client(&config)
                 .map_err(vector_error_response)?;
             let owner_key = vector_knowledge::resolve_owner_key(None);
@@ -3735,7 +3738,7 @@ async fn admin_user_accounts_list(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
     let offset = query.offset.unwrap_or(0).max(0);
-    let limit = query.limit.unwrap_or(50).max(1).min(200);
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let units = state
         .user_store
         .list_org_units()
@@ -5214,7 +5217,7 @@ async fn persist_knowledge_upload(
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+    if content.len() > MAX_KNOWLEDGE_CONTENT_BYTES {
         return Err(error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
             i18n::t("tool.read.too_large"),
@@ -5470,7 +5473,7 @@ async fn convert_upload_to_markdown(
     let content = tokio::fs::read_to_string(&output_path)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if content.as_bytes().len() > MAX_KNOWLEDGE_CONTENT_BYTES {
+    if content.len() > MAX_KNOWLEDGE_CONTENT_BYTES {
         return Err(error_response(
             StatusCode::PAYLOAD_TOO_LARGE,
             i18n::t("tool.read.too_large"),

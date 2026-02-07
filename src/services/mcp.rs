@@ -257,7 +257,7 @@ impl WunderMcpServer {
             .map_err(|err| McpError::invalid_params(format!("source_url 无效: {err}"), None))?;
         let name = parsed_url
             .path_segments()
-            .and_then(|segments| segments.last())
+            .and_then(|mut segments| segments.next_back())
             .unwrap_or("")
             .trim();
         let name = if name.is_empty() { "document" } else { name }.to_string();
@@ -517,7 +517,7 @@ pub async fn fetch_tools(config: &Config, server: &McpServerConfig) -> Result<Ve
         fetch_tools_sse(config, server).await?
     } else {
         let transport = build_transport(config, server)?;
-        let service = serve_client(NoopClientHandler::default(), transport).await?;
+        let service = serve_client(NoopClientHandler, transport).await?;
         let tools = service.list_all_tools().await?;
         collect_tool_specs(server, tools)
     };
@@ -602,7 +602,7 @@ pub async fn call_tool_with_server(
         return call_tool_sse(config, server, tool_name, args).await;
     }
     let transport = build_transport(config, server)?;
-    let service = serve_client(NoopClientHandler::default(), transport).await?;
+    let service = serve_client(NoopClientHandler, transport).await?;
     let result = service
         .call_tool(CallToolRequestParam {
             name: Cow::Owned(tool_name.to_string()),

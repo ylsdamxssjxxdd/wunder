@@ -526,6 +526,12 @@ pub struct ThroughputStatusResponse {
     pub history: Vec<ThroughputSnapshot>,
 }
 
+impl Default for ThroughputManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThroughputManager {
     pub fn new() -> Self {
         let history = load_report_index();
@@ -628,10 +634,8 @@ impl ThroughputManager {
                 Some(run_id.to_string())
             } else if let Some(active) = state.active.as_ref() {
                 return Ok(active.report());
-            } else if let Some(last) = state.history.last() {
-                Some(last.run.id.clone())
             } else {
-                None
+                state.history.last().map(|last| last.run.id.clone())
             }
         };
         let Some(target_id) = target_id else {

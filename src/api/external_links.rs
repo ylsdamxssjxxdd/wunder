@@ -40,7 +40,7 @@ async fn list_external_links(
     let items = records
         .iter()
         .filter(|record| is_link_visible(record, user_level))
-        .filter(|record| target_link_id.map_or(true, |target| record.link_id == target))
+        .filter(|record| target_link_id.is_none_or(|target| record.link_id == target))
         .map(external_link_payload)
         .collect::<Vec<_>>();
     Ok(Json(json!({

@@ -432,18 +432,19 @@ fn build_skill_prompt_block(workdir_display: &str, skills: &[SkillSpec]) -> Stri
     if skills.is_empty() {
         return String::new();
     }
-    let mut lines = Vec::new();
-    lines.push(i18n::t("prompt.skills.header"));
-    lines.push(i18n::t("prompt.skills.rule1"));
-    lines.push(i18n::t("prompt.skills.rule2"));
-    lines.push(i18n::t("prompt.skills.rule3"));
-    lines.push(i18n::t("prompt.skills.rule4"));
-    lines.push(i18n::t_with_params(
-        "prompt.skills.rule6",
-        &HashMap::from([("workdir".to_string(), workdir_display.to_string())]),
-    ));
-    lines.push(String::new());
-    lines.push(i18n::t("prompt.skills.list_header"));
+    let mut lines = vec![
+        i18n::t("prompt.skills.header"),
+        i18n::t("prompt.skills.rule1"),
+        i18n::t("prompt.skills.rule2"),
+        i18n::t("prompt.skills.rule3"),
+        i18n::t("prompt.skills.rule4"),
+        i18n::t_with_params(
+            "prompt.skills.rule6",
+            &HashMap::from([("workdir".to_string(), workdir_display.to_string())]),
+        ),
+        String::new(),
+        i18n::t("prompt.skills.list_header"),
+    ];
     let mut sorted = skills.to_vec();
     sorted.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     for spec in sorted {
@@ -532,7 +533,7 @@ fn absolute_path_str(path: &Path) -> String {
     } else {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let joined = cwd.join(path);
-        joined.canonicalize().unwrap_or_else(|_| joined)
+        joined.canonicalize().unwrap_or(joined)
     };
     let mut text = resolved.to_string_lossy().to_string();
     if cfg!(windows) {

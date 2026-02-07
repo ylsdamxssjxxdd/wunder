@@ -41,12 +41,7 @@ pub fn normalize_model_type(value: Option<&str>) -> ModelType {
     if raw.is_empty() {
         return ModelType::Llm;
     }
-    match raw
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .replace(' ', "_")
-        .as_str()
-    {
+    match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "embedding" | "embed" | "emb" => ModelType::Embedding,
         _ => ModelType::Llm,
     }
@@ -65,12 +60,7 @@ pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
     if raw.is_empty() {
         return ToolCallMode::ToolCall;
     }
-    match raw
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .replace(' ', "_")
-        .as_str()
-    {
+    match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "function_call" | "functioncall" | "function" | "fc" => ToolCallMode::FunctionCall,
         "tool_call" | "toolcall" | "tool" | "tag" | "xml" => ToolCallMode::ToolCall,
         _ => ToolCallMode::ToolCall,
@@ -501,11 +491,7 @@ pub fn normalize_provider(provider: Option<&str>) -> String {
     if raw.is_empty() {
         return "openai_compatible".to_string();
     }
-    let normalized = raw
-        .trim()
-        .to_ascii_lowercase()
-        .replace('-', "_")
-        .replace(' ', "_");
+    let normalized = raw.trim().to_ascii_lowercase().replace(['-', ' '], "_");
     match normalized.as_str() {
         "openai_compat" => "openai_compatible".to_string(),
         "openai_native" => "openai".to_string(),
@@ -568,9 +554,7 @@ fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
 }
 
 fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
-    let Some(raw) = raw else {
-        return None;
-    };
+    let raw = raw?;
     let Value::Object(map) = raw else {
         return None;
     };

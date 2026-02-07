@@ -165,7 +165,7 @@ impl Orchestrator {
             start_event_id,
         );
         let stream = tokio_stream::wrappers::ReceiverStream::new(event_rx)
-            .map(|event| Ok::<_, std::convert::Infallible>(event));
+            .map(Ok::<_, std::convert::Infallible>);
         Ok(stream)
     }
 

@@ -267,8 +267,8 @@ fn format_template(template: &str, params: &HashMap<String, String>) -> String {
             let Some(value) = params.get(key) else {
                 return caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
             };
-            if fmt.starts_with(':') {
-                if let Some(output) = format_with_spec(value, &fmt[1..]) {
+            if let Some(spec) = fmt.strip_prefix(':') {
+                if let Some(output) = format_with_spec(value, spec) {
                     return output;
                 }
             }

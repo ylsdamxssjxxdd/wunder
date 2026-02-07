@@ -143,7 +143,7 @@ fn store() -> &'static KnowledgeStore {
 pub fn resolve_llm_config(config: &Config, model_name: Option<&str>) -> Option<LlmModelConfig> {
     let name = model_name
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| config.llm.default.as_str());
+        .unwrap_or(config.llm.default.as_str());
     if let Some(model) = config
         .llm
         .models

@@ -37,6 +37,8 @@ const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
 const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 
+type WorkspaceEntriesPage = (Vec<WorkspaceEntry>, u64, String, Option<String>, u64);
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
     pub name: String,
@@ -617,7 +619,7 @@ impl WorkspaceManager {
         limit: u64,
         sort_by: &str,
         order: &str,
-    ) -> Result<(Vec<WorkspaceEntry>, u64, String, Option<String>, u64)> {
+    ) -> Result<WorkspaceEntriesPage> {
         let normalized = normalize_relative_path(relative_path);
         let target = self.resolve_path(
             user_id,
@@ -650,9 +652,9 @@ impl WorkspaceManager {
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_secs_f64())
                 .unwrap_or(0.0);
-            let updated = meta.modified().ok().and_then(|time| {
+            let updated = meta.modified().ok().map(|time| {
                 let dt: DateTime<Local> = time.into();
-                Some(dt.to_rfc3339())
+                dt.to_rfc3339()
             });
             let entry_type = if meta.is_dir() { "dir" } else { "file" };
             let rel_path = entry
@@ -697,8 +699,8 @@ impl WorkspaceManager {
 
         match sort_field {
             "name" => {
-                dirs.sort_by(|a, b| sort_name(a).cmp(&sort_name(b)));
-                files.sort_by(|a, b| sort_name(a).cmp(&sort_name(b)));
+                dirs.sort_by_key(sort_name);
+                files.sort_by_key(sort_name);
             }
             _ => {
                 dirs.sort_by(|a, b| {
@@ -759,7 +761,7 @@ impl WorkspaceManager {
         limit: u64,
         sort_by: &str,
         order: &str,
-    ) -> Result<(Vec<WorkspaceEntry>, u64, String, Option<String>, u64)> {
+    ) -> Result<WorkspaceEntriesPage> {
         let user_id = user_id.to_string();
         let relative_path = relative_path.to_string();
         let keyword = keyword.map(|value| value.to_string());
@@ -1127,8 +1129,8 @@ impl WorkspaceManager {
         }
         let root = self.ensure_user_root(user_id)?;
         let safe_id = self.safe_user_id(user_id);
-        let safe_offset = offset.max(0);
-        let safe_limit = limit.max(0);
+        let safe_offset = offset;
+        let safe_limit = limit;
         let version = self.get_tree_version(user_id);
         let now = now_ts();
         if let Some(index) = self.get_search_index(&safe_id, version, now) {
@@ -1371,9 +1373,7 @@ impl WorkspaceManager {
 
     fn get_search_index(&self, safe_id: &str, version: u64, now: f64) -> Option<SearchIndex> {
         let mut cache = self.search_cache.lock();
-        let Some(entry) = cache.get_mut(safe_id) else {
-            return None;
-        };
+        let entry = cache.get_mut(safe_id)?;
         if entry.version != version {
             cache.remove(safe_id);
             self.evict_search_cache_locked(&mut cache, now);
@@ -1415,9 +1415,9 @@ impl WorkspaceManager {
             let updated = meta
                 .as_ref()
                 .and_then(|meta| meta.modified().ok())
-                .and_then(|time| {
+                .map(|time| {
                     let dt: DateTime<Local> = time.into();
-                    Some(dt.to_rfc3339())
+                    dt.to_rfc3339()
                 });
             let rel = entry
                 .path()
@@ -1575,8 +1575,8 @@ fn build_workspace_tree_inner(
             files.push(name);
         }
     }
-    dirs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-    files.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    dirs.sort_by_key(|item| item.0.to_lowercase());
+    files.sort_by_key(|item| item.to_lowercase());
     let prefix = "  ".repeat(depth);
     for (name, dir_path) in dirs {
         lines.push(format!("{prefix}{name}/"));
@@ -1654,9 +1654,9 @@ fn search_by_walkdir(
         let updated = meta
             .as_ref()
             .and_then(|meta| meta.modified().ok())
-            .and_then(|time| {
+            .map(|time| {
                 let dt: DateTime<Local> = time.into();
-                Some(dt.to_rfc3339())
+                dt.to_rfc3339()
             });
         let rel = entry
             .path()

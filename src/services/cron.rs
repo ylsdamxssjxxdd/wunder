@@ -31,6 +31,14 @@ const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUMMARY_MAX_CHARS: usize = 200;
 
+type NormalizedSchedule = (
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+);
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct CronActionRequest {
     pub action: String,
@@ -318,7 +326,7 @@ pub async fn list_cron_runs(
 ) -> Result<Value> {
     let cleaned_user = user_id.trim().to_string();
     let cleaned_job = job_id.trim().to_string();
-    let safe_limit = limit.max(1).min(200);
+    let safe_limit = limit.clamp(1, 200);
     let storage = storage.clone();
     let runs = {
         let job_id = cleaned_job.clone();
@@ -493,15 +501,7 @@ fn apply_job_patch(
     Ok(())
 }
 
-fn normalize_schedule_input(
-    schedule: &CronScheduleInput,
-) -> Result<(
-    String,
-    Option<String>,
-    Option<i64>,
-    Option<String>,
-    Option<String>,
-)> {
+fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSchedule> {
     let kind = schedule.kind.trim().to_lowercase();
     match kind.as_str() {
         "at" => {
@@ -631,9 +631,7 @@ fn parse_rfc3339(value: &str) -> Option<DateTime<Utc>> {
 }
 
 fn extract_payload_message(payload: Option<&Value>) -> Option<String> {
-    let Some(payload) = payload else {
-        return None;
-    };
+    let payload = payload?;
     match payload {
         Value::String(text) => {
             let trimmed = text.trim();

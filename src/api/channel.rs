@@ -469,7 +469,7 @@ async fn load_account_by_channel_and_id(
             .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
     let record = record
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "channel account not found"))?;
-    if record.status.trim().to_ascii_lowercase() != "active" {
+    if !record.status.trim().eq_ignore_ascii_case("active") {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "channel account disabled",
