@@ -1,7 +1,10 @@
 ﻿<template>
   <div class="workspace-panel">
     <div class="workspace-header">
-    <div class="workspace-title">{{ t('workspace.title') }}</div>
+      <div class="workspace-title-row">
+        <div class="workspace-title">{{ t('workspace.title') }}</div>
+        <div class="workspace-container-id">{{ normalizedContainerId }}</div>
+      </div>
       <div class="workspace-header-actions">
         <button
           class="workspace-icon-btn"
@@ -284,6 +287,10 @@ const props = defineProps({
   agentId: {
     type: String,
     default: ''
+  },
+  containerId: {
+    type: [Number, String],
+    default: 1
   }
 });
 
@@ -538,6 +545,11 @@ const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+const normalizedContainerId = computed(() => {
+  const parsed = Number.parseInt(String(props.containerId ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+});
 
 const withAgentParams = (params = {}) => {
   const agentId = normalizedAgentId.value;

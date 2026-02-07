@@ -1018,6 +1018,7 @@
     min-height: 0;
     overflow: auto;
     align-content: flex-start;
+    padding-top: 4px;
     padding-right: 4px;
   }
 }

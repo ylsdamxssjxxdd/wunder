@@ -138,6 +138,16 @@
 .agent-card-meta--updated {
   margin-top: auto;
   padding-top: 4px;
+  width: 100%;
+  justify-content: space-between;
+}
+
+.agent-card-container-id {
+  color: var(--portal-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .agent-card-footer {

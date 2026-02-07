@@ -120,6 +120,9 @@
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
+                  <span class="agent-card-container-id">
+                    {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -175,6 +178,9 @@
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
+                  <span class="agent-card-container-id">
+                    {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -597,6 +603,23 @@ const normalizeSandboxContainerId = (value) => {
   return Math.min(10, Math.max(1, parsed));
 };
 
+const sortAgentsByContainerId = (list) =>
+  (Array.isArray(list) ? list : [])
+    .map((agent, index) => ({
+      agent,
+      index,
+      sandboxContainerId: normalizeSandboxContainerId(agent?.sandbox_container_id)
+    }))
+    .sort((left, right) => {
+      if (left.sandboxContainerId !== right.sandboxContainerId) {
+        return left.sandboxContainerId - right.sandboxContainerId;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.agent);
+
+const getAgentSandboxContainerId = (agent) => normalizeSandboxContainerId(agent?.sandbox_container_id);
+
 const form = reactive({
   name: '',
   description: '',
@@ -737,13 +760,13 @@ const sharedAgents = computed(() => agentStore.sharedAgents || []);
 const agentLoading = computed(() => agentStore.loading);
 const filteredAgents = computed(() => {
   const query = normalizedQuery.value;
-  if (!query) return agents.value;
-  return agents.value.filter((agent) => matchesQuery(agent, query));
+  const matched = query ? agents.value.filter((agent) => matchesQuery(agent, query)) : agents.value;
+  return sortAgentsByContainerId(matched);
 });
 const filteredSharedAgents = computed(() => {
   const query = normalizedQuery.value;
-  if (!query) return sharedAgents.value;
-  return sharedAgents.value.filter((agent) => matchesQuery(agent, query));
+  const matched = query ? sharedAgents.value.filter((agent) => matchesQuery(agent, query)) : sharedAgents.value;
+  return sortAgentsByContainerId(matched);
 });
 const filteredExternalLinks = computed(() => {
   const query = normalizedQuery.value;

@@ -117,7 +117,7 @@
       <div class="main-grid">
         <aside v-if="!isCompactLayout" class="sidebar">
           <div class="glass-card info-panel">
-            <WorkspacePanel :agent-id="activeAgentId" />
+            <WorkspacePanel :agent-id="activeAgentId" :container-id="activeSandboxContainerId" />
           </div>
 
           <div class="glass-card history-panel">
@@ -508,7 +508,7 @@
         </div>
       </template>
       <div class="panel-dialog-body">
-        <WorkspacePanel :agent-id="activeAgentId" />
+        <WorkspacePanel :agent-id="activeAgentId" :container-id="activeSandboxContainerId" />
       </div>
     </el-dialog>
 
@@ -778,6 +778,14 @@ const activeAgentId = computed(
 );
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
+);
+const normalizeSandboxContainerId = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+};
+const activeSandboxContainerId = computed(() =>
+  normalizeSandboxContainerId(activeAgent.value?.sandbox_container_id)
 );
 const canManageActiveAgent = computed(() => Boolean(String(activeAgentId.value || '').trim()));
 const activeAgentLabel = computed(
