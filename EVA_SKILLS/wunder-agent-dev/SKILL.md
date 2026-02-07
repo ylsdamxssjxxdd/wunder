@@ -109,16 +109,28 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - `/wunder` + `debug_payload=true` 拿完整请求体
 - 关注事件：`llm_request`、`tool_call`、`tool_result`、`final`
 
+### 3) 智能体容器协作/隔离回归
+- 脚本：`EVA_SKILLS/wunder-agent-dev/scripts/agent_sandbox_collab_check.py`
+- 作用：
+  - 校验预置智能体的 `sandbox_container_id` 布局（文稿校对/数据分析/科学绘图/政策分析/公文写作 = 2~6）
+  - 自动创建临时智能体，验证“同容器共享文件区、跨容器隔离文件区”
+- 环境变量：`WUNDER_BASE_URL`、`WUNDER_USER_TOKEN`（可选，优先）或 `WUNDER_USERNAME` + `WUNDER_PASSWORD`
+
 ## 经验技巧
 - LLM 输出可能“伪造工具结果”，关键回路请直接走管理端或脚本触发
 - 网关 WS 鉴权需在握手阶段传 `Authorization: Bearer <token>`，`connect.params.auth.token` 只做逻辑校验
 - `wunder.override.yaml` 会覆盖基础配置，联调前先确认生效值
 - 编码乱码先用 ASCII 对照用例定位，别用乱码样本做结论
+- 工作区路由现在优先按 `user_id + sandbox_container_id`，仅在无可用容器信息时回退到历史路由
+- 删除智能体时要特别注意：同容器可被多个智能体共享，不应默认清理整个容器文件区
+- 预置智能体容器改造建议用“一次性 meta 标记 + 仅修正默认容器值”的策略，避免覆盖用户自定义设置
+- API 异常排障建议优先看 `error.code` / `error.hint` / `error.trace_id`，并在前端提供 trace_id 一键复制
 
 ## 脚本说明
 - `scripts/update_feature_log.py`：写入 `docs/功能迭代.md`
 - `EVA_SKILLS/wunder-agent-dev/scripts/gateway_smoke_test.py`：网关节点回路测试
-- EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py：管理端导航与 i18n 一致性检查
+- `EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py`：管理端导航与 i18n 一致性检查
+- `EVA_SKILLS/wunder-agent-dev/scripts/agent_sandbox_collab_check.py`：智能体容器共享/隔离回归检查
 
 ## 交付自检清单
 - [ ] 变更范围与主链路一致
