@@ -4,7 +4,7 @@
     <main class="portal-content">
       <section class="portal-main">
         <div class="portal-main-scroll">
-          <section class="portal-section">
+          <section class="portal-section portal-section--agents">
             <div class="portal-section-header portal-section-header--search">
               <div class="portal-section-heading">
                 <div class="portal-section-title-row">

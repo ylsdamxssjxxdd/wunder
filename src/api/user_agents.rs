@@ -536,6 +536,12 @@ const PRESET_POLICY_ANALYSIS_DESCRIPTION: &str = "解读政策要点并评估影
 const PRESET_POLICY_ANALYSIS_PROMPT: &str = "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。";
 const PRESET_POLICY_ANALYSIS_ICON: &str = "briefcase";
 const PRESET_POLICY_ANALYSIS_COLOR: &str = "#f97316";
+const PRESET_CONTAINER_ID_PROOFREAD: i32 = 2;
+const PRESET_CONTAINER_ID_DATA_ANALYSIS: i32 = 3;
+const PRESET_CONTAINER_ID_SCI_DRAW: i32 = 4;
+const PRESET_CONTAINER_ID_POLICY_ANALYSIS: i32 = 5;
+const PRESET_CONTAINER_ID_OFFICIAL_WRITING: i32 = 6;
+const PRESET_CONTAINER_META_PREFIX: &str = "user_agent_presets_container_v1:";
 
 struct PresetAgent {
     name: &'static str,
@@ -543,6 +549,7 @@ struct PresetAgent {
     system_prompt: &'static str,
     icon_name: &'static str,
     icon_color: &'static str,
+    sandbox_container_id: i32,
 }
 
 async fn ensure_preset_agents(
@@ -550,6 +557,7 @@ async fn ensure_preset_agents(
     user: &crate::storage::UserAccountRecord,
 ) -> Result<(), Response> {
     let meta_key = format!("{PRESET_META_PREFIX}{}", user.user_id);
+    let container_meta_key = format!("{PRESET_CONTAINER_META_PREFIX}{}", user.user_id);
     let existing = state
         .user_store
         .list_user_agents(&user.user_id)
@@ -559,10 +567,16 @@ async fn ensure_preset_agents(
         .map(|record| record.name.trim().to_string())
         .collect();
     let now = now_ts();
+    let container_layout_seeded = state
+        .user_store
+        .get_meta(&container_meta_key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
     for record in existing {
         let trimmed_name = record.name.trim();
+        let mut updated = record.clone();
+        let mut changed = false;
         if trimmed_name == LEGACY_EMAIL_PRESET_NAME {
-            let mut updated = record.clone();
             updated.name = PRESET_OFFICIAL_NAME.to_string();
             updated.description = PRESET_OFFICIAL_DESCRIPTION.to_string();
             updated.system_prompt = PRESET_OFFICIAL_PROMPT.to_string();
@@ -570,14 +584,10 @@ async fn ensure_preset_agents(
                 PRESET_OFFICIAL_ICON,
                 PRESET_OFFICIAL_COLOR,
             ));
-            updated.updated_at = now;
-            let _ = state.user_store.upsert_user_agent(&updated);
             existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
             existing_names.insert(PRESET_OFFICIAL_NAME.to_string());
-            continue;
-        }
-        if trimmed_name == LEGACY_MEETING_NAME {
-            let mut updated = record.clone();
+            changed = true;
+        } else if trimmed_name == LEGACY_MEETING_NAME {
             updated.name = PRESET_SCI_DRAW_NAME.to_string();
             updated.description = PRESET_SCI_DRAW_DESCRIPTION.to_string();
             updated.system_prompt = PRESET_SCI_DRAW_PROMPT.to_string();
@@ -585,14 +595,10 @@ async fn ensure_preset_agents(
                 PRESET_SCI_DRAW_ICON,
                 PRESET_SCI_DRAW_COLOR,
             ));
-            updated.updated_at = now;
-            let _ = state.user_store.upsert_user_agent(&updated);
             existing_names.remove(LEGACY_MEETING_NAME);
             existing_names.insert(PRESET_SCI_DRAW_NAME.to_string());
-            continue;
-        }
-        if trimmed_name == LEGACY_PLAN_NAME {
-            let mut updated = record.clone();
+            changed = true;
+        } else if trimmed_name == LEGACY_PLAN_NAME {
             updated.name = PRESET_POLICY_ANALYSIS_NAME.to_string();
             updated.description = PRESET_POLICY_ANALYSIS_DESCRIPTION.to_string();
             updated.system_prompt = PRESET_POLICY_ANALYSIS_PROMPT.to_string();
@@ -600,11 +606,29 @@ async fn ensure_preset_agents(
                 PRESET_POLICY_ANALYSIS_ICON,
                 PRESET_POLICY_ANALYSIS_COLOR,
             ));
-            updated.updated_at = now;
-            let _ = state.user_store.upsert_user_agent(&updated);
             existing_names.remove(LEGACY_PLAN_NAME);
             existing_names.insert(PRESET_POLICY_ANALYSIS_NAME.to_string());
+            changed = true;
         }
+
+        if !container_layout_seeded {
+            if let Some(container_id) = preset_sandbox_container_id(updated.name.trim()) {
+                if updated.sandbox_container_id == DEFAULT_SANDBOX_CONTAINER_ID
+                    && updated.sandbox_container_id != container_id
+                {
+                    updated.sandbox_container_id = container_id;
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            updated.updated_at = now;
+            let _ = state.user_store.upsert_user_agent(&updated);
+        }
+    }
+    if !container_layout_seeded {
+        let _ = state.user_store.set_meta(&container_meta_key, "1");
     }
     let seeded = state
         .user_store
@@ -634,7 +658,7 @@ async fn ensure_preset_agents(
             is_shared: false,
             status: "active".to_string(),
             icon: Some(build_icon_payload(preset.icon_name, preset.icon_color)),
-            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            sandbox_container_id: preset.sandbox_container_id,
             created_at: now,
             updated_at: now,
         };
@@ -642,6 +666,17 @@ async fn ensure_preset_agents(
     }
     let _ = state.user_store.set_meta(&meta_key, "1");
     Ok(())
+}
+
+fn preset_sandbox_container_id(name: &str) -> Option<i32> {
+    match name.trim() {
+        "文稿校对" => Some(PRESET_CONTAINER_ID_PROOFREAD),
+        "数据分析" => Some(PRESET_CONTAINER_ID_DATA_ANALYSIS),
+        PRESET_SCI_DRAW_NAME => Some(PRESET_CONTAINER_ID_SCI_DRAW),
+        PRESET_POLICY_ANALYSIS_NAME => Some(PRESET_CONTAINER_ID_POLICY_ANALYSIS),
+        PRESET_OFFICIAL_NAME => Some(PRESET_CONTAINER_ID_OFFICIAL_WRITING),
+        _ => None,
+    }
 }
 
 fn preset_agents() -> Vec<PresetAgent> {
@@ -652,6 +687,7 @@ fn preset_agents() -> Vec<PresetAgent> {
             system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。",
             icon_name: "spark",
             icon_color: "#fbbf24",
+            sandbox_container_id: PRESET_CONTAINER_ID_PROOFREAD,
         },
         PresetAgent {
             name: "数据分析",
@@ -659,6 +695,7 @@ fn preset_agents() -> Vec<PresetAgent> {
             system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。",
             icon_name: "chart",
             icon_color: "#60a5fa",
+            sandbox_container_id: PRESET_CONTAINER_ID_DATA_ANALYSIS,
         },
         PresetAgent {
             name: PRESET_SCI_DRAW_NAME,
@@ -666,6 +703,7 @@ fn preset_agents() -> Vec<PresetAgent> {
             system_prompt: PRESET_SCI_DRAW_PROMPT,
             icon_name: PRESET_SCI_DRAW_ICON,
             icon_color: PRESET_SCI_DRAW_COLOR,
+            sandbox_container_id: PRESET_CONTAINER_ID_SCI_DRAW,
         },
         PresetAgent {
             name: PRESET_POLICY_ANALYSIS_NAME,
@@ -673,6 +711,7 @@ fn preset_agents() -> Vec<PresetAgent> {
             system_prompt: PRESET_POLICY_ANALYSIS_PROMPT,
             icon_name: PRESET_POLICY_ANALYSIS_ICON,
             icon_color: PRESET_POLICY_ANALYSIS_COLOR,
+            sandbox_container_id: PRESET_CONTAINER_ID_POLICY_ANALYSIS,
         },
         PresetAgent {
             name: PRESET_OFFICIAL_NAME,
@@ -680,6 +719,7 @@ fn preset_agents() -> Vec<PresetAgent> {
             system_prompt: PRESET_OFFICIAL_PROMPT,
             icon_name: PRESET_OFFICIAL_ICON,
             icon_color: PRESET_OFFICIAL_COLOR,
+            sandbox_container_id: PRESET_CONTAINER_ID_OFFICIAL_WRITING,
         },
     ]
 }

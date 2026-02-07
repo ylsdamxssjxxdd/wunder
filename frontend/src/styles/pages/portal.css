@@ -602,6 +602,10 @@
   gap: 14px;
 }
 
+.portal-section--agents {
+  min-height: 0;
+}
+
 .portal-section--shared {
   margin-top: 40px;
 }
@@ -990,6 +994,32 @@
 
 .portal-section--apps {
   margin-top: 32px;
+  min-height: 0;
+}
+
+@media (min-width: 960px) {
+  .portal-main-scroll {
+    overflow: hidden;
+    padding-right: 0;
+  }
+
+  .portal-section--agents {
+    flex: 2 1 0;
+  }
+
+  .portal-section--apps {
+    flex: 1 1 0;
+    margin-top: 0;
+  }
+
+  .portal-section--agents .portal-agent-grid,
+  .portal-section--apps .portal-agent-grid {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    align-content: flex-start;
+    padding-right: 4px;
+  }
 }
 
 .external-app-page {
