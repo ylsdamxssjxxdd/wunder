@@ -243,6 +243,7 @@ impl Orchestrator {
         is_debug_log_level(&config.observability.log_level)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn call_llm(
         &self,
         llm_config: &LlmModelConfig,

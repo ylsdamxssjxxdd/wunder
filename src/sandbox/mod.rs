@@ -245,6 +245,7 @@ pub fn sandbox_enabled(config: &Config) -> bool {
     config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_tool(
     config: &Config,
     workspace: &WorkspaceManager,

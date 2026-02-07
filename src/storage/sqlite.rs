@@ -5,10 +5,12 @@ use crate::storage::{
     normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord,
     ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord,
     ChannelUserBindingRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord,
-    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord,
-    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
-    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, ListChannelUserBindingsQuery,
+    MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
+    SpeechJobRecord, StorageBackend, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
+    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
+    UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -1936,19 +1938,9 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
-    fn update_agent_task_status(
-        &self,
-        task_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        started_at: Option<f64>,
-        finished_at: Option<f64>,
-        last_error: Option<&str>,
-        updated_at: f64,
-    ) -> Result<()> {
+    fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned = task_id.trim();
+        let cleaned = params.task_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
@@ -1956,13 +1948,13 @@ impl StorageBackend for SqliteStorage {
         conn.execute(
             "UPDATE agent_tasks SET status = ?, retry_count = ?, retry_at = ?, started_at = ?, finished_at = ?, last_error = ?, updated_at = ? WHERE task_id = ?",
             params![
-                status,
-                retry_count,
-                retry_at,
-                started_at,
-                finished_at,
-                last_error,
-                updated_at,
+                params.status,
+                params.retry_count,
+                params.retry_at,
+                params.started_at,
+                params.finished_at,
+                params.last_error,
+                params.updated_at,
                 cleaned
             ],
         )?;
@@ -2309,53 +2301,35 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
-    fn upsert_memory_task_log(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        task_id: &str,
-        status: &str,
-        queued_time: f64,
-        started_time: f64,
-        finished_time: f64,
-        elapsed_s: f64,
-        request_payload: Option<&Value>,
-        result: &str,
-        error: &str,
-        updated_time: Option<f64>,
-    ) -> Result<()> {
+    fn upsert_memory_task_log(&self, params: UpsertMemoryTaskLogParams<'_>) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        let cleaned_task = task_id.trim();
+        let cleaned_user = params.user_id.trim();
+        let cleaned_session = params.session_id.trim();
+        let cleaned_task = params.task_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_task.is_empty() {
             return Ok(());
         }
-        let status_text = status.trim();
-        let payload_text = request_payload
+        let status_text = params.status.trim();
+        let payload_text = params
+            .request_payload
             .map(Self::json_to_string)
             .unwrap_or_default();
-        let now = updated_time.unwrap_or_else(Self::now_ts);
+        let now = params.updated_time.unwrap_or_else(Self::now_ts);
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(user_id, session_id) DO UPDATE SET \
-               task_id = excluded.task_id, status = excluded.status, queued_time = excluded.queued_time, started_time = excluded.started_time, \
-               finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, request_payload = excluded.request_payload, result = excluded.result, \
-               error = excluded.error, updated_time = excluded.updated_time",
+            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(user_id, session_id) DO UPDATE SET                task_id = excluded.task_id, status = excluded.status, queued_time = excluded.queued_time, started_time = excluded.started_time,                finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, request_payload = excluded.request_payload, result = excluded.result,                error = excluded.error, updated_time = excluded.updated_time",
             params![
                 cleaned_task,
                 cleaned_user,
                 cleaned_session,
                 status_text,
-                queued_time,
-                started_time,
-                finished_time,
-                elapsed_s,
+                params.queued_time,
+                params.started_time,
+                params.finished_time,
+                params.elapsed_s,
                 payload_text,
-                result,
-                error,
+                params.result,
+                params.error,
                 now
             ],
         )?;
@@ -3856,67 +3830,70 @@ impl StorageBackend for SqliteStorage {
 
     fn list_channel_user_bindings(
         &self,
-        channel: Option<&str>,
-        account_id: Option<&str>,
-        peer_kind: Option<&str>,
-        peer_id: Option<&str>,
-        user_id: Option<&str>,
-        offset: i64,
-        limit: i64,
+        query: ListChannelUserBindingsQuery<'_>,
     ) -> Result<(Vec<ChannelUserBindingRecord>, i64)> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let mut filters = Vec::new();
         let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = channel
+        if let Some(channel) = query
+            .channel
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             filters.push("channel = ?".to_string());
             params_list.push(SqlValue::from(channel.to_string()));
         }
-        if let Some(account_id) = account_id
+        if let Some(account_id) = query
+            .account_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             filters.push("account_id = ?".to_string());
             params_list.push(SqlValue::from(account_id.to_string()));
         }
-        if let Some(peer_kind) = peer_kind
+        if let Some(peer_kind) = query
+            .peer_kind
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             filters.push("peer_kind = ?".to_string());
             params_list.push(SqlValue::from(peer_kind.to_string()));
         }
-        if let Some(peer_id) = peer_id
+        if let Some(peer_id) = query
+            .peer_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             filters.push("peer_id = ?".to_string());
             params_list.push(SqlValue::from(peer_id.to_string()));
         }
-        if let Some(user_id) = user_id
+        if let Some(user_id) = query
+            .user_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             filters.push("user_id = ?".to_string());
             params_list.push(SqlValue::from(user_id.to_string()));
         }
-        let mut query =
+        let mut sql =
             "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings"
                 .to_string();
         if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
+            sql.push_str(" WHERE ");
+            sql.push_str(&filters.join(" AND "));
         }
-        query.push_str(" ORDER BY updated_at DESC");
-        let offset_value = offset.max(0);
-        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
+        sql.push_str(" ORDER BY updated_at DESC");
+        let offset_value = query.offset.max(0);
+        let limit_value = if query.limit <= 0 {
+            100
+        } else {
+            query.limit.min(500)
+        };
         params_list.push(SqlValue::from(limit_value));
         params_list.push(SqlValue::from(offset_value));
-        query.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&query)?;
+        sql.push_str(" LIMIT ? OFFSET ?");
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
             Ok(ChannelUserBindingRecord {
                 channel: row.get(0)?,
@@ -3932,13 +3909,13 @@ impl StorageBackend for SqliteStorage {
         for record in rows.flatten() {
             output.push(record);
         }
-        let mut count_query = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
+        let mut count_sql = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
         if !filters.is_empty() {
-            count_query.push_str(" WHERE ");
-            count_query.push_str(&filters.join(" AND "));
+            count_sql.push_str(" WHERE ");
+            count_sql.push_str(&filters.join(" AND "));
         }
         let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_query, count_params, |row| row.get(0))?;
+        let total: i64 = conn.query_row(&count_sql, count_params, |row| row.get(0))?;
         Ok((output, total))
     }
 
@@ -4325,23 +4302,25 @@ impl StorageBackend for SqliteStorage {
 
     fn update_channel_outbox_status(
         &self,
-        outbox_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        last_error: Option<&str>,
-        delivered_at: Option<f64>,
-        updated_at: f64,
+        params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned = outbox_id.trim();
+        let cleaned = params.outbox_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
         let conn = self.open()?;
         conn.execute(
             "UPDATE channel_outbox SET status = ?, retry_count = ?, retry_at = ?, last_error = ?, updated_at = ?, delivered_at = ? WHERE outbox_id = ?",
-            params![status, retry_count, retry_at, last_error, updated_at, delivered_at, cleaned],
+            params![
+                params.status,
+                params.retry_count,
+                params.retry_at,
+                params.last_error,
+                params.updated_at,
+                params.delivered_at,
+                cleaned
+            ],
         )?;
         Ok(())
     }

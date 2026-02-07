@@ -1832,6 +1832,7 @@ fn resolve_child_agent(
     Ok((None, None))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_session_run(
     context: &ToolContext<'_>,
     request: WunderRequest,
@@ -1998,6 +1999,7 @@ fn cleanup_session(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_child_announce(
     workspace: &WorkspaceManager,
     storage: &Arc<dyn StorageBackend>,
@@ -3267,6 +3269,7 @@ async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value
     .map_err(|err| anyhow!(err.to_string()))?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn search_content_inner(
     workspace: &WorkspaceManager,
     user_id: &str,

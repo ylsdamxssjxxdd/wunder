@@ -13,7 +13,8 @@ use crate::schemas::WunderRequest;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChatSessionRecord, StorageBackend, UserAgentRecord,
+    ChannelSessionRecord, ChatSessionRecord, StorageBackend, UpdateChannelOutboxStatusParams,
+    UserAgentRecord,
 };
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
@@ -410,6 +411,7 @@ impl ChannelHub {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_channel_session(
         &self,
         message: &ChannelMessage,
@@ -708,15 +710,15 @@ impl ChannelHub {
             let cfg = resolve_outbox_config(self.config_store.get().await.channels.outbox.clone());
             retry_at = compute_retry_at(now, retry_count, &cfg);
         }
-        self.set_outbox_status(
-            &record.outbox_id,
+        self.set_outbox_status(UpdateChannelOutboxStatusParams {
+            outbox_id: &record.outbox_id,
             status,
             retry_count,
             retry_at,
-            last_error.as_deref(),
+            last_error: last_error.as_deref(),
             delivered_at,
-            now,
-        )
+            updated_at: now,
+        })
         .await?;
         Ok(())
     }
@@ -975,30 +977,25 @@ impl ChannelHub {
             .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
-    async fn set_outbox_status(
-        &self,
-        outbox_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        last_error: Option<&str>,
-        delivered_at: Option<f64>,
-        updated_at: f64,
-    ) -> Result<()> {
+    async fn set_outbox_status(&self, params: UpdateChannelOutboxStatusParams<'_>) -> Result<()> {
         let storage = self.storage.clone();
-        let outbox_id = outbox_id.to_string();
-        let status = status.to_string();
-        let last_error = last_error.map(|value| value.to_string());
+        let outbox_id = params.outbox_id.to_string();
+        let status = params.status.to_string();
+        let last_error = params.last_error.map(|value| value.to_string());
+        let retry_count = params.retry_count;
+        let retry_at = params.retry_at;
+        let delivered_at = params.delivered_at;
+        let updated_at = params.updated_at;
         tokio::task::spawn_blocking(move || {
-            storage.update_channel_outbox_status(
-                &outbox_id,
-                &status,
+            storage.update_channel_outbox_status(UpdateChannelOutboxStatusParams {
+                outbox_id: &outbox_id,
+                status: &status,
                 retry_count,
                 retry_at,
-                last_error.as_deref(),
+                last_error: last_error.as_deref(),
                 delivered_at,
                 updated_at,
-            )
+            })
         })
         .await
         .unwrap_or_else(|err| Err(anyhow!(err)))

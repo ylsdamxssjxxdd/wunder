@@ -108,15 +108,15 @@ async fn list_channel_bindings(
     let user_id = resolved.user.user_id.clone();
     let (bindings, total) = state
         .storage
-        .list_channel_user_bindings(
-            query.channel.as_deref(),
-            query.account_id.as_deref(),
-            query.peer_kind.as_deref(),
-            query.peer_id.as_deref(),
-            Some(&user_id),
-            0,
-            200,
-        )
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: query.channel.as_deref(),
+            account_id: query.account_id.as_deref(),
+            peer_kind: query.peer_kind.as_deref(),
+            peer_id: query.peer_id.as_deref(),
+            user_id: Some(&user_id),
+            offset: 0,
+            limit: 200,
+        })
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let channel_bindings = state
         .storage

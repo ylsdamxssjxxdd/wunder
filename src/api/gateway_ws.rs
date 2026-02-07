@@ -351,6 +351,7 @@ async fn handle_gateway_ws(
     let _ = writer.await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_connect(
     state: &Arc<AppState>,
     hub: &GatewayHub,

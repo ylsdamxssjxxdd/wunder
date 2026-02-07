@@ -46,6 +46,7 @@ pub struct CronActionRequest {
     pub job: Option<CronJobInput>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_cron_action(
     config: Config,
     storage: Arc<dyn StorageBackend>,
@@ -1165,6 +1166,7 @@ impl CronRuntime {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn finish_job(
         &self,
         job: CronJobRecord,
@@ -1210,6 +1212,7 @@ impl CronRuntime {
 }
 
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn persist_cron_run_and_update_job(
     storage: &dyn StorageBackend,
     job: CronJobRecord,

@@ -443,6 +443,58 @@ pub enum SessionLockStatus {
     SystemBusy,
 }
 
+// Parameter objects to keep storage APIs readable and avoid long argument lists.
+
+#[derive(Debug, Clone, Copy)]
+pub struct UpdateAgentTaskStatusParams<'a> {
+    pub task_id: &'a str,
+    pub status: &'a str,
+    pub retry_count: i64,
+    pub retry_at: f64,
+    pub started_at: Option<f64>,
+    pub finished_at: Option<f64>,
+    pub last_error: Option<&'a str>,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UpsertMemoryTaskLogParams<'a> {
+    pub user_id: &'a str,
+    pub session_id: &'a str,
+    pub task_id: &'a str,
+    pub status: &'a str,
+    pub queued_time: f64,
+    pub started_time: f64,
+    pub finished_time: f64,
+    pub elapsed_s: f64,
+    pub request_payload: Option<&'a Value>,
+    pub result: &'a str,
+    pub error: &'a str,
+    pub updated_time: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ListChannelUserBindingsQuery<'a> {
+    pub channel: Option<&'a str>,
+    pub account_id: Option<&'a str>,
+    pub peer_kind: Option<&'a str>,
+    pub peer_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UpdateChannelOutboxStatusParams<'a> {
+    pub outbox_id: &'a str,
+    pub status: &'a str,
+    pub retry_count: i64,
+    pub retry_at: f64,
+    pub last_error: Option<&'a str>,
+    pub delivered_at: Option<f64>,
+    pub updated_at: f64,
+}
+
 /// 存储后端抽象，统一封装历史/监控/记忆的持久化读写。
 pub trait StorageBackend: Send + Sync {
     fn ensure_initialized(&self) -> Result<()>;
@@ -524,17 +576,7 @@ pub trait StorageBackend: Send + Sync {
         status: Option<&str>,
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>>;
-    fn update_agent_task_status(
-        &self,
-        task_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        started_at: Option<f64>,
-        finished_at: Option<f64>,
-        last_error: Option<&str>,
-        updated_at: f64,
-    ) -> Result<()>;
+    fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()>;
 
     fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()>;
     fn get_vector_document(
@@ -591,22 +633,7 @@ pub trait StorageBackend: Send + Sync {
     fn delete_memory_record(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_memory_records_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_memory_settings_by_user(&self, user_id: &str) -> Result<i64>;
-
-    fn upsert_memory_task_log(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        task_id: &str,
-        status: &str,
-        queued_time: f64,
-        started_time: f64,
-        finished_time: f64,
-        elapsed_s: f64,
-        request_payload: Option<&Value>,
-        result: &str,
-        error: &str,
-        updated_time: Option<f64>,
-    ) -> Result<()>;
+    fn upsert_memory_task_log(&self, params: UpsertMemoryTaskLogParams<'_>) -> Result<()>;
     fn load_memory_task_logs(&self, limit: Option<i64>) -> Result<Vec<HashMap<String, Value>>>;
     fn load_memory_task_log_by_task_id(
         &self,
@@ -720,13 +747,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Option<ChannelUserBindingRecord>>;
     fn list_channel_user_bindings(
         &self,
-        channel: Option<&str>,
-        account_id: Option<&str>,
-        peer_kind: Option<&str>,
-        peer_id: Option<&str>,
-        user_id: Option<&str>,
-        offset: i64,
-        limit: i64,
+        query: ListChannelUserBindingsQuery<'_>,
     ) -> Result<(Vec<ChannelUserBindingRecord>, i64)>;
     fn delete_channel_user_binding(
         &self,
@@ -768,13 +789,7 @@ pub trait StorageBackend: Send + Sync {
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>>;
     fn update_channel_outbox_status(
         &self,
-        outbox_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        last_error: Option<&str>,
-        delivered_at: Option<f64>,
-        updated_at: f64,
+        params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()>;
 
     fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()>;

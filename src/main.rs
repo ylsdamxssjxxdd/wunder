@@ -1,6 +1,6 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
 #![cfg_attr(test, allow(dead_code))]
-#![allow(clippy::too_many_arguments, clippy::result_large_err)]
+#![allow(clippy::result_large_err)]
 mod api;
 mod channels;
 mod core;

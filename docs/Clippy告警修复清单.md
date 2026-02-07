@@ -190,3 +190,35 @@ Final progress:
 
 - Keep `too_many_arguments` and `result_large_err` on a dedicated refactor backlog.
 - When interfaces stabilize, replace multi-arg functions with parameter structs and introduce a lightweight API error type to retire the temporary allow policy.
+
+## 11. Round 6 (Storage Refactor, 2026-02-07)
+
+Goal:
+
+- Complete the storage-focused refactor for `too_many_arguments` by introducing parameter objects and updating the full call chain.
+
+Key changes:
+
+- Added parameter structs in `src/storage/mod.rs`:
+  - `UpdateAgentTaskStatusParams`
+  - `UpsertMemoryTaskLogParams`
+  - `ListChannelUserBindingsQuery`
+  - `UpdateChannelOutboxStatusParams`
+- Updated `StorageBackend` signatures to use these structs.
+- Updated both storage implementations:
+  - `src/storage/postgres.rs`
+  - `src/storage/sqlite.rs`
+- Updated all related upstream callers:
+  - `src/services/user_store.rs`
+  - `src/services/agent_runtime.rs`
+  - `src/services/memory.rs`
+  - `src/orchestrator/memory.rs`
+  - `src/channels/service.rs`
+  - `src/api/admin.rs`
+  - `src/api/user_channels.rs`
+
+Validation:
+
+- `cargo fmt`: pass
+- `cargo clippy -q`: 0 warnings
+- `cargo test -q`: pass

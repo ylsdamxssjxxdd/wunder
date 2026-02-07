@@ -177,6 +177,7 @@ fn load_seed_units(path: &Path) -> Result<Vec<OrgUnitSeed>> {
     Ok(seeds)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_records(
     seed: &OrgUnitSeed,
     parent_id: Option<String>,

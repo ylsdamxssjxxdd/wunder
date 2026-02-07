@@ -6413,15 +6413,15 @@ async fn admin_channel_user_bindings(
 ) -> Result<Json<Value>, Response> {
     let (items, total) = state
         .storage
-        .list_channel_user_bindings(
-            query.channel.as_deref(),
-            query.account_id.as_deref(),
-            query.peer_kind.as_deref(),
-            query.peer_id.as_deref(),
-            query.user_id.as_deref(),
-            query.offset.unwrap_or(0),
-            query.limit.unwrap_or(50),
-        )
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: query.channel.as_deref(),
+            account_id: query.account_id.as_deref(),
+            peer_kind: query.peer_kind.as_deref(),
+            peer_id: query.peer_id.as_deref(),
+            user_id: query.user_id.as_deref(),
+            offset: query.offset.unwrap_or(0),
+            limit: query.limit.unwrap_or(50),
+        })
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let items = items
         .into_iter()

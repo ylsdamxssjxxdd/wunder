@@ -1,6 +1,6 @@
 // 长期记忆存储：基于持久化存储封装读写与提示构建。
 use crate::i18n;
-use crate::storage::StorageBackend;
+use crate::storage::{StorageBackend, UpsertMemoryTaskLogParams};
 use chrono::{Datelike, Local, TimeZone, Timelike};
 use regex::Regex;
 use serde::Serialize;
@@ -310,61 +310,28 @@ impl MemoryStore {
         })
     }
 
-    pub fn upsert_task_log(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        task_id: &str,
-        status: &str,
-        queued_time: f64,
-        started_time: f64,
-        finished_time: f64,
-        elapsed_s: f64,
-        request_payload: Option<&Value>,
-        result: &str,
-        error: &str,
-        now_ts: Option<f64>,
-    ) {
-        if let Err(err) = self.storage.upsert_memory_task_log(
-            user_id,
-            session_id,
-            task_id,
-            status,
-            queued_time,
-            started_time,
-            finished_time,
-            elapsed_s,
-            request_payload,
-            result,
-            error,
-            now_ts,
-        ) {
-            warn!("memory upsert task log failed for {user_id}/{session_id}: {err}");
+    pub fn upsert_task_log(&self, params: UpsertMemoryTaskLogParams<'_>) {
+        if let Err(err) = self.storage.upsert_memory_task_log(params) {
+            warn!(
+                "memory upsert task log failed for {}/{}: {err}",
+                params.user_id, params.session_id
+            );
         }
     }
 
-    pub async fn upsert_task_log_async(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        task_id: &str,
-        status: &str,
-        queued_time: f64,
-        started_time: f64,
-        finished_time: f64,
-        elapsed_s: f64,
-        request_payload: Option<&Value>,
-        result: &str,
-        error: &str,
-        now_ts: Option<f64>,
-    ) {
-        let user_id = user_id.to_string();
-        let session_id = session_id.to_string();
-        let task_id = task_id.to_string();
-        let status = status.to_string();
-        let result = result.to_string();
-        let error = error.to_string();
-        let request_payload = request_payload.cloned();
+    pub async fn upsert_task_log_async(&self, params: UpsertMemoryTaskLogParams<'_>) {
+        let user_id = params.user_id.to_string();
+        let session_id = params.session_id.to_string();
+        let task_id = params.task_id.to_string();
+        let status = params.status.to_string();
+        let result = params.result.to_string();
+        let error = params.error.to_string();
+        let request_payload = params.request_payload.cloned();
+        let queued_time = params.queued_time;
+        let started_time = params.started_time;
+        let finished_time = params.finished_time;
+        let elapsed_s = params.elapsed_s;
+        let updated_time = params.updated_time;
         let storage = self.storage.clone();
         let max_records = self.max_records;
         let _ = tokio::task::spawn_blocking(move || {
@@ -372,20 +339,20 @@ impl MemoryStore {
                 storage,
                 max_records,
             };
-            store.upsert_task_log(
-                &user_id,
-                &session_id,
-                &task_id,
-                &status,
+            store.upsert_task_log(UpsertMemoryTaskLogParams {
+                user_id: &user_id,
+                session_id: &session_id,
+                task_id: &task_id,
+                status: &status,
                 queued_time,
                 started_time,
                 finished_time,
                 elapsed_s,
-                request_payload.as_ref(),
-                &result,
-                &error,
-                now_ts,
-            );
+                request_payload: request_payload.as_ref(),
+                result: &result,
+                error: &error,
+                updated_time,
+            });
         })
         .await;
     }

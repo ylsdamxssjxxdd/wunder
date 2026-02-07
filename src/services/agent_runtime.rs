@@ -3,7 +3,9 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
-use crate::storage::{AgentTaskRecord, AgentThreadRecord, ChatSessionRecord};
+use crate::storage::{
+    AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
+};
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -330,16 +332,17 @@ impl AgentRuntime {
 
     pub fn cancel_task(&self, task_id: &str) -> Result<()> {
         let now = now_ts();
-        self.user_store.update_agent_task_status(
-            task_id,
-            TASK_STATUS_CANCELLED,
-            0,
-            now,
-            None,
-            Some(now),
-            Some("cancelled"),
-            now,
-        )?;
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id,
+                status: TASK_STATUS_CANCELLED,
+                retry_count: 0,
+                retry_at: now,
+                started_at: None,
+                finished_at: Some(now),
+                last_error: Some("cancelled"),
+                updated_at: now,
+            })?;
         Ok(())
     }
 
@@ -648,16 +651,18 @@ impl AgentRuntime {
 
     async fn execute_task(&self, task: AgentTaskRecord) {
         let started_at = now_ts();
-        let _ = self.user_store.update_agent_task_status(
-            &task.task_id,
-            TASK_STATUS_RUNNING,
-            task.retry_count,
-            started_at,
-            Some(started_at),
-            None,
-            None,
-            started_at,
-        );
+        let _ = self
+            .user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id: &task.task_id,
+                status: TASK_STATUS_RUNNING,
+                retry_count: task.retry_count,
+                retry_at: started_at,
+                started_at: Some(started_at),
+                finished_at: None,
+                last_error: None,
+                updated_at: started_at,
+            });
         let _ = self.update_thread_status(
             &task.user_id,
             &task.agent_id,
@@ -705,16 +710,18 @@ impl AgentRuntime {
                     // drain
                 }
                 let finished_at = now_ts();
-                let _ = self.user_store.update_agent_task_status(
-                    &task.task_id,
-                    TASK_STATUS_SUCCESS,
-                    task.retry_count,
-                    finished_at,
-                    Some(started_at),
-                    Some(finished_at),
-                    None,
-                    finished_at,
-                );
+                let _ = self
+                    .user_store
+                    .update_agent_task_status(UpdateAgentTaskStatusParams {
+                        task_id: &task.task_id,
+                        status: TASK_STATUS_SUCCESS,
+                        retry_count: task.retry_count,
+                        retry_at: finished_at,
+                        started_at: Some(started_at),
+                        finished_at: Some(finished_at),
+                        last_error: None,
+                        updated_at: finished_at,
+                    });
                 let _ = self.update_thread_status(
                     &task.user_id,
                     &task.agent_id,
@@ -776,31 +783,33 @@ impl AgentRuntime {
         }
         let delay = 1.5_f64.powi(next_retry as i32).clamp(1.0, 30.0);
         let now = now_ts();
-        self.user_store.update_agent_task_status(
-            &task.task_id,
-            TASK_STATUS_RETRY,
-            next_retry,
-            now + delay,
-            task.started_at.or(Some(now)),
-            None,
-            Some(message.as_str()),
-            now,
-        )?;
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id: &task.task_id,
+                status: TASK_STATUS_RETRY,
+                retry_count: next_retry,
+                retry_at: now + delay,
+                started_at: task.started_at.or(Some(now)),
+                finished_at: None,
+                last_error: Some(message.as_str()),
+                updated_at: now,
+            })?;
         Ok(())
     }
 
     fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
         let now = now_ts();
-        self.user_store.update_agent_task_status(
-            &task.task_id,
-            status,
-            task.retry_count,
-            now,
-            task.started_at.or(Some(now)),
-            Some(now),
-            Some(message.as_str()),
-            now,
-        )?;
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id: &task.task_id,
+                status,
+                retry_count: task.retry_count,
+                retry_at: now,
+                started_at: task.started_at.or(Some(now)),
+                finished_at: Some(now),
+                last_error: Some(message.as_str()),
+                updated_at: now,
+            })?;
         self.update_thread_status(
             &task.user_id,
             &task.agent_id,

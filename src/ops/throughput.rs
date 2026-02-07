@@ -988,6 +988,7 @@ async fn run_supervisor(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_request(
     orchestrator: Arc<Orchestrator>,
     monitor: Arc<MonitorState>,

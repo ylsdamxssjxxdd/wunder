@@ -104,6 +104,7 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_store: ConfigStore,
         _config: Config,

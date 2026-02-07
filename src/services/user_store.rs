@@ -1,9 +1,9 @@
 use crate::org_units;
 use crate::storage::{
     normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChatSessionRecord,
-    OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord,
-    DEFAULT_SANDBOX_CONTAINER_ID,
+    OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend,
+    UpdateAgentTaskStatusParams, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
+    UserTokenRecord, UserToolAccessRecord, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -255,6 +255,7 @@ impl UserStore {
         self.storage.delete_org_unit(unit_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_user(
         &self,
         username: &str,
@@ -279,6 +280,7 @@ impl UserStore {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_user_with_password_hash(
         &self,
         username: &str,
@@ -642,27 +644,8 @@ impl UserStore {
             .list_agent_tasks_by_thread(thread_id, status, limit)
     }
 
-    pub fn update_agent_task_status(
-        &self,
-        task_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        started_at: Option<f64>,
-        finished_at: Option<f64>,
-        last_error: Option<&str>,
-        updated_at: f64,
-    ) -> Result<()> {
-        self.storage.update_agent_task_status(
-            task_id,
-            status,
-            retry_count,
-            retry_at,
-            started_at,
-            finished_at,
-            last_error,
-            updated_at,
-        )
+    pub fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()> {
+        self.storage.update_agent_task_status(params)
     }
 }
 

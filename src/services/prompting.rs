@@ -96,6 +96,7 @@ impl PromptComposer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn build_system_prompt_cached(
         &self,
         config: &Config,

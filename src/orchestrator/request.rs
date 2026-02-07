@@ -169,6 +169,7 @@ impl Orchestrator {
         Ok(stream)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn build_system_prompt(
         &self,
         config: &Config,

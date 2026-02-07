@@ -1,4 +1,5 @@
 use super::*;
+use crate::storage::UpsertMemoryTaskLogParams;
 
 const MEMORY_SUMMARY_PROMPT_PATH: &str = "prompts/memory_summary.txt";
 
@@ -262,6 +263,7 @@ impl Orchestrator {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn maybe_compact_messages(
         &self,
         config: &Config,
@@ -1077,20 +1079,20 @@ impl Orchestrator {
                     0.0
                 };
                 self.memory_store
-                    .upsert_task_log_async(
-                        &task.user_id,
-                        &task.session_id,
-                        &task.task_id,
-                        &task.status,
-                        task.queued_time,
-                        task.start_time,
-                        task.end_time,
+                    .upsert_task_log_async(UpsertMemoryTaskLogParams {
+                        user_id: &task.user_id,
+                        session_id: &task.session_id,
+                        task_id: &task.task_id,
+                        status: &task.status,
+                        queued_time: task.queued_time,
+                        started_time: task.start_time,
+                        finished_time: task.end_time,
                         elapsed_s,
-                        task.request_payload.as_ref(),
-                        &task.summary_result,
-                        &task.error,
-                        Some(task.end_time),
-                    )
+                        request_payload: task.request_payload.as_ref(),
+                        result: &task.summary_result,
+                        error: &task.error,
+                        updated_time: Some(task.end_time),
+                    })
                     .await;
             }
         }

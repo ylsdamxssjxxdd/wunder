@@ -847,6 +847,7 @@ impl WeaviateClient {
         Err(anyhow!("weaviate schema create failed: {status} {body}"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_chunks(
         &self,
         owner_id: &str,
@@ -1403,6 +1404,7 @@ pub fn resolve_weaviate_client(config: &Config) -> Result<WeaviateClient> {
         .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn prepare_document(
     base: &KnowledgeBaseConfig,
     owner_id: Option<&str>,
@@ -1456,6 +1458,7 @@ pub async fn prepare_document(
     Ok(meta)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn index_document(
     config: &Config,
     base: &KnowledgeBaseConfig,

@@ -1409,6 +1409,7 @@ impl MonitorState {
         let _ = self.storage.set_meta(migration_key, "1");
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_locked(
         &self,
         sessions: &mut HashMap<String, SessionRecord>,

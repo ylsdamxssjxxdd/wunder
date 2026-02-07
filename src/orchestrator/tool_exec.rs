@@ -103,6 +103,7 @@ impl ToolResultPayload {
 }
 
 impl Orchestrator {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn append_chat(
         &self,
         user_id: &str,
@@ -592,6 +593,7 @@ impl Orchestrator {
         self.append_tool_log(user_id, session_id, name, args, &result, include_payload);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn log_a2ui_tool_call(
         &self,
         user_id: &str,

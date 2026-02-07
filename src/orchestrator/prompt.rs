@@ -94,6 +94,7 @@ impl Orchestrator {
         Some(FunctionTooling { tools, name_map })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn build_system_prompt_with_allowed(
         &self,
         config: &Config,
@@ -128,6 +129,7 @@ impl Orchestrator {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn resolve_session_prompt(
         &self,
         config: &Config,

@@ -4,10 +4,12 @@ use crate::storage::{
     normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChannelAccountRecord,
     ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord, ChannelSessionRecord,
     ChannelUserBindingRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord,
-    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, MediaAssetRecord,
-    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
-    StorageBackend, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, ListChannelUserBindingsQuery,
+    MediaAssetRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
+    SpeechJobRecord, StorageBackend, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
+    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
+    UserQuotaStatus, UserTokenRecord, UserToolAccessRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -2106,19 +2108,9 @@ impl StorageBackend for PostgresStorage {
             .collect())
     }
 
-    fn update_agent_task_status(
-        &self,
-        task_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        started_at: Option<f64>,
-        finished_at: Option<f64>,
-        last_error: Option<&str>,
-        updated_at: f64,
-    ) -> Result<()> {
+    fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned = task_id.trim();
+        let cleaned = params.task_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
@@ -2126,13 +2118,13 @@ impl StorageBackend for PostgresStorage {
         conn.execute(
             "UPDATE agent_tasks SET status = $1, retry_count = $2, retry_at = $3, started_at = $4, finished_at = $5, last_error = $6, updated_at = $7 WHERE task_id = $8",
             &[
-                &status,
-                &retry_count,
-                &retry_at,
-                &started_at,
-                &finished_at,
-                &last_error,
-                &updated_at,
+                &params.status,
+                &params.retry_count,
+                &params.retry_at,
+                &params.started_at,
+                &params.finished_at,
+                &params.last_error,
+                &params.updated_at,
                 &cleaned,
             ],
         )?;
@@ -2452,53 +2444,35 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
-    fn upsert_memory_task_log(
-        &self,
-        _user_id: &str,
-        _session_id: &str,
-        _task_id: &str,
-        _status: &str,
-        _queued_time: f64,
-        _started_time: f64,
-        _finished_time: f64,
-        _elapsed_s: f64,
-        _request_payload: Option<&Value>,
-        _result: &str,
-        _error: &str,
-        _updated_time: Option<f64>,
-    ) -> Result<()> {
+    fn upsert_memory_task_log(&self, params: UpsertMemoryTaskLogParams<'_>) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned_user = _user_id.trim();
-        let cleaned_session = _session_id.trim();
-        let cleaned_task = _task_id.trim();
+        let cleaned_user = params.user_id.trim();
+        let cleaned_session = params.session_id.trim();
+        let cleaned_task = params.task_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_task.is_empty() {
             return Ok(());
         }
-        let status_text = _status.trim();
-        let payload_text = _request_payload
+        let status_text = params.status.trim();
+        let payload_text = params
+            .request_payload
             .map(Self::json_to_string)
             .unwrap_or_default();
-        let now = _updated_time.unwrap_or_else(Self::now_ts);
+        let now = params.updated_time.unwrap_or_else(Self::now_ts);
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
-             ON CONFLICT(user_id, session_id) DO UPDATE SET \
-               task_id = EXCLUDED.task_id, status = EXCLUDED.status, queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time, \
-               finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s, request_payload = EXCLUDED.request_payload, result = EXCLUDED.result, \
-               error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
+            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)              ON CONFLICT(user_id, session_id) DO UPDATE SET                task_id = EXCLUDED.task_id, status = EXCLUDED.status, queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time,                finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s, request_payload = EXCLUDED.request_payload, result = EXCLUDED.result,                error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
             &[
                 &cleaned_task,
                 &cleaned_user,
                 &cleaned_session,
                 &status_text,
-                &_queued_time,
-                &_started_time,
-                &_finished_time,
-                &_elapsed_s,
+                &params.queued_time,
+                &params.started_time,
+                &params.finished_time,
+                &params.elapsed_s,
                 &payload_text,
-                &_result,
-                &_error,
+                &params.result,
+                &params.error,
                 &now,
             ],
         )?;
@@ -3971,70 +3945,74 @@ impl StorageBackend for PostgresStorage {
 
     fn list_channel_user_bindings(
         &self,
-        channel: Option<&str>,
-        account_id: Option<&str>,
-        peer_kind: Option<&str>,
-        peer_id: Option<&str>,
-        user_id: Option<&str>,
-        offset: i64,
-        limit: i64,
+        query: ListChannelUserBindingsQuery<'_>,
     ) -> Result<(Vec<ChannelUserBindingRecord>, i64)> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let mut filters = Vec::new();
         let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::new();
-        if let Some(channel) = channel
+        if let Some(channel) = query
+            .channel
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             params.push(Box::new(channel.to_string()));
             filters.push(format!("channel = ${}", params.len()));
         }
-        if let Some(account_id) = account_id
+        if let Some(account_id) = query
+            .account_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             params.push(Box::new(account_id.to_string()));
             filters.push(format!("account_id = ${}", params.len()));
         }
-        if let Some(peer_kind) = peer_kind
+        if let Some(peer_kind) = query
+            .peer_kind
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             params.push(Box::new(peer_kind.to_string()));
             filters.push(format!("peer_kind = ${}", params.len()));
         }
-        if let Some(peer_id) = peer_id
+        if let Some(peer_id) = query
+            .peer_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             params.push(Box::new(peer_id.to_string()));
             filters.push(format!("peer_id = ${}", params.len()));
         }
-        if let Some(user_id) = user_id
+        if let Some(user_id) = query
+            .user_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
             params.push(Box::new(user_id.to_string()));
             filters.push(format!("user_id = ${}", params.len()));
         }
-        let mut query = "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings".to_string();
+        let mut sql = "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings".to_string();
         if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
+            sql.push_str(" WHERE ");
+            sql.push_str(&filters.join(" AND "));
         }
-        query.push_str(" ORDER BY updated_at DESC");
-        let offset_value = offset.max(0);
-        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
+        sql.push_str(" ORDER BY updated_at DESC");
+        let offset_value = query.offset.max(0);
+        let limit_value = if query.limit <= 0 {
+            100
+        } else {
+            query.limit.min(500)
+        };
         params.push(Box::new(offset_value));
         params.push(Box::new(limit_value));
-        query.push_str(&format!(
+        sql.push_str(&format!(
             " OFFSET ${} LIMIT ${}",
             params.len() - 1,
             params.len()
         ));
-        let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_ref()).collect();
-        let rows = conn.query(&query, &params_refs)?;
+        let params_refs: Vec<&(dyn ToSql + Sync)> =
+            params.iter().map(|item| item.as_ref()).collect();
+        let rows = conn.query(&sql, &params_refs)?;
         let mut output = Vec::new();
         for row in rows {
             output.push(ChannelUserBindingRecord {
@@ -4047,13 +4025,13 @@ impl StorageBackend for PostgresStorage {
                 updated_at: row.get::<_, Option<f64>>(6).unwrap_or(0.0),
             });
         }
-        let mut count_query = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
+        let mut count_sql = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
         if !filters.is_empty() {
-            count_query.push_str(" WHERE ");
-            count_query.push_str(&filters.join(" AND "));
+            count_sql.push_str(" WHERE ");
+            count_sql.push_str(&filters.join(" AND "));
         }
         let count_params: Vec<&(dyn ToSql + Sync)> = params_refs[..params_refs.len() - 2].to_vec();
-        let total_row = conn.query_one(&count_query, &count_params)?;
+        let total_row = conn.query_one(&count_sql, &count_params)?;
         let total: i64 = total_row.get(0);
         Ok((output, total))
     }
@@ -4433,23 +4411,25 @@ impl StorageBackend for PostgresStorage {
 
     fn update_channel_outbox_status(
         &self,
-        outbox_id: &str,
-        status: &str,
-        retry_count: i64,
-        retry_at: f64,
-        last_error: Option<&str>,
-        delivered_at: Option<f64>,
-        updated_at: f64,
+        params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        let cleaned = outbox_id.trim();
+        let cleaned = params.outbox_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
         let mut conn = self.conn()?;
         conn.execute(
             "UPDATE channel_outbox SET status = $1, retry_count = $2, retry_at = $3, last_error = $4, updated_at = $5, delivered_at = $6 WHERE outbox_id = $7",
-            &[&status, &retry_count, &retry_at, &last_error, &updated_at, &delivered_at, &cleaned],
+            &[
+                &params.status,
+                &params.retry_count,
+                &params.retry_at,
+                &params.last_error,
+                &params.updated_at,
+                &params.delivered_at,
+                &cleaned,
+            ],
         )?;
         Ok(())
     }

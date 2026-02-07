@@ -610,6 +610,7 @@ impl WorkspaceManager {
         self.maybe_schedule_temp_cleanup();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn list_workspace_entries(
         &self,
         user_id: &str,
@@ -752,6 +753,7 @@ impl WorkspaceManager {
         Ok((sliced, tree_version, normalized, parent, total))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_workspace_entries_async(
         self: &Arc<Self>,
         user_id: &str,
