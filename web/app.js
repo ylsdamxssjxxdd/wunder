@@ -146,6 +146,14 @@ const bindSidebarCollapse = () => {
   window.addEventListener("resize", updateSidebarCollapse);
 };
 
+const toggleSidebarCollapse = () => {
+  sidebarCollapsed = !sidebarCollapsed;
+  document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+  if (!sidebarCollapsed) {
+    clearNavGroupHover();
+  }
+};
+
 const panelMap = {
 
   monitor: { panel: elements.monitorPanel, nav: elements.navMonitor },
@@ -1239,6 +1247,11 @@ const bootstrap = async () => {
 
   bindGlobalInputs();
   bindSidebarCollapse();
+  
+  // 绑定侧边栏标题点击事件
+  if (elements.sidebarTitle) {
+    elements.sidebarTitle.addEventListener("click", toggleSidebarCollapse);
+  }
 
   await initAdminAuth();
   applyAuthScopeVisibility();
