@@ -2044,6 +2044,27 @@ button.danger {
   font-size: 16px;
 }
 
+.tool-heatmap-item i.fa-bee {
+  position: relative;
+  width: 1em;
+  height: 1em;
+  transform: scale(1.8);
+  transform-origin: center;
+}
+
+.tool-heatmap-item i.fa-bee::before {
+  content: "";
+}
+
+.tool-heatmap-item i.fa-bee::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url("../third/custom-icons/fa-bee.svg") center / contain no-repeat;
+  mask: url("../third/custom-icons/fa-bee.svg") center / contain no-repeat;
+}
+
 .tool-heatmap-name {
   width: 100%;
   overflow: hidden;

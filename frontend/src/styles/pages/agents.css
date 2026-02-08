@@ -20,7 +20,7 @@
   gap: 12px;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
   min-height: 150px;
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
 }
@@ -32,7 +32,6 @@
 .agent-card:hover {
   border-color: rgba(106, 217, 255, 0.5);
   box-shadow: 0 20px 44px rgba(0, 0, 0, 0.28);
-  transform: translateY(-2px);
 }
 
 .agent-card--compact {

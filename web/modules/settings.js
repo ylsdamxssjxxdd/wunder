@@ -26,6 +26,7 @@ const MIN_MAX_ACTIVE_SESSIONS = 1;
 const serverSettings = {
   maxActiveSessions: null,
   streamChunkSize: null,
+  chatStreamChannel: "ws",
 };
 const securitySettings = {
   apiKey: "",
@@ -213,6 +214,18 @@ const applyStreamChunkSize = (streamChunkSize) => {
   elements.settingsStreamChunkSize.value = "";
 };
 
+const applyChatStreamChannel = (chatStreamChannel) => {
+  if (!elements.settingsChatStreamChannel) {
+    return;
+  }
+  const normalized = String(chatStreamChannel || "ws").trim().toLowerCase();
+  const resolved = resolveSelectValue(
+    elements.settingsChatStreamChannel,
+    normalized === "sse" ? "sse" : "ws"
+  );
+  elements.settingsChatStreamChannel.value = resolved;
+};
+
 const applySandboxEnabled = (sandboxEnabled) => {
   if (!elements.settingsSandboxEnabled) {
     return;
@@ -227,6 +240,7 @@ const applySandboxEnabled = (sandboxEnabled) => {
 const applyServerSettings = (options = {}) => {
   applyMaxActiveSessions(options.maxActiveSessions);
   applyStreamChunkSize(options.streamChunkSize);
+  applyChatStreamChannel(options.chatStreamChannel);
 };
 
 const applySecuritySettings = (options = {}) => {
@@ -342,6 +356,14 @@ const resolveStreamChunkSize = () =>
     0
   );
 
+const resolveChatStreamChannel = () => {
+  const raw = String(elements.settingsChatStreamChannel?.value || "").trim().toLowerCase();
+  if (raw === "sse") {
+    return "sse";
+  }
+  return "ws";
+};
+
 const resolveSandboxEnabled = () => {
   if (!elements.settingsSandboxEnabled) {
     return null;
@@ -394,9 +416,12 @@ const applySystemSettings = (payload = {}) => {
   serverSettings.streamChunkSize = Number.isFinite(server.stream_chunk_size)
     ? server.stream_chunk_size
     : null;
+  serverSettings.chatStreamChannel =
+    String(server.chat_stream_channel || "ws").trim().toLowerCase() === "sse" ? "sse" : "ws";
   applyServerSettings({
     maxActiveSessions: serverSettings.maxActiveSessions,
     streamChunkSize: serverSettings.streamChunkSize,
+    chatStreamChannel: serverSettings.chatStreamChannel,
   });
 
   const security = payload.security || {};
@@ -540,7 +565,11 @@ export const loadAdminDefaults = async (options = {}) => {
 const buildSystemUpdatePayload = () => {
   const payload = {};
 
-  if (elements.settingsMaxActiveSessions || elements.settingsStreamChunkSize) {
+  if (
+    elements.settingsMaxActiveSessions ||
+    elements.settingsStreamChunkSize ||
+    elements.settingsChatStreamChannel
+  ) {
     const server = {};
     const nextMaxActiveSessions = resolveMaxActiveSessions();
     if (Number.isFinite(nextMaxActiveSessions)) {
@@ -549,6 +578,9 @@ const buildSystemUpdatePayload = () => {
     const nextStreamChunkSize = resolveStreamChunkSize();
     if (Number.isFinite(nextStreamChunkSize)) {
       server.stream_chunk_size = nextStreamChunkSize;
+    }
+    if (elements.settingsChatStreamChannel) {
+      server.chat_stream_channel = resolveChatStreamChannel();
     }
     if (Object.keys(server).length) {
       payload.server = server;

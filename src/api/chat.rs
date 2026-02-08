@@ -1,5 +1,6 @@
 use crate::api::attachment_convert::{build_conversion_payload, convert_multipart_list};
 use crate::api::user_context::resolve_user;
+use crate::config::normalize_chat_stream_channel;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::OrchestratorError;
@@ -37,6 +38,7 @@ const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/wunder/chat/transport", get(chat_transport))
         .route(
             "/wunder/chat/sessions",
             post(create_session).get(list_sessions),
@@ -112,6 +114,20 @@ struct SendMessageRequest {
     stream: Option<bool>,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
+}
+
+async fn chat_transport(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let _resolved = resolve_user(&state, &headers, None).await?;
+    let config = state.config_store.get().await;
+    let chat_stream_channel = normalize_chat_stream_channel(&config.server.chat_stream_channel);
+    Ok(Json(json!({
+        "data": {
+            "chat_stream_channel": chat_stream_channel,
+        }
+    })))
 }
 
 #[derive(Debug, Deserialize)]

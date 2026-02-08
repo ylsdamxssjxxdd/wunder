@@ -67,6 +67,9 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "skill_get", icon: "fa-wand-magic-sparkles" },
   { keyword: "\u5b50\u667a\u80fd\u4f53\u63a7\u5236", icon: "fa-diagram-project" },
   { keyword: "subagent_control", icon: "fa-diagram-project" },
+  { keyword: "\u667a\u80fd\u4f53\u8702\u7fa4", icon: "fa-bee" },
+  { keyword: "agent_swarm", icon: "fa-bee" },
+  { keyword: "swarm_control", icon: "fa-bee" },
   { keyword: "a2a\u89c2\u5bdf", icon: "fa-glasses" },
   { keyword: "a2a_observe", icon: "fa-glasses" },
   { keyword: "a2a\u7b49\u5f85", icon: "fa-clock" },
@@ -1103,7 +1106,8 @@ const renderToolHeatmap = (toolStats) => {
       count: formatHeatmapCount(item.calls),
     });
     const icon = document.createElement("i");
-    icon.className = `fa-solid ${resolveToolIcon(item.name, item.category)}`;
+    const iconToken = resolveToolIcon(item.name, item.category);
+    icon.className = `fa-solid ${iconToken}`;
     const name = document.createElement("span");
     name.className = "tool-heatmap-name";
     name.textContent = item.name;

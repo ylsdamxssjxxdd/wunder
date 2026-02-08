@@ -81,6 +81,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub stream_chunk_size: usize,
     pub max_active_sessions: usize,
+    #[serde(default = "default_chat_stream_channel")]
+    pub chat_stream_channel: String,
     #[serde(default = "default_server_mode")]
     pub mode: String,
 }
@@ -92,9 +94,25 @@ impl Default for ServerConfig {
             port: 8000,
             stream_chunk_size: 1024,
             max_active_sessions: 30,
+            chat_stream_channel: default_chat_stream_channel(),
             mode: "api".to_string(),
         }
     }
+}
+
+pub const CHAT_STREAM_CHANNEL_WS: &str = "ws";
+pub const CHAT_STREAM_CHANNEL_SSE: &str = "sse";
+
+pub fn normalize_chat_stream_channel(value: &str) -> String {
+    if value.trim().eq_ignore_ascii_case(CHAT_STREAM_CHANNEL_SSE) {
+        CHAT_STREAM_CHANNEL_SSE.to_string()
+    } else {
+        CHAT_STREAM_CHANNEL_WS.to_string()
+    }
+}
+
+fn default_chat_stream_channel() -> String {
+    CHAT_STREAM_CHANNEL_WS.to_string()
 }
 
 fn default_server_mode() -> String {

@@ -62,6 +62,8 @@
   - Custom/shared tools are named as `user_id@tool` (MCP: `user_id@server@tool`).
   - Knowledge tools accept `query` or `keywords` list (one required) with optional `limit`; vector knowledge searches each keyword and returns grouped `queries` results (multi-keyword includes `keyword` on documents).
   - Built-in `subagent_control` handles `action=list|history|send|spawn`.
+  - Built-in `agent_swarm` (`swarm_control`) handles `action=list|status|send|history|spawn` for managing agents other than the current one.
+  - `agent_swarm.send` reuses the latest session by `agent_id`; set `createIfMissing=true` to auto-create a target session when needed.
   - `subagent_control.send` supports `timeoutSeconds` to wait for replies; `subagent_control.spawn` supports `runTimeoutSeconds` to wait and return `reply/elapsed_s`.
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`

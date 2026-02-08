@@ -3,8 +3,8 @@ use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_
 use crate::auth;
 use crate::channels::ChannelMessage;
 use crate::config::{
-    normalize_knowledge_base_type, A2aServiceConfig, Config, KnowledgeBaseConfig,
-    KnowledgeBaseType, LspConfig, McpServerConfig,
+    normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
+    KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig,
 };
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::i18n;
@@ -2644,6 +2644,7 @@ fn build_system_settings_payload(config: &Config) -> Value {
         "server": {
             "max_active_sessions": config.server.max_active_sessions,
             "stream_chunk_size": config.server.stream_chunk_size,
+            "chat_stream_channel": normalize_chat_stream_channel(&config.server.chat_stream_channel),
         },
         "security": {
             "api_key": config.api_key(),
@@ -2711,6 +2712,15 @@ async fn admin_system_update(
                 ));
             }
         }
+        if let Some(chat_stream_channel) = server.chat_stream_channel.as_ref() {
+            let channel = chat_stream_channel.trim();
+            if !channel.eq_ignore_ascii_case("ws") && !channel.eq_ignore_ascii_case("sse") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "chat_stream_channel must be ws or sse".to_string(),
+                ));
+            }
+        }
     }
     if let Some(security) = payload.security.as_ref() {
         if let Some(mode) = security.exec_policy_mode.as_ref() {
@@ -2732,6 +2742,10 @@ async fn admin_system_update(
                 }
                 if let Some(stream_chunk_size) = server.stream_chunk_size {
                     config.server.stream_chunk_size = stream_chunk_size;
+                }
+                if let Some(chat_stream_channel) = server.chat_stream_channel {
+                    config.server.chat_stream_channel =
+                        normalize_chat_stream_channel(&chat_stream_channel);
                 }
             }
             if let Some(security) = payload.security {
@@ -6049,6 +6063,8 @@ struct SystemServerUpdateRequest {
     max_active_sessions: Option<usize>,
     #[serde(default)]
     stream_chunk_size: Option<usize>,
+    #[serde(default)]
+    chat_stream_channel: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -78,6 +78,7 @@ const handleStreamError = (error) => {
 };
 
 export const createSession = (payload) => api.post('/chat/sessions', payload);
+export const fetchChatTransportProfile = () => api.get('/chat/transport');
 export const listSessions = (params) => api.get('/chat/sessions', { params });
 export const getSession = (id) => api.get(`/chat/sessions/${id}`);
 export const getSessionEvents = (id) => api.get(`/chat/sessions/${id}/events`);

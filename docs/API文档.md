@@ -105,6 +105,8 @@
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
+- 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn` 管理当前用户“当前智能体以外”的其他智能体。
+- `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话，必要时可通过 `createIfMissing=true` 自动创建新会话，再发送指令。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
@@ -686,6 +688,7 @@
 - `GET` 返回：
   - `server.max_active_sessions`：全局最大并发会话数
   - `server.stream_chunk_size`：流式输出分片大小（字节）
+  - `server.chat_stream_channel`：聊天流式通道默认值（`ws`/`sse`）
   - `security.api_key`：API Key（未配置时为 null）
   - `security.allow_commands`：允许执行命令前缀列表
   - `security.allow_paths`：允许访问的额外目录列表
@@ -1735,6 +1738,9 @@
 
 ### 4.1.55 `/wunder/chat/*`
 
+- `GET /wunder/chat/transport`：获取当前聊天流式通道策略
+  - 返回：`data.chat_stream_channel`（`ws`/`sse`）
+
 - `POST /wunder/chat/sessions`：创建会话
   - 入参（JSON）：`title`（可选）、`agent_id`（可选）
 - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides/parent_session_id/parent_message_id/spawn_label/spawned_by/is_main）
@@ -2050,9 +2056,9 @@
   - 入参：`node_id`、`command`、`args`（可选）、`timeout_s`（可选）、`metadata`（可选）
   - 返回：`data.ok/data.payload/data.error`
 
-### 4.2.2 WebSocket 流式响应（默认）
+### 4.2.2 WebSocket 流式响应（可选）
 
-- 说明：WebSocket 作为默认传输层，不改变事件语义与字段；事件仍与 SSE 保持一致（`event/id/data`）。
+- 说明：聊天端默认传输由 `server.chat_stream_channel` 控制（默认 `ws`，可切到 `sse`）；无论通道如何切换，事件语义与字段均保持一致（`event/id/data`）。
 - Endpoint（用户侧）：`/wunder/chat/ws`
 - Endpoint（统一入口）：`/wunder/ws`
 - 鉴权：

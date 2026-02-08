@@ -4,6 +4,7 @@ import {
   cancelMessageStream,
   createSession,
   deleteSession as deleteSessionApi,
+  fetchChatTransportProfile,
   getSession,
   getSessionEvents,
   listSessions,
@@ -1813,8 +1814,26 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const baseEventId = lastEventId || 0;
-  chatWsClient
-    .request({
+  const watchWithSse = async () => {
+    // SSE watch may complete on idle; reconnect to keep behavior close to WS watch mode.
+    while (!controller.signal.aborted) {
+      const response = await resumeMessageStream(key, {
+        signal: controller.signal,
+        afterEventId: lastEventId || baseEventId
+      });
+      if (!response.ok) {
+        const errorText = await readResponseError(response);
+        throw new Error(errorText || t('chat.error.resumeFailedWithStatus', { status: response.status }));
+      }
+      await consumeSseStream(response, onEvent);
+      if (controller.signal.aborted) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+  };
+  const watchWithWs = () =>
+    chatWsClient.request({
       requestId,
       sessionId: key,
       message: {
@@ -1826,14 +1845,27 @@ const startSessionWatcher = (store, sessionId) => {
       onEvent,
       signal: controller.signal,
       closeOnFinal: false
-    })
-    .catch((error) => {
-      if (error?.name === 'AbortError' || error?.phase === 'aborted') {
-        finalizeAll(true);
-        return;
-      }
-      finalizeAll(false);
     });
+  const preferredTransport = resolveStreamTransport();
+  store.streamTransport = preferredTransport;
+  const watchPromise =
+    preferredTransport === 'ws'
+      ? watchWithWs().catch((error) => {
+          if (error?.phase === 'connect') {
+            markWsUnavailable();
+            store.streamTransport = 'sse';
+            return watchWithSse();
+          }
+          throw error;
+        })
+      : watchWithSse();
+  watchPromise.catch((error) => {
+    if (error?.name === 'AbortError' || error?.phase === 'aborted') {
+      finalizeAll(true);
+      return;
+    }
+    finalizeAll(false);
+  });
 };
 
 const DEFAULT_STREAM_TRANSPORT = 'ws';
@@ -2711,6 +2743,22 @@ export const useChatStore = defineStore('chat', {
       }
       this.streamTransport = next;
     },
+    async refreshStreamTransportPolicy() {
+      try {
+        const { data } = await fetchChatTransportProfile();
+        const remote = String(data?.data?.chat_stream_channel || '').trim().toLowerCase();
+        const next = remote === 'sse' ? 'sse' : 'ws';
+        localStorage.setItem('chat_stream_transport', next);
+        if (next === 'ws') {
+          wsUnavailableUntil = 0;
+        }
+        this.streamTransport = resolveStreamTransport();
+        return next;
+      } catch (error) {
+        this.streamTransport = resolveStreamTransport();
+        return this.streamTransport;
+      }
+    },
     toggleStreamTransport() {
       const next = this.streamTransport === 'sse' ? 'ws' : 'sse';
       this.setStreamTransport(next);
@@ -2766,6 +2814,7 @@ export const useChatStore = defineStore('chat', {
       }
     },
     async loadSessions(options = {}) {
+      await this.refreshStreamTransportPolicy();
       const params = {};
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
         params.agent_id = options.agent_id ?? '';
@@ -3108,6 +3157,7 @@ export const useChatStore = defineStore('chat', {
             closeOnFinal: true
           });
         };
+        await this.refreshStreamTransportPolicy();
         const transport = resolveStreamTransport();
         this.streamTransport = transport;
         if (transport === 'ws') {
@@ -3258,6 +3308,9 @@ export const useChatStore = defineStore('chat', {
           });
         };
         const hasAfterEventId = Number.isFinite(afterEventId);
+        if (hasAfterEventId) {
+          await this.refreshStreamTransportPolicy();
+        }
         const transport = hasAfterEventId ? resolveStreamTransport() : 'sse';
         this.streamTransport = transport;
         if (transport === 'ws') {

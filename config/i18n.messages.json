@@ -1583,6 +1583,22 @@
     "en-US": "Action to perform: list/history/send/spawn.",
     "zh-CN": "操作类型：list/history/send/spawn。"
   },
+  "tool.spec.agent_swarm.description": {
+    "en-US": "Manage other agents for the current user (list/status/send/history/spawn).",
+    "zh-CN": "管理当前用户的其他智能体（列表/状态/发送/历史/派生）。"
+  },
+  "tool.spec.agent_swarm.args.action": {
+    "en-US": "Action to perform: list/status/send/history/spawn.",
+    "zh-CN": "操作类型：list/status/send/history/spawn。"
+  },
+  "tool.spec.agent_swarm.args.create_if_missing": {
+    "en-US": "Optional. Auto-create a session when sending to an agent without existing sessions.",
+    "zh-CN": "可选。发送给未创建会话的智能体时，是否自动创建会话。"
+  },
+  "tool.spec.agent_swarm.args.include_current": {
+    "en-US": "Optional. Include the current agent in swarm management actions.",
+    "zh-CN": "可选。是否允许在蜂群管理动作中包含当前智能体。"
+  },
   "tool.spec.node_invoke.description": {
     "en-US": "List connected gateway nodes or invoke a command on a node.",
     "zh-CN": "列出已接入的网关节点，或调用节点执行指令。"

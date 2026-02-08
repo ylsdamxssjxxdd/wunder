@@ -487,6 +487,37 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "智能体蜂群".to_string(),
+            description: t("tool.spec.agent_swarm.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.agent_swarm.args.action"),
+                        "enum": ["list", "status", "send", "history", "spawn"]
+                    },
+                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
+                    "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
+                    "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
+                    "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                    "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
+                    "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
+                    "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
+                    "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
+                    "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
+                    "createIfMissing": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.create_if_missing")},
+                    "includeCurrent": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.include_current")}
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
             name: "节点调用".to_string(),
             description: t("tool.spec.node_invoke.description"),
             input_schema: json!({
@@ -544,6 +575,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("edit_file".to_string(), "编辑文件".to_string());
     map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
+    map.insert(
+        "agent_swarm".to_string(),
+        "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
+    );
+    map.insert(
+        "swarm_control".to_string(),
+        "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
+    );
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
     map
@@ -851,6 +890,7 @@ pub async fn execute_builtin_tool(
         "编辑文件" => edit_file(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
+        "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
         "节点调用" => execute_node_invoke(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
@@ -1426,6 +1466,481 @@ async fn subagent_control(context: &ToolContext<'_>, args: &Value) -> Result<Val
         }
         _ => Err(anyhow!("未知子智能体控制 action: {action}")),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmControlArgs {
+    action: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmListArgs {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default, rename = "activeMinutes", alias = "active_minutes")]
+    active_minutes: Option<f64>,
+    #[serde(default, rename = "includeCurrent", alias = "include_current")]
+    include_current: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmStatusArgs {
+    #[serde(default, alias = "agentId", alias = "agent_id")]
+    agent_id: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default, rename = "includeCurrent", alias = "include_current")]
+    include_current: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmSendArgs {
+    #[serde(default, alias = "agentId", alias = "agent_id")]
+    agent_id: Option<String>,
+    #[serde(
+        default,
+        alias = "session_id",
+        alias = "sessionId",
+        alias = "sessionKey",
+        alias = "session_key"
+    )]
+    session_key: Option<String>,
+    message: String,
+    #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
+    timeout_seconds: Option<f64>,
+    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
+    create_if_missing: Option<bool>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default, rename = "includeCurrent", alias = "include_current")]
+    include_current: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct AgentSwarmRuntime {
+    lock_sessions: HashSet<String>,
+    running_sessions: HashSet<String>,
+}
+
+async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmControlArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let action = payload.action.trim();
+    if action.is_empty() {
+        return Err(anyhow!("agent_swarm action cannot be empty"));
+    }
+    let action_lower = action.to_lowercase();
+    match action_lower.as_str() {
+        "list" | "agents_list" | "agent_list" | "swarm_list" => {
+            agent_swarm_list(context, args).await
+        }
+        "status" | "agent_status" | "agents_status" | "swarm_status" => {
+            agent_swarm_status(context, args).await
+        }
+        "send" | "agent_send" | "agents_send" | "swarm_send" => {
+            agent_swarm_send(context, args).await
+        }
+        "history" | "agent_history" | "agents_history" | "swarm_history" => {
+            agent_swarm_history(context, args).await
+        }
+        "spawn" | "agent_spawn" | "agents_spawn" | "swarm_spawn" => {
+            agent_swarm_spawn(context, args).await
+        }
+        _ => Err(anyhow!("unknown agent_swarm action: {action}")),
+    }
+}
+
+async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmListArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let limit = clamp_limit(payload.limit, 50, MAX_SESSION_LIST_ITEMS);
+    let include_current = payload.include_current.unwrap_or(false);
+    let cutoff = payload
+        .active_minutes
+        .filter(|value| *value > 0.0)
+        .map(|value| now_ts() - value * 60.0);
+    let runtime_map = collect_swarm_runtime(context, user_id)?;
+    let mut items = Vec::new();
+    for agent in collect_swarm_agents(context, user_id, include_current)? {
+        let runtime = runtime_map.get(&agent.agent_id);
+        let (sessions, session_total) =
+            context
+                .storage
+                .list_chat_sessions(user_id, Some(&agent.agent_id), None, 0, 1)?;
+        let latest = sessions.first();
+        if let Some(cutoff) = cutoff {
+            let latest_updated = latest.map(|record| record.updated_at).unwrap_or(0.0);
+            let active_count = merge_swarm_active_sessions(runtime).len();
+            if latest_updated < cutoff && active_count == 0 {
+                continue;
+            }
+        }
+        let active_session_ids = merge_swarm_active_sessions(runtime);
+        let last_status =
+            latest.and_then(|record| monitor_session_status(context, &record.session_id));
+        items.push(json!({
+            "agent_id": agent.agent_id,
+            "name": agent.name,
+            "description": agent.description,
+            "status": agent.status,
+            "is_shared": agent.is_shared,
+            "access_level": agent.access_level,
+            "updated_at": format_ts(agent.updated_at),
+            "session_total": session_total,
+            "active_session_total": active_session_ids.len(),
+            "running_session_total": runtime.map(|entry| entry.running_sessions.len()).unwrap_or(0),
+            "lock_session_total": runtime.map(|entry| entry.lock_sessions.len()).unwrap_or(0),
+            "active_session_ids": active_session_ids,
+            "last_session_id": latest.map(|record| record.session_id.clone()),
+            "last_message_at": latest.map(|record| format_ts(record.last_message_at)),
+            "last_session_status": last_status,
+        }));
+        if items.len() as i64 >= limit {
+            break;
+        }
+    }
+    Ok(json!({ "total": items.len(), "items": items }))
+}
+
+async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmStatusArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let Some(agent_id) = normalize_optional_string(payload.agent_id) else {
+        return agent_swarm_list(context, args).await;
+    };
+    let include_current = payload.include_current.unwrap_or(false);
+    let current_agent_id = current_agent_id(context);
+    if !include_current {
+        if !include_current {
+            ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
+        }
+    }
+    let Some(agent) = load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
+    else {
+        return Err(anyhow!(i18n::t("error.agent_not_found")));
+    };
+    let limit = clamp_limit(payload.limit, 20, MAX_SESSION_LIST_ITEMS);
+    let runtime_map = collect_swarm_runtime(context, user_id)?;
+    let runtime = runtime_map.get(&agent_id);
+    let active_session_ids = merge_swarm_active_sessions(runtime);
+    let active_set: HashSet<String> = active_session_ids.iter().cloned().collect();
+    let (sessions, session_total) =
+        context
+            .storage
+            .list_chat_sessions(user_id, Some(&agent_id), None, 0, limit)?;
+    let mut recent_sessions = Vec::with_capacity(sessions.len());
+    for record in sessions {
+        let status = monitor_session_status(context, &record.session_id);
+        recent_sessions.push(json!({
+            "session_id": record.session_id,
+            "title": record.title,
+            "updated_at": format_ts(record.updated_at),
+            "last_message_at": format_ts(record.last_message_at),
+            "parent_session_id": record.parent_session_id,
+            "status": status,
+            "active": active_set.contains(&record.session_id),
+        }));
+    }
+    Ok(json!({
+        "agent": {
+            "agent_id": agent.agent_id,
+            "name": agent.name,
+            "description": agent.description,
+            "status": agent.status,
+            "is_shared": agent.is_shared,
+            "access_level": agent.access_level,
+            "updated_at": format_ts(agent.updated_at),
+        },
+        "session_total": session_total,
+        "active_session_total": active_session_ids.len(),
+        "running_session_total": runtime.map(|entry| entry.running_sessions.len()).unwrap_or(0),
+        "lock_session_total": runtime.map(|entry| entry.lock_sessions.len()).unwrap_or(0),
+        "active_session_ids": active_session_ids,
+        "recent_sessions": recent_sessions,
+    }))
+}
+
+async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmSendArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let message = payload.message.trim().to_string();
+    if message.is_empty() {
+        return Err(anyhow!(i18n::t("error.content_required")));
+    }
+    let current_agent_id = current_agent_id(context);
+    let include_current = payload.include_current.unwrap_or(false);
+    let requested_agent_id = normalize_optional_string(payload.agent_id);
+    let (target_agent_id, target_session_id, created_session) =
+        if let Some(session_key) = payload.session_key {
+            let session_id = resolve_session_key(Some(session_key))?;
+            let record = context
+                .storage
+                .get_chat_session(user_id, &session_id)?
+                .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+            let resolved_agent_id = normalize_optional_string(record.agent_id.clone())
+                .ok_or_else(|| anyhow!("agent_swarm send target session is missing agent_id"))?;
+            if !include_current {
+                ensure_swarm_target_not_current(&resolved_agent_id, current_agent_id.as_deref())?;
+            }
+            if let Some(requested) = requested_agent_id.as_ref() {
+                if requested != &resolved_agent_id {
+                    return Err(anyhow!(
+                        "agent_swarm send agent_id does not match target session"
+                    ));
+                }
+            }
+            (resolved_agent_id, session_id, false)
+        } else {
+            let agent_id = requested_agent_id
+                .ok_or_else(|| anyhow!("agent_swarm send requires agent_id or session_id"))?;
+            ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
+            let target_agent =
+                load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
+                    .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
+            if let Some(record) = context
+                .storage
+                .list_chat_sessions(user_id, Some(&agent_id), None, 0, 1)?
+                .0
+                .into_iter()
+                .next()
+            {
+                (agent_id, record.session_id, false)
+            } else if payload.create_if_missing.unwrap_or(true) {
+                let now = now_ts();
+                let session_id = format!("sess_{}", Uuid::new_v4().simple());
+                let label = normalize_optional_string(payload.label.clone());
+                let title = label
+                    .clone()
+                    .unwrap_or_else(|| format!("swarm-{}", target_agent.name));
+                let parent_session_id = if context.session_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(context.session_id.to_string())
+                };
+                let record = ChatSessionRecord {
+                    session_id: session_id.clone(),
+                    user_id: user_id.to_string(),
+                    title,
+                    created_at: now,
+                    updated_at: now,
+                    last_message_at: now,
+                    agent_id: Some(agent_id.clone()),
+                    tool_overrides: target_agent.tool_names.clone(),
+                    parent_session_id,
+                    parent_message_id: None,
+                    spawn_label: label,
+                    spawned_by: Some("swarm".to_string()),
+                };
+                context.storage.upsert_chat_session(&record)?;
+                (agent_id, session_id, true)
+            } else {
+                return Err(anyhow!(
+                    "target agent session not found and createIfMissing is false"
+                ));
+            }
+        };
+
+    let mut send_args = json!({
+        "session_id": target_session_id,
+        "message": message,
+    });
+    if let Some(timeout_seconds) = payload.timeout_seconds {
+        send_args["timeoutSeconds"] = json!(timeout_seconds);
+    }
+    let mut result = sessions_send(context, &send_args).await?;
+    if let Value::Object(ref mut map) = result {
+        map.insert("agent_id".to_string(), json!(target_agent_id));
+        map.insert("session_id".to_string(), json!(target_session_id));
+        map.insert("created_session".to_string(), json!(created_session));
+    }
+    Ok(result)
+}
+
+async fn agent_swarm_history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionHistoryArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let session_id = resolve_session_key(payload.session_key.clone())?;
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let include_current = args
+        .get("includeCurrent")
+        .or_else(|| args.get("include_current"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let requested_agent_id = args
+        .get("agentId")
+        .or_else(|| args.get("agent_id"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let record = context
+        .storage
+        .get_chat_session(user_id, &session_id)?
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+    let target_agent_id = normalize_optional_string(record.agent_id.clone())
+        .ok_or_else(|| anyhow!("agent_swarm history target session is missing agent_id"))?;
+    if let Some(requested_agent_id) = requested_agent_id {
+        if requested_agent_id != target_agent_id {
+            return Err(anyhow!(
+                "agent_swarm history agent_id does not match target session"
+            ));
+        }
+    }
+    if !include_current {
+        ensure_swarm_target_not_current(&target_agent_id, current_agent_id(context).as_deref())?;
+    }
+    sessions_history(context, args).await
+}
+
+async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionSpawnArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let agent_id = normalize_optional_string(payload.agent_id)
+        .ok_or_else(|| anyhow!("agent_swarm spawn requires agent_id"))?;
+    let include_current = args
+        .get("includeCurrent")
+        .or_else(|| args.get("include_current"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !include_current {
+        ensure_swarm_target_not_current(&agent_id, current_agent_id(context).as_deref())?;
+    }
+    sessions_spawn(context, args).await
+}
+
+fn collect_swarm_agents(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    include_current: bool,
+) -> Result<Vec<UserAgentRecord>> {
+    let access = context.storage.get_user_agent_access(user_id)?;
+    let current_agent_id = current_agent_id(context);
+    let mut agents = context.storage.list_user_agents(user_id)?;
+    agents.extend(context.storage.list_shared_user_agents(user_id)?);
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for agent in agents {
+        if agent.agent_id.trim().is_empty() {
+            continue;
+        }
+        if !seen.insert(agent.agent_id.clone()) {
+            continue;
+        }
+        if !is_agent_allowed_by_access(user_id, access.as_ref(), &agent) {
+            continue;
+        }
+        if !include_current
+            && current_agent_id
+                .as_deref()
+                .is_some_and(|value| value == agent.agent_id.as_str())
+        {
+            continue;
+        }
+        output.push(agent);
+    }
+    output.sort_by(|a, b| {
+        b.updated_at
+            .partial_cmp(&a.updated_at)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.agent_id.cmp(&b.agent_id))
+    });
+    Ok(output)
+}
+
+fn collect_swarm_runtime(
+    context: &ToolContext<'_>,
+    user_id: &str,
+) -> Result<HashMap<String, AgentSwarmRuntime>> {
+    let mut output = HashMap::new();
+    for lock in context.storage.list_session_locks_by_user(user_id)? {
+        let agent_id = lock.agent_id.trim();
+        let session_id = lock.session_id.trim();
+        if agent_id.is_empty() || session_id.is_empty() {
+            continue;
+        }
+        output
+            .entry(agent_id.to_string())
+            .or_insert_with(AgentSwarmRuntime::default)
+            .lock_sessions
+            .insert(session_id.to_string());
+    }
+    if let Some(monitor) = context.monitor.as_ref() {
+        for session in monitor.list_sessions(true) {
+            let session_user_id = session.get("user_id").and_then(Value::as_str).unwrap_or("");
+            if session_user_id.trim() != user_id {
+                continue;
+            }
+            let agent_id = session
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            let session_id = session
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            if agent_id.is_empty() || session_id.is_empty() {
+                continue;
+            }
+            output
+                .entry(agent_id.to_string())
+                .or_insert_with(AgentSwarmRuntime::default)
+                .running_sessions
+                .insert(session_id.to_string());
+        }
+    }
+    Ok(output)
+}
+
+fn merge_swarm_active_sessions(runtime: Option<&AgentSwarmRuntime>) -> Vec<String> {
+    let Some(runtime) = runtime else {
+        return Vec::new();
+    };
+    let mut sessions = runtime.lock_sessions.clone();
+    sessions.extend(runtime.running_sessions.clone());
+    let mut output = sessions.into_iter().collect::<Vec<_>>();
+    output.sort();
+    output
+}
+
+fn monitor_session_status(context: &ToolContext<'_>, session_id: &str) -> Option<String> {
+    context
+        .monitor
+        .as_ref()
+        .and_then(|monitor| monitor.get_record(session_id))
+        .and_then(|entry| {
+            entry
+                .get("status")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string())
+        })
+}
+
+fn ensure_swarm_target_not_current(
+    target_agent_id: &str,
+    current_agent_id: Option<&str>,
+) -> Result<()> {
+    if current_agent_id.is_some_and(|value| value == target_agent_id) {
+        return Err(anyhow!(
+            "agent_swarm only manages agents other than the current agent"
+        ));
+    }
+    Ok(())
 }
 
 async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2100,6 +2615,13 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
             Some(trimmed)
         }
     })
+}
+
+fn current_agent_id(context: &ToolContext<'_>) -> Option<String> {
+    context
+        .agent_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn resolve_session_key(value: Option<String>) -> Result<String> {
