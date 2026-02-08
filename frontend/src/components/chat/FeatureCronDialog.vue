@@ -11,15 +11,20 @@
     <template #header>
       <div class="feature-window-header">
         <div class="feature-window-title">{{ t('chat.features.cron') }}</div>
-        <button class="feature-window-close" type="button" @click="visible = false">×</button>
+        <button class="feature-window-close" type="button" @click="visible = false">&times;</button>
       </div>
     </template>
     <div class="feature-window-body">
       <div class="feature-window-toolbar">
         <div class="feature-window-hint">{{ t('cron.subtitle') }}</div>
-        <button class="feature-window-btn" type="button" :disabled="loading" @click="refreshAll">
-          {{ t('common.refresh') }}
-        </button>
+        <div class="feature-window-toolbar-actions">
+          <button class="feature-window-btn" type="button" :disabled="loading" @click="refreshAll">
+            {{ t('common.refresh') }}
+          </button>
+          <button class="feature-window-btn" type="button" :disabled="creating" @click="openCreateDialog">
+            {{ t('cron.action.create') }}
+          </button>
+        </div>
       </div>
       <div class="feature-window-grid">
         <div class="feature-window-list">
@@ -134,15 +139,104 @@
       </div>
     </div>
   </el-dialog>
+
+  <el-dialog
+    v-model="createDialogVisible"
+    class="feature-window-dialog feature-window-dialog--cron-create"
+    width="560px"
+    top="12vh"
+    :show-close="false"
+    :close-on-click-modal="false"
+    append-to-body
+  >
+    <template #header>
+      <div class="feature-window-header">
+        <div class="feature-window-title">{{ t('cron.create.title') }}</div>
+        <button class="feature-window-close" type="button" :disabled="creating" @click="closeCreateDialog">&times;</button>
+      </div>
+    </template>
+    <div class="feature-window-create feature-window-create--dialog">
+      <label class="feature-window-create-label" for="feature-cron-create-message">
+        {{ t('cron.create.message') }}
+      </label>
+      <textarea
+        id="feature-cron-create-message"
+        v-model="createForm.message"
+        class="feature-window-create-input feature-window-create-textarea"
+        :placeholder="t('cron.create.messagePlaceholder')"
+      ></textarea>
+      <label class="feature-window-create-label" for="feature-cron-create-run-at">
+        {{ t('cron.create.runAt') }}
+      </label>
+      <input
+        id="feature-cron-create-run-at"
+        v-model="createForm.runAt"
+        class="feature-window-create-input"
+        type="datetime-local"
+      />
+      <label class="feature-window-create-label">{{ t('cron.create.mode') }}</label>
+      <div class="feature-window-create-mode">
+        <button
+          class="feature-window-create-mode-btn"
+          :class="{ active: createForm.mode === 'once' }"
+          type="button"
+          @click="createForm.mode = 'once'"
+        >
+          {{ t('cron.create.mode.once') }}
+        </button>
+        <button
+          class="feature-window-create-mode-btn"
+          :class="{ active: createForm.mode === 'repeat' }"
+          type="button"
+          @click="createForm.mode = 'repeat'"
+        >
+          {{ t('cron.create.mode.repeat') }}
+        </button>
+      </div>
+      <div v-if="createForm.mode === 'repeat'" class="feature-window-create-interval">
+        <span>{{ t('cron.create.intervalEvery') }}</span>
+        <input
+          v-model.number="createForm.intervalValue"
+          class="feature-window-create-input feature-window-create-input--number"
+          type="number"
+          min="1"
+          step="1"
+        />
+        <select v-model="createForm.intervalUnit" class="feature-window-create-input feature-window-create-input--select">
+          <option value="minute">{{ t('cron.create.interval.unit.minute') }}</option>
+          <option value="hour">{{ t('cron.create.interval.unit.hour') }}</option>
+          <option value="day">{{ t('cron.create.interval.unit.day') }}</option>
+        </select>
+      </div>
+      <div class="feature-window-create-hint">{{ t('cron.create.hint') }}</div>
+      <div class="feature-window-create-actions">
+        <button class="feature-window-btn" type="button" :disabled="creating" @click="resetCreateForm">
+          {{ t('common.reset') }}
+        </button>
+        <button class="feature-window-btn" type="button" :disabled="creating" @click="createJob">
+          {{ creating ? t('common.loading') : t('cron.create.submit') }}
+        </button>
+      </div>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
-import { ElMessageBox } from 'element-plus';
+import { computed, reactive, ref, watch } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { fetchCronJobs, fetchCronRuns, disableCronJob, enableCronJob, removeCronJob, runCronJob } from '@/api/cron';
+import {
+  addCronJob,
+  fetchCronJobs,
+  fetchCronRuns,
+  disableCronJob,
+  enableCronJob,
+  removeCronJob,
+  runCronJob
+} from '@/api/cron';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { createSession, listSessions } from '@/api/chat';
 
 const props = defineProps({
   modelValue: {
@@ -177,6 +271,21 @@ const loading = ref(false);
 const runsLoading = ref(false);
 const selectedJobId = ref('');
 const selectedRunId = ref('');
+const createDialogVisible = ref(false);
+const creating = ref(false);
+const createForm = reactive({
+  message: '',
+  runAt: '',
+  mode: 'once',
+  intervalValue: 5,
+  intervalUnit: 'minute'
+});
+
+const INTERVAL_UNIT_MS = {
+  minute: 60 * 1000,
+  hour: 60 * 60 * 1000,
+  day: 24 * 60 * 60 * 1000
+};
 
 const selectedJob = computed(() => jobs.value.find((job) => job.job_id === selectedJobId.value) || null);
 const selectedRun = computed(() => runs.value.find((run) => run.run_id === selectedRunId.value) || null);
@@ -254,6 +363,136 @@ const formatRunTrigger = (trigger) => {
   if (trigger === 'schedule') return t('cron.run.trigger.schedule');
   if (trigger === 'api') return t('cron.run.trigger.api');
   return trigger || t('common.unknown');
+};
+
+const toDateTimeLocalValue = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (part) => String(part).padStart(2, '0');
+  return (
+    String(date.getFullYear()) +
+    '-' +
+    pad(date.getMonth() + 1) +
+    '-' +
+    pad(date.getDate()) +
+    'T' +
+    pad(date.getHours()) +
+    ':' +
+    pad(date.getMinutes())
+  );
+};
+
+const resolveDefaultRunAt = () => toDateTimeLocalValue(new Date(Date.now() + 5 * 60 * 1000));
+
+const resetCreateForm = () => {
+  createForm.message = '';
+  createForm.runAt = resolveDefaultRunAt();
+  createForm.mode = 'once';
+  createForm.intervalValue = 5;
+  createForm.intervalUnit = 'minute';
+};
+
+const openCreateDialog = () => {
+  resetCreateForm();
+  createDialogVisible.value = true;
+};
+
+const closeCreateDialog = () => {
+  createDialogVisible.value = false;
+};
+
+const resolveCreateAgentId = () => {
+  const cleaned = String(contextAgentId.value || '').trim();
+  if (!cleaned || cleaned === '__default__' || cleaned === 'default') {
+    return '';
+  }
+  return cleaned;
+};
+
+const resolveIntervalMs = () => {
+  const intervalValue = Number.parseInt(createForm.intervalValue, 10);
+  if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
+    return null;
+  }
+  const unitMs = INTERVAL_UNIT_MS[createForm.intervalUnit] || INTERVAL_UNIT_MS.minute;
+  return intervalValue * unitMs;
+};
+
+const resolveTargetSessionId = async () => {
+  const agentId = resolveCreateAgentId();
+  const params = agentId ? { agent_id: agentId } : undefined;
+  const { data } = await listSessions(params);
+  const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+  const candidate = items.find((item) => item?.is_main) || items[0];
+  const sessionId = String(candidate?.id || '').trim();
+  if (sessionId) {
+    return sessionId;
+  }
+  const createPayload = agentId ? { agent_id: agentId } : {};
+  const created = await createSession(createPayload);
+  const createdSessionId = String(created?.data?.data?.id || '').trim();
+  if (createdSessionId) {
+    return createdSessionId;
+  }
+  throw new Error(t('error.session_not_found'));
+};
+
+const createJob = async () => {
+  const message = String(createForm.message || '').trim();
+  if (!message) {
+    ElMessage.warning(t('cron.create.messageRequired'));
+    return;
+  }
+  if (!createForm.runAt) {
+    ElMessage.warning(t('cron.create.runAtRequired'));
+    return;
+  }
+  const runAt = new Date(createForm.runAt);
+  if (Number.isNaN(runAt.getTime())) {
+    ElMessage.warning(t('cron.create.runAtInvalid'));
+    return;
+  }
+  let schedule = {
+    kind: 'at',
+    at: runAt.toISOString()
+  };
+  if (createForm.mode === 'repeat') {
+    const everyMs = resolveIntervalMs();
+    if (!Number.isFinite(everyMs) || everyMs <= 0) {
+      ElMessage.warning(t('cron.create.intervalInvalid'));
+      return;
+    }
+    schedule = {
+      kind: 'every',
+      at: runAt.toISOString(),
+      every_ms: everyMs
+    };
+  }
+  creating.value = true;
+  try {
+    const sessionId = await resolveTargetSessionId();
+    const agentId = resolveCreateAgentId();
+    await addCronJob({
+      action: 'add',
+      job: {
+        session_id: sessionId,
+        ...(agentId ? { agent_id: agentId } : {}),
+        session: 'main',
+        payload: { message },
+        schedule,
+        enabled: true
+      }
+    });
+    ElMessage.success(t('cron.create.success'));
+    closeCreateDialog();
+    resetCreateForm();
+    await refreshAll();
+  } catch (error) {
+    showApiError(error, resolveError(error));
+  } finally {
+    creating.value = false;
+  }
 };
 
 const loadJobs = async () => {
@@ -383,7 +622,9 @@ watch(
   (value) => {
     if (value) {
       refreshAll();
+      return;
     }
+    closeCreateDialog();
   }
 );
 
@@ -428,6 +669,60 @@ watch(
   box-shadow: var(--fw-shadow);
   color: var(--fw-text);
   color-scheme: dark;
+}
+
+
+:global(.feature-window-dialog--cron-create.el-dialog) {
+  --fw-text: #e2e8f0;
+  --fw-muted: #94a3b8;
+  --fw-bg: linear-gradient(160deg, #070d1a, #0b1426);
+  --fw-shadow: 0 20px 44px rgba(8, 12, 24, 0.55);
+  --fw-border: rgba(51, 65, 85, 0.72);
+  --fw-border-soft: rgba(51, 65, 85, 0.62);
+  --fw-divider: rgba(51, 65, 85, 0.62);
+  --fw-surface-alt: #0d182c;
+  --fw-control-bg: #111c31;
+  --fw-control-hover: #162844;
+  --fw-focus-border: rgba(56, 189, 248, 0.65);
+  --fw-focus-ring: rgba(56, 189, 248, 0.18);
+  --fw-accent-border: rgba(77, 216, 255, 0.65);
+  --fw-accent-shadow: rgba(77, 216, 255, 0.35);
+  width: min(94vw, 560px) !important;
+  max-width: 560px;
+  background: var(--fw-bg);
+  border: 1px solid var(--fw-border);
+  border-radius: 14px;
+  box-shadow: var(--fw-shadow);
+  color: var(--fw-text);
+  color-scheme: dark;
+}
+
+:global(:root[data-user-theme='light'] .feature-window-dialog--cron-create.el-dialog) {
+  --fw-text: #0f172a;
+  --fw-muted: #64748b;
+  --fw-bg: linear-gradient(180deg, #ffffff, #f7faff);
+  --fw-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+  --fw-border: rgba(148, 163, 184, 0.52);
+  --fw-border-soft: rgba(148, 163, 184, 0.36);
+  --fw-divider: rgba(148, 163, 184, 0.42);
+  --fw-surface-alt: #ffffff;
+  --fw-control-bg: #f1f5f9;
+  --fw-control-hover: #e2e8f0;
+  --fw-focus-border: rgba(37, 99, 235, 0.55);
+  --fw-focus-ring: rgba(37, 99, 235, 0.16);
+  --fw-accent-border: rgba(37, 99, 235, 0.42);
+  --fw-accent-shadow: rgba(37, 99, 235, 0.22);
+  color-scheme: light;
+}
+
+:global(.feature-window-dialog--cron-create .el-dialog__header) {
+  border-bottom: 1px solid var(--fw-divider);
+  padding: 14px 18px;
+}
+
+:global(.feature-window-dialog--cron-create .el-dialog__body) {
+  padding: 14px 18px 18px;
+  color: var(--fw-text);
 }
 
 :global(:root[data-user-theme='light'] .feature-window-dialog--cron.el-dialog) {
@@ -517,6 +812,112 @@ watch(
 .feature-window-hint {
   color: var(--fw-muted);
   font-size: 12px;
+}
+
+.feature-window-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feature-window-create {
+  border: 1px solid var(--fw-border-soft);
+  border-radius: 10px;
+  background: var(--fw-surface-alt);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feature-window-create--dialog {
+  margin-top: 2px;
+}
+
+.feature-window-create-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fw-text);
+}
+
+.feature-window-create-label {
+  font-size: 12px;
+  color: var(--fw-muted);
+}
+
+.feature-window-create-input {
+  width: 100%;
+  border: 1px solid var(--fw-border);
+  border-radius: 8px;
+  background: var(--fw-control-bg);
+  color: var(--fw-text);
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.feature-window-create-input:focus {
+  outline: none;
+  border-color: var(--fw-focus-border);
+  box-shadow: 0 0 0 2px var(--fw-focus-ring);
+}
+
+.feature-window-create-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.feature-window-create-mode {
+  display: flex;
+  gap: 6px;
+}
+
+.feature-window-create-mode-btn {
+  flex: 1 1 0;
+  border: 1px solid var(--fw-border);
+  border-radius: 8px;
+  background: var(--fw-control-bg);
+  color: var(--fw-text);
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.feature-window-create-mode-btn.active {
+  border-color: var(--fw-accent-border);
+  box-shadow: inset 0 0 0 1px var(--fw-accent-shadow);
+}
+
+.feature-window-create-interval {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fw-muted);
+}
+
+.feature-window-create-input--number {
+  width: 76px;
+  min-width: 76px;
+}
+
+.feature-window-create-input--select {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-window-create-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fw-muted);
+}
+
+.feature-window-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .feature-window-grid {

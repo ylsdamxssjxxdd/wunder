@@ -54,7 +54,7 @@
   - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称
   - `skip_tool_calls`：布尔，可选，是否忽略模型输出中的工具调用并直接结束（默认 false）
   - `stream`：布尔，可选，是否流式输出（默认 true）
-  - `debug_payload`：布尔，可选，调试用，开启后会保留模型请求体用于事件与日志记录（默认 false）
+  - `debug_payload`：布尔，可选，调试用；仅管理员调试会话（`is_admin=true`）开启后会保留模型请求体用于事件与日志记录（默认 false）
   - `session_id`：字符串，可选，指定会话标识
   - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与沙盒容器工作区路由）
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
@@ -519,6 +519,7 @@
   - 返回：`data.runs`
 - `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行
   - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
+  - 说明：`job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点。
   - 返回：`data` 中包含 action 结果与 job 信息
 
 ### 4.1.3 `/wunder/admin/mcp`
@@ -782,12 +783,15 @@
     + decode_tokens/decode_duration_s/decode_speed_tps）
   - `events`：事件详情列表
 - 说明：
-- 事件列表会按 `observability.monitor_event_limit` 保留最近 N 条，<= 0 表示不截断。
-  - 管理员会话不受事件数量与字段裁剪限制。
-  - 字符串字段会按 `observability.monitor_payload_max_chars` 截断（<= 0 表示不截断）。
-  - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
-  - `observability.monitor_drop_event_types` 可过滤不持久化的事件类型。
-  - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
+- `session` 详情新增 `log_profile`（`normal`/`debug`）与 `trace_id`，用于跨模块追踪。
+- `events` 每条记录新增 `event_id`（线程内递增）。
+- 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程详情中快速定位上下文。
+- `normal` 日志画像会按 `observability.monitor_event_limit` 保留最近 N 条（<= 0 表示不截断），并按 `observability.monitor_payload_max_chars` 截断字符串字段（<= 0 表示不截断）。
+- `normal` 日志画像默认跳过高频增量事件：`llm_output_delta`、`tool_output_delta`；`debug` 日志画像仅在管理员调试会话（`is_admin=true` 且 `debug_payload=true`）启用，并保留这些高频事件与完整字段。
+- `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
+- `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
+- 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
+
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
 

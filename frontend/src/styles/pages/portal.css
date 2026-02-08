@@ -44,9 +44,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 10px 16px;
-  min-height: 64px;
+  flex-wrap: nowrap;
+  gap: var(--user-topbar-gap);
+  padding: var(--user-topbar-padding-y) var(--user-topbar-padding-x);
+  height: var(--user-topbar-height);
+  min-height: var(--user-topbar-height);
   border-bottom: 1px solid var(--portal-border);
   background: linear-gradient(
     90deg,
@@ -66,9 +68,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  gap: 16px;
-  min-height: 64px;
+  flex-wrap: nowrap;
+  padding: var(--user-topbar-padding-y) var(--user-topbar-padding-x);
+  gap: var(--user-topbar-gap);
+  height: var(--user-topbar-height);
+  min-height: var(--user-topbar-height);
   background: linear-gradient(
     90deg,
     rgba(var(--portal-primary-rgb), 0.16),
@@ -1141,7 +1145,7 @@
   }
 
   .user-topbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .user-topbar-center {
@@ -1150,13 +1154,13 @@
   }
 
   .portal-shell .topbar {
-    flex-wrap: wrap;
-    gap: 12px;
+    flex-wrap: nowrap;
+    gap: var(--user-topbar-gap);
   }
 
   .portal-shell .topbar-actions {
-    flex-wrap: wrap;
-    width: 100%;
+    flex-wrap: nowrap;
+    width: auto;
   }
 }
 
@@ -1217,13 +1221,13 @@
   }
 
   .portal-shell .topbar-actions {
-    width: 100%;
+    width: auto;
     justify-content: flex-end;
   }
 
   .portal-shell .topbar-nav {
-    width: 100%;
-    overflow-x: auto;
-    padding-bottom: 6px;
+    width: auto;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 }

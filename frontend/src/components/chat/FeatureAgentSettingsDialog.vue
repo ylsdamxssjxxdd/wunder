@@ -1,170 +1,168 @@
 <template>
   <el-dialog
     v-model="visible"
-    class="feature-window-dialog feature-window-dialog--agent"
-    width="1080px"
-    top="8vh"
+    class="user-tools-dialog agent-editor-dialog feature-agent-editor-dialog"
+    width="820px"
+    top="6vh"
     :show-close="false"
     :close-on-click-modal="false"
     append-to-body
   >
     <template #header>
-      <div class="feature-window-header">
-        <div class="feature-window-title">{{ t('chat.features.agentSettings') }}</div>
-        <button class="feature-window-close" type="button" @click="visible = false">×</button>
+      <div class="user-tools-header">
+        <div class="user-tools-title">{{ t('chat.features.agentSettings') }}</div>
+        <button class="icon-btn" type="button" @click="visible = false">&times;</button>
       </div>
     </template>
-    <div class="feature-window-body">
-      <div v-if="!canEdit" class="feature-window-empty">{{ t('chat.features.agentMissing') }}</div>
-      <template v-else>
-        <div class="feature-window-editable">
-          <div class="feature-window-form-grid">
-            <label class="feature-window-field">
-              <span>{{ t('portal.agent.form.name') }}</span>
-              <input v-model="form.name" class="feature-window-input" :placeholder="t('portal.agent.form.placeholder.name')" />
-            </label>
-            <label class="feature-window-field">
-              <span>{{ t('portal.agent.form.description') }}</span>
-              <input
-                v-model="form.description"
-                class="feature-window-input"
-                :placeholder="t('portal.agent.form.placeholder.description')"
-              />
-            </label>
-            <label class="feature-window-field feature-window-field-full feature-window-avatar-field">
-              <span>{{ t('portal.agent.avatarTitle') }}</span>
-              <div class="feature-window-avatar-card">
-                <div class="feature-window-avatar-header">
-                  <button
-                    class="feature-window-avatar-trigger"
-                    type="button"
-                    :aria-expanded="avatarPanelVisible"
-                    @click="avatarPanelVisible = !avatarPanelVisible"
-                  >
-                    <div class="feature-window-avatar-preview" :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })">
-                      <span v-if="form.icon_name === DEFAULT_ICON_NAME" class="feature-window-avatar-text">Aa</span>
-                      <i
-                        v-else-if="getAvatarIconOption(form.icon_name)"
-                        class="feature-window-avatar-icon"
-                        :class="['fa-solid', getAvatarIconOption(form.icon_name).fa]"
-                        aria-hidden="true"
-                      ></i>
-                      <span v-else class="feature-window-avatar-text">Aa</span>
-                    </div>
-                    <i
-                      class="fa-solid feature-window-avatar-chevron"
-                      :class="avatarPanelVisible ? 'fa-chevron-up' : 'fa-chevron-down'"
-                      aria-hidden="true"
-                    ></i>
+    <div class="agent-editor-body">
+      <div v-if="!canEdit" class="agent-tool-loading">{{ t('chat.features.agentMissing') }}</div>
+      <el-form v-else :model="form" label-position="top" class="agent-editor-form">
+        <el-form-item class="agent-form-item agent-form-item--name" :label="t('portal.agent.form.name')">
+          <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
+        </el-form-item>
+        <el-form-item class="agent-form-item agent-form-item--description" :label="t('portal.agent.form.description')">
+          <el-input v-model="form.description" :placeholder="t('portal.agent.form.placeholder.description')" />
+        </el-form-item>
+        <el-form-item class="agent-form-item agent-form-item--prompt" :label="t('portal.agent.form.prompt')">
+          <el-input
+            v-model="form.system_prompt"
+            type="textarea"
+            :rows="8"
+            :placeholder="t('portal.agent.form.placeholder.prompt')"
+          />
+        </el-form-item>
+        <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
+          <div class="agent-tool-picker">
+            <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
+            <div v-else-if="toolError" class="agent-tool-loading">{{ toolError }}</div>
+            <div v-else-if="!toolGroups.length" class="agent-tool-loading">{{ t('portal.agent.tools.loadFailed') }}</div>
+            <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
+              <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
+                <div class="agent-tool-group-header">
+                  <div class="agent-tool-group-title">{{ group.label }}</div>
+                  <button class="agent-tool-group-select" type="button" @click.stop="selectToolGroup(group)">
+                    {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
                   </button>
                 </div>
-                <div v-show="avatarPanelVisible" class="feature-window-avatar-panel">
-                  <div class="feature-window-avatar-row">
-                    <div class="feature-window-avatar-custom">
-                      <input
-                        class="feature-window-avatar-color"
-                        type="color"
-                        :value="customColor || '#6ad9ff'"
-                        @input="updateCustomColor($event.target.value)"
-                      />
-                      <input
-                        class="feature-window-input"
-                        type="text"
-                        :value="customColor"
-                        :placeholder="t('portal.agent.avatarCustom')"
-                        @input="updateCustomColor($event.target.value)"
-                      />
-                    </div>
+                <div class="agent-tool-options">
+                  <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
+                    <span :title="option.description || option.label">{{ option.label }}</span>
+                  </el-checkbox>
+                </div>
+              </div>
+            </el-checkbox-group>
+            <div v-if="sharedToolsNotice" class="agent-editor-hint">{{ t('portal.agent.tools.notice') }}</div>
+          </div>
+        </el-form-item>
+        <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
+          <div class="agent-basic-settings">
+            <div class="agent-avatar-card">
+              <div class="agent-avatar-header">
+                <div class="agent-avatar-header-left">
+                  <div class="agent-avatar-title">{{ t('portal.agent.avatarTitle') }}</div>
+                  <div
+                    class="agent-avatar-preview agent-avatar-preview--toggle"
+                    role="button"
+                    tabindex="0"
+                    :aria-expanded="avatarPanelVisible"
+                    :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
+                    @click="avatarPanelVisible = !avatarPanelVisible"
+                    @keydown.enter="avatarPanelVisible = !avatarPanelVisible"
+                  >
+                    <span v-if="form.icon_name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
+                    <i
+                      v-else-if="getAvatarIconOption(form.icon_name)"
+                      class="agent-avatar-option-icon"
+                      :class="['fa-solid', getAvatarIconOption(form.icon_name).fa]"
+                      aria-hidden="true"
+                    ></i>
+                    <span v-else class="agent-avatar-option-text">Aa</span>
                   </div>
-                  <div class="feature-window-avatar-icons">
+                </div>
+              </div>
+              <div v-show="avatarPanelVisible" class="agent-avatar-panel">
+                <div class="agent-avatar-section">
+                  <div class="agent-avatar-section-title">{{ t('portal.agent.avatarIcon') }}</div>
+                  <div class="agent-avatar-options">
                     <button
                       v-for="option in avatarIconOptions"
                       :key="option.name"
-                      class="feature-window-avatar-option"
+                      class="agent-avatar-option"
                       :class="{ active: form.icon_name === option.name }"
                       type="button"
                       :title="option.label"
                       @click="selectAvatarIcon(option)"
                     >
-                      <span v-if="option.name === DEFAULT_ICON_NAME" class="feature-window-avatar-text">Aa</span>
-                      <i v-else class="feature-window-avatar-icon" :class="['fa-solid', option.fa]" aria-hidden="true"></i>
-                    </button>
-                  </div>
-                  <div class="feature-window-avatar-colors">
-                    <button
-                      v-for="color in avatarColorOptions"
-                      :key="color || 'default'"
-                      class="feature-window-avatar-swatch"
-                      :class="{ active: (form.icon_color || '') === (color || '') }"
-                      type="button"
-                      :title="color ? color : t('portal.agent.avatarDefault')"
-                      :style="color ? { background: color } : {}"
-                      @click="selectAvatarColor(color)"
-                    >
-                      <span v-if="!color" class="feature-window-avatar-default">{{ t('portal.agent.avatarDefault') }}</span>
+                      <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
+                      <i v-else class="agent-avatar-option-icon" :class="['fa-solid', option.fa]" aria-hidden="true"></i>
                     </button>
                   </div>
                 </div>
-              </div>
-            </label>
-            <label class="feature-window-field feature-window-field-full">
-              <span>{{ t('portal.agent.form.prompt') }}</span>
-              <textarea
-                v-model="form.system_prompt"
-                class="feature-window-input feature-window-textarea"
-                :placeholder="t('portal.agent.form.placeholder.prompt')"
-              ></textarea>
-            </label>
-          </div>
-          <div class="feature-window-toolbar">
-            <div class="feature-window-hint">{{ t('portal.agent.form.tools') }}</div>
-          </div>
-          <div class="feature-window-tool-panel">
-            <div v-if="toolLoading" class="feature-window-empty">{{ t('portal.agent.tools.loading') }}</div>
-            <div v-else-if="toolError" class="feature-window-empty">{{ toolError }}</div>
-            <div v-else-if="!toolGroups.length" class="feature-window-empty">{{ t('portal.agent.tools.loadFailed') }}</div>
-            <template v-else>
-              <div v-for="group in toolGroups" :key="group.label" class="feature-window-tool-group">
-                <div class="feature-window-tool-title">{{ group.label }}</div>
-                <label v-for="item in group.items" :key="item.name" class="feature-window-tool-item">
-                  <input
-                    type="checkbox"
-                    :checked="isToolSelected(item.name)"
-                    @change="toggleTool(item.name, $event.target.checked)"
-                  />
-                  <div class="feature-window-tool-meta">
-                    <div class="feature-window-tool-name">{{ item.name }}</div>
-                    <div class="feature-window-tool-desc">{{ item.description || t('chat.ability.noDesc') }}</div>
+                <div class="agent-avatar-section">
+                  <div class="agent-avatar-section-title">{{ t('portal.agent.avatarColor') }}</div>
+                  <div class="agent-avatar-colors">
+                    <button
+                      v-for="color in avatarColorOptions"
+                      :key="color || 'default'"
+                      class="agent-avatar-color"
+                      :class="{ active: (form.icon_color || '') === (color || '') }"
+                      type="button"
+                      :title="color || 'Aa'"
+                      :style="color ? { background: color } : {}"
+                      @click="selectAvatarColor(color)"
+                    >
+                      <span v-if="!color" class="agent-avatar-color-text">Aa</span>
+                    </button>
                   </div>
-                </label>
+                  <div class="agent-avatar-custom">
+                    <input
+                      class="agent-avatar-custom-input"
+                      type="color"
+                      :value="customColor || '#6ad9ff'"
+                      @input="updateCustomColor($event.target.value)"
+                    />
+                    <input
+                      class="agent-avatar-custom-text"
+                      type="text"
+                      :value="customColor"
+                      :placeholder="t('portal.agent.avatarCustom')"
+                      @input="updateCustomColor($event.target.value)"
+                    />
+                  </div>
+                </div>
               </div>
-            </template>
+            </div>
+            <div class="agent-share-card agent-share-card--combined">
+              <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
+              <div class="agent-share-row">
+                <el-switch v-model="form.is_shared" />
+                <span>{{ t('portal.agent.share.label') }}</span>
+              </div>
+              <div class="agent-share-row agent-share-row--sandbox">
+                <span>{{ t('portal.agent.sandbox.title') }}</span>
+                <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
+                  <el-option
+                    v-for="id in sandboxContainerOptions"
+                    :key="id"
+                    :label="t('portal.agent.sandbox.option', { id })"
+                    :value="id"
+                  />
+                </el-select>
+              </div>
+              <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
+            </div>
           </div>
-          <label class="feature-window-checkbox">
-            <input v-model="form.is_shared" type="checkbox" />
-            <span>{{ t('portal.agent.share.label') }}</span>
-          </label>
-          <label class="feature-window-inline-field">
-            <span>{{ t('portal.agent.sandbox.title') }}</span>
-            <select v-model.number="form.sandbox_container_id" class="feature-window-select">
-              <option v-for="id in sandboxContainerOptions" :key="id" :value="id">
-                {{ t('portal.agent.sandbox.option', { id }) }}
-              </option>
-            </select>
-          </label>
-          <div class="feature-window-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-        </div>
-      </template>
+        </el-form-item>
+      </el-form>
     </div>
     <template #footer>
-      <div class="feature-window-actions">
-        <button class="feature-window-btn danger" type="button" :disabled="!canEdit" @click="deleteAgent">
-          {{ t('portal.agent.delete') }}
-        </button>
-        <button class="feature-window-btn primary" type="button" :disabled="saving || !canEdit" @click="saveAgent">
-          {{ saving ? t('common.saving') : t('portal.agent.save') }}
-        </button>
-      </div>
+      <el-button @click="visible = false">{{ t('portal.agent.cancel') }}</el-button>
+      <el-button type="danger" plain :disabled="saving || !canEdit" @click="deleteAgent">
+        {{ t('portal.agent.delete') }}
+      </el-button>
+      <el-button type="primary" :loading="saving" :disabled="!canEdit" @click="saveAgent">
+        {{ saving ? t('common.saving') : t('portal.agent.save') }}
+      </el-button>
     </template>
   </el-dialog>
 </template>
@@ -281,8 +279,7 @@ const toolLoading = ref(false);
 const toolError = ref('');
 
 const customColor = ref('');
-
-const avatarPanelVisible = ref(false);
+const avatarPanelVisible = ref(true);
 
 AVATAR_ICON_OPTIONS.forEach((option) => {
   if (!option || option.name === DEFAULT_ICON_NAME) return;
@@ -383,52 +380,68 @@ const getAvatarStyle = (config) => {
   return style;
 };
 
-const normalizeToolItem = (item) => {
+const normalizeToolOption = (item) => {
   if (!item) return null;
   if (typeof item === 'string') {
     const name = item.trim();
-    return name ? { name, description: '' } : null;
+    return name ? { label: name, value: name, description: '' } : null;
   }
-  const name = String(item.name || item.tool_name || item.toolName || item.id || '').trim();
-  if (!name) return null;
+  const value = String(item.name || item.tool_name || item.toolName || item.id || '').trim();
+  if (!value) return null;
   return {
-    name,
+    label: value,
+    value,
     description: String(item.description || '').trim()
   };
 };
 
-const filterToolItems = (list) =>
-  Array.isArray(list) ? list.map((item) => normalizeToolItem(item)).filter(Boolean) : [];
+const normalizeOptions = (list) =>
+  Array.isArray(list) ? list.map((item) => normalizeToolOption(item)).filter(Boolean) : [];
 
 const toolGroups = computed(() => {
   const summary = toolSummary.value || {};
-  const groups = [
-    { label: t('portal.agent.tools.group.builtin'), items: filterToolItems(summary.builtin_tools) },
-    { label: t('portal.agent.tools.group.mcp'), items: filterToolItems(summary.mcp_tools) },
-    { label: t('portal.agent.tools.group.a2a'), items: filterToolItems(summary.a2a_tools) },
-    { label: t('portal.agent.tools.group.knowledge'), items: filterToolItems(summary.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), items: filterToolItems(summary.user_tools) },
-    { label: t('portal.agent.tools.group.shared'), items: filterToolItems(summary.shared_tools) },
-    { label: t('portal.agent.tools.group.skills'), items: filterToolItems(summary.skills) }
-  ];
-  return groups.filter((group) => group.items.length > 0);
+  const sharedSelected = new Set(
+    Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected : []
+  );
+  const sharedPool = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
+  const sharedTools =
+    sharedSelected.size > 0
+      ? sharedPool.filter((tool) => sharedSelected.has(String(tool?.name || '').trim()))
+      : sharedPool;
+  return [
+    { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
+    { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
+    { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(summary.a2a_tools) },
+    { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
+    { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
+    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) },
+    { label: t('portal.agent.tools.group.shared'), options: normalizeOptions(sharedTools) }
+  ].filter((group) => group.options.length > 0);
 });
 
-const isToolSelected = (name) => Array.isArray(form.tool_names) && form.tool_names.includes(name);
+const sharedToolsNotice = computed(() => {
+  const summary = toolSummary.value || {};
+  const shared = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
+  const selected = Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected : [];
+  return shared.length > 0 && selected.length === 0;
+});
 
-const toggleTool = (name, checked) => {
-  const current = Array.isArray(form.tool_names) ? [...form.tool_names] : [];
-  if (checked) {
-    if (!current.includes(name)) {
-      current.push(name);
-    }
+const isToolGroupFullySelected = (group) => {
+  if (!group || !Array.isArray(group.options) || group.options.length === 0) return false;
+  const current = new Set(form.tool_names);
+  return group.options.every((option) => current.has(option.value));
+};
+
+const selectToolGroup = (group) => {
+  if (!group || !Array.isArray(group.options) || group.options.length === 0) return;
+  const next = new Set(form.tool_names);
+  const fullySelected = group.options.every((option) => next.has(option.value));
+  if (fullySelected) {
+    group.options.forEach((option) => next.delete(option.value));
   } else {
-    const index = current.indexOf(name);
-    if (index >= 0) {
-      current.splice(index, 1);
-    }
+    group.options.forEach((option) => next.add(option.value));
   }
-  form.tool_names = current;
+  form.tool_names = Array.from(next);
 };
 
 const loadToolSummary = async () => {
@@ -509,15 +522,11 @@ const deleteAgent = async () => {
   if (!canEdit.value) return;
   const targetName = String(form.name || normalizedAgentId.value || '').trim();
   try {
-    await ElMessageBox.confirm(
-      t('portal.agent.deleteConfirm', { name: targetName }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('portal.agent.delete'),
-        cancelButtonText: t('portal.agent.cancel'),
-        type: 'warning'
-      }
-    );
+    await ElMessageBox.confirm(t('portal.agent.deleteConfirm', { name: targetName }), t('common.notice'), {
+      confirmButtonText: t('portal.agent.delete'),
+      cancelButtonText: t('portal.agent.cancel'),
+      type: 'warning'
+    });
   } catch (error) {
     return;
   }
@@ -535,7 +544,7 @@ watch(
   () => visible.value,
   (value) => {
     if (value) {
-      avatarPanelVisible.value = false;
+      avatarPanelVisible.value = true;
       loadToolSummary();
       loadAgent();
     }
@@ -551,500 +560,3 @@ watch(
   }
 );
 </script>
-
-<style scoped>
-:global(.feature-window-dialog--agent.el-dialog) {
-  --fw-text: #e2e8f0;
-  --fw-muted: #94a3b8;
-  --fw-bg: linear-gradient(160deg, #070d1a, #0b1426);
-  --fw-shadow: 0 24px 56px rgba(8, 12, 24, 0.55);
-  --fw-border: rgba(51, 65, 85, 0.72);
-  --fw-border-soft: rgba(51, 65, 85, 0.62);
-  --fw-divider: rgba(51, 65, 85, 0.62);
-  --fw-surface: #0b1527;
-  --fw-surface-alt: #0d182c;
-  --fw-control-bg: #111c31;
-  --fw-control-hover: #162844;
-  --fw-focus-border: rgba(56, 189, 248, 0.65);
-  --fw-focus-ring: rgba(56, 189, 248, 0.18);
-  --fw-accent-border: rgba(77, 216, 255, 0.5);
-  --fw-accent-shadow: rgba(77, 216, 255, 0.22);
-  --fw-danger: #fca5a5;
-  --fw-danger-border: rgba(248, 113, 113, 0.4);
-  width: min(96vw, 1080px) !important;
-  max-width: 1080px;
-  height: min(82vh, 760px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--fw-bg);
-  border: 1px solid var(--fw-border);
-  border-radius: 14px;
-  box-shadow: var(--fw-shadow);
-  color: var(--fw-text);
-  color-scheme: dark;
-}
-
-:global(:root[data-user-theme='light'] .feature-window-dialog--agent.el-dialog) {
-  --fw-text: #0f172a;
-  --fw-muted: #64748b;
-  --fw-bg: linear-gradient(180deg, #ffffff, #f7faff);
-  --fw-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
-  --fw-border: rgba(148, 163, 184, 0.52);
-  --fw-border-soft: rgba(148, 163, 184, 0.36);
-  --fw-divider: rgba(148, 163, 184, 0.42);
-  --fw-surface: #f8fafc;
-  --fw-surface-alt: #ffffff;
-  --fw-control-bg: #f1f5f9;
-  --fw-control-hover: #e2e8f0;
-  --fw-focus-border: rgba(37, 99, 235, 0.55);
-  --fw-focus-ring: rgba(37, 99, 235, 0.16);
-  --fw-accent-border: rgba(37, 99, 235, 0.42);
-  --fw-accent-shadow: rgba(37, 99, 235, 0.22);
-  --fw-danger: #b91c1c;
-  --fw-danger-border: rgba(220, 38, 38, 0.32);
-  color-scheme: light;
-}
-
-:global(.feature-window-dialog--agent .el-dialog__header) {
-  border-bottom: 1px solid var(--fw-divider);
-  padding: 14px 18px;
-}
-
-:global(.feature-window-dialog--agent .el-dialog__body) {
-  padding: 16px 18px 18px;
-  color: var(--fw-text);
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-:global(.feature-window-dialog--agent .el-dialog__footer) {
-  border-top: 1px solid var(--fw-divider);
-  padding: 12px 18px 16px;
-}
-
-.feature-window-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.feature-window-title {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.feature-window-close {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--fw-border);
-  border-radius: 10px;
-  background: var(--fw-control-bg);
-  color: var(--fw-text);
-  cursor: pointer;
-}
-
-.feature-window-close:hover {
-  border-color: var(--fw-focus-border);
-  background: var(--fw-control-hover);
-}
-
-.feature-window-close:focus-visible {
-  outline: 2px solid var(--fw-focus-ring);
-  outline-offset: 1px;
-}
-
-.feature-window-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.feature-window-editable {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  overscroll-behavior: contain;
-  padding-right: 2px;
-}
-
-.feature-window-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.feature-window-hint {
-  color: var(--fw-muted);
-  font-size: 12px;
-}
-
-.feature-window-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  flex: 0 0 auto;
-}
-
-.feature-window-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.feature-window-field-full {
-  grid-column: 1 / -1;
-}
-
-.feature-window-input {
-  border: 1px solid var(--fw-border);
-  border-radius: 8px;
-  background: var(--fw-surface-alt);
-  color: var(--fw-text);
-  padding: 7px 9px;
-  font-size: 12px;
-  outline: none;
-}
-
-.feature-window-input::placeholder {
-  color: var(--fw-muted);
-}
-
-.feature-window-input:focus {
-  border-color: var(--fw-focus-border);
-  box-shadow: 0 0 0 2px var(--fw-focus-ring);
-}
-
-.feature-window-input option {
-  background: var(--fw-surface);
-  color: var(--fw-text);
-}
-
-.feature-window-textarea {
-  min-height: 96px;
-  resize: vertical;
-}
-
-.feature-window-avatar-card {
-  border: 1px solid var(--fw-border-soft);
-  border-radius: 10px;
-  background: var(--fw-surface);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.feature-window-avatar-header {
-  display: flex;
-  align-items: center;
-}
-
-.feature-window-avatar-trigger {
-  border: 1px solid var(--fw-border-soft);
-  border-radius: 10px;
-  background: var(--fw-surface-alt);
-  color: inherit;
-  min-height: 44px;
-  padding: 6px 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-
-.feature-window-avatar-trigger:hover {
-  border-color: var(--fw-focus-border);
-  background: var(--fw-control-hover);
-}
-
-.feature-window-avatar-trigger:focus-visible {
-  outline: 2px solid var(--fw-focus-ring);
-  outline-offset: 1px;
-}
-
-.feature-window-avatar-chevron {
-  color: var(--fw-muted);
-  font-size: 12px;
-}
-
-.feature-window-avatar-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.feature-window-avatar-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.feature-window-avatar-preview {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  border: 1px solid var(--fw-border);
-  background: linear-gradient(145deg, var(--fw-control-bg), var(--fw-surface-alt));
-  color: var(--fw-text);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.feature-window-avatar-icon {
-  font-size: 16px;
-}
-
-.feature-window-avatar-text {
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.feature-window-avatar-custom {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.feature-window-avatar-color {
-  width: 42px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid var(--fw-border);
-  background: transparent;
-  padding: 2px;
-  cursor: pointer;
-}
-
-.feature-window-avatar-icons {
-  display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.feature-window-avatar-option {
-  border: 1px solid var(--fw-border);
-  border-radius: 8px;
-  background: var(--fw-surface-alt);
-  color: var(--fw-text);
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.feature-window-avatar-option.active {
-  border-color: var(--fw-accent-border);
-  box-shadow: inset 0 0 0 1px var(--fw-accent-shadow);
-}
-
-.feature-window-avatar-option:hover {
-  border-color: var(--fw-focus-border);
-  background: var(--fw-control-hover);
-}
-
-.feature-window-avatar-colors {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.feature-window-avatar-swatch {
-  min-width: 32px;
-  height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--fw-border);
-  background: var(--fw-surface-alt);
-  color: var(--fw-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  cursor: pointer;
-}
-
-.feature-window-avatar-swatch.active {
-  border-color: var(--fw-accent-border);
-  box-shadow: inset 0 0 0 1px var(--fw-accent-shadow);
-}
-
-.feature-window-avatar-default {
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.feature-window-checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.feature-window-inline-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.feature-window-inline-field > span {
-  color: var(--fw-muted);
-}
-
-.feature-window-select {
-  border: 1px solid var(--fw-border);
-  border-radius: 8px;
-  background: var(--fw-control-bg);
-  color: var(--fw-text);
-  padding: 5px 8px;
-  min-width: 132px;
-}
-
-.feature-window-select:focus-visible {
-  outline: 2px solid var(--fw-focus-ring);
-  outline-offset: 1px;
-}
-
-.feature-window-tool-panel {
-  border: 1px solid var(--fw-border-soft);
-  border-radius: 10px;
-  background: var(--fw-surface);
-  padding: 10px;
-  flex: 1 1 auto;
-  min-height: 260px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.feature-window-tool-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.feature-window-tool-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--fw-muted);
-}
-
-.feature-window-tool-item {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  border: 1px solid var(--fw-border-soft);
-  border-radius: 8px;
-  padding: 7px 8px;
-  background: var(--fw-surface-alt);
-}
-
-.feature-window-tool-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.feature-window-tool-name {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.feature-window-tool-desc {
-  font-size: 12px;
-  color: var(--fw-muted);
-}
-
-.feature-window-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.feature-window-btn {
-  border: 1px solid var(--fw-border);
-  border-radius: 10px;
-  background: var(--fw-control-bg);
-  color: var(--fw-text);
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.feature-window-btn:hover {
-  border-color: var(--fw-focus-border);
-  background: var(--fw-control-hover);
-  color: var(--fw-text);
-}
-
-.feature-window-btn:focus-visible {
-  outline: 2px solid var(--fw-focus-ring);
-  outline-offset: 1px;
-}
-
-.feature-window-btn.primary {
-  border-color: var(--fw-accent-border);
-  box-shadow: inset 0 0 0 1px var(--fw-accent-shadow);
-}
-
-.feature-window-btn.danger {
-  border-color: var(--fw-danger-border);
-  color: var(--fw-danger);
-}
-
-.feature-window-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.feature-window-empty {
-  color: var(--fw-muted);
-  font-size: 12px;
-  text-align: center;
-  padding: 12px;
-}
-
-@media (max-width: 900px) {
-  .feature-window-form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .feature-window-avatar-icons {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-
-  .feature-window-avatar-custom {
-    grid-template-columns: 36px minmax(0, 1fr);
-  }
-
-  .feature-window-tool-panel {
-    min-height: 180px;
-  }
-
-  .feature-window-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}
-</style>

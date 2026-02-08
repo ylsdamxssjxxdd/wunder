@@ -4419,7 +4419,22 @@
           </div>
           <div class="form-row">
             <label data-i18n="monitor.detail.events">事件详情</label>
-            <div id="monitorDetailEvents" class="log log-collapsible"></div>
+            <div class="monitor-detail-events-panel">
+              <div class="monitor-detail-filters">
+                <select id="monitorDetailTypeFilter" class="select">
+                  <option value="" data-i18n="monitor.detail.filter.allTypes">全部类型</option>
+                </select>
+                <input
+                  id="monitorDetailKeyword"
+                  class="input"
+                  type="text"
+                  data-i18n-placeholder="monitor.detail.filter.keywordPlaceholder"
+                  placeholder="输入事件关键词"
+                />
+                <div id="monitorDetailFilterStats" class="muted"></div>
+              </div>
+              <div id="monitorDetailEvents" class="log log-collapsible"></div>
+            </div>
           </div>
         </div>
         <div class="modal-actions">

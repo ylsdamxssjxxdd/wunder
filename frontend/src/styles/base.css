@@ -10,6 +10,10 @@
   --light-border: #e5e7eb;
   --light-text: #1f2937;
   --scrollbar-size: 6px;
+  --user-topbar-height: 64px;
+  --user-topbar-padding-y: 10px;
+  --user-topbar-padding-x: 16px;
+  --user-topbar-gap: 16px;
 }
 
 * {

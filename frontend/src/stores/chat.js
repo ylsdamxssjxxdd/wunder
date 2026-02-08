@@ -449,6 +449,21 @@ const normalizeStreamEventId = (value) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const getRuntimeLastEventId = (runtime) => {
+  const normalized = normalizeStreamEventId(runtime?.lastEventId);
+  return normalized === null ? 0 : normalized;
+};
+
+const updateRuntimeLastEventId = (runtime, eventId) => {
+  if (!runtime) return;
+  const normalized = normalizeStreamEventId(eventId);
+  if (normalized === null) return;
+  const current = normalizeStreamEventId(runtime.lastEventId);
+  if (current === null || normalized > current) {
+    runtime.lastEventId = normalized;
+  }
+};
+
 const normalizeStreamRound = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number.parseInt(value, 10);
@@ -1434,7 +1449,8 @@ const ensureRuntime = (sessionId) => {
       resumeRequestId: null,
       watchController: null,
       watchRequestId: null,
-      stopRequested: false
+      stopRequested: false,
+      lastEventId: 0
     });
   }
   return sessionRuntime.get(key);
@@ -1550,6 +1566,18 @@ const findPendingAssistantMessage = (messages) =>
         .find((message) => message?.role === 'assistant' && normalizeFlag(message.stream_incomplete))
     : null;
 
+const findAssistantMessageByRound = (messages, roundNumber) => {
+  if (!Array.isArray(messages) || !Number.isFinite(roundNumber) || roundNumber <= 0) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    if (normalizeStreamRound(message.stream_round) === roundNumber) {
+      return message;
+    }
+  }
+  return null;
+};
+
 const ensurePendingAssistantMessage = (store, sessionId, messages, baseEventId) => {
   if (!Array.isArray(messages)) return null;
   const existing = findPendingAssistantMessage(messages);
@@ -1598,7 +1626,19 @@ const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
   return true;
 };
 
+const hasAnchoredWatchUserMessage = (messages, anchor, content) => {
+  if (!Array.isArray(messages) || !anchor || !content) return false;
+  const anchorIndex = messages.indexOf(anchor);
+  if (anchorIndex <= 0) return false;
+  const previous = messages[anchorIndex - 1];
+  if (previous?.role !== 'user') return false;
+  return String(previous.content || '') === content;
+};
+
 const insertWatchUserMessage = (store, sessionId, messages, content, eventTimestampMs, anchor) => {
+  if (hasAnchoredWatchUserMessage(messages, anchor, content)) {
+    return;
+  }
   if (!shouldInsertWatchUserMessage(messages, content, eventTimestampMs)) {
     return;
   }
@@ -1632,7 +1672,10 @@ const startSessionWatcher = (store, sessionId) => {
   const workflowState = getSessionWorkflowState(key);
   const roundStates = new Map();
   const completedRounds = new Set();
-  let lastEventId = resolveMaxStreamEventId(sessionMessagesRef) || 0;
+  let lastEventId = Math.max(
+    resolveMaxStreamEventId(sessionMessagesRef) || 0,
+    getRuntimeLastEventId(runtime)
+  );
   const minEventTimestampMs =
     lastEventId > 0 ? null : resolveLastAssistantTimestampMs(sessionMessagesRef);
 
@@ -1641,27 +1684,27 @@ const startSessionWatcher = (store, sessionId) => {
     if (completedRounds.has(roundNumber)) return null;
     const existing = roundStates.get(roundNumber);
     if (existing) return existing;
-    const pendingCandidate = findPendingAssistantMessage(sessionMessagesRef);
-    if (pendingCandidate) {
-      const assignedRound = normalizeStreamRound(pendingCandidate.stream_round);
-      const alreadyTracked = Array.from(roundStates.values()).some(
-        (entry) => entry.message === pendingCandidate
-      );
+    const candidate =
+      findAssistantMessageByRound(sessionMessagesRef, roundNumber) ||
+      findPendingAssistantMessage(sessionMessagesRef);
+    if (candidate) {
+      const assignedRound = normalizeStreamRound(candidate.stream_round);
+      const alreadyTracked = Array.from(roundStates.values()).some((entry) => entry.message === candidate);
       if (!alreadyTracked && (assignedRound === null || assignedRound === roundNumber)) {
         if (assignedRound === null) {
-          pendingCandidate.stream_round = roundNumber;
+          candidate.stream_round = roundNumber;
         }
-        if (!pendingCandidate.created_at && Number.isFinite(eventTimestampMs)) {
-          pendingCandidate.created_at = new Date(eventTimestampMs).toISOString();
+        if (!candidate.created_at && Number.isFinite(eventTimestampMs)) {
+          candidate.created_at = new Date(eventTimestampMs).toISOString();
         }
-        pendingCandidate.workflowStreaming = true;
-        pendingCandidate.stream_incomplete = true;
+        candidate.workflowStreaming = true;
+        candidate.stream_incomplete = true;
         const processor = createWorkflowProcessor(
-          pendingCandidate,
+          candidate,
           workflowState,
           () => notifySessionSnapshot(store, key, sessionMessagesRef)
         );
-        const state = { message: pendingCandidate, processor, userInserted: false };
+        const state = { message: candidate, processor, userInserted: false };
         roundStates.set(roundNumber, state);
         return state;
       }
@@ -1721,6 +1764,7 @@ const startSessionWatcher = (store, sessionId) => {
         return;
       }
       lastEventId = normalizedEventId;
+      updateRuntimeLastEventId(runtime, normalizedEventId);
     }
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
     if (
@@ -3030,6 +3074,7 @@ export const useChatStore = defineStore('chat', {
             return;
           }
           assignStreamEventId(assistantMessage, eventId);
+          updateRuntimeLastEventId(runtime, eventId);
           processor.handleEvent(eventType, dataText);
         };
         const streamWithSse = async () => {
@@ -3175,6 +3220,7 @@ export const useChatStore = defineStore('chat', {
       try {
         const onEvent = (eventType, dataText, eventId) => {
           assignStreamEventId(message, eventId);
+          updateRuntimeLastEventId(runtime, eventId);
           processor.handleEvent(eventType, dataText);
         };
         const streamWithSse = async () => {

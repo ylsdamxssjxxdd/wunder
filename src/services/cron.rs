@@ -519,7 +519,23 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
         }
         "every" => {
             let every_ms = schedule.every_ms.unwrap_or(0).max(1000);
-            Ok((kind, None, Some(every_ms), None, None))
+            let start_at = schedule
+                .at
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(start_at) = start_at {
+                if parse_rfc3339(start_at).is_none() {
+                    return Err(anyhow!("invalid schedule.at"));
+                }
+            }
+            Ok((
+                kind,
+                start_at.map(|value| value.to_string()),
+                Some(every_ms),
+                None,
+                None,
+            ))
         }
         "cron" => {
             let expr = schedule
@@ -568,7 +584,11 @@ fn compute_next_run_at(
             if every_ms <= 0 {
                 return None;
             }
-            let anchor_ms = (created_at * 1000.0) as i64;
+            let anchor_ts = schedule_at
+                .and_then(parse_rfc3339)
+                .map(|value| value.timestamp_millis() as f64 / 1000.0)
+                .unwrap_or(created_at);
+            let anchor_ms = (anchor_ts * 1000.0) as i64;
             let now_ms = (now * 1000.0) as i64;
             if now_ms < anchor_ms {
                 return Some(anchor_ms as f64 / 1000.0);

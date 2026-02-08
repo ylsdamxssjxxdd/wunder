@@ -38,8 +38,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  min-height: 56px;
+  flex-wrap: nowrap;
+  gap: var(--user-topbar-gap);
+  padding: var(--user-topbar-padding-y) var(--user-topbar-padding-x);
+  height: var(--user-topbar-height);
+  min-height: var(--user-topbar-height);
+  position: sticky;
+  top: 0;
+  z-index: 10;
   background: linear-gradient(
     90deg,
     rgba(var(--chat-primary-rgb), 0.16),
@@ -52,20 +58,24 @@
 .chat-shell .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .chat-shell .brand-meta {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 4px;
+  min-width: 0;
 }
 
 .chat-shell .brand-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 12px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .chat-shell .transport-status {
@@ -111,9 +121,9 @@
 }
 
 .chat-shell .brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
   background: radial-gradient(circle at 30% 30%, rgba(77, 216, 255, 0.5), rgba(77, 216, 255, 0.08));
   border: 1px solid var(--chat-border);
   display: flex;
@@ -125,19 +135,18 @@
 }
 
 .chat-shell .brand-title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.4px;
-  line-height: 1.1;
 }
 
 .chat-shell .brand-sub {
+  color: var(--chat-muted);
+  font-size: 13px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--chat-muted);
-  font-size: 12px;
-  line-height: 1.1;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .chat-shell .brand-subtitle {
@@ -171,7 +180,10 @@
 .chat-shell .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  margin-left: auto;
 }
 
 .chat-shell .topbar-compact-actions {
@@ -182,7 +194,7 @@
 }
 
 .chat-shell .topbar-panel-btn {
-  padding: 5px 8px;
+  padding: 6px 12px;
   border-radius: 12px;
   border: 1px solid rgba(77, 216, 255, 0.35);
   background: rgba(255, 255, 255, 0.05);
@@ -212,8 +224,9 @@
 }
 
 .chat-shell .topbar-feature-btn {
-  min-width: 34px;
-  padding: 5px 8px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   justify-content: center;
   gap: 0;
 }
@@ -311,8 +324,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 12px;
   border: 1px solid var(--chat-border);
   background: rgba(255, 255, 255, 0.06);
@@ -340,8 +353,8 @@
 .chat-shell .topbar-user {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 6px;
+  gap: 10px;
+  padding: 4px 8px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--chat-border);
@@ -374,7 +387,7 @@
 }
 
 .chat-shell .logout-btn {
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
@@ -391,8 +404,8 @@
 }
 
 .chat-shell .topbar-icon-btn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 12px;
   border: 1px solid rgba(77, 216, 255, 0.35);
   background: rgba(255, 255, 255, 0.05);

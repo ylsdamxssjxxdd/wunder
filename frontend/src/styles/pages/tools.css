@@ -181,6 +181,109 @@
   gap: 8px;
 }
 
+.cron-sidebar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cron-create-panel {
+  border: 1px solid var(--portal-border);
+  background: rgba(15, 23, 42, 0.42);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-create-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--portal-text);
+}
+
+.cron-create-label {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.cron-create-input {
+  width: 100%;
+  border: 1px solid var(--portal-border);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.36);
+  color: var(--portal-text);
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cron-create-input:focus {
+  outline: none;
+  border-color: rgba(77, 216, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(77, 216, 255, 0.16);
+}
+
+.cron-create-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.cron-create-mode {
+  display: flex;
+  gap: 6px;
+}
+
+.cron-create-mode-btn {
+  flex: 1 1 0;
+  border: 1px solid var(--portal-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--portal-text);
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cron-create-mode-btn.active {
+  border-color: rgba(77, 216, 255, 0.72);
+  box-shadow: 0 0 0 2px rgba(77, 216, 255, 0.16);
+}
+
+.cron-create-interval {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.cron-create-input--number {
+  width: 76px;
+  min-width: 76px;
+}
+
+.cron-create-input--select {
+  flex: 1;
+  min-width: 0;
+}
+
+.cron-create-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--portal-muted);
+}
+
+.cron-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .cron-sidebar-title {
   font-size: 13px;
   font-weight: 600;
@@ -511,6 +614,21 @@
   background: rgba(148, 163, 184, 0.12);
   border-color: rgba(148, 163, 184, 0.4);
   color: var(--portal-text);
+}
+
+:root[data-user-theme='light'] .cron-create-panel {
+  background: rgba(248, 250, 252, 0.9);
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+:root[data-user-theme='light'] .cron-create-input {
+  background: #ffffff;
+  border-color: rgba(148, 163, 184, 0.42);
+}
+
+:root[data-user-theme='light'] .cron-create-mode-btn {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.4);
 }
 
 :root[data-user-theme='light'] .cron-run-item {

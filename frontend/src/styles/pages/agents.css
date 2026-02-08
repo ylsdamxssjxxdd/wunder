@@ -142,12 +142,28 @@
   justify-content: space-between;
 }
 
+.agent-card-meta-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
 .agent-card-container-id {
   color: var(--portal-muted);
   font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
-  margin-left: auto;
+}
+
+.agent-card-cron-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  color: var(--portal-muted);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .agent-card-footer {
@@ -563,6 +579,11 @@
   .agent-editor-form {
     grid-template-columns: 1fr;
   }
+
+  .agent-share-card--combined {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 }
 
 .agent-basic-settings {
@@ -689,6 +710,19 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 16, 30, 0.62);
   min-width: 180px;
+}
+
+.agent-share-card--combined {
+  flex: 0 0 260px;
+  min-width: 240px;
+}
+
+.agent-share-row--sandbox {
+  justify-content: space-between;
+}
+
+.agent-share-row--sandbox .el-select {
+  margin-left: auto;
 }
 
 .agent-share-title {

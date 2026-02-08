@@ -19,6 +19,7 @@ use std::sync::{
 use std::thread;
 use sysinfo::{Disks, ProcessRefreshKind, System};
 use tracing::{error, warn};
+use uuid::Uuid;
 use walkdir::WalkDir;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
@@ -32,8 +33,61 @@ const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MonitorLogProfile {
+    Normal,
+    Debug,
+}
+
+impl MonitorLogProfile {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Debug => "debug",
+        }
+    }
+
+    fn from_request(debug_payload: bool, is_admin: bool) -> Self {
+        if debug_payload && is_admin {
+            Self::Debug
+        } else {
+            Self::Normal
+        }
+    }
+
+    fn from_storage(raw: Option<&str>, is_admin: bool) -> Self {
+        if let Some(value) = raw {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "debug" | "verbose" => {
+                    return if is_admin { Self::Debug } else { Self::Normal };
+                }
+                "normal" | "default" => return Self::Normal,
+                _ => {}
+            }
+        }
+        if is_admin {
+            Self::Debug
+        } else {
+            Self::Normal
+        }
+    }
+
+    fn keeps_full_payload(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+
+    fn should_keep_high_volume_events(self) -> bool {
+        matches!(self, Self::Debug)
+    }
+
+    fn should_apply_event_limit(self) -> bool {
+        matches!(self, Self::Normal)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MonitorEvent {
+    event_id: i64,
     timestamp: f64,
     event_type: String,
     data: Value,
@@ -42,6 +96,7 @@ struct MonitorEvent {
 impl MonitorEvent {
     fn to_storage(&self) -> Value {
         json!({
+            "event_id": self.event_id,
             "timestamp": self.timestamp,
             "type": self.event_type,
             "data": self.data,
@@ -49,6 +104,7 @@ impl MonitorEvent {
     }
 
     fn from_storage(payload: &Value) -> Option<Self> {
+        let event_id = payload.get("event_id").and_then(Value::as_i64).unwrap_or(0);
         let timestamp = payload
             .get("timestamp")
             .and_then(Value::as_f64)
@@ -63,6 +119,7 @@ impl MonitorEvent {
             .cloned()
             .unwrap_or(Value::Object(Default::default()));
         Some(Self {
+            event_id,
             timestamp,
             event_type,
             data,
@@ -80,6 +137,7 @@ impl MonitorEvent {
             }
         }
         json!({
+            "event_id": self.event_id,
             "timestamp": format_ts(self.timestamp),
             "type": self.event_type,
             "data": data,
@@ -167,6 +225,8 @@ struct SessionRecord {
     user_id: String,
     agent_id: String,
     is_admin: bool,
+    log_profile: MonitorLogProfile,
+    trace_id: String,
     question: String,
     status: String,
     stage: String,
@@ -178,6 +238,7 @@ struct SessionRecord {
     user_rounds: i64,
     context_tokens: i64,
     context_tokens_peak: i64,
+    next_event_id: i64,
     events: VecDeque<MonitorEvent>,
     dirty: bool,
     last_persisted: f64,
@@ -190,6 +251,8 @@ impl SessionRecord {
         agent_id: String,
         question: String,
         is_admin: bool,
+        log_profile: MonitorLogProfile,
+        trace_id: String,
         now: f64,
     ) -> Self {
         Self {
@@ -197,6 +260,8 @@ impl SessionRecord {
             user_id,
             agent_id,
             is_admin,
+            log_profile,
+            trace_id,
             question,
             status: MonitorState::STATUS_RUNNING.to_string(),
             stage: "received".to_string(),
@@ -208,6 +273,7 @@ impl SessionRecord {
             user_rounds: 1,
             context_tokens: 0,
             context_tokens_peak: 0,
+            next_event_id: 1,
             events: VecDeque::new(),
             dirty: true,
             last_persisted: 0.0,
@@ -225,6 +291,8 @@ impl SessionRecord {
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "is_admin": self.is_admin,
+            "log_profile": self.log_profile.as_str(),
+            "trace_id": self.trace_id,
             "question": self.question,
             "status": self.status,
             "stage": self.stage,
@@ -244,6 +312,9 @@ impl SessionRecord {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "agent_id": self.agent_id,
+            "is_admin": self.is_admin,
+            "log_profile": self.log_profile.as_str(),
+            "trace_id": self.trace_id,
             "question": self.question,
             "status": self.status,
             "stage": self.stage,
@@ -256,6 +327,7 @@ impl SessionRecord {
             "rounds": self.user_rounds,
             "context_tokens": self.context_tokens,
             "context_tokens_peak": self.context_tokens_peak,
+            "next_event_id": self.next_event_id,
             "events": self
                 .events
                 .iter()
@@ -283,6 +355,17 @@ impl SessionRecord {
             .get("is_admin")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let log_profile = MonitorLogProfile::from_storage(
+            payload.get("log_profile").and_then(Value::as_str),
+            is_admin,
+        );
+        let trace_id = payload
+            .get("trace_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(build_monitor_trace_id);
         let question = payload
             .get("question")
             .and_then(Value::as_str)
@@ -338,11 +421,26 @@ impl SessionRecord {
                 }
             }
         }
+        let mut cursor = 1_i64;
+        for event in &mut events {
+            if event.event_id <= 0 {
+                event.event_id = cursor;
+            }
+            cursor = event.event_id.saturating_add(1);
+        }
+        let next_event_id = payload
+            .get("next_event_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(1)
+            .max(cursor)
+            .max(1);
         Some(Self {
             session_id,
             user_id,
             agent_id,
             is_admin,
+            log_profile,
+            trace_id,
             question,
             status,
             stage,
@@ -354,6 +452,7 @@ impl SessionRecord {
             user_rounds,
             context_tokens,
             context_tokens_peak: context_tokens_peak.max(context_tokens),
+            next_event_id,
             events,
             dirty: false,
             last_persisted: updated_time,
@@ -547,6 +646,7 @@ impl MonitorState {
         agent_id: &str,
         question: &str,
         is_admin: bool,
+        debug_payload: bool,
     ) -> i64 {
         self.run_guarded(
             "monitor.register",
@@ -561,6 +661,7 @@ impl MonitorState {
                     agent_id,
                     question,
                     is_admin,
+                    debug_payload,
                     now,
                     false,
                 );
@@ -1344,7 +1445,7 @@ impl MonitorState {
             } else if record.status == Self::STATUS_CANCELLING {
                 record.stage = "cancelling".to_string();
             }
-            if !record.is_admin {
+            if record.log_profile.should_apply_event_limit() {
                 if let Some(limit) = self.event_limit {
                     while record.events.len() > limit {
                         record.events.pop_front();
@@ -1418,6 +1519,7 @@ impl MonitorState {
         agent_id: &str,
         question: &str,
         is_admin: bool,
+        debug_payload: bool,
         now: f64,
         append_received: bool,
     ) -> (Option<SessionRecord>, i64) {
@@ -1425,6 +1527,7 @@ impl MonitorState {
             return (None, 1);
         }
         let cleaned_agent = agent_id.trim();
+        let log_profile = MonitorLogProfile::from_request(debug_payload, is_admin);
         {
             let mut forced = self.forced_cancelled.lock();
             forced.remove(session_id);
@@ -1433,6 +1536,14 @@ impl MonitorState {
             record.user_rounds += 1;
             record.question = question.to_string();
             record.is_admin = is_admin;
+            record.log_profile = log_profile;
+            let trace_id = if record.trace_id.trim().is_empty() {
+                let generated = build_monitor_trace_id();
+                record.trace_id = generated.clone();
+                generated
+            } else {
+                record.trace_id.clone()
+            };
             if !cleaned_agent.is_empty() {
                 record.agent_id = cleaned_agent.to_string();
             }
@@ -1452,19 +1563,39 @@ impl MonitorState {
                 &json!({
                     "summary": summary,
                     "user_round": user_round,
-                    "question": question
+                    "question": question,
+                    "trace_id": trace_id,
+                    "log_profile": log_profile.as_str(),
                 }),
                 now,
             );
+            if !question.trim().is_empty() {
+                self.append_event(
+                    record,
+                    "user_input",
+                    &json!({
+                        "summary": question,
+                        "message": question,
+                        "question": question,
+                        "user_round": user_round,
+                        "trace_id": trace_id,
+                        "log_profile": log_profile.as_str(),
+                    }),
+                    now,
+                );
+            }
             record.dirty = true;
             return (self.maybe_persist_record(record, now, false), user_round);
         }
+        let trace_id = build_monitor_trace_id();
         let mut record = SessionRecord::new(
             session_id.to_string(),
             user_id.to_string(),
             cleaned_agent.to_string(),
             question.to_string(),
             is_admin,
+            log_profile,
+            trace_id.clone(),
             now,
         );
         let event_type = if append_received {
@@ -1480,10 +1611,27 @@ impl MonitorState {
             &json!({
                 "summary": summary,
                 "user_round": user_round,
-                "question": question
+                "question": question,
+                "trace_id": trace_id,
+                "log_profile": log_profile.as_str(),
             }),
             now,
         );
+        if !question.trim().is_empty() {
+            self.append_event(
+                &mut record,
+                "user_input",
+                &json!({
+                    "summary": question,
+                    "message": question,
+                    "question": question,
+                    "user_round": user_round,
+                    "trace_id": trace_id,
+                    "log_profile": log_profile.as_str(),
+                }),
+                now,
+            );
+        }
         record.dirty = true;
         let to_persist = self.maybe_persist_record(&mut record, now, false);
         sessions.insert(session_id.to_string(), record);
@@ -1564,19 +1712,29 @@ impl MonitorState {
         data: &Value,
         timestamp: f64,
     ) {
-        if !record.is_admin
-            && (should_skip_non_admin_event(event_type)
-                || self.drop_event_types.contains(event_type))
+        let dropped_by_config = self.drop_event_types.contains(event_type);
+        if should_skip_event_for_profile(record.log_profile, event_type)
+            || (dropped_by_config && !record.log_profile.keeps_full_payload())
         {
             return;
         }
-        let sanitized = self.sanitize_event_data(event_type, data, record.is_admin);
+        let mut payload = data.clone();
+        if let Value::Object(ref mut map) = payload {
+            map.entry("trace_id".to_string())
+                .or_insert_with(|| Value::String(record.trace_id.clone()));
+            map.entry("log_profile".to_string())
+                .or_insert_with(|| Value::String(record.log_profile.as_str().to_string()));
+        }
+        let sanitized = self.sanitize_event_data(event_type, &payload, record.log_profile);
+        let event_id = record.next_event_id.max(1);
+        record.next_event_id = event_id.saturating_add(1);
         record.events.push_back(MonitorEvent {
+            event_id,
             timestamp,
             event_type: event_type.to_string(),
             data: sanitized,
         });
-        if !record.is_admin {
+        if record.log_profile.should_apply_event_limit() {
             if let Some(limit) = self.event_limit {
                 while record.events.len() > limit {
                     record.events.pop_front();
@@ -1585,8 +1743,13 @@ impl MonitorState {
         }
     }
 
-    fn sanitize_event_data(&self, event_type: &str, data: &Value, is_admin: bool) -> Value {
-        if is_admin {
+    fn sanitize_event_data(
+        &self,
+        event_type: &str,
+        data: &Value,
+        log_profile: MonitorLogProfile,
+    ) -> Value {
+        if log_profile.keeps_full_payload() {
             return data.clone();
         }
         if !data.is_object() {
@@ -2018,8 +2181,15 @@ fn resolve_payload_limit(raw: i64) -> Option<usize> {
     }
 }
 
-fn should_skip_non_admin_event(event_type: &str) -> bool {
-    event_type == "llm_output_delta"
+fn build_monitor_trace_id() -> String {
+    format!("trace_{}", Uuid::new_v4().simple())
+}
+
+fn should_skip_event_for_profile(log_profile: MonitorLogProfile, event_type: &str) -> bool {
+    if log_profile.should_keep_high_volume_events() {
+        return false;
+    }
+    matches!(event_type, "llm_output_delta" | "tool_output_delta")
 }
 
 fn trim_text(text: &str, limit: Option<usize>) -> String {
@@ -2037,18 +2207,31 @@ fn trim_text(text: &str, limit: Option<usize>) -> String {
 }
 
 fn trim_string_fields(data: &Value, limit: Option<usize>) -> Value {
-    let Value::Object(map) = data else {
-        return data.clone();
-    };
-    let mut output = serde_json::Map::new();
-    for (key, value) in map {
-        if let Value::String(text) = value {
-            output.insert(key.clone(), Value::String(trim_text(text, limit)));
-        } else {
-            output.insert(key.clone(), value.clone());
-        }
+    trim_json_value(data, limit, 0)
+}
+
+fn trim_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
+    const MAX_DEPTH: usize = 16;
+    if depth >= MAX_DEPTH {
+        return value.clone();
     }
-    Value::Object(output)
+    match value {
+        Value::String(text) => Value::String(trim_text(text, limit)),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| trim_json_value(item, limit, depth + 1))
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let mut output = serde_json::Map::new();
+            for (key, item) in map {
+                output.insert(key.clone(), trim_json_value(item, limit, depth + 1));
+            }
+            Value::Object(output)
+        }
+        _ => value.clone(),
+    }
 }
 
 fn calc_dir_size(path: &Path, extensions: Option<&[&str]>) -> u64 {
@@ -2157,12 +2340,66 @@ fn localize_summary(summary: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::should_skip_non_admin_event;
+    use super::{should_skip_event_for_profile, trim_string_fields, MonitorLogProfile};
+    use serde_json::json;
 
     #[test]
-    fn non_admin_sessions_skip_llm_output_delta_events() {
-        assert!(should_skip_non_admin_event("llm_output_delta"));
-        assert!(!should_skip_non_admin_event("llm_output"));
-        assert!(!should_skip_non_admin_event("tool_call"));
+    fn normal_profile_skips_high_volume_events() {
+        assert!(should_skip_event_for_profile(
+            MonitorLogProfile::Normal,
+            "llm_output_delta"
+        ));
+        assert!(should_skip_event_for_profile(
+            MonitorLogProfile::Normal,
+            "tool_output_delta"
+        ));
+        assert!(!should_skip_event_for_profile(
+            MonitorLogProfile::Normal,
+            "llm_output"
+        ));
+    }
+
+    #[test]
+    fn debug_profile_keeps_high_volume_events() {
+        assert!(!should_skip_event_for_profile(
+            MonitorLogProfile::Debug,
+            "llm_output_delta"
+        ));
+        assert!(!should_skip_event_for_profile(
+            MonitorLogProfile::Debug,
+            "tool_output_delta"
+        ));
+    }
+
+    #[test]
+    fn debug_profile_requires_admin_flag() {
+        assert_eq!(
+            MonitorLogProfile::from_request(true, true),
+            MonitorLogProfile::Debug
+        );
+        assert_eq!(
+            MonitorLogProfile::from_request(true, false),
+            MonitorLogProfile::Normal
+        );
+        assert_eq!(
+            MonitorLogProfile::from_storage(Some("debug"), false),
+            MonitorLogProfile::Normal
+        );
+    }
+
+    #[test]
+    fn trim_string_fields_recursively_applies_limit() {
+        let payload = json!({
+            "outer": "abcdefg",
+            "nested": {
+                "inner": "hijklmn"
+            },
+            "arr": ["opqrst", {"deep": "uvwxyz"}]
+        });
+        let trimmed = trim_string_fields(&payload, Some(4));
+        assert_eq!(trimmed["outer"], json!("abcd...(truncated)"));
+        assert_eq!(trimmed["nested"]["inner"], json!("hijk...(truncated)"));
+        assert_eq!(trimmed["arr"][0], json!("opqr...(truncated)"));
+        assert_eq!(trimmed["arr"][1]["deep"], json!("uvwx...(truncated)"));
     }
 }

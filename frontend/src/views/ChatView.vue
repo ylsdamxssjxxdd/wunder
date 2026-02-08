@@ -70,14 +70,6 @@
                 <span class="topbar-feature-transport-dot" aria-hidden="true"></span>
                 <span>{{ featureTransportText }}</span>
               </div>
-              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('cron')">
-                <i class="fa-solid fa-clock topbar-icon" aria-hidden="true"></i>
-                <span>{{ t('chat.features.cron') }}</span>
-              </button>
-              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('channels')">
-                <i class="fa-solid fa-share-nodes topbar-icon" aria-hidden="true"></i>
-                <span>{{ t('chat.features.channels') }}</span>
-              </button>
               <button
                 class="topbar-feature-item"
                 type="button"
@@ -85,6 +77,14 @@
               >
                 <i class="fa-solid fa-pen-to-square topbar-icon" aria-hidden="true"></i>
                 <span>{{ t('chat.features.agentSettings') }}</span>
+              </button>
+              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('cron')">
+                <i class="fa-solid fa-clock topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.cron') }}</span>
+              </button>
+              <button class="topbar-feature-item" type="button" @click="handleFeatureAction('channels')">
+                <i class="fa-solid fa-share-nodes topbar-icon" aria-hidden="true"></i>
+                <span>{{ t('chat.features.channels') }}</span>
               </button>
               <button
                 class="topbar-feature-item topbar-feature-item-danger"

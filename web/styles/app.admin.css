@@ -3328,6 +3328,45 @@
   z-index: 215;
 }
 
+#monitorDetailModal .modal-card {
+  height: 90vh;
+}
+
+#monitorDetailModal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+#monitorDetailModal .modal-body .form-row {
+  margin-bottom: 0;
+}
+
+#monitorDetailModal .modal-body .form-row:last-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#monitorDetailModal .monitor-detail-events-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+#monitorDetailModal #monitorDetailEvents {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#monitorDetailModal #monitorDetailQuestion {
+  max-height: 88px;
+  overflow-y: auto;
+}
+
 #skillModal {
   z-index: 220;
 }

@@ -77,6 +77,22 @@
                     <span>{{ t('portal.card.idle') }}</span>
                   </div>
                 </div>
+                <div class="agent-card-meta agent-card-meta--updated">
+                  <span>{{ t('portal.card.defaultMeta') }}</span>
+                  <span class="agent-card-meta-right">
+                    <span
+                      v-if="hasAgentCronTask(DEFAULT_AGENT_KEY)"
+                      class="agent-card-cron-indicator"
+                      :title="t('portal.agent.cronHint')"
+                      :aria-label="t('portal.agent.cronHint')"
+                    >
+                      <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                    </span>
+                    <span class="agent-card-container-id">
+                      {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(null) }) }}
+                    </span>
+                  </span>
+                </div>
               </div>
               <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
@@ -120,8 +136,18 @@
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
-                  <span class="agent-card-container-id">
-                    {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                  <span class="agent-card-meta-right">
+                    <span
+                      v-if="hasAgentCronTask(agent)"
+                      class="agent-card-cron-indicator"
+                      :title="t('portal.agent.cronHint')"
+                      :aria-label="t('portal.agent.cronHint')"
+                    >
+                      <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                    </span>
+                    <span class="agent-card-container-id">
+                      {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                    </span>
                   </span>
                 </div>
               </div>
@@ -178,8 +204,18 @@
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ formatTime(agent.updated_at) }}</span>
-                  <span class="agent-card-container-id">
-                    {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                  <span class="agent-card-meta-right">
+                    <span
+                      v-if="hasAgentCronTask(agent)"
+                      class="agent-card-cron-indicator"
+                      :title="t('portal.agent.cronHint')"
+                      :aria-label="t('portal.agent.cronHint')"
+                    >
+                      <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                    </span>
+                    <span class="agent-card-container-id">
+                      {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
+                    </span>
                   </span>
                 </div>
               </div>
@@ -266,6 +302,37 @@
               :rows="8"
               :placeholder="t('portal.agent.form.placeholder.prompt')"
             />
+          </el-form-item>
+          <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
+            <div class="agent-tool-picker">
+              <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
+              <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
+                <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
+                  <div class="agent-tool-group-header">
+                    <div class="agent-tool-group-title">{{ group.label }}</div>
+                    <button
+                      class="agent-tool-group-select"
+                      type="button"
+                      @click.stop="selectToolGroup(group)"
+                    >
+                      {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
+                    </button>
+                  </div>
+                  <div class="agent-tool-options">
+                    <el-checkbox
+                      v-for="option in group.options"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      <span :title="option.description || option.label">{{ option.label }}</span>
+                    </el-checkbox>
+                  </div>
+                </div>
+              </el-checkbox-group>
+              <div v-if="sharedToolsNotice" class="agent-editor-hint">
+                {{ t('portal.agent.tools.notice') }}
+              </div>
+            </div>
           </el-form-item>
           <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
             <div class="agent-basic-settings">
@@ -356,17 +423,14 @@
                   </div>
                 </div>
               </div>
-              <div class="agent-share-card">
+              <div class="agent-share-card agent-share-card--combined">
                 <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
                 <div class="agent-share-row">
                   <el-switch v-model="form.is_shared" />
                   <span>{{ t('portal.agent.share.label') }}</span>
                 </div>
-              </div>
-              <div class="agent-share-card">
-                <div class="agent-share-title">{{ t('portal.agent.sandbox.title') }}</div>
-                <div class="agent-share-row">
-                  <span>{{ t('portal.agent.sandbox.label') }}</span>
+                <div class="agent-share-row agent-share-row--sandbox">
+                  <span>{{ t('portal.agent.sandbox.title') }}</span>
                   <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
                     <el-option
                       v-for="id in sandboxContainerOptions"
@@ -377,37 +441,6 @@
                   </el-select>
                 </div>
                 <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-              </div>
-            </div>
-          </el-form-item>
-          <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
-            <div class="agent-tool-picker">
-              <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
-              <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
-                <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
-                  <div class="agent-tool-group-header">
-                    <div class="agent-tool-group-title">{{ group.label }}</div>
-                    <button
-                      class="agent-tool-group-select"
-                      type="button"
-                      @click.stop="selectToolGroup(group)"
-                    >
-                      {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
-                    </button>
-                  </div>
-                  <div class="agent-tool-options">
-                    <el-checkbox
-                      v-for="option in group.options"
-                      :key="option.value"
-                      :value="option.value"
-                    >
-                      <span :title="option.description || option.label">{{ option.label }}</span>
-                    </el-checkbox>
-                  </div>
-                </div>
-              </el-checkbox-group>
-              <div v-if="sharedToolsNotice" class="agent-editor-hint">
-                {{ t('portal.agent.tools.notice') }}
               </div>
             </div>
           </el-form-item>
@@ -430,6 +463,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
+import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
@@ -453,6 +487,7 @@ const runningAgentIds = ref([]);
 const waitingAgentIds = ref([]);
 const externalLinks = ref([]);
 const externalLoading = ref(false);
+const cronAgentIds = ref(new Set());
 const avatarPanelVisible = ref(true);
 const customColor = ref('');
 let runningTimer = null;
@@ -620,6 +655,15 @@ const sortAgentsByContainerId = (list) =>
 
 const getAgentSandboxContainerId = (agent) => normalizeSandboxContainerId(agent?.sandbox_container_id);
 
+const hasAgentCronTask = (agent) => {
+  const agentId =
+    typeof agent === 'string'
+      ? String(agent).trim()
+      : String(agent?.id || '').trim();
+  if (!agentId) return false;
+  return cronAgentIds.value.has(agentId);
+};
+
 const form = reactive({
   name: '',
   description: '',
@@ -744,6 +788,7 @@ onMounted(() => {
   agentStore.loadAgents();
   loadCatalog();
   loadExternalApps();
+  loadCronAgentIds();
   loadRunningAgents();
   runningTimer = window.setInterval(loadRunningAgents, RUNNING_REFRESH_MS);
 });
@@ -963,6 +1008,31 @@ const getExternalHost = (url) => {
     return parsed.host || value;
   } catch (error) {
     return value;
+  }
+};
+
+const loadCronAgentIds = async () => {
+  try {
+    const { data } = await fetchCronJobs();
+    const jobs = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
+    const ids = new Set();
+    jobs.forEach((job) => {
+      const rawAgentId = String(job?.agent_id || '').trim();
+      const sessionTarget = String(job?.session_target || '').trim().toLowerCase();
+      const isDefaultJob =
+        rawAgentId === '' ||
+        sessionTarget === 'default' ||
+        sessionTarget === 'system' ||
+        sessionTarget === '__default__' ||
+        job?.is_default === true;
+      const agentId = isDefaultJob ? DEFAULT_AGENT_KEY : rawAgentId;
+      if (agentId) {
+        ids.add(agentId);
+      }
+    });
+    cronAgentIds.value = ids;
+  } catch (error) {
+    cronAgentIds.value = new Set();
   }
 };
 

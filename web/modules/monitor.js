@@ -109,6 +109,55 @@ const getStatusLabelToKey = () => ({
 });
 
 // 兼容旧版本状态结构，避免缓存旧 state.js 时导致监控图表异常
+const MONITOR_DETAIL_TEXT_FALLBACKS = {
+  "monitor.detail.filter.allTypes": {
+    zh: "全部类型",
+    en: "All event types",
+  },
+  "monitor.detail.filter.keywordPlaceholder": {
+    zh: "输入事件关键词",
+    en: "Search event payload",
+  },
+  "monitor.detail.filter.stats": {
+    zh: "显示 {visible}/{total} 条",
+    en: "Showing {visible}/{total}",
+  },
+  "monitor.detail.filter.profile.normal": {
+    zh: "普通日志",
+    en: "Normal logs",
+  },
+  "monitor.detail.filter.profile.debug": {
+    zh: "调试日志",
+    en: "Debug logs",
+  },
+  "monitor.detail.meta.trace": {
+    zh: "追踪 {traceId}",
+    en: "Trace {traceId}",
+  },
+};
+
+const applyMonitorDetailTextParams = (template, params = {}) => {
+  return Object.keys(params).reduce(
+    (result, paramKey) =>
+      result.replace(new RegExp(`\{${paramKey}\}`, "g"), String(params[paramKey])),
+    template
+  );
+};
+
+const resolveMonitorDetailText = (key, params = {}) => {
+  const translated = t(key, params);
+  if (translated && translated !== key) {
+    return translated;
+  }
+  const fallback = MONITOR_DETAIL_TEXT_FALLBACKS[key];
+  if (!fallback) {
+    return translated || key;
+  }
+  const language = String(getCurrentLanguage() || "").toLowerCase();
+  const template = language.startsWith("en") ? fallback.en : fallback.zh;
+  return applyMonitorDetailTextParams(template, params);
+};
+
 const ensureMonitorState = () => {
   if (!state.monitor) {
     state.monitor = {
@@ -166,6 +215,18 @@ const ensureMonitorState = () => {
     state.monitor.detail = null;
   } else if (state.monitor.detail && typeof state.monitor.detail !== "object") {
     state.monitor.detail = null;
+  }
+  if (!state.monitor.detailFilters || typeof state.monitor.detailFilters !== "object") {
+    state.monitor.detailFilters = {
+      eventType: "",
+      keyword: "",
+    };
+  }
+  if (typeof state.monitor.detailFilters.eventType !== "string") {
+    state.monitor.detailFilters.eventType = "";
+  }
+  if (typeof state.monitor.detailFilters.keyword !== "string") {
+    state.monitor.detailFilters.keyword = "";
   }
   if (typeof state.monitor.tokenZoomLocked !== "boolean") {
     state.monitor.tokenZoomLocked = false;
@@ -1450,6 +1511,18 @@ const buildMonitorDetailMeta = (session, events) => {
   const metaParts = [];
   metaParts.push(session?.user_id || "-");
   metaParts.push(getSessionStatusLabel(session?.status));
+  const logProfile = String(session?.log_profile || "").trim().toLowerCase();
+  if (logProfile) {
+    const profileKey =
+      logProfile === "debug"
+        ? "monitor.detail.filter.profile.debug"
+        : "monitor.detail.filter.profile.normal";
+    metaParts.push(resolveMonitorDetailText(profileKey));
+  }
+  const traceId = String(session?.trace_id || "").trim();
+  if (traceId) {
+    metaParts.push(resolveMonitorDetailText("monitor.detail.meta.trace", { traceId }));
+  }
   const elapsedSeconds = resolveMonitorDetailElapsedSeconds(session, events);
   if (Number.isFinite(elapsedSeconds)) {
     metaParts.push(
@@ -2532,20 +2605,27 @@ const formatMonitorEventTimestamp = (value) => {
 };
 
 const resolveMonitorEventTitle = (event) => {
+  const eventType = String(event?.type || "").trim().toLowerCase();
   const data = unwrapMonitorEventData(event?.data);
   if (data && typeof data === "object") {
+    const userInputTitle =
+      eventType === "user_input"
+        ? data.message || data.question || data.input || data.content
+        : "";
     const summary =
-      data.summary ??
-      data.message ??
-      data.error ??
-      data.reason ??
-      data.tool ??
-      data.tool_name ??
-      data.toolName ??
-      data.name ??
-      data.model ??
-      data.model_name ??
-      data.stage ??
+      userInputTitle ||
+      data.summary ||
+      data.message ||
+      data.question ||
+      data.error ||
+      data.reason ||
+      data.tool ||
+      data.tool_name ||
+      data.toolName ||
+      data.name ||
+      data.model ||
+      data.model_name ||
+      data.stage ||
       data.status;
     const title = truncateMonitorEventTitle(summary);
     if (title) {
@@ -2567,8 +2647,10 @@ const resolveMonitorEventTitle = (event) => {
 const buildMonitorEventLine = (event) => {
   const timestamp = event?.timestamp || "";
   const eventType = event?.type || "unknown";
+  const eventId = Number(event?.event_id);
+  const prefix = Number.isFinite(eventId) && eventId > 0 ? "#" + eventId + " " : "";
   const dataText = stringifyMonitorEventData(event?.data);
-  return `[${timestamp}] ${eventType}: ${dataText}`;
+  return "[" + timestamp + "] " + prefix + eventType + ": " + dataText;
 };
 
 // 从事件数据中提取工具名称，便于定位工具调用位置
@@ -2579,6 +2661,106 @@ const resolveMonitorEventToolName = (event) => {
   }
   const tool = data.tool ?? data.tool_name ?? data.toolName;
   return typeof tool === "string" ? tool.trim() : "";
+};
+
+const normalizeMonitorDetailEventType = (value) => String(value || "").trim();
+
+const collectMonitorDetailEventTypes = (events) => {
+  const types = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const eventType = normalizeMonitorDetailEventType(event?.type || "");
+    if (eventType) {
+      types.add(eventType);
+    }
+  });
+  return Array.from(types).sort((left, right) => left.localeCompare(right));
+};
+
+const resetMonitorDetailFilters = () => {
+  ensureMonitorState();
+  state.monitor.detailFilters.eventType = "";
+  state.monitor.detailFilters.keyword = "";
+  if (elements.monitorDetailTypeFilter) {
+    elements.monitorDetailTypeFilter.value = "";
+  }
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.value = "";
+  }
+  if (elements.monitorDetailFilterStats) {
+    elements.monitorDetailFilterStats.textContent = "";
+  }
+};
+
+const syncMonitorDetailFilterControls = (events) => {
+  if (!elements.monitorDetailTypeFilter) {
+    return;
+  }
+  const selectedType = normalizeMonitorDetailEventType(state.monitor?.detailFilters?.eventType);
+  const eventTypes = collectMonitorDetailEventTypes(events);
+  const availableTypes = new Set(eventTypes);
+  state.monitor.detailFilters.eventType = availableTypes.has(selectedType) ? selectedType : "";
+  const filterNode = elements.monitorDetailTypeFilter;
+  filterNode.textContent = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = resolveMonitorDetailText("monitor.detail.filter.allTypes");
+  filterNode.appendChild(allOption);
+  eventTypes.forEach((eventType) => {
+    const option = document.createElement("option");
+    option.value = eventType;
+    option.textContent = eventType;
+    filterNode.appendChild(option);
+  });
+  filterNode.value = state.monitor.detailFilters.eventType;
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.setAttribute(
+      "placeholder",
+      resolveMonitorDetailText("monitor.detail.filter.keywordPlaceholder")
+    );
+    if (document.activeElement !== elements.monitorDetailKeyword) {
+      elements.monitorDetailKeyword.value = state.monitor.detailFilters.keyword || "";
+    }
+  }
+};
+
+const resolveMonitorDetailFilteredEvents = (events) => {
+  const selectedType = normalizeMonitorDetailEventType(state.monitor?.detailFilters?.eventType);
+  const keyword = String(state.monitor?.detailFilters?.keyword || "")
+    .trim()
+    .toLowerCase();
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    const eventType = normalizeMonitorDetailEventType(event?.type || "");
+    if (selectedType && eventType !== selectedType) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    const haystack = (eventType + " " + stringifyMonitorEventData(event?.data)).toLowerCase();
+    return haystack.includes(keyword);
+  });
+};
+
+const renderMonitorDetailFilterStats = (visibleCount, totalCount) => {
+  if (!elements.monitorDetailFilterStats) {
+    return;
+  }
+  elements.monitorDetailFilterStats.textContent = resolveMonitorDetailText("monitor.detail.filter.stats", {
+    visible: visibleCount,
+    total: totalCount,
+  });
+};
+
+const renderMonitorDetailWithFilters = (events, options = {}) => {
+  syncMonitorDetailFilterControls(events);
+  const filtered = resolveMonitorDetailFilteredEvents(events);
+  renderMonitorDetailFilterStats(filtered.length, Array.isArray(events) ? events.length : 0);
+  const focusTool = typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
+  const focusLine = renderMonitorDetailEvents(filtered, { focusTool });
+  if (focusTool) {
+    scrollMonitorDetailToLine(focusLine);
+  }
+  return focusLine;
 };
 
 // 渲染线程事件列表，并返回需要定位的目标节点
@@ -2611,7 +2793,9 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     summary.appendChild(timeNode);
     const eventNode = document.createElement("span");
     eventNode.className = "log-event";
-    eventNode.textContent = eventType;
+    const eventId = Number(event?.event_id);
+    eventNode.textContent =
+      Number.isFinite(eventId) && eventId > 0 ? "#" + eventId + " " + eventType : eventType;
     summary.appendChild(eventNode);
     const titleNode = document.createElement("span");
     titleNode.className = "log-title";
@@ -2784,14 +2968,12 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       session,
       events,
     };
+    resetMonitorDetailFilters();
     setMonitorDetailExportEnabled(true);
     const focusTool =
       typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
-    const focusLine = renderMonitorDetailEvents(events, { focusTool });
+    renderMonitorDetailWithFilters(events, { focusTool });
     elements.monitorDetailModal.classList.add("active");
-    if (focusTool) {
-      scrollMonitorDetailToLine(focusLine);
-    }
   } catch (error) {
     const message = t("monitor.detailLoadFailed", { message: error.message });
     appendLog(message);
@@ -2802,6 +2984,7 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
 const closeMonitorDetail = () => {
   elements.monitorDetailModal.classList.remove("active");
   state.monitor.detail = null;
+  resetMonitorDetailFilters();
   setMonitorDetailExportEnabled(false);
 };
 
@@ -2889,6 +3072,26 @@ export const initMonitorPanel = () => {
   if (elements.monitorDetailExport) {
     elements.monitorDetailExport.addEventListener("click", exportMonitorDetailLogs);
     setMonitorDetailExportEnabled(false);
+  }
+  if (elements.monitorDetailTypeFilter) {
+    elements.monitorDetailTypeFilter.addEventListener("change", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.eventType = normalizeMonitorDetailEventType(
+        elements.monitorDetailTypeFilter.value
+      );
+      renderMonitorDetailWithFilters(state.monitor.detail.events || []);
+    });
+  }
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.addEventListener("input", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.keyword = String(elements.monitorDetailKeyword.value || "");
+      renderMonitorDetailWithFilters(state.monitor.detail.events || []);
+    });
   }
   elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);
   elements.monitorDetailCloseBtn.addEventListener("click", closeMonitorDetail);

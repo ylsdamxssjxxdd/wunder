@@ -103,6 +103,7 @@ impl Orchestrator {
                 prepared.agent_id.as_deref().unwrap_or(""),
                 &question,
                 is_admin,
+                prepared.debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
             let mut start_payload = json!({

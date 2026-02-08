@@ -1123,6 +1123,20 @@ button.danger {
   flex: 0 0 auto;
 }
 
+.monitor-event-item > summary .log-event {
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+  text-align: left;
+}
+
 .monitor-event-item > summary .log-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -1168,6 +1182,36 @@ button.danger {
   flex-direction: column;
   gap: 8px;
   white-space: normal;
+}
+
+.monitor-detail-events-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.monitor-detail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.monitor-detail-filters .select {
+  min-width: 170px;
+}
+
+.monitor-detail-filters .input {
+  min-width: 220px;
+  flex: 1 1 280px;
+}
+
+#monitorDetailFilterStats {
+  margin-left: auto;
+  font-size: 12px;
 }
 
 .log-item {
