@@ -194,16 +194,7 @@ impl Orchestrator {
             messages.extend(history_messages);
             let user_message = self.build_user_message(&question, prepared.attachments.as_deref());
             messages.push(user_message.clone());
-            self.append_chat(
-                &user_id,
-                &session_id,
-                "user",
-                user_message.get("content"),
-                None,
-                None,
-                None,
-                None,
-            );
+            let mut user_message_appended = false;
 
             let max_rounds = if is_admin {
                 None
@@ -303,6 +294,19 @@ impl Orchestrator {
                         None,
                     )
                     .await?;
+                if !user_message_appended {
+                    self.append_chat(
+                        &user_id,
+                        &session_id,
+                        "user",
+                        user_message.get("content"),
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    user_message_appended = true;
+                }
                 last_response = Some((content.clone(), reasoning.clone()));
                 accumulate_usage(&mut round_usage, &usage);
 

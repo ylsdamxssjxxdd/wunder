@@ -29,6 +29,8 @@ const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
 const DEFAULT_LOG_USAGE_TTL_S: f64 = 15.0;
 const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
+const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
+const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 8;
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
@@ -527,6 +529,15 @@ struct UsageCache {
     updated_ts: f64,
 }
 
+#[derive(Debug, Default)]
+struct WorkspaceUsageScanState {
+    per_user: HashMap<String, u64>,
+    user_order: Vec<String>,
+    cursor: usize,
+    initialized: bool,
+    last_full_scan_ts: f64,
+}
+
 pub struct MonitorState {
     sessions: Mutex<HashMap<String, SessionRecord>>,
     forced_cancelled: Mutex<HashSet<String>>,
@@ -539,8 +550,11 @@ pub struct MonitorState {
     workspace_root: PathBuf,
     log_usage_cache: Mutex<UsageCache>,
     workspace_usage_cache: Mutex<UsageCache>,
+    workspace_usage_scan_state: Mutex<WorkspaceUsageScanState>,
     log_usage_ttl_s: f64,
     workspace_usage_ttl_s: f64,
+    workspace_usage_full_scan_interval_s: f64,
+    workspace_usage_scan_batch_users: usize,
     event_limit: Option<usize>,
     payload_limit: Option<usize>,
     persist_interval_s: f64,
@@ -598,8 +612,11 @@ impl MonitorState {
             workspace_root,
             log_usage_cache: Mutex::new(UsageCache::default()),
             workspace_usage_cache: Mutex::new(UsageCache::default()),
+            workspace_usage_scan_state: Mutex::new(WorkspaceUsageScanState::default()),
             log_usage_ttl_s: DEFAULT_LOG_USAGE_TTL_S,
             workspace_usage_ttl_s: DEFAULT_WORKSPACE_USAGE_TTL_S,
+            workspace_usage_full_scan_interval_s: DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S,
+            workspace_usage_scan_batch_users: DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS,
             event_limit,
             payload_limit,
             persist_interval_s,
@@ -1107,7 +1124,7 @@ impl MonitorState {
                 return cache.value;
             }
         }
-        let value = self.calc_workspace_usage();
+        let value = self.calc_workspace_usage_incremental(now);
         let mut cache = self.workspace_usage_cache.lock();
         cache.value = value;
         cache.updated_ts = now;
@@ -1124,12 +1141,28 @@ impl MonitorState {
         }
     }
 
-    fn calc_workspace_usage(&self) -> u64 {
+    fn calc_workspace_usage_incremental(&self, now: f64) -> u64 {
+        let user_dirs = self.collect_workspace_user_dirs();
+        let mut scan_state = self.workspace_usage_scan_state.lock();
+        let need_full_scan = !scan_state.initialized
+            || now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s;
+        if need_full_scan {
+            return rebuild_workspace_usage_state(&mut scan_state, &user_dirs, now);
+        }
+        update_workspace_usage_state_incremental(
+            &mut scan_state,
+            &user_dirs,
+            self.workspace_usage_scan_batch_users,
+        );
+        workspace_usage_total(scan_state.per_user.values().copied())
+    }
+
+    fn collect_workspace_user_dirs(&self) -> Vec<(String, PathBuf)> {
         let entries = match fs::read_dir(&self.workspace_root) {
             Ok(entries) => entries,
-            Err(_) => return 0,
+            Err(_) => return Vec::new(),
         };
-        let mut total: u64 = 0;
+        let mut dirs = Vec::new();
         for entry in entries.flatten() {
             let Ok(file_type) = entry.file_type() else {
                 continue;
@@ -1137,9 +1170,14 @@ impl MonitorState {
             if !file_type.is_dir() {
                 continue;
             }
-            total = total.saturating_add(calc_dir_size(entry.path().as_path(), None));
+            let name = entry.file_name().to_string_lossy().trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            dirs.push((name, entry.path()));
         }
-        total
+        dirs.sort_by(|left, right| left.0.cmp(&right.0));
+        dirs
     }
 
     fn collect_system_snapshot(&self) -> SystemSnapshot {
@@ -2254,6 +2292,92 @@ fn trim_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
             Value::Object(output)
         }
         _ => value.clone(),
+    }
+}
+
+fn workspace_usage_total<I>(sizes: I) -> u64
+where
+    I: IntoIterator<Item = u64>,
+{
+    sizes
+        .into_iter()
+        .fold(0_u64, |acc, value| acc.saturating_add(value))
+}
+
+fn rebuild_workspace_usage_state(
+    scan_state: &mut WorkspaceUsageScanState,
+    user_dirs: &[(String, PathBuf)],
+    now: f64,
+) -> u64 {
+    scan_state.per_user.clear();
+    scan_state.user_order.clear();
+    for (user, path) in user_dirs {
+        let size = calc_dir_size(path.as_path(), None);
+        scan_state.per_user.insert(user.clone(), size);
+        scan_state.user_order.push(user.clone());
+    }
+    scan_state.cursor = 0;
+    scan_state.initialized = true;
+    scan_state.last_full_scan_ts = now;
+    workspace_usage_total(scan_state.per_user.values().copied())
+}
+
+fn update_workspace_usage_state_incremental(
+    scan_state: &mut WorkspaceUsageScanState,
+    user_dirs: &[(String, PathBuf)],
+    batch_users: usize,
+) {
+    let mut current_map: HashMap<&str, &PathBuf> = HashMap::with_capacity(user_dirs.len());
+    for (user, path) in user_dirs {
+        current_map.insert(user.as_str(), path);
+    }
+
+    scan_state
+        .per_user
+        .retain(|user, _| current_map.contains_key(user.as_str()));
+    scan_state
+        .user_order
+        .retain(|user| current_map.contains_key(user.as_str()));
+
+    let mut has_new_user = false;
+    for (user, path) in user_dirs {
+        if scan_state.per_user.contains_key(user) {
+            continue;
+        }
+        let size = calc_dir_size(path.as_path(), None);
+        scan_state.per_user.insert(user.clone(), size);
+        scan_state.user_order.push(user.clone());
+        has_new_user = true;
+    }
+    if has_new_user {
+        scan_state.user_order.sort();
+        scan_state.cursor = 0;
+    }
+
+    if scan_state.user_order.is_empty() {
+        scan_state.cursor = 0;
+        return;
+    }
+
+    if scan_state.cursor >= scan_state.user_order.len() {
+        scan_state.cursor = 0;
+    }
+
+    let scan_count = batch_users.max(1).min(scan_state.user_order.len());
+    for _ in 0..scan_count {
+        if scan_state.cursor >= scan_state.user_order.len() {
+            scan_state.cursor = 0;
+        }
+        let user = scan_state.user_order[scan_state.cursor].clone();
+        scan_state.cursor += 1;
+        if scan_state.cursor >= scan_state.user_order.len() {
+            scan_state.cursor = 0;
+        }
+        let Some(path) = current_map.get(user.as_str()) else {
+            continue;
+        };
+        let size = calc_dir_size(path.as_path(), None);
+        scan_state.per_user.insert(user, size);
     }
 }
 

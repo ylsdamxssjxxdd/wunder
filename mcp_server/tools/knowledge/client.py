@@ -133,9 +133,6 @@ def query_kb_sync(
 
     return {
         "ok": True,
-        "query": query,
-        "kb_key": cfg.key,
-        "dataset_ids": cfg.dataset_ids,
         "total": total,
         "chunks": chunks,
         "documents": documents,

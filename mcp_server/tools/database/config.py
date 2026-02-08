@@ -22,6 +22,14 @@ class DbConfig:
     description: str | None
 
 
+@dataclass(frozen=True)
+class DbQueryTarget:
+    key: str
+    table: str
+    description: str | None
+    db_key: str | None
+
+
 def _normalize_engine(raw: str) -> str:
     value = raw.lower()
     if value in ("mysql", "mariadb"):
@@ -48,6 +56,116 @@ def _get_target_description_map() -> dict[str, str]:
     if default_desc:
         mapping.setdefault(get_default_db_key(), str(default_desc))
     return mapping
+
+
+def _get_table_description_map() -> dict[str, str]:
+    config = _get_db_section()
+    raw = get_section_value(config, "table_descriptions", "tables_descriptions")
+    mapping: dict[str, str] = {}
+    if isinstance(raw, dict):
+        mapping.update({str(key): str(value) for key, value in raw.items() if value})
+    return mapping
+
+
+def _parse_query_target(
+    key_hint: str | None,
+    raw: Any,
+    description_map: dict[str, str],
+) -> DbQueryTarget:
+    if isinstance(raw, str):
+        table = raw.strip()
+        if not table:
+            raise ValueError("database.tables contains an empty table name.")
+        key = (key_hint or table).strip()
+        description = description_map.get(key) or description_map.get(table)
+        return DbQueryTarget(
+            key=key,
+            table=table,
+            description=description,
+            db_key=None,
+        )
+
+    if not isinstance(raw, dict):
+        raise ValueError("database.tables entries must be strings or objects.")
+
+    table = str(raw.get("table") or raw.get("name") or "").strip()
+    if not table:
+        raise ValueError("database.tables entry is missing table.")
+
+    key = str(raw.get("key") or key_hint or table).strip()
+    if not key:
+        raise ValueError("database.tables entry is missing key.")
+
+    description = raw.get("description") or raw.get("desc")
+    if not description:
+        description = description_map.get(key) or description_map.get(table)
+
+    db_key_raw = raw.get("db_key") or raw.get("target")
+    db_key = str(db_key_raw).strip() if db_key_raw else None
+
+    return DbQueryTarget(
+        key=key,
+        table=table,
+        description=str(description) if description else None,
+        db_key=db_key,
+    )
+
+
+def load_db_query_targets() -> list[DbQueryTarget]:
+    config = _get_db_section()
+    description_map = _get_table_description_map()
+    raw = get_section_value(config, "query_tables", "tables")
+
+    targets: list[DbQueryTarget] = []
+
+    if raw is None:
+        single_table = get_section_value(config, "table", "default_table", "query_table")
+        if isinstance(single_table, str) and single_table.strip():
+            targets.append(
+                _parse_query_target(
+                    key_hint=None,
+                    raw=single_table,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, dict):
+        for key, value in raw.items():
+            targets.append(
+                _parse_query_target(
+                    key_hint=str(key),
+                    raw=value,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, (list, tuple)):
+        for value in raw:
+            targets.append(
+                _parse_query_target(
+                    key_hint=None,
+                    raw=value,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, str):
+        targets.append(
+            _parse_query_target(
+                key_hint=None,
+                raw=raw,
+                description_map=description_map,
+            )
+        )
+    else:
+        raise ValueError("database.tables must be a string, array, or object.")
+
+    seen_keys: set[str] = set()
+    deduped: list[DbQueryTarget] = []
+    for target in targets:
+        if target.key in seen_keys:
+            raise ValueError(f"database.tables has duplicate key: {target.key}")
+        seen_keys.add(target.key)
+        deduped.append(target)
+
+    return deduped
 
 
 def _parse_mysql_dsn(dsn: str, key: str) -> DbConfig:

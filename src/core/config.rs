@@ -51,6 +51,8 @@ pub struct Config {
     pub sandbox: SandboxConfig,
     #[serde(default)]
     pub agent_queue: AgentQueueConfig,
+    #[serde(default)]
+    pub user_agents: UserAgentsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -182,6 +184,92 @@ fn default_agent_queue_max_retries() -> u32 {
 
 fn default_agent_queue_task_ttl_s() -> u64 {
     24 * 60 * 60
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAgentsConfig {
+    #[serde(default = "default_user_agent_presets")]
+    pub presets: Vec<UserAgentPresetConfig>,
+}
+
+impl Default for UserAgentsConfig {
+    fn default() -> Self {
+        Self {
+            presets: default_user_agent_presets(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAgentPresetConfig {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default = "default_user_agent_preset_icon_name")]
+    pub icon_name: String,
+    #[serde(default = "default_user_agent_preset_icon_color")]
+    pub icon_color: String,
+    #[serde(default = "default_user_agent_preset_sandbox_container_id")]
+    pub sandbox_container_id: i32,
+}
+
+fn default_user_agent_preset_icon_name() -> String {
+    "spark".to_string()
+}
+
+fn default_user_agent_preset_icon_color() -> String {
+    "#94a3b8".to_string()
+}
+
+fn default_user_agent_preset_sandbox_container_id() -> i32 {
+    1
+}
+
+fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
+    vec![
+        UserAgentPresetConfig {
+            name: "文稿校对".to_string(),
+            description: "语病检查、错别字修正与语气优化".to_string(),
+            system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。".to_string(),
+            icon_name: "spark".to_string(),
+            icon_color: "#fbbf24".to_string(),
+            sandbox_container_id: 2,
+        },
+        UserAgentPresetConfig {
+            name: "数据分析".to_string(),
+            description: "结构化分析数据并输出结论与建议".to_string(),
+            system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。".to_string(),
+            icon_name: "chart".to_string(),
+            icon_color: "#60a5fa".to_string(),
+            sandbox_container_id: 3,
+        },
+        UserAgentPresetConfig {
+            name: "科学绘图".to_string(),
+            description: "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表".to_string(),
+            system_prompt: "你是科学绘图助手。根据研究问题与数据，绘制专业图表".to_string(),
+            icon_name: "chart".to_string(),
+            icon_color: "#22d3ee".to_string(),
+            sandbox_container_id: 4,
+        },
+        UserAgentPresetConfig {
+            name: "政策分析".to_string(),
+            description: "解读政策要点并评估影响".to_string(),
+            system_prompt: "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。".to_string(),
+            icon_name: "briefcase".to_string(),
+            icon_color: "#f97316".to_string(),
+            sandbox_container_id: 5,
+        },
+        UserAgentPresetConfig {
+            name: "公文写作".to_string(),
+            description: "公文起草、格式规范与措辞润色".to_string(),
+            system_prompt: "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。".to_string(),
+            icon_name: "shield".to_string(),
+            icon_color: "#94a3b8".to_string(),
+            sandbox_container_id: 6,
+        },
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1079,5 +1167,39 @@ mod tests {
 
         std::env::remove_var("WUNDER_TEST_PLACEHOLDER");
         assert_eq!(expand_env_placeholders("${WUNDER_TEST_PLACEHOLDER}"), "");
+    }
+
+    #[test]
+    fn test_user_agent_presets_have_expected_defaults() {
+        let config = Config::default();
+        assert_eq!(config.user_agents.presets.len(), 5);
+        assert_eq!(config.user_agents.presets[0].name, "文稿校对");
+        assert_eq!(config.user_agents.presets[0].sandbox_container_id, 2);
+    }
+
+    #[test]
+    fn test_user_agent_presets_support_yaml_override() {
+        let parsed: Config = serde_yaml::from_str(
+            r#"
+user_agents:
+  presets:
+    - name: 自定义应用
+      description: 自定义描述
+      system_prompt: 你是自定义助手
+      icon_name: spark
+      icon_color: '#123456'
+      sandbox_container_id: 8
+"#,
+        )
+        .expect("parse user_agents override");
+
+        assert_eq!(parsed.user_agents.presets.len(), 1);
+        let preset = &parsed.user_agents.presets[0];
+        assert_eq!(preset.name, "自定义应用");
+        assert_eq!(preset.description, "自定义描述");
+        assert_eq!(preset.system_prompt, "你是自定义助手");
+        assert_eq!(preset.icon_name, "spark");
+        assert_eq!(preset.icon_color, "#123456");
+        assert_eq!(preset.sandbox_container_id, 8);
     }
 }

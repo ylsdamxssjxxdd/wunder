@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from datetime import date, datetime, time as time_type, timedelta
 from decimal import Decimal
 from typing import Any, Sequence
@@ -78,6 +79,104 @@ def _is_read_only_sql(sql: str) -> bool:
     return stripped.lower().startswith(READ_ONLY_PREFIXES)
 
 
+TABLE_REFERENCE_PATTERN = re.compile(
+    r'\b(?:from|join)\s+((?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*))?)',
+    re.IGNORECASE,
+)
+DISALLOWED_KEYWORDS_PATTERN = re.compile(
+    r"\b(?:insert|update|delete|replace|alter|drop|truncate|create|grant|revoke|call|set)\b",
+    re.IGNORECASE,
+)
+SYSTEM_SCHEMA_PATTERN = re.compile(
+    r"\b(?:information_schema|pg_catalog|mysql\.|performance_schema)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_single_quoted_literals(sql: str) -> str:
+    output: list[str] = []
+    in_single_quote = False
+    idx = 0
+    while idx < len(sql):
+        char = sql[idx]
+        if in_single_quote:
+            if char == "'":
+                if idx + 1 < len(sql) and sql[idx + 1] == "'":
+                    idx += 2
+                    continue
+                in_single_quote = False
+            idx += 1
+            continue
+        if char == "'":
+            in_single_quote = True
+            idx += 1
+            continue
+        output.append(char)
+        idx += 1
+    return "".join(output)
+
+
+def _normalize_identifier_token(token: str) -> tuple[str | None, str] | None:
+    text = token.strip().rstrip(',').strip()
+    if not text:
+        return None
+
+    parts = [part.strip() for part in re.split(r"\s*\.\s*", text) if part.strip()]
+    if not parts:
+        return None
+
+    normalized_parts: list[str] = []
+    for part in parts:
+        if (
+            len(part) >= 2
+            and ((part.startswith('`') and part.endswith('`')) or (part.startswith('"') and part.endswith('"')))
+        ):
+            part = part[1:-1]
+        normalized_parts.append(part.strip())
+
+    if not normalized_parts:
+        return None
+    if len(normalized_parts) == 1:
+        return (None, normalized_parts[0].lower())
+
+    return (normalized_parts[-2].lower(), normalized_parts[-1].lower())
+
+
+def _extract_table_references(sql: str) -> list[tuple[str | None, str]]:
+    text = _strip_single_quoted_literals(_strip_sql_comments(sql))
+    references: list[tuple[str | None, str]] = []
+    for match in TABLE_REFERENCE_PATTERN.finditer(text):
+        normalized = _normalize_identifier_token(match.group(1))
+        if normalized is None:
+            continue
+        references.append(normalized)
+    return references
+
+
+def validate_sql_against_target_table(sql: str, cfg: DbConfig, table: str) -> str | None:
+    cleaned = _strip_single_quoted_literals(_strip_sql_comments(sql)).lower()
+    if DISALLOWED_KEYWORDS_PATTERN.search(cleaned):
+        return "Only SELECT/EXPLAIN/WITH read-only SQL is allowed."
+    if SYSTEM_SCHEMA_PATTERN.search(cleaned):
+        return "System schema queries are blocked for table-bound db_query tools."
+
+    references = _extract_table_references(sql)
+    if not references:
+        return f"SQL must include FROM/JOIN on bound table '{table}'."
+
+    expected_table = table.lower()
+    expected_database = cfg.database.lower()
+    for schema, actual_table in references:
+        if actual_table != expected_table:
+            return f"This tool can only query table '{table}'."
+        if schema and cfg.engine == "mysql" and schema != expected_database:
+            return (
+                "Cross-database access is blocked for this tool. "
+                f"Use table '{table}' in database '{cfg.database}'."
+            )
+    return None
+
+
 def _normalize_value(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
@@ -98,6 +197,28 @@ def _normalize_value(value: Any) -> Any:
 
 def _normalize_row(row: Sequence[Any], columns: Sequence[str]) -> dict[str, Any]:
     return {col: _normalize_value(val) for col, val in zip(columns, row)}
+
+
+def _compact_columns(columns: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
+    compacted: list[dict[str, str]] = []
+    for column in columns:
+        name = str(column.get("name") or "").strip()
+        column_type = str(column.get("type") or "").strip()
+        if not name or not column_type:
+            continue
+        compacted.append({"name": name, "type": column_type})
+    return compacted
+
+
+def get_table_schema_compact_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
+    details = describe_table_sync(cfg, table)
+    if not details.get("ok"):
+        return details
+    return {
+        "ok": True,
+        "table": table,
+        "columns": _compact_columns(details.get("columns") or []),
+    }
 
 
 def fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]:
@@ -567,20 +688,16 @@ def execute_sql_sync(
                 result_rows = [_normalize_row(row, columns) for row in rows]
                 return {
                     "ok": True,
-                    "columns": columns,
                     "rows": result_rows,
                     "row_count": len(result_rows),
-                    "rows_truncated": truncated,
+                    "truncated": truncated,
                 }
 
-            lastrowid = getattr(cursor, "lastrowid", None)
             return {
                 "ok": True,
-                "columns": [],
                 "rows": [],
-                "row_count": cursor.rowcount,
-                "rows_truncated": False,
-                "lastrowid": _normalize_value(lastrowid) if lastrowid is not None else None,
+                "row_count": max(cursor.rowcount, 0),
+                "truncated": False,
             }
     finally:
         connection.close()

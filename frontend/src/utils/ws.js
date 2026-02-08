@@ -111,9 +111,9 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
         const data = eventPayload?.data;
         const dataText = typeof data === 'string' ? data : JSON.stringify(data ?? {});
         onEvent(eventType, dataText, eventId);
-        if (options.closeOnFinal && eventType === 'final') {
+        if (options.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
           try {
-            socket.close(1000, 'final');
+            socket.close(1000, eventType === 'final' ? 'final' : 'error_event');
           } catch (error) {
             // ignore
           }
@@ -270,7 +270,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
       const eventId = eventPayload?.id || '';
       const dataText = buildEventText(eventPayload?.data);
       entry.onEvent(eventType, dataText, eventId);
-      if (entry.closeOnFinal && eventType === 'final') {
+      if (entry.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
         resolveRequest(requestId);
       }
       return;

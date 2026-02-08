@@ -39,6 +39,12 @@ docker compose -f docker-compose-x86.yml up -d wunder_mcp
     "user": "root",
     "password": "",
     "database": "personnel",
+    "tables": {
+      "employees": {
+        "table": "employees",
+        "description": "employee master data"
+      }
+    },
     "description": "人员与组织信息库",
     "connect_timeout": 5
   },
@@ -68,13 +74,123 @@ docker compose -f docker-compose-x86.yml up -d wunder_mcp
 }
 ```
 
-如需多库配置，可在 `database.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
-也可以使用 `database.target_descriptions`（或 `database.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
-建议在 `database.description` 中补充核心表及用途（如 `employees=人员主数据`、`departments=部门`），帮助模型更准确选表；保持简洁，避免把所有表都塞进去。
+### 2.1 数据库配置规则
 
-知识库检索基于 RAGFlow 的 `/api/v1/retrieval` 接口，需要配置 `knowledge.base_url`、`knowledge.api_key` 与 `dataset_ids`。
-多知识库可在 `knowledge.targets` 中配置多个目标，并可为每个目标增加 `description` 说明用途。
-也可以使用 `knowledge.target_descriptions`（或 `knowledge.descriptions`）仅维护 key->用途说明的映射，用于补全工具描述。
+- `database` 支持两种模式：
+  - 单目标模式：直接配置 `db_type/host/port/user/password/database`。
+  - 多目标模式：配置 `targets` + `default_key`，`targets.<db_key>` 既可以写对象，也可以写 DSN 字符串。
+- `database.tables`（别名：`database.query_tables`）用于声明对模型暴露的表，每个条目注册一个 `db_query` 工具。
+- 表条目支持两种写法：
+  - 字符串：直接写表名，例如 `"employees"`。
+  - 对象：支持 `table`（或 `name`），可选 `description`，可选 `db_key`。
+- 工具命名规则：
+  - 只有 1 个表条目时，工具名为 `db_query`。
+  - 有多个表条目时，工具名为 `db_query_<key>`。
+- 绑定表强约束（table-bound）：
+  - 每个工具仅允许查询其绑定表。
+  - 跨表、跨库、系统库查询会被拒绝。
+  - SQL 必须包含绑定表的 `FROM/JOIN`。
+- `db_key` 选择规则：
+  - 表条目显式配置 `db_key` 时，使用该目标库。
+  - 未配置 `db_key` 时，回退到 `default_key`（若未配置 `targets` 则使用单目标配置）。
+
+### 2.2 示例：单库多表
+
+```json
+{
+  "database": {
+    "db_type": "mysql",
+    "host": "host.docker.internal",
+    "port": 3307,
+    "user": "root",
+    "password": "rootpass123!",
+    "database": "personnel",
+    "tables": {
+      "employees": {
+        "table": "employees",
+        "description": "人员主数据"
+      },
+      "departments": {
+        "table": "departments",
+        "description": "部门主数据"
+      }
+    }
+  }
+}
+```
+
+该配置会生成工具：
+- `db_query_employees`
+- `db_query_departments`
+
+### 2.3 示例：多库多表
+
+```json
+{
+  "database": {
+    "default_key": "hr_db",
+    "targets": {
+      "hr_db": {
+        "type": "mysql",
+        "host": "10.0.0.11",
+        "port": 3306,
+        "user": "readonly",
+        "password": "***",
+        "database": "hr",
+        "description": "人力资源库"
+      },
+      "finance_db": "mysql://readonly:***@10.0.0.12:3306/finance?connect_timeout=5"
+    },
+    "tables": {
+      "hr_employees": {
+        "table": "employees",
+        "db_key": "hr_db",
+        "description": "人力员工表"
+      },
+      "hr_departments": {
+        "table": "departments",
+        "db_key": "hr_db"
+      },
+      "finance_vouchers": {
+        "table": "vouchers",
+        "db_key": "finance_db",
+        "description": "财务凭证表"
+      }
+    }
+  }
+}
+```
+
+该配置会生成工具：
+- `db_query_hr_employees`
+- `db_query_hr_departments`
+- `db_query_finance_vouchers`
+
+### 2.4 示例：知识库多目标
+
+`knowledge.targets` 也是“一目标一工具”：
+- 只有 1 个目标时，工具名为 `kb_query`
+- 有多个目标时，工具名为 `kb_query_<key>`
+
+```json
+{
+  "knowledge": {
+    "base_url": "http://127.0.0.1:9380",
+    "api_key": "REPLACE_WITH_RAGFLOW_API_KEY",
+    "default_key": "policy",
+    "targets": {
+      "policy": {
+        "dataset_ids": ["dataset-policy"],
+        "description": "制度知识库"
+      },
+      "tech": {
+        "dataset_ids": ["dataset-tech"],
+        "description": "技术知识库"
+      }
+    }
+  }
+}
+```
 
 ## 3. MCP 连接示例
 
@@ -93,7 +209,7 @@ docker compose -f docker-compose-x86.yml up -d wunder_mcp
 }
 ```
 
-> 如通过网关或反向代理加鉴权，请在 `headers` 中补充对应的认证头。当前提供工具：`db_get_schema`、`db_query`、`kb_query`。
+> 如通过网关或反向代理加鉴权，请在 `headers` 中补充对应的认证头。当前提供工具：`db_query`（按表动态生成）与 `kb_query`（按知识库动态生成）。
 
 ## 4. 服务器部署时的 IP / 端口配置要点
 
@@ -122,6 +238,6 @@ docker compose -f docker-compose-x86.yml up -d wunder_mcp
 - `main.py`：FastMCP 服务入口。
 - `runtime.py`：运行时配置读取（MCP_HOST/MCP_PORT/MCP_TRANSPORT）。
 - `tools/`：每类 MCP 工具一个子目录。
-  - `tools/database/`：数据库工具实现（`db_get_schema`/`db_query`）。
+- `tools/database/`: database tool implementation (dynamic `db_query` registration by configured tables).
 - 新增工具后在 `tools/__init__.py` 注册即可生效。
 - `common/`：通用工具方法。

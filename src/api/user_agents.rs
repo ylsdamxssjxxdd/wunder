@@ -1,5 +1,6 @@
 // 用户智能体 API：创建/管理用户自定义智能体。
 use crate::api::user_context::resolve_user;
+use crate::config::UserAgentPresetConfig;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::state::AppState;
@@ -511,39 +512,48 @@ fn now_ts() -> f64 {
 
 const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
 const LEGACY_EMAIL_PRESET_NAME: &str = "邮件写作";
-const PRESET_OFFICIAL_NAME: &str = "公文写作";
-const PRESET_OFFICIAL_DESCRIPTION: &str = "公文起草、格式规范与措辞润色";
-const PRESET_OFFICIAL_PROMPT: &str =
-    "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。";
-const PRESET_OFFICIAL_ICON: &str = "shield";
-const PRESET_OFFICIAL_COLOR: &str = "#94a3b8";
 const LEGACY_MEETING_NAME: &str = "会议纪要";
 const LEGACY_PLAN_NAME: &str = "方案策划";
-const PRESET_SCI_DRAW_NAME: &str = "科学绘图";
-const PRESET_SCI_DRAW_DESCRIPTION: &str =
-    "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表";
-const PRESET_SCI_DRAW_PROMPT: &str = "你是科学绘图助手。根据研究问题与数据，绘制专业图表";
-const PRESET_SCI_DRAW_ICON: &str = "chart";
-const PRESET_SCI_DRAW_COLOR: &str = "#22d3ee";
-const PRESET_POLICY_ANALYSIS_NAME: &str = "政策分析";
-const PRESET_POLICY_ANALYSIS_DESCRIPTION: &str = "解读政策要点并评估影响";
-const PRESET_POLICY_ANALYSIS_PROMPT: &str = "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。";
-const PRESET_POLICY_ANALYSIS_ICON: &str = "briefcase";
-const PRESET_POLICY_ANALYSIS_COLOR: &str = "#f97316";
-const PRESET_CONTAINER_ID_PROOFREAD: i32 = 2;
-const PRESET_CONTAINER_ID_DATA_ANALYSIS: i32 = 3;
 const PRESET_CONTAINER_ID_SCI_DRAW: i32 = 4;
 const PRESET_CONTAINER_ID_POLICY_ANALYSIS: i32 = 5;
 const PRESET_CONTAINER_ID_OFFICIAL_WRITING: i32 = 6;
 const PRESET_CONTAINER_META_PREFIX: &str = "user_agent_presets_container_v1:";
 
+#[derive(Clone)]
 struct PresetAgent {
-    name: &'static str,
-    description: &'static str,
-    system_prompt: &'static str,
-    icon_name: &'static str,
-    icon_color: &'static str,
+    name: String,
+    description: String,
+    system_prompt: String,
+    icon_name: String,
+    icon_color: String,
     sandbox_container_id: i32,
+}
+
+impl PresetAgent {
+    fn from_config(config: UserAgentPresetConfig) -> Option<Self> {
+        let name = config.name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let icon_name = if config.icon_name.trim().is_empty() {
+            "spark".to_string()
+        } else {
+            config.icon_name.trim().to_string()
+        };
+        let icon_color = if config.icon_color.trim().is_empty() {
+            "#94a3b8".to_string()
+        } else {
+            config.icon_color.trim().to_string()
+        };
+        Some(Self {
+            name: name.to_string(),
+            description: config.description.trim().to_string(),
+            system_prompt: config.system_prompt.trim().to_string(),
+            icon_name,
+            icon_color,
+            sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
+        })
+    }
 }
 
 async fn ensure_preset_agents(
@@ -552,6 +562,7 @@ async fn ensure_preset_agents(
 ) -> Result<(), Response> {
     let meta_key = format!("{PRESET_META_PREFIX}{}", user.user_id);
     let container_meta_key = format!("{PRESET_CONTAINER_META_PREFIX}{}", user.user_id);
+    let preset_agents = configured_preset_agents(state).await;
     let existing = state
         .user_store
         .list_user_agents(&user.user_id)
@@ -571,42 +582,41 @@ async fn ensure_preset_agents(
         let mut updated = record.clone();
         let mut changed = false;
         if trimmed_name == LEGACY_EMAIL_PRESET_NAME {
-            updated.name = PRESET_OFFICIAL_NAME.to_string();
-            updated.description = PRESET_OFFICIAL_DESCRIPTION.to_string();
-            updated.system_prompt = PRESET_OFFICIAL_PROMPT.to_string();
-            updated.icon = Some(build_icon_payload(
-                PRESET_OFFICIAL_ICON,
-                PRESET_OFFICIAL_COLOR,
-            ));
-            existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
-            existing_names.insert(PRESET_OFFICIAL_NAME.to_string());
-            changed = true;
+            changed = apply_legacy_preset_upgrade(
+                &mut updated,
+                &preset_agents,
+                PRESET_CONTAINER_ID_OFFICIAL_WRITING,
+            );
+            if changed {
+                existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
+                existing_names.insert(updated.name.trim().to_string());
+            }
         } else if trimmed_name == LEGACY_MEETING_NAME {
-            updated.name = PRESET_SCI_DRAW_NAME.to_string();
-            updated.description = PRESET_SCI_DRAW_DESCRIPTION.to_string();
-            updated.system_prompt = PRESET_SCI_DRAW_PROMPT.to_string();
-            updated.icon = Some(build_icon_payload(
-                PRESET_SCI_DRAW_ICON,
-                PRESET_SCI_DRAW_COLOR,
-            ));
-            existing_names.remove(LEGACY_MEETING_NAME);
-            existing_names.insert(PRESET_SCI_DRAW_NAME.to_string());
-            changed = true;
+            changed = apply_legacy_preset_upgrade(
+                &mut updated,
+                &preset_agents,
+                PRESET_CONTAINER_ID_SCI_DRAW,
+            );
+            if changed {
+                existing_names.remove(LEGACY_MEETING_NAME);
+                existing_names.insert(updated.name.trim().to_string());
+            }
         } else if trimmed_name == LEGACY_PLAN_NAME {
-            updated.name = PRESET_POLICY_ANALYSIS_NAME.to_string();
-            updated.description = PRESET_POLICY_ANALYSIS_DESCRIPTION.to_string();
-            updated.system_prompt = PRESET_POLICY_ANALYSIS_PROMPT.to_string();
-            updated.icon = Some(build_icon_payload(
-                PRESET_POLICY_ANALYSIS_ICON,
-                PRESET_POLICY_ANALYSIS_COLOR,
-            ));
-            existing_names.remove(LEGACY_PLAN_NAME);
-            existing_names.insert(PRESET_POLICY_ANALYSIS_NAME.to_string());
-            changed = true;
+            changed = apply_legacy_preset_upgrade(
+                &mut updated,
+                &preset_agents,
+                PRESET_CONTAINER_ID_POLICY_ANALYSIS,
+            );
+            if changed {
+                existing_names.remove(LEGACY_PLAN_NAME);
+                existing_names.insert(updated.name.trim().to_string());
+            }
         }
 
         if !container_layout_seeded {
-            if let Some(container_id) = preset_sandbox_container_id(updated.name.trim()) {
+            if let Some(container_id) =
+                preset_sandbox_container_id(updated.name.trim(), &preset_agents)
+            {
                 if updated.sandbox_container_id == DEFAULT_SANDBOX_CONTAINER_ID
                     && updated.sandbox_container_id != container_id
                 {
@@ -637,21 +647,21 @@ async fn ensure_preset_agents(
         .collect::<Vec<_>>();
     tool_names.sort();
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
-    for preset in preset_agents() {
-        if existing_names.contains(preset.name) {
+    for preset in &preset_agents {
+        if existing_names.contains(preset.name.as_str()) {
             continue;
         }
         let record = crate::storage::UserAgentRecord {
             agent_id: format!("agent_{}", Uuid::new_v4().simple()),
             user_id: user.user_id.clone(),
-            name: preset.name.to_string(),
-            description: preset.description.to_string(),
-            system_prompt: preset.system_prompt.to_string(),
+            name: preset.name.clone(),
+            description: preset.description.clone(),
+            system_prompt: preset.system_prompt.clone(),
             tool_names: tool_names.clone(),
             access_level: access_level.clone(),
             is_shared: false,
             status: "active".to_string(),
-            icon: Some(build_icon_payload(preset.icon_name, preset.icon_color)),
+            icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
             sandbox_container_id: preset.sandbox_container_id,
             created_at: now,
             updated_at: now,
@@ -662,60 +672,62 @@ async fn ensure_preset_agents(
     Ok(())
 }
 
-fn preset_sandbox_container_id(name: &str) -> Option<i32> {
-    match name.trim() {
-        "文稿校对" => Some(PRESET_CONTAINER_ID_PROOFREAD),
-        "数据分析" => Some(PRESET_CONTAINER_ID_DATA_ANALYSIS),
-        PRESET_SCI_DRAW_NAME => Some(PRESET_CONTAINER_ID_SCI_DRAW),
-        PRESET_POLICY_ANALYSIS_NAME => Some(PRESET_CONTAINER_ID_POLICY_ANALYSIS),
-        PRESET_OFFICIAL_NAME => Some(PRESET_CONTAINER_ID_OFFICIAL_WRITING),
-        _ => None,
+async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
+    let config = state.config_store.get().await;
+    let mut seen_names = HashSet::new();
+    let mut presets = Vec::new();
+    for preset in config.user_agents.presets {
+        let Some(preset) = PresetAgent::from_config(preset) else {
+            continue;
+        };
+        if seen_names.insert(preset.name.clone()) {
+            presets.push(preset);
+        }
     }
+    presets
 }
 
-fn preset_agents() -> Vec<PresetAgent> {
-    vec![
-        PresetAgent {
-            name: "文稿校对",
-            description: "语病检查、错别字修正与语气优化",
-            system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。",
-            icon_name: "spark",
-            icon_color: "#fbbf24",
-            sandbox_container_id: PRESET_CONTAINER_ID_PROOFREAD,
-        },
-        PresetAgent {
-            name: "数据分析",
-            description: "结构化分析数据并输出结论与建议",
-            system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。",
-            icon_name: "chart",
-            icon_color: "#60a5fa",
-            sandbox_container_id: PRESET_CONTAINER_ID_DATA_ANALYSIS,
-        },
-        PresetAgent {
-            name: PRESET_SCI_DRAW_NAME,
-            description: PRESET_SCI_DRAW_DESCRIPTION,
-            system_prompt: PRESET_SCI_DRAW_PROMPT,
-            icon_name: PRESET_SCI_DRAW_ICON,
-            icon_color: PRESET_SCI_DRAW_COLOR,
-            sandbox_container_id: PRESET_CONTAINER_ID_SCI_DRAW,
-        },
-        PresetAgent {
-            name: PRESET_POLICY_ANALYSIS_NAME,
-            description: PRESET_POLICY_ANALYSIS_DESCRIPTION,
-            system_prompt: PRESET_POLICY_ANALYSIS_PROMPT,
-            icon_name: PRESET_POLICY_ANALYSIS_ICON,
-            icon_color: PRESET_POLICY_ANALYSIS_COLOR,
-            sandbox_container_id: PRESET_CONTAINER_ID_POLICY_ANALYSIS,
-        },
-        PresetAgent {
-            name: PRESET_OFFICIAL_NAME,
-            description: PRESET_OFFICIAL_DESCRIPTION,
-            system_prompt: PRESET_OFFICIAL_PROMPT,
-            icon_name: PRESET_OFFICIAL_ICON,
-            icon_color: PRESET_OFFICIAL_COLOR,
-            sandbox_container_id: PRESET_CONTAINER_ID_OFFICIAL_WRITING,
-        },
-    ]
+fn apply_legacy_preset_upgrade(
+    record: &mut crate::storage::UserAgentRecord,
+    preset_agents: &[PresetAgent],
+    sandbox_container_id: i32,
+) -> bool {
+    let Some(preset) = preset_agents
+        .iter()
+        .find(|item| item.sandbox_container_id == sandbox_container_id)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    if record.name != preset.name {
+        record.name = preset.name.clone();
+        changed = true;
+    }
+    if record.description != preset.description {
+        record.description = preset.description.clone();
+        changed = true;
+    }
+    if record.system_prompt != preset.system_prompt {
+        record.system_prompt = preset.system_prompt.clone();
+        changed = true;
+    }
+    let icon_payload = build_icon_payload(&preset.icon_name, &preset.icon_color);
+    if record.icon.as_deref() != Some(icon_payload.as_str()) {
+        record.icon = Some(icon_payload);
+        changed = true;
+    }
+    changed
+}
+
+fn preset_sandbox_container_id(name: &str, preset_agents: &[PresetAgent]) -> Option<i32> {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    preset_agents
+        .iter()
+        .find(|preset| preset.name == cleaned)
+        .map(|preset| preset.sandbox_container_id)
 }
 
 fn normalize_agent_id(raw: &str) -> String {

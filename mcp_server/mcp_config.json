@@ -2,13 +2,23 @@
   "database": {
     "default_key": "default",
     "db_type": "mysql",
-    "host": "192.168.0.2",
-    "port": 32768,
+    "host": "host.docker.internal",
+    "port": 3307,
     "user": "root",
     "password": "rootpass123!",
     "database": "personnel",
     "description": "人员与组织信息库",
-    "connect_timeout": 5
+    "connect_timeout": 5,
+    "tables": {
+      "employees": {
+        "table": "employees",
+        "description": "人员主数据"
+      },
+      "departments": {
+        "table": "departments",
+        "description": "部门主数据"
+      }
+    }
   },
   "knowledge": {
     "base_url": "http://192.168.0.2",
