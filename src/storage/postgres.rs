@@ -1727,6 +1727,26 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
+    fn load_recent_monitor_records(&self, limit: i64) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT payload FROM monitor_sessions ORDER BY updated_time DESC LIMIT $1",
+            &[&limit],
+        )?;
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: String = row.get(0);
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_monitor_record(&self, _session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = _session_id.trim();

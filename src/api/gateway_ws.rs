@@ -18,6 +18,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{timeout_at, Duration, Instant};
+use tracing::warn;
 use uuid::Uuid;
 
 const GATEWAY_ENDPOINT: &str = "/wunder/gateway/ws";
@@ -496,7 +497,12 @@ async fn handle_connect(
     if let Some(mut record) = node_token_record {
         record.last_used_at = Some(now);
         record.updated_at = now;
-        let _ = state.storage.upsert_gateway_node_token(&record);
+        let storage = state.storage.clone();
+        std::mem::drop(tokio::task::spawn_blocking(move || {
+            if let Err(err) = storage.upsert_gateway_node_token(&record) {
+                warn!("gateway node token touch failed: {err}");
+            }
+        }));
     }
     let policy = GatewayHub::default_policy();
     let payload = json!({

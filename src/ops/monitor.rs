@@ -32,6 +32,7 @@ const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
+const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MonitorLogProfile {
@@ -152,11 +153,13 @@ enum MonitorWriteTask {
 struct MonitorWriteQueue {
     sender: SyncSender<MonitorWriteTask>,
     dropped: AtomicU64,
+    storage: Arc<dyn StorageBackend>,
 }
 
 impl MonitorWriteQueue {
     fn new(storage: Arc<dyn StorageBackend>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(MONITOR_WRITE_QUEUE_SIZE);
+        let writer_storage = storage.clone();
         if let Err(err) = thread::Builder::new()
             .name("wunder-monitor-writer".to_string())
             .spawn(move || {
@@ -171,7 +174,7 @@ impl MonitorWriteQueue {
                         }
                     }
                     for task in batch {
-                        if let Err(err) = Self::apply_write(&storage, task) {
+                        if let Err(err) = Self::apply_write(&writer_storage, task) {
                             error!("monitor storage write failed: {err}");
                         }
                     }
@@ -183,16 +186,21 @@ impl MonitorWriteQueue {
         Self {
             sender,
             dropped: AtomicU64::new(0),
+            storage,
         }
     }
 
     fn enqueue(&self, task: MonitorWriteTask) {
         match self.sender.try_send(task) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-                let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
-                if dropped == 1 || dropped.is_multiple_of(1000) {
-                    warn!("monitor write queue full, dropped {dropped} records");
+            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
+                if let Err(err) = Self::apply_write(&self.storage, task) {
+                    let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                    if dropped == 1 || dropped.is_multiple_of(1000) {
+                        warn!(
+                            "monitor write queue fallback failed, dropped {dropped} records: {err}"
+                        );
+                    }
                 }
             }
         }
@@ -244,17 +252,27 @@ struct SessionRecord {
     last_persisted: f64,
 }
 
+struct SessionRecordInit {
+    session_id: String,
+    user_id: String,
+    agent_id: String,
+    question: String,
+    is_admin: bool,
+    log_profile: MonitorLogProfile,
+    trace_id: String,
+}
+
 impl SessionRecord {
-    fn new(
-        session_id: String,
-        user_id: String,
-        agent_id: String,
-        question: String,
-        is_admin: bool,
-        log_profile: MonitorLogProfile,
-        trace_id: String,
-        now: f64,
-    ) -> Self {
+    fn new(init: SessionRecordInit, now: f64) -> Self {
+        let SessionRecordInit {
+            session_id,
+            user_id,
+            agent_id,
+            question,
+            is_admin,
+            log_profile,
+            trace_id,
+        } = init;
         Self {
             session_id,
             user_id,
@@ -1416,7 +1434,10 @@ impl MonitorState {
 
     fn load_history(&self) {
         self.migrate_legacy_history();
-        let records = self.storage.load_monitor_records().unwrap_or_default();
+        let records = self
+            .storage
+            .load_recent_monitor_records(MONITOR_HISTORY_LOAD_LIMIT)
+            .unwrap_or_default();
         let mut rebuilt = HashMap::new();
         for payload in records {
             let Some(mut record) = SessionRecord::from_storage(&payload) else {
@@ -1589,13 +1610,15 @@ impl MonitorState {
         }
         let trace_id = build_monitor_trace_id();
         let mut record = SessionRecord::new(
-            session_id.to_string(),
-            user_id.to_string(),
-            cleaned_agent.to_string(),
-            question.to_string(),
-            is_admin,
-            log_profile,
-            trace_id.clone(),
+            SessionRecordInit {
+                session_id: session_id.to_string(),
+                user_id: user_id.to_string(),
+                agent_id: cleaned_agent.to_string(),
+                question: question.to_string(),
+                is_admin,
+                log_profile,
+                trace_id: trace_id.clone(),
+            },
             now,
         );
         let event_type = if append_received {

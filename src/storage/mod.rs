@@ -547,6 +547,17 @@ pub trait StorageBackend: Send + Sync {
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
     fn load_monitor_records(&self) -> Result<Vec<Value>>;
+    fn load_recent_monitor_records(&self, limit: i64) -> Result<Vec<Value>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut records = self.load_monitor_records()?;
+        records.sort_by(|left, right| {
+            monitor_record_updated_time(right).total_cmp(&monitor_record_updated_time(left))
+        });
+        records.truncate(limit as usize);
+        Ok(records)
+    }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;
 
@@ -859,7 +870,16 @@ pub trait StorageBackend: Send + Sync {
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
 }
 
-/// 构建存储后端，根据 backend 配置选择 SQLite/Postgres。
+// Helper for sorting monitor session records by updated_time.
+fn monitor_record_updated_time(record: &Value) -> f64 {
+    record
+        .get("updated_time")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+}
+
+/// Build storage backend from config, selecting SQLite/Postgres.
 pub fn build_storage(config: &StorageConfig) -> Result<Arc<dyn StorageBackend>> {
     let backend = config.backend.trim().to_lowercase();
     let backend = if backend.is_empty() {

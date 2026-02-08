@@ -1519,6 +1519,26 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
+    fn load_recent_monitor_records(&self, limit: i64) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn
+            .prepare("SELECT payload FROM monitor_sessions ORDER BY updated_time DESC LIMIT ?1")?;
+        let rows = stmt
+            .query_map([limit], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::with_capacity(rows.len());
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_monitor_record(&self, session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         if session_id.trim().is_empty() {

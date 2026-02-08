@@ -1619,9 +1619,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     let include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
     if !include_current {
-        if !include_current {
-            ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
-        }
+        ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
     }
     let Some(agent) = load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
     else {

@@ -212,7 +212,7 @@ impl WsClient {
 
     async fn send_json(&mut self, message: Value) -> Result<()> {
         self.stream
-            .send(Message::Text(message.to_string().into()))
+            .send(Message::Text(message.to_string()))
             .await
             .context("send websocket message failed")
     }

@@ -926,7 +926,7 @@ mod tests {
         let tail_chars = 3;
         let input = "abcdefghijklmnopqrstuvwxyz";
         let value = truncate_tool_result_string(
-            &input,
+            input,
             head_chars,
             tail_chars,
             TOOL_RESULT_TRUNCATION_MARKER,

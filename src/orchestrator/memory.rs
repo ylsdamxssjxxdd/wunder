@@ -1603,32 +1603,6 @@ fn should_compact_by_context(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_should_compact_by_context_threshold() {
-        let (by_history, should_compact) = should_compact_by_context(90, 100, Some(80));
-        assert!(by_history);
-        assert!(should_compact);
-    }
-
-    #[test]
-    fn test_should_compact_by_context_overflow_only() {
-        let (by_history, should_compact) = should_compact_by_context(120, 100, None);
-        assert!(!by_history);
-        assert!(should_compact);
-    }
-
-    #[test]
-    fn test_should_compact_by_context_no_compaction() {
-        let (by_history, should_compact) = should_compact_by_context(50, 100, Some(80));
-        assert!(!by_history);
-        assert!(!should_compact);
-    }
-}
-
 fn is_image_attachment(attachment: &AttachmentPayload, content: &str) -> bool {
     let content_type = attachment
         .content_type
@@ -1664,4 +1638,30 @@ fn data_url_regex() -> Option<&'static Regex> {
             )
         })
         .as_ref()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_compact_by_context_threshold() {
+        let (by_history, should_compact) = should_compact_by_context(90, 100, Some(80));
+        assert!(by_history);
+        assert!(should_compact);
+    }
+
+    #[test]
+    fn test_should_compact_by_context_overflow_only() {
+        let (by_history, should_compact) = should_compact_by_context(120, 100, None);
+        assert!(!by_history);
+        assert!(should_compact);
+    }
+
+    #[test]
+    fn test_should_compact_by_context_no_compaction() {
+        let (by_history, should_compact) = should_compact_by_context(50, 100, Some(80));
+        assert!(!by_history);
+        assert!(!should_compact);
+    }
 }
