@@ -1564,7 +1564,10 @@ impl MonitorState {
         data: &Value,
         timestamp: f64,
     ) {
-        if !record.is_admin && self.drop_event_types.contains(event_type) {
+        if !record.is_admin
+            && (should_skip_non_admin_event(event_type)
+                || self.drop_event_types.contains(event_type))
+        {
             return;
         }
         let sanitized = self.sanitize_event_data(event_type, data, record.is_admin);
@@ -2015,6 +2018,10 @@ fn resolve_payload_limit(raw: i64) -> Option<usize> {
     }
 }
 
+fn should_skip_non_admin_event(event_type: &str) -> bool {
+    event_type == "llm_output_delta"
+}
+
 fn trim_text(text: &str, limit: Option<usize>) -> String {
     let Some(limit) = limit else {
         return text.to_string();
@@ -2147,4 +2154,15 @@ fn localize_summary(summary: &str) -> String {
         }
     }
     cleaned.to_string()
+}
+#[cfg(test)]
+mod tests {
+    use super::should_skip_non_admin_event;
+
+    #[test]
+    fn non_admin_sessions_skip_llm_output_delta_events() {
+        assert!(should_skip_non_admin_event("llm_output_delta"));
+        assert!(!should_skip_non_admin_event("llm_output"));
+        assert!(!should_skip_non_admin_event("tool_call"));
+    }
 }

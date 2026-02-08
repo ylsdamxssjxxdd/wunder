@@ -206,7 +206,7 @@
           <div ref="messagesContainerRef" class="messages-container" @click="handleMessageClick">
             <div
               v-for="(message, index) in chatStore.messages"
-              :key="index"
+              :key="resolveMessageKey(message, index)"
               :class="['message', message.role === 'user' ? 'from-user' : 'from-ai']"
             >
               <div
@@ -1663,6 +1663,27 @@ const formatTime = (value) => {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(
     parsed.getHours()
   )}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+};
+
+const messageRenderKeys = new WeakMap();
+let messageRenderKeySeq = 0;
+
+const resolveMessageKey = (message, index) => {
+  if (!message || typeof message !== 'object') {
+    return `message-${index}`;
+  }
+  const cached = messageRenderKeys.get(message);
+  if (cached) {
+    return cached;
+  }
+  messageRenderKeySeq += 1;
+  const role = String(message.role || 'unknown');
+  const createdAt = String(message.created_at || '');
+  const streamEventId = String(message.stream_event_id || '');
+  const streamRound = String(message.stream_round || '');
+  const key = `${role}:${createdAt}:${streamRound}:${streamEventId}:${messageRenderKeySeq}`;
+  messageRenderKeys.set(message, key);
+  return key;
 };
 
 const formatTitle = (title) => {

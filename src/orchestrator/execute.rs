@@ -25,10 +25,12 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
-        let limiter = RequestLimiter::new(
-            self.storage.clone(),
-            self.config_store.get().await.server.max_active_sessions,
-        );
+        let max_active_sessions = if prepared.is_admin {
+            i64::MAX as usize
+        } else {
+            self.config_store.get().await.server.max_active_sessions
+        };
+        let limiter = RequestLimiter::new(self.storage.clone(), max_active_sessions);
         let session_id = prepared.session_id.clone();
         let user_id = prepared.user_id.clone();
         let question = prepared.question.clone();
@@ -50,17 +52,17 @@ impl Orchestrator {
                         lock_agent_id = format!("subagent:{lock_session}");
                     }
                 }
-                let ok = limiter
-                    .acquire(&session_id, &user_id, &lock_agent_id)
-                    .await
-                    .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-                if !ok {
-                    return Err(OrchestratorError::user_busy(i18n::t(
-                        "error.user_session_busy",
-                    )));
-                }
-                acquired = true;
             }
+            let ok = limiter
+                .acquire(&session_id, &user_id, &lock_agent_id)
+                .await
+                .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+            if !ok {
+                return Err(OrchestratorError::user_busy(i18n::t(
+                    "error.user_session_busy",
+                )));
+            }
+            acquired = true;
 
             if prepared.stream && !is_admin {
                 let cleanup_session = session_id.clone();
@@ -82,7 +84,7 @@ impl Orchestrator {
 
             // 心跳续租会话锁，避免长任务被误判超时。
             let heartbeat_limiter = limiter.clone();
-            if !is_admin {
+            if acquired {
                 let heartbeat_session = session_id.clone();
                 heartbeat_task = Some(tokio::spawn(async move {
                     loop {

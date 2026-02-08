@@ -655,8 +655,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 6px;
+  height: 100%;
   min-height: 0;
-  max-height: 230px;
   overflow: auto;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
