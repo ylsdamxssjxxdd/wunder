@@ -1,6 +1,6 @@
 use crate::auth as guard_auth;
 use crate::state::AppState;
-use crate::storage::normalize_hive_id;
+use crate::storage::DEFAULT_HIVE_ID;
 use crate::user_store::UserStore;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -14,10 +14,6 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/admin/team_runs", get(list_team_runs))
         .route("/wunder/admin/team_runs/{team_run_id}", get(get_team_run))
-        .route(
-            "/wunder/admin/hives/{hive_id}/team_runs",
-            get(list_hive_team_runs),
-        )
 }
 
 async fn list_team_runs(
@@ -39,12 +35,11 @@ async fn list_team_runs(
         })?;
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
-    let hive_id = query.hive_id.as_deref().map(normalize_hive_id);
     let (items, total) = state
         .user_store
         .list_team_runs(
             user_id,
-            hive_id.as_deref(),
+            None,
             query.parent_session_id.as_deref(),
             offset,
             limit,
@@ -84,51 +79,11 @@ async fn get_team_run(
     })))
 }
 
-async fn list_hive_team_runs(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    AxumPath(hive_id): AxumPath<String>,
-    Query(query): Query<AdminHiveTeamRunsQuery>,
-) -> Result<Json<Value>, Response> {
-    ensure_admin(&state, &headers)?;
-    let user_id = query
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
-                "admin hive team runs requires user_id".to_string(),
-            )
-        })?;
-    let limit = query.limit.unwrap_or(100).clamp(1, 500);
-    let offset = query.offset.unwrap_or(0).max(0);
-    let normalized_hive_id = normalize_hive_id(&hive_id);
-    let (items, total) = state
-        .user_store
-        .list_team_runs(
-            user_id,
-            Some(&normalized_hive_id),
-            query.parent_session_id.as_deref(),
-            offset,
-            limit,
-        )
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({
-        "data": {
-            "hive_id": normalized_hive_id,
-            "total": total,
-            "items": items.into_iter().map(|run| admin_run_payload(&run)).collect::<Vec<_>>(),
-        }
-    })))
-}
-
 fn admin_run_payload(record: &crate::storage::TeamRunRecord) -> Value {
     json!({
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": normalize_hive_id(&record.hive_id),
+        "hive_id": DEFAULT_HIVE_ID,
         "parent_session_id": record.parent_session_id,
         "status": record.status,
         "strategy": record.strategy,
@@ -149,7 +104,7 @@ fn admin_task_payload(record: &crate::storage::TeamTaskRecord) -> Value {
         "task_id": record.task_id,
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": normalize_hive_id(&record.hive_id),
+        "hive_id": DEFAULT_HIVE_ID,
         "agent_id": record.agent_id,
         "target_session_id": record.target_session_id,
         "spawned_session_id": record.spawned_session_id,
@@ -195,8 +150,6 @@ struct AdminTeamRunsQuery {
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]
-    hive_id: Option<String>,
-    #[serde(default)]
     parent_session_id: Option<String>,
     #[serde(default)]
     offset: Option<i64>,
@@ -204,14 +157,3 @@ struct AdminTeamRunsQuery {
     limit: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
-struct AdminHiveTeamRunsQuery {
-    #[serde(default)]
-    user_id: Option<String>,
-    #[serde(default)]
-    parent_session_id: Option<String>,
-    #[serde(default)]
-    offset: Option<i64>,
-    #[serde(default)]
-    limit: Option<i64>,
-}

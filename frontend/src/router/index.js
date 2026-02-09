@@ -20,14 +20,19 @@ import AdminSystemView from '@/views/AdminSystemView.vue';
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
 
+const USER_LOGIN_PATH = '/login';
+const USER_BEEHIVE_PATH = '/app/home';
+
+const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
+
 const routes = [
   {
     path: '/',
-    redirect: '/app/chat'
+    redirect: () => (hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH)
   },
   {
     path: '/home',
-    redirect: '/app/home'
+    redirect: USER_BEEHIVE_PATH
   },
   {
     path: '/portal',
@@ -47,7 +52,7 @@ const routes = [
     path: '/app',
     component: UserLayout,
     meta: { requiresAuth: true },
-    redirect: '/app/chat',
+    redirect: USER_BEEHIVE_PATH,
     children: [
       { path: 'home', name: 'home', component: PortalView },
       { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
@@ -108,9 +113,14 @@ router.beforeEach(async (to) => {
   } else {
     disableDemoMode();
   }
-  const token = localStorage.getItem('access_token');
+  const token = hasAccessToken();
+
+  if ((to.path === '/login' || to.path === '/register') && token) {
+    return USER_BEEHIVE_PATH;
+  }
+
   if (to.meta.requiresAuth && !token) {
-    return to.path.startsWith('/admin') ? '/admin/login' : '/login';
+    return to.path.startsWith('/admin') ? '/admin/login' : USER_LOGIN_PATH;
   }
   return true;
 });

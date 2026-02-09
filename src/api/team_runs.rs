@@ -4,7 +4,7 @@ use crate::services::swarm::events::{
     TEAM_FINISH, TEAM_START, TEAM_TASK_DISPATCH, TEAM_TASK_UPDATE,
 };
 use crate::state::AppState;
-use crate::storage::{normalize_hive_id, TeamRunRecord, TeamTaskRecord};
+use crate::storage::{TeamRunRecord, TeamTaskRecord, DEFAULT_HIVE_ID};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -51,12 +51,7 @@ async fn create_team_run(
         ));
     }
 
-    let resolved_hive_id = resolve_hive_id_for_team_run(
-        &state,
-        &user_id,
-        &parent_session_id,
-        payload.hive_id.as_deref(),
-    )?;
+    let resolved_hive_id = DEFAULT_HIVE_ID.to_string();
 
     let swarm_config = state.config_store.get().await.tools.swarm.clone();
     let max_parallel_tasks = swarm_config.max_parallel_tasks_per_team.max(1) as i64;
@@ -104,7 +99,7 @@ async fn create_team_run(
         if agent_id.is_empty() {
             continue;
         }
-        let agent = state
+        let _agent = state
             .user_store
             .get_user_agent(&user_id, &agent_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
@@ -115,13 +110,6 @@ async fn create_team_run(
                     format!("agent {agent_id} not found"),
                 )
             })?;
-        if normalize_hive_id(&agent.hive_id) != resolved_hive_id {
-            return Err(error_with_code(
-                StatusCode::FORBIDDEN,
-                "SWARM_HIVE_DENIED",
-                format!("agent {agent_id} is outside current hive"),
-            ));
-        }
         task_total += 1;
         tasks.push((
             agent_id,
@@ -242,7 +230,7 @@ async fn create_team_run(
     Ok(Json(json!({
         "data": {
             "team_run_id": record.team_run_id,
-            "hive_id": normalize_hive_id(&record.hive_id),
+            "hive_id": DEFAULT_HIVE_ID,
             "task_total": record.task_total,
             "status": record.status,
         }
@@ -363,7 +351,6 @@ async fn list_team_runs(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id;
-    let hive_filter = query.hive_id.as_deref().map(normalize_hive_id);
     let parent_session_id = query
         .parent_session_id
         .as_deref()
@@ -375,7 +362,7 @@ async fn list_team_runs(
         .user_store
         .list_team_runs(
             &user_id,
-            hive_filter.as_deref(),
+            None,
             parent_session_id,
             offset,
             limit,
@@ -397,14 +384,13 @@ async fn list_team_runs_by_session(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id;
-    let hive_filter = query.hive_id.as_deref().map(normalize_hive_id);
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
     let (runs, total) = state
         .user_store
         .list_team_runs(
             &user_id,
-            hive_filter.as_deref(),
+            None,
             Some(session_id.trim()),
             offset,
             limit,
@@ -416,51 +402,6 @@ async fn list_team_runs_by_session(
             "items": runs.into_iter().map(|run| team_run_payload(&run)).collect::<Vec<_>>(),
         }
     })))
-}
-
-fn resolve_hive_id_for_team_run(
-    state: &AppState,
-    user_id: &str,
-    parent_session_id: &str,
-    requested_hive_id: Option<&str>,
-) -> Result<String, Response> {
-    if let Some(requested_hive_id) = requested_hive_id {
-        let normalized = normalize_hive_id(requested_hive_id);
-        let hive = state
-            .user_store
-            .get_hive(user_id, &normalized)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if hive.is_none() {
-            return Err(error_with_code(
-                StatusCode::BAD_REQUEST,
-                "SWARM_HIVE_UNRESOLVED",
-                format!("hive {normalized} not found"),
-            ));
-        }
-        return Ok(normalized);
-    }
-
-    if let Some(session) = state
-        .user_store
-        .get_chat_session(user_id, parent_session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    {
-        if let Some(agent_id) = session.agent_id {
-            if let Some(agent) = state
-                .user_store
-                .get_user_agent(user_id, &agent_id)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            {
-                return Ok(normalize_hive_id(&agent.hive_id));
-            }
-        }
-    }
-
-    let default_hive = state
-        .user_store
-        .ensure_default_hive(user_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(normalize_hive_id(&default_hive.hive_id))
 }
 
 fn resolve_parent_agent_id(
@@ -497,7 +438,7 @@ fn team_run_payload(record: &TeamRunRecord) -> Value {
     json!({
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": normalize_hive_id(&record.hive_id),
+        "hive_id": DEFAULT_HIVE_ID,
         "parent_session_id": record.parent_session_id,
         "parent_agent_id": record.parent_agent_id,
         "strategy": record.strategy,
@@ -522,7 +463,7 @@ fn team_task_payload(record: &TeamTaskRecord) -> Value {
         "task_id": record.task_id,
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": normalize_hive_id(&record.hive_id),
+        "hive_id": DEFAULT_HIVE_ID,
         "agent_id": record.agent_id,
         "target_session_id": record.target_session_id,
         "spawned_session_id": record.spawned_session_id,
@@ -554,8 +495,6 @@ fn error_with_code(status: StatusCode, code: &str, message: String) -> Response 
 struct CreateTeamRunRequest {
     parent_session_id: String,
     #[serde(default)]
-    hive_id: Option<String>,
-    #[serde(default)]
     strategy: Option<String>,
     #[serde(default)]
     merge_policy: Option<String>,
@@ -576,8 +515,6 @@ struct CreateTeamTaskRequest {
 
 #[derive(Debug, Deserialize)]
 struct ListTeamRunsQuery {
-    #[serde(default)]
-    hive_id: Option<String>,
     #[serde(default)]
     parent_session_id: Option<String>,
     #[serde(default)]

@@ -97,7 +97,7 @@ const handleRegister = async () => {
       ...form,
       unit_id: form.unit_id || ''
     });
-    router.push('/app/chat');
+    router.push('/app/home');
   } catch (error) {
     showApiError(error, t('auth.register.error'));
   }

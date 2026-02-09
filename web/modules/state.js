@@ -37,8 +37,6 @@ export const state = {
   panelLoaded: {
     monitor: false,
     users: false,
-    swarmRuns: false,
-    swarmHives: false,
     userAccounts: false,
     externalLinks: false,
     orgUnits: false,

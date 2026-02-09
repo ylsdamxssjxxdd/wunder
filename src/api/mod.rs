@@ -15,7 +15,6 @@ pub(crate) mod errors;
 pub mod evaluation;
 pub mod external_links;
 pub mod gateway_ws;
-pub mod hives;
 pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;
@@ -49,7 +48,6 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(external_links::router())
         .merge(user_tools::router())
         .merge(user_agents::router())
-        .merge(hives::router())
         .merge(team_runs::router())
         .merge(user_channels::router())
         .merge(a2a::router())

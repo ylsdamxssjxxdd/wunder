@@ -2324,3 +2324,11 @@
 - `SWARM_HIVE_DENIED`：目标智能体不在当前蜂巢作用域。
 - `SWARM_POLICY_BLOCKED`：触发策略限制（并发、任务数、参数校验）。
 - `SWARM_RUN_TIMEOUT`：蜂群运行超时。
+
+## 单蜂巢 API 变更（2026-02）
+
+- 已移除：`/wunder/hives`、`/wunder/hives/{hive_id}`、`/wunder/hives/{hive_id}/summary`、`/wunder/hives/{hive_id}/agents`。
+- `/wunder/agents` 不再按 `hive_id` 参数筛选，始终返回当前用户的单蜂巢智能体列表。
+- `/wunder/chat/team_runs` 与 `/wunder/chat/sessions/{session_id}/team_runs` 不再使用 `hive_id` 过滤参数。
+- 返回体中的 `hive_id` 保留为兼容字段，固定为 `default`。
+

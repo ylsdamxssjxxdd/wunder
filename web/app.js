@@ -78,8 +78,6 @@ import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
-import { initSwarmRunsPanel, loadSwarmRuns } from "./modules/swarm-runs.js";
-import { initSwarmHivesPanel, loadSwarmHives } from "./modules/swarm-hives.js";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-07";
@@ -167,10 +165,6 @@ const panelMap = {
 
   memory: { panel: elements.memoryPanel, nav: elements.navMemory },
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
-
-  swarmRuns: { panel: elements.swarmRunsPanel, nav: elements.navSwarmRuns },
-
-  swarmHives: { panel: elements.swarmHivesPanel, nav: elements.navSwarmHives },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
@@ -466,30 +460,6 @@ const bindNavigation = () => {
     }
 
   });
-
-  if (elements.navSwarmRuns) {
-    elements.navSwarmRuns.addEventListener("click", async () => {
-      switchPanel("swarmRuns");
-      try {
-        await loadSwarmRuns();
-        state.panelLoaded.swarmRuns = true;
-      } catch (error) {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.swarmRuns"), message: error.message }));
-      }
-    });
-  }
-
-  if (elements.navSwarmHives) {
-    elements.navSwarmHives.addEventListener("click", async () => {
-      switchPanel("swarmHives");
-      try {
-        await loadSwarmHives();
-        state.panelLoaded.swarmHives = true;
-      } catch (error) {
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.swarmHives"), message: error.message }));
-      }
-    });
-  }
 
   elements.navUserAccounts.addEventListener("click", async () => {
     switchPanel("userAccounts");
@@ -1173,8 +1143,6 @@ const bindGlobalInputs = () => {
 
     });
 
-    loadSwarmRuns().catch(() => {});
-    loadSwarmHives().catch(() => {});
 
   };
 
@@ -1269,9 +1237,6 @@ const bootstrap = async () => {
 
   initSettingsPanel();
   initApiDocsPanel();
-  initSwarmRunsPanel();
-  initSwarmHivesPanel();
-
   bindNavigation();
   bindNavGroupToggles();
   bindNavGroupHover();
@@ -1299,8 +1264,6 @@ const bootstrap = async () => {
   }
 
   switchPanel(initialPanel);
-  loadSwarmRuns().catch(() => {});
-  loadSwarmHives().catch(() => {});
   expandActiveNavGroupOnly();
   if (authScope === "leader") {
     if (initialPanel === "orgUnits") {

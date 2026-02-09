@@ -4,8 +4,8 @@
       <div class="brand-mark">AI</div>
       <div class="brand-meta">
         <div class="brand-title-row">
-        <div class="brand-title">{{ resolvedTitle }}</div>
-      </div>
+          <div class="brand-title">{{ resolvedTitle }}</div>
+        </div>
         <div class="brand-sub">
           <span>{{ resolvedSubtitle }}</span>
           <span v-if="demoMode" class="demo-badge">{{ t('user.demoMode') }}</span>

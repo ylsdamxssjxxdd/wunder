@@ -3,8 +3,8 @@ const LOCALES = {
   "zh-CN": {
     "language.zh-CN": "简体中文",
     "language.en-US": "English",
-    "page.title": "WUNDER 终端",
-    "sidebar.title": "WUNDER 终端",
+    "page.title": "wunder引擎",
+    "sidebar.title": "wunder引擎",
     "sidebar.group.system": "系统",
     "sidebar.group.agent": "智能体",
     "sidebar.group.tools": "工具",
@@ -1914,8 +1914,8 @@ const LOCALES = {
   "en-US": {
     "language.zh-CN": "简体中文",
     "language.en-US": "English",
-    "page.title": "WUNDER Console",
-    "sidebar.title": "WUNDER Console",
+    "page.title": "wunder Engine",
+    "sidebar.title": "wunder Engine",
     "sidebar.group.system": "System",
     "sidebar.group.agent": "Agent",
     "sidebar.group.tools": "Tools",
@@ -4032,4 +4032,5 @@ export const setLanguage = (language, options = {}) => {
   }
   return currentLanguage;
 };
+
 

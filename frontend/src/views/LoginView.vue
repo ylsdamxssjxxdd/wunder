@@ -46,7 +46,7 @@ const themeClass = computed(() => (themeStore.mode === 'light' ? 'theme-light' :
 const handleLogin = async () => {
   try {
     await authStore.login(form);
-    router.push('/app/chat');
+    router.push('/app/home');
   } catch (error) {
     showApiError(error, t('auth.login.error'));
   }

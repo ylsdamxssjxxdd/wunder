@@ -518,7 +518,7 @@
         </div>
       </template>
       <div class="panel-dialog-body">
-        <SwarmPanel :session-id="chatStore.activeSessionId" :hive-id="activeHiveId" />
+        <SwarmPanel :session-id="chatStore.activeSessionId" />
       </div>
     </el-dialog>
 
@@ -667,7 +667,6 @@ import SwarmPanel from '@/components/chat/SwarmPanel.vue';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
-import { useBeehiveStore } from '@/stores/beehive';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
 import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
@@ -683,7 +682,6 @@ const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const agentStore = useAgentStore();
-const beehiveStore = useBeehiveStore();
 const { t } = useI18n();
 const currentUser = computed(() => authStore.user);
 const currentUserUnitLabel = computed(() => {
@@ -742,6 +740,11 @@ const abilityTooltipOptions = {
   ]
 };
 const TOOL_OVERRIDE_NONE = '__no_tools__';
+const EXTERNAL_SESSION_SYNC_VISIBLE_MS = 2500;
+const EXTERNAL_SESSION_SYNC_HIDDEN_MS = 8000;
+let externalSessionSyncTimer = null;
+let externalSessionSyncRunning = false;
+let externalSessionSyncStopped = false;
 
 const normalizeToolItemName = (item) => {
   if (!item) return '';
@@ -814,11 +817,6 @@ const activeAgentId = computed(
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
-const activeHiveId = computed(() => {
-  const hiveId = String(activeAgent.value?.hive_id || '').trim();
-  if (hiveId) return hiveId;
-  return String(beehiveStore.activeHiveId || 'default');
-});
 const normalizeSandboxContainerId = (value) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return 1;
@@ -935,7 +933,6 @@ const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
-  await beehiveStore.loadHives({ keepActive: true }).catch(() => null);
   const initialAgentId = routeEntry.value === 'default' ? '' : routeAgentId.value;
   await openAgentSession(initialAgentId);
   if (routeEntry.value === 'default') {
@@ -1561,6 +1558,100 @@ const flushChatSnapshot = () => {
   chatStore.scheduleSnapshot(true);
 };
 
+const resolveSessionActivityTimestampMs = (session) => {
+  const parsed = parseTimeValue(session?.updated_at ?? session?.last_message_at ?? session?.created_at);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const shouldSkipExternalSessionSync = () => {
+  const id = String(chatStore.activeSessionId || '').trim();
+  if (!id) return false;
+  if (chatStore.isSessionLoading?.(id)) return true;
+  // Avoid disrupting a locally-initiated stream; wait until it completes.
+  const last = chatStore.messages?.[chatStore.messages.length - 1];
+  if (last?.role === 'assistant' && (last.workflowStreaming || last.stream_incomplete)) {
+    return true;
+  }
+  return false;
+};
+
+const canAutoOpenIncomingSession = () =>
+  !chatStore.messages.some((message) => {
+    if (!message || message.isGreeting) return false;
+    return String(message.content || '').trim().length > 0;
+  });
+
+const clearExternalSessionSyncTimer = () => {
+  if (externalSessionSyncTimer) {
+    clearTimeout(externalSessionSyncTimer);
+    externalSessionSyncTimer = null;
+  }
+};
+
+const scheduleExternalSessionSync = (immediate = false) => {
+  if (externalSessionSyncStopped) return;
+  clearExternalSessionSyncTimer();
+  const hidden = typeof document !== 'undefined' && document.hidden;
+  const delay = immediate
+    ? 0
+    : hidden
+      ? EXTERNAL_SESSION_SYNC_HIDDEN_MS
+      : EXTERNAL_SESSION_SYNC_VISIBLE_MS;
+  externalSessionSyncTimer = setTimeout(() => {
+    void runExternalSessionSync();
+  }, delay);
+};
+
+const runExternalSessionSync = async () => {
+  if (externalSessionSyncStopped) return;
+  if (externalSessionSyncRunning) {
+    scheduleExternalSessionSync(false);
+    return;
+  }
+  externalSessionSyncRunning = true;
+  try {
+    const previousActivity = new Map(
+      chatStore.sessions.map((session) => [
+        String(session?.id || '').trim(),
+        resolveSessionActivityTimestampMs(session)
+      ])
+    );
+    const agentId = String(activeAgentId.value || '').trim();
+    const sessions = await chatStore.loadSessions({ agent_id: agentId, skipTransportRefresh: true });
+    if (!Array.isArray(sessions)) return;
+
+    const latestActive = String(chatStore.activeSessionId || '').trim();
+    if (!latestActive) {
+      if (canAutoOpenIncomingSession()) {
+        const targetId = resolveInitialSessionId(agentId);
+        if (targetId) {
+          await chatStore.loadSessionDetail(targetId);
+        }
+      }
+      return;
+    }
+
+    if (shouldSkipExternalSessionSync()) return;
+
+    const activeSession = sessions.find((item) => String(item?.id || '').trim() === latestActive);
+    if (!activeSession) return;
+    const previousTimestamp = previousActivity.get(latestActive) || 0;
+    const nextTimestamp = resolveSessionActivityTimestampMs(activeSession);
+    if (nextTimestamp <= previousTimestamp) return;
+    await chatStore.loadSessionDetail(latestActive);
+  } catch (error) {
+    // ignore background sync failures
+  } finally {
+    externalSessionSyncRunning = false;
+    scheduleExternalSessionSync(false);
+  }
+};
+
+const handleVisibilityChange = () => {
+  flushChatSnapshot();
+  scheduleExternalSessionSync(true);
+};
+
 const handleBeforeUnload = () => {
   chatStore.markPageUnloading();
   flushChatSnapshot();
@@ -1867,17 +1958,22 @@ onMounted(async () => {
   scheduleWorkspaceResourceHydration();
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
   updateCompactLayout();
+  externalSessionSyncStopped = false;
+  scheduleExternalSessionSync(true);
   window.addEventListener('resize', updateCompactLayout);
   window.addEventListener('beforeunload', handleBeforeUnload);
-  document.addEventListener('visibilitychange', flushChatSnapshot);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
   document.addEventListener('click', handleFeatureMenuClickOutside);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateCompactLayout);
   window.removeEventListener('beforeunload', handleBeforeUnload);
-  document.removeEventListener('visibilitychange', flushChatSnapshot);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('click', handleFeatureMenuClickOutside);
+  externalSessionSyncStopped = true;
+  externalSessionSyncRunning = false;
+  clearExternalSessionSyncTimer();
   if (stopWorkspaceRefreshListener) {
     stopWorkspaceRefreshListener();
     stopWorkspaceRefreshListener = null;
@@ -1895,6 +1991,7 @@ watch(
       clearWorkspaceResourceCache();
       scheduleWorkspaceResourceHydration();
       planExpanded.value = false;
+      scheduleExternalSessionSync(true);
     }
   }
 );
@@ -1957,6 +2054,7 @@ watch(
     if (value === oldValue) return;
     await init();
     loadToolSummary();
+    scheduleExternalSessionSync(true);
   }
 );
 
@@ -1983,6 +2081,7 @@ watch(
   async (value, oldValue) => {
     if (!value || value === oldValue || value !== 'default') return;
     await openAgentSession('');
+    scheduleExternalSessionSync(true);
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
   }
 );
@@ -1993,6 +2092,7 @@ watch(
     if (value === oldValue) return;
     if (routeEntry.value === 'default') return;
     await openAgentSession(value);
+    scheduleExternalSessionSync(true);
   }
 );
 

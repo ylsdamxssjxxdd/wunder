@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   createAgent as createAgentApi,
@@ -9,15 +9,12 @@ import {
   updateAgent as updateAgentApi
 } from '@/api/agents';
 
-const normalizeHiveId = (value) => String(value || '').trim();
-
 export const useAgentStore = defineStore('agents', {
   state: () => ({
     agents: [],
     sharedAgents: [],
     agentMap: {},
-    loading: false,
-    activeHiveId: ''
+    loading: false
   }),
   actions: {
     hydrateMap(agents, sharedAgents) {
@@ -30,21 +27,10 @@ export const useAgentStore = defineStore('agents', {
       this.agentMap = map;
     },
 
-    async loadAgents(options = {}) {
-      const all = options.all === true;
-      const hiveId = all
-        ? ''
-        : normalizeHiveId(options.hiveId !== undefined ? options.hiveId : this.activeHiveId);
-      if (!all) {
-        this.activeHiveId = hiveId;
-      }
-      const ownedParams = hiveId ? { hive_id: hiveId } : {};
+    async loadAgents() {
       this.loading = true;
       try {
-        const [ownedRes, sharedRes] = await Promise.all([
-          listAgents(ownedParams),
-          listSharedAgents()
-        ]);
+        const [ownedRes, sharedRes] = await Promise.all([listAgents(), listSharedAgents()]);
         const ownedItems = ownedRes?.data?.data?.items || [];
         const sharedItems = sharedRes?.data?.data?.items || [];
         this.agents = ownedItems;
@@ -70,25 +56,25 @@ export const useAgentStore = defineStore('agents', {
       return agent;
     },
 
-    async createAgent(payload, options = {}) {
+    async createAgent(payload) {
       const { data } = await createAgentApi(payload);
       const agent = data?.data;
-      await this.loadAgents({ hiveId: options.hiveId ?? payload?.hive_id ?? this.activeHiveId });
+      await this.loadAgents();
       return agent;
     },
 
-    async updateAgent(id, payload, options = {}) {
+    async updateAgent(id, payload) {
       const { data } = await updateAgentApi(id, payload);
       const agent = data?.data;
-      await this.loadAgents({ hiveId: options.hiveId ?? this.activeHiveId });
+      await this.loadAgents();
       return agent;
     },
 
-    async deleteAgent(id, options = {}) {
+    async deleteAgent(id) {
       const key = String(id || '').trim();
       if (!key) return null;
       const { data } = await deleteAgentApi(key);
-      await this.loadAgents({ hiveId: options.hiveId ?? this.activeHiveId });
+      await this.loadAgents();
       return data?.data;
     }
   }

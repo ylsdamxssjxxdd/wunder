@@ -22,8 +22,8 @@ use crate::sandbox;
 use crate::schemas::{ToolSpec, WunderRequest};
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
-    normalize_hive_id, ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentAccessRecord,
-    UserAgentRecord,
+    ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentAccessRecord,
+    UserAgentRecord, DEFAULT_HIVE_ID,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{
@@ -1492,8 +1492,6 @@ struct AgentSwarmListArgs {
     active_minutes: Option<f64>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
     include_current: Option<bool>,
-    #[serde(default, alias = "hiveId", alias = "hive_id")]
-    hive_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1504,16 +1502,12 @@ struct AgentSwarmStatusArgs {
     limit: Option<i64>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
     include_current: Option<bool>,
-    #[serde(default, alias = "hiveId", alias = "hive_id")]
-    hive_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct AgentSwarmSendArgs {
     #[serde(default, alias = "agentId", alias = "agent_id")]
     agent_id: Option<String>,
-    #[serde(default, alias = "hiveId", alias = "hive_id")]
-    hive_id: Option<String>,
     #[serde(
         default,
         alias = "session_id",
@@ -1576,7 +1570,7 @@ async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Val
     }
     let limit = clamp_limit(payload.limit, 50, MAX_SESSION_LIST_ITEMS);
     let include_current = payload.include_current.unwrap_or(false);
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, payload.hive_id.as_deref())?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
     let cutoff = payload
         .active_minutes
         .filter(|value| *value > 0.0)
@@ -1602,7 +1596,7 @@ async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Val
             latest.and_then(|record| monitor_session_status(context, &record.session_id));
         items.push(json!({
             "agent_id": agent.agent_id,
-            "hive_id": normalize_hive_id(&agent.hive_id),
+            "hive_id": DEFAULT_HIVE_ID,
             "name": agent.name,
             "description": agent.description,
             "status": agent.status,
@@ -1635,7 +1629,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     let Some(agent_id) = normalize_optional_string(payload.agent_id) else {
         return agent_swarm_list(context, args).await;
     };
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, payload.hive_id.as_deref())?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
     let include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
     if !include_current {
@@ -1671,7 +1665,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     Ok(json!({
         "agent": {
             "agent_id": agent.agent_id,
-            "hive_id": normalize_hive_id(&agent.hive_id),
+            "hive_id": DEFAULT_HIVE_ID,
             "name": agent.name,
             "description": agent.description,
             "status": agent.status,
@@ -1701,7 +1695,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     }
     let current_agent_id = current_agent_id(context);
     let include_current = payload.include_current.unwrap_or(false);
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, payload.hive_id.as_deref())?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
     let requested_agent_id = normalize_optional_string(payload.agent_id);
     let (target_agent_id, target_session_id, created_session) =
         if let Some(session_key) = payload.session_key {
@@ -1878,7 +1872,7 @@ fn collect_swarm_agents(
     context: &ToolContext<'_>,
     user_id: &str,
     include_current: bool,
-    hive_id: &str,
+    _hive_id: &str,
 ) -> Result<Vec<UserAgentRecord>> {
     let access = context.storage.get_user_agent_access(user_id)?;
     let current_agent_id = current_agent_id(context);
@@ -1894,9 +1888,6 @@ fn collect_swarm_agents(
             continue;
         }
         if !is_agent_allowed_by_access(user_id, access.as_ref(), &agent) {
-            continue;
-        }
-        if normalize_hive_id(&agent.hive_id) != normalize_hive_id(hive_id) {
             continue;
         }
         if !include_current
@@ -2008,45 +1999,15 @@ fn swarm_hive_arg(args: &Value) -> Option<&str> {
 }
 
 fn resolve_swarm_hive_id(
-    context: &ToolContext<'_>,
-    user_id: &str,
-    requested_hive_id: Option<&str>,
+    _context: &ToolContext<'_>,
+    _user_id: &str,
+    _requested_hive_id: Option<&str>,
 ) -> Result<String> {
-    if let Some(hive_id) = requested_hive_id {
-        let normalized = normalize_hive_id(hive_id);
-        let exists = context.storage.get_hive(user_id, &normalized)?;
-        if exists.is_none() {
-            return Err(anyhow!("SWARM_HIVE_UNRESOLVED: hive not found"));
-        }
-        return Ok(normalized);
-    }
-    if let Some(agent_id) = current_agent_id(context)
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if let Some(agent) = context.storage.get_user_agent(user_id, agent_id)? {
-            return Ok(normalize_hive_id(&agent.hive_id));
-        }
-    }
-    if let Some(hive) = context
-        .storage
-        .list_hives(user_id, false)?
-        .into_iter()
-        .next()
-    {
-        return Ok(normalize_hive_id(&hive.hive_id));
-    }
-    Ok(normalize_hive_id("default"))
+    Ok(DEFAULT_HIVE_ID.to_string())
 }
 
-fn ensure_swarm_agent_in_hive(agent: &UserAgentRecord, hive_id: &str) -> Result<()> {
-    if normalize_hive_id(&agent.hive_id) == normalize_hive_id(hive_id) {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "SWARM_HIVE_DENIED: target agent is outside current hive"
-    ))
+fn ensure_swarm_agent_in_hive(_agent: &UserAgentRecord, _hive_id: &str) -> Result<()> {
+    Ok(())
 }
 
 async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

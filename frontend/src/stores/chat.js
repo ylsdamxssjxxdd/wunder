@@ -910,12 +910,17 @@ const removeDemoChatSession = (sessionId) => {
   persistDemoChatState(state);
 };
 
-const sortSessionsByCreatedAt = (sessions = []) =>
+const resolveSessionActivityTime = (session) =>
+  resolveTimestampMs(
+    session?.updated_at ?? session?.last_message_at ?? session?.created_at
+  );
+
+const sortSessionsByActivity = (sessions = []) =>
   (Array.isArray(sessions) ? sessions.slice() : [])
     .map((session, index) => ({ session, index }))
     .sort((a, b) => {
-      const aTime = resolveTimestampMs(a.session?.created_at);
-      const bTime = resolveTimestampMs(b.session?.created_at);
+      const aTime = resolveSessionActivityTime(a.session);
+      const bTime = resolveSessionActivityTime(b.session);
       if (aTime !== null && bTime !== null && aTime !== bTime) {
         return bTime - aTime;
       }
@@ -2877,13 +2882,17 @@ export const useChatStore = defineStore('chat', {
       }
     },
     async loadSessions(options = {}) {
-      await this.refreshStreamTransportPolicy();
+      const shouldRefreshTransport =
+        options.skipTransportRefresh !== true && options.refresh_transport !== false;
+      if (shouldRefreshTransport) {
+        await this.refreshStreamTransportPolicy();
+      }
       const params = {};
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
         params.agent_id = options.agent_id ?? '';
       }
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
-      this.sessions = sortSessionsByCreatedAt(data.data.items || []);
+      this.sessions = sortSessionsByActivity(data.data.items || []);
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },

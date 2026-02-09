@@ -673,47 +673,8 @@
   flex: 0 1 auto;
 }
 
-.portal-hive-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.portal-hive-select {
-  width: 176px;
-}
-
-.portal-hive-create-btn {
-  min-height: 34px;
-  border: 1px solid var(--portal-border);
-  border-radius: 999px;
-  background: rgba(106, 217, 255, 0.16);
-  color: var(--portal-primary);
-  font-size: 12px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.portal-hive-create-btn:hover,
-.portal-hive-create-btn:focus-visible {
-  border-color: rgba(106, 217, 255, 0.55);
-  background: rgba(106, 217, 255, 0.24);
-}
-
-.portal-hive-copy-select,
 .agent-copy-select {
   width: 100%;
-}
-
-:root[data-user-theme='light'] .portal-hive-create-btn {
-  border-color: rgba(37, 99, 235, 0.28);
-  background: rgba(219, 234, 254, 0.9);
-  color: #1d4ed8;
 }
 
 .portal-section-search {
@@ -1302,14 +1263,6 @@
     flex-wrap: wrap;
   }
 
-  .portal-hive-switcher {
-    width: 100%;
-  }
-
-  .portal-hive-select {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
 
   .portal-section-search {
     width: 100%;

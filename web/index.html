@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title data-i18n="page.title">WUNDER 终端</title>
+    <title data-i18n="page.title">wunder引擎</title>
     <link
       rel="icon"
       type="image/svg+xml"
@@ -27,7 +27,7 @@
       <aside class="sidebar">
         <button id="sidebarTitle" class="sidebar-title" type="button">
           <i class="fa-solid fa-dragon"></i>
-          <span data-i18n="sidebar.title">WUNDER 终端</span>
+          <span data-i18n="sidebar.title">wunder引擎</span>
         </button>
         <div class="sidebar-nav">
           <div class="nav-group" data-group="system">
@@ -77,14 +77,6 @@
               <button id="navUsers" class="nav-btn">
                 <i class="fa-solid fa-code-branch"></i>
                 <span data-i18n="panel.users">线程管理</span>
-              </button>
-              <button id="navSwarmRuns" class="nav-btn">
-                <i class="fa-solid fa-diagram-project"></i>
-                <span data-i18n="panel.swarmRuns">蜂群运行</span>
-              </button>
-              <button id="navSwarmHives" class="nav-btn">
-                <i class="fa-solid fa-layer-group"></i>
-                <span data-i18n="panel.swarmHives">蜂巢概览</span>
               </button>
               <button id="navMemory" class="nav-btn">
                 <i class="fa-solid fa-brain"></i>
@@ -583,55 +575,6 @@
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-        <section id="swarmRunsPanel" class="panel">
-          <div class="list-header">
-            <h1 data-i18n="panel.swarmRuns">蜂群运行</h1>
-            <div class="header-actions">
-              <div class="header-input">
-                <label for="swarmRunsHiveFilter" data-i18n="swarm.runs.filter.hive">蜂巢 ID</label>
-                <input id="swarmRunsHiveFilter" type="text" placeholder="可选，用于筛选" data-i18n-placeholder="swarm.runs.filter.placeholder" />
-              </div>
-              <button id="swarmRunsRefreshBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-arrows-rotate"></i>
-                <span data-i18n="common.refresh">刷新</span>
-              </button>
-            </div>
-          </div>
-          <div class="tips" data-i18n="swarm.runs.tip">查看指定用户在蜂巢内的蜂群运行与任务详情。</div>
-          <div class="swarm-admin-layout">
-            <div class="swarm-admin-column">
-              <div class="detail-title" data-i18n="swarm.runs.list.title">运行列表</div>
-              <div id="swarmRunsList" class="swarm-runs-list">
-                <div class="swarm-empty" data-i18n="swarm.runs.empty">No swarm runs</div>
-              </div>
-            </div>
-            <div class="swarm-admin-column">
-              <div class="detail-title" data-i18n="swarm.runs.detail.title">运行详情</div>
-              <div id="swarmRunDetail" class="swarm-run-detail">
-                <div class="swarm-empty" data-i18n="swarm.runs.detail.empty">Select a run</div>
-              </div>
-            </div>
-          </div>
-        </section>
-        <section id="swarmHivesPanel" class="panel">
-          <div class="list-header">
-            <h1 data-i18n="panel.swarmHives">蜂巢概览</h1>
-            <div class="header-actions">
-              <div class="header-input">
-                <label for="swarmHivesHiveId" data-i18n="swarm.hives.filter.hive">蜂巢 ID</label>
-                <input id="swarmHivesHiveId" type="text" placeholder="输入蜂巢 ID" data-i18n-placeholder="swarm.hives.filter.placeholder" />
-              </div>
-              <button id="swarmHivesRefreshBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-arrows-rotate"></i>
-                <span data-i18n="common.refresh">刷新</span>
-              </button>
-            </div>
-          </div>
-          <div class="tips" data-i18n="swarm.hives.tip">按蜂巢查看运行规模、运行中数量与失败数量。</div>
-          <div id="swarmHivesSummary" class="swarm-hive-summary">
-            <div class="swarm-empty" data-i18n="swarm.hives.empty">No hive records</div>
           </div>
         </section>
                 <section id="userAccountsPanel" class="panel">
@@ -4760,3 +4703,4 @@
     <script type="module" src="./app.js?v=20260124-03"></script>
 </body>
 </html>
+

@@ -3,7 +3,6 @@
     <div class="swarm-panel-header">
       <div>
         <div class="swarm-panel-title">{{ t('beehive.swarm.title') }}</div>
-        <div class="swarm-panel-subtitle">{{ t('beehive.swarm.hive', { hive: hiveId || '-' }) }}</div>
       </div>
       <button class="swarm-panel-refresh" type="button" :disabled="loading" @click="loadRuns">
         <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
@@ -51,10 +50,6 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  hiveId: {
-    type: String,
-    default: ''
-  }
 });
 
 const { t } = useI18n();
@@ -97,9 +92,6 @@ const loadRuns = async () => {
   loading.value = true;
   try {
     const params = { limit: 20 };
-    if (props.hiveId) {
-      params.hive_id = props.hiveId;
-    }
     const { data } = await listSessionTeamRuns(sessionId, params);
     runs.value = data?.data?.items || [];
     if (!runs.value.find((item) => item.team_run_id === activeRunId.value)) {
@@ -120,7 +112,7 @@ const loadRuns = async () => {
 };
 
 watch(
-  () => [props.sessionId, props.hiveId],
+  () => props.sessionId,
   () => {
     loadRuns();
   },
