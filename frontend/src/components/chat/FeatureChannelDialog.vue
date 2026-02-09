@@ -53,7 +53,7 @@
               <label class="feature-window-field">
                 <span>{{ t('channels.bind.peerKind') }}</span>
                 <select v-model="form.peer_kind" class="feature-window-input">
-                  <option v-for="option in peerKindOptions" :key="option.value" :value="option.value">
+                  <option v-for="option in effectivePeerKindOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
                   </option>
                 </select>
@@ -63,9 +63,10 @@
                 <input
                   v-model="form.peer_id"
                   class="feature-window-input"
-                  :placeholder="t('channels.bind.peerId.placeholder')"
+                  :placeholder="peerIdPlaceholder"
                 />
               </label>
+              <div v-if="bindHint" class="feature-window-hint">{{ bindHint }}</div>
               <label class="feature-window-field feature-window-field-full">
                 <span>{{ t('channels.bind.agent') }}</span>
                 <select v-model="form.agent_id" class="feature-window-input">
@@ -171,12 +172,62 @@ const CHANNEL_META = {
   }
 };
 
+const accounts = ref([]);
+const bindings = ref([]);
+const loading = ref(false);
+const bindingLoading = ref(false);
+const bindingSaving = ref(false);
+const selectedKey = ref('');
+const selectedAccount = computed(() => accounts.value.find((item) => item.key === selectedKey.value) || null);
+
+const form = reactive({
+  peer_kind: 'dm',
+  peer_id: '',
+  agent_id: ''
+});
+
 const peerKindOptions = computed(() => [
   { value: 'dm', label: t('channels.peerKind.dm') },
   { value: 'group', label: t('channels.peerKind.group') },
   { value: 'channel', label: t('channels.peerKind.channel') },
   { value: 'user', label: t('channels.peerKind.user') }
 ]);
+
+const effectivePeerKindOptions = computed(() => {
+  const channel = String(selectedAccount.value?.channel || '')
+    .trim()
+    .toLowerCase();
+  if (channel === 'feishu') {
+    return [
+      { value: 'user', label: t('channels.peerKind.user') },
+      { value: 'group', label: t('channels.peerKind.group') }
+    ];
+  }
+  return peerKindOptions.value;
+});
+
+const peerIdPlaceholder = computed(() => {
+  const account = selectedAccount.value;
+  if (!account) {
+    return t('channels.bind.peerId.placeholder');
+  }
+  if (String(account.channel || '').toLowerCase() !== 'feishu') {
+    return t('channels.bind.peerId.placeholder');
+  }
+  return account.receiveIdType === 'open_id'
+    ? t('channels.bind.peerId.feishu.openId')
+    : t('channels.bind.peerId.feishu.chatId');
+});
+
+const bindHint = computed(() => {
+  const account = selectedAccount.value;
+  if (!account || String(account.channel || '').toLowerCase() !== 'feishu') {
+    return '';
+  }
+  return account.receiveIdType === 'open_id'
+    ? t('channels.bind.hint.feishu.openId')
+    : t('channels.bind.hint.feishu.chatId');
+});
 
 const agentOptions = computed(() => {
   const options = [];
@@ -194,21 +245,6 @@ const agentOptions = computed(() => {
   );
   return options;
 });
-
-const accounts = ref([]);
-const bindings = ref([]);
-const loading = ref(false);
-const bindingLoading = ref(false);
-const bindingSaving = ref(false);
-const selectedKey = ref('');
-
-const form = reactive({
-  peer_kind: 'dm',
-  peer_id: '',
-  agent_id: ''
-});
-
-const selectedAccount = computed(() => accounts.value.find((item) => item.key === selectedKey.value) || null);
 
 const filteredBindings = computed(() => {
   if (!selectedAccount.value) return [];
@@ -235,7 +271,11 @@ const normalizeAccount = (record) => {
     active: String(record?.status || '').toLowerCase() === 'active' || !record?.status,
     label: meta.labelKey ? t(meta.labelKey) : channel,
     desc: meta.descKey ? t(meta.descKey) : t('channels.provider.generic'),
-    defaultPeerKind: meta.defaultPeerKind || 'dm'
+    defaultPeerKind: meta.defaultPeerKind || 'dm',
+    receiveIdType:
+      String(record?.meta?.receive_id_type || '')
+        .trim()
+        .toLowerCase() || 'chat_id'
   };
 };
 
@@ -298,7 +338,17 @@ const refreshAll = async () => {
 
 const resetForm = () => {
   const account = selectedAccount.value;
-  form.peer_kind = account?.defaultPeerKind || 'dm';
+  const defaultKind = account?.defaultPeerKind || 'dm';
+  if (
+    String(account?.channel || '')
+      .trim()
+      .toLowerCase() === 'feishu' &&
+    defaultKind !== 'group'
+  ) {
+    form.peer_kind = 'user';
+  } else {
+    form.peer_kind = defaultKind;
+  }
   form.peer_id = '';
   form.agent_id = contextAgentId.value || '';
 };

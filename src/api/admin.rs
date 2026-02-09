@@ -1,7 +1,8 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::auth;
-use crate::channels::ChannelMessage;
+use crate::channels::types::ChannelAccountConfig;
+use crate::channels::{feishu, ChannelMessage};
 use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig,
@@ -29,7 +30,8 @@ use crate::{
     org_units,
     storage::{
         ChannelAccountRecord, ChannelBindingRecord, ExternalLinkRecord, GatewayNodeRecord,
-        GatewayNodeTokenRecord, OrgUnitRecord, StorageBackend, UserAccountRecord,
+        GatewayNodeTokenRecord, ListChannelUserBindingsQuery, OrgUnitRecord, StorageBackend,
+        UserAccountRecord,
     },
 };
 use anyhow::anyhow;
@@ -6247,6 +6249,102 @@ struct ChannelTestRequest {
     message: ChannelMessage,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum FeishuLongConnectionRuntimeStatus {
+    Running,
+    WaitingBinding,
+    MissingCredentials,
+    Disabled,
+    AccountInactive,
+    NotConfigured,
+    Unknown,
+}
+
+impl FeishuLongConnectionRuntimeStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::WaitingBinding => "waiting_binding",
+            Self::MissingCredentials => "missing_credentials",
+            Self::Disabled => "disabled",
+            Self::AccountInactive => "account_inactive",
+            Self::NotConfigured => "not_configured",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn resolve_feishu_binding_count(
+    storage: &dyn StorageBackend,
+    channel: &str,
+    account_id: &str,
+) -> Result<i64, anyhow::Error> {
+    let (_, total) = storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
+        channel: Some(channel),
+        account_id: Some(account_id),
+        peer_kind: None,
+        peer_id: None,
+        user_id: None,
+        offset: 0,
+        limit: 1,
+    })?;
+    Ok(total)
+}
+
+fn build_channel_account_runtime(
+    storage: &dyn StorageBackend,
+    record: &ChannelAccountRecord,
+) -> Value {
+    if !record
+        .channel
+        .trim()
+        .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+    {
+        return json!({});
+    }
+
+    let account_cfg = ChannelAccountConfig::from_value(&record.config);
+    let Some(feishu_cfg) = account_cfg.feishu else {
+        return json!({
+            "feishu_long_connection": {
+                "status": FeishuLongConnectionRuntimeStatus::NotConfigured.as_str(),
+                "binding_count": 0,
+                "long_connection_enabled": false,
+                "has_credentials": false,
+            }
+        });
+    };
+
+    let long_connection_enabled = feishu::long_connection_enabled(&feishu_cfg);
+    let has_credentials = feishu::has_long_connection_credentials(&feishu_cfg);
+    let account_active = record.status.trim().eq_ignore_ascii_case("active");
+    let binding_count =
+        resolve_feishu_binding_count(storage, &record.channel, &record.account_id).ok();
+
+    let status = if !account_active {
+        FeishuLongConnectionRuntimeStatus::AccountInactive
+    } else if !long_connection_enabled {
+        FeishuLongConnectionRuntimeStatus::Disabled
+    } else if !has_credentials {
+        FeishuLongConnectionRuntimeStatus::MissingCredentials
+    } else {
+        match binding_count {
+            Some(count) if count > 0 => FeishuLongConnectionRuntimeStatus::Running,
+            Some(_) => FeishuLongConnectionRuntimeStatus::WaitingBinding,
+            None => FeishuLongConnectionRuntimeStatus::Unknown,
+        }
+    };
+
+    json!({
+        "feishu_long_connection": {
+            "status": status.as_str(),
+            "binding_count": binding_count,
+            "long_connection_enabled": long_connection_enabled,
+            "has_credentials": has_credentials,
+        }
+    })
+}
+
 async fn admin_channel_accounts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ChannelAccountQuery>,
@@ -6260,6 +6358,7 @@ async fn admin_channel_accounts(
     let items = records
         .into_iter()
         .map(|record| {
+            let runtime = build_channel_account_runtime(state.storage.as_ref(), &record);
             json!({
                 "channel": record.channel,
                 "account_id": record.account_id,
@@ -6267,6 +6366,7 @@ async fn admin_channel_accounts(
                 "status": record.status,
                 "created_at": record.created_at,
                 "updated_at": record.updated_at,
+                "runtime": runtime,
             })
         })
         .collect::<Vec<_>>();
@@ -6306,6 +6406,7 @@ async fn admin_channel_accounts_upsert(
         .storage
         .upsert_channel_account(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let runtime = build_channel_account_runtime(state.storage.as_ref(), &record);
     Ok(Json(json!({ "data": {
         "channel": record.channel,
         "account_id": record.account_id,
@@ -6313,6 +6414,7 @@ async fn admin_channel_accounts_upsert(
         "status": record.status,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "runtime": runtime,
     }})))
 }
 

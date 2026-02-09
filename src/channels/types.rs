@@ -71,6 +71,8 @@ pub struct FeishuConfig {
     pub domain: Option<String>,
     #[serde(default, alias = "receiveIdType")]
     pub receive_id_type: Option<String>,
+    #[serde(default, alias = "longConnectionEnabled")]
+    pub long_connection_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

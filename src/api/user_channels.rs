@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::channels::types::ChannelAccountConfig;
 use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
@@ -87,12 +88,26 @@ async fn list_channel_accounts(
     let items = records
         .into_iter()
         .map(|record| {
+            let account_cfg = ChannelAccountConfig::from_value(&record.config);
+            let mut meta = json!({});
+            if let Some(feishu_cfg) = account_cfg.feishu {
+                meta = json!({
+                    "receive_id_type": feishu_cfg
+                        .receive_id_type
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("chat_id"),
+                    "long_connection_enabled": feishu_cfg.long_connection_enabled.unwrap_or(true),
+                });
+            }
             json!({
                 "channel": record.channel,
                 "account_id": record.account_id,
                 "status": record.status,
                 "created_at": record.created_at,
                 "updated_at": record.updated_at,
+                "meta": meta,
             })
         })
         .collect::<Vec<_>>();
@@ -190,12 +205,18 @@ async fn upsert_channel_binding(
     let user_id = resolved.user.user_id.clone();
     let channel = payload.channel.trim().to_string();
     let account_id = payload.account_id.trim().to_string();
-    let peer_kind = payload.peer_kind.trim().to_string();
+    let peer_kind = normalize_user_peer_kind(&channel, &payload.peer_kind);
     let peer_id = payload.peer_id.trim().to_string();
     if channel.is_empty() || account_id.is_empty() || peer_kind.is_empty() || peer_id.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
+        ));
+    }
+    if channel.eq_ignore_ascii_case("feishu") && !matches!(peer_kind.as_str(), "user" | "group") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "feishu peer_kind must be user or group".to_string(),
         ));
     }
     let config = state.config_store.get().await;
@@ -341,6 +362,16 @@ async fn delete_channel_binding(
         "deleted_bindings": affected_binding,
         "deleted_user_bindings": affected_user_binding,
     }})))
+}
+
+fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
+    let normalized = peer_kind.trim().to_ascii_lowercase();
+    if channel.trim().eq_ignore_ascii_case("feishu")
+        && matches!(normalized.as_str(), "dm" | "direct" | "single")
+    {
+        return "user".to_string();
+    }
+    normalized
 }
 
 fn make_user_binding_id(

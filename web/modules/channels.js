@@ -46,6 +46,7 @@ const buildChannelConfigTemplate = (channel) => {
           encrypt_key: "",
           domain: "open.feishu.cn",
           receive_id_type: "chat_id",
+          long_connection_enabled: true,
         },
       };
     case "qqbot":
@@ -131,17 +132,69 @@ const normalizeChannelAccount = (record) => {
   const account_id = String(record?.account_id || "").trim();
   const status = String(record?.status || "active").trim() || "active";
   const config = isPlainObject(record?.config) ? record.config : {};
+  const runtime = isPlainObject(record?.runtime) ? record.runtime : {};
   return {
     channel,
     account_id,
     status,
     config,
+    runtime,
     created_at: record?.created_at,
     updated_at: record?.updated_at,
   };
 };
 
+const FEISHU_LONG_CONNECTION_STATUS_KEYS = {
+  running: "channels.runtime.feishu.status.running",
+  waiting_binding: "channels.runtime.feishu.status.waitingBinding",
+  missing_credentials: "channels.runtime.feishu.status.missingCredentials",
+  disabled: "channels.runtime.feishu.status.disabled",
+  account_inactive: "channels.runtime.feishu.status.accountInactive",
+  not_configured: "channels.runtime.feishu.status.notConfigured",
+  unknown: "channels.runtime.feishu.status.unknown",
+};
+
 const isAccountActive = (record) => record?.status?.trim().toLowerCase() === "active";
+
+const resolveFeishuLongConnectionRuntime = (account) => {
+  if (String(account?.channel || "").trim().toLowerCase() !== "feishu") {
+    return null;
+  }
+  const runtime = isPlainObject(account?.runtime?.feishu_long_connection)
+    ? account.runtime.feishu_long_connection
+    : null;
+  if (!runtime) {
+    return null;
+  }
+  const normalizedStatus = String(runtime.status || "unknown")
+    .trim()
+    .toLowerCase();
+  const status = FEISHU_LONG_CONNECTION_STATUS_KEYS[normalizedStatus]
+    ? normalizedStatus
+    : "unknown";
+  const rawBindingCount = Number(runtime.binding_count);
+  const bindingCount = Number.isFinite(rawBindingCount) ? rawBindingCount : null;
+  return {
+    status,
+    statusLabel: t(FEISHU_LONG_CONNECTION_STATUS_KEYS[status]),
+    bindingCount,
+  };
+};
+
+const formatFeishuLongConnectionRuntime = (account, withLabel = false) => {
+  const runtime = resolveFeishuLongConnectionRuntime(account);
+  if (!runtime) {
+    return "";
+  }
+  const segments = [runtime.statusLabel];
+  if (runtime.bindingCount !== null) {
+    segments.push(t("channels.runtime.bindingCount", { count: runtime.bindingCount }));
+  }
+  if (withLabel) {
+    return `${t("channels.runtime.feishu.longConnection")}: ${segments.join(" | ")}`;
+  }
+  return segments.join(" | ");
+};
 
 const renderChannelAccountDetail = () => {
   const account = state.channels.accounts[state.channels.selectedIndex];
@@ -162,6 +215,10 @@ const renderChannelAccountDetail = () => {
   const meta = [
     isAccountActive(account) ? t("channels.status.active") : t("channels.status.disabled"),
   ];
+  const longConnectionText = formatFeishuLongConnectionRuntime(account, true);
+  if (longConnectionText) {
+    meta.push(longConnectionText);
+  }
   if (account.updated_at) {
     meta.push(`updated: ${account.updated_at}`);
   }
@@ -194,7 +251,9 @@ const renderChannelAccountList = () => {
     const statusText = isAccountActive(account)
       ? t("channels.status.active")
       : t("channels.status.disabled");
-    item.innerHTML = `<div>${title}</div><small>${statusText}</small>`;
+    const longConnectionText = formatFeishuLongConnectionRuntime(account, false);
+    const summaryText = longConnectionText ? `${statusText} | ${longConnectionText}` : statusText;
+    item.innerHTML = `<div>${title}</div><small>${summaryText}</small>`;
     item.addEventListener("click", () => {
       state.channels.selectedIndex = index;
       renderChannelAccountList();
@@ -349,7 +408,12 @@ const toggleChannelAccountEnabled = async () => {
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
-  account.status = nextStatus;
+  const result = await response.json().catch(() => null);
+  const normalized = normalizeChannelAccount(result?.data || payload);
+  state.channels.accounts[state.channels.selectedIndex] = {
+    ...account,
+    ...normalized,
+  };
   renderChannelAccountList();
   renderChannelAccountDetail();
 };

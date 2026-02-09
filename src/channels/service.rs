@@ -4,7 +4,9 @@ use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::qqbot;
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
-use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
+use crate::channels::types::{
+    ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig,
+};
 use crate::channels::whatsapp_cloud;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::monitor::MonitorState;
@@ -13,15 +15,15 @@ use crate::schemas::WunderRequest;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChatSessionRecord, StorageBackend, UpdateChannelOutboxStatusParams,
-    UserAgentRecord,
+    ChannelSessionRecord, ChatSessionRecord, ListChannelUserBindingsQuery, StorageBackend,
+    UpdateChannelOutboxStatusParams, UserAgentRecord,
 };
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderValue as AxumHeaderValue};
 use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tracing::{error, warn};
@@ -32,6 +34,23 @@ const DEFAULT_SESSION_TITLE: &str = "Channel Session";
 const SESSION_STRATEGY_MAIN_THREAD: &str = "main_thread";
 const SESSION_STRATEGY_PER_PEER: &str = "per_peer";
 const SESSION_STRATEGY_HYBRID: &str = "hybrid";
+const FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
+const FEISHU_LONG_CONN_RETRY_BASE_S: u64 = 3;
+const FEISHU_LONG_CONN_RETRY_MAX_S: u64 = 30;
+
+#[derive(Debug, Clone)]
+struct FeishuLongConnTarget {
+    account_id: String,
+    updated_at: f64,
+    inbound_token: Option<String>,
+    config: FeishuConfig,
+}
+
+impl FeishuLongConnTarget {
+    fn task_key(&self) -> String {
+        format!("{}:{:.3}", self.account_id, self.updated_at)
+    }
+}
 
 fn channels_runtime_enabled(config: &Config) -> bool {
     config.channels.enabled || config.gateway.enabled
@@ -110,6 +129,10 @@ impl ChannelHub {
         tokio::spawn(async move {
             worker.outbox_loop().await;
         });
+        let feishu_worker = hub.clone();
+        tokio::spawn(async move {
+            feishu_worker.feishu_long_connection_supervisor_loop().await;
+        });
         hub
     }
 
@@ -176,12 +199,40 @@ impl ChannelHub {
             .list_channel_bindings(Some(&message.channel))
             .await
             .unwrap_or_default();
-        let resolved_binding = resolve_binding(&bindings, &message);
+        let sender_fallback_id = message
+            .sender
+            .as_ref()
+            .map(|sender| sender.id.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .filter(|value| !value.eq_ignore_ascii_case(message.peer.id.trim()))
+            .filter(|_| is_direct_peer(&message.peer.kind));
+        let mut resolved_binding = resolve_binding(&bindings, &message);
+        if resolved_binding.is_none() {
+            if let Some(sender_id) = sender_fallback_id.as_deref() {
+                let mut fallback_message = message.clone();
+                fallback_message.peer.id = sender_id.to_string();
+                resolved_binding = resolve_binding(&bindings, &fallback_message);
+            }
+        }
         let resolved_agent_id = resolved_binding
             .as_ref()
             .and_then(|binding| binding.agent_id.clone())
             .or_else(|| account_cfg.agent_id.clone())
             .or_else(|| config.channels.default_agent_id.clone());
+        if resolved_agent_id.is_none() {
+            warn!(
+                "channel agent unresolved: channel={}, account_id={}, peer_kind={}, peer_id={}, sender_id={}",
+                message.channel,
+                message.account_id,
+                message.peer.kind,
+                message.peer.id,
+                message
+                    .sender
+                    .as_ref()
+                    .map(|sender| sender.id.as_str())
+                    .unwrap_or_default()
+            );
+        }
 
         let agent_record = match resolved_agent_id.as_ref() {
             Some(agent_id) => self.get_agent(agent_id).await,
@@ -196,7 +247,7 @@ impl ChannelHub {
         );
 
         let session_strategy = ChannelSessionStrategy::from_config(&config);
-        let bound_user_id = self
+        let mut bound_user_id = self
             .get_channel_user_binding(
                 &message.channel,
                 &message.account_id,
@@ -205,6 +256,19 @@ impl ChannelHub {
             )
             .await?
             .map(|record| record.user_id);
+        if bound_user_id.is_none() {
+            if let Some(sender_id) = sender_fallback_id.as_deref() {
+                bound_user_id = self
+                    .get_channel_user_binding(
+                        &message.channel,
+                        &message.account_id,
+                        &message.peer.kind,
+                        sender_id,
+                    )
+                    .await?
+                    .map(|record| record.user_id);
+            }
+        }
         let session_info = self
             .resolve_channel_session(
                 &message,
@@ -312,6 +376,12 @@ impl ChannelHub {
         };
 
         let response = self.orchestrator.run(request).await?;
+        if response.answer.trim().is_empty() {
+            warn!(
+                "channel response empty: channel={}, account_id={}, peer_id={}",
+                message.channel, message.account_id, message.peer.id
+            );
+        }
         let mut outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -723,6 +793,177 @@ impl ChannelHub {
         Ok(())
     }
 
+    async fn feishu_long_connection_supervisor_loop(&self) {
+        let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+        loop {
+            workers.retain(|_, handle| !handle.is_finished());
+            let config = self.config_store.get().await;
+            if !channels_runtime_enabled(&config) {
+                for (_, handle) in workers.drain() {
+                    handle.abort();
+                }
+                sleep(Duration::from_secs(FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                continue;
+            }
+
+            match self.list_feishu_long_connection_targets().await {
+                Ok(targets) => {
+                    let mut desired_keys = HashSet::new();
+                    for target in targets {
+                        let task_key = target.task_key();
+                        desired_keys.insert(task_key.clone());
+                        if workers.contains_key(&task_key) {
+                            continue;
+                        }
+                        let worker = self.clone();
+                        workers.insert(
+                            task_key,
+                            tokio::spawn(async move {
+                                worker.feishu_long_connection_worker_loop(target).await;
+                            }),
+                        );
+                    }
+
+                    let stale_keys = workers
+                        .keys()
+                        .filter(|key| !desired_keys.contains(*key))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for task_key in stale_keys {
+                        if let Some(handle) = workers.remove(&task_key) {
+                            handle.abort();
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("load feishu long connection targets failed: {err}");
+                }
+            }
+
+            sleep(Duration::from_secs(FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+        }
+    }
+
+    async fn list_feishu_long_connection_targets(&self) -> Result<Vec<FeishuLongConnTarget>> {
+        let storage = self.storage.clone();
+        let accounts = tokio::task::spawn_blocking(move || {
+            storage.list_channel_accounts(Some(feishu::FEISHU_CHANNEL), Some("active"))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+
+        let mut targets = Vec::new();
+        for record in accounts {
+            let account_cfg = ChannelAccountConfig::from_value(&record.config);
+            let Some(feishu_cfg) = account_cfg.feishu else {
+                continue;
+            };
+            if !feishu::long_connection_enabled(&feishu_cfg) {
+                continue;
+            }
+            if !feishu::has_long_connection_credentials(&feishu_cfg) {
+                warn!(
+                    "skip feishu long connection target without app credentials: account_id={}",
+                    record.account_id
+                );
+                continue;
+            }
+            if !self
+                .has_channel_user_binding(feishu::FEISHU_CHANNEL, &record.account_id)
+                .await?
+            {
+                continue;
+            }
+            targets.push(FeishuLongConnTarget {
+                account_id: record.account_id,
+                updated_at: record.updated_at,
+                inbound_token: account_cfg.inbound_token,
+                config: feishu_cfg,
+            });
+        }
+
+        Ok(targets)
+    }
+
+    async fn feishu_long_connection_worker_loop(&self, target: FeishuLongConnTarget) {
+        let mut retry_delay_s = FEISHU_LONG_CONN_RETRY_BASE_S;
+        loop {
+            let result = feishu::run_long_connection_session(&self.http, &target.config, {
+                let worker = self.clone();
+                let event_target = target.clone();
+                move |payload| {
+                    let worker = worker.clone();
+                    let event_target = event_target.clone();
+                    async move {
+                        worker
+                            .handle_feishu_long_connection_payload(&event_target, payload)
+                            .await
+                    }
+                }
+            })
+            .await;
+
+            match result {
+                Ok(endpoint) => {
+                    retry_delay_s = endpoint
+                        .reconnect_interval_s
+                        .clamp(FEISHU_LONG_CONN_RETRY_BASE_S, FEISHU_LONG_CONN_RETRY_MAX_S);
+                    warn!(
+                        "feishu long connection closed: account_id={}, retry_in={}s",
+                        target.account_id, retry_delay_s
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        "feishu long connection failed: account_id={}, retry_in={}s, error={err}",
+                        target.account_id, retry_delay_s
+                    );
+                    retry_delay_s = (retry_delay_s * 2).min(FEISHU_LONG_CONN_RETRY_MAX_S);
+                }
+            }
+
+            sleep(Duration::from_secs(retry_delay_s)).await;
+        }
+    }
+
+    async fn handle_feishu_long_connection_payload(
+        &self,
+        target: &FeishuLongConnTarget,
+        payload: Value,
+    ) -> Result<()> {
+        let resolved_payload =
+            feishu::decrypt_event_if_needed(payload, target.config.encrypt_key.as_deref())?;
+        if !feishu::is_message_event(&resolved_payload) {
+            return Ok(());
+        }
+        let messages =
+            feishu::extract_inbound_messages(&resolved_payload, &target.account_id, Some("user"))?;
+        if messages.is_empty() {
+            return Ok(());
+        }
+        let headers = build_internal_channel_headers(target.inbound_token.as_deref())?;
+        let result = self
+            .handle_inbound(
+                feishu::FEISHU_CHANNEL,
+                &headers,
+                messages,
+                Some(resolved_payload),
+            )
+            .await?;
+        if !result.errors.is_empty() {
+            return Err(anyhow!(
+                "feishu long connection inbound rejected: {}",
+                result.errors.join(" | ")
+            ));
+        }
+        if result.accepted == 0 {
+            return Err(anyhow!(
+                "feishu long connection inbound ignored: no message accepted"
+            ));
+        }
+        Ok(())
+    }
+
     async fn outbox_loop(&self) {
         loop {
             let config = self.config_store.get().await;
@@ -745,6 +986,13 @@ impl ChannelHub {
                     for record in items {
                         let outcome = self.deliver_outbox_record(&record).await;
                         if let Err(err) = outcome {
+                            warn!(
+                                "deliver outbox failed: outbox_id={}, channel={}, account_id={}, retry_count={}, error={err}",
+                                record.outbox_id,
+                                record.channel,
+                                record.account_id,
+                                record.retry_count
+                            );
                             let mut status = "retry";
                             let error_text = Some(err.to_string());
                             if record.retry_count as u32 >= outbox_cfg.max_retries {
@@ -831,6 +1079,26 @@ impl ChannelHub {
             .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
+    async fn has_channel_user_binding(&self, channel: &str, account_id: &str) -> Result<bool> {
+        let storage = self.storage.clone();
+        let channel = channel.to_string();
+        let account_id = account_id.to_string();
+        let (_, total) = tokio::task::spawn_blocking(move || {
+            storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
+                channel: Some(&channel),
+                account_id: Some(&account_id),
+                peer_kind: None,
+                peer_id: None,
+                user_id: None,
+                offset: 0,
+                limit: 1,
+            })
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        Ok(total > 0)
+    }
+
     async fn get_channel_user_binding(
         &self,
         channel: &str,
@@ -841,10 +1109,20 @@ impl ChannelHub {
         let storage = self.storage.clone();
         let channel = channel.to_string();
         let account_id = account_id.to_string();
-        let peer_kind = peer_kind.to_string();
+        let peer_kinds = equivalent_peer_kinds(peer_kind);
         let peer_id = peer_id.to_string();
         tokio::task::spawn_blocking(move || {
-            storage.get_channel_user_binding(&channel, &account_id, &peer_kind, &peer_id)
+            for candidate_kind in &peer_kinds {
+                if let Some(record) = storage.get_channel_user_binding(
+                    &channel,
+                    &account_id,
+                    candidate_kind,
+                    &peer_id,
+                )? {
+                    return Ok(Some(record));
+                }
+            }
+            Ok(None)
         })
         .await
         .unwrap_or_else(|err| Err(anyhow!(err)))
@@ -861,17 +1139,22 @@ impl ChannelHub {
         let storage = self.storage.clone();
         let channel = channel.to_string();
         let account_id = account_id.to_string();
-        let peer_kind = peer_kind.to_string();
+        let peer_kinds = equivalent_peer_kinds(peer_kind);
         let peer_id = peer_id.to_string();
         let thread_id = thread_id.map(|value| value.to_string());
         tokio::task::spawn_blocking(move || {
-            storage.get_channel_session(
-                &channel,
-                &account_id,
-                &peer_kind,
-                &peer_id,
-                thread_id.as_deref(),
-            )
+            for candidate_kind in &peer_kinds {
+                if let Some(record) = storage.get_channel_session(
+                    &channel,
+                    &account_id,
+                    candidate_kind,
+                    &peer_id,
+                    thread_id.as_deref(),
+                )? {
+                    return Ok(Some(record));
+                }
+            }
+            Ok(None)
         })
         .await
         .unwrap_or_else(|err| Err(anyhow!(err)))
@@ -1018,6 +1301,19 @@ struct ChannelSessionInfo {
     tts_voice: Option<String>,
 }
 
+fn build_internal_channel_headers(inbound_token: Option<&str>) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    if let Some(token) = inbound_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let header_value = AxumHeaderValue::from_str(token)
+            .map_err(|err| anyhow!("invalid inbound token header value: {err}"))?;
+        headers.insert("x-channel-token", header_value);
+    }
+    Ok(headers)
+}
+
 fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()> {
     if message.channel.trim().is_empty() {
         message.channel = provider.trim().to_string();
@@ -1042,6 +1338,20 @@ fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()>
         };
     }
     Ok(())
+}
+
+fn equivalent_peer_kinds(kind: &str) -> Vec<String> {
+    let normalized = kind.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return vec![String::new()];
+    }
+    if is_direct_peer(&normalized) {
+        return ["user", "dm", "direct", "single"]
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect();
+    }
+    vec![normalized]
 }
 
 fn is_direct_peer(kind: &str) -> bool {

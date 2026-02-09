@@ -5,15 +5,485 @@ use crate::channels::types::{
 use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use aes::Aes256;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::Engine;
+use futures::{SinkExt, StreamExt};
+use prost::Message as ProstMessage;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::future::Future;
+use std::time::{Duration, Instant};
+use tokio::time::{interval, MissedTickBehavior};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
+use tracing::warn;
+use url::Url;
 
 type Aes256CbcDec = cbc::Decryptor<Aes256>;
 
 pub const FEISHU_CHANNEL: &str = "feishu";
+
+const FEISHU_LONG_CONN_ENDPOINT_URI: &str = "/callback/ws/endpoint";
+const FEISHU_LONG_CONN_DEFAULT_PING_INTERVAL_S: u64 = 120;
+const FEISHU_LONG_CONN_DEFAULT_RECONNECT_INTERVAL_S: u64 = 120;
+const FEISHU_LONG_CONN_FRAGMENT_TTL_S: u64 = 5;
+
+const FEISHU_WS_METHOD_CONTROL: i32 = 0;
+const FEISHU_WS_METHOD_DATA: i32 = 1;
+const FEISHU_WS_TYPE_EVENT: &str = "event";
+const FEISHU_WS_TYPE_PING: &str = "ping";
+const FEISHU_WS_TYPE_PONG: &str = "pong";
+const FEISHU_WS_HEADER_TYPE: &str = "type";
+const FEISHU_WS_HEADER_MESSAGE_ID: &str = "message_id";
+const FEISHU_WS_HEADER_SUM: &str = "sum";
+const FEISHU_WS_HEADER_SEQ: &str = "seq";
+const FEISHU_WS_HEADER_BIZ_RT: &str = "biz_rt";
+const FEISHU_WS_SERVICE_ID_QUERY: &str = "service_id";
+
+#[derive(Debug, Clone)]
+pub struct FeishuLongConnectionEndpoint {
+    pub url: String,
+    pub service_id: i32,
+    pub ping_interval_s: u64,
+    pub reconnect_interval_s: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct FeishuLongConnectionClientConfigPayload {
+    #[serde(default, rename = "ReconnectInterval")]
+    reconnect_interval: Option<i64>,
+    #[serde(default, rename = "PingInterval")]
+    ping_interval: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeishuLongConnectionEndpointResponse {
+    #[serde(default)]
+    code: i64,
+    #[serde(default)]
+    msg: Option<String>,
+    #[serde(default)]
+    data: Option<FeishuLongConnectionEndpointPayload>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FeishuLongConnectionEndpointPayload {
+    #[serde(default, rename = "URL")]
+    url: Option<String>,
+    #[serde(default, rename = "ClientConfig")]
+    client_config: Option<FeishuLongConnectionClientConfigPayload>,
+}
+
+#[derive(Clone, PartialEq, ProstMessage)]
+struct FeishuWsHeader {
+    #[prost(string, tag = "1")]
+    key: String,
+    #[prost(string, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, ProstMessage)]
+struct FeishuWsFrame {
+    #[prost(uint64, tag = "1")]
+    seq_id: u64,
+    #[prost(uint64, tag = "2")]
+    log_id: u64,
+    #[prost(int32, tag = "3")]
+    service: i32,
+    #[prost(int32, tag = "4")]
+    method: i32,
+    #[prost(message, repeated, tag = "5")]
+    headers: Vec<FeishuWsHeader>,
+    #[prost(string, tag = "6")]
+    payload_encoding: String,
+    #[prost(string, tag = "7")]
+    payload_type: String,
+    #[prost(bytes, tag = "8")]
+    payload: Vec<u8>,
+    #[prost(string, tag = "9")]
+    log_id_new: String,
+}
+
+#[derive(Debug)]
+struct FeishuPayloadChunks {
+    expires_at: Instant,
+    chunks: Vec<Option<Vec<u8>>>,
+}
+
+#[derive(Debug, Default)]
+struct FeishuPayloadAssembler {
+    chunks: HashMap<String, FeishuPayloadChunks>,
+}
+
+impl FeishuPayloadAssembler {
+    fn merge(
+        &mut self,
+        message_id: &str,
+        sum: usize,
+        seq: usize,
+        payload: Vec<u8>,
+    ) -> Option<Vec<u8>> {
+        if message_id.trim().is_empty() || sum <= 1 || seq >= sum {
+            return Some(payload);
+        }
+        self.prune_expired();
+        let expires_at = Instant::now() + Duration::from_secs(FEISHU_LONG_CONN_FRAGMENT_TTL_S);
+        let entry = self
+            .chunks
+            .entry(message_id.to_string())
+            .or_insert_with(|| FeishuPayloadChunks {
+                expires_at,
+                chunks: vec![None; sum],
+            });
+        if entry.chunks.len() != sum {
+            entry.chunks = vec![None; sum];
+        }
+        entry.expires_at = expires_at;
+        entry.chunks[seq] = Some(payload);
+
+        if entry.chunks.iter().any(Option::is_none) {
+            return None;
+        }
+
+        let mut output = Vec::new();
+        for part in &mut entry.chunks {
+            if let Some(buffer) = part.take() {
+                output.extend(buffer);
+            }
+        }
+        self.chunks.remove(message_id);
+        Some(output)
+    }
+
+    fn prune_expired(&mut self) {
+        let now = Instant::now();
+        self.chunks.retain(|_, item| item.expires_at > now);
+    }
+}
+
+pub fn long_connection_enabled(config: &FeishuConfig) -> bool {
+    config.long_connection_enabled.unwrap_or(true)
+}
+
+pub fn has_long_connection_credentials(config: &FeishuConfig) -> bool {
+    app_credentials(config).is_ok()
+}
+
+pub fn is_message_event(payload: &Value) -> bool {
+    payload
+        .get("event")
+        .and_then(|event| event.get("message"))
+        .is_some()
+}
+
+pub async fn fetch_long_connection_endpoint(
+    http: &Client,
+    config: &FeishuConfig,
+) -> Result<FeishuLongConnectionEndpoint> {
+    let (app_id, app_secret) = app_credentials(config)?;
+    let endpoint_url = format!(
+        "{}{FEISHU_LONG_CONN_ENDPOINT_URI}",
+        resolve_openapi_base_url(config)
+    );
+    let response = http
+        .post(endpoint_url)
+        .header("locale", "zh")
+        .json(&json!({
+            "AppID": app_id,
+            "AppSecret": app_secret,
+        }))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "feishu long connection endpoint failed: {status} {body}"
+        ));
+    }
+
+    let payload: FeishuLongConnectionEndpointResponse = response.json().await?;
+    if payload.code != 0 {
+        let message = payload.msg.as_deref().unwrap_or("unknown");
+        return Err(anyhow!("feishu long connection endpoint failed: {message}"));
+    }
+
+    let endpoint = payload
+        .data
+        .ok_or_else(|| anyhow!("feishu long connection endpoint missing data"))?;
+    let url = endpoint
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("feishu long connection endpoint missing url"))?
+        .to_string();
+    let service_id = parse_service_id(&url)?;
+    let client_config = endpoint.client_config.unwrap_or_default();
+
+    Ok(FeishuLongConnectionEndpoint {
+        url,
+        service_id,
+        ping_interval_s: parse_positive_i64(
+            client_config.ping_interval,
+            FEISHU_LONG_CONN_DEFAULT_PING_INTERVAL_S,
+        ),
+        reconnect_interval_s: parse_positive_i64(
+            client_config.reconnect_interval,
+            FEISHU_LONG_CONN_DEFAULT_RECONNECT_INTERVAL_S,
+        ),
+    })
+}
+
+pub async fn run_long_connection_session<F, Fut>(
+    http: &Client,
+    config: &FeishuConfig,
+    mut on_event: F,
+) -> Result<FeishuLongConnectionEndpoint>
+where
+    F: FnMut(Value) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let endpoint = fetch_long_connection_endpoint(http, config).await?;
+    let (mut socket, _) = connect_async(endpoint.url.as_str())
+        .await
+        .map_err(|err| anyhow!("feishu long connection connect failed: {err}"))?;
+
+    let mut payload_assembler = FeishuPayloadAssembler::default();
+    let mut ping_interval_s = endpoint.ping_interval_s.max(1);
+    let mut ticker = interval(Duration::from_secs(ping_interval_s));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let ping_frame = build_ping_frame(endpoint.service_id);
+                socket
+                    .send(WsMessage::Binary(encode_ws_frame(&ping_frame)?))
+                    .await
+                    .map_err(|err| anyhow!("feishu long connection ping failed: {err}"))?;
+            }
+            incoming = socket.next() => {
+                let incoming = incoming.ok_or_else(|| anyhow!("feishu long connection closed"))?;
+                let message = incoming
+                    .map_err(|err| anyhow!("feishu long connection recv failed: {err}"))?;
+                match message {
+                    WsMessage::Binary(buffer) => {
+                        let mut frame = decode_ws_frame(&buffer)?;
+                        if frame.method == FEISHU_WS_METHOD_CONTROL {
+                            let control_type = header_value(&frame.headers, FEISHU_WS_HEADER_TYPE)
+                                .map(|value| value.to_ascii_lowercase())
+                                .unwrap_or_default();
+                            if control_type == FEISHU_WS_TYPE_PONG {
+                                if let Some(next_ping_interval_s) = resolve_pong_ping_interval(&frame.payload) {
+                                    if next_ping_interval_s != ping_interval_s {
+                                        ping_interval_s = next_ping_interval_s;
+                                        ticker = interval(Duration::from_secs(ping_interval_s));
+                                        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if frame.method != FEISHU_WS_METHOD_DATA {
+                            continue;
+                        }
+
+                        let message_type = header_value(&frame.headers, FEISHU_WS_HEADER_TYPE)
+                            .map(|value| value.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        if message_type == FEISHU_WS_TYPE_PING {
+                            continue;
+                        }
+                        if message_type != FEISHU_WS_TYPE_EVENT {
+                            continue;
+                        }
+
+                        let sum = parse_header_usize(&frame.headers, FEISHU_WS_HEADER_SUM).unwrap_or(1);
+                        let seq = parse_header_usize(&frame.headers, FEISHU_WS_HEADER_SEQ).unwrap_or(0);
+                        let message_id = header_value(&frame.headers, FEISHU_WS_HEADER_MESSAGE_ID)
+                            .unwrap_or_default()
+                            .to_string();
+                        let payload = if sum > 1 {
+                            payload_assembler.merge(
+                                &message_id,
+                                sum,
+                                seq,
+                                std::mem::take(&mut frame.payload),
+                            )
+                        } else {
+                            Some(std::mem::take(&mut frame.payload))
+                        };
+                        let Some(payload) = payload else {
+                            continue;
+                        };
+
+                        let started = Instant::now();
+                        let status_code = match serde_json::from_slice::<Value>(&payload) {
+                            Ok(payload_json) => match on_event(payload_json).await {
+                                Ok(()) => 200,
+                                Err(err) => {
+                                    warn!(
+                                        "feishu long connection event handler failed: message_id={}, error={err}",
+                                        message_id
+                                    );
+                                    500
+                                }
+                            },
+                            Err(err) => {
+                                warn!(
+                                    "feishu long connection event payload invalid json: message_id={}, error={err}",
+                                    message_id
+                                );
+                                400
+                            }
+                        };
+
+                        append_header(
+                            &mut frame.headers,
+                            FEISHU_WS_HEADER_BIZ_RT,
+                            started.elapsed().as_millis().to_string(),
+                        );
+                        frame.payload = serde_json::to_vec(&json!({ "code": status_code }))?;
+                        socket
+                            .send(WsMessage::Binary(encode_ws_frame(&frame)?))
+                            .await
+                            .map_err(|err| anyhow!("feishu long connection ack failed: {err}"))?;
+                    }
+                    WsMessage::Ping(payload) => {
+                        socket
+                            .send(WsMessage::Pong(payload))
+                            .await
+                            .map_err(|err| anyhow!("feishu long connection pong failed: {err}"))?;
+                    }
+                    WsMessage::Close(frame) => {
+                        let reason = frame
+                            .map(|item| {
+                                if item.reason.is_empty() {
+                                    item.code.to_string()
+                                } else {
+                                    format!("{} {}", item.code, item.reason)
+                                }
+                            })
+                            .unwrap_or_else(|| "remote closed".to_string());
+                        return Err(anyhow!("feishu long connection closed: {reason}"));
+                    }
+                    WsMessage::Text(_) | WsMessage::Pong(_) => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn resolve_pong_ping_interval(payload: &[u8]) -> Option<u64> {
+    if payload.is_empty() {
+        return None;
+    }
+    let client_config =
+        serde_json::from_slice::<FeishuLongConnectionClientConfigPayload>(payload).ok()?;
+    Some(parse_positive_i64(
+        client_config.ping_interval,
+        FEISHU_LONG_CONN_DEFAULT_PING_INTERVAL_S,
+    ))
+}
+
+fn build_ping_frame(service_id: i32) -> FeishuWsFrame {
+    FeishuWsFrame {
+        seq_id: 0,
+        log_id: 0,
+        service: service_id,
+        method: FEISHU_WS_METHOD_CONTROL,
+        headers: vec![FeishuWsHeader {
+            key: FEISHU_WS_HEADER_TYPE.to_string(),
+            value: FEISHU_WS_TYPE_PING.to_string(),
+        }],
+        payload_encoding: String::new(),
+        payload_type: String::new(),
+        payload: Vec::new(),
+        log_id_new: String::new(),
+    }
+}
+
+fn decode_ws_frame(bytes: &[u8]) -> Result<FeishuWsFrame> {
+    FeishuWsFrame::decode(bytes).map_err(|err| anyhow!("invalid feishu ws frame: {err}"))
+}
+
+fn encode_ws_frame(frame: &FeishuWsFrame) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    frame
+        .encode(&mut buffer)
+        .map_err(|err| anyhow!("encode feishu ws frame failed: {err}"))?;
+    Ok(buffer)
+}
+
+fn append_header(headers: &mut Vec<FeishuWsHeader>, key: &str, value: String) {
+    headers.push(FeishuWsHeader {
+        key: key.to_string(),
+        value,
+    });
+}
+
+fn header_value<'a>(headers: &'a [FeishuWsHeader], key: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case(key))
+        .map(|header| header.value.as_str())
+}
+
+fn parse_header_usize(headers: &[FeishuWsHeader], key: &str) -> Option<usize> {
+    header_value(headers, key)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0 || key.eq_ignore_ascii_case(FEISHU_WS_HEADER_SEQ))
+}
+
+fn parse_service_id(url: &str) -> Result<i32> {
+    let parsed = Url::parse(url).with_context(|| format!("invalid feishu ws url: {url}"))?;
+    parsed
+        .query_pairs()
+        .find(|(key, _)| key.eq_ignore_ascii_case(FEISHU_WS_SERVICE_ID_QUERY))
+        .and_then(|(_, value)| value.trim().parse::<i32>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow!("feishu ws url missing service_id"))
+}
+
+fn parse_positive_i64(raw: Option<i64>, fallback: u64) -> u64 {
+    raw.filter(|value| *value > 0)
+        .map(|value| value as u64)
+        .unwrap_or(fallback)
+}
+
+fn resolve_openapi_base_url(config: &FeishuConfig) -> String {
+    let domain = config
+        .domain
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("open.feishu.cn");
+    if domain.starts_with("http://") || domain.starts_with("https://") {
+        domain.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", domain.trim_end_matches('/'))
+    }
+}
+
+fn app_credentials(config: &FeishuConfig) -> Result<(&str, &str)> {
+    let app_id = config
+        .app_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("feishu app_id missing"))?;
+    let app_secret = config
+        .app_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("feishu app_secret missing"))?;
+    Ok((app_id, app_secret))
+}
 
 pub fn verify_challenge_token(payload: &Value, token: &str) -> bool {
     let provided = payload
@@ -258,25 +728,9 @@ pub async fn send_outbound(
     outbound: &ChannelOutboundMessage,
     config: &FeishuConfig,
 ) -> Result<()> {
-    let app_id = config
-        .app_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("feishu app_id missing"))?;
-    let app_secret = config
-        .app_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("feishu app_secret missing"))?;
-    let domain = config
-        .domain
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("open.feishu.cn");
-    let token_url = format!("https://{domain}/open-apis/auth/v3/tenant_access_token/internal");
+    let (app_id, app_secret) = app_credentials(config)?;
+    let base_url = resolve_openapi_base_url(config);
+    let token_url = format!("{base_url}/open-apis/auth/v3/tenant_access_token/internal");
     let token_resp = http
         .post(token_url)
         .json(&json!({ "app_id": app_id, "app_secret": app_secret }))
@@ -322,8 +776,7 @@ pub async fn send_outbound(
                 .map(|attachment| format!("[{}] {}", attachment.kind, attachment.url))
         })
         .unwrap_or_else(|| "(empty message)".to_string());
-    let send_url =
-        format!("https://{domain}/open-apis/im/v1/messages?receive_id_type={receive_id_type}");
+    let send_url = format!("{base_url}/open-apis/im/v1/messages?receive_id_type={receive_id_type}");
     let send_resp = http
         .post(send_url)
         .bearer_auth(tenant_token)
@@ -340,4 +793,47 @@ pub async fn send_outbound(
     let status = send_resp.status();
     let body = send_resp.text().await.unwrap_or_default();
     Err(anyhow!("feishu outbound failed: {status} {body}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn long_connection_enabled_defaults_to_true() {
+        let config = FeishuConfig::default();
+        assert!(long_connection_enabled(&config));
+        let mut disabled = FeishuConfig::default();
+        disabled.long_connection_enabled = Some(false);
+        assert!(!long_connection_enabled(&disabled));
+    }
+
+    #[test]
+    fn parse_service_id_from_ws_url_works() {
+        let service_id =
+            parse_service_id("wss://open.feishu.cn/ws/abc?device_id=dev&service_id=12345")
+                .expect("service_id should parse");
+        assert_eq!(service_id, 12345);
+    }
+
+    #[test]
+    fn payload_assembler_combines_fragments() {
+        let mut assembler = FeishuPayloadAssembler::default();
+        assert!(assembler
+            .merge("mid", 2, 0, br#"{"text":"#.to_vec())
+            .is_none());
+        let output = assembler
+            .merge("mid", 2, 1, br#""hello"}"#.to_vec())
+            .expect("fragment payload should be merged");
+        assert_eq!(output, br#"{"text":"hello"}"#.to_vec());
+    }
+
+    #[test]
+    fn detect_message_event_payload() {
+        let payload = json!({ "event": { "message": { "chat_id": "oc_1" } } });
+        assert!(is_message_event(&payload));
+        let payload = json!({ "event": { "sender": { "id": "u_1" } } });
+        assert!(!is_message_event(&payload));
+    }
 }

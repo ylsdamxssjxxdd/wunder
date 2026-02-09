@@ -26,7 +26,7 @@ pub fn resolve_binding(
             continue;
         }
         if let Some(peer_kind) = binding.peer_kind.as_ref() {
-            if !peer_kind.is_empty() && !eq_ignore_case(peer_kind, &message.peer.kind) {
+            if !peer_kind.is_empty() && !peer_kind_matches(peer_kind, &message.peer.kind) {
                 continue;
             }
         }
@@ -78,6 +78,17 @@ fn compute_specificity(binding: &ChannelBindingRecord) -> i64 {
         }
     }
     score
+}
+
+fn peer_kind_matches(left: &str, right: &str) -> bool {
+    eq_ignore_case(left, right) || (is_direct_peer_kind(left) && is_direct_peer_kind(right))
+}
+
+fn is_direct_peer_kind(kind: &str) -> bool {
+    matches!(
+        kind.trim().to_ascii_lowercase().as_str(),
+        "dm" | "direct" | "single" | "user"
+    )
 }
 
 fn eq_ignore_case(left: &str, right: &str) -> bool {
