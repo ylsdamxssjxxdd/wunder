@@ -1021,6 +1021,7 @@ async fn run_request(
         config_overrides,
         agent_prompt: None,
         attachments: None,
+        allow_queue: true,
         is_admin: false,
     };
     let started = Instant::now();

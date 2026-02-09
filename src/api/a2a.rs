@@ -721,6 +721,7 @@ impl A2aService {
             config_overrides: None,
             agent_prompt: None,
             attachments: None,
+            allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
         };
 
@@ -808,6 +809,7 @@ impl A2aService {
             config_overrides: None,
             agent_prompt: None,
             attachments: None,
+            allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
         };
 

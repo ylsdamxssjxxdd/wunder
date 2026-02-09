@@ -54,7 +54,7 @@ impl Orchestrator {
                 }
             }
             let ok = limiter
-                .acquire(&session_id, &user_id, &lock_agent_id)
+                .acquire(&session_id, &user_id, &lock_agent_id, prepared.allow_queue)
                 .await
                 .map_err(|err| OrchestratorError::internal(err.to_string()))?;
             if !ok {

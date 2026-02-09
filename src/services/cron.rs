@@ -1165,6 +1165,7 @@ impl CronRuntime {
             config_overrides: None,
             agent_prompt,
             attachments: None,
+            allow_queue: true,
             is_admin: UserStore::is_admin(&user),
         })
     }

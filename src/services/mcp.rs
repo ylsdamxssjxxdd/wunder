@@ -212,6 +212,7 @@ impl ServerHandler for WunderMcpServer {
                 config_overrides: None,
                 agent_prompt: None,
                 attachments: None,
+                allow_queue: true,
                 is_admin: false,
             })
             .await

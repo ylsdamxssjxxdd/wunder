@@ -818,6 +818,7 @@ async fn run_case(
         config_overrides: ctx.config_overrides.clone(),
         agent_prompt: None,
         attachments: None,
+        allow_queue: true,
         is_admin: false,
     };
 

@@ -669,6 +669,7 @@ pub(crate) async fn build_chat_request(
         config_overrides: None,
         agent_prompt,
         attachments,
+        allow_queue: true,
         is_admin: UserStore::is_admin(user),
     })
 }

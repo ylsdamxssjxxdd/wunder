@@ -2079,6 +2079,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         config_overrides: None,
         agent_prompt,
         attachments: None,
+        allow_queue: true,
         is_admin: context.is_admin,
     };
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -2219,6 +2220,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         config_overrides: None,
         agent_prompt,
         attachments: None,
+        allow_queue: true,
         is_admin: context.is_admin,
     };
     let run_id = format!("run_{}", Uuid::new_v4().simple());

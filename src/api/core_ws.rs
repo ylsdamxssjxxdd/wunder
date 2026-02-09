@@ -374,6 +374,7 @@ async fn handle_ws(
                             config_overrides: payload.config_overrides,
                             agent_prompt: payload.agent_prompt,
                             attachments: payload.attachments,
+                            allow_queue: true,
                             is_admin: UserStore::is_admin(&user),
                         };
                         let outcome = match state.agent_runtime.submit_user_request(request).await {

@@ -64,6 +64,7 @@ impl Orchestrator {
             debug_payload: request.debug_payload,
             attachments,
             language,
+            allow_queue: request.allow_queue,
             is_admin: request.is_admin,
         })
     }

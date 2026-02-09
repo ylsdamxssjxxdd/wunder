@@ -16,6 +16,7 @@ pub(super) struct PreparedRequest {
     pub(super) debug_payload: bool,
     pub(super) attachments: Option<Vec<AttachmentPayload>>,
     pub(super) language: String,
+    pub(super) allow_queue: bool,
     pub(super) is_admin: bool,
 }
 
