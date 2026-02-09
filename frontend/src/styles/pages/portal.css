@@ -625,6 +625,10 @@
   align-items: flex-start;
 }
 
+.portal-section-header--apps {
+  align-items: center;
+}
+
 .portal-section-heading {
   display: flex;
   flex-direction: column;
@@ -651,6 +655,10 @@
   margin-top: 4px;
 }
 
+.portal-section-desc--apps {
+  margin-top: 0;
+}
+
 .portal-section-meta {
   color: var(--portal-muted);
   font-size: 12px;
@@ -673,6 +681,71 @@
 
 .portal-section-actions .portal-section-meta {
   white-space: nowrap;
+}
+
+.portal-more-apps-toggle {
+  border: 1px solid var(--portal-border);
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--portal-text);
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.portal-more-apps-toggle:hover,
+.portal-more-apps-toggle:focus-visible {
+  border-color: rgba(106, 217, 255, 0.5);
+  color: var(--portal-primary);
+}
+
+.portal-more-apps-toggle:focus-visible {
+  outline: 2px solid rgba(106, 217, 255, 0.38);
+  outline-offset: 1px;
+}
+
+.portal-more-apps-toggle.is-active {
+  border-color: rgba(106, 217, 255, 0.58);
+  background: rgba(106, 217, 255, 0.16);
+  color: var(--portal-primary);
+}
+
+.portal-more-apps-toggle-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(106, 217, 255, 0.38);
+  background: rgba(106, 217, 255, 0.16);
+  color: inherit;
+  text-align: center;
+  line-height: 18px;
+  font-size: 11px;
+}
+
+.portal-more-apps-toggle-arrow {
+  font-size: 10px;
+}
+
+:root[data-user-theme='light'] .portal-more-apps-toggle {
+  background: rgba(148, 163, 184, 0.16);
+}
+
+:root[data-user-theme='light'] .portal-more-apps-toggle.is-active {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(191, 219, 254, 0.62);
+  color: #1d4ed8;
+}
+
+:root[data-user-theme='light'] .portal-more-apps-toggle-count {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(219, 234, 254, 0.85);
 }
 
 .portal-grid {

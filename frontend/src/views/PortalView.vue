@@ -30,6 +30,23 @@
                         &times;
                       </button>
                     </div>
+                    <button
+                      class="portal-more-apps-toggle"
+                      type="button"
+                      :class="{ 'is-active': showMoreApps }"
+                      :aria-expanded="showMoreApps ? 'true' : 'false'"
+                      :title="t('portal.section.moreAppsDesc')"
+                      @click="toggleMoreApps"
+                    >
+                      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
+                      <span>{{ t('portal.section.moreApps') }}</span>
+                      <span class="portal-more-apps-toggle-count">{{ filteredExternalLinks.length }}</span>
+                      <i
+                        class="fa-solid portal-more-apps-toggle-arrow"
+                        :class="showMoreApps ? 'fa-chevron-up' : 'fa-chevron-down'"
+                        aria-hidden="true"
+                      ></i>
+                    </button>
                     <div class="portal-section-meta">
                       {{ t('portal.section.count', { count: filteredAgents.length }) }}
                     </div>
@@ -248,12 +265,9 @@
               </div>
             </div>
           </section>
-          <section class="portal-section portal-section--apps">
-            <div class="portal-section-header">
-              <div>
-                <div class="portal-section-title">{{ t('portal.section.moreApps') }}</div>
-                <div class="portal-section-desc">{{ t('portal.section.moreAppsDesc') }}</div>
-              </div>
+          <section v-if="showMoreApps" class="portal-section portal-section--apps">
+            <div class="portal-section-header portal-section-header--apps">
+              <div class="portal-section-desc portal-section-desc--apps">{{ t('portal.section.moreAppsDesc') }}</div>
               <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredExternalLinks.length }) }}</div>
             </div>
             <div class="agent-grid portal-agent-grid">
@@ -506,6 +520,7 @@ const agentStore = useAgentStore();
 const { t } = useI18n();
 const searchQuery = ref('');
 const showSharedAgents = ref(false);
+const showMoreApps = ref(false);
 const dialogVisible = ref(false);
 const saving = ref(false);
 const editingId = ref('');
@@ -1325,6 +1340,10 @@ const enterAgent = (agent) => {
 
 const enterDefaultChat = () => {
   router.push({ path: `${basePath.value}/chat`, query: { entry: 'default' } });
+};
+
+const toggleMoreApps = () => {
+  showMoreApps.value = !showMoreApps.value;
 };
 
 const openExternalApp = (link) => {
