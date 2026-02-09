@@ -45,6 +45,8 @@ struct ChannelAccountUpsertRequest {
     #[serde(default)]
     create_new: Option<bool>,
     #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
     account_name: Option<String>,
     #[serde(default)]
     app_id: Option<String>,
@@ -192,6 +194,31 @@ async fn upsert_channel_account(
     }
 
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
+    let requested_agent_id = payload
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let Some(agent_id) = requested_agent_id.as_ref() {
+        let record = state
+            .user_store
+            .get_user_agent_by_id(agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| {
+                error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found"))
+            })?;
+        let access = state
+            .user_store
+            .get_user_agent_access(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
+    }
     let existing_account_ids = list_owned_account_ids_for_channel(&state, &user_id, &channel)?;
     let requested_account_id = payload
         .account_id
@@ -267,6 +294,13 @@ async fn upsert_channel_account(
             Value::String(display_name.to_string()),
         );
     }
+
+    let existing_agent_id = config_value
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
 
     let existing_peer_kind = load_user_binding_pref(&state, &user_id, &channel, &account_id)?;
     let mut selected_peer_kind = payload
@@ -434,9 +468,14 @@ async fn upsert_channel_account(
                 Value::String(make_user_inbound_token(&user_id, &channel, &account_id)),
             );
         }
-        map.insert("agent_id".to_string(), Value::Null);
+        if let Some(agent_id) = requested_agent_id.clone().or(existing_agent_id.clone()) {
+            map.insert("agent_id".to_string(), Value::String(agent_id));
+        } else {
+            map.insert("agent_id".to_string(), Value::Null);
+        }
     }
 
+    let agent_id_for_binding = requested_agent_id.clone().or(existing_agent_id);
     let enabled = payload.enabled.unwrap_or(true);
     let now = now_ts();
     let status = if enabled {
@@ -468,6 +507,7 @@ async fn upsert_channel_account(
         &channel,
         &account_id,
         &selected_peer_kind,
+        agent_id_for_binding.as_deref(),
         enabled,
         now,
     )?;
@@ -1234,6 +1274,7 @@ fn sync_user_default_binding(
     channel: &str,
     account_id: &str,
     selected_peer_kind: &str,
+    agent_id: Option<&str>,
     enabled: bool,
     now: f64,
 ) -> Result<(), Response> {
@@ -1292,13 +1333,17 @@ fn sync_user_default_binding(
         &selected_kind,
         WILDCARD_PEER_ID,
     );
+    let agent_id = agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
     let binding_record = crate::storage::ChannelBindingRecord {
         binding_id: selected_binding_id,
         channel: channel.to_string(),
         account_id: account_id.to_string(),
         peer_kind: Some(selected_kind.clone()),
         peer_id: Some(WILDCARD_PEER_ID.to_string()),
-        agent_id: None,
+        agent_id,
         tool_overrides: Vec::new(),
         priority: 100,
         enabled,

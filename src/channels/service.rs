@@ -214,10 +214,28 @@ impl ChannelHub {
                 resolved_binding = resolve_binding(&bindings, &fallback_message);
             }
         }
+        let fallback_agent_id = if resolved_binding
+            .as_ref()
+            .and_then(|binding| binding.agent_id.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .is_none()
+            && account_cfg
+                .agent_id
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            resolve_agent_id_by_account(&bindings, &message)
+        } else {
+            None
+        };
         let resolved_agent_id = resolved_binding
             .as_ref()
             .and_then(|binding| binding.agent_id.clone())
             .or_else(|| account_cfg.agent_id.clone())
+            .or_else(|| fallback_agent_id)
             .or_else(|| config.channels.default_agent_id.clone());
         if resolved_agent_id.is_none() {
             warn!(
@@ -1321,6 +1339,48 @@ fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()>
         };
     }
     Ok(())
+}
+
+fn resolve_agent_id_by_account(
+    bindings: &[ChannelBindingRecord],
+    message: &ChannelMessage,
+) -> Option<String> {
+    let channel = message.channel.trim();
+    let account_id = message.account_id.trim();
+    if channel.is_empty() || account_id.is_empty() {
+        return None;
+    }
+    let mut resolved: Option<String> = None;
+    for binding in bindings {
+        if !binding.enabled {
+            continue;
+        }
+        if !binding.channel.is_empty() && !binding.channel.trim().eq_ignore_ascii_case(channel) {
+            continue;
+        }
+        if !binding.account_id.is_empty()
+            && !binding.account_id.trim().eq_ignore_ascii_case(account_id)
+        {
+            continue;
+        }
+        let Some(agent_id) = binding
+            .agent_id
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        match resolved.as_ref() {
+            None => resolved = Some(agent_id.to_string()),
+            Some(existing) => {
+                if !existing.eq_ignore_ascii_case(agent_id) {
+                    return None;
+                }
+            }
+        }
+    }
+    resolved
 }
 
 fn equivalent_peer_kinds(kind: &str) -> Vec<String> {

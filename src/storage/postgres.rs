@@ -261,6 +261,16 @@ impl PostgresStorage {
             .unwrap_or(Value::Null)
     }
 
+    fn normalize_channel_thread_id(value: Option<&str>) -> String {
+        value.unwrap_or("").trim().to_string()
+    }
+
+    fn normalize_channel_thread_value(value: Option<String>) -> Option<String> {
+        value
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+    }
+
     fn conn(&self) -> Result<PgConn<'_>> {
         let client = self.block_on(self.pool.get())??;
         Ok(PgConn {
@@ -352,6 +362,9 @@ impl PostgresStorage {
             let name: String = row.get(0);
             columns.insert(name);
         }
+        if !columns.contains("status") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN status TEXT", &[])?;
+        }
         if !columns.contains("agent_id") {
             conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", &[])?;
         }
@@ -384,6 +397,156 @@ impl PostgresStorage {
              ON chat_sessions (user_id, parent_session_id, updated_at)",
             &[],
         );
+        Ok(())
+    }
+
+    fn ensure_channel_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        fn ensure_table_columns(
+            conn: &mut PgConn<'_>,
+            table: &str,
+            columns: &[(&str, &str)],
+        ) -> Result<()> {
+            let rows = conn.query(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = $1",
+                &[&table],
+            )?;
+            let mut existing = HashSet::new();
+            for row in rows {
+                let name: String = row.get(0);
+                existing.insert(name);
+            }
+            for (name, ddl) in columns {
+                if !existing.contains(*name) {
+                    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"), &[])?;
+                }
+            }
+            Ok(())
+        }
+
+        ensure_table_columns(
+            conn,
+            "channel_accounts",
+            &[
+                ("config", "config TEXT NOT NULL DEFAULT '{}'"),
+                ("status", "status TEXT NOT NULL DEFAULT 'active'"),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "updated_at",
+                    "updated_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+            ],
+        )?;
+        ensure_table_columns(
+            conn,
+            "channel_bindings",
+            &[
+                ("channel", "channel TEXT"),
+                ("account_id", "account_id TEXT"),
+                ("peer_kind", "peer_kind TEXT"),
+                ("peer_id", "peer_id TEXT"),
+                ("agent_id", "agent_id TEXT"),
+                ("tool_overrides", "tool_overrides TEXT"),
+                ("priority", "priority BIGINT NOT NULL DEFAULT 0"),
+                ("enabled", "enabled INTEGER NOT NULL DEFAULT 1"),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "updated_at",
+                    "updated_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+            ],
+        )?;
+        ensure_table_columns(
+            conn,
+            "channel_user_bindings",
+            &[
+                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "updated_at",
+                    "updated_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+            ],
+        )?;
+        ensure_table_columns(
+            conn,
+            "channel_sessions",
+            &[
+                ("thread_id", "thread_id TEXT NOT NULL DEFAULT ''"),
+                ("session_id", "session_id TEXT NOT NULL DEFAULT ''"),
+                ("agent_id", "agent_id TEXT"),
+                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
+                ("tts_enabled", "tts_enabled INTEGER"),
+                ("tts_voice", "tts_voice TEXT"),
+                ("metadata", "metadata TEXT"),
+                (
+                    "last_message_at",
+                    "last_message_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "updated_at",
+                    "updated_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+            ],
+        )?;
+        let _ = conn.execute(
+            "ALTER TABLE channel_sessions ALTER COLUMN thread_id SET DEFAULT ''",
+            &[],
+        );
+        let _ = conn.execute(
+            "UPDATE channel_sessions SET thread_id = '' WHERE thread_id IS NULL",
+            &[],
+        );
+        ensure_table_columns(
+            conn,
+            "channel_messages",
+            &[
+                ("thread_id", "thread_id TEXT"),
+                ("session_id", "session_id TEXT"),
+                ("message_id", "message_id TEXT"),
+                ("sender_id", "sender_id TEXT"),
+                ("message_type", "message_type TEXT"),
+                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
+                ("raw_payload", "raw_payload TEXT"),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+            ],
+        )?;
+        ensure_table_columns(
+            conn,
+            "channel_outbox",
+            &[
+                ("thread_id", "thread_id TEXT"),
+                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
+                ("status", "status TEXT NOT NULL DEFAULT 'pending'"),
+                ("retry_count", "retry_count BIGINT NOT NULL DEFAULT 0"),
+                ("retry_at", "retry_at DOUBLE PRECISION NOT NULL DEFAULT 0"),
+                ("last_error", "last_error TEXT"),
+                (
+                    "created_at",
+                    "created_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                (
+                    "updated_at",
+                    "updated_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+                ),
+                ("delivered_at", "delivered_at DOUBLE PRECISION"),
+            ],
+        )?;
         Ok(())
     }
 
@@ -938,7 +1101,7 @@ impl StorageBackend for PostgresStorage {
                   account_id TEXT NOT NULL,
                   peer_kind TEXT NOT NULL,
                   peer_id TEXT NOT NULL,
-                  thread_id TEXT,
+                  thread_id TEXT NOT NULL DEFAULT '',
                   session_id TEXT NOT NULL,
                   agent_id TEXT,
                   user_id TEXT NOT NULL,
@@ -1116,6 +1279,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_user_account_list_indexes(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
+                    self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
@@ -4086,6 +4250,7 @@ impl StorageBackend for PostgresStorage {
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
+        let thread_id = Self::normalize_channel_thread_id(record.thread_id.as_deref());
         let metadata = record.metadata.as_ref().map(Self::json_to_string);
         let tts_enabled = record.tts_enabled.map(|value| if value { 1 } else { 0 });
         conn.execute(
@@ -4098,7 +4263,7 @@ impl StorageBackend for PostgresStorage {
                 &record.account_id,
                 &record.peer_kind,
                 &record.peer_id,
-                &record.thread_id,
+                &thread_id,
                 &record.session_id,
                 &record.agent_id,
                 &record.user_id,
@@ -4133,18 +4298,25 @@ impl StorageBackend for PostgresStorage {
         {
             return Ok(None);
         }
+        let thread_id = Self::normalize_channel_thread_id(thread_id);
         let mut conn = self.conn()?;
         let row = conn.query_opt(
             "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at \
              FROM channel_sessions WHERE channel = $1 AND account_id = $2 AND peer_kind = $3 AND peer_id = $4 AND thread_id IS NOT DISTINCT FROM $5",
-            &[&cleaned_channel, &cleaned_account, &cleaned_peer_kind, &cleaned_peer_id, &thread_id],
+            &[
+                &cleaned_channel,
+                &cleaned_account,
+                &cleaned_peer_kind,
+                &cleaned_peer_id,
+                &thread_id,
+            ],
         )?;
         Ok(row.map(|row| ChannelSessionRecord {
             channel: row.get(0),
             account_id: row.get(1),
             peer_kind: row.get(2),
             peer_id: row.get(3),
-            thread_id: row.get(4),
+            thread_id: Self::normalize_channel_thread_value(row.get(4)),
             session_id: row.get(5),
             agent_id: row.get(6),
             user_id: row.get(7),
@@ -4226,7 +4398,7 @@ impl StorageBackend for PostgresStorage {
                 account_id: row.get(1),
                 peer_kind: row.get(2),
                 peer_id: row.get(3),
-                thread_id: row.get(4),
+                thread_id: Self::normalize_channel_thread_value(row.get(4)),
                 session_id: row.get(5),
                 agent_id: row.get(6),
                 user_id: row.get(7),

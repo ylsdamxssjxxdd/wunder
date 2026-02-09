@@ -16,7 +16,7 @@
     </template>
 
     <div class="feature-window-body">
-      <UserChannelSettingsPanel ref="panelRef" mode="dialog" @changed="handleChanged" />
+      <UserChannelSettingsPanel ref="panelRef" mode="dialog" :agent-id="agentId" @changed="handleChanged" />
     </div>
   </el-dialog>
 </template>

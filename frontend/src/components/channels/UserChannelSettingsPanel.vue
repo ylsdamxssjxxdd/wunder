@@ -111,11 +111,6 @@
               {{ account.active ? t('channels.status.enabled') : t('channels.status.disabled') }}
             </span>
           </div>
-          <div class="channel-account-meta">
-            <span class="channel-account-tag">{{ account.providerLabel }}</span>
-            <span class="channel-account-tag">{{ account.account_id }}</span>
-          </div>
-          <div class="channel-account-desc">{{ account.desc }}</div>
         </button>
       </div>
     </div>
@@ -239,10 +234,15 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { deleteChannelAccount, listChannelAccounts, upsertChannelAccount } from '@/api/channels';
+import {
+  deleteChannelAccount,
+  listChannelAccounts,
+  listChannelBindings,
+  upsertChannelAccount
+} from '@/api/channels';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -250,6 +250,10 @@ const props = defineProps({
   mode: {
     type: String,
     default: 'page'
+  },
+  agentId: {
+    type: String,
+    default: ''
   }
 });
 
@@ -258,6 +262,10 @@ const emit = defineEmits(['changed']);
 const { t } = useI18n();
 
 const FALLBACK_CHANNELS = ['feishu', 'whatsapp', 'telegram', 'wechat', 'qqbot'];
+const resolvedAgentId = computed(() => {
+  const trimmed = String(props.agentId || '').trim();
+  return trimmed || '';
+});
 
 const loading = ref(false);
 const saving = ref(false);
@@ -435,16 +443,38 @@ const resetEditForm = () => {
 const loadAccounts = async (preferred) => {
   loading.value = true;
   try {
-    const { data } = await listChannelAccounts();
+    const [accountsResp, bindingsResp] = await Promise.all([
+      listChannelAccounts(),
+      resolvedAgentId.value ? listChannelBindings() : Promise.resolve({ data: null })
+    ]);
+    const data = accountsResp?.data;
     const payload = data?.data || {};
     const items = Array.isArray(payload.items) ? payload.items : [];
     const channels = Array.isArray(payload.supported_channels) ? payload.supported_channels : [];
+    const bindingItems = Array.isArray(bindingsResp?.data?.data?.items)
+      ? bindingsResp.data.data.items
+      : [];
 
     supportedChannels.value = channels
       .map((item) => ({ channel: String(item?.channel || '').trim().toLowerCase() }))
       .filter((item) => item.channel);
 
-    accounts.value = items.map((item) => normalizeAccount(item)).filter(Boolean);
+    let normalizedAccounts = items.map((item) => normalizeAccount(item)).filter(Boolean);
+    if (resolvedAgentId.value) {
+      const allowedKeys = new Set();
+      bindingItems.forEach((binding) => {
+        if (binding?.enabled !== true) return;
+        const channel = String(binding?.channel || '').trim().toLowerCase();
+        const accountId = String(binding?.account_id || '').trim();
+        if (!channel || !accountId) return;
+        const agentId = String(binding?.agent_id || '').trim();
+        if (agentId && agentId === resolvedAgentId.value) {
+          allowedKeys.add(`${channel}::${accountId}`);
+        }
+      });
+      normalizedAccounts = normalizedAccounts.filter((account) => allowedKeys.has(account.key));
+    }
+    accounts.value = normalizedAccounts;
 
     const preferredKey =
       preferred?.channel && preferred?.account_id
@@ -504,6 +534,9 @@ const createAccount = async () => {
     account_name: createForm.account_name || undefined,
     enabled: Boolean(createForm.enabled)
   };
+  if (resolvedAgentId.value) {
+    payload.agent_id = resolvedAgentId.value;
+  }
 
   if (channel === 'feishu') {
     const appId = String(createForm.app_id || '').trim();
@@ -562,6 +595,9 @@ const saveAccount = async () => {
     account_name: editForm.account_name || undefined,
     enabled: Boolean(editForm.enabled)
   };
+  if (resolvedAgentId.value) {
+    payload.agent_id = resolvedAgentId.value;
+  }
 
   if (account.channel === 'feishu') {
     const appId = String(editForm.app_id || '').trim();
@@ -640,5 +676,9 @@ const removeAccount = async () => {
 
 defineExpose({
   refreshAll
+});
+
+onMounted(() => {
+  refreshAll();
 });
 </script>

@@ -155,6 +155,16 @@ impl SqliteStorage {
             .unwrap_or(Value::Null)
     }
 
+    fn normalize_channel_thread_id(value: Option<&str>) -> String {
+        value.unwrap_or("").trim().to_string()
+    }
+
+    fn normalize_channel_thread_value(value: Option<String>) -> Option<String> {
+        value
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+    }
+
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
         let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -229,6 +239,9 @@ impl SqliteStorage {
         for name in rows.flatten() {
             columns.insert(name);
         }
+        if !columns.contains("status") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN status TEXT", [])?;
+        }
         if !columns.contains("agent_id") {
             conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", [])?;
         }
@@ -261,6 +274,114 @@ impl SqliteStorage {
              ON chat_sessions (user_id, parent_session_id, updated_at)",
             [],
         );
+        Ok(())
+    }
+
+    fn ensure_channel_columns(&self, conn: &Connection) -> Result<()> {
+        fn existing_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut columns = HashSet::new();
+            for name in rows.flatten() {
+                columns.insert(name);
+            }
+            Ok(columns)
+        }
+
+        fn add_missing(conn: &Connection, table: &str, columns: &[(&str, &str)]) -> Result<()> {
+            let existing = existing_columns(conn, table)?;
+            for (name, ddl) in columns {
+                if !existing.contains(*name) {
+                    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"), [])?;
+                }
+            }
+            Ok(())
+        }
+
+        add_missing(
+            conn,
+            "channel_accounts",
+            &[
+                ("config", "config TEXT NOT NULL DEFAULT '{}'"),
+                ("status", "status TEXT NOT NULL DEFAULT 'active'"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
+            ],
+        )?;
+        add_missing(
+            conn,
+            "channel_bindings",
+            &[
+                ("channel", "channel TEXT"),
+                ("account_id", "account_id TEXT"),
+                ("peer_kind", "peer_kind TEXT"),
+                ("peer_id", "peer_id TEXT"),
+                ("agent_id", "agent_id TEXT"),
+                ("tool_overrides", "tool_overrides TEXT"),
+                ("priority", "priority INTEGER NOT NULL DEFAULT 0"),
+                ("enabled", "enabled INTEGER NOT NULL DEFAULT 1"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
+            ],
+        )?;
+        add_missing(
+            conn,
+            "channel_user_bindings",
+            &[
+                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
+            ],
+        )?;
+        add_missing(
+            conn,
+            "channel_sessions",
+            &[
+                ("thread_id", "thread_id TEXT NOT NULL DEFAULT ''"),
+                ("session_id", "session_id TEXT NOT NULL DEFAULT ''"),
+                ("agent_id", "agent_id TEXT"),
+                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
+                ("tts_enabled", "tts_enabled INTEGER"),
+                ("tts_voice", "tts_voice TEXT"),
+                ("metadata", "metadata TEXT"),
+                ("last_message_at", "last_message_at REAL NOT NULL DEFAULT 0"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
+            ],
+        )?;
+        let _ = conn.execute(
+            "UPDATE channel_sessions SET thread_id = '' WHERE thread_id IS NULL",
+            [],
+        );
+        add_missing(
+            conn,
+            "channel_messages",
+            &[
+                ("thread_id", "thread_id TEXT"),
+                ("session_id", "session_id TEXT"),
+                ("message_id", "message_id TEXT"),
+                ("sender_id", "sender_id TEXT"),
+                ("message_type", "message_type TEXT"),
+                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
+                ("raw_payload", "raw_payload TEXT"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+            ],
+        )?;
+        add_missing(
+            conn,
+            "channel_outbox",
+            &[
+                ("thread_id", "thread_id TEXT"),
+                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
+                ("status", "status TEXT NOT NULL DEFAULT 'pending'"),
+                ("retry_count", "retry_count INTEGER NOT NULL DEFAULT 0"),
+                ("retry_at", "retry_at REAL NOT NULL DEFAULT 0"),
+                ("last_error", "last_error TEXT"),
+                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
+                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
+                ("delivered_at", "delivered_at REAL"),
+            ],
+        )?;
         Ok(())
     }
 
@@ -720,7 +841,7 @@ impl StorageBackend for SqliteStorage {
               account_id TEXT NOT NULL,
               peer_kind TEXT NOT NULL,
               peer_id TEXT NOT NULL,
-              thread_id TEXT,
+              thread_id TEXT NOT NULL DEFAULT '',
               session_id TEXT NOT NULL,
               agent_id TEXT,
               user_id TEXT NOT NULL,
@@ -895,6 +1016,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_user_account_list_indexes(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
@@ -3969,6 +4091,7 @@ impl StorageBackend for SqliteStorage {
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
+        let thread_id = Self::normalize_channel_thread_id(record.thread_id.as_deref());
         let metadata = record.metadata.as_ref().map(Self::json_to_string);
         let tts_enabled = record.tts_enabled.map(|value| if value { 1 } else { 0 });
         conn.execute(
@@ -3981,7 +4104,7 @@ impl StorageBackend for SqliteStorage {
                 record.account_id,
                 record.peer_kind,
                 record.peer_id,
-                record.thread_id,
+                thread_id,
                 record.session_id,
                 record.agent_id,
                 record.user_id,
@@ -4016,12 +4139,20 @@ impl StorageBackend for SqliteStorage {
         {
             return Ok(None);
         }
+        let thread_id = Self::normalize_channel_thread_id(thread_id);
         let conn = self.open()?;
         let row = conn
             .query_row(
                 "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at \
                  FROM channel_sessions WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ? AND (thread_id IS ? OR thread_id = ?)",
-                params![cleaned_channel, cleaned_account, cleaned_peer_kind, cleaned_peer_id, thread_id, thread_id],
+                params![
+                    cleaned_channel,
+                    cleaned_account,
+                    cleaned_peer_kind,
+                    cleaned_peer_id,
+                    thread_id,
+                    thread_id
+                ],
                 |row| {
                     let metadata_text: Option<String> = row.get(10)?;
                     Ok(ChannelSessionRecord {
@@ -4029,7 +4160,7 @@ impl StorageBackend for SqliteStorage {
                         account_id: row.get(1)?,
                         peer_kind: row.get(2)?,
                         peer_id: row.get(3)?,
-                        thread_id: row.get(4)?,
+                        thread_id: Self::normalize_channel_thread_value(row.get(4)?),
                         session_id: row.get(5)?,
                         agent_id: row.get(6)?,
                         user_id: row.get(7)?,
@@ -4108,7 +4239,7 @@ impl StorageBackend for SqliteStorage {
                 account_id: row.get(1)?,
                 peer_kind: row.get(2)?,
                 peer_id: row.get(3)?,
-                thread_id: row.get(4)?,
+                thread_id: Self::normalize_channel_thread_value(row.get(4)?),
                 session_id: row.get(5)?,
                 agent_id: row.get(6)?,
                 user_id: row.get(7)?,

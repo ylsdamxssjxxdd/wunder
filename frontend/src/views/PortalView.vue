@@ -89,7 +89,7 @@
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
                     </span>
                     <span
-                      v-for="item in configuredChannelIcons"
+                      v-for="item in resolveChannelIconsFor(DEFAULT_AGENT_KEY)"
                       :key="item.channel"
                       class="agent-card-channel-indicator"
                       :title="channelIndicatorTitle(item.label)"
@@ -155,7 +155,7 @@
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
                     </span>
                     <span
-                      v-for="item in configuredChannelIcons"
+                      v-for="item in resolveChannelIconsFor(agent.id)"
                       :key="item.channel"
                       class="agent-card-channel-indicator"
                       :title="channelIndicatorTitle(item.label)"
@@ -232,7 +232,7 @@
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
                     </span>
                     <span
-                      v-for="item in configuredChannelIcons"
+                      v-for="item in resolveChannelIconsFor(agent.id)"
                       :key="item.channel"
                       class="agent-card-channel-indicator"
                       :title="channelIndicatorTitle(item.label)"
@@ -491,7 +491,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchCronJobs } from '@/api/cron';
-import { listChannelAccounts } from '@/api/channels';
+import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
@@ -518,7 +518,7 @@ const externalLoading = ref(false);
 const cronAgentIds = ref(new Set());
 const avatarPanelVisible = ref(true);
 const customColor = ref('');
-const configuredChannels = ref([]);
+const configuredChannelsByAgent = ref({});
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
@@ -863,10 +863,10 @@ const filteredExternalLinks = computed(() => {
   });
 });
 
-const configuredChannelIcons = computed(() => {
+const buildChannelIcons = (channels) => {
   const dedup = new Set();
   const icons = [];
-  configuredChannels.value.forEach((channel) => {
+  (Array.isArray(channels) ? channels : []).forEach((channel) => {
     const name = String(channel || '').trim().toLowerCase();
     if (!name || dedup.has(name)) return;
     dedup.add(name);
@@ -878,7 +878,21 @@ const configuredChannelIcons = computed(() => {
     });
   });
   return icons;
+};
+
+const configuredChannelIconsByAgent = computed(() => {
+  const output = {};
+  const entries = configuredChannelsByAgent.value || {};
+  Object.entries(entries).forEach(([agentId, channels]) => {
+    output[agentId] = buildChannelIcons(channels);
+  });
+  return output;
 });
+
+const resolveChannelIconsFor = (agentId) => {
+  const key = String(agentId || '').trim() || DEFAULT_AGENT_KEY;
+  return configuredChannelIconsByAgent.value[key] || [];
+};
 
 const channelIndicatorTitle = (label) => t('portal.channel.configured', { channel: label });
 
@@ -1111,25 +1125,62 @@ const loadExternalApps = async () => {
 
 const loadConfiguredChannels = async () => {
   try {
-    const { data } = await listChannelAccounts();
-    const items = Array.isArray(data?.data?.items) ? data.data.items : [];
-    const channelSet = new Set(
-      items
-        .filter((item) => {
-          const channel = String(item?.channel || '').trim();
-          if (!channel) return false;
-          const configured = item?.meta?.configured === true;
-          const active =
-            item?.active === true ||
-            String(item?.status || '').trim().toLowerCase() === 'active';
-          return configured && active;
-        })
-        .map((item) => String(item.channel || '').trim().toLowerCase())
-        .filter(Boolean)
-    );
-    configuredChannels.value = Array.from(channelSet);
+    const [accountsResp, bindingsResp] = await Promise.all([
+      listChannelAccounts(),
+      listChannelBindings()
+    ]);
+    const accountItems = Array.isArray(accountsResp?.data?.data?.items)
+      ? accountsResp.data.data.items
+      : [];
+    const bindingItems = Array.isArray(bindingsResp?.data?.data?.items)
+      ? bindingsResp.data.data.items
+      : [];
+
+    const accountStatus = new Map();
+    accountItems.forEach((item) => {
+      const channel = String(item?.channel || '').trim().toLowerCase();
+      const accountId = String(item?.account_id || '').trim();
+      if (!channel || !accountId) return;
+      const configured = item?.meta?.configured === true;
+      const active =
+        item?.active === true ||
+        String(item?.status || '').trim().toLowerCase() === 'active';
+      accountStatus.set(`${channel}::${accountId}`, { channel, configured, active });
+    });
+
+    const channelMap = new Map();
+    const boundKeys = new Set();
+
+    bindingItems.forEach((binding) => {
+      if (binding?.enabled !== true) return;
+      const channel = String(binding?.channel || '').trim().toLowerCase();
+      const accountId = String(binding?.account_id || '').trim();
+      if (!channel || !accountId) return;
+      const key = `${channel}::${accountId}`;
+      const status = accountStatus.get(key);
+      if (!status || !status.configured || !status.active) return;
+      boundKeys.add(key);
+      const agentId = String(binding?.agent_id || '').trim() || DEFAULT_AGENT_KEY;
+      const set = channelMap.get(agentId) || new Set();
+      set.add(channel);
+      channelMap.set(agentId, set);
+    });
+
+    accountStatus.forEach((status, key) => {
+      if (!status.configured || !status.active) return;
+      if (boundKeys.has(key)) return;
+      const set = channelMap.get(DEFAULT_AGENT_KEY) || new Set();
+      set.add(status.channel);
+      channelMap.set(DEFAULT_AGENT_KEY, set);
+    });
+
+    const output = {};
+    channelMap.forEach((set, agentId) => {
+      output[agentId] = Array.from(set);
+    });
+    configuredChannelsByAgent.value = output;
   } catch (error) {
-    configuredChannels.value = [];
+    configuredChannelsByAgent.value = {};
   }
 };
 

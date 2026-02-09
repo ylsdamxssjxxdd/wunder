@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -51,7 +52,13 @@ impl ChannelRateLimiter {
             });
         }
         let mut states = self.states.lock();
-        let state = states.entry(key.to_string()).or_insert_with(RateState::new);
+        let (state, is_new) = match states.entry(key.to_string()) {
+            Entry::Vacant(entry) => (entry.insert(RateState::new()), true),
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+        };
+        if is_new && cfg.qps > 0 {
+            state.tokens = cfg.qps as f64;
+        }
         let now = Instant::now();
         let elapsed = now.duration_since(state.last_refill);
         if cfg.qps > 0 {

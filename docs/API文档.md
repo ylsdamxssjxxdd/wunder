@@ -1997,6 +1997,7 @@
     - `account_id`：账号 ID（更新时必填；创建时可不填）
     - `create_new`：是否强制创建新账号（可选）
     - `account_name`：账号显示名称（可选）
+    - `agent_id`：绑定的智能体 ID（可选；传入后默认绑定指向该智能体）
     - `enabled`：是否启用（可选，默认 `true`）
     - `peer_kind`：默认会话类型（非飞书渠道可选）
     - `config`：渠道配置补丁（JSON 对象，可选）
@@ -2007,6 +2008,7 @@
   - 行为说明：
     - 首次创建会自动写入 `inbound_token`。
     - 会自动维护默认绑定（`peer_id="*"`），并按 `peer_kind` / `receive_group_chat` 更新。
+    - 传入 `agent_id` 时，默认绑定会同时写入该 `agent_id` 以隔离到指定智能体。
     - 飞书账号保存成功后会以 `long_connection_enabled=true` 参与长连接调度。
 
 - `DELETE /wunder/channels/accounts/{channel}/{account_id}`
