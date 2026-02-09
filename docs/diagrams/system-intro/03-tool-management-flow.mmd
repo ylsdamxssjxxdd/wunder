@@ -1,5 +1,31 @@
-﻿flowchart LR
-  Config["配置入口(config/wunder.yaml + data/config/wunder.override.yaml + data/user_tools/{user_id}/config.json)"] --> Catalog["工具清单(/wunder/tools, src/api/core.rs + src/services/user_tools.rs)"]
-  Catalog --> Orchestrator["编排与注入(src/orchestrator + src/services/prompting.rs)"]
-  Orchestrator --> Exec["执行器(src/services/tools.rs + src/services/skills.rs + src/services/knowledge.rs + src/services/mcp.rs)"]
-  Exec --> Pool["工具池(内置工具 + Skills + 知识库 + MCP/用户工具)"]
+flowchart TB
+  Config["配置层
+config/wunder.yaml + override"] --> Catalog["工具目录聚合"]
+  UserPolicy["访问策略
+user_tool_access 与 user_agent_access"] --> Selector["请求级工具选择"]
+  Request["请求参数
+tool_names 与 disable_tools"] --> Selector
+  Catalog --> Selector
+
+  subgraph Sources["工具来源"]
+    Builtin["内置工具"]
+    MCP["MCP 工具"]
+    A2A["A2A 服务工具"]
+    Skills["Skills 工具"]
+    LiteralKB["字面知识库工具"]
+    VectorKB["向量知识库工具"]
+    UserTools["用户自建与共享工具"]
+  end
+
+  Builtin --> Catalog
+  MCP --> Catalog
+  A2A --> Catalog
+  Skills --> Catalog
+  LiteralKB --> Catalog
+  VectorKB --> Catalog
+  UserTools --> Catalog
+
+  Selector --> Prompt["Prompt Builder 注入工具规格"]
+  Prompt --> Orchestrator["Orchestrator"]
+  Orchestrator --> Exec["tool_exec 执行"]
+  Exec --> Logs["tool_logs / artifact_logs / monitor events"]

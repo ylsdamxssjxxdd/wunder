@@ -471,6 +471,60 @@ const normalizeStreamRound = (value) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const readDeltaSegments = (value) => {
+  if (!value || typeof value !== 'object') return [];
+  if (Array.isArray(value.segments)) {
+    return value.segments;
+  }
+  if (value.data && typeof value.data === 'object' && Array.isArray(value.data.segments)) {
+    return value.data.segments;
+  }
+  return [];
+};
+
+const parseSegmentedDelta = (payload, data) => {
+  const candidates = [data, payload];
+  for (const source of candidates) {
+    const segments = readDeltaSegments(source);
+    if (!segments.length) continue;
+    let delta = '';
+    let reasoningDelta = '';
+    let round = null;
+    segments.forEach((segment) => {
+      if (!segment || typeof segment !== 'object') return;
+      if (typeof segment.delta === 'string' && segment.delta) {
+        delta += segment.delta;
+      }
+      if (typeof segment.reasoning_delta === 'string' && segment.reasoning_delta) {
+        reasoningDelta += segment.reasoning_delta;
+      }
+      const segmentRound = normalizeStreamRound(
+        segment.user_round ?? segment.model_round ?? segment.round
+      );
+      if (segmentRound !== null) {
+        round = segmentRound;
+      }
+    });
+    return { delta, reasoningDelta, round };
+  }
+  return null;
+};
+
+const resolveEventRoundNumber = (payload, data) => {
+  const directRound = normalizeStreamRound(
+    data?.user_round ??
+      payload?.user_round ??
+      data?.model_round ??
+      payload?.model_round ??
+      data?.round ??
+      payload?.round
+  );
+  if (directRound !== null) {
+    return directRound;
+  }
+  return parseSegmentedDelta(payload, data)?.round ?? null;
+};
+
 const assignStreamEventId = (message, eventId) => {
   if (!message || message.role !== 'assistant') return;
   const normalized = normalizeStreamEventId(eventId);
@@ -1775,12 +1829,7 @@ const startSessionWatcher = (store, sessionId) => {
     ) {
       return;
     }
-    const roundNumber = normalizeStreamRound(
-      data?.user_round ??
-        payload?.user_round ??
-        data?.round ??
-        payload?.round
-    );
+    const roundNumber = resolveEventRoundNumber(payload, data);
     const stage = data?.stage ?? payload?.stage;
     const isRoundStart = eventType === 'round_start' || (eventType === 'progress' && stage === 'start');
     const state = ensureRoundState(roundNumber, eventTimestampMs);
@@ -2153,15 +2202,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const resolveRound = (payload, data) => {
-    const roundValue =
-      data?.user_round ??
-      payload?.user_round ??
-      data?.model_round ??
-      payload?.model_round ??
-      data?.round ??
-      payload?.round;
-    const roundNumber = Number(roundValue);
-    if (Number.isFinite(roundNumber)) {
+    const roundNumber = resolveEventRoundNumber(payload, data);
+    if (roundNumber !== null) {
       updateRoundState(roundNumber);
       return roundNumber;
     }
@@ -2503,8 +2545,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             visibleRound = round;
           }
         }
-        const delta = data?.delta ?? payload?.delta ?? data?.content ?? payload?.content ?? '';
-        const reasoningDelta = data?.reasoning_delta ?? payload?.reasoning_delta ?? '';
+        const segmentedDelta = parseSegmentedDelta(payload, data);
+        const delta =
+          data?.delta ??
+          payload?.delta ??
+          data?.content ??
+          payload?.content ??
+          segmentedDelta?.delta ??
+          '';
+        const reasoningDelta =
+          data?.reasoning_delta ?? payload?.reasoning_delta ?? segmentedDelta?.reasoningDelta ?? '';
         const reasoningDeltaText =
           typeof reasoningDelta === 'string' ? reasoningDelta : reasoningDelta ? String(reasoningDelta) : '';
         if (reasoningDeltaText) {
@@ -3264,9 +3314,11 @@ export const useChatStore = defineStore('chat', {
       }
       let aborted = false;
       const forcedEventId = options.afterEventId;
+      const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
       const afterEventId = Number.isFinite(forcedEventId)
         ? Number.parseInt(forcedEventId, 10)
-        : normalizeStreamEventId(message.stream_event_id);
+        : normalizedMessageEventId;
+      const resumeAfterEventId = Number.isFinite(afterEventId) ? Math.max(afterEventId, 0) : 0;
       try {
         const onEvent = (eventType, dataText, eventId) => {
           assignStreamEventId(message, eventId);
@@ -3276,7 +3328,7 @@ export const useChatStore = defineStore('chat', {
         const streamWithSse = async () => {
           const response = await resumeMessageStream(sessionId, {
             signal: runtime?.resumeController?.signal,
-            afterEventId
+            afterEventId: resumeAfterEventId
           });
           if (!response.ok) {
             const errorText = await readResponseError(response);
@@ -3299,7 +3351,7 @@ export const useChatStore = defineStore('chat', {
               request_id: requestId,
               session_id: sessionId,
               payload: {
-                after_event_id: afterEventId
+                after_event_id: Math.max(afterEventId, 1)
               }
             },
             onEvent,
@@ -3307,7 +3359,7 @@ export const useChatStore = defineStore('chat', {
             closeOnFinal: true
           });
         };
-        const hasAfterEventId = Number.isFinite(afterEventId);
+        const hasAfterEventId = Number.isFinite(afterEventId) && afterEventId > 0;
         if (hasAfterEventId) {
           await this.refreshStreamTransportPolicy();
         }

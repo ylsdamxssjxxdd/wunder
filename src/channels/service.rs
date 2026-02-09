@@ -15,8 +15,8 @@ use crate::schemas::WunderRequest;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChatSessionRecord, ListChannelUserBindingsQuery, StorageBackend,
-    UpdateChannelOutboxStatusParams, UserAgentRecord,
+    ChannelSessionRecord, ChatSessionRecord, StorageBackend, UpdateChannelOutboxStatusParams,
+    UserAgentRecord,
 };
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
@@ -868,12 +868,6 @@ impl ChannelHub {
                 );
                 continue;
             }
-            if !self
-                .has_channel_user_binding(feishu::FEISHU_CHANNEL, &record.account_id)
-                .await?
-            {
-                continue;
-            }
             targets.push(FeishuLongConnTarget {
                 account_id: record.account_id,
                 updated_at: record.updated_at,
@@ -1077,26 +1071,6 @@ impl ChannelHub {
         tokio::task::spawn_blocking(move || storage.list_channel_bindings(channel.as_deref()))
             .await
             .unwrap_or_else(|err| Err(anyhow!(err)))
-    }
-
-    async fn has_channel_user_binding(&self, channel: &str, account_id: &str) -> Result<bool> {
-        let storage = self.storage.clone();
-        let channel = channel.to_string();
-        let account_id = account_id.to_string();
-        let (_, total) = tokio::task::spawn_blocking(move || {
-            storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
-                channel: Some(&channel),
-                account_id: Some(&account_id),
-                peer_kind: None,
-                peer_id: None,
-                user_id: None,
-                offset: 0,
-                limit: 1,
-            })
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
-        Ok(total > 0)
     }
 
     async fn get_channel_user_binding(

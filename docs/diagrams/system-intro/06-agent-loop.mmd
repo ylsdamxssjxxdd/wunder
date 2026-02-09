@@ -1,9 +1,18 @@
 flowchart LR
-  User["用户输入(user_round)"] --> Context["上下文构建<br/>(历史/工具/记忆)"]
-  Context --> LLM["模型调用(model_round)"]
-  LLM --> Decide{输出类型}
-  Decide -- "工具调用" --> ToolPlan["解析工具意图"]
-  ToolPlan --> ToolExec["执行工具/沙盒"]
-  ToolExec --> Observe["结果回填<br/>事件记录"]
-  Observe --> LLM
-  Decide -- "最终回复" --> Final["最终回复<br/>释放会话锁"]
+  User["用户输入
+user_round +1"] --> Resolve["解析 user_id agent_id session_id"]
+  Resolve --> Busy{"主会话是否繁忙"}
+  Busy -- 是且队列开启 --> Queue["写入 agent_tasks"]
+  Queue --> Worker["AgentRuntime worker"]
+  Busy -- 否 --> Worker
+  Worker --> Context["构建上下文
+历史 工具 记忆"]
+  Context --> Model["LLM 调用
+model_round +1"]
+  Model --> Decision{"输出类型"}
+  Decision -- 工具调用 --> Plan["解析 tool_call/function_call"]
+  Plan --> Exec["执行工具"]
+  Exec --> Observe["结果回填与事件记录"]
+  Observe --> Context
+  Decision -- 最终回复 --> Final["输出 final 并释放 session_locks"]
+  Final --> Memory["异步入队长期记忆总结"]

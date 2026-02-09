@@ -1717,7 +1717,7 @@
   - 当 `ChannelAccount.config.feishu.app_id/app_secret` 可用时，使用飞书 OpenAPI 直接发送文本
   - 默认 `receive_id_type=chat_id`（可通过 `feishu.receive_id_type` 覆盖）
 - 长连接模式：
-  - 当渠道账号 `status=active`、配置了 `feishu.app_id/app_secret` 且至少存在 1 条用户侧绑定时，系统会自动建立飞书长连接。
+  - 当渠道账号 `status=active` 且配置了 `feishu.app_id/app_secret` 时，系统会自动建立飞书长连接。
 - `account_id`：渠道账号标识，仅用于 wunder 内部区分账号，不是飞书消息路由 ID（通常可填 `cli_xxx` 便于识别）。
 - `peer_id`：用户侧绑定的对端 ID，不能填 app_id/cli；当 `receive_id_type=chat_id` 时应填写 `chat_id`（如 `oc_xxx`）。
 - `peer_kind`：飞书建议仅使用 `user`（私聊）或 `group`（群聊）。
@@ -1925,7 +1925,7 @@
 - `GET /wunder/admin/channels/accounts`
   - Query：`channel`、`status`
   - 返回：`data.items`（channel/account_id/config/status/created_at/updated_at/runtime）
-  - `runtime.feishu_long_connection`：飞书账号运行态（`running/waiting_binding/missing_credentials/disabled/account_inactive/not_configured/unknown`）与 `binding_count`
+  - `runtime.feishu_long_connection`：飞书账号运行态（`running/missing_credentials/disabled/account_inactive/not_configured`）与 `binding_count`
 - `POST /wunder/admin/channels/accounts`
   - 入参：`channel`、`account_id`、`config`、`status`（可选）
   - 返回：账号记录（含 `runtime`）

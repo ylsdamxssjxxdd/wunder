@@ -6252,24 +6252,20 @@ struct ChannelTestRequest {
 #[derive(Debug, Clone, Copy)]
 enum FeishuLongConnectionRuntimeStatus {
     Running,
-    WaitingBinding,
     MissingCredentials,
     Disabled,
     AccountInactive,
     NotConfigured,
-    Unknown,
 }
 
 impl FeishuLongConnectionRuntimeStatus {
     fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
-            Self::WaitingBinding => "waiting_binding",
             Self::MissingCredentials => "missing_credentials",
             Self::Disabled => "disabled",
             Self::AccountInactive => "account_inactive",
             Self::NotConfigured => "not_configured",
-            Self::Unknown => "unknown",
         }
     }
 }
@@ -6328,11 +6324,7 @@ fn build_channel_account_runtime(
     } else if !has_credentials {
         FeishuLongConnectionRuntimeStatus::MissingCredentials
     } else {
-        match binding_count {
-            Some(count) if count > 0 => FeishuLongConnectionRuntimeStatus::Running,
-            Some(_) => FeishuLongConnectionRuntimeStatus::WaitingBinding,
-            None => FeishuLongConnectionRuntimeStatus::Unknown,
-        }
+        FeishuLongConnectionRuntimeStatus::Running
     };
 
     json!({
@@ -6378,7 +6370,16 @@ async fn admin_channel_accounts_upsert(
     Json(payload): Json<ChannelAccountUpsertRequest>,
 ) -> Result<Json<Value>, Response> {
     let channel = payload.channel.trim().to_string();
-    let account_id = payload.account_id.trim().to_string();
+    let config_value = payload.config.unwrap_or(Value::Object(Default::default()));
+    let mut account_id = payload.account_id.trim().to_string();
+    if channel.eq_ignore_ascii_case(feishu::FEISHU_CHANNEL) && account_id.is_empty() {
+        account_id = ChannelAccountConfig::from_value(&config_value)
+            .feishu
+            .and_then(|config| config.app_id)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+    }
     if channel.is_empty() || account_id.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -6397,7 +6398,7 @@ async fn admin_channel_accounts_upsert(
     let record = ChannelAccountRecord {
         channel: channel.clone(),
         account_id: account_id.clone(),
-        config: payload.config.unwrap_or(Value::Object(Default::default())),
+        config: config_value,
         status: payload.status.unwrap_or_else(|| "active".to_string()),
         created_at,
         updated_at: now,

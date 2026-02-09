@@ -154,3 +154,13 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - 新增脚本：EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py
 - 用途：快速检查导航分组、工具快捷入口、JS 绑定和 i18n 键是否一致。
 - 运行方式：python3 EVA_SKILLS/wunder-agent-dev/scripts/admin_nav_sanity.py
+
+## 近期补充经验（文档/图表/DOCX）
+- 文档重构后恢复图表，优先采用“回填到对应章节”而非统一放附录，避免结构与图脱节。
+- Mermaid 兼容性优先：subgraph 标题和节点文案尽量加引号，避免括号或特殊字符导致旧渲染器报错。
+- 图表维护建议固定流程：先改 docs/diagrams/system-intro 下的 mmd 源文件，再批量渲染 svg 和 png，最后同步到 web/docs/diagrams/system-intro。
+- web/docs/paper.md 的图片链接不要带查询参数（例如 ?v=时间戳），否则 pandoc 资源解析可能找不到本地图片。
+- 生成论文 DOCX 时优先使用 EVA_SKILLS/公文写作/scripts/convert_markdown_to_docx.py 并开启 use-pandoc，确保 Markdown 图片真正内嵌。
+- 生成后做嵌图验收：检查 docx 压缩包中 word/media 文件数量，并核对 word/document.xml 中 drawing 计数，确认图片没有丢失。
+- 若 mermaid-cli 提示缺少浏览器，使用 puppeteer 配置文件指定本机 chrome-headless-shell.exe 路径可稳定渲染。
+- 文档和图表改动完成后，按仓库规范及时写入 docs/功能迭代.md，避免经验沉没。

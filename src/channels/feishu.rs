@@ -804,8 +804,10 @@ mod tests {
     fn long_connection_enabled_defaults_to_true() {
         let config = FeishuConfig::default();
         assert!(long_connection_enabled(&config));
-        let mut disabled = FeishuConfig::default();
-        disabled.long_connection_enabled = Some(false);
+        let disabled = FeishuConfig {
+            long_connection_enabled: Some(false),
+            ..FeishuConfig::default()
+        };
         assert!(!long_connection_enabled(&disabled));
     }
 

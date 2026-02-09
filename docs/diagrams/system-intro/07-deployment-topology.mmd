@@ -1,17 +1,19 @@
-﻿flowchart LR
+flowchart LR
   subgraph Clients["访问方"]
-    UserUI["用户前端"]
-    AdminUI["管理前端"]
+    UserUI["用户侧前端(生产)"]
+    DebugUI["调试前端(开发)"]
+    AdminUI["管理端调试 UI"]
     ApiClient["API/SDK 调用方"]
   end
 
   subgraph Runtime["运行服务"]
-    Nginx["前端<br/>wunder_nginx"]
-    RustAPI["核心<br/>wunder_engine&nbsp;&nbsp;"]
+    Nginx["前端静态服务<br/>wunder_nginx"]
+    FrontendDev["前端开发服务<br/>wunder_frontend"]
+    RustAPI["核心服务/网关<br/>wunder_engine"]
     Sandbox["沙盒<br/>sandbox"]
-    MCP["MCP服务<br/>wunder_mcp"]
-    PG[(数据库<br/>postgres)]
-    VectorDB[(向量数据库&nbsp;&nbsp;<br/>Weaviate)]
+    MCP["MCP 服务<br/>wunder_mcp"]
+    PG[("数据库<br/>postgres")]
+    VectorDB["向量数据库<br/>Weaviate"]
   end
 
   subgraph RightSide[" "]
@@ -19,22 +21,25 @@
     subgraph External["外部依赖"]
       LLM["大模型 API"]
       ExtDB["业务数据库"]
-      KB["RAG知识库"]
+      KB["RAG 知识库/外部工具"]
     end
     subgraph Mounts["挂载目录"]
-      WS[(Workspaces 卷)]
+      WS[("Workspaces 卷")]
     end
   end
 
   UserUI -->|静态资源| Nginx
-  UserUI -->|HTTP/SSE| RustAPI
-  AdminUI -->|静态资源 + API| RustAPI
-  ApiClient -->|HTTP/SSE| RustAPI
+  DebugUI -->|静态资源| FrontendDev
+
+  UserUI -->|HTTP/WS| RustAPI
+  DebugUI -->|HTTP/WS| RustAPI
+  AdminUI -->|HTTP/WS| RustAPI
+  ApiClient -->|HTTP/WS| RustAPI
 
   RustAPI --> PG
-  RustAPI --> VectorDB
   RustAPI --> WS
   RustAPI --> LLM
+  RustAPI --> VectorDB
   RustAPI --> Sandbox
   RustAPI --> MCP
 
@@ -46,8 +51,8 @@
   classDef external fill:#f6ffed,stroke:#73d13d,stroke-width:1.2px,color:#135200;
   classDef volume fill:#f5f5f5,stroke:#bfbfbf,stroke-width:1.2px,color:#434343;
 
-  class UserUI,AdminUI,ApiClient client;
-  class Nginx,RustAPI,Sandbox,MCP,PG,VectorDB runtime;
+  class UserUI,DebugUI,AdminUI,ApiClient client;
+  class Nginx,FrontendDev,RustAPI,Sandbox,MCP,PG,VectorDB runtime;
   class LLM,ExtDB,KB external;
   class WS volume;
 

@@ -1,36 +1,31 @@
-﻿sequenceDiagram
-  participant U as 用户/前端
-  participant API as API层
+sequenceDiagram
+  participant U as 用户
+  participant API as API 路由
+  participant AR as AgentRuntime
   participant O as Orchestrator
-  participant P as Prompt Builder
-  participant L as LLM
-  participant T as 工具执行层
-  participant S as 存储/监控
+  participant T as 工具层
+  participant S as 存储与监控
 
-  U->>API: POST /wunder (user_id, question, tool_names, stream)
-  API->>O: 转交请求
-  O->>S: 获取会话锁/注册监控
-  O->>P: 构建系统提示词(含工具/技能/工作区/记忆)
-  O->>S: 读取历史/工作区/工具配置
-  O->>O: 追加用户消息
-  opt 触发历史压缩
-    O->>S: 校验额度/扣减(注册用户)
-    O->>L: 调用摘要模型生成上下文摘要
-    L-->>O: 摘要结果
-    O->>S: 写入摘要与压缩事件
-  end
-  loop 每轮
-    O->>S: 校验额度/扣减(注册用户)
-    O->>L: 调用模型(可流式)
-    L-->>O: 生成工具调用或答案
-    alt 有工具调用
-      O->>T: 执行工具(内置/MCP/Skills/知识库/自建)
-      T-->>O: 工具结果
-      O->>S: 写入对话/工具/产物/监控事件
-    else 无工具调用
-      O->>S: 写入对话/监控事件
+  U->>API: POST /wunder (user_id, question, stream)
+  API->>AR: submit_user_request
+  alt 主线程忙且队列开启
+    AR->>S: 写入 agent_tasks pending
+    API-->>U: queued 响应(task_id)
+  else 直接执行
+    AR->>O: execute_stream
+    O->>S: 获取 session_locks 和历史
+    loop 每个 model_round
+      O->>O: 构建上下文与预算检查
+      O->>O: 调用 LLM
+      alt 触发工具调用
+        O->>T: 执行内置/MCP/Skills/知识库/用户工具
+        T-->>O: 工具结果
+      end
+      O->>S: 写入 chat_history tool_logs stream_events
+      O-->>U: WebSocket 事件流
+      opt WebSocket 不可用
+        O-->>U: SSE 事件兜底
+      end
     end
+    O->>S: 释放会话锁并更新 monitor_sessions
   end
-  O-->>U: SSE事件(过程/最终)或非流式回复
-  O->>S: 入队长期记忆总结
-  O->>S: 释放会话锁/更新监控状态

@@ -1,14 +1,16 @@
-﻿flowchart LR
-  subgraph Row1[" "]
-    direction LR
-    A["压缩检查<br/>读取配置/估算 tokens/预算"] --> B{"触发压缩？"} -->|否| Z["跳过压缩"]
-  end
-
-  subgraph Row2[" "]
-    direction LR
-    C["准备压缩输入<br/>compact_prompt + 历史合并"] --> D["裁剪输入<br/>移除 reasoning/限长"] --> E["生成摘要<br/>max_output<=1024"] --> F{"摘要成功？"}
-    F -- "是" --> H["写入摘要 + 标记边界"] --> I["重建上下文<br/>补裁剪/重置 usage/发送事件"] --> Z
-  end
-
-  B -- "是" --> C
-  F -- "否" --> G["占位摘要<br/>继续裁剪"] --> H
+flowchart LR
+  A["估算 context_tokens 与历史阈值"] --> B{"触发压缩?"}
+  B -- 否 --> K["保持原上下文"]
+  B -- 是 --> C["构建压缩输入
+compact_prompt + 历史候选"]
+  C --> D["裁剪过长内容
+移除 reasoning 与冗余字段"]
+  D --> E["调用摘要模型
+max_output <= 1024"]
+  E --> F{"摘要成功?"}
+  F -- 是 --> G["写入 compaction 摘要
+记录 compacted_until 与 reset_mode"]
+  F -- 否 --> H["写入占位摘要并继续"]
+  G --> I["重建上下文并发送 compaction 事件"]
+  H --> I
+  I --> J["继续后续 model_round"]

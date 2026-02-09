@@ -1,4 +1,5 @@
 use super::*;
+use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub(super) struct RequestLimiter {
@@ -24,14 +25,19 @@ impl RequestLimiter {
         user_id: &str,
         agent_id: &str,
     ) -> Result<bool> {
-        if session_id.trim().is_empty() || user_id.trim().is_empty() {
+        let cleaned_session = session_id.trim();
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        if cleaned_session.is_empty() || cleaned_user.is_empty() {
             return Ok(false);
         }
+        let retry_window = SESSION_LOCK_BUSY_RETRY_S.max(self.poll_interval_s);
+        let retry_deadline = Instant::now() + Duration::from_secs_f64(retry_window);
         loop {
             let storage = self.storage.clone();
-            let session_id = session_id.to_string();
-            let user_id = user_id.to_string();
-            let agent_id = agent_id.to_string();
+            let session_id = cleaned_session.to_string();
+            let user_id = cleaned_user.to_string();
+            let agent_id = cleaned_agent.to_string();
             let ttl = self.lock_ttl_s;
             let max_active = self.max_active;
             let status = tokio::task::spawn_blocking(move || {
@@ -41,41 +47,55 @@ impl RequestLimiter {
             .map_err(|err| anyhow!("session lock join error: {err}"))??;
             match status {
                 SessionLockStatus::Acquired => return Ok(true),
-                SessionLockStatus::UserBusy => return Ok(false),
+                SessionLockStatus::UserBusy => {
+                    if Instant::now() >= retry_deadline {
+                        return Ok(false);
+                    }
+                    tokio::time::sleep(Duration::from_secs_f64(self.poll_interval_s)).await;
+                }
                 SessionLockStatus::SystemBusy => {
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(self.poll_interval_s))
-                        .await;
+                    tokio::time::sleep(Duration::from_secs_f64(self.poll_interval_s)).await;
                 }
             }
         }
     }
 
     pub(super) async fn touch(&self, session_id: &str) {
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return;
+        }
         let storage = self.storage.clone();
-        let session_id = session_id.to_string();
+        let session_id = cleaned_session.to_string();
         let ttl = self.lock_ttl_s;
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || {
-                if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
-                    warn!("failed to touch session lock for {session_id}: {err}");
-                }
-            });
-        } else if let Err(err) = storage.touch_session_lock(&session_id, ttl) {
-            warn!("failed to touch session lock for {session_id}: {err}");
+        match tokio::task::spawn_blocking(move || storage.touch_session_lock(&session_id, ttl))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!("failed to touch session lock for {cleaned_session}: {err}");
+            }
+            Err(err) => {
+                warn!("failed to touch session lock for {cleaned_session}: {err}");
+            }
         }
     }
 
     pub(super) async fn release(&self, session_id: &str) {
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return;
+        }
         let storage = self.storage.clone();
-        let session_id = session_id.to_string();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || {
-                if let Err(err) = storage.release_session_lock(&session_id) {
-                    warn!("failed to release session lock for {session_id}: {err}");
-                }
-            });
-        } else if let Err(err) = storage.release_session_lock(&session_id) {
-            warn!("failed to release session lock for {session_id}: {err}");
+        let session_id = cleaned_session.to_string();
+        match tokio::task::spawn_blocking(move || storage.release_session_lock(&session_id)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!("failed to release session lock for {cleaned_session}: {err}");
+            }
+            Err(err) => {
+                warn!("failed to release session lock for {cleaned_session}: {err}");
+            }
         }
     }
 }

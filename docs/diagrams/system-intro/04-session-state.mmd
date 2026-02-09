@@ -1,9 +1,13 @@
-﻿stateDiagram-v2
-  [*] --> running: 注册会话
-  running --> waiting: 问询面板等待选择
-  waiting --> running: 用户选择继续
-  running --> cancelling: 请求取消
-  waiting --> cancelling: 请求取消
+stateDiagram-v2
+  [*] --> received: 收到请求
+  received --> queued: 主线程忙且 agent_queue 启用
+  queued --> running: worker 出队执行
+  received --> running: 直接执行
+  running --> waiting: 问询面板等待用户选择
+  waiting --> running: 用户继续
+  running --> cancelling: 取消请求
+  waiting --> cancelling: 取消请求
+  queued --> cancelled: 队列任务取消
   cancelling --> cancelled: 中断完成
   running --> finished: 输出 final
-  running --> error: 异常/超时
+  running --> error: 异常或超时

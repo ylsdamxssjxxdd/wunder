@@ -294,6 +294,19 @@ const parseConfigInput = () => {
   }
 };
 
+const resolveAccountId = (channel, accountId, config) => {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  const normalizedAccountId = String(accountId || "").trim();
+  if (normalizedAccountId) {
+    return normalizedAccountId;
+  }
+  if (normalizedChannel !== "feishu") {
+    return "";
+  }
+  const feishu = isPlainObject(config?.feishu) ? config.feishu : {};
+  return String(feishu.app_id || feishu.appId || "").trim();
+};
+
 const openChannelAccountModal = (index) => {
   state.channelAccountModal.index = index;
   const account = index !== null ? state.channels.accounts[index] : null;
@@ -323,15 +336,22 @@ const saveChannelAccount = async () => {
   const channel = String(elements.channelAccountChannel.value || "")
     .trim()
     .toLowerCase();
-  const account_id = String(elements.channelAccountId.value || "").trim();
-  if (!channel || !account_id) {
-    notify(t("channels.error.required"), "warn");
-    return;
-  }
   const configResult = parseConfigInput();
   if (!configResult.ok) {
     elements.channelAccountConfigError.textContent = configResult.error;
     return;
+  }
+  const account_id = resolveAccountId(
+    channel,
+    String(elements.channelAccountId.value || "").trim(),
+    configResult.value
+  );
+  if (!channel || !account_id) {
+    notify(t("channels.error.required"), "warn");
+    return;
+  }
+  if (!String(elements.channelAccountId.value || "").trim()) {
+    elements.channelAccountId.value = account_id;
   }
   const payload = {
     channel,
