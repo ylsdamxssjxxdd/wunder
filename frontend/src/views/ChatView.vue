@@ -55,15 +55,6 @@
           >
             <i class="fa-solid fa-earth-asia topbar-icon" aria-hidden="true"></i>
           </button>
-          <button
-            class="topbar-icon-btn"
-            type="button"
-            :title="t('beehive.swarm.title')"
-            :aria-label="t('beehive.swarm.title')"
-            @click="openSwarmDialog"
-          >
-            <i class="fa-solid fa-diagram-project topbar-icon" aria-hidden="true"></i>
-          </button>
           <div ref="featureMenuRef" class="topbar-feature-menu-wrap">
             <button
               class="topbar-panel-btn topbar-feature-btn"
@@ -502,27 +493,6 @@
     </el-dialog>
 
     <el-dialog
-      v-model="swarmDialogVisible"
-      class="workspace-dialog compact-panel-dialog"
-      width="90vw"
-      top="6vh"
-      :show-close="false"
-      :append-to-body="false"
-      :close-on-click-modal="true"
-      destroy-on-close
-    >
-      <template #header>
-        <div class="image-preview-header">
-          <div class="image-preview-title">{{ t('beehive.swarm.title') }}</div>
-          <button class="icon-btn" type="button" @click="swarmDialogVisible = false">&times;</button>
-        </div>
-      </template>
-      <div class="panel-dialog-body">
-        <SwarmPanel :session-id="chatStore.activeSessionId" />
-      </div>
-    </el-dialog>
-
-    <el-dialog
       v-model="workspaceDialogVisible"
       class="workspace-dialog compact-panel-dialog"
       width="90vw"
@@ -663,7 +633,6 @@ import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
-import SwarmPanel from '@/components/chat/SwarmPanel.vue';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -713,9 +682,9 @@ const promptPreviewContent = ref('');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
-const swarmDialogVisible = ref(false);
 const workspaceDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
+const manualDraftPending = ref(false);
 const featureMenuVisible = ref(false);
 const featureMenuRef = ref(null);
 const cronDialogVisible = ref(false);
@@ -918,6 +887,16 @@ const resolveInitialSessionId = (agentId) => {
 
 const openAgentSession = async (agentId) => {
   const normalizedAgentId = String(agentId || '').trim();
+  const currentAgentId = String(
+    activeSession.value?.agent_id || chatStore.draftAgentId || ''
+  ).trim();
+  const switchingAgent = currentAgentId !== normalizedAgentId;
+  if (switchingAgent) {
+    manualDraftPending.value = true;
+    chatStore.openDraftSession({ agent_id: normalizedAgentId });
+  } else {
+    manualDraftPending.value = false;
+  }
   await chatStore.loadSessions({ agent_id: normalizedAgentId });
   const targetId = resolveInitialSessionId(normalizedAgentId);
   if (targetId) {
@@ -926,6 +905,7 @@ const openAgentSession = async (agentId) => {
     }
     return;
   }
+  manualDraftPending.value = true;
   chatStore.openDraftSession({ agent_id: normalizedAgentId });
 };
 
@@ -942,6 +922,7 @@ const init = async () => {
 
 const handleCreateSession = () => {
   const agentId = activeAgentId.value;
+  manualDraftPending.value = true;
   chatStore.openDraftSession({ agent_id: agentId });
   draftKey.value += 1;
 };
@@ -1050,6 +1031,7 @@ const handleFeatureMenuClickOutside = (event) => {
 };
 
 const handleSelectSession = async (sessionId) => {
+  manualDraftPending.value = false;
   await chatStore.loadSessionDetail(sessionId);
   if (isCompactLayout.value) {
     historyDialogVisible.value = false;
@@ -1575,11 +1557,15 @@ const shouldSkipExternalSessionSync = () => {
   return false;
 };
 
-const canAutoOpenIncomingSession = () =>
-  !chatStore.messages.some((message) => {
+const canAutoOpenIncomingSession = () => {
+  if (manualDraftPending.value) {
+    return false;
+  }
+  return !chatStore.messages.some((message) => {
     if (!message || message.isGreeting) return false;
     return String(message.content || '').trim().length > 0;
   });
+};
 
 const clearExternalSessionSyncTimer = () => {
   if (externalSessionSyncTimer) {
@@ -1605,6 +1591,11 @@ const scheduleExternalSessionSync = (immediate = false) => {
 const runExternalSessionSync = async () => {
   if (externalSessionSyncStopped) return;
   if (externalSessionSyncRunning) {
+    scheduleExternalSessionSync(false);
+    return;
+  }
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (activeSessionId && shouldSkipExternalSessionSync()) {
     scheduleExternalSessionSync(false);
     return;
   }
@@ -1833,9 +1824,6 @@ const updateCompactLayout = () => {
   isCompactLayout.value = window.innerWidth <= 960;
 };
 
-const openSwarmDialog = () => {
-  swarmDialogVisible.value = true;
-};
 
 const openWorkspaceDialog = () => {
   workspaceDialogVisible.value = true;
@@ -1986,6 +1974,9 @@ watch(
   (value, oldValue) => {
     if (!value && oldValue) {
       draftKey.value += 1;
+    }
+    if (value) {
+      manualDraftPending.value = false;
     }
     if (value !== oldValue) {
       clearWorkspaceResourceCache();

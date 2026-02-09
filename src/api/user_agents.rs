@@ -850,7 +850,6 @@ fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
 
-
 #[derive(Debug, Deserialize)]
 struct AgentCreateRequest {
     name: String,

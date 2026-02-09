@@ -25,6 +25,18 @@ const USER_BEEHIVE_PATH = '/app/home';
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
+const isAuthRequiredError = (error) => {
+  const status = Number(error?.response?.status || 0);
+  if (status === 401) {
+    return true;
+  }
+  const payload = error?.response?.data;
+  const errorCode = String(payload?.error?.code || payload?.code || payload?.message || '')
+    .trim()
+    .toLowerCase();
+  return errorCode === 'auth_required' || errorCode === 'error.auth_required';
+};
+
 const routes = [
   {
     path: '/',
@@ -105,7 +117,7 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
-  // 进入演示路由时启用演示模式，离开则关闭
+  // Enable demo mode only for /demo routes.
   if (to.path.startsWith('/demo')) {
     enableDemoMode();
     const authStore = useAuthStore();
@@ -113,16 +125,41 @@ router.beforeEach(async (to) => {
   } else {
     disableDemoMode();
   }
+
   const token = hasAccessToken();
+  const authStore = useAuthStore();
 
   if ((to.path === '/login' || to.path === '/register') && token) {
-    return USER_BEEHIVE_PATH;
+    try {
+      if (!authStore.user) {
+        await authStore.loadProfile();
+      }
+      return USER_BEEHIVE_PATH;
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        authStore.logout();
+      }
+      return true;
+    }
   }
 
   if (to.meta.requiresAuth && !token) {
     return to.path.startsWith('/admin') ? '/admin/login' : USER_LOGIN_PATH;
   }
+
+  if (to.meta.requiresAuth && token && !authStore.user) {
+    try {
+      await authStore.loadProfile();
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        authStore.logout();
+        return to.path.startsWith('/admin') ? '/admin/login' : USER_LOGIN_PATH;
+      }
+    }
+  }
+
   return true;
 });
 
 export default router;
+

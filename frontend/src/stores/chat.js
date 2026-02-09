@@ -2900,13 +2900,15 @@ export const useChatStore = defineStore('chat', {
       const currentSessionId = this.activeSessionId;
       cacheSessionMessages(currentSessionId, this.messages);
       abortResumeStream(currentSessionId);
-      abortSendStream(currentSessionId);
       clearSessionWatcher();
       const runtime = ensureRuntime(currentSessionId);
       if (runtime) {
         runtime.stopRequested = false;
       }
-      setSessionLoading(this, currentSessionId, false);
+      // Keep in-flight send stream alive so switching agent/thread won't cancel background runs.
+      if (!runtime?.sendController) {
+        setSessionLoading(this, currentSessionId, false);
+      }
       this.activeSessionId = null;
       this.draftAgentId = String(options.agent_id || '').trim();
       this.draftToolOverrides = null;

@@ -360,13 +360,7 @@ async fn list_team_runs(
     let offset = query.offset.unwrap_or(0).max(0);
     let (runs, total) = state
         .user_store
-        .list_team_runs(
-            &user_id,
-            None,
-            parent_session_id,
-            offset,
-            limit,
-        )
+        .list_team_runs(&user_id, None, parent_session_id, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
@@ -388,13 +382,7 @@ async fn list_team_runs_by_session(
     let offset = query.offset.unwrap_or(0).max(0);
     let (runs, total) = state
         .user_store
-        .list_team_runs(
-            &user_id,
-            None,
-            Some(session_id.trim()),
-            offset,
-            limit,
-        )
+        .list_team_runs(&user_id, None, Some(session_id.trim()), offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {

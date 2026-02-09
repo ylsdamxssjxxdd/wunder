@@ -156,4 +156,3 @@ struct AdminTeamRunsQuery {
     #[serde(default)]
     limit: Option<i64>,
 }
-
