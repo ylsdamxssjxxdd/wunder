@@ -661,6 +661,10 @@
   height: 100%;
 }
 
+.channel-manager-page--dialog {
+  height: 100%;
+}
+
 .channel-sidebar {
   width: 260px;
   min-width: 220px;
@@ -679,6 +683,34 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.channel-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-create-card {
+  border: 1px solid rgba(77, 216, 255, 0.3);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.32);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.channel-create-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--portal-muted);
+}
+
+.channel-create-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .channel-sidebar-title {
@@ -900,6 +932,15 @@
   gap: 6px;
 }
 
+.channel-form-field-full {
+  grid-column: 1 / -1;
+}
+
+.channel-form-field > span {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
 .channel-form-field label {
   font-size: 12px;
   color: var(--portal-muted);
@@ -919,9 +960,28 @@
   color: var(--portal-muted);
 }
 
+.channel-textarea {
+  min-height: 110px;
+  resize: vertical;
+  background: rgba(15, 23, 42, 0.3);
+  border: 1px solid var(--portal-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--portal-text);
+  font-size: 12px;
+  outline: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+}
+
+.channel-textarea::placeholder {
+  color: var(--portal-muted);
+}
+
 .channel-form-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .channel-binding-list {
@@ -990,7 +1050,13 @@
   color: var(--portal-text);
 }
 
-:root[data-user-theme='light'] .channel-input {
+:root[data-user-theme='light'] .channel-create-card {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.38);
+}
+
+:root[data-user-theme='light'] .channel-input,
+:root[data-user-theme='light'] .channel-textarea {
   background: #ffffff;
   border-color: rgba(148, 163, 184, 0.35);
   color: var(--portal-text);

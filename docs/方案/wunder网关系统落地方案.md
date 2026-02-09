@@ -36,7 +36,7 @@
 
 ### 2.2 wunder 当前实现盘点（已有能力）
 - **统一入口**：`/wunder` + SSE/WS（`/wunder/ws`、`/wunder/chat/ws`）。
-- **WS 协议协商**：支持 `connect`、`protocol_version/min/max`、`ready/policy`（见 `docs/WebSocket-Transport.md`）。
+- **WS 协议协商**：支持 `connect`、`protocol_version/min/max`、`ready/policy`（见 `docs/方案/WebSocket-Transport.md`）。
 - **事件流复用**：与 SSE 事件语义一致，支持断线回放（`stream_events`）。
 - **多渠道接入基础链路**：
   - 统一 Webhook：`/wunder/channel/{provider}/webhook`

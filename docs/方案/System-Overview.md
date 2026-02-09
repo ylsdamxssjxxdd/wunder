@@ -192,4 +192,4 @@ docs/ppt-en/         # system intro PPT (EN)
 ```
 
 ---
-For deeper technical details, see: `docs/Design-Plan.md` and `docs/API-Documentation.md`.
+For deeper technical details, see: `docs/方案/Design-Plan.md` and `docs/方案/API-Documentation.md`.

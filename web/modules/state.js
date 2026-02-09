@@ -79,12 +79,8 @@ export const state = {
   channels: {
     accounts: [],
     selectedIndex: -1,
-    saveVersion: 0,
   },
   a2aServiceModal: {
-    index: null,
-  },
-  channelAccountModal: {
     index: null,
   },
   mcpModal: {

@@ -1977,19 +1977,56 @@
 
 ### 4.1.60 `/wunder/channels/*`
 
-- 说明：用户侧自助绑定渠道账号与对端会话，需携带用户鉴权（Authorization）。
+- 鉴权：必须携带用户侧 token（`Authorization: Bearer <user_token>`）。
+- 用户侧渠道账号仅由当前用户维护，和管理侧渠道账号隔离；管理侧页面仅用于运行态监控。
+
 - `GET /wunder/channels/accounts`
-  - Query：`channel`（可选）
-  - 返回：`data.items`（channel/account_id/status/created_at/updated_at，仅返回 active）
+  - Query：`channel`（可选，按渠道过滤，如 `feishu`）
+  - 返回：
+    - `data.items`：当前用户的渠道账号列表（`channel/account_id/name/status/active/meta/config/raw_config/created_at/updated_at`）
+    - `data.supported_channels`：前端可用的渠道类型列表（`channel`）
+  - `meta` 关键字段：
+    - `configured`：是否已完成可用配置
+    - `peer_kind`：默认会话类型（如 `group` / `user`）
+    - `receive_group_chat`：是否接收群聊（飞书）
+
+- `POST /wunder/channels/accounts`
+  - 用途：新增或更新当前用户的渠道账号。
+  - 通用入参：
+    - `channel`：渠道类型（必填）
+    - `account_id`：账号 ID（更新时必填；创建时可不填）
+    - `create_new`：是否强制创建新账号（可选）
+    - `account_name`：账号显示名称（可选）
+    - `enabled`：是否启用（可选，默认 `true`）
+    - `peer_kind`：默认会话类型（非飞书渠道可选）
+    - `config`：渠道配置补丁（JSON 对象，可选）
+  - 飞书快捷入参：
+    - `app_id`、`app_secret`（必填或沿用已有值）
+    - `receive_group_chat`（可选，默认 `true`）
+    - `domain`（可选，默认 `open.feishu.cn`）
+  - 行为说明：
+    - 首次创建会自动写入 `inbound_token`。
+    - 会自动维护默认绑定（`peer_id="*"`），并按 `peer_kind` / `receive_group_chat` 更新。
+    - 飞书账号保存成功后会以 `long_connection_enabled=true` 参与长连接调度。
+
+- `DELETE /wunder/channels/accounts/{channel}/{account_id}`
+  - 删除指定渠道账号，并清理该账号下当前用户的默认绑定与用户绑定映射。
+  - 返回：`data.deleted_accounts/deleted_bindings/deleted_user_bindings`。
+
+- `DELETE /wunder/channels/accounts/{channel}`
+  - 兼容旧接口。
+  - 当该用户在该渠道下仅有 1 个账号时可直接删除；若存在多个账号会返回错误，提示改用带 `account_id` 的删除接口。
+
 - `GET /wunder/channels/bindings`
-  - Query：`channel`、`account_id`、`peer_kind`、`peer_id`
-  - 返回：`data.items`（binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at）与 `data.total`
+  - Query：`channel`、`account_id`、`peer_kind`、`peer_id`（均可选）
+  - 返回：当前用户可见的绑定列表（含 `binding_id/agent_id/tool_overrides/priority/enabled`）。
+
 - `POST /wunder/channels/bindings`
-  - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`、`agent_id`（可选）、`tool_overrides`（可选）、`priority`（可选）、`enabled`（可选）
-  - 返回：绑定记录（含 `binding_id`）
-  - 说明：会同步写入 channel_user_bindings；`binding_id` 按 user_id + channel + account + peer 生成。
+  - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`，可选 `agent_id/tool_overrides/priority/enabled`。
+  - 要求：`account_id` 必须属于当前用户，账号需为启用状态。
+
 - `DELETE /wunder/channels/bindings/{channel}/{account_id}/{peer_kind}/{peer_id}`
-  - 返回：`data.deleted_bindings`、`data.deleted_user_bindings`
+  - 删除当前用户在该会话标识下的绑定。
 
 ### 4.2 流式响应（SSE）
 
@@ -2083,7 +2120,7 @@
 - `type=error` 统一错误载荷字段：`code`/`message`/`status`/`hint`/`trace_id`/`timestamp`。
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
-- 详细协议与节点说明：见 `docs/WebSocket-Transport.md`
+- 详细协议与节点说明：见 `docs/方案/WebSocket-Transport.md`
 
 ### 4.2.3 Gateway WebSocket Control Plane
 

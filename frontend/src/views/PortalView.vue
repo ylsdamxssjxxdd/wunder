@@ -88,6 +88,15 @@
                     >
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
                     </span>
+                    <span
+                      v-for="item in configuredChannelIcons"
+                      :key="item.channel"
+                      class="agent-card-channel-indicator"
+                      :title="channelIndicatorTitle(item.label)"
+                      :aria-label="channelIndicatorTitle(item.label)"
+                    >
+                      <i class="fa-solid" :class="item.icon" aria-hidden="true"></i>
+                    </span>
                     <span class="agent-card-container-id">
                       {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(null) }) }}
                     </span>
@@ -144,6 +153,15 @@
                       :aria-label="t('portal.agent.cronHint')"
                     >
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                    </span>
+                    <span
+                      v-for="item in configuredChannelIcons"
+                      :key="item.channel"
+                      class="agent-card-channel-indicator"
+                      :title="channelIndicatorTitle(item.label)"
+                      :aria-label="channelIndicatorTitle(item.label)"
+                    >
+                      <i class="fa-solid" :class="item.icon" aria-hidden="true"></i>
                     </span>
                     <span class="agent-card-container-id">
                       {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
@@ -212,6 +230,15 @@
                       :aria-label="t('portal.agent.cronHint')"
                     >
                       <i class="fa-solid fa-clock" aria-hidden="true"></i>
+                    </span>
+                    <span
+                      v-for="item in configuredChannelIcons"
+                      :key="item.channel"
+                      class="agent-card-channel-indicator"
+                      :title="channelIndicatorTitle(item.label)"
+                      :aria-label="channelIndicatorTitle(item.label)"
+                    >
+                      <i class="fa-solid" :class="item.icon" aria-hidden="true"></i>
                     </span>
                     <span class="agent-card-container-id">
                       {{ t('portal.agent.sandbox.option', { id: getAgentSandboxContainerId(agent) }) }}
@@ -464,6 +491,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchCronJobs } from '@/api/cron';
+import { listChannelAccounts } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
@@ -490,11 +518,20 @@ const externalLoading = ref(false);
 const cronAgentIds = ref(new Set());
 const avatarPanelVisible = ref(true);
 const customColor = ref('');
+const configuredChannels = ref([]);
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const DEFAULT_ICON_NAME = 'initial';
+
+const CHANNEL_ICON_META = {
+  feishu: { icon: 'fa-feather-pointed', labelKey: 'channels.provider.feishu' },
+  whatsapp: { icon: 'fa-whatsapp', labelKey: 'channels.provider.whatsapp' },
+  telegram: { icon: 'fa-telegram', labelKey: 'channels.provider.telegram' },
+  wechat: { icon: 'fa-weixin', labelKey: 'channels.provider.wechat' },
+  qqbot: { icon: 'fa-qq', labelKey: 'channels.provider.qqbot' }
+};
 
 const AVATAR_ICON_CLASS_MAP = {
   chat: 'fa-comment-dots',
@@ -790,6 +827,7 @@ onMounted(() => {
   loadExternalApps();
   loadCronAgentIds();
   loadRunningAgents();
+  loadConfiguredChannels();
   runningTimer = window.setInterval(loadRunningAgents, RUNNING_REFRESH_MS);
 });
 
@@ -824,6 +862,25 @@ const filteredExternalLinks = computed(() => {
     return source.includes(query);
   });
 });
+
+const configuredChannelIcons = computed(() => {
+  const dedup = new Set();
+  const icons = [];
+  configuredChannels.value.forEach((channel) => {
+    const name = String(channel || '').trim().toLowerCase();
+    if (!name || dedup.has(name)) return;
+    dedup.add(name);
+    const meta = CHANNEL_ICON_META[name] || { icon: 'fa-link', labelKey: '' };
+    icons.push({
+      channel: name,
+      icon: meta.icon,
+      label: meta.labelKey ? t(meta.labelKey) : name
+    });
+  });
+  return icons;
+});
+
+const channelIndicatorTitle = (label) => t('portal.channel.configured', { channel: label });
 
 const runningAgentSet = computed(() => new Set(runningAgentIds.value));
 const waitingAgentSet = computed(() => new Set(waitingAgentIds.value));
@@ -1049,6 +1106,30 @@ const loadExternalApps = async () => {
     externalLinks.value = [];
   } finally {
     externalLoading.value = false;
+  }
+};
+
+const loadConfiguredChannels = async () => {
+  try {
+    const { data } = await listChannelAccounts();
+    const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+    const channelSet = new Set(
+      items
+        .filter((item) => {
+          const channel = String(item?.channel || '').trim();
+          if (!channel) return false;
+          const configured = item?.meta?.configured === true;
+          const active =
+            item?.active === true ||
+            String(item?.status || '').trim().toLowerCase() === 'active';
+          return configured && active;
+        })
+        .map((item) => String(item.channel || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+    configuredChannels.value = Array.from(channelSet);
+  } catch (error) {
+    configuredChannels.value = [];
   }
 };
 

@@ -1,5 +1,5 @@
 use crate::api::user_context::resolve_user;
-use crate::channels::types::ChannelAccountConfig;
+use crate::channels::types::{ChannelAccountConfig, FeishuConfig};
 use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
@@ -11,15 +11,67 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::{json, Map, Value};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use uuid::Uuid;
+
+const USER_CHANNEL_FEISHU: &str = "feishu";
+const USER_CHANNEL_QQBOT: &str = "qqbot";
+const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
+const USER_CHANNEL_WECHAT: &str = "wechat";
+const USER_CHANNEL_TELEGRAM: &str = "telegram";
+const SUPPORTED_USER_CHANNELS: [&str; 5] = [
+    USER_CHANNEL_FEISHU,
+    USER_CHANNEL_QQBOT,
+    USER_CHANNEL_WHATSAPP,
+    USER_CHANNEL_WECHAT,
+    USER_CHANNEL_TELEGRAM,
+];
+const DEFAULT_GROUP_PEER_KIND: &str = "group";
+const WILDCARD_PEER_ID: &str = "*";
 
 #[derive(Debug, Deserialize)]
 struct ChannelAccountsQuery {
     #[serde(default)]
     channel: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelAccountUpsertRequest {
+    channel: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    create_new: Option<bool>,
+    #[serde(default)]
+    account_name: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    app_secret: Option<String>,
+    #[serde(default)]
+    receive_group_chat: Option<bool>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    peer_kind: Option<String>,
+    #[serde(default)]
+    config: Option<Value>,
+    #[serde(default)]
+    feishu: Option<FeishuAccountPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FeishuAccountPayload {
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    app_secret: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,7 +104,18 @@ struct ChannelBindingUpsertRequest {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/wunder/channels/accounts", get(list_channel_accounts))
+        .route(
+            "/wunder/channels/accounts",
+            get(list_channel_accounts).post(upsert_channel_account),
+        )
+        .route(
+            "/wunder/channels/accounts/{channel}/{account_id}",
+            delete(delete_channel_account_by_id),
+        )
+        .route(
+            "/wunder/channels/accounts/{channel}",
+            delete(delete_channel_account_legacy),
+        )
         .route(
             "/wunder/channels/bindings",
             get(list_channel_bindings).post(upsert_channel_binding),
@@ -68,7 +131,8 @@ async fn list_channel_accounts(
     headers: HeaderMap,
     Query(query): Query<ChannelAccountsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let _resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
     if !config.channels.enabled && !config.gateway.enabled {
         return Err(error_response(
@@ -76,42 +140,422 @@ async fn list_channel_accounts(
             "channels disabled".to_string(),
         ));
     }
-    let channel = query
+
+    let channel_filter = query
         .channel
         .as_deref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty());
-    let records = state
+        .map(|value| normalize_user_channel(Some(value)))
+        .transpose()?;
+
+    let account_keys = list_owned_account_keys(&state, &user_id, channel_filter.as_deref())?;
+    let mut items = Vec::new();
+    for (channel, account_id) in account_keys {
+        let record = state
+            .storage
+            .get_channel_account(&channel, &account_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let Some(record) = record else {
+            continue;
+        };
+
+        let binding_pref = load_user_binding_pref(&state, &user_id, &channel, &account_id)?;
+        items.push(build_user_account_item(
+            &channel,
+            &account_id,
+            &record.status,
+            Some(record.created_at),
+            Some(record.updated_at),
+            &record.config,
+            binding_pref.as_deref(),
+        ));
+    }
+
+    Ok(Json(json!({ "data": {
+        "items": items,
+        "supported_channels": supported_user_channel_items(),
+    } })))
+}
+
+async fn upsert_channel_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChannelAccountUpsertRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let config = state.config_store.get().await;
+    if !config.channels.enabled && !config.gateway.enabled {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "channels disabled".to_string(),
+        ));
+    }
+
+    let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
+    let existing_account_ids = list_owned_account_ids_for_channel(&state, &user_id, &channel)?;
+    let requested_account_id = payload
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let has_requested_account = requested_account_id.is_some();
+    let create_new = payload.create_new.unwrap_or(false);
+
+    let account_id = if let Some(account_id) = requested_account_id {
+        if !existing_account_ids.iter().any(|item| item == &account_id) {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                i18n::t("error.permission_denied"),
+            ));
+        }
+        account_id
+    } else if create_new || existing_account_ids.is_empty() {
+        make_user_account_id()
+    } else if existing_account_ids.len() == 1 {
+        existing_account_ids[0].clone()
+    } else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "account_id is required when multiple channel accounts exist".to_string(),
+        ));
+    };
+
+    let existing = state
         .storage
-        .list_channel_accounts(channel, Some("active"))
+        .get_channel_account(&channel, &account_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let items = records
-        .into_iter()
-        .map(|record| {
-            let account_cfg = ChannelAccountConfig::from_value(&record.config);
-            let mut meta = json!({});
-            if let Some(feishu_cfg) = account_cfg.feishu {
-                meta = json!({
-                    "receive_id_type": feishu_cfg
-                        .receive_id_type
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or("chat_id"),
-                    "long_connection_enabled": feishu_cfg.long_connection_enabled.unwrap_or(true),
-                });
-            }
-            json!({
-                "channel": record.channel,
-                "account_id": record.account_id,
-                "status": record.status,
-                "created_at": record.created_at,
-                "updated_at": record.updated_at,
-                "meta": meta,
+    if has_requested_account && existing.is_none() {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "channel account not found".to_string(),
+        ));
+    }
+
+    let mut config_value = existing
+        .as_ref()
+        .map(|record| record.config.clone())
+        .unwrap_or_else(|| json!({}));
+    if !config_value.is_object() {
+        config_value = json!({});
+    }
+
+    if let Some(extra_config) = payload.config.as_ref() {
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        merge_json_object(map, extra_config)?;
+    }
+
+    if let Some(display_name) = payload
+        .account_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        map.insert(
+            "display_name".to_string(),
+            Value::String(display_name.to_string()),
+        );
+    }
+
+    let existing_peer_kind = load_user_binding_pref(&state, &user_id, &channel, &account_id)?;
+    let mut selected_peer_kind = payload
+        .peer_kind
+        .as_deref()
+        .map(|value| normalize_user_peer_kind(&channel, value))
+        .filter(|value| !value.is_empty())
+        .or(existing_peer_kind.clone())
+        .unwrap_or_else(|| default_peer_kind_for_channel(&channel, payload.receive_group_chat));
+
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU) {
+        let existing_feishu = ChannelAccountConfig::from_value(&config_value)
+            .feishu
+            .unwrap_or_default();
+
+        let requested_app_id = payload
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .feishu
+                    .as_ref()
+                    .and_then(|value| value.app_id.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let app_id = requested_app_id
+            .or_else(|| {
+                existing_feishu
+                    .app_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
             })
-        })
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "data": { "items": items } })))
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "feishu app_id is required".to_string(),
+                )
+            })?;
+
+        let requested_app_secret = payload
+            .app_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .feishu
+                    .as_ref()
+                    .and_then(|value| value.app_secret.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let app_secret = requested_app_secret
+            .or_else(|| {
+                existing_feishu
+                    .app_secret
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "feishu app_secret is required".to_string(),
+                )
+            })?;
+
+        let domain = payload
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .feishu
+                    .as_ref()
+                    .and_then(|value| value.domain.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                existing_feishu
+                    .domain
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "open.feishu.cn".to_string());
+
+        let receive_group_chat = payload
+            .receive_group_chat
+            .unwrap_or_else(|| existing_peer_kind.as_deref() != Some("user"));
+        selected_peer_kind = if receive_group_chat {
+            "group".to_string()
+        } else {
+            "user".to_string()
+        };
+
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        map.insert(
+            "feishu".to_string(),
+            json!(FeishuConfig {
+                app_id: Some(app_id),
+                app_secret: Some(app_secret),
+                verification_token: None,
+                encrypt_key: None,
+                domain: Some(domain),
+                receive_id_type: Some("chat_id".to_string()),
+                long_connection_enabled: Some(true),
+            }),
+        );
+    } else if existing.is_none() && payload.config.is_none() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "config is required for this channel".to_string(),
+        ));
+    }
+
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
+        && !matches!(selected_peer_kind.as_str(), "user" | "group")
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "feishu peer_kind must be user or group".to_string(),
+        ));
+    }
+    if selected_peer_kind.trim().is_empty() {
+        selected_peer_kind = DEFAULT_GROUP_PEER_KIND.to_string();
+    }
+
+    {
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        let inbound_token_missing = map
+            .get("inbound_token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none();
+        if inbound_token_missing {
+            map.insert(
+                "inbound_token".to_string(),
+                Value::String(make_user_inbound_token(&user_id, &channel, &account_id)),
+            );
+        }
+        map.insert("agent_id".to_string(), Value::Null);
+    }
+
+    let enabled = payload.enabled.unwrap_or(true);
+    let now = now_ts();
+    let status = if enabled {
+        "active".to_string()
+    } else {
+        "disabled".to_string()
+    };
+    let created_at = existing
+        .as_ref()
+        .map(|record| record.created_at)
+        .unwrap_or(now);
+
+    let account_record = crate::storage::ChannelAccountRecord {
+        channel: channel.clone(),
+        account_id: account_id.clone(),
+        config: config_value.clone(),
+        status: status.clone(),
+        created_at,
+        updated_at: now,
+    };
+    state
+        .storage
+        .upsert_channel_account(&account_record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    sync_user_default_binding(
+        &state,
+        &user_id,
+        &channel,
+        &account_id,
+        &selected_peer_kind,
+        enabled,
+        now,
+    )?;
+
+    let item = build_user_account_item(
+        &channel,
+        &account_id,
+        &status,
+        Some(created_at),
+        Some(now),
+        &config_value,
+        Some(&selected_peer_kind),
+    );
+
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn delete_channel_account_by_id(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((channel, account_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let channel = normalize_user_channel(Some(channel.as_str()))?;
+    let account_id = account_id.trim().to_string();
+    if account_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+
+    let (deleted_account, deleted_bindings, deleted_user_bindings) =
+        delete_channel_account_records(&state, &user_id, &channel, &account_id)?;
+
+    Ok(Json(json!({ "data": {
+        "channel": channel,
+        "account_id": account_id,
+        "deleted_accounts": deleted_account,
+        "deleted_bindings": deleted_bindings,
+        "deleted_user_bindings": deleted_user_bindings,
+    }})))
+}
+
+async fn delete_channel_account_legacy(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(channel): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let channel = normalize_user_channel(Some(channel.as_str()))?;
+
+    let account_ids = list_owned_account_ids_for_channel(&state, &user_id, &channel)?;
+    if account_ids.is_empty() {
+        return Ok(Json(json!({ "data": {
+            "channel": channel,
+            "account_id": null,
+            "deleted_accounts": 0,
+            "deleted_bindings": 0,
+            "deleted_user_bindings": 0,
+        }})));
+    }
+    if account_ids.len() > 1 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "multiple channel accounts exist, please specify account_id".to_string(),
+        ));
+    }
+
+    let account_id = account_ids[0].clone();
+    let (deleted_account, deleted_bindings, deleted_user_bindings) =
+        delete_channel_account_records(&state, &user_id, &channel, &account_id)?;
+
+    Ok(Json(json!({ "data": {
+        "channel": channel,
+        "account_id": account_id,
+        "deleted_accounts": deleted_account,
+        "deleted_bindings": deleted_bindings,
+        "deleted_user_bindings": deleted_user_bindings,
+    }})))
 }
 
 async fn list_channel_bindings(
@@ -121,10 +565,16 @@ async fn list_channel_bindings(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
+    let query_channel = query
+        .channel
+        .as_deref()
+        .map(|value| normalize_user_channel(Some(value)))
+        .transpose()?;
+
     let (bindings, total) = state
         .storage
         .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
-            channel: query.channel.as_deref(),
+            channel: query_channel.as_deref(),
             account_id: query.account_id.as_deref(),
             peer_kind: query.peer_kind.as_deref(),
             peer_id: query.peer_id.as_deref(),
@@ -135,7 +585,7 @@ async fn list_channel_bindings(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let channel_bindings = state
         .storage
-        .list_channel_bindings(query.channel.as_deref())
+        .list_channel_bindings(query_channel.as_deref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut binding_by_id: HashMap<String, crate::storage::ChannelBindingRecord> = HashMap::new();
     let mut binding_by_peer: HashMap<String, crate::storage::ChannelBindingRecord> = HashMap::new();
@@ -164,19 +614,16 @@ async fn list_channel_bindings(
                 &record.peer_kind,
                 &record.peer_id,
             );
-            let binding = binding_by_id
-                .get(&binding_id)
-                .cloned()
-                .or_else(|| {
-                    binding_by_peer
-                        .get(&peer_key(
-                            &record.channel,
-                            &record.account_id,
-                            &record.peer_kind,
-                            &record.peer_id,
-                        ))
-                        .cloned()
-                });
+            let binding = binding_by_id.get(&binding_id).cloned().or_else(|| {
+                binding_by_peer
+                    .get(&peer_key(
+                        &record.channel,
+                        &record.account_id,
+                        &record.peer_kind,
+                        &record.peer_id,
+                    ))
+                    .cloned()
+            });
             json!({
                 "binding_id": binding_id,
                 "channel": record.channel,
@@ -203,7 +650,7 @@ async fn upsert_channel_binding(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    let channel = payload.channel.trim().to_string();
+    let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let account_id = payload.account_id.trim().to_string();
     let peer_kind = normalize_user_peer_kind(&channel, &payload.peer_kind);
     let peer_id = payload.peer_id.trim().to_string();
@@ -213,10 +660,18 @@ async fn upsert_channel_binding(
             i18n::t("error.content_required"),
         ));
     }
-    if channel.eq_ignore_ascii_case("feishu") && !matches!(peer_kind.as_str(), "user" | "group") {
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
+        && !matches!(peer_kind.as_str(), "user" | "group")
+    {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "feishu peer_kind must be user or group".to_string(),
+        ));
+    }
+    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
         ));
     }
     let config = state.config_store.get().await;
@@ -321,7 +776,7 @@ async fn delete_channel_binding(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    let channel = channel.trim().to_string();
+    let channel = normalize_user_channel(Some(channel.as_str()))?;
     let account_id = account_id.trim().to_string();
     let peer_kind = peer_kind.trim().to_string();
     let peer_id = peer_id.trim().to_string();
@@ -329,6 +784,12 @@ async fn delete_channel_binding(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
+        ));
+    }
+    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
         ));
     }
     let existing = state
@@ -364,14 +825,545 @@ async fn delete_channel_binding(
     }})))
 }
 
+fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {
+    let channel = channel
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+        })?;
+    let normalized = channel.to_ascii_lowercase();
+    if is_supported_user_channel(&normalized) {
+        return Ok(normalized);
+    }
+    Err(error_response(
+        StatusCode::BAD_REQUEST,
+        "unsupported channel".to_string(),
+    ))
+}
+
+fn resolve_user_channels(channel: Option<&str>) -> Result<Vec<String>, Response> {
+    if let Some(channel) = channel {
+        return Ok(vec![normalize_user_channel(Some(channel))?]);
+    }
+    Ok(SUPPORTED_USER_CHANNELS
+        .iter()
+        .map(|item| (*item).to_string())
+        .collect())
+}
+
+fn supported_user_channel_items() -> Vec<Value> {
+    SUPPORTED_USER_CHANNELS
+        .iter()
+        .map(|channel| json!({ "channel": channel }))
+        .collect()
+}
+
+fn is_supported_user_channel(channel: &str) -> bool {
+    SUPPORTED_USER_CHANNELS
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(channel.trim()))
+}
+
+fn list_owned_account_keys(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel_filter: Option<&str>,
+) -> Result<Vec<(String, String)>, Response> {
+    let mut account_keys: BTreeSet<(String, String)> = BTreeSet::new();
+
+    let (bindings, _) = state
+        .storage
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: channel_filter,
+            account_id: None,
+            peer_kind: None,
+            peer_id: None,
+            user_id: Some(user_id),
+            offset: 0,
+            limit: 1000,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    for binding in bindings {
+        let channel = binding.channel.trim().to_ascii_lowercase();
+        if !is_supported_user_channel(&channel) {
+            continue;
+        }
+        if let Some(filter) = channel_filter {
+            if !channel.eq_ignore_ascii_case(filter) {
+                continue;
+            }
+        }
+        let account_id = binding.account_id.trim().to_string();
+        if account_id.is_empty() {
+            continue;
+        }
+        account_keys.insert((channel, account_id));
+    }
+
+    for channel in resolve_user_channels(channel_filter)? {
+        let legacy_account_id = make_legacy_user_account_id(user_id, &channel);
+        let legacy_record = state
+            .storage
+            .get_channel_account(&channel, &legacy_account_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if legacy_record.is_some() {
+            account_keys.insert((channel, legacy_account_id));
+        }
+    }
+
+    Ok(account_keys.into_iter().collect())
+}
+
+fn list_owned_account_ids_for_channel(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+) -> Result<Vec<String>, Response> {
+    let normalized_channel = normalize_user_channel(Some(channel))?;
+    let keys = list_owned_account_keys(state, user_id, Some(&normalized_channel))?;
+    Ok(keys.into_iter().map(|(_, account_id)| account_id).collect())
+}
+
+fn user_owns_channel_account(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> Result<bool, Response> {
+    let channel = normalize_user_channel(Some(channel))?;
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(false);
+    }
+
+    let legacy_account_id = make_legacy_user_account_id(user_id, &channel);
+    if account_id.eq_ignore_ascii_case(&legacy_account_id) {
+        return Ok(true);
+    }
+
+    let (bindings, _) = state
+        .storage
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: Some(&channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: Some(user_id),
+            offset: 0,
+            limit: 1,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok(!bindings.is_empty())
+}
+
+fn load_user_binding_pref(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> Result<Option<String>, Response> {
+    let (items, _) = state
+        .storage
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: Some(user_id),
+            offset: 0,
+            limit: 200,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    for item in items {
+        if is_wildcard_peer_id(&item.peer_id) {
+            let peer_kind = item.peer_kind.trim();
+            if !peer_kind.is_empty() {
+                return Ok(Some(peer_kind.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn build_user_account_item(
+    channel: &str,
+    account_id: &str,
+    status: &str,
+    created_at: Option<f64>,
+    updated_at: Option<f64>,
+    config: &Value,
+    peer_kind_hint: Option<&str>,
+) -> Value {
+    let account_cfg = ChannelAccountConfig::from_value(config);
+    let mut peer_kind = peer_kind_hint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_GROUP_PEER_KIND)
+        .to_ascii_lowercase();
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
+        && !matches!(peer_kind.as_str(), "group" | "user")
+    {
+        peer_kind = "group".to_string();
+    }
+
+    let active = status.trim().eq_ignore_ascii_case("active");
+    let receive_group_chat = peer_kind == "group";
+
+    let configured: bool;
+    let config_preview: Value;
+    let mut receive_id_type = "chat_id".to_string();
+    let mut long_connection_enabled = true;
+
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU) {
+        let feishu = account_cfg.feishu.unwrap_or_default();
+        let app_id = feishu
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let app_secret_set = feishu
+            .app_secret
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let domain = feishu
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("open.feishu.cn")
+            .to_string();
+        receive_id_type = feishu
+            .receive_id_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("chat_id")
+            .to_string();
+        long_connection_enabled = feishu.long_connection_enabled.unwrap_or(true);
+        configured = !app_id.is_empty() && app_secret_set;
+        config_preview = json!({
+            "feishu": {
+                "app_id": app_id,
+                "app_secret_set": app_secret_set,
+                "domain": domain,
+            }
+        });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_QQBOT) {
+        let qqbot = account_cfg.qqbot.unwrap_or_default();
+        let app_id = qqbot
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let client_secret_set = qqbot
+            .client_secret
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        configured = !app_id.is_empty() && client_secret_set;
+        config_preview = json!({
+            "qqbot": {
+                "app_id": app_id,
+                "client_secret_set": client_secret_set,
+                "markdown_support": qqbot.markdown_support,
+            }
+        });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WHATSAPP) {
+        let whatsapp = account_cfg.whatsapp_cloud.unwrap_or_default();
+        let phone_number_id = whatsapp
+            .phone_number_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let access_token_set = whatsapp
+            .access_token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let verify_token_set = whatsapp
+            .verify_token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        configured = !phone_number_id.is_empty() && access_token_set;
+        config_preview = json!({
+            "whatsapp_cloud": {
+                "phone_number_id": phone_number_id,
+                "access_token_set": access_token_set,
+                "verify_token_set": verify_token_set,
+                "api_version": whatsapp.api_version,
+            }
+        });
+    } else {
+        configured = config
+            .as_object()
+            .map(|map| !map.is_empty())
+            .unwrap_or(false);
+        config_preview = config.clone();
+    }
+
+    let display_name = config
+        .get("display_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let mut meta = json!({
+        "configured": configured,
+        "peer_kind": peer_kind,
+        "receive_group_chat": receive_group_chat,
+    });
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU) {
+        if let Some(meta_map) = meta.as_object_mut() {
+            meta_map.insert(
+                "receive_id_type".to_string(),
+                Value::String(receive_id_type),
+            );
+            meta_map.insert(
+                "long_connection_enabled".to_string(),
+                Value::Bool(long_connection_enabled),
+            );
+        }
+    }
+
+    json!({
+        "channel": channel,
+        "account_id": account_id,
+        "name": display_name,
+        "status": status,
+        "active": active,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "meta": meta,
+        "config": config_preview,
+        "raw_config": config,
+    })
+}
+
+fn merge_json_object(target: &mut Map<String, Value>, patch: &Value) -> Result<(), Response> {
+    let patch_obj = patch.as_object().ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "channel config must be a JSON object".to_string(),
+        )
+    })?;
+    for (key, value) in patch_obj {
+        target.insert(key.clone(), value.clone());
+    }
+    Ok(())
+}
+
+fn delete_channel_account_records(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> Result<(i64, i64, i64), Response> {
+    let deleted_account = state
+        .storage
+        .delete_channel_account(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let (bindings, _) = state
+        .storage
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: Some(user_id),
+            offset: 0,
+            limit: 200,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let mut deleted_bindings = 0_i64;
+    let mut deleted_user_bindings = 0_i64;
+    for record in bindings {
+        deleted_user_bindings += state
+            .storage
+            .delete_channel_user_binding(
+                &record.channel,
+                &record.account_id,
+                &record.peer_kind,
+                &record.peer_id,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let binding_id = make_user_binding_id(
+            &record.user_id,
+            &record.channel,
+            &record.account_id,
+            &record.peer_kind,
+            &record.peer_id,
+        );
+        deleted_bindings += state
+            .storage
+            .delete_channel_binding(&binding_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+
+    Ok((deleted_account, deleted_bindings, deleted_user_bindings))
+}
+
+fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>) -> String {
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_FEISHU) {
+        return if receive_group_chat.unwrap_or(true) {
+            "group".to_string()
+        } else {
+            "user".to_string()
+        };
+    }
+    if receive_group_chat == Some(false) {
+        return "user".to_string();
+    }
+    DEFAULT_GROUP_PEER_KIND.to_string()
+}
+
+fn sync_user_default_binding(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+    selected_peer_kind: &str,
+    enabled: bool,
+    now: f64,
+) -> Result<(), Response> {
+    let selected_kind = normalize_user_peer_kind(channel, selected_peer_kind);
+    if selected_kind.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "peer_kind is required".to_string(),
+        ));
+    }
+
+    let (existing_bindings, _) = state
+        .storage
+        .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: Some(user_id),
+            offset: 0,
+            limit: 200,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    for record in existing_bindings {
+        let keep = record.peer_kind == selected_kind && is_wildcard_peer_id(&record.peer_id);
+        if keep {
+            continue;
+        }
+        state
+            .storage
+            .delete_channel_user_binding(
+                &record.channel,
+                &record.account_id,
+                &record.peer_kind,
+                &record.peer_id,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let binding_id = make_user_binding_id(
+            user_id,
+            &record.channel,
+            &record.account_id,
+            &record.peer_kind,
+            &record.peer_id,
+        );
+        state
+            .storage
+            .delete_channel_binding(&binding_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+
+    let selected_binding_id = make_user_binding_id(
+        user_id,
+        channel,
+        account_id,
+        &selected_kind,
+        WILDCARD_PEER_ID,
+    );
+    let binding_record = crate::storage::ChannelBindingRecord {
+        binding_id: selected_binding_id,
+        channel: channel.to_string(),
+        account_id: account_id.to_string(),
+        peer_kind: Some(selected_kind.clone()),
+        peer_id: Some(WILDCARD_PEER_ID.to_string()),
+        agent_id: None,
+        tool_overrides: Vec::new(),
+        priority: 100,
+        enabled,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .storage
+        .upsert_channel_binding(&binding_record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let user_binding_record = crate::storage::ChannelUserBindingRecord {
+        channel: channel.to_string(),
+        account_id: account_id.to_string(),
+        peer_kind: selected_kind,
+        peer_id: WILDCARD_PEER_ID.to_string(),
+        user_id: user_id.to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .storage
+        .upsert_channel_user_binding(&user_binding_record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok(())
+}
+
 fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
     let normalized = peer_kind.trim().to_ascii_lowercase();
-    if channel.trim().eq_ignore_ascii_case("feishu")
+    if channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
         && matches!(normalized.as_str(), "dm" | "direct" | "single")
     {
         return "user".to_string();
     }
     normalized
+}
+
+fn make_legacy_user_account_id(user_id: &str, channel: &str) -> String {
+    let key = format!(
+        "uacc:{user_id}|{channel}",
+        user_id = user_id.trim().to_ascii_lowercase(),
+        channel = channel.trim().to_ascii_lowercase(),
+    );
+    format!(
+        "uacc_{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, key.as_bytes()).simple()
+    )
+}
+
+fn make_user_account_id() -> String {
+    format!("uacc_{}", Uuid::new_v4().simple())
+}
+
+fn make_user_inbound_token(user_id: &str, channel: &str, account_id: &str) -> String {
+    let key = format!(
+        "uacc-token:{user_id}|{channel}|{account_id}",
+        user_id = user_id.trim().to_ascii_lowercase(),
+        channel = channel.trim().to_ascii_lowercase(),
+        account_id = account_id.trim().to_ascii_lowercase(),
+    );
+    format!(
+        "utok_{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, key.as_bytes()).simple()
+    )
 }
 
 fn make_user_binding_id(
@@ -403,6 +1395,10 @@ fn peer_key(channel: &str, account_id: &str, peer_kind: &str, peer_id: &str) -> 
         peer_kind.trim().to_ascii_lowercase(),
         peer_id.trim()
     )
+}
+
+fn is_wildcard_peer_id(value: &str) -> bool {
+    value.trim() == WILDCARD_PEER_ID
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

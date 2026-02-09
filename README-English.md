@@ -39,11 +39,12 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 ## Entrypoints & Usage
 - Admin debug UI: `http://127.0.0.1:18000`
 - Debug frontend: `http://127.0.0.1:18001`
-- User frontend: `http://127.0.0.1:18002`
+- User frontend (development, default): `http://127.0.0.1:18001`
+- User frontend (production static, when Nginx is enabled): `http://127.0.0.1:18002`
 - Unified API entry: `/wunder` (streaming + non-streaming)
 
 ### Usage flow
-1. Start the services and open the user frontend: `http://127.0.0.1:18002`
+1. After startup, open the user frontend (development default): `http://127.0.0.1:18001` (use `http://127.0.0.1:18002` when Nginx static deployment is enabled)
 2. Enter `/home` to create or select an agent app (or go straight to chat).
 3. Use chat to interact; prepare required files in the workspace.
 
@@ -66,7 +67,8 @@ The first start pulls base images and builds dependencies, so it may take a whil
 
 ### 3) Open entrypoints
 Admin debug UI: `http://127.0.0.1:18000`
-User frontend: `http://127.0.0.1:18001`
+User frontend (development, default): `http://127.0.0.1:18001`
+User frontend (production static, when Nginx is enabled): `http://127.0.0.1:18002`
 
 ## Workspace & Persistence
 - Workspace path: `workspaces/<user_id>` (prompt uses `/workspaces/<user_id>/`).
@@ -105,4 +107,12 @@ docs/                # design/API/test docs
 - System overview: `docs/系统介绍.md`
 - Design plan: `docs/设计方案.md`
 - API documentation: `docs/API文档.md`
-- Test plan: `docs/测试方案.md`
+- Test plan: `docs/方案/Test-Plan.md`
+
+## wunder Devoured Core
+- EVA: <https://github.com/ylsdamxssjxxdd/eva>
+- OpenAI Codex: <https://github.com/openai/codex>
+- Claude Code: <https://github.com/anthropics/claude-code>
+- OpenClaw: <https://github.com/openclaw/openclaw>
+- OpenCode: <https://github.com/anomalyco/opencode>
+

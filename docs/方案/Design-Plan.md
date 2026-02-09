@@ -60,7 +60,7 @@ Workspace/Memory/Logs
 
 ## 4. API design
 
-See `docs/API-Documentation.md`.
+See `docs/方案/API-Documentation.md`.
 
 ## 5. Core modules
 

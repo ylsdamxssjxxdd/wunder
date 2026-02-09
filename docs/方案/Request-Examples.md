@@ -115,4 +115,4 @@ with requests.post(WUNDER_URL, json=payload, headers=headers, stream=True, timeo
 
 Notes:
 - `debug_payload` is supported only on `/wunder`; `/wunder/chat` omits full request bodies.
-- The SSE stream emits multiple event types; see `docs/API-Documentation.md` for details.
+- The stream emits multiple event types with the same event semantics over WS/SSE; see `docs/方案/API-Documentation.md` for details.

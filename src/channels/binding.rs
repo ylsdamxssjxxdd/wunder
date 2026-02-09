@@ -1,6 +1,8 @@
 use crate::channels::types::ChannelMessage;
 use crate::storage::ChannelBindingRecord;
 
+const WILDCARD_PEER_ID: &str = "*";
+
 #[derive(Debug, Clone)]
 pub struct BindingResolution {
     pub agent_id: Option<String>,
@@ -31,7 +33,10 @@ pub fn resolve_binding(
             }
         }
         if let Some(peer_id) = binding.peer_id.as_ref() {
-            if !peer_id.is_empty() && !eq_ignore_case(peer_id, &message.peer.id) {
+            if !peer_id.is_empty()
+                && !is_wildcard_peer_id(peer_id)
+                && !eq_ignore_case(peer_id, &message.peer.id)
+            {
                 continue;
             }
         }
@@ -73,7 +78,7 @@ fn compute_specificity(binding: &ChannelBindingRecord) -> i64 {
         }
     }
     if let Some(peer_id) = binding.peer_id.as_ref() {
-        if !peer_id.is_empty() {
+        if !peer_id.is_empty() && !is_wildcard_peer_id(peer_id) {
             score += 8;
         }
     }
@@ -93,4 +98,68 @@ fn is_direct_peer_kind(kind: &str) -> bool {
 
 fn eq_ignore_case(left: &str, right: &str) -> bool {
     left.trim().eq_ignore_ascii_case(right.trim())
+}
+
+fn is_wildcard_peer_id(peer_id: &str) -> bool {
+    peer_id.trim() == WILDCARD_PEER_ID
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::types::{ChannelMessage, ChannelPeer};
+
+    fn message(peer_kind: &str, peer_id: &str) -> ChannelMessage {
+        ChannelMessage {
+            channel: "feishu".to_string(),
+            account_id: "acc".to_string(),
+            peer: ChannelPeer {
+                kind: peer_kind.to_string(),
+                id: peer_id.to_string(),
+                name: None,
+            },
+            thread: None,
+            message_id: None,
+            sender: None,
+            message_type: "text".to_string(),
+            text: Some("hello".to_string()),
+            attachments: Vec::new(),
+            location: None,
+            ts: None,
+            meta: None,
+        }
+    }
+
+    fn binding(peer_id: &str, priority: i64) -> ChannelBindingRecord {
+        ChannelBindingRecord {
+            binding_id: format!("b_{peer_id}"),
+            channel: "feishu".to_string(),
+            account_id: "acc".to_string(),
+            peer_kind: Some("group".to_string()),
+            peer_id: Some(peer_id.to_string()),
+            agent_id: None,
+            tool_overrides: Vec::new(),
+            priority,
+            enabled: true,
+            created_at: 0.0,
+            updated_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn wildcard_peer_id_matches_any_peer() {
+        let bindings = vec![binding("*", 10)];
+        let resolved = resolve_binding(&bindings, &message("group", "chat_1"));
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn specific_peer_beats_wildcard() {
+        let bindings = vec![binding("*", 100), binding("chat_1", 1)];
+        let resolved = resolve_binding(&bindings, &message("group", "chat_1"));
+        assert_eq!(
+            resolved.and_then(|item| item.binding_id),
+            Some("b_chat_1".to_string())
+        );
+    }
 }

@@ -165,6 +165,16 @@
   line-height: 1;
 }
 
+.agent-card-channel-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  color: var(--portal-primary);
+  font-size: 12px;
+  line-height: 1;
+}
+
 .agent-card-footer {
   display: flex;
   align-items: center;

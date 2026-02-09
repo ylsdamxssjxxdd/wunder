@@ -1086,14 +1086,23 @@ impl ChannelHub {
         let peer_kinds = equivalent_peer_kinds(peer_kind);
         let peer_id = peer_id.to_string();
         tokio::task::spawn_blocking(move || {
+            let mut peer_ids = vec![peer_id.clone()];
+            if !peer_ids
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case("*"))
+            {
+                peer_ids.push("*".to_string());
+            }
             for candidate_kind in &peer_kinds {
-                if let Some(record) = storage.get_channel_user_binding(
-                    &channel,
-                    &account_id,
-                    candidate_kind,
-                    &peer_id,
-                )? {
-                    return Ok(Some(record));
+                for candidate_peer_id in &peer_ids {
+                    if let Some(record) = storage.get_channel_user_binding(
+                        &channel,
+                        &account_id,
+                        candidate_kind,
+                        candidate_peer_id,
+                    )? {
+                        return Ok(Some(record));
+                    }
                 }
             }
             Ok(None)

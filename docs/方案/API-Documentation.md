@@ -593,7 +593,7 @@ Example payload:
 - Multiplexing: one connection can run concurrent requests; set `request_id` and expect it back on `event/error`
 - `/wunder/ws` uses the same payload as `/wunder` POST (`user_id/question/...`) and forces `stream=true`.
 - Resume: send `resume` with `after_event_id` to replay from `stream_events`.
-- Full protocol: `docs/WebSocket-Transport.md`
+- Full protocol: `docs/方案/WebSocket-Transport.md`
 
 ## 4.3 Non-stream response
 

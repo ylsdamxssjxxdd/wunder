@@ -39,11 +39,12 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 ## 入口与使用
 - 管理端调试界面：`http://127.0.0.1:18000`
 - 调试前端：`http://127.0.0.1:18001`
-- 用户侧前端：`http://127.0.0.1:18002`
+- 用户侧前端（开发，默认）：`http://127.0.0.1:18001`
+- 用户侧前端（生产静态，启用 Nginx 时）：`http://127.0.0.1:18002`
 - API 入口：`/wunder`（支持流式与非流式）
 
 ### 使用方式
-1. 启动服务后打开用户侧前端：`http://127.0.0.1:18002`
+1. 启动服务后默认打开用户侧前端（开发）：`http://127.0.0.1:18001`（若启用 Nginx 静态部署则使用 `http://127.0.0.1:18002`）
 2. 进入 `/home` 新建或选择智能体应用（也可直接进入聊天页）。
 3. 在聊天页进行对话，所需资料可先整理到工作区。
 
@@ -66,7 +67,8 @@ docker compose -f docker-compose-arm.yml up
 
 ### 3) 打开入口
 管理端调试界面：`http://127.0.0.1:18000`
-用户侧前端：`http://127.0.0.1:18001`
+用户侧前端（开发，默认）：`http://127.0.0.1:18001`
+用户侧前端（生产静态，启用 Nginx 时）：`http://127.0.0.1:18002`
 
 ## 工作区与持久化
 - 工作区路径：`workspaces/<user_id>`（提示词使用 `/workspaces/<user_id>/`）。
@@ -105,4 +107,12 @@ docs/                # 设计/API/测试文档
 - 系统介绍：`docs/系统介绍.md`
 - 设计方案：`docs/设计方案.md`
 - API 文档：`docs/API文档.md`
-- 测试方案：`docs/测试方案.md`
+- 测试方案：`docs/方案/测试方案.md`
+
+## wunder已吞噬核心
+- EVA：<https://github.com/ylsdamxssjxxdd/eva>
+- OpenAI Codex：<https://github.com/openai/codex>
+- Claude Code：<https://github.com/anthropics/claude-code>
+- OpenClaw：<https://github.com/openclaw/openclaw>
+- OpenCode：<https://github.com/anomalyco/opencode>
+

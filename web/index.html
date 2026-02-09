@@ -57,6 +57,10 @@
                 <i class="fa-solid fa-arrow-up-right-from-square"></i>
                 <span data-i18n="panel.externalLinks">外链管理</span>
               </button>
+              <button id="navChannels" class="nav-btn">
+                <i class="fa-solid fa-link"></i>
+                <span data-i18n="panel.channels">渠道监控</span>
+              </button>
             </div>
           </div>
           <div class="nav-group" data-group="agent">
@@ -77,10 +81,6 @@
               <button id="navMemory" class="nav-btn">
                 <i class="fa-solid fa-brain"></i>
                 <span data-i18n="panel.memory">记忆管理</span>
-              </button>
-              <button id="navChannels" class="nav-btn">
-                <i class="fa-solid fa-link"></i>
-                <span data-i18n="panel.channels">渠道管理</span>
               </button>
               <button id="navBuiltin" class="nav-btn">
                 <i class="fa-solid fa-toolbox"></i>
@@ -1896,18 +1896,15 @@
         </section>
         <section id="channelsPanel" class="panel">
           <div class="list-header">
-            <h1 data-i18n="channels.title">渠道管理</h1>
+            <h1 data-i18n="channels.title">渠道监控</h1>
             <div class="header-actions">
               <button id="channelsRefreshBtn" class="secondary btn-with-icon">
                 <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
               </button>
-              <button id="channelAccountAddBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-plus"></i><span data-i18n="channels.action.add">新增渠道</span>
-              </button>
             </div>
           </div>
           <div class="tips" data-i18n="channels.tip">
-            维护开放给用户的渠道账号，支持停用或更新渠道配置（如 token、Webhook 信息）。
+            仅用于监控渠道账号的运行状态与配置快照，渠道配置入口已迁移到用户侧。
           </div>
           <div class="management-layout channels-management-layout">
             <div class="management-list channels-list-pane">
@@ -1927,22 +1924,6 @@
                     未选择渠道
                   </div>
                   <div id="channelAccountDetailMeta" class="muted"></div>
-                </div>
-              </div>
-              <div class="detail-actions">
-                <div class="actions">
-                  <label class="checkbox-row checkbox-compact">
-                    <input id="channelAccountEnabled" type="checkbox" />
-                    <span data-i18n="channels.field.enabled">开放渠道</span>
-                  </label>
-                </div>
-                <div class="actions">
-                  <button id="channelAccountEditBtn" class="secondary btn-with-icon">
-                    <i class="fa-solid fa-pen-to-square"></i><span data-i18n="channels.action.edit">编辑</span>
-                  </button>
-                  <button id="channelAccountDeleteBtn" class="danger btn-with-icon">
-                    <i class="fa-solid fa-trash"></i><span data-i18n="channels.action.delete">删除</span>
-                  </button>
                 </div>
               </div>
               <div class="channel-detail-section">
@@ -3424,50 +3405,6 @@
           </button>
           <button id="a2aServiceModalSave" class="btn-with-icon">
             <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
-          </button>
-        </div>
-      </div>
-    </div>
-    <div id="channelAccountModal" class="modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div id="channelAccountModalTitle" class="detail-title" data-i18n="channels.modal.addTitle">
-            新增渠道
-          </div>
-          <button id="channelAccountModalClose" class="icon-btn" type="button">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-row">
-            <label for="channelAccountChannel" data-i18n="channels.field.channel">渠道</label>
-            <select id="channelAccountChannel"></select>
-            <div class="muted" data-i18n="channels.field.channelHint">请选择系统支持的渠道</div>
-          </div>
-          <div class="form-row">
-            <label for="channelAccountId" data-i18n="channels.field.account">账号</label>
-            <input id="channelAccountId" type="text" placeholder="phone_number_id" />
-          </div>
-          <div class="form-row">
-            <label for="channelAccountStatus" data-i18n="channels.field.status">状态</label>
-            <select id="channelAccountStatus">
-              <option value="active" data-i18n="channels.status.active">已启用</option>
-              <option value="disabled" data-i18n="channels.status.disabled">已停用</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label for="channelAccountConfig" data-i18n="channels.field.config">渠道配置</label>
-            <textarea id="channelAccountConfig" class="code-preview" placeholder="{}"></textarea>
-            <div id="channelAccountConfigError" class="error-text"></div>
-          </div>
-          <div class="muted" data-i18n="channels.modal.tip">
-            配置将存储在渠道账号的 config 字段中，支持 JSON 格式。
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="channelAccountModalCancel" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
-          </button>
-          <button id="channelAccountModalSave" class="btn-with-icon">
-            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
           </button>
         </div>
       </div>

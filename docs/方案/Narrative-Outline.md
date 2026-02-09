@@ -45,7 +45,7 @@ This outline is for explaining wunder to teammates who have only used chat-based
 - Global: light theme, 16:9 safe area, no overflow, pure HTML + JS, no speaker notes; each point must be a dedicated slide; except cover and TOC, every slide must show “Section X” and progress. Use bridge sentences to connect sections without saying “next section”.
 - Cover: only a big title plus one subtitle/slogan.
 - TOC: fixed order: Core Idea / Tool System / Workspace / Frontier Features / Agent management testing / Quick Start.
-- Core Idea: one slide only, highlight “/wunder unified entry, SSE progress, orchestration + tool execution chain”.
+- Core Idea: one slide only, highlight “/wunder unified entry, WS-first with SSE fallback progress, orchestration + tool execution chain”.
 - Tool System: one overview slide, then six category slides; each category uses “what it is / why it matters / governance”.
 - Built-in tools: cover file read/write/search/replace, command exec, ptc; emphasize allow_paths / allow_commands.
 - MCP tools: explain server@tool, external system integration, allow_tools allowlist, and unified timeouts.
@@ -58,8 +58,8 @@ This outline is for explaining wunder to teammates who have only used chat-based
 - Frontier features: three slides in order: “Memory & Compaction / A2UI / A2A”, all labeled “Section 4 Frontier Features”.
 - Memory & compaction: thresholds, structured summary injection, auto continuity; emphasize “context occupancy tokens” not total consumption.
 - Long-term memory: generation timing, record limit, injection method, toggle control.
-- A2UI: model outputs A2UI JSON, SSE events, front-end rendering; stress “answers become UI”.
-- A2A: JSON-RPC + SSE, AgentCard discovery, unified auth; stress cross-system interoperability.
+- A2UI: model outputs A2UI JSON, unified WS/SSE events, front-end rendering; stress “answers become UI”.
+- A2A: JSON-RPC + SSE streaming (aligned with in-site WS/SSE event semantics), AgentCard discovery, unified auth; stress cross-system interoperability.
 - Agent management testing: one overview slide plus three detail slides for session management, throughput testing, and capability evaluation; stress manageable, measurable, evaluable.
 - Quick start: three steps (pick scenario / pick tool combo / codify workflow), include pilot examples.
 - Closing: thank you + closing slogan + Q&A prompt.

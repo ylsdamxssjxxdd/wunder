@@ -2,6 +2,15 @@ import api from './http';
 
 export const listChannelAccounts = (params) => api.get('/channels/accounts', { params });
 
+export const upsertChannelAccount = (payload) => api.post('/channels/accounts', payload);
+
+export const deleteChannelAccount = (channel, accountId) =>
+  accountId
+    ? api.delete(
+        `/channels/accounts/${encodeURIComponent(channel)}/${encodeURIComponent(accountId)}`
+      )
+    : api.delete(`/channels/accounts/${encodeURIComponent(channel)}`);
+
 export const listChannelBindings = (params) => api.get('/channels/bindings', { params });
 
 export const upsertChannelBinding = (payload) => api.post('/channels/bindings', payload);
