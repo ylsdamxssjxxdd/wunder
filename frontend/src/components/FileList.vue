@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="file-list">
     <div class="file-header">
       <span>{{ t('fileList.title') }}</span>
@@ -28,7 +28,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from '@/i18n';
 
 defineProps({

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="file-preview">
     <div class="preview-title">{{ t('filePreview.title') }}</div>
     <div v-if="file">
@@ -12,7 +12,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from '@/i18n';
 
 defineProps({

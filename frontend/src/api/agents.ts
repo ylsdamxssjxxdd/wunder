@@ -1,4 +1,4 @@
-﻿import api from './http';
+import api from './http';
 
 export const listAgents = (params = {}) => api.get('/agents', { params });
 export const listSharedAgents = () => api.get('/agents/shared');

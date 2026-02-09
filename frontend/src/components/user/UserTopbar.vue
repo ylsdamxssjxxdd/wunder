@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <header class="user-topbar topbar">
     <div class="brand">
       <div class="brand-mark">AI</div>
@@ -75,7 +75,7 @@
   </header>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 

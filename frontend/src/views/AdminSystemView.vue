@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="admin-view">
     <el-card>
       <h3>{{ t('admin.system.title') }}</h3>
@@ -20,7 +20,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted } from 'vue';
 
 import { useI18n } from '@/i18n';

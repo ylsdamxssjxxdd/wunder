@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="auth-page theme-light admin-auth">
     <div class="auth-card">
       <h2>{{ t('admin.login.title') }}</h2>
@@ -19,7 +19,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';

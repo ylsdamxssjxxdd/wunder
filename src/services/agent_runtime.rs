@@ -153,14 +153,14 @@ impl AgentRuntime {
         let mut lease = None;
         let config = self.config_store.get().await;
         if !explicit_session && set_as_main {
-            if let Some(current_session_id) = session_id.as_deref()
-                && !self.is_session_idle(&user_id, current_session_id).await
-            {
-                // For implicit session requests, fork when main is busy so concurrent app calls stay parallel.
-                let forked = self.create_isolated_session(&user_id, &agent_id)?;
-                session_id = Some(forked);
-                request.session_id = session_id.clone();
-                set_as_main = false;
+            if let Some(current_session_id) = session_id.as_deref() {
+                if !self.is_session_idle(&user_id, current_session_id).await {
+                    // For implicit session requests, fork when main is busy so concurrent app calls stay parallel.
+                    let forked = self.create_isolated_session(&user_id, &agent_id)?;
+                    session_id = Some(forked);
+                    request.session_id = session_id.clone();
+                    set_as_main = false;
+                }
             }
         }
 

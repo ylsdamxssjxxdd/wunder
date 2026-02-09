@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-input">
     <el-input
       v-model="text"
@@ -15,7 +15,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue';
 import { useI18n } from '@/i18n';
 

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <el-scrollbar class="message-scroll">
     <div v-for="(message, index) in messages" :key="index" class="message-item">
       <div :class="['message-bubble', message.role === 'user' ? 'user' : 'assistant']">
@@ -11,7 +11,7 @@
   </el-scrollbar>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from '@/i18n';
 
 defineProps({

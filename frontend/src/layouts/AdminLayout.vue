@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="layout theme-light admin-shell">
     <el-container class="layout-container admin-container">
       <el-aside width="240px" class="layout-aside admin-aside">
@@ -47,7 +47,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 

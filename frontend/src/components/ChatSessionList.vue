@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="session-list">
     <div class="session-header">
       <span>{{ t('chat.sessions.title') }}</span>
@@ -20,7 +20,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from '@/i18n';
 
 defineProps({

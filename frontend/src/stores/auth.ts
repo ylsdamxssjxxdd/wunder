@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import { fetchMe, login, loginDemo, register } from '@/api/auth';
 import {

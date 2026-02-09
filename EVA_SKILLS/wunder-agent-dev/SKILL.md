@@ -164,3 +164,19 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - 生成后做嵌图验收：检查 docx 压缩包中 word/media 文件数量，并核对 word/document.xml 中 drawing 计数，确认图片没有丢失。
 - 若 mermaid-cli 提示缺少浏览器，使用 puppeteer 配置文件指定本机 chrome-headless-shell.exe 路径可稳定渲染。
 - 文档和图表改动完成后，按仓库规范及时写入 docs/功能迭代.md，避免经验沉没。
+
+
+## 近期补充经验（并发与会话）
+- 并发控制的最小粒度是 `session_id`，不是 `agent_id`：同一智能体只要请求落在不同 `session_id`，可以并行执行。
+- `/wunder` 未显式传 `session_id` 时会走“主会话”路径；若主会话正忙，必须自动分叉到隔离会话，否则会表现为串行或后续请求被中止。
+- `agent_queue.enabled=true` 不应改变并发语义，只应决定“忙时返回 USER_BUSY”还是“忙时入队等待”。
+- 排查并发回退建议固定四步：
+  1) 先确认入站请求是否显式携带 `session_id`；
+  2) 再看 `submit_user_request` 在主会话 busy 时是否执行分叉；
+  3) 最后核对 `session_locks` 与 monitor 状态，确认冲突的是同一会话还是不同会话；
+  4) 结合事件流判定是后端拒绝、排队等待，还是前端误触发中止。
+- 前端并发回归的高频诱因是会话切换时误取消流：`AbortController` 或发送态状态机如果按“全局单实例”管理，会错误中断其它会话。
+- 每次并发相关改动后至少做三组回归：
+  - 同一智能体 + 不同会话并行；
+  - 不同智能体并行；
+  - 运行中切换会话/新建会话时，旧会话流不被中止。

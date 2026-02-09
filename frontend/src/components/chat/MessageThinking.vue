@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <el-tooltip
     v-if="visible"
     :show-after="160"
@@ -22,7 +22,7 @@
   </el-tooltip>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';

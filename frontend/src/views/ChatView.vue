@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-shell">
     <div class="app-shell">
       <header class="topbar">
@@ -615,7 +615,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';

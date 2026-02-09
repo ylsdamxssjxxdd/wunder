@@ -53,7 +53,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="workspace-view">
       <div class="workspace-sidebar">
         <div class="workspace-actions">
@@ -23,7 +23,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';

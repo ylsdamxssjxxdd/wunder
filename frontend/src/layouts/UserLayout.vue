@@ -1,8 +1,8 @@
-﻿<template>
+<template>
   <router-view />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 

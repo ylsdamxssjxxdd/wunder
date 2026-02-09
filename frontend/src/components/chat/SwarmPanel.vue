@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="swarm-panel">
     <div class="swarm-panel-header">
       <div>
@@ -39,7 +39,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch } from 'vue';
 
 import { getTeamRun, listSessionTeamRuns } from '@/api/swarm';

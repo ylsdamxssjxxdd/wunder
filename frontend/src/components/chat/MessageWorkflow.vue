@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <details v-if="visible" class="message-workflow">
     <summary>
       <span class="workflow-title">{{ t('chat.workflow.title') }}</span>
@@ -37,7 +37,7 @@
   </el-dialog>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref } from 'vue';
 
 import { useI18n } from '@/i18n';

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="portal-shell">
     <UserTopbar :title="t('portal.title')" :subtitle="t('portal.subtitle')" :hide-chat="true" />
     <main class="portal-content">
@@ -518,7 +518,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';

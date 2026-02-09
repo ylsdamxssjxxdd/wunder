@@ -1,4 +1,4 @@
-﻿import api from './http';
+import api from './http';
 
 export const createTeamRun = (payload) => api.post('/chat/team_runs', payload);
 export const listTeamRuns = (params = {}) => api.get('/chat/team_runs', { params });

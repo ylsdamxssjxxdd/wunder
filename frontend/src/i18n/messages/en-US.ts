@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   'language.zh-CN': '简体中文',
   'language.en-US': 'English',
   'common.loading': 'Loading...',
