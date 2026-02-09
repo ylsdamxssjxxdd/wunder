@@ -1,9 +1,10 @@
 use crate::org_units;
 use crate::storage::{
-    normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord, ChatSessionRecord,
-    OrgUnitRecord, SessionLockRecord, SessionRunRecord, StorageBackend,
-    UpdateAgentTaskStatusParams, UserAccountRecord, UserAgentAccessRecord, UserAgentRecord,
-    UserTokenRecord, UserToolAccessRecord, DEFAULT_SANDBOX_CONTAINER_ID,
+    normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
+    ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord,
+    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
+    DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -590,8 +591,72 @@ impl UserStore {
         DEFAULT_SANDBOX_CONTAINER_ID
     }
 
+    pub fn default_hive_id(&self) -> String {
+        DEFAULT_HIVE_ID.to_string()
+    }
+
+    pub fn resolve_agent_hive_id(&self, agent_id: Option<&str>) -> Option<String> {
+        let cleaned = agent_id.map(str::trim).filter(|value| !value.is_empty())?;
+        let record = self.storage.get_user_agent_by_id(cleaned).ok().flatten()?;
+        Some(normalize_hive_id(&record.hive_id))
+    }
+
+    pub fn ensure_default_hive(&self, user_id: &str) -> Result<HiveRecord> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Err(anyhow!("user_id is empty"));
+        }
+        let hives = self.storage.list_hives(cleaned_user, false)?;
+        if let Some(existing) = hives.into_iter().next() {
+            return Ok(existing);
+        }
+        let now = now_ts();
+        let default = HiveRecord {
+            hive_id: DEFAULT_HIVE_ID.to_string(),
+            user_id: cleaned_user.to_string(),
+            name: "默认蜂巢".to_string(),
+            description: "系统默认蜂巢，用于承载初始智能体应用。".to_string(),
+            is_default: true,
+            status: "active".to_string(),
+            created_time: now,
+            updated_time: now,
+        };
+        self.storage.upsert_hive(&default)?;
+        Ok(default)
+    }
+
+    pub fn upsert_hive(&self, record: &HiveRecord) -> Result<()> {
+        self.storage.upsert_hive(record)
+    }
+
+    pub fn get_hive(&self, user_id: &str, hive_id: &str) -> Result<Option<HiveRecord>> {
+        self.storage.get_hive(user_id, hive_id)
+    }
+
+    pub fn list_hives(&self, user_id: &str, include_archived: bool) -> Result<Vec<HiveRecord>> {
+        self.storage.list_hives(user_id, include_archived)
+    }
+
+    pub fn move_agents_to_hive(
+        &self,
+        user_id: &str,
+        hive_id: &str,
+        agent_ids: &[String],
+    ) -> Result<i64> {
+        self.storage
+            .move_agents_to_hive(user_id, hive_id, agent_ids)
+    }
+
     pub fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
         self.storage.list_user_agents(user_id)
+    }
+
+    pub fn list_user_agents_by_hive(
+        &self,
+        user_id: &str,
+        hive_id: &str,
+    ) -> Result<Vec<UserAgentRecord>> {
+        self.storage.list_user_agents_by_hive(user_id, hive_id)
     }
 
     pub fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
@@ -600,6 +665,34 @@ impl UserStore {
 
     pub fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64> {
         self.storage.delete_user_agent(user_id, agent_id)
+    }
+
+    pub fn upsert_team_run(&self, record: &TeamRunRecord) -> Result<()> {
+        self.storage.upsert_team_run(record)
+    }
+
+    pub fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>> {
+        self.storage.get_team_run(team_run_id)
+    }
+
+    pub fn list_team_runs(
+        &self,
+        user_id: &str,
+        hive_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<TeamRunRecord>, i64)> {
+        self.storage
+            .list_team_runs(user_id, hive_id, parent_session_id, offset, limit)
+    }
+
+    pub fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()> {
+        self.storage.upsert_team_task(record)
+    }
+
+    pub fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>> {
+        self.storage.list_team_tasks(team_run_id)
     }
 
     pub fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {

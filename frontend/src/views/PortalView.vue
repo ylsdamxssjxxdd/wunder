@@ -10,6 +10,26 @@
                 <div class="portal-section-title-row">
                   <div class="portal-section-title">{{ t('portal.section.myAgents') }}</div>
                   <div class="portal-section-actions">
+                    <div class="portal-hive-switcher">
+                      <el-select
+                        v-model="activeHiveId"
+                        size="small"
+                        class="portal-hive-select"
+                        :placeholder="t('beehive.switcher.placeholder')"
+                        @change="handleHiveChange"
+                      >
+                        <el-option
+                          v-for="hive in hiveOptions"
+                          :key="hive.hive_id"
+                          :label="hive.name || hive.hive_id"
+                          :value="hive.hive_id"
+                        />
+                      </el-select>
+                      <button class="portal-hive-create-btn" type="button" @click="openHiveDialog">
+                        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+                        <span>{{ t('beehive.switcher.create') }}</span>
+                      </button>
+                    </div>
                     <div class="portal-search portal-section-search">
                       <i
                         class="fa-solid fa-magnifying-glass portal-search-icon"
@@ -311,6 +331,49 @@
     </main>
 
     <el-dialog
+      v-model="hiveDialogVisible"
+      width="520px"
+      :title="t('beehive.dialog.createTitle')"
+      append-to-body
+    >
+      <el-form label-position="top">
+        <el-form-item :label="t('beehive.dialog.name')" required>
+          <el-input v-model="hiveForm.name" :placeholder="t('beehive.dialog.namePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('beehive.dialog.description')">
+          <el-input
+            v-model="hiveForm.description"
+            type="textarea"
+            :rows="3"
+            :placeholder="t('beehive.dialog.descriptionPlaceholder')"
+          />
+        </el-form-item>
+        <el-form-item :label="t('beehive.dialog.copyFromHive')">
+          <el-select
+            v-model="hiveForm.copy_from_hive_id"
+            class="portal-hive-copy-select"
+            clearable
+            :placeholder="t('beehive.dialog.copyFromPlaceholder')"
+          >
+            <el-option :label="t('beehive.dialog.noCopy')" value="" />
+            <el-option
+              v-for="hive in hiveOptions"
+              :key="`copy-${hive.hive_id}`"
+              :label="hive.name || hive.hive_id"
+              :value="hive.hive_id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="hiveDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="savingHive" @click="saveHive">
+          {{ t('common.create') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="dialogVisible"
       class="user-tools-dialog agent-editor-dialog"
       width="820px"
@@ -329,6 +392,27 @@
         <el-form :model="form" label-position="top" class="agent-editor-form">
           <el-form-item class="agent-form-item agent-form-item--name" :label="t('portal.agent.form.name')">
             <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
+          </el-form-item>
+          <el-form-item
+            v-if="!editingId"
+            class="agent-form-item agent-form-item--copy"
+            :label="t('portal.agent.form.copyFrom')"
+          >
+            <el-select
+              v-model="form.copy_from_agent_id"
+              class="agent-copy-select"
+              clearable
+              filterable
+              :placeholder="t('portal.agent.form.copyFromPlaceholder')"
+            >
+              <el-option :label="t('portal.agent.form.copyFromNone')" value="" />
+              <el-option
+                v-for="agent in agentCopyOptions"
+                :key="`copy-agent-${agent.id}`"
+                :label="formatAgentCopyLabel(agent)"
+                :value="agent.id"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item
             class="agent-form-item agent-form-item--description"
@@ -502,7 +586,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { listRunningAgents } from '@/api/agents';
+import { listAgents as listAgentsApi, listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchCronJobs } from '@/api/cron';
 import { listChannelAccounts, listChannelBindings } from '@/api/channels';
@@ -511,12 +595,14 @@ import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
+import { useBeehiveStore } from '@/stores/beehive';
 import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
+const beehiveStore = useBeehiveStore();
 const { t } = useI18n();
 const searchQuery = ref('');
 const showSharedAgents = ref(false);
@@ -534,6 +620,14 @@ const cronAgentIds = ref(new Set());
 const avatarPanelVisible = ref(true);
 const customColor = ref('');
 const configuredChannelsByAgent = ref({});
+const hiveDialogVisible = ref(false);
+const savingHive = ref(false);
+const agentCopyOptions = ref([]);
+const hiveForm = reactive({
+  name: '',
+  description: '',
+  copy_from_hive_id: ''
+});
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
@@ -720,6 +814,7 @@ const form = reactive({
   name: '',
   description: '',
   is_shared: false,
+  copy_from_agent_id: '',
   tool_names: [],
   system_prompt: '',
   sandbox_container_id: 1,
@@ -728,6 +823,15 @@ const form = reactive({
 });
 
 const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
+const activeHiveId = computed({
+  get: () => String(beehiveStore.activeHiveId || 'default'),
+  set: (value) => {
+    beehiveStore.setActiveHive(value);
+  }
+});
+const hiveOptions = computed(() =>
+  Array.isArray(beehiveStore.hives) ? beehiveStore.hives : []
+);
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
 const matchesQuery = (agent, query) => {
@@ -741,6 +845,19 @@ const matchesQuery = (agent, query) => {
     .join(' ')
     .toLowerCase();
   return source.includes(query);
+};
+
+const resolveHiveLabel = (hiveId) => {
+  const cleanedHiveId = String(hiveId || '').trim();
+  if (!cleanedHiveId) return 'default';
+  const hive = beehiveStore.hiveMap?.[cleanedHiveId];
+  return String(hive?.name || cleanedHiveId);
+};
+
+const formatAgentCopyLabel = (agent) => {
+  const name = String(agent?.name || '').trim() || String(agent?.id || '').trim();
+  const hive = resolveHiveLabel(agent?.hive_id);
+  return `${name} ? ${hive}`;
 };
 
 const getAgentAvatarText = (name) => {
@@ -833,16 +950,48 @@ const getAvatarStyle = (config) => {
 
 const getAgentAvatarStyle = (agent) => getAvatarStyle(getIconConfig(agent?.icon));
 
-onMounted(() => {
-  if (!authStore.user) {
-    authStore.loadProfile();
+const loadAgentsByActiveHive = async () => {
+  await agentStore.loadAgents({ hiveId: activeHiveId.value });
+};
+
+const loadAgentCopyOptions = async () => {
+  try {
+    const { data } = await listAgentsApi();
+    const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+    agentCopyOptions.value = items
+      .map((item) => ({
+        id: String(item?.id || '').trim(),
+        name: String(item?.name || '').trim(),
+        hive_id: String(item?.hive_id || '').trim()
+      }))
+      .filter((item) => item.id && item.name);
+  } catch (error) {
+    agentCopyOptions.value = [];
   }
-  agentStore.loadAgents();
-  loadCatalog();
-  loadExternalApps();
-  loadCronAgentIds();
-  loadRunningAgents();
-  loadConfiguredChannels();
+};
+
+const initPortal = async () => {
+  try {
+    if (!authStore.user) {
+      await authStore.loadProfile();
+    }
+    await beehiveStore.loadHives({ keepActive: true });
+    await Promise.all([
+      loadAgentsByActiveHive(),
+      loadAgentCopyOptions(),
+      loadCatalog(),
+      loadExternalApps(),
+      loadCronAgentIds(),
+      loadRunningAgents(),
+      loadConfiguredChannels()
+    ]);
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+};
+
+onMounted(() => {
+  void initPortal();
   runningTimer = window.setInterval(loadRunningAgents, RUNNING_REFRESH_MS);
 });
 
@@ -1020,6 +1169,7 @@ const resetForm = () => {
   form.name = '';
   form.description = '';
   form.is_shared = false;
+  form.copy_from_agent_id = '';
   form.system_prompt = '';
   form.sandbox_container_id = 1;
   form.icon_name = DEFAULT_ICON_NAME;
@@ -1242,10 +1392,58 @@ const loadRunningAgents = async () => {
   }
 };
 
+const handleHiveChange = async () => {
+  await Promise.all([
+    loadAgentsByActiveHive(),
+    loadRunningAgents(),
+    loadConfiguredChannels()
+  ]);
+};
+
+const openHiveDialog = () => {
+  hiveForm.name = '';
+  hiveForm.description = '';
+  hiveForm.copy_from_hive_id = '';
+  hiveDialogVisible.value = true;
+};
+
+const saveHive = async () => {
+  const name = String(hiveForm.name || '').trim();
+  if (!name) {
+    ElMessage.warning(t('beehive.dialog.nameRequired'));
+    return;
+  }
+  savingHive.value = true;
+  try {
+    const payload = {
+      name,
+      description: String(hiveForm.description || '').trim()
+    };
+    const copyFromHiveId = String(hiveForm.copy_from_hive_id || '').trim();
+    if (copyFromHiveId) {
+      payload.copy_from_hive_id = copyFromHiveId;
+    }
+    await beehiveStore.createHive(payload);
+    hiveDialogVisible.value = false;
+    ElMessage.success(t('beehive.message.hiveCreated'));
+    await Promise.all([
+      loadAgentsByActiveHive(),
+      loadRunningAgents(),
+      loadConfiguredChannels(),
+      loadAgentCopyOptions()
+    ]);
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  } finally {
+    savingHive.value = false;
+  }
+};
+
 const openCreateDialog = async () => {
   if (!toolCatalog.value) {
     await loadCatalog();
   }
+  await loadAgentCopyOptions();
   resetForm();
   dialogVisible.value = true;
 };
@@ -1258,6 +1456,7 @@ const openEditDialog = async (agent) => {
   form.name = agent.name || '';
   form.description = agent.description || '';
   form.is_shared = Boolean(agent.is_shared);
+  form.copy_from_agent_id = '';
   form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
   form.system_prompt = agent.system_prompt || '';
   form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
@@ -1289,18 +1488,25 @@ const saveAgent = async () => {
       name,
       description: form.description || '',
       is_shared: Boolean(form.is_shared),
+      copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       icon: iconPayload
     };
+    if (!payload.copy_from_agent_id) {
+      delete payload.copy_from_agent_id;
+    }
     if (editingId.value) {
-      await agentStore.updateAgent(editingId.value, payload);
+      delete payload.copy_from_agent_id;
+      await agentStore.updateAgent(editingId.value, payload, { hiveId: activeHiveId.value });
       ElMessage.success(t('portal.agent.updateSuccess'));
     } else {
-      await agentStore.createAgent(payload);
+      payload.hive_id = activeHiveId.value;
+      await agentStore.createAgent(payload, { hiveId: activeHiveId.value });
       ElMessage.success(t('portal.agent.createSuccess'));
     }
+    await loadAgentCopyOptions();
     dialogVisible.value = false;
   } catch (error) {
     showApiError(error, t('portal.agent.saveFailed'));
@@ -1325,7 +1531,8 @@ const confirmDelete = async (agent) => {
     return;
   }
   try {
-    await agentStore.deleteAgent(agent.id);
+    await agentStore.deleteAgent(agent.id, { hiveId: activeHiveId.value });
+    await loadAgentCopyOptions();
     ElMessage.success(t('portal.agent.deleteSuccess'));
   } catch (error) {
     showApiError(error, t('portal.agent.deleteFailed'));

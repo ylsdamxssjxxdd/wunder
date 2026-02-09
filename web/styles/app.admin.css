@@ -1,3 +1,4 @@
+@import "./swarm.css";
 /* 管理面板布局 */
 .lsp-layout {
   flex: 1 1 0;
@@ -1598,6 +1599,11 @@
   background: #ffffff;
   padding: 14px 16px;
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+}
+
+.external-links-detail-pane .detail-actions {
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .external-link-list {

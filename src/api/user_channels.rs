@@ -473,6 +473,7 @@ async fn upsert_channel_account(
         } else {
             map.insert("agent_id".to_string(), Value::Null);
         }
+        map.insert("owner_user_id".to_string(), Value::String(user_id.clone()));
     }
 
     let agent_id_for_binding = requested_agent_id.clone().or(existing_agent_id);
@@ -1268,6 +1269,7 @@ fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>
     DEFAULT_GROUP_PEER_KIND.to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_user_default_binding(
     state: &Arc<AppState>,
     user_id: &str,

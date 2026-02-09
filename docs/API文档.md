@@ -2264,3 +2264,63 @@
 ## 5. 附录：辅助脚本
 
 - `scripts/update_feature_log.py`：按分类写入 `docs/功能迭代.md`（支持 `--type/--scope`），默认使用 UTF-8 BOM 避免乱码。
+
+### 4.8 蜂巢与蜂群接口（2026-02增补）
+
+#### 4.8.1 `/wunder/hives`
+- 方法：`GET/POST`
+- `GET`：查询当前用户蜂巢列表，支持 `include_archived` 参数。
+- `POST`：创建蜂巢，`name` 必填，`description` 可选；支持 `copy_from_hive_id` 从已有蜂巢复制应用。
+
+#### 4.8.2 `/wunder/hives/{hive_id}`
+- 方法：`PATCH`
+- 说明：更新蜂巢基础信息，支持 `name/description/status/is_default` 字段。
+
+#### 4.8.3 `/wunder/hives/{hive_id}/summary`
+- 方法：`GET`
+- 说明：返回蜂巢聚合指标（应用数、运行中会话、近期成功率、平均耗时等）。
+- 参数：`lookback_minutes`，默认 60 分钟。
+
+#### 4.8.4 `/wunder/hives/{hive_id}/agents`
+- 方法：`POST`
+- 说明：将一组智能体迁移到目标蜂巢。
+- 请求体：`agent_ids: string[]`。
+
+#### 4.8.5 `/wunder/chat/team_runs`
+- 方法：`GET/POST`
+- `GET`：按用户查询 TeamRun，支持 `hive_id/parent_session_id/offset/limit`。
+- `POST`：创建 TeamRun。
+  - `parent_session_id` 必填。
+  - `hive_id` 可选，不传时按父会话推导。
+  - `strategy/merge_policy/timeout_s` 可选。
+  - `tasks[]` 必填，元素包含 `agent_id` 与可选 `target_session_id/priority`。
+
+#### 4.8.6 `/wunder/chat/team_runs/{team_run_id}`
+- 方法：`GET`
+- 说明：查询单个 TeamRun 详情及其 TeamTask 列表。
+
+#### 4.8.7 `/wunder/chat/team_runs/{team_run_id}/cancel`
+- 方法：`POST`
+- 说明：取消进行中的 TeamRun，并将状态更新为 `cancelled`。
+
+#### 4.8.8 `/wunder/chat/sessions/{session_id}/team_runs`
+- 方法：`GET`
+- 说明：按会话查询 TeamRun，支持 `hive_id/offset/limit`。
+
+#### 4.8.9 `/wunder/admin/team_runs`
+- 方法：`GET`
+- 说明：管理端查询 TeamRun，支持按 `user_id/hive_id/parent_session_id` 过滤。
+
+#### 4.8.10 `/wunder/admin/team_runs/{team_run_id}`
+- 方法：`GET`
+- 说明：管理端查询单个 TeamRun + TeamTask 详情。
+
+#### 4.8.11 `/wunder/admin/hives/{hive_id}/team_runs`
+- 方法：`GET`
+- 说明：管理端按蜂巢查询 TeamRun，支持 `user_id` 过滤。
+
+#### 4.8.12 错误码
+- `SWARM_HIVE_UNRESOLVED`：蜂巢不存在或无法解析。
+- `SWARM_HIVE_DENIED`：目标智能体不在当前蜂巢作用域。
+- `SWARM_POLICY_BLOCKED`：触发策略限制（并发、任务数、参数校验）。
+- `SWARM_RUN_TIMEOUT`：蜂群运行超时。

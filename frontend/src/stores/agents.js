@@ -9,12 +9,15 @@ import {
   updateAgent as updateAgentApi
 } from '@/api/agents';
 
+const normalizeHiveId = (value) => String(value || '').trim();
+
 export const useAgentStore = defineStore('agents', {
   state: () => ({
     agents: [],
     sharedAgents: [],
     agentMap: {},
-    loading: false
+    loading: false,
+    activeHiveId: ''
   }),
   actions: {
     hydrateMap(agents, sharedAgents) {
@@ -26,10 +29,22 @@ export const useAgentStore = defineStore('agents', {
       });
       this.agentMap = map;
     },
-    async loadAgents() {
+
+    async loadAgents(options = {}) {
+      const all = options.all === true;
+      const hiveId = all
+        ? ''
+        : normalizeHiveId(options.hiveId !== undefined ? options.hiveId : this.activeHiveId);
+      if (!all) {
+        this.activeHiveId = hiveId;
+      }
+      const ownedParams = hiveId ? { hive_id: hiveId } : {};
       this.loading = true;
       try {
-        const [ownedRes, sharedRes] = await Promise.all([listAgents(), listSharedAgents()]);
+        const [ownedRes, sharedRes] = await Promise.all([
+          listAgents(ownedParams),
+          listSharedAgents()
+        ]);
         const ownedItems = ownedRes?.data?.data?.items || [];
         const sharedItems = sharedRes?.data?.data?.items || [];
         this.agents = ownedItems;
@@ -40,6 +55,7 @@ export const useAgentStore = defineStore('agents', {
         this.loading = false;
       }
     },
+
     async getAgent(id, options = {}) {
       const key = String(id || '').trim();
       if (!key) return null;
@@ -53,27 +69,26 @@ export const useAgentStore = defineStore('agents', {
       }
       return agent;
     },
-    async createAgent(payload) {
+
+    async createAgent(payload, options = {}) {
       const { data } = await createAgentApi(payload);
       const agent = data?.data;
-      await this.loadAgents();
+      await this.loadAgents({ hiveId: options.hiveId ?? payload?.hive_id ?? this.activeHiveId });
       return agent;
     },
-    async updateAgent(id, payload) {
+
+    async updateAgent(id, payload, options = {}) {
       const { data } = await updateAgentApi(id, payload);
       const agent = data?.data;
-      await this.loadAgents();
+      await this.loadAgents({ hiveId: options.hiveId ?? this.activeHiveId });
       return agent;
     },
-    async deleteAgent(id) {
+
+    async deleteAgent(id, options = {}) {
       const key = String(id || '').trim();
       if (!key) return null;
       const { data } = await deleteAgentApi(key);
-      this.agents = this.agents.filter((item) => item.id !== key);
-      this.sharedAgents = this.sharedAgents.filter((item) => item.id !== key);
-      const map = { ...this.agentMap };
-      delete map[key];
-      this.agentMap = map;
+      await this.loadAgents({ hiveId: options.hiveId ?? this.activeHiveId });
       return data?.data;
     }
   }

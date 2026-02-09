@@ -1599,6 +1599,10 @@
     "en-US": "Optional. Include the current agent in swarm management actions.",
     "zh-CN": "可选。是否允许在蜂群管理动作中包含当前智能体。"
   },
+  "tool.spec.agent_swarm.args.hive_id": {
+    "en-US": "Optional. Hive scope id used to limit visible agents and sessions.",
+    "zh-CN": "可选。指定蜂群可见范围的蜂巢 ID。"
+  },
   "tool.spec.node_invoke.description": {
     "en-US": "List connected gateway nodes or invoke a command on a node.",
     "zh-CN": "列出已接入的网关节点，或调用节点执行指令。"

@@ -55,6 +55,15 @@
           >
             <i class="fa-solid fa-earth-asia topbar-icon" aria-hidden="true"></i>
           </button>
+          <button
+            class="topbar-icon-btn"
+            type="button"
+            :title="t('beehive.swarm.title')"
+            :aria-label="t('beehive.swarm.title')"
+            @click="openSwarmDialog"
+          >
+            <i class="fa-solid fa-diagram-project topbar-icon" aria-hidden="true"></i>
+          </button>
           <div ref="featureMenuRef" class="topbar-feature-menu-wrap">
             <button
               class="topbar-panel-btn topbar-feature-btn"
@@ -200,6 +209,7 @@
               ></div>
             </div>
           </div>
+
         </aside>
 
         <section class="chat-panel">
@@ -492,6 +502,27 @@
     </el-dialog>
 
     <el-dialog
+      v-model="swarmDialogVisible"
+      class="workspace-dialog compact-panel-dialog"
+      width="90vw"
+      top="6vh"
+      :show-close="false"
+      :append-to-body="false"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="image-preview-header">
+          <div class="image-preview-title">{{ t('beehive.swarm.title') }}</div>
+          <button class="icon-btn" type="button" @click="swarmDialogVisible = false">&times;</button>
+        </div>
+      </template>
+      <div class="panel-dialog-body">
+        <SwarmPanel :session-id="chatStore.activeSessionId" :hive-id="activeHiveId" />
+      </div>
+    </el-dialog>
+
+    <el-dialog
       v-model="workspaceDialogVisible"
       class="workspace-dialog compact-panel-dialog"
       width="90vw"
@@ -632,9 +663,11 @@ import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import SwarmPanel from '@/components/chat/SwarmPanel.vue';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { useBeehiveStore } from '@/stores/beehive';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
 import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
@@ -650,6 +683,7 @@ const route = useRoute();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const agentStore = useAgentStore();
+const beehiveStore = useBeehiveStore();
 const { t } = useI18n();
 const currentUser = computed(() => authStore.user);
 const currentUserUnitLabel = computed(() => {
@@ -681,6 +715,7 @@ const promptPreviewContent = ref('');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
+const swarmDialogVisible = ref(false);
 const workspaceDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
 const featureMenuVisible = ref(false);
@@ -779,6 +814,11 @@ const activeAgentId = computed(
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
+const activeHiveId = computed(() => {
+  const hiveId = String(activeAgent.value?.hive_id || '').trim();
+  if (hiveId) return hiveId;
+  return String(beehiveStore.activeHiveId || 'default');
+});
 const normalizeSandboxContainerId = (value) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return 1;
@@ -895,6 +935,7 @@ const init = async () => {
   if (demoMode.value || !authStore.user) {
     await authStore.loadProfile();
   }
+  await beehiveStore.loadHives({ keepActive: true }).catch(() => null);
   const initialAgentId = routeEntry.value === 'default' ? '' : routeAgentId.value;
   await openAgentSession(initialAgentId);
   if (routeEntry.value === 'default') {
@@ -1699,6 +1740,10 @@ const updateCompactLayout = () => {
     return;
   }
   isCompactLayout.value = window.innerWidth <= 960;
+};
+
+const openSwarmDialog = () => {
+  swarmDialogVisible.value = true;
 };
 
 const openWorkspaceDialog = () => {

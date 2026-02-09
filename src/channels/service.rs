@@ -28,6 +28,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
+use tokio_stream::StreamExt;
 use tracing::{error, warn};
 use uuid::Uuid;
 
@@ -88,6 +89,12 @@ enum ChannelCommand {
     NewThread,
     Stop,
     Help,
+}
+
+#[derive(Debug, Clone)]
+enum ChannelModelResult {
+    Answer(String),
+    Busy,
 }
 
 impl ChannelCommand {
@@ -277,28 +284,29 @@ impl ChannelHub {
         } else {
             None
         };
-        let resolved_agent_id = resolved_binding
+        let account_agent_id = account_cfg
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut resolved_agent_id = resolved_binding
             .as_ref()
             .and_then(|binding| binding.agent_id.clone())
-            .or_else(|| account_cfg.agent_id.clone())
-            .or_else(|| fallback_agent_id)
+            .or_else(|| account_agent_id.clone())
+            .or(fallback_agent_id)
             .or_else(|| config.channels.default_agent_id.clone());
-        if resolved_agent_id.is_none() {
-            warn!(
-                "channel agent unresolved: channel={}, account_id={}, peer_kind={}, peer_id={}, sender_id={}",
-                message.channel,
-                message.account_id,
-                message.peer.kind,
-                message.peer.id,
-                message
-                    .sender
-                    .as_ref()
-                    .map(|sender| sender.id.as_str())
-                    .unwrap_or_default()
-            );
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            if let Some(account_agent) = account_agent_id {
+                resolved_agent_id = Some(account_agent);
+            }
         }
 
-        let agent_record = match resolved_agent_id.as_ref() {
+        let mut agent_record = match resolved_agent_id.as_ref() {
             Some(agent_id) => self.get_agent(agent_id).await,
             None => Ok(None),
         }?;
@@ -310,7 +318,14 @@ impl ChannelHub {
             &config,
         );
 
-        let session_strategy = ChannelSessionStrategy::from_config(&config);
+        let mut session_strategy = ChannelSessionStrategy::from_config(&config);
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            session_strategy = ChannelSessionStrategy::MainThread;
+        }
         let mut bound_user_id = self
             .get_channel_user_binding(
                 &message.channel,
@@ -334,6 +349,15 @@ impl ChannelHub {
             }
         }
         if bound_user_id.is_none() {
+            bound_user_id = account
+                .config
+                .get("owner_user_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+        if bound_user_id.is_none() {
             bound_user_id = self
                 .get_channel_account_owner(&message.channel, &message.account_id)
                 .await?;
@@ -349,6 +373,34 @@ impl ChannelHub {
                 bound_user_id,
             )
             .await?;
+        self.touch_chat_session_activity(&session_info.user_id, &session_info.session_id)
+            .await;
+
+        if resolved_agent_id.is_none() {
+            if let Some(session_agent_id) = self
+                .resolve_session_agent_id(&session_info.user_id, &session_info.session_id)
+                .await?
+            {
+                resolved_agent_id = Some(session_agent_id.clone());
+                if agent_record.is_none() {
+                    agent_record = self.get_agent(&session_agent_id).await?;
+                }
+            }
+        }
+        if resolved_agent_id.is_none() {
+            warn!(
+                "channel agent unresolved: channel={}, account_id={}, peer_kind={}, peer_id={}, sender_id={}",
+                message.channel,
+                message.account_id,
+                message.peer.kind,
+                message.peer.id,
+                message
+                    .sender
+                    .as_ref()
+                    .map(|sender| sender.id.as_str())
+                    .unwrap_or_default()
+            );
+        }
 
         if let Err(err) = self
             .insert_channel_message(&message, &session_info.session_id, raw_payload.clone())
@@ -396,6 +448,24 @@ impl ChannelHub {
                     .await;
             }
         };
+
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            if let Err(err) = self
+                .send_processing_ack(&config, &message, &session_info, resolved_binding.as_ref())
+                .await
+            {
+                warn!(
+                    "send channel processing ack failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel,
+                    message.account_id,
+                    session_info.session_id
+                );
+            }
+        }
 
         for attachment in &message.attachments {
             if let Err(err) = self
@@ -454,7 +524,7 @@ impl ChannelHub {
             question,
             tool_names: tool_names.clone(),
             skip_tool_calls: false,
-            stream: false,
+            stream: true,
             debug_payload: false,
             session_id: Some(session_info.session_id.clone()),
             agent_id: resolved_agent_id.clone(),
@@ -470,18 +540,18 @@ impl ChannelHub {
             allow_queue: false,
             is_admin: false,
         };
-        let response = match self.orchestrator.run(request).await {
-            Ok(response) => response,
-            Err(err) => {
-                if is_user_busy(&err) {
-                    return self
-                        .respond_busy(&message, &session_info, resolved_binding.as_ref())
-                        .await;
-                }
-                return Err(err);
+        let response = match self
+            .run_channel_request(request, &session_info.user_id, &session_info.session_id)
+            .await?
+        {
+            ChannelModelResult::Answer(answer) => answer,
+            ChannelModelResult::Busy => {
+                return self
+                    .respond_busy(&message, &session_info, resolved_binding.as_ref())
+                    .await;
             }
         };
-        if response.answer.trim().is_empty() {
+        if response.trim().is_empty() {
             warn!(
                 "channel response empty: channel={}, account_id={}, peer_id={}",
                 message.channel, message.account_id, message.peer.id
@@ -492,7 +562,7 @@ impl ChannelHub {
             account_id: message.account_id.clone(),
             peer: message.peer.clone(),
             thread: message.thread.clone(),
-            text: Some(response.answer.clone()),
+            text: Some(response.clone()),
             attachments: Vec::new(),
             meta: Some(json!({
                 "session_id": session_info.session_id,
@@ -505,7 +575,7 @@ impl ChannelHub {
         let tts_enabled = session_info.tts_enabled.unwrap_or(false);
         if tts_enabled {
             if let Ok(Some(attachment)) = media_processor
-                .synthesize_tts(&response.answer, session_info.tts_voice.as_deref())
+                .synthesize_tts(&response, session_info.tts_voice.as_deref())
                 .await
             {
                 if let Err(err) = self
@@ -620,15 +690,27 @@ impl ChannelHub {
             .or_else(|| existing.as_ref().map(|record| record.user_id.clone()))
             .unwrap_or_else(|| {
                 format!(
-                    "chan:{}:{}:{}:{}",
+                    "chan:{}:{}",
                     channel.to_lowercase(),
                     account_id.to_lowercase(),
-                    peer_kind.to_lowercase(),
-                    peer_id
                 )
             });
-        let cleaned_agent = agent_id.map(|value| value.trim()).unwrap_or("");
-        let agent_value = if cleaned_agent.is_empty() {
+        let resolved_agent = agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|record| record.agent_id.as_ref())
+                    .map(String::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let cleaned_agent = resolved_agent.trim();
+        let mut agent_value = if cleaned_agent.is_empty() {
             None
         } else {
             Some(cleaned_agent.to_string())
@@ -673,6 +755,14 @@ impl ChannelHub {
                     resolved_tool_overrides = chat_record.tool_overrides.clone();
                 }
             }
+            if agent_value.is_none() {
+                agent_value = chat_record
+                    .agent_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+            }
             created_at = chat_record.created_at;
         }
         let chat_record = ChatSessionRecord {
@@ -698,7 +788,7 @@ impl ChannelHub {
             peer_id,
             thread_id,
             session_id: session_id.clone(),
-            agent_id: agent_value,
+            agent_id: agent_value.clone(),
             user_id: user_id.clone(),
             tts_enabled,
             tts_voice: tts_voice.clone(),
@@ -714,6 +804,118 @@ impl ChannelHub {
             tts_enabled,
             tts_voice,
         })
+    }
+
+    async fn resolve_session_agent_id(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        let session = self.get_chat_session(user_id, session_id).await?;
+        Ok(session
+            .and_then(|record| record.agent_id)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    }
+
+    async fn run_channel_request(
+        &self,
+        request: WunderRequest,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<ChannelModelResult> {
+        let session_id_owned = session_id.to_string();
+        let mut stream = self.orchestrator.stream(request).await?;
+        let mut final_answer: Option<String> = None;
+        while let Some(event) = stream.next().await {
+            let event = match event {
+                Ok(item) => item,
+                Err(_) => continue,
+            };
+            let event_payload = event
+                .data
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| event.data.clone());
+            if event.event == "error" {
+                let code = event_payload
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .or_else(|| event.data.get("code").and_then(Value::as_str))
+                    .unwrap_or_default();
+                if code == "USER_BUSY" {
+                    return Ok(ChannelModelResult::Busy);
+                }
+                let message = event_payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| event.data.get("message").and_then(Value::as_str))
+                    .unwrap_or_default();
+                let detail = if message.trim().is_empty() {
+                    serde_json::to_string(&event_payload).unwrap_or_default()
+                } else {
+                    message.to_string()
+                };
+                return Err(anyhow!("channel stream run failed: {detail}"));
+            }
+            if event.event == "final" {
+                let answer = event_payload
+                    .get("answer")
+                    .or_else(|| event_payload.get("content"))
+                    .or_else(|| event_payload.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_string();
+                final_answer = Some(answer);
+                break;
+            }
+        }
+        let mut answer = match final_answer {
+            Some(answer) if !answer.trim().is_empty() => answer,
+            _ => self
+                .load_latest_assistant_message(user_id, &session_id_owned)
+                .await
+                .unwrap_or_default(),
+        };
+        if answer.trim().is_empty() {
+            answer = "Model returned an empty response. Please try again shortly.".to_string();
+        }
+        Ok(ChannelModelResult::Answer(answer))
+    }
+
+    async fn load_latest_assistant_message(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return None;
+        }
+        let storage = self.storage.clone();
+        let user_id = cleaned_user.to_string();
+        let session_id = cleaned_session.to_string();
+        let history = tokio::task::spawn_blocking(move || {
+            storage.load_chat_history(&user_id, &session_id, Some(20))
+        })
+        .await
+        .ok()?
+        .ok()?;
+        for item in history.iter().rev() {
+            let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+            if !role.eq_ignore_ascii_case("assistant") {
+                continue;
+            }
+            if let Some(text) = extract_chat_content(item) {
+                let cleaned = text.trim();
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
+            }
+        }
+        None
     }
 
     async fn enqueue_outbox(&self, outbound: &ChannelOutboundMessage) -> Result<String> {
@@ -1276,6 +1478,29 @@ impl ChannelHub {
         }
     }
 
+    async fn touch_chat_session_activity(&self, user_id: &str, session_id: &str) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return;
+        }
+        let user_store = self.user_store.clone();
+        let user_id = cleaned_user.to_string();
+        let session_id = cleaned_session.to_string();
+        let now = now_ts();
+        let outcome = tokio::task::spawn_blocking(move || {
+            user_store.touch_chat_session(&user_id, &session_id, now, now)
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)));
+        if let Err(err) = outcome {
+            warn!(
+                "touch channel chat session failed: user_id={}, session_id={}, error={err}",
+                cleaned_user, cleaned_session
+            );
+        }
+    }
+
     async fn load_latest_user_message(&self, user_id: &str, session_id: &str) -> Option<String> {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
@@ -1355,6 +1580,39 @@ impl ChannelHub {
         })
     }
 
+    async fn send_processing_ack(
+        &self,
+        config: &Config,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+    ) -> Result<()> {
+        let ack_text = "已收到消息，正在处理中，请稍后。".to_string();
+        let outbound = ChannelOutboundMessage {
+            channel: message.channel.clone(),
+            account_id: message.account_id.clone(),
+            peer: message.peer.clone(),
+            thread: message.thread.clone(),
+            text: Some(ack_text),
+            attachments: Vec::new(),
+            meta: Some(json!({
+                "session_id": session_info.session_id,
+                "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+                "message_id": message.message_id,
+                "processing_ack": true,
+            })),
+        };
+        let outbox_id = self.enqueue_outbox(&outbound).await?;
+        if !resolve_outbox_config(config.channels.outbox.clone()).worker_enabled {
+            let record = self.get_outbox(&outbox_id).await?;
+            if let Some(record) = record {
+                self.deliver_outbox_record(&record).await?;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn handle_channel_command(
         &self,
         command: ChannelCommand,
@@ -1755,12 +2013,6 @@ fn message_preview_text(message: &ChannelMessage) -> String {
         return format!("[{message_type}]");
     }
     "[empty message]".to_string()
-}
-
-fn is_user_busy(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<crate::orchestrator::OrchestratorError>()
-        .map(|err| err.code() == "USER_BUSY")
-        .unwrap_or(false)
 }
 
 fn resolve_agent_id_by_account(

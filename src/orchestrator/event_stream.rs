@@ -143,6 +143,13 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "context_usage"
             | "quota_usage"
             | "round_usage"
+            | "team_start"
+            | "team_task_dispatch"
+            | "team_task_update"
+            | "team_task_result"
+            | "team_merge"
+            | "team_finish"
+            | "team_error"
             | "final"
             | "error"
     )

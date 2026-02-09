@@ -377,10 +377,27 @@ const renderExternalLinkDetail = () => {
   fillForm(selected);
 };
 
+const normalizeExternalUrl = (value) => {
+  const cleaned = String(value || "").trim();
+  if (!cleaned) {
+    return "";
+  }
+  let parsed;
+  try {
+    parsed = new URL(cleaned);
+  } catch (error) {
+    throw new Error(t("externalLinks.error.invalidUrl"));
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(t("externalLinks.error.invalidUrl"));
+  }
+  return cleaned;
+};
+
 const collectFormPayload = () => {
   const title = elements.externalLinkFormTitle.value.trim();
-  const url = elements.externalLinkFormUrl.value.trim();
-  if (!title || !url) {
+  const rawUrl = elements.externalLinkFormUrl.value.trim();
+  if (!title || !rawUrl) {
     throw new Error(t("externalLinks.error.required"));
   }
   const sortOrder = Number.parseInt(elements.externalLinkFormSortOrder.value, 10);
@@ -388,7 +405,7 @@ const collectFormPayload = () => {
     link_id: state.externalLinks.selectedId || undefined,
     title,
     description: elements.externalLinkFormDescription.value.trim(),
-    url,
+    url: normalizeExternalUrl(rawUrl),
     icon: serializeIconConfig(getFormIconConfig()),
     allowed_levels: readLevelChecks(),
     sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
@@ -442,11 +459,11 @@ export const loadExternalLinks = async (options = {}) => {
     renderExternalLinkList();
     renderExternalLinkDetail();
     if (!options.silent) {
-      notify.success(t("externalLinks.toast.refreshSuccess"));
+      notify(t("externalLinks.toast.refreshSuccess"), "success");
     }
   } catch (error) {
     if (!options.silent) {
-      notify.error(t("externalLinks.toast.loadFailed", { message: error.message }));
+      notify(t("externalLinks.toast.loadFailed", { message: error.message }), "error");
     }
   } finally {
     state.externalLinks.loading = false;
@@ -462,9 +479,9 @@ const saveExternalLink = async () => {
     });
     const saved = normalizeExternalLink(response?.data || {});
     await loadExternalLinks({ silent: true, selectedId: saved.link_id });
-    notify.success(t("externalLinks.toast.saveSuccess"));
+    notify(t("externalLinks.toast.saveSuccess"), "success");
   } catch (error) {
-    notify.error(t("externalLinks.toast.saveFailed", { message: error.message }));
+    notify(t("externalLinks.toast.saveFailed", { message: error.message }), "error");
   }
 };
 
@@ -484,9 +501,9 @@ const deleteExternalLink = async () => {
       method: "DELETE",
     });
     await loadExternalLinks({ silent: true });
-    notify.success(t("externalLinks.toast.deleteSuccess"));
+    notify(t("externalLinks.toast.deleteSuccess"), "success");
   } catch (error) {
-    notify.error(t("externalLinks.toast.deleteFailed", { message: error.message }));
+    notify(t("externalLinks.toast.deleteFailed", { message: error.message }), "error");
   }
 };
 

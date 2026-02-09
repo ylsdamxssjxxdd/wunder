@@ -33,9 +33,28 @@ pub(crate) const TOOL_LOG_EXCLUDED_NAMES: &[&str] = &[
 pub const DEFAULT_SANDBOX_CONTAINER_ID: i32 = 1;
 pub const MIN_SANDBOX_CONTAINER_ID: i32 = 1;
 pub const MAX_SANDBOX_CONTAINER_ID: i32 = 10;
+pub const DEFAULT_HIVE_ID: &str = "default";
 
 pub fn normalize_sandbox_container_id(value: i32) -> i32 {
     value.clamp(MIN_SANDBOX_CONTAINER_ID, MAX_SANDBOX_CONTAINER_ID)
+}
+
+pub fn normalize_hive_id(value: &str) -> String {
+    let cleaned = value.trim();
+    if cleaned.is_empty() {
+        return DEFAULT_HIVE_ID.to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            output.push(ch.to_ascii_lowercase());
+        }
+    }
+    if output.is_empty() {
+        DEFAULT_HIVE_ID.to_string()
+    } else {
+        output
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +119,7 @@ pub struct UserToolAccessRecord {
 pub struct UserAgentRecord {
     pub agent_id: String,
     pub user_id: String,
+    pub hive_id: String,
     pub name: String,
     pub description: String,
     pub system_prompt: String,
@@ -111,6 +131,61 @@ pub struct UserAgentRecord {
     pub sandbox_container_id: i32,
     pub created_at: f64,
     pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct HiveRecord {
+    pub hive_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub is_default: bool,
+    pub status: String,
+    pub created_time: f64,
+    pub updated_time: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamRunRecord {
+    pub team_run_id: String,
+    pub user_id: String,
+    pub hive_id: String,
+    pub parent_session_id: String,
+    pub parent_agent_id: Option<String>,
+    pub strategy: String,
+    pub status: String,
+    pub task_total: i64,
+    pub task_success: i64,
+    pub task_failed: i64,
+    pub context_tokens_total: i64,
+    pub context_tokens_peak: i64,
+    pub model_round_total: i64,
+    pub started_time: Option<f64>,
+    pub finished_time: Option<f64>,
+    pub elapsed_s: Option<f64>,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub updated_time: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamTaskRecord {
+    pub task_id: String,
+    pub team_run_id: String,
+    pub user_id: String,
+    pub hive_id: String,
+    pub agent_id: String,
+    pub target_session_id: Option<String>,
+    pub spawned_session_id: Option<String>,
+    pub status: String,
+    pub retry_count: i64,
+    pub priority: i64,
+    pub started_time: Option<f64>,
+    pub finished_time: Option<f64>,
+    pub elapsed_s: Option<f64>,
+    pub result_summary: Option<String>,
+    pub error: Option<String>,
+    pub updated_time: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -864,8 +939,36 @@ pub trait StorageBackend: Send + Sync {
     fn get_user_agent(&self, user_id: &str, agent_id: &str) -> Result<Option<UserAgentRecord>>;
     fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>>;
     fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
+    fn list_user_agents_by_hive(
+        &self,
+        user_id: &str,
+        hive_id: &str,
+    ) -> Result<Vec<UserAgentRecord>>;
     fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
     fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64>;
+
+    fn upsert_hive(&self, record: &HiveRecord) -> Result<()>;
+    fn get_hive(&self, user_id: &str, hive_id: &str) -> Result<Option<HiveRecord>>;
+    fn list_hives(&self, user_id: &str, include_archived: bool) -> Result<Vec<HiveRecord>>;
+    fn move_agents_to_hive(
+        &self,
+        user_id: &str,
+        hive_id: &str,
+        agent_ids: &[String],
+    ) -> Result<i64>;
+
+    fn upsert_team_run(&self, record: &TeamRunRecord) -> Result<()>;
+    fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>>;
+    fn list_team_runs(
+        &self,
+        user_id: &str,
+        hive_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<TeamRunRecord>, i64)>;
+    fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()>;
+    fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
 }
@@ -903,8 +1006,8 @@ pub fn build_storage(config: &StorageConfig) -> Result<Arc<dyn StorageBackend>> 
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_sandbox_container_id, DEFAULT_SANDBOX_CONTAINER_ID, MAX_SANDBOX_CONTAINER_ID,
-        MIN_SANDBOX_CONTAINER_ID,
+        normalize_hive_id, normalize_sandbox_container_id, DEFAULT_HIVE_ID,
+        DEFAULT_SANDBOX_CONTAINER_ID, MAX_SANDBOX_CONTAINER_ID, MIN_SANDBOX_CONTAINER_ID,
     };
 
     #[test]
@@ -925,5 +1028,18 @@ mod tests {
             normalize_sandbox_container_id(DEFAULT_SANDBOX_CONTAINER_ID),
             DEFAULT_SANDBOX_CONTAINER_ID
         );
+    }
+
+    #[test]
+    fn normalize_hive_id_falls_back_to_default_when_empty_or_invalid() {
+        assert_eq!(normalize_hive_id(""), DEFAULT_HIVE_ID);
+        assert_eq!(normalize_hive_id("   "), DEFAULT_HIVE_ID);
+        assert_eq!(normalize_hive_id("@@@"), DEFAULT_HIVE_ID);
+    }
+
+    #[test]
+    fn normalize_hive_id_keeps_safe_characters_and_lowercases() {
+        assert_eq!(normalize_hive_id("Hive_A-01"), "hive_a-01");
+        assert_eq!(normalize_hive_id(" hive-Main "), "hive-main");
     }
 }

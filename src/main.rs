@@ -21,7 +21,8 @@ pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
     a2a_store, attachment, cron, doc2md, history, knowledge, llm, mcp, memory, org_units,
-    prompting, skills, tools, user_access, user_store, user_tools, vector_knowledge, workspace,
+    prompting, skills, swarm, tools, user_access, user_store, user_tools, vector_knowledge,
+    workspace,
 };
 
 use axum::body::Body;

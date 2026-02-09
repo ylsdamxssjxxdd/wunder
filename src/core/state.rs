@@ -13,6 +13,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
 use crate::services::agent_runtime::AgentRuntime;
+use crate::services::swarm::SwarmService;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
 use crate::throughput::ThroughputManager;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub monitor: Arc<MonitorState>,
     pub orchestrator: Arc<Orchestrator>,
     pub agent_runtime: Arc<AgentRuntime>,
+    pub swarm_service: Arc<SwarmService>,
     pub lsp_manager: Arc<LspManager>,
     pub memory: Arc<MemoryStore>,
     pub skills: Arc<RwLock<SkillRegistry>>,
@@ -88,6 +90,7 @@ impl AppState {
             storage.clone(),
             gateway.clone(),
         ));
+        let swarm_service = Arc::new(SwarmService::new(storage.clone()));
         let agent_runtime = AgentRuntime::new(
             config_store.clone(),
             user_store.clone(),
@@ -129,6 +132,7 @@ impl AppState {
             monitor,
             orchestrator,
             agent_runtime,
+            swarm_service,
             lsp_manager,
             memory,
             skills,

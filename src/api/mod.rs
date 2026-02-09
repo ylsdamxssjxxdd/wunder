@@ -1,6 +1,7 @@
-// API 路由汇总入口，按领域拆分以保持结构清晰。
+﻿// API 路由汇总入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
+pub mod admin_swarm;
 pub(crate) mod attachment_convert;
 pub mod auth;
 pub mod channel;
@@ -14,6 +15,8 @@ pub(crate) mod errors;
 pub mod evaluation;
 pub mod external_links;
 pub mod gateway_ws;
+pub mod hives;
+pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;
 pub mod user_channels;
@@ -41,10 +44,13 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(temp_dir::router())
         .merge(workspace::router())
         .merge(admin::router())
+        .merge(admin_swarm::router())
         .merge(evaluation::router())
         .merge(external_links::router())
         .merge(user_tools::router())
         .merge(user_agents::router())
+        .merge(hives::router())
+        .merge(team_runs::router())
         .merge(user_channels::router())
         .merge(a2a::router())
         .merge(crate::mcp::router(state.clone()))

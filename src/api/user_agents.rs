@@ -4,13 +4,16 @@ use crate::config::UserAgentPresetConfig;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::state::AppState;
-use crate::storage::{normalize_sandbox_container_id, DEFAULT_SANDBOX_CONTAINER_ID};
+use crate::storage::{
+    normalize_hive_id, normalize_sandbox_container_id, DEFAULT_HIVE_ID,
+    DEFAULT_SANDBOX_CONTAINER_ID,
+};
 use crate::user_access::{
     build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
     is_agent_allowed,
 };
 use anyhow::Result;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::{routing::get, Json, Router};
@@ -40,14 +43,27 @@ pub fn router() -> Router<Arc<AppState>> {
 async fn list_agents(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<ListAgentsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    ensure_preset_agents(&state, &resolved.user).await?;
-    let agents = state
+    state
         .user_store
-        .list_user_agents(&user_id)
+        .ensure_default_hive(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    ensure_preset_agents(&state, &resolved.user).await?;
+    let hive_filter = query.hive_id.as_deref().map(normalize_hive_id);
+    let agents = if let Some(hive_id) = hive_filter.as_deref() {
+        state
+            .user_store
+            .list_user_agents_by_hive(&user_id, hive_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    } else {
+        state
+            .user_store
+            .list_user_agents(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    };
     let access = state
         .user_store
         .get_user_agent_access(&user_id)
@@ -208,12 +224,54 @@ async fn create_agent(
             i18n::t("error.content_required"),
         ));
     }
-    let mut tool_names = normalize_tool_list(payload.tool_names);
+
+    let default_hive = state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let target_hive_id = payload
+        .hive_id
+        .as_deref()
+        .map(normalize_hive_id)
+        .unwrap_or_else(|| normalize_hive_id(&default_hive.hive_id));
+    let target_hive = state
+        .user_store
+        .get_hive(&user_id, &target_hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if target_hive.is_none() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("hive {target_hive_id} not found"),
+        ));
+    }
+
+    let copy_from_agent_id = payload
+        .copy_from_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let copy_source = if let Some(copy_id) = copy_from_agent_id {
+        let source = state
+            .user_store
+            .get_user_agent(&user_id, copy_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
+        Some(source)
+    } else {
+        None
+    };
+
+    let mut tool_names = if let Some(source) = copy_source.as_ref() {
+        source.tool_names.clone()
+    } else {
+        normalize_tool_list(payload.tool_names.clone())
+    };
     if !tool_names.is_empty() {
         let context = build_user_tool_context(&state, &user_id).await;
         let allowed = compute_allowed_tool_names(&resolved.user, &context);
         tool_names = filter_allowed_tools(&tool_names, &allowed);
     }
+
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     let status = normalize_agent_status(payload.status.as_deref());
     let is_shared = payload.is_shared.unwrap_or(false);
@@ -221,19 +279,40 @@ async fn create_agent(
     let sandbox_container_id = normalize_sandbox_container_id(
         payload
             .sandbox_container_id
-            .unwrap_or(DEFAULT_SANDBOX_CONTAINER_ID),
+            .unwrap_or_else(|| {
+                copy_source
+                    .as_ref()
+                    .map(|item| item.sandbox_container_id)
+                    .unwrap_or(DEFAULT_SANDBOX_CONTAINER_ID)
+            }),
     );
+
+    let (description, system_prompt, icon) = if let Some(source) = copy_source.as_ref() {
+        (
+            source.description.clone(),
+            source.system_prompt.clone(),
+            source.icon.clone(),
+        )
+    } else {
+        (
+            payload.description.unwrap_or_default(),
+            payload.system_prompt.unwrap_or_default(),
+            payload.icon,
+        )
+    };
+
     let record = crate::storage::UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
         user_id: user_id.clone(),
+        hive_id: target_hive_id,
         name,
-        description: payload.description.unwrap_or_default(),
-        system_prompt: payload.system_prompt.unwrap_or_default(),
+        description,
+        system_prompt,
         tool_names,
         access_level,
         is_shared,
         status,
-        icon: payload.icon,
+        icon,
         sandbox_container_id,
         created_at: now,
         updated_at: now,
@@ -297,6 +376,20 @@ async fn update_agent(
     }
     if let Some(sandbox_container_id) = payload.sandbox_container_id {
         record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
+    }
+    if let Some(hive_id) = payload.hive_id {
+        let normalized_hive_id = normalize_hive_id(&hive_id);
+        let target_hive = state
+            .user_store
+            .get_hive(&user_id, &normalized_hive_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if target_hive.is_none() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("hive {} not found", normalized_hive_id),
+            ));
+        }
+        record.hive_id = normalized_hive_id;
     }
     record.updated_at = now_ts();
     state
@@ -459,6 +552,7 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
+        "hive_id": normalize_hive_id(&record.hive_id),
         "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
@@ -654,6 +748,7 @@ async fn ensure_preset_agents(
         let record = crate::storage::UserAgentRecord {
             agent_id: format!("agent_{}", Uuid::new_v4().simple()),
             user_id: user.user_id.clone(),
+            hive_id: DEFAULT_HIVE_ID.to_string(),
             name: preset.name.clone(),
             description: preset.description.clone(),
             system_prompt: preset.system_prompt.clone(),
@@ -751,6 +846,12 @@ fn error_response(status: StatusCode, message: String) -> Response {
 }
 
 #[derive(Debug, Deserialize)]
+struct ListAgentsQuery {
+    #[serde(default)]
+    hive_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AgentCreateRequest {
     name: String,
     #[serde(default)]
@@ -767,6 +868,10 @@ struct AgentCreateRequest {
     icon: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+    #[serde(default)]
+    hive_id: Option<String>,
+    #[serde(default, alias = "copyFromAgentId", alias = "copy_from_agent_id")]
+    copy_from_agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -792,4 +897,6 @@ struct AgentUpdateRequest {
     icon: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+    #[serde(default)]
+    hive_id: Option<String>,
 }

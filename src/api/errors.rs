@@ -71,6 +71,10 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "PAYLOAD_TOO_LARGE" => StatusCode::PAYLOAD_TOO_LARGE,
         "RATE_LIMITED" | "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
         "PUSH_NOT_SUPPORTED" => StatusCode::NOT_IMPLEMENTED,
+        "SWARM_HIVE_UNRESOLVED" => StatusCode::BAD_REQUEST,
+        "SWARM_HIVE_DENIED" => StatusCode::FORBIDDEN,
+        "SWARM_POLICY_BLOCKED" => StatusCode::TOO_MANY_REQUESTS,
+        "SWARM_RUN_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
         "SERVICE_UNAVAILABLE" | "CONNECTION_CLOSED" => StatusCode::SERVICE_UNAVAILABLE,
         "UPSTREAM_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
         "INTERNAL_ERROR" => StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,6 +112,16 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
             Some("Verify task id and current task state before retrying.")
         }
         "CONNECTION_CLOSED" => Some("Reconnect websocket and retry the request."),
+        "SWARM_HIVE_UNRESOLVED" => {
+            Some("Select or create a valid hive before launching the swarm.")
+        }
+        "SWARM_HIVE_DENIED" => {
+            Some("Use agents that belong to the same hive as the current scope.")
+        }
+        "SWARM_POLICY_BLOCKED" => {
+            Some("Reduce parallel tasks/depth or wait for active swarm runs to finish.")
+        }
+        "SWARM_RUN_TIMEOUT" => Some("Increase timeout or simplify task payload before retrying."),
         _ => None,
     }
 }

@@ -316,6 +316,8 @@ pub struct LlmModelConfig {
 pub struct ToolsConfig {
     #[serde(default)]
     pub builtin: BuiltinToolsConfig,
+    #[serde(default)]
+    pub swarm: AgentSwarmConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -345,6 +347,58 @@ impl Default for CronConfig {
 pub struct BuiltinToolsConfig {
     #[serde(default)]
     pub enabled: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSwarmConfig {
+    #[serde(default = "default_agent_swarm_runner")]
+    pub runner: String,
+    #[serde(default = "default_agent_swarm_max_active_team_runs")]
+    pub max_active_team_runs: usize,
+    #[serde(default = "default_agent_swarm_max_parallel_tasks_per_team")]
+    pub max_parallel_tasks_per_team: usize,
+    #[serde(default = "default_agent_swarm_default_timeout_s")]
+    pub default_timeout_s: u64,
+    #[serde(default = "default_agent_swarm_max_retry")]
+    pub max_retry: u32,
+    #[serde(default = "default_agent_swarm_max_depth")]
+    pub max_depth: u32,
+}
+
+impl Default for AgentSwarmConfig {
+    fn default() -> Self {
+        Self {
+            runner: default_agent_swarm_runner(),
+            max_active_team_runs: default_agent_swarm_max_active_team_runs(),
+            max_parallel_tasks_per_team: default_agent_swarm_max_parallel_tasks_per_team(),
+            default_timeout_s: default_agent_swarm_default_timeout_s(),
+            max_retry: default_agent_swarm_max_retry(),
+            max_depth: default_agent_swarm_max_depth(),
+        }
+    }
+}
+
+fn default_agent_swarm_runner() -> String {
+    "legacy".to_string()
+}
+
+fn default_agent_swarm_max_active_team_runs() -> usize {
+    32
+}
+
+fn default_agent_swarm_max_parallel_tasks_per_team() -> usize {
+    16
+}
+
+fn default_agent_swarm_default_timeout_s() -> u64 {
+    180
+}
+
+fn default_agent_swarm_max_retry() -> u32 {
+    2
+}
+
+fn default_agent_swarm_max_depth() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

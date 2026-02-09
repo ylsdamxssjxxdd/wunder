@@ -108,9 +108,9 @@ impl Orchestrator {
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);
-        let start_event_id = if prepared.is_admin {
-            let session_id = prepared.session_id.clone();
-            let storage = self.storage.clone();
+        let session_id = prepared.session_id.clone();
+        let storage = self.storage.clone();
+        let start_event_id =
             match tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
                 .await
             {
@@ -129,10 +129,7 @@ impl Orchestrator {
                     );
                     0
                 }
-            }
-        } else {
-            0
-        };
+            };
         let emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),

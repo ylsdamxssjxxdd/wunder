@@ -31,7 +31,6 @@
 }
 
 :root[data-performance-mode='low'] .chat-shell .topbar,
-:root[data-performance-mode='low'] .chat-shell .glass-card,
 :root[data-performance-mode='low'] .chat-shell .chat-panel,
 :root[data-performance-mode='low'] .chat-shell .message-content,
 :root[data-performance-mode='low'] .chat-shell .input-container,
@@ -40,6 +39,12 @@
 :root[data-performance-mode='low'] .chat-shell .history-item {
   background: var(--chat-panel);
   background-image: none;
+}
+
+:root[data-performance-mode='low'] .chat-shell .glass-card {
+  background: var(--chat-card);
+  background-image: none;
+  border: 1px solid var(--chat-border);
 }
 
 :root[data-performance-mode='low'] .chat-shell .glass-card.info-panel,

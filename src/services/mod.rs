@@ -11,6 +11,7 @@ pub mod memory;
 pub mod org_units;
 pub mod prompting;
 pub mod skills;
+pub mod swarm;
 pub mod tools;
 pub mod user_access;
 pub mod user_store;

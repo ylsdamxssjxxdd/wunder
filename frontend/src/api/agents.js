@@ -1,6 +1,6 @@
 ﻿import api from './http';
 
-export const listAgents = () => api.get('/agents');
+export const listAgents = (params = {}) => api.get('/agents', { params });
 export const listSharedAgents = () => api.get('/agents/shared');
 export const listRunningAgents = () => api.get('/agents/running');
 export const getAgent = (id) => api.get(`/agents/${id}`);

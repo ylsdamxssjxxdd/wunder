@@ -2700,6 +2700,19 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         break;
       }
+      case 'team_start':
+      case 'team_task_dispatch':
+      case 'team_task_update':
+      case 'team_task_result':
+      case 'team_merge':
+      case 'team_finish':
+      case 'team_error': {
+        const status = eventType === 'team_error' ? 'failed' : eventType === 'team_finish' ? 'completed' : 'loading';
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(t('chat.workflow.event', { event: eventType }), buildDetail(data || raw), status)
+        );
+        break;
+      }
       default: {
         const fallbackName = data?.name ?? payload?.name;
         const summary = fallbackName
