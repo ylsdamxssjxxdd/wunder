@@ -822,7 +822,8 @@
 }
 
 .simlab-history-card {
-  margin-top: auto;
+  margin-top: 0;
+  flex: 1 1 0;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;
@@ -830,7 +831,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 140px;
+  min-height: 220px;
 }
 
 .simlab-history-title {
@@ -841,10 +842,11 @@
 
 .simlab-history-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  max-height: 180px;
+  max-height: none;
   overflow-y: auto;
 }
 
@@ -912,67 +914,78 @@
 .simlab-report-list-body {
   flex: 1 1 0;
   min-height: 0;
-  max-height: none;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
-.simlab-report-item {
+.simlab-report-table-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  background: #fff;
+}
+
+.simlab-report-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.simlab-report-table th,
+.simlab-report-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+
+.simlab-report-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
   background: #f8fafc;
-}
-
-.simlab-report-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px;
-}
-
-.simlab-report-left {
-  min-width: 0;
-}
-
-.simlab-report-title {
-  font-size: 13px;
+  color: #64748b;
   font-weight: 600;
+}
+
+.simlab-report-table td {
   color: #0f172a;
 }
 
-.simlab-report-subtitle {
+.simlab-report-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.simlab-report-table .is-center {
+  text-align: center;
+}
+
+.simlab-report-table .is-right {
+  text-align: right;
+}
+
+.simlab-cell-status {
+  min-width: 80px;
+}
+
+.simlab-cell-runid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 11px;
-  color: #64748b;
-  word-break: break-all;
+  color: #475569;
+  white-space: nowrap;
 }
 
-.simlab-report-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.simlab-report-duration {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.simlab-detail-btn {
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-  font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.simlab-detail-btn:hover {
-  border-color: #93c5fd;
-  color: #1d4ed8;
+.simlab-cell-error {
+  min-width: 180px;
+  max-width: 260px;
+  color: #b91c1c;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .simlab-status-pill {
@@ -1008,78 +1021,6 @@
   border-color: #cbd5e1;
 }
 
-.simlab-report-content {
-  border-top: 1px solid #e2e8f0;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.simlab-report-error {
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 12px;
-  line-height: 1.45;
-  padding: 8px;
-}
-
-.simlab-highlight-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.simlab-highlight-item {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.simlab-highlight-label {
-  font-size: 11px;
-  color: #64748b;
-}
-
-.simlab-highlight-value {
-  font-size: 13px;
-  color: #0f172a;
-  font-weight: 600;
-}
-
-.simlab-detail-label {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.simlab-detail-report {
-  flex: 1 1 0;
-  min-height: 180px;
-  margin: 0;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  color: #0f172a;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-@media (max-width: 1400px) {
-  .simlab-highlight-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 980px) {
   .simlab-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -1088,9 +1029,4 @@
   .simlab-form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .simlab-highlight-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
-

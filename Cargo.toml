@@ -8,6 +8,10 @@ rust-version = "1.92"
 name = "wunder-cli"
 path = "wunder-cli/main.rs"
 
+[[bin]]
+name = "wunder-desktop"
+path = "wunder-desktop/main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }

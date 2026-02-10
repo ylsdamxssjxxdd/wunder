@@ -61,6 +61,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
 ///
 /// It intentionally omits admin/channel/gateway/cron routes to keep the local
 /// surface minimal while still reusing the same orchestrator/tooling pipeline.
+#[allow(dead_code)]
 pub fn build_desktop_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .merge(chat::router())

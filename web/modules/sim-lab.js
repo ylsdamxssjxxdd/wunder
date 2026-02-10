@@ -318,8 +318,9 @@ const renderCurveChart = (report) => {
 };
 
 const selectedProjects = () => {
+  const fromState = [...selectedProjectIds].filter((projectId) => projectId && projectId.trim());
   if (!elements.simLabProjects) {
-    return [];
+    return fromState;
   }
   const values = [];
   elements.simLabProjects
@@ -330,7 +331,16 @@ const selectedProjects = () => {
         values.push(projectId);
       }
     });
-  return values;
+  if (values.length) {
+    return values;
+  }
+  if (fromState.length) {
+    return fromState;
+  }
+  if (projectsCache.length) {
+    return [projectsCache[0].project_id];
+  }
+  return [];
 };
 
 const setStatus = (message = "") => {
@@ -586,54 +596,35 @@ const fetchProjects = async () => {
   }
 };
 
-const projectTitle = (projectId) => {
-  const project = projectsCache.find((item) => item.project_id === projectId);
-  return project?.title || projectId;
-};
-
 const boolLabel = (value) => (value ? t("common.yes") : t("common.no"));
 
-const extractHighlights = (project) => {
-  const report = project?.report;
-  if (!report || typeof report !== "object") {
-    return [];
+const formatInteger = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(Math.floor(numeric)) : "-";
+};
+
+const formatWorkerSessions = (report) => {
+  const expected = Number(report?.worker_sessions?.expected);
+  const created = Number(report?.worker_sessions?.created);
+  if (Number.isFinite(created) && Number.isFinite(expected)) {
+    return `${Math.floor(created)}/${Math.floor(expected)}`;
   }
-  const highlights = [];
-  if (Number.isFinite(Number(report?.session_runs?.peak_concurrency))) {
-    highlights.push({
-      label: t("simLab.result.metric.peakConcurrency"),
-      value: String(Number(report.session_runs.peak_concurrency)),
-    });
+  if (Number.isFinite(created)) {
+    return `${Math.floor(created)}/-`;
   }
-  if (Number.isFinite(Number(report?.worker_sessions?.expected))) {
-    highlights.push({
-      label: t("simLab.result.metric.workersExpected"),
-      value: String(Number(report.worker_sessions.expected)),
-    });
+  if (Number.isFinite(expected)) {
+    return `-/${Math.floor(expected)}`;
   }
-  if (Number.isFinite(Number(report?.worker_sessions?.created))) {
-    highlights.push({
-      label: t("simLab.result.metric.workersCreated"),
-      value: String(Number(report.worker_sessions.created)),
-    });
+  return "-";
+};
+
+const formatChecks = (report) => {
+  if (!report?.checks || typeof report.checks !== "object") {
+    return "-";
   }
-  if (Number.isFinite(Number(report?.llm_calls?.total))) {
-    highlights.push({
-      label: t("simLab.result.metric.llmCalls"),
-      value: String(Number(report.llm_calls.total)),
-    });
-  }
-  if (report?.checks && typeof report.checks === "object") {
-    highlights.push({
-      label: t("simLab.result.metric.workersAllSuccess"),
-      value: boolLabel(Boolean(report.checks.all_worker_runs_success)),
-    });
-    highlights.push({
-      label: t("simLab.result.metric.noActiveRuns"),
-      value: boolLabel(Boolean(report.checks.no_active_runs_left)),
-    });
-  }
-  return highlights;
+  const workerAllSuccess = boolLabel(Boolean(report.checks.all_worker_runs_success));
+  const noActiveRunsLeft = boolLabel(Boolean(report.checks.no_active_runs_left));
+  return `${workerAllSuccess}/${noActiveRunsLeft}`;
 };
 
 const normalizeRunStatus = (status) => {
@@ -741,86 +732,93 @@ const renderProjectReports = (projects) => {
     return;
   }
 
-  list.forEach((project) => {
-    const row = document.createElement("div");
-    row.className = "simlab-report-item";
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "simlab-report-table-wrap";
 
-    const header = document.createElement("div");
-    header.className = "simlab-report-summary";
+  const table = document.createElement("table");
+  table.className = "simlab-report-table";
 
-    const left = document.createElement("div");
-    left.className = "simlab-report-left";
-
-    const workers = Number(project?.workers);
-    const hasWorkers = Number.isFinite(workers) && workers > 0;
-    const rowTitle = hasWorkers
-      ? t("simLab.result.stepTitle", { workers })
-      : projectTitle(project.project_id);
-
-    const title = document.createElement("div");
-    title.className = "simlab-report-title";
-    title.textContent = rowTitle;
-
-    const subtitle = document.createElement("div");
-    subtitle.className = "simlab-report-subtitle";
-    subtitle.textContent = project.run_id
-      ? `${project.project_id} · ${project.run_id}`
-      : project.project_id;
-
-    left.appendChild(title);
-    left.appendChild(subtitle);
-
-    const right = document.createElement("div");
-    right.className = "simlab-report-right";
-
-    const duration = document.createElement("span");
-    duration.className = "simlab-report-duration";
-    duration.textContent = formatSeconds(project.wall_time_s);
-
-    const status = document.createElement("span");
-    status.className = `simlab-status-pill ${statusClass(project.status)}`;
-    status.textContent = statusLabel(project.status);
-
-    right.appendChild(duration);
-    right.appendChild(status);
-
-    header.appendChild(left);
-    header.appendChild(right);
-    row.appendChild(header);
-
-    const content = document.createElement("div");
-    content.className = "simlab-report-content";
-
-    if (project.error) {
-      const errorBox = document.createElement("div");
-      errorBox.className = "simlab-report-error";
-      errorBox.textContent = `${t("simLab.result.error")}: ${project.error}`;
-      content.appendChild(errorBox);
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const columns = [
+    { key: "simLab.table.col.step", className: "is-center" },
+    { key: "simLab.table.col.workers", className: "is-center" },
+    { key: "simLab.table.col.status", className: "is-center" },
+    { key: "simLab.table.col.wallTime", className: "is-right" },
+    { key: "simLab.table.col.peakConcurrency", className: "is-right" },
+    { key: "simLab.table.col.workerSessions", className: "is-center" },
+    { key: "simLab.table.col.llmCalls", className: "is-right" },
+    { key: "simLab.table.col.checks", className: "is-center" },
+    { key: "simLab.table.col.runId" },
+    { key: "simLab.table.col.error" },
+  ];
+  columns.forEach((column) => {
+    const th = document.createElement("th");
+    th.textContent = t(column.key);
+    if (column.className) {
+      th.className = column.className;
     }
-
-    const highlights = extractHighlights(project);
-    if (highlights.length) {
-      const grid = document.createElement("div");
-      grid.className = "simlab-highlight-grid";
-      highlights.forEach((item) => {
-        const card = document.createElement("div");
-        card.className = "simlab-highlight-item";
-        const label = document.createElement("span");
-        label.className = "simlab-highlight-label";
-        label.textContent = item.label;
-        const value = document.createElement("strong");
-        value.className = "simlab-highlight-value";
-        value.textContent = item.value;
-        card.appendChild(label);
-        card.appendChild(value);
-        grid.appendChild(card);
-      });
-      content.appendChild(grid);
-    }
-
-    row.appendChild(content);
-    elements.simLabReportList.appendChild(row);
+    headRow.appendChild(th);
   });
+  thead.appendChild(headRow);
+
+  const tbody = document.createElement("tbody");
+  list.forEach((project, index) => {
+    const row = document.createElement("tr");
+    row.className = `simlab-report-row ${statusClass(project.status)}`;
+
+    const report = project?.report && typeof project.report === "object" ? project.report : null;
+    const peakConcurrency = formatInteger(report?.session_runs?.peak_concurrency);
+    const workerSessions = formatWorkerSessions(report);
+    const llmCalls = formatInteger(report?.llm_calls?.total);
+    const checks = formatChecks(report);
+
+    const cells = [
+      { text: String(Number(project?.order) || index + 1), className: "is-center" },
+      {
+        text:
+          Number.isFinite(Number(project?.workers)) && Number(project.workers) > 0
+            ? String(Math.floor(Number(project.workers)))
+            : "-",
+        className: "is-center",
+      },
+      {
+        text: statusLabel(project.status),
+        className: "is-center simlab-cell-status",
+        pillClass: statusClass(project.status),
+      },
+      { text: formatSeconds(project.wall_time_s), className: "is-right" },
+      { text: peakConcurrency, className: "is-right" },
+      { text: workerSessions, className: "is-center" },
+      { text: llmCalls, className: "is-right" },
+      { text: checks, className: "is-center" },
+      { text: project.run_id || "-", className: "simlab-cell-runid" },
+      { text: project.error || "-", className: "simlab-cell-error" },
+    ];
+
+    cells.forEach((cell) => {
+      const td = document.createElement("td");
+      if (cell.className) {
+        td.className = cell.className;
+      }
+      if (cell.pillClass) {
+        const pill = document.createElement("span");
+        pill.className = `simlab-status-pill ${cell.pillClass}`;
+        pill.textContent = cell.text;
+        td.appendChild(pill);
+      } else {
+        td.textContent = cell.text;
+      }
+      row.appendChild(td);
+    });
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  elements.simLabReportList.appendChild(tableWrap);
 };
 
 const renderReport = (report) => {
@@ -1047,14 +1045,12 @@ export const initSimLabPanel = async () => {
       renderProjects();
       renderReport(lastReport);
       renderHistory();
-      renderDetail();
       updateRunButton();
     });
     hydrateHistory();
     updateRunButton();
     renderReport(null);
     renderHistory();
-    renderDetail();
   }
   await reconcileRunningState();
   await fetchProjects();

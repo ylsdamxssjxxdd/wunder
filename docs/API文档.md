@@ -2407,3 +2407,33 @@
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。
+
+## wunder-desktop 本地桥接接口约定（M0/M1）
+
+> wunder-desktop 复用既有 `/wunder` 协议，不新增独立业务协议版本；差异主要在运行时绑定与鉴权方式。
+
+- 运行地址：默认绑定 `127.0.0.1`，端口支持 `0`（自动分配）。
+- API 基址：`http://127.0.0.1:<port>/wunder`
+- 鉴权：
+  - 使用 desktop 本地 token（启动时生成并落盘到 `WUNDER_TEMPD/config/desktop.settings.json`）。
+  - 支持从以下位置携带 token：
+    - `x-api-key`
+    - `Authorization: Bearer <token>`
+    - `sec-websocket-protocol` 中的 `wunder-auth.<token>`
+    - 查询参数 `access_token` / `api_key`
+- 流式：
+  - WebSocket：沿用 `/wunder/chat/ws`
+  - SSE：沿用 chat stream/resume 路径作为回退
+
+### desktop 暴露路由范围（当前）
+
+- 包含：chat/chat_ws/core/core_ws/workspace/user_tools/user_agents/user_channels/mcp/temp_dir
+- 不包含：admin/channel/gateway/cron/a2a 等管理或多租户侧路由
+
+### 启动期目录与持久化
+
+- `WUNDER_TEMPD/wunder_desktop.sqlite3`
+- `WUNDER_TEMPD/config/wunder.override.yaml`
+- `WUNDER_TEMPD/config/desktop.settings.json`
+- `WUNDER_TEMPD/user_tools/*`
+- `WUNDER_TEMPD/vector_knowledge/*`

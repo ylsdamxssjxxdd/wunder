@@ -1557,12 +1557,19 @@ fn clear_dir_contents(path: &Path) {
     }
 }
 
+const WORKSPACE_TREE_MAX_LINES: usize = 320;
+const WORKSPACE_TREE_MAX_ENTRIES_PER_DIR: usize = 120;
+
 fn build_workspace_tree(root: &Path, max_depth: usize) -> String {
     if !root.exists() {
         return i18n::t("workspace.tree.empty");
     }
     let mut lines = Vec::new();
-    build_workspace_tree_inner(root, 0, max_depth, &mut lines);
+    let mut truncated = false;
+    build_workspace_tree_inner(root, 0, max_depth, &mut lines, &mut truncated);
+    if truncated {
+        lines.push("... (workspace tree truncated)".to_string());
+    }
     if lines.is_empty() {
         i18n::t("workspace.tree.empty")
     } else {
@@ -1575,8 +1582,10 @@ fn build_workspace_tree_inner(
     depth: usize,
     max_depth: usize,
     lines: &mut Vec<String>,
+    truncated: &mut bool,
 ) {
-    if depth > max_depth {
+    if depth > max_depth || lines.len() >= WORKSPACE_TREE_MAX_LINES {
+        *truncated = true;
         return;
     }
     let entries = match fs::read_dir(path) {
@@ -1587,6 +1596,9 @@ fn build_workspace_tree_inner(
     let mut files: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_workspace_tree_entry(&name) {
+            continue;
+        }
         let meta = match entry.metadata() {
             Ok(meta) => meta,
             Err(_) => continue,
@@ -1600,15 +1612,56 @@ fn build_workspace_tree_inner(
     dirs.sort_by_key(|item| item.0.to_lowercase());
     files.sort_by_key(|item| item.to_lowercase());
     let prefix = "  ".repeat(depth);
-    for (name, dir_path) in dirs {
+    for (dir_count, (name, dir_path)) in dirs.into_iter().enumerate() {
+        if lines.len() >= WORKSPACE_TREE_MAX_LINES {
+            *truncated = true;
+            break;
+        }
+        if dir_count >= WORKSPACE_TREE_MAX_ENTRIES_PER_DIR {
+            *truncated = true;
+            break;
+        }
         lines.push(format!("{prefix}{name}/"));
         if depth < max_depth {
-            build_workspace_tree_inner(&dir_path, depth + 1, max_depth, lines);
+            build_workspace_tree_inner(&dir_path, depth + 1, max_depth, lines, truncated);
+            if *truncated {
+                break;
+            }
         }
     }
-    for name in files {
+    if *truncated {
+        return;
+    }
+    for (file_count, name) in files.into_iter().enumerate() {
+        if lines.len() >= WORKSPACE_TREE_MAX_LINES {
+            *truncated = true;
+            break;
+        }
+        if file_count >= WORKSPACE_TREE_MAX_ENTRIES_PER_DIR {
+            *truncated = true;
+            break;
+        }
         lines.push(format!("{prefix}{name}"));
     }
+}
+
+fn should_skip_workspace_tree_entry(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        ".git"
+            | ".svn"
+            | ".hg"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".next"
+            | "wunder_temp"
+            | "__pycache__"
+            | ".idea"
+            | ".vscode"
+    )
 }
 
 fn search_from_index(

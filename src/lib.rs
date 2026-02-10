@@ -12,6 +12,7 @@ mod sandbox;
 mod services;
 pub mod storage;
 
+pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
     auth, command_utils, config, config_store, exec_policy, i18n, path_utils, schemas, shutdown,

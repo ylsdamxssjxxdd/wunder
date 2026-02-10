@@ -57,6 +57,17 @@ impl AppStateInitOptions {
             start_cron: false,
         }
     }
+
+    pub const fn desktop_default() -> Self {
+        Self {
+            seed_org_units: false,
+            ensure_default_admin: false,
+            spawn_gateway_maintenance: false,
+            start_team_run_runner: false,
+            start_agent_runtime: false,
+            start_cron: false,
+        }
+    }
 }
 
 impl Default for AppStateInitOptions {
