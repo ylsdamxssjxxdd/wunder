@@ -2333,14 +2333,13 @@
 
 #### 4.8.14 `/wunder/admin/sim_lab/runs`
 - 方法：`POST`
-- 说明：执行模拟测试任务，支持单项目或多项目（并行/串行）运行。
+- 说明：执行模拟测试任务，当前固定并行执行（`mode` 字段仅保留兼容，不影响执行模式）。
 - 鉴权：管理员令牌（Bearer）。
 - 请求体示例：
 ```json
 {
   "run_id": "simlab_20260210_ab12cd",
   "projects": ["swarm_flow"],
-  "mode": "parallel",
   "keep_artifacts": false,
   "options": {
     "swarm_flow": {
@@ -2354,6 +2353,7 @@
 }
 ```
 - 参数说明：`run_id` 可选，建议前端传入用于后续停止；未传时服务端自动生成。
+- 运行前置：服务端会确保模拟账号 `wunder-sim` 存在；每次运行会重置该账号下历史会话与智能体应用，并按 `workers` 重建工蜂应用（容器 `1..10` 随机分配），随后由母蜂发起真实蜂群链路。
 - 响应：`data` 返回 `run_id/mode/wall_time_s/project_total/project_success/project_failed/projects[]`，其中 `projects[]` 含每个项目的执行状态、耗时、报告与错误信息。
 
 #### 4.8.15 `/wunder/admin/sim_lab/runs/{run_id}/status`
@@ -2393,3 +2393,9 @@
 - `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
 - `wunder-cli config show|set-tool-call-mode`：查看/设置运行配置。
 - `wunder-cli doctor`：运行时环境诊断。
+
+- 交互态支持 `/config` 与 `/config show`：
+  - `/config` 会依次提示输入 `base_url`、`api_key`、`model`，写入 `WUNDER_TEMP/config/wunder.override.yaml` 并设为默认模型。
+  - provider 根据 `base_url` 自动推断（含 dashscope -> qwen），默认 `tool_call_mode=tool_call`，可通过 `config set-tool-call-mode` 再切换。
+- CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
+- 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。

@@ -202,3 +202,6 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - 模拟测试报告尽量输出统一结构：`project_total/project_success/project_failed/projects[]`，便于后续扩展多测试项目并支持并行/串行切换。
 - 蜂群仿真中若依赖 mock 模型，建议固定母蜂/工蜂预制文本与工具调用序列，再用报告指标验证并发与收敛，不要把“模型随机输出”当作稳定性信号。
 - TeamRun 并发问题回归时优先验证三条链路：请求是否携带会话隔离、子会话是否继承配置覆盖、面板是否错误复用全局中止控制器。
+- 并发压测若发现峰值长期卡在 20 左右，优先检查 `RequestLimiter` 是否在解析 `config_overrides` 之前初始化；应先合并配置再取 `server.max_active_sessions`。
+- 蜂群仿真要贴近真实链路时，建议固定使用专用账号（如 `wunder-sim`）并在每轮前执行“账号存在校验 + 会话/应用重置 + 按 workers 重建工蜂应用（容器随机 1..10）”。
+- 管理端“开始/停止”按钮建议用单按钮切换状态并直接调用 `cancel` 接口，避免额外状态指示器与多按钮状态竞争导致 UI 假运行。

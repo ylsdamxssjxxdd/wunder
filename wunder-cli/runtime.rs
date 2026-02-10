@@ -42,7 +42,7 @@ impl CliRuntime {
             .unwrap_or_else(|| repo_root.join("config/wunder.yaml"));
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
-        let prompts_root = repo_root.join("prompts");
+        let prompts_root = repo_root.clone();
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
         let vector_root = temp_root.join("vector_knowledge");

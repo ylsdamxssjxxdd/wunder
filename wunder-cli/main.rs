@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
-use wunder_server::config::Config;
+use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::schemas::WunderRequest;
 use wunder_server::skills::load_skills;
 use wunder_server::tools::{
@@ -170,9 +170,11 @@ async fn run_chat_loop(
         match trimmed {
             "/exit" | "/quit" => break,
             "/help" => {
-                println!("/new    create a new session");
-                println!("/session show current session id");
-                println!("/exit   exit interactive mode");
+                println!("/new        create a new session");
+                println!("/session    show current session id");
+                println!("/config     configure model endpoint/api key/model");
+                println!("/config show print current runtime config");
+                println!("/exit       exit interactive mode");
                 continue;
             }
             "/session" => {
@@ -183,6 +185,14 @@ async fn run_chat_loop(
                 session_id = uuid::Uuid::new_v4().simple().to_string();
                 runtime.save_session(&session_id).ok();
                 println!("switched to session: {session_id}");
+                continue;
+            }
+            "/config" => {
+                config_interactive_setup(runtime, global).await?;
+                continue;
+            }
+            "/config show" => {
+                config_show(runtime, global).await?;
                 continue;
             }
             _ => {}
@@ -621,6 +631,126 @@ async fn config_set_tool_call_mode(
         command.mode.as_str()
     );
     Ok(())
+}
+
+async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    if let Some(model) = runtime.resolve_model_name(global.model.as_deref()).await {
+        println!("current model: {model}");
+    }
+    println!("configure llm model (press Enter on any field to cancel)");
+
+    let Some(base_url) = prompt_config_value("base_url: ")? else {
+        println!("config cancelled");
+        return Ok(());
+    };
+    let Some(api_key) = prompt_config_value("api_key: ")? else {
+        println!("config cancelled");
+        return Ok(());
+    };
+    let Some(model_name) = prompt_config_value("model: ")? else {
+        println!("config cancelled");
+        return Ok(());
+    };
+
+    let provider = infer_provider_from_base_url(&base_url);
+    let model_for_update = model_name.clone();
+    let provider_for_update = provider.clone();
+    let base_url_for_update = base_url.clone();
+    let api_key_for_update = api_key.clone();
+
+    runtime
+        .state
+        .config_store
+        .update(move |config| {
+            let entry = config
+                .llm
+                .models
+                .entry(model_for_update.clone())
+                .or_insert_with(|| {
+                    build_cli_llm_model_config(
+                        provider_for_update.as_str(),
+                        base_url_for_update.as_str(),
+                        api_key_for_update.as_str(),
+                        model_for_update.as_str(),
+                    )
+                });
+            entry.enable = Some(true);
+            entry.provider = Some(provider_for_update.clone());
+            entry.base_url = Some(base_url_for_update.clone());
+            entry.api_key = Some(api_key_for_update.clone());
+            entry.model = Some(model_for_update.clone());
+            entry.tool_call_mode = Some("tool_call".to_string());
+            if entry
+                .model_type
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                entry.model_type = Some("llm".to_string());
+            }
+            config.llm.default = model_for_update.clone();
+        })
+        .await?;
+
+    println!("model configured");
+    println!("- provider: {provider}");
+    println!("- base_url: {base_url}");
+    println!("- model: {model_name}");
+    println!("- tool_call_mode: tool_call");
+    Ok(())
+}
+
+fn prompt_config_value(prompt: &str) -> Result<Option<String>> {
+    let value = read_line(prompt)?;
+    let cleaned = value.trim();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(cleaned.to_string()))
+}
+
+fn infer_provider_from_base_url(base_url: &str) -> String {
+    let normalized = base_url.trim().to_ascii_lowercase();
+    if normalized.contains("dashscope.aliyuncs.com") {
+        "qwen".to_string()
+    } else if normalized.contains("api.openai.com") {
+        "openai".to_string()
+    } else if normalized.contains("openrouter.ai") {
+        "openrouter".to_string()
+    } else {
+        "openai_compatible".to_string()
+    }
+}
+
+fn build_cli_llm_model_config(
+    provider: &str,
+    base_url: &str,
+    api_key: &str,
+    model_name: &str,
+) -> LlmModelConfig {
+    LlmModelConfig {
+        enable: Some(true),
+        provider: Some(provider.to_string()),
+        base_url: Some(base_url.to_string()),
+        api_key: Some(api_key.to_string()),
+        model: Some(model_name.to_string()),
+        temperature: None,
+        timeout_s: None,
+        retry: None,
+        max_rounds: None,
+        max_context: None,
+        max_output: None,
+        support_vision: None,
+        stream: None,
+        stream_include_usage: None,
+        history_compaction_ratio: None,
+        history_compaction_reset: None,
+        tool_call_mode: Some("tool_call".to_string()),
+        model_type: Some("llm".to_string()),
+        stop: None,
+        mock_if_unconfigured: None,
+    }
 }
 
 async fn handle_doctor(

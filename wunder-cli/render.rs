@@ -105,8 +105,13 @@ impl StreamRenderer {
                 let message = event
                     .data
                     .get("message")
+                    .or_else(|| event.data.get("detail"))
+                    .or_else(|| event.data.get("error"))
                     .and_then(Value::as_str)
-                    .unwrap_or("unknown error");
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| compact_json(&event.data));
                 eprintln!("[error] {message}");
             }
             "final" => {

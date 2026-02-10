@@ -25,7 +25,9 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
-        let request_config = self.resolve_config(prepared.config_overrides.as_ref()).await;
+        let request_config = self
+            .resolve_config(prepared.config_overrides.as_ref())
+            .await;
         let max_active_sessions = if prepared.is_admin {
             i64::MAX as usize
         } else {

@@ -2193,13 +2193,11 @@ impl StorageBackend for SqliteStorage {
             return Ok(0);
         }
         let conn = self.open()?;
-        let value: Option<i64> = conn
-            .query_row(
-                "SELECT MAX(event_id) FROM stream_events WHERE session_id = ?",
-                params![cleaned_session],
-                |row| row.get(0),
-            )
-            .optional()?;
+        let value: Option<i64> = conn.query_row(
+            "SELECT MAX(event_id) FROM stream_events WHERE session_id = ?",
+            params![cleaned_session],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
         Ok(value.unwrap_or(0))
     }
 

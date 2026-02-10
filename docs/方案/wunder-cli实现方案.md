@@ -110,13 +110,13 @@ CLI 初始化时设置：
 - `WUNDER_CONFIG_PATH`
 - `WUNDER_CONFIG_OVERRIDE_PATH`
 - `WUNDER_I18N_MESSAGES_PATH`
-- `WUNDER_PROMPTS_ROOT`
+- `WUNDER_PROMPTS_ROOT`（可选，仅用于外部覆盖提示词）
 - `WUNDER_SKILL_RUNNER_PATH`
 - `WUNDER_USER_TOOLS_ROOT`
 - `WUNDER_VECTOR_KNOWLEDGE_ROOT`
 - `WUNDER_WORKSPACE_SINGLE_ROOT=1`
 
-用途：确保从任意目录启动时，提示词、多语言、skills 执行器、用户工具目录都可正确定位。
+用途：确保从任意目录启动时，路径相关组件可定位；提示词默认走内嵌模板，不依赖磁盘 prompts 目录。
 
 ---
 
@@ -145,8 +145,9 @@ CLI 初始化时设置：
 4. `vector_knowledge` 支持自定义根目录
    - 用 `WUNDER_VECTOR_KNOWLEDGE_ROOT` 替换固定 `vector_knowledge/`。
 
-5. `prompting` 支持提示词根目录
-   - 用 `WUNDER_PROMPTS_ROOT` 确保 CLI 非仓库目录运行可加载提示词。
+5. `prompting` 支持“内嵌模板 + 外部覆盖”
+   - 核心提示词通过内置模板内嵌（system/plan/question_panel/extra/engineer/a2ui/compact/memory_summary）。
+   - 若外部路径存在同名文件，仍可按 `WUNDER_PROMPTS_ROOT` 覆盖，兼顾可移植性与可定制性。
 
 6. `skills` 支持自定义 skill runner 路径
    - 用 `WUNDER_SKILL_RUNNER_PATH` 指向仓库脚本。
@@ -177,6 +178,7 @@ CLI 初始化时设置：
 - `mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
 - `skills list|enable|disable`：本地 skills 启用状态管理。
 - `config show|set-tool-call-mode`：查看/设置运行配置。
+- 交互内置命令 `/config`：按提示依次输入 base_url / api_key / model，自动写入 override 并设为默认模型。
 - `doctor`：运行时环境诊断。
 
 ## 7.3 默认行为
@@ -187,6 +189,15 @@ CLI 初始化时设置：
 - `resume` 子命令默认恢复最近会话并进入交互，可通过 `--last` 或显式 `SESSION_ID` 指定会话。
 
 这与 codex 的“默认进入主交互，子命令化扩展能力、支持会话恢复”保持一致。
+
+## 7.4 交互态快捷命令
+
+- `/help`：展示交互命令。
+- `/session`：查看当前会话 id。
+- `/new`：新建会话并切换。
+- `/config`：进入模型配置引导（三段输入）。
+- `/config show`：打印当前运行配置。
+- `/exit`：退出交互。
 
 ## 8. 交互与事件输出
 
@@ -233,7 +244,8 @@ CLI 初始化时设置：
 - CLI 模式不启动 server 常驻后台循环，减少 CPU/内存常驻占用。
 - SQLite 继续使用 WAL + busy_timeout，保证本地并发写稳态。
 - 会话与日志状态放入 `WUNDER_TEMP`，便于长期运行维护与迁移。
-- `doctor` 用于快速定位模型配置、提示词路径、runner 路径异常。
+- 提示词内嵌后，脱离仓库目录也可稳定运行；仅在需要自定义时读取外部模板。
+- `doctor` 用于快速定位模型配置、提示词覆盖路径、runner 路径异常。
 
 ---
 
@@ -244,11 +256,13 @@ CLI 初始化时设置：
 - 搭建 `wunder-cli/` 目录与 `[[bin]]`。
 - 打通 `ask/chat/resume/tool/exec/mcp/skills/config/doctor` 基础命令。
 - 完成 `WUNDER_TEMP` 持久化与单根工作区模式。
+- 完成交互态 `/config` 三段引导配置（base_url/api_key/model）。
+- 修复 SQLite `MAX(event_id)` 在空会话下的 NULL 读取问题，避免流式偏移告警。
 
 ### M2
 
 - 强化交互体验（更接近 codex 的提示与状态输出）。
-- 补齐命令层的错误提示与诊断信息。
+- 补齐命令层的错误提示与诊断信息（含 `LLM unavailable` 的 detail 展示）。
 - 增加更多 mcp/skills 管理动作（如导入/测试）。
 
 ### M3
@@ -266,6 +280,8 @@ CLI 初始化时设置：
 - `wunder-cli` 默认可进入交互会话。
 - `WUNDER_TEMP` 目录完整自动创建。
 - `config set-tool-call-mode` 可持久化并可被 `config show` 读取。
+- 交互 `/config` 完成后可直接发起对话，无 `MAX(event_id)` 空值告警。
+- 无 prompts 目录时仍可运行（提示词由二进制内嵌提供）。
 
 ---
 

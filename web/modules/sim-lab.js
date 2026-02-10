@@ -1,8 +1,8 @@
-import { elements } from "./elements.js?v=20260210-02";
+import { elements } from "./elements.js?v=20260118-07";
 import { getWunderBase } from "./api.js";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260210-02";
+import { t } from "./i18n.js?v=20260118-07";
 
 let initialized = false;
 let running = false;
@@ -55,26 +55,28 @@ const setStatus = (message = "") => {
 };
 
 const updateRunButton = () => {
-  if (elements.simLabRunBtn) {
-    elements.simLabRunBtn.disabled = running;
-    const runLabel = elements.simLabRunBtn.querySelector("span");
-    if (runLabel) {
-      runLabel.textContent = running ? t("simLab.action.running") : t("simLab.action.run");
-    }
+  if (!elements.simLabRunBtn) {
+    return;
   }
 
-  if (elements.simLabStopBtn) {
-    elements.simLabStopBtn.hidden = !running;
-    elements.simLabStopBtn.disabled = !running || stopping;
-    const stopLabel = elements.simLabStopBtn.querySelector("span");
-    if (stopLabel) {
-      stopLabel.textContent = stopping ? t("simLab.action.stopping") : t("simLab.action.stop");
-    }
+  elements.simLabRunBtn.disabled = stopping;
+  elements.simLabRunBtn.classList.toggle("is-running", running);
+  elements.simLabRunBtn.classList.toggle("danger", running);
+
+  const icon = elements.simLabRunBtn.querySelector("i");
+  if (icon) {
+    icon.className = `fa-solid ${running ? "fa-stop" : "fa-play"}`;
   }
 
-  if (elements.simLabRunningIndicator) {
-    elements.simLabRunningIndicator.hidden = !running;
+  const runLabel = elements.simLabRunBtn.querySelector("span");
+  if (!runLabel) {
+    return;
   }
+  if (stopping) {
+    runLabel.textContent = t("simLab.action.stopping");
+    return;
+  }
+  runLabel.textContent = running ? t("simLab.action.stop") : t("simLab.action.run");
 };
 
 const resetRunState = () => {
@@ -419,19 +421,6 @@ const renderProjectReports = (projects) => {
       content.appendChild(grid);
     }
 
-    if (project.report) {
-      const raw = document.createElement("details");
-      raw.className = "simlab-project-raw";
-      const rawSummary = document.createElement("summary");
-      rawSummary.textContent = t("simLab.result.projectRawToggle");
-      const rawPre = document.createElement("pre");
-      rawPre.className = "code-preview";
-      rawPre.textContent = JSON.stringify(project.report, null, 2);
-      raw.appendChild(rawSummary);
-      raw.appendChild(rawPre);
-      content.appendChild(raw);
-    }
-
     row.appendChild(content);
     elements.simLabReportList.appendChild(row);
   });
@@ -495,6 +484,14 @@ const stopSimulation = async () => {
   }
 };
 
+const handleRunButtonClick = async () => {
+  if (running) {
+    await stopSimulation();
+    return;
+  }
+  await runSimulation();
+};
+
 const runSimulation = async () => {
   if (running) {
     return;
@@ -548,10 +545,7 @@ export const initSimLabPanel = async () => {
   if (!initialized) {
     initialized = true;
     if (elements.simLabRunBtn) {
-      elements.simLabRunBtn.addEventListener("click", runSimulation);
-    }
-    if (elements.simLabStopBtn) {
-      elements.simLabStopBtn.addEventListener("click", stopSimulation);
+      elements.simLabRunBtn.addEventListener("click", handleRunButtonClick);
     }
     if (elements.simLabRefreshProjectsBtn) {
       elements.simLabRefreshProjectsBtn.addEventListener("click", () => {

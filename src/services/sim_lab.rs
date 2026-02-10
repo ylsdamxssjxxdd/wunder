@@ -1,6 +1,9 @@
 use crate::schemas::WunderRequest;
 use crate::state::AppState;
-use crate::storage::{ChatSessionRecord, UserAgentRecord, DEFAULT_HIVE_ID};
+use crate::storage::{
+    ChatSessionRecord, UserAgentRecord, DEFAULT_HIVE_ID, MAX_SANDBOX_CONTAINER_ID,
+    MIN_SANDBOX_CONTAINER_ID,
+};
 use anyhow::{anyhow, Result};
 use axum::{extract::State, routing::post, Json, Router};
 use chrono::{DateTime, Utc};
@@ -29,6 +32,9 @@ const MOTHER_MARKER: &str = "MOTHER_SIM_START";
 const WORKER_MARKER: &str = "WORKER_SIM_TASK";
 const OBSERVATION_PREFIX: &str = "tool_response:";
 const PROJECT_SWARM_FLOW: &str = "swarm_flow";
+const SIM_USER_ID: &str = "wunder-sim";
+const SIM_USER_PASSWORD: &str = "wunder-sim-password";
+const SIM_MOTHER_AGENT_ID: &str = "wunder_sim_mother";
 
 #[derive(Default)]
 struct SimRunControl {
@@ -90,8 +96,8 @@ pub struct SimLabProjectReport {
 pub fn list_projects() -> Vec<SimLabProject> {
     vec![SimLabProject {
         project_id: PROJECT_SWARM_FLOW.to_string(),
-        title: "Swarm Flow".to_string(),
-        description: "Deterministic mother/worker/tool-loop simulation using in-process mock model and real orchestrator pipeline.".to_string(),
+        title: "Swarm Chain Test".to_string(),
+        description: "Deterministic mother/worker/tool-loop simulation for swarm chain validation using in-process mock model and real orchestrator pipeline.".to_string(),
         defaults: json!({
             "workers": DEFAULT_WORKERS,
             "max_wait_s": DEFAULT_MAX_WAIT_S,
@@ -533,10 +539,13 @@ async fn run_swarm_flow(
     let artifact_root_display = artifact_root.to_string_lossy().to_string();
 
     let run_result = async {
-        let user_id = format!("swarm_flow_user_{}", Uuid::new_v4().simple());
+        let user_id = SIM_USER_ID.to_string();
         *run_control.user_id.lock() = Some(user_id.clone());
+
+        ensure_swarm_sim_user(state.as_ref(), &user_id)?;
+        reset_swarm_sim_user_runtime(state.as_ref(), &user_id)?;
         let (mother_agent_id, worker_agent_ids) =
-            seed_agents(state.as_ref(), &user_id, args.workers)?;
+            seed_swarm_agents(state.as_ref(), &user_id, args.workers)?;
 
         {
             let mut scenario = mock_state.scenario.write();
@@ -603,15 +612,6 @@ async fn run_swarm_flow(
             mock_state.as_ref(),
         )?;
 
-        if !args.keep_artifacts {
-            cleanup_swarm_flow_artifacts(
-                state.as_ref(),
-                &user_id,
-                &mother_agent_id,
-                &worker_agent_ids,
-            )?;
-        }
-
         Ok(report)
     }
     .await;
@@ -655,15 +655,48 @@ fn build_mock_request_overrides(args: &SimArgs, llm_base_url: &str) -> Value {
     })
 }
 
-fn cleanup_swarm_flow_artifacts(
-    state: &AppState,
-    user_id: &str,
-    mother_agent_id: &str,
-    worker_agent_ids: &[String],
-) -> Result<()> {
+fn ensure_swarm_sim_user(state: &AppState, user_id: &str) -> Result<()> {
+    if let Some(mut user) = state.user_store.get_user_by_id(user_id)? {
+        let mut changed = false;
+        if !user.status.trim().eq_ignore_ascii_case("active") {
+            user.status = "active".to_string();
+            changed = true;
+        }
+        if !user.roles.iter().any(|role| role == "user") {
+            user.roles.push("user".to_string());
+            changed = true;
+        }
+        if user.access_level.trim().is_empty() {
+            user.access_level = "A".to_string();
+            changed = true;
+        }
+        if changed {
+            user.updated_at = now_ts();
+            state.user_store.update_user(&user)?;
+        }
+    } else {
+        let _ = state.user_store.create_user(
+            user_id,
+            None,
+            SIM_USER_PASSWORD,
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )?;
+    }
+    state.user_store.ensure_default_hive(user_id)?;
+    Ok(())
+}
+
+fn reset_swarm_sim_user_runtime(state: &AppState, user_id: &str) -> Result<()> {
+    state.monitor.purge_user_sessions(user_id);
+    let _ = state.workspace.purge_user_data(user_id);
+
     let (sessions, _) = state
         .user_store
-        .list_chat_sessions(user_id, None, None, 0, 2048)?;
+        .list_chat_sessions(user_id, None, None, 0, 4096)?;
     for session in sessions {
         let _ = state
             .storage
@@ -671,15 +704,16 @@ fn cleanup_swarm_flow_artifacts(
         let _ = state.storage.delete_monitor_record(&session.session_id);
     }
 
+    let _ = state.storage.delete_monitor_records_by_user(user_id);
     let _ = state.storage.delete_session_locks_by_user(user_id);
+    let _ = state.storage.delete_stream_events_by_user(user_id);
 
-    let _ = state.user_store.delete_user_agent(user_id, mother_agent_id);
-    let _ = state
-        .user_store
-        .delete_agent_thread(user_id, mother_agent_id);
-    for agent_id in worker_agent_ids {
-        let _ = state.user_store.delete_user_agent(user_id, agent_id);
-        let _ = state.user_store.delete_agent_thread(user_id, agent_id);
+    let agents = state.user_store.list_user_agents(user_id)?;
+    for agent in agents {
+        let _ = state.user_store.delete_user_agent(user_id, &agent.agent_id);
+        let _ = state
+            .user_store
+            .delete_agent_thread(user_id, &agent.agent_id);
     }
 
     Ok(())
@@ -942,7 +976,10 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
                 profile.label(),
                 round_one_tool.function_name()
             ),
-            Some(vec![function_tool_call(round_one_tool.function_name(), &args)]),
+            Some(vec![function_tool_call(
+                round_one_tool.function_name(),
+                &args,
+            )]),
         );
     }
 
@@ -954,7 +991,10 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
                 profile.label(),
                 round_two_tool.function_name()
             ),
-            Some(vec![function_tool_call(round_two_tool.function_name(), &args)]),
+            Some(vec![function_tool_call(
+                round_two_tool.function_name(),
+                &args,
+            )]),
         );
     }
 
@@ -970,9 +1010,9 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
 
 fn choose_worker_profile(first_user: &str) -> WorkerToolProfile {
     let source = extract_worker_agent_hint(first_user).unwrap_or_else(|| first_user.to_string());
-    let hash = source
-        .bytes()
-        .fold(0u64, |state, byte| state.wrapping_mul(131).wrapping_add(byte as u64));
+    let hash = source.bytes().fold(0u64, |state, byte| {
+        state.wrapping_mul(131).wrapping_add(byte as u64)
+    });
     match (hash % 8) as usize {
         0 => WorkerToolProfile::InspectSearch,
         1 => WorkerToolProfile::InspectRead,
@@ -1279,19 +1319,22 @@ fn seed_swarm_workspace(state: &AppState, user_id: &str) -> Result<()> {
         "- validate tool orchestration",
         "- collect concurrency metrics",
     ]
-    .join("
-");
+    .join("\n");
     state
         .workspace
         .write_file(user_id, "sim_lab/shared/context.txt", &shared_context, true)?;
     Ok(())
 }
 
-fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(String, Vec<String>)> {
+fn seed_swarm_agents(
+    state: &AppState,
+    user_id: &str,
+    workers: usize,
+) -> Result<(String, Vec<String>)> {
     state.user_store.ensure_default_hive(user_id)?;
     let now = now_ts();
 
-    let mother_agent_id = format!("mother_{}", Uuid::new_v4().simple());
+    let mother_agent_id = SIM_MOTHER_AGENT_ID.to_string();
     let mother = UserAgentRecord {
         agent_id: mother_agent_id.clone(),
         user_id: user_id.to_string(),
@@ -1304,15 +1347,16 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
         is_shared: false,
         status: "active".to_string(),
         icon: None,
-        sandbox_container_id: 1,
+        sandbox_container_id: random_sandbox_container_id(workers),
         created_at: now,
         updated_at: now,
     };
     state.user_store.upsert_user_agent(&mother)?;
 
-    let mut workers_ids = Vec::with_capacity(workers);
+    let worker_tools = seeded_worker_tools();
+    let mut worker_ids = Vec::with_capacity(workers);
     for index in 0..workers {
-        let agent_id = format!("worker_{}_{}", index + 1, Uuid::new_v4().simple());
+        let agent_id = format!("wunder_sim_worker_{:03}", index + 1);
         let worker = UserAgentRecord {
             agent_id: agent_id.clone(),
             user_id: user_id.to_string(),
@@ -1320,30 +1364,40 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
             name: format!("SwarmWorkerSim{}", index + 1),
             description: "Deterministic worker agent for tool-loop simulation".to_string(),
             system_prompt: "Execute two tool loops then return final summary.".to_string(),
-            tool_names: vec![
-                "list_files".to_string(),
-                "search_content".to_string(),
-                "read_file".to_string(),
-                "write_file".to_string(),
-                "replace_text".to_string(),
-                "edit_file".to_string(),
-                "execute_command".to_string(),
-                "programmatic_tool_call".to_string(),
-                "final_response".to_string(),
-            ],
+            tool_names: worker_tools.clone(),
             access_level: "A".to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: None,
-            sandbox_container_id: (index + 2) as i32,
+            sandbox_container_id: random_sandbox_container_id(index),
             created_at: now,
             updated_at: now,
         };
         state.user_store.upsert_user_agent(&worker)?;
-        workers_ids.push(agent_id);
+        worker_ids.push(agent_id);
     }
 
-    Ok((mother_agent_id, workers_ids))
+    Ok((mother_agent_id, worker_ids))
+}
+
+fn seeded_worker_tools() -> Vec<String> {
+    vec![
+        "list_files".to_string(),
+        "search_content".to_string(),
+        "read_file".to_string(),
+        "write_file".to_string(),
+        "replace_text".to_string(),
+        "edit_file".to_string(),
+        "execute_command".to_string(),
+        "programmatic_tool_call".to_string(),
+        "final_response".to_string(),
+    ]
+}
+
+fn random_sandbox_container_id(seed: usize) -> i32 {
+    let span = (MAX_SANDBOX_CONTAINER_ID - MIN_SANDBOX_CONTAINER_ID + 1) as u128;
+    let mixed = Uuid::new_v4().as_u128() ^ ((seed as u128 + 1) * 0x9E37_79B9_7F4A_7C15_u128);
+    MIN_SANDBOX_CONTAINER_ID + (mixed % span) as i32
 }
 
 fn create_mother_session(state: &AppState, user_id: &str, mother_agent_id: &str) -> Result<String> {

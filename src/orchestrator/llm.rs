@@ -92,8 +92,10 @@ impl Orchestrator {
         {
             return Ok((fallback_name.clone(), fallback.clone()));
         }
-        Err(OrchestratorError::llm_unavailable(i18n::t(
+        let detail = i18n::t("error.llm_config_required");
+        Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
             "error.llm_unavailable",
+            &HashMap::from([("detail".to_string(), detail)]),
         )))
     }
 
