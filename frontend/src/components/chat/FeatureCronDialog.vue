@@ -287,6 +287,22 @@ const INTERVAL_UNIT_MS = {
   day: 24 * 60 * 60 * 1000
 };
 
+type CronSchedulePayload =
+  | {
+      kind: 'at';
+      at: string;
+    }
+  | {
+      kind: 'every';
+      at: string;
+      every_ms: number;
+    };
+
+type CronJobPayload = {
+  job_id: string;
+  agent_id?: string;
+};
+
 const selectedJob = computed(() => jobs.value.find((job) => job.job_id === selectedJobId.value) || null);
 const selectedRun = computed(() => runs.value.find((run) => run.run_id === selectedRunId.value) || null);
 const payloadText = computed(() => {
@@ -411,7 +427,7 @@ const resolveCreateAgentId = () => {
 };
 
 const resolveIntervalMs = () => {
-  const intervalValue = Number.parseInt(createForm.intervalValue, 10);
+  const intervalValue = Number.parseInt(String(createForm.intervalValue), 10);
   if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
     return null;
   }
@@ -453,7 +469,7 @@ const createJob = async () => {
     ElMessage.warning(t('cron.create.runAtInvalid'));
     return;
   }
-  let schedule = {
+  let schedule: CronSchedulePayload = {
     kind: 'at',
     at: runAt.toISOString()
   };
@@ -556,7 +572,7 @@ const selectJob = async (job) => {
 };
 
 const buildJobPayload = (job) => {
-  const payload = { job_id: job.job_id };
+  const payload: CronJobPayload = { job_id: String(job.job_id || '') };
   const agentId = String(job?.agent_id || '').trim() || contextAgentId.value;
   if (agentId && agentId !== '__default__' && agentId !== 'default') {
     payload.agent_id = agentId;

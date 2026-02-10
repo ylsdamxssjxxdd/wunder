@@ -106,8 +106,10 @@
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
-- 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn` 管理当前用户“当前智能体以外”的其他智能体。
+- 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话，必要时可通过 `createIfMissing=true` 自动创建新会话，再发送指令。
+- `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
+- 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。

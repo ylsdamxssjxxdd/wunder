@@ -566,7 +566,7 @@ const formatK = (value) => {
 
 const ensureStatsSession = async () => {
   if (conversationMessages.value.length > 0) return;
-  const persisted = chatStore.getPersistedState?.() || {};
+  const persisted = (chatStore.getPersistedState?.() || {}) as { activeSessionId?: string };
   const targetId =
     chatStore.activeSessionId ||
     persisted.activeSessionId ||

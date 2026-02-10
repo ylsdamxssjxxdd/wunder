@@ -6,7 +6,7 @@ import { t } from '@/i18n';
 const HEADER_TRACE_ID = 'x-trace-id';
 
 type HeaderBag = Headers | Record<string, unknown> | undefined | null;
-type ErrorPayload = Record<string, any>;
+type UnknownRecord = Record<string, unknown>;
 
 type ResolvedApiError = {
   message: string;
@@ -21,6 +21,9 @@ type NotificationOptions = {
   copyLabel?: string;
   duration?: number;
 };
+
+const asRecord = (value: unknown): UnknownRecord =>
+  value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
 const readHeader = (headers: HeaderBag, key: string): string => {
   if (!headers) return '';
@@ -46,22 +49,23 @@ const pickString = (...values: unknown[]): string => {
 };
 
 const normalizeDetailMessage = (detail: unknown): string => {
-  const payload = detail as ErrorPayload;
-  if (!payload) return '';
+  if (!detail) return '';
   if (typeof detail === 'string') return detail;
+  const payload = asRecord(detail);
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
   if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
-  if (payload.detail) {
-    if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail.trim();
-    if (typeof payload.detail.message === 'string' && payload.detail.message.trim()) {
-      return payload.detail.message.trim();
-    }
+  const nestedDetail = payload.detail;
+  if (typeof nestedDetail === 'string' && nestedDetail.trim()) return nestedDetail.trim();
+  const nestedPayload = asRecord(nestedDetail);
+  if (typeof nestedPayload.message === 'string' && nestedPayload.message.trim()) {
+    return nestedPayload.message.trim();
   }
   return '';
 };
 
 const parseErrorPayload = (payload: unknown) => {
-  if (!payload || typeof payload !== 'object') {
+  const source = asRecord(payload);
+  if (!Object.keys(source).length) {
     return {
       message: '',
       code: '',
@@ -70,9 +74,10 @@ const parseErrorPayload = (payload: unknown) => {
       hint: ''
     };
   }
-  const source = payload as ErrorPayload;
-  const error = source.error && typeof source.error === 'object' ? source.error : {};
+  const error = asRecord(source.error);
   const detail = source.detail;
+  const detailPayload = asRecord(detail);
+  const statusNumber = Number(error.status);
   return {
     message: pickString(
       error.message,
@@ -81,10 +86,10 @@ const parseErrorPayload = (payload: unknown) => {
       source.error_message,
       source.error
     ),
-    code: pickString(error.code, detail?.code, source.code),
-    traceId: pickString(error.trace_id, detail?.trace_id, source.trace_id),
-    status: Number.isFinite(Number(error.status)) ? Number(error.status) : null,
-    hint: pickString(error.hint, detail?.hint, source.hint)
+    code: pickString(error.code, detailPayload.code, source.code),
+    traceId: pickString(error.trace_id, detailPayload.trace_id, source.trace_id),
+    status: Number.isFinite(statusNumber) ? statusNumber : null,
+    hint: pickString(error.hint, detailPayload.hint, source.hint)
   };
 };
 
@@ -113,17 +118,20 @@ const copyTraceId = async (traceId: string): Promise<void> => {
   copyWithExecCommand(traceId);
 };
 
-export const resolveApiError = (source: any, fallback = ''): ResolvedApiError => {
-  const response = source?.response;
-  const payload = response?.data;
+export const resolveApiError = (source: unknown, fallback = ''): ResolvedApiError => {
+  const sourceRecord = asRecord(source);
+  const response = asRecord(sourceRecord.response);
+  const payload = response.data;
   const parsed = parseErrorPayload(payload);
-  const traceId = pickString(parsed.traceId, readHeader(response?.headers, HEADER_TRACE_ID));
-  const message = pickString(parsed.message, source?.message, fallback, t('common.requestFailed'));
+  const traceId = pickString(parsed.traceId, readHeader(response.headers as HeaderBag, HEADER_TRACE_ID));
+  const rawStatus = Number(response.status);
+  const status = Number.isFinite(rawStatus) ? rawStatus : null;
+  const message = pickString(parsed.message, sourceRecord.message, fallback, t('common.requestFailed'));
   return {
     message,
     code: parsed.code,
     traceId,
-    status: parsed.status || (response?.status ? Number(response.status) : null),
+    status: parsed.status || status,
     hint: parsed.hint
   };
 };
@@ -156,7 +164,11 @@ const buildNotificationMessage = (resolved: ResolvedApiError, options: Notificat
   ]);
 };
 
-export const showApiError = (source: any, fallback = '', options: NotificationOptions = {}): void => {
+export const showApiError = (
+  source: unknown,
+  fallback = '',
+  options: NotificationOptions = {}
+): void => {
   const resolved = resolveApiError(source, fallback);
   if (!resolved.message) {
     return;

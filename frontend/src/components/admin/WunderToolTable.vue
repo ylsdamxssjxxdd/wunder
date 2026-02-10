@@ -64,12 +64,19 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import type { PropType } from 'vue';
 
 import { useI18n } from '@/i18n';
 
+type ToolItem = {
+  name?: string;
+  description?: string;
+  input_schema?: unknown;
+};
+
 const props = defineProps({
   tools: {
-    type: Array,
+    type: Array as PropType<ToolItem[]>,
     default: () => []
   },
   tableHeight: {
@@ -85,14 +92,13 @@ const props = defineProps({
 const { t } = useI18n();
 const keyword = ref('');
 const dialogVisible = ref(false);
-const selectedTool = ref(null);
+const selectedTool = ref<ToolItem | null>(null);
 const resolvedEmptyText = computed(() => props.emptyText || t('admin.tools.empty'));
 
 const filteredTools = computed(() => {
   const list = Array.isArray(props.tools) ? props.tools : [];
   const target = keyword.value.trim().toLowerCase();
   if (!target) return list;
-  // 根据名称/描述进行模糊过滤，方便管理员快速定位工具
   return list.filter((item) => {
     const name = String(item?.name || '').toLowerCase();
     const desc = String(item?.description || '').toLowerCase();
@@ -100,16 +106,15 @@ const filteredTools = computed(() => {
   });
 });
 
-const openDetail = (tool) => {
-  // 点击查看工具详情时弹窗展示完整信息
+const openDetail = (tool: ToolItem) => {
   selectedTool.value = tool;
   dialogVisible.value = true;
 };
 
-const formatSchema = (schema) => {
+const formatSchema = (schema: unknown) => {
   try {
     return JSON.stringify(schema, null, 2);
-  } catch (error) {
+  } catch {
     return String(schema || '');
   }
 };

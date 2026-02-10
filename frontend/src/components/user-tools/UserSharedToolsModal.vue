@@ -55,7 +55,7 @@
             <input
               type="checkbox"
               :checked="isSelected(tool.name)"
-              @change="toggleSelection(tool.name, $event.target.checked)"
+              @change="toggleSelection(tool.name, ($event.target as HTMLInputElement).checked)"
             />
             <span>{{ t('common.use') }}</span>
           </label>

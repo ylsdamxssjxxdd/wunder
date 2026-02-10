@@ -1,11 +1,14 @@
 import api from './http';
 
-export const listAgents = (params = {}) => api.get('/agents', { params });
+import type { ApiId, ApiPayload, QueryParams } from './types';
+
+export const listAgents = (params: QueryParams = {}) => api.get('/agents', { params });
 export const listSharedAgents = () => api.get('/agents/shared');
 export const listRunningAgents = () => api.get('/agents/running');
-export const getAgent = (id) => api.get(`/agents/${id}`);
-export const createAgent = (payload) => api.post('/agents', payload);
-export const updateAgent = (id, payload) => api.put(`/agents/${id}`, payload);
-export const deleteAgent = (id) => api.delete(`/agents/${id}`);
-export const getDefaultSession = (id) => api.get(`/agents/${id}/default-session`);
-export const setDefaultSession = (id, payload) => api.post(`/agents/${id}/default-session`, payload);
+export const getAgent = (id: ApiId) => api.get(`/agents/${id}`);
+export const createAgent = (payload: ApiPayload) => api.post('/agents', payload);
+export const updateAgent = (id: ApiId, payload: ApiPayload) => api.put(`/agents/${id}`, payload);
+export const deleteAgent = (id: ApiId) => api.delete(`/agents/${id}`);
+export const getDefaultSession = (id: ApiId) => api.get(`/agents/${id}/default-session`);
+export const setDefaultSession = (id: ApiId, payload: ApiPayload) =>
+  api.post(`/agents/${id}/default-session`, payload);

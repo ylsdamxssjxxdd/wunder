@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "strict": false,
+    "noEmit": true
+  },
+  "include": ["src/api/**/*.ts"]
+}

@@ -1310,6 +1310,10 @@ const resetDocState = () => {
   embeddingChunkIndices.value = new Set();
 };
 
+type SelectDocOptions = {
+  keepSelection?: boolean;
+};
+
 const loadVectorDocs = async () => {
   const base = activeBase.value;
   if (!base || !base.name) {
@@ -1340,7 +1344,7 @@ const loadVectorDocs = async () => {
   }
 };
 
-const selectDoc = async (docId, options = {}) => {
+const selectDoc = async (docId, options: SelectDocOptions = {}) => {
   const base = activeBase.value;
   if (!base || !base.name) {
     ElMessage.warning(t('knowledge.base.selectRequired'));
@@ -1370,14 +1374,14 @@ const selectDoc = async (docId, options = {}) => {
   }
 };
 
-const reindexDocs = async (docId) => {
+const reindexDocs = async (docId = undefined) => {
   const base = activeBase.value;
   if (!base || !base.name) {
     ElMessage.warning(t('knowledge.base.selectRequired'));
     return;
   }
   try {
-    const payload = { base: base.name };
+    const payload: { base: string; doc_id?: string } = { base: base.name };
     if (docId) {
       payload.doc_id = docId;
     }

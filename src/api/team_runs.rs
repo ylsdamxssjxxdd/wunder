@@ -227,6 +227,8 @@ async fn create_team_run(
         );
     }
 
+    state.team_run_runner.enqueue(&record.team_run_id).await;
+
     Ok(Json(json!({
         "data": {
             "team_run_id": record.team_run_id,
@@ -298,6 +300,8 @@ async fn cancel_team_run(
         .user_store
         .upsert_team_run(&run)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    state.team_run_runner.cancel(&run.team_run_id).await;
 
     let tasks = state
         .user_store

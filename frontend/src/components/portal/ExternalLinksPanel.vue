@@ -40,25 +40,29 @@ import { computed } from 'vue';
 import PortalCard from '@/components/portal/PortalCard.vue';
 import { useI18n } from '@/i18n';
 
-const props = defineProps({
-  groups: {
-    type: Array,
-    default: () => []
-  },
-  query: {
-    type: String,
-    default: ''
-  },
-  basePath: {
-    type: String,
-    default: '/app'
-  }
-});
+type ExternalItem = {
+  id?: string | number;
+  title?: string;
+  description?: string;
+  tags?: string[];
+};
+
+type ExternalGroup = {
+  id?: string | number;
+  title?: string;
+  items?: ExternalItem[];
+};
+
+const props = defineProps<{
+  groups: ExternalGroup[];
+  query: string;
+  basePath: string;
+}>();
 
 const { t } = useI18n();
 const normalizedQuery = computed(() => String(props.query || '').trim().toLowerCase());
 
-const matchesQuery = (item, query) => {
+const matchesQuery = (item: ExternalItem, query: string) => {
   if (!query) return true;
   const source = [
     item.title,
@@ -75,7 +79,7 @@ const filteredGroups = computed(() => {
   const query = normalizedQuery.value;
   return props.groups
     .map((group) => {
-      const items = (group.items || []).filter((item) => matchesQuery(item, query));
+      const items = (Array.isArray(group.items) ? group.items : []).filter((item) => matchesQuery(item, query));
       return { ...group, items };
     })
     .filter((group) => group.items.length > 0);

@@ -1,7 +1,17 @@
-type AnyRecord = Record<string, any>;
+type UnknownRecord = Record<string, unknown>;
 
 type PromptSegmentState = {
   inSkills: boolean;
+};
+
+const asRecord = (value: unknown): UnknownRecord =>
+  value && typeof value === 'object' ? (value as UnknownRecord) : {};
+
+const pickToolName = (item: unknown): string => {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  const obj = asRecord(item);
+  return String(obj.name || obj.tool_name || obj.toolName || obj.id || '');
 };
 
 const escapeHtml = (text: unknown): string =>
@@ -16,15 +26,7 @@ const normalizeToolNames = (list: unknown): string[] => {
   if (!Array.isArray(list)) {
     return [];
   }
-  return list
-    .map((item) => {
-      if (!item) return '';
-      if (typeof item === 'string') return item;
-      const obj = item as AnyRecord;
-      return obj.name || obj.tool_name || obj.toolName || obj.id || '';
-    })
-    .map((name) => String(name).trim())
-    .filter(Boolean);
+  return list.map((item) => pickToolName(item).trim()).filter(Boolean);
 };
 
 const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegmentState): string => {
@@ -53,7 +55,7 @@ const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegm
 
 export const renderSystemPromptHighlight = (
   rawText: string,
-  toolsPayload: AnyRecord = {}
+  toolsPayload: UnknownRecord = {}
 ): string => {
   if (!rawText) {
     return '';

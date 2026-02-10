@@ -286,11 +286,8 @@
                 <MessageWorkflow
                   v-if="message.role === 'assistant'"
                   :items="message.workflowItems || []"
-                  :loading="message.workflowStreaming"
-                  :visible="
-                    message.workflowStreaming ||
-                    (message.workflowItems && message.workflowItems.length > 0)
-                  "
+                  :loading="Boolean(message.workflowStreaming)"
+                  :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
                 />
                 <div
                   v-if="shouldShowMessageText(message)"
@@ -1199,7 +1196,8 @@ const fetchWorkspaceResource = async (resource) => {
   const cached = workspaceResourceCache.get(resource.publicPath);
   if (cached?.objectUrl) return cached;
   if (cached?.promise) return cached.promise;
-  const params = { path: resource.relativePath };
+  const params: Record<string, string> = { path: String(resource.relativePath || '') };
+  
   if (resource.requestUserId) {
     params.user_id = resource.requestUserId;
   }
@@ -1478,7 +1476,7 @@ const handleMessageClick = async (event) => {
   const resourceButton = target.closest('[data-workspace-action]');
   if (resourceButton) {
     const action = resourceButton.getAttribute('data-workspace-action');
-    const container = resourceButton.closest('[data-workspace-path]');
+    const container = resourceButton.closest('[data-workspace-path]') as HTMLElement | null;
     const publicPath = container?.dataset?.workspacePath || '';
     if (action === 'download' && publicPath) {
       event.preventDefault();
@@ -1486,7 +1484,7 @@ const handleMessageClick = async (event) => {
     }
     return;
   }
-  const resourceLink = target.closest('a.ai-resource-link[data-workspace-path]');
+  const resourceLink = target.closest('a.ai-resource-link[data-workspace-path]') as HTMLElement | null;
   if (resourceLink) {
     const publicPath = resourceLink.dataset?.workspacePath || '';
     if (publicPath) {
@@ -1497,7 +1495,7 @@ const handleMessageClick = async (event) => {
   }
   const previewImage = target.closest('img.ai-resource-preview');
   if (previewImage) {
-    const card = previewImage.closest('.ai-resource-card');
+    const card = previewImage.closest('.ai-resource-card') as HTMLElement | null;
     if (card?.dataset?.workspaceState !== 'ready') return;
     const src = previewImage.getAttribute('src') || '';
     if (!src) return;

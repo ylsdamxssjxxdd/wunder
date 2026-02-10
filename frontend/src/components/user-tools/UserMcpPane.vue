@@ -111,7 +111,7 @@
                 <input
                   type="checkbox"
                   :checked="isToolEnabled(tool)"
-                  @change="toggleToolEnable(tool, $event.target.checked)"
+                  @change="toggleToolEnable(tool, ($event.target as HTMLInputElement).checked)"
                 />
                 <span>{{ t('userTools.action.enable') }}</span>
               </label>
@@ -119,7 +119,7 @@
                 <input
                   type="checkbox"
                   :checked="isToolShared(tool)"
-                  @change="toggleToolShare(tool, $event.target.checked)"
+                  @change="toggleToolShare(tool, ($event.target as HTMLInputElement).checked)"
                 />
                 <span>{{ t('userTools.action.share') }}</span>
               </label>

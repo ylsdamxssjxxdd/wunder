@@ -342,14 +342,14 @@ const WORKSPACE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/,
 const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
 const WORKSPACE_FOLDER_ICON = `${WORKSPACE_DOC_ICON_BASE}/folder.png`;
 const WORKSPACE_ICON_PATH_RE = /^(\.\.\/|\.\/)+/;
-const ICON_DEFINITIONS = vscodeIconsTheme?.iconDefinitions || {};
+const ICON_DEFINITIONS = (vscodeIconsTheme?.iconDefinitions || {}) as Record<string, unknown>;
 const FILE_EXTENSION_ICON_MAP = new Map(
   Object.entries(vscodeIconsTheme?.fileExtensions || {}).map(([key, value]) => [
     String(key).toLowerCase(),
     value
   ])
 );
-const FALLBACK_EXTENSION_ICON_ENTRIES = [
+const FALLBACK_EXTENSION_ICON_ENTRIES: Array<[string, string]> = [
   ['7z', '_f_zip'],
   ['aac', '_f_audio'],
   ['adoc', '_f_asciidoc'],
@@ -496,8 +496,8 @@ const FALLBACK_EXTENSION_ICON_ENTRIES = [
   ['zip', '_f_zip'],
   ['zsh', '_f_shell'],
 ];
-const FALLBACK_EXTENSION_ICON_MAP = new Map(
-  FALLBACK_EXTENSION_ICON_ENTRIES.filter(([, iconId]) => ICON_DEFINITIONS[iconId])
+const FALLBACK_EXTENSION_ICON_MAP = new Map<string, string>(
+  FALLBACK_EXTENSION_ICON_ENTRIES.filter(([, iconId]) => Boolean(ICON_DEFINITIONS[iconId]))
 );
 const FILE_NAME_ICON_MAP = new Map(
   Object.entries(vscodeIconsTheme?.fileNames || {}).map(([key, value]) => [
@@ -543,6 +543,49 @@ const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
+
+type UploadProgressOptions = {
+  percent?: number;
+  loaded?: number;
+  total?: number;
+  indeterminate?: boolean;
+};
+
+type PromptInputOptions = {
+  title?: string;
+  placeholder?: string;
+  defaultValue?: string;
+};
+
+type WorkspaceUploadOptions = {
+  refreshTree?: boolean;
+  relativePaths?: string[];
+};
+
+type DirectoryReaderLike = {
+  readEntries: (
+    successCallback: (entries: FileSystemEntryLike[]) => void,
+    errorCallback?: (reason: DOMException) => void
+  ) => void;
+};
+
+type FileSystemEntryLike = {
+  isFile?: boolean;
+  isDirectory?: boolean;
+  name?: string;
+  fullPath?: string;
+  file?: (successCallback: (file: File) => void, errorCallback?: (reason: DOMException) => void) => void;
+  createReader?: () => DirectoryReaderLike;
+};
+
+type DataTransferItemLike = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntryLike | null;
+};
+
+type WorkspaceDroppedFile = {
+  file: File;
+  relativePath: string;
+};
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const normalizedContainerId = computed(() => {
@@ -809,7 +852,9 @@ const normalizeIconKey = (value) => String(value || '').trim().toLowerCase();
 
 const resolveThemeIconPath = (iconId, fallbackId = DEFAULT_FILE_ICON_ID) => {
   const resolvedId = iconId && ALLOWED_ICON_IDS.has(iconId) ? iconId : '';
-  const definition = resolvedId ? ICON_DEFINITIONS[resolvedId] : null;
+  const definition = resolvedId
+    ? (ICON_DEFINITIONS[resolvedId] as { iconPath?: string } | undefined)
+    : null;
   const rawPath = definition?.iconPath || '';
   if (rawPath) {
     const normalized = rawPath.replace(WORKSPACE_ICON_PATH_RE, '');
@@ -909,7 +954,7 @@ const formatBytes = (size) => {
 };
 
 // 统一管理上传进度条展示，避免并发上传导致状态错乱
-const setUploadProgress = (options = {}) => {
+const setUploadProgress = (options: UploadProgressOptions = {}) => {
   const { percent = 0, loaded = 0, total = 0, indeterminate = false } = options;
   uploadProgress.active = true;
   uploadProgress.indeterminate = indeterminate;
@@ -1011,7 +1056,7 @@ const confirmAction = async (message, title = t('common.notice')) => {
   }
 };
 
-const promptInput = async (message, options = {}) => {
+const promptInput = async (message: string, options: PromptInputOptions = {}) => {
   const {
     title = t('common.notice'),
     placeholder = '',
@@ -1059,7 +1104,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     if (state.expanded.size) {
       const filtered = new Set();
-      state.expanded.forEach((value) => {
+      state.expanded.forEach((value: string) => {
         if (!normalizedPath || value === normalizedPath || value.startsWith(`${normalizedPath}/`)) {
           filtered.add(value);
         }
@@ -1263,11 +1308,15 @@ const triggerUpload = () => {
   uploadInputRef.value.click();
 };
 
-const uploadWorkspaceFiles = async (files, targetPath, options = {}) => {
+const uploadWorkspaceFiles = async (
+  files: File[] | FileList,
+  targetPath: string,
+  options: WorkspaceUploadOptions = {}
+) => {
   if (!files || !files.length) return;
   const { refreshTree = true, relativePaths = [] } = options;
   const fileList = Array.from(files);
-  const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
+  const totalBytes = fileList.reduce((sum: number, file) => sum + (Number(file?.size) || 0), 0);
   // 对齐 Wunder 上传限制：单次上传总大小不超过 200MB
   if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
     throw new Error(
@@ -1278,7 +1327,7 @@ const uploadWorkspaceFiles = async (files, targetPath, options = {}) => {
   formData.append('path', normalizeWorkspacePath(targetPath));
   appendAgentId(formData);
   fileList.forEach((file, index) => {
-    formData.append('files', file);
+    formData.append('files', file as Blob);
     if (relativePaths.length) {
       formData.append('relative_paths', relativePaths[index] ?? '');
     }
@@ -1305,8 +1354,9 @@ const uploadWorkspaceFiles = async (files, targetPath, options = {}) => {
   }
 };
 
-const handleUploadInput = async (event) => {
-  const files = Array.from(event.target.files || []);
+const handleUploadInput = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null;
+  const files = target?.files ? Array.from(target.files) : [];
   if (!files.length) return;
   try {
     await uploadWorkspaceFiles(files, state.path);
@@ -1701,12 +1751,12 @@ const downloadArchive = async () => {
   }
 };
 
-const readDirectoryEntries = (reader) =>
+const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
   new Promise((resolve) => {
-    const entries = [];
+    const entries: FileSystemEntryLike[] = [];
     const readBatch = () => {
       reader.readEntries(
-        (batch) => {
+        (batch: FileSystemEntryLike[]) => {
           if (!batch.length) {
             resolve(entries);
             return;
@@ -1720,10 +1770,10 @@ const readDirectoryEntries = (reader) =>
     readBatch();
   });
 
-const walkEntry = async (entry, prefix) => {
+const walkEntry = async (entry: FileSystemEntryLike, prefix: string): Promise<WorkspaceDroppedFile[]> => {
   if (!entry) return [];
   if (entry.isFile) {
-    const file = await new Promise((resolve) => {
+    const file = await new Promise<File | null>((resolve) => {
       entry.file((target) => resolve(target), () => resolve(null));
     });
     if (!file) return [];
@@ -1744,11 +1794,13 @@ const walkEntry = async (entry, prefix) => {
   return [];
 };
 
-const collectDroppedFiles = async (dataTransfer) => {
-  const items = Array.from(dataTransfer?.items || []);
+const collectDroppedFiles = async (
+  dataTransfer: DataTransfer | null | undefined
+): Promise<WorkspaceDroppedFile[]> => {
+  const items = Array.from(dataTransfer?.items || []) as DataTransferItemLike[];
   if (items.length) {
     const batches = await Promise.all(
-      items.map((item) => {
+      items.map((item: DataTransferItemLike) => {
         const entry = item.webkitGetAsEntry?.();
         if (entry) {
           return walkEntry(entry, '');

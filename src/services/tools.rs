@@ -68,6 +68,9 @@ const SESSION_RESULT_MAX_CHARS: usize = 2000;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
+const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
+const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
+const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
 
 type ToolEventCallback = dyn Fn(&str, Value) + Send + Sync;
 
@@ -496,7 +499,7 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.agent_swarm.args.action"),
-                        "enum": ["list", "status", "send", "history", "spawn"]
+                        "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
                     "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
@@ -515,7 +518,27 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     "createIfMissing": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.create_if_missing")},
                     "includeCurrent": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.include_current")},
                     "hiveId": {"type": "string", "description": t("tool.spec.agent_swarm.args.hive_id")},
-                    "hive_id": {"type": "string", "description": t("tool.spec.agent_swarm.args.hive_id")}
+                    "hive_id": {"type": "string", "description": t("tool.spec.agent_swarm.args.hive_id")},
+                    "tasks": {
+                        "type": "array",
+                        "description": t("tool.spec.agent_swarm.args.tasks"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                                "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                                "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                                "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                                "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                                "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
+                                "createIfMissing": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.create_if_missing")}
+                            }
+                        }
+                    },
+                    "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
+                    "run_ids": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
+                    "waitSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.wait_seconds")},
+                    "pollIntervalSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.poll_interval")}
                 },
                 "required": ["action"]
             }),
@@ -1527,6 +1550,74 @@ struct AgentSwarmSendArgs {
     include_current: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AgentSwarmBatchTaskArgs {
+    #[serde(default, alias = "agentId", alias = "agent_id")]
+    agent_id: Option<String>,
+    #[serde(
+        default,
+        alias = "session_id",
+        alias = "sessionId",
+        alias = "sessionKey",
+        alias = "session_key"
+    )]
+    session_key: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
+    create_if_missing: Option<bool>,
+    #[serde(default, rename = "includeCurrent", alias = "include_current")]
+    include_current: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmBatchSendArgs {
+    #[serde(default)]
+    tasks: Vec<AgentSwarmBatchTaskArgs>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default, rename = "waitSeconds", alias = "wait_seconds")]
+    wait_seconds: Option<f64>,
+    #[serde(
+        default,
+        rename = "pollIntervalSeconds",
+        alias = "poll_interval_seconds"
+    )]
+    poll_interval_seconds: Option<f64>,
+    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
+    create_if_missing: Option<bool>,
+    #[serde(default, rename = "includeCurrent", alias = "include_current")]
+    include_current: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSwarmWaitArgs {
+    #[serde(default, rename = "runIds", alias = "run_ids")]
+    run_ids: Option<Vec<String>>,
+    #[serde(default, alias = "runId", alias = "run_id")]
+    run_id: Option<String>,
+    #[serde(default, rename = "waitSeconds", alias = "wait_seconds")]
+    wait_seconds: Option<f64>,
+    #[serde(
+        default,
+        rename = "pollIntervalSeconds",
+        alias = "poll_interval_seconds"
+    )]
+    poll_interval_seconds: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct SwarmRunSnapshot {
+    status: String,
+    terminal: bool,
+    failed: bool,
+    payload: Value,
+}
+
 #[derive(Debug, Default, Clone)]
 struct AgentSwarmRuntime {
     lock_sessions: HashSet<String>,
@@ -1551,6 +1642,9 @@ async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         "send" | "agent_send" | "agents_send" | "swarm_send" => {
             agent_swarm_send(context, args).await
         }
+        "batch_send" | "swarm_batch_send" | "agents_batch_send" | "batch" | "fanout"
+        | "dispatch" => agent_swarm_batch_send(context, args).await,
+        "wait" | "join" | "collect" | "swarm_wait" => agent_swarm_wait(context, args).await,
         "history" | "agent_history" | "agents_history" | "swarm_history" => {
             agent_swarm_history(context, args).await
         }
@@ -1797,6 +1891,343 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         map.insert("created_session".to_string(), json!(created_session));
     }
     Ok(result)
+}
+
+async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmBatchSendArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    if payload.tasks.is_empty() {
+        return Err(anyhow!("agent_swarm batch_send requires non-empty tasks"));
+    }
+    let max_tasks = context
+        .config
+        .tools
+        .swarm
+        .max_parallel_tasks_per_team
+        .max(1);
+    if payload.tasks.len() > max_tasks {
+        return Err(anyhow!(
+            "agent_swarm batch_send task count {} exceeds max_parallel_tasks_per_team {}",
+            payload.tasks.len(),
+            max_tasks
+        ));
+    }
+
+    let shared_message = normalize_optional_string(payload.message.clone());
+    let shared_label = normalize_optional_string(payload.label.clone());
+    let mut items = Vec::with_capacity(payload.tasks.len());
+    let mut run_ids = Vec::new();
+
+    for (index, task) in payload.tasks.into_iter().enumerate() {
+        let message = normalize_optional_string(task.message)
+            .or_else(|| shared_message.clone())
+            .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
+
+        let mut send_args = json!({
+            "action": "send",
+            "message": message,
+            "timeoutSeconds": 0.0,
+        });
+        if let Some(agent_id) = normalize_optional_string(task.agent_id) {
+            send_args["agentId"] = json!(agent_id);
+        }
+        if let Some(session_key) = normalize_optional_string(task.session_key) {
+            send_args["session_id"] = json!(session_key);
+        }
+        if let Some(label) = normalize_optional_string(task.label).or_else(|| shared_label.clone())
+        {
+            send_args["label"] = json!(label);
+        }
+        if let Some(create_if_missing) = task.create_if_missing.or(payload.create_if_missing) {
+            send_args["createIfMissing"] = json!(create_if_missing);
+        }
+        if let Some(include_current) = task.include_current.or(payload.include_current) {
+            send_args["includeCurrent"] = json!(include_current);
+        }
+
+        match agent_swarm_send(context, &send_args).await {
+            Ok(result) => {
+                let run_id = result
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_string();
+                if !run_id.is_empty() {
+                    run_ids.push(run_id.clone());
+                }
+                let mut item = json!({
+                    "index": index,
+                    "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
+                    "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
+                    "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
+                    "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                    "created_session": result
+                        .get("created_session")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                });
+                if let Some(error) = result.get("error") {
+                    if let Value::Object(ref mut map) = item {
+                        map.insert("error".to_string(), error.clone());
+                    }
+                }
+                items.push(item);
+            }
+            Err(err) => {
+                items.push(json!({
+                    "index": index,
+                    "status": "error",
+                    "error": err.to_string(),
+                }));
+            }
+        }
+    }
+
+    let run_ids = dedupe_non_empty_strings(run_ids);
+    let accepted_total = items
+        .iter()
+        .filter(|item| {
+            item.get("run_id")
+                .and_then(Value::as_str)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .count();
+    let failed_total = items.len().saturating_sub(accepted_total);
+
+    let mut response = json!({
+        "status": if accepted_total > 0 {
+            if failed_total > 0 { "partial" } else { "accepted" }
+        } else {
+            "error"
+        },
+        "task_total": items.len(),
+        "accepted_total": accepted_total,
+        "failed_total": failed_total,
+        "run_ids": run_ids,
+        "items": items,
+    });
+
+    let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
+    if wait_seconds > 0.0 {
+        let poll_interval_seconds = payload
+            .poll_interval_seconds
+            .unwrap_or(SWARM_WAIT_DEFAULT_POLL_S);
+        let wait_result =
+            wait_for_swarm_runs(context, &run_ids, wait_seconds, poll_interval_seconds, true)
+                .await?;
+        if let Value::Object(ref mut map) = response {
+            map.insert("wait".to_string(), wait_result.clone());
+            if let Some(status) = wait_result.get("status").and_then(Value::as_str) {
+                map.insert("status".to_string(), json!(status));
+            }
+        }
+    }
+
+    Ok(response)
+}
+
+async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: AgentSwarmWaitArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let mut run_ids = payload.run_ids.unwrap_or_default();
+    if let Some(run_id) = payload.run_id {
+        run_ids.push(run_id);
+    }
+    let run_ids = dedupe_non_empty_strings(run_ids);
+    if run_ids.is_empty() {
+        return Err(anyhow!("agent_swarm wait requires runIds"));
+    }
+    let wait_seconds = payload
+        .wait_seconds
+        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+        .max(0.0);
+    let poll_interval_seconds = payload
+        .poll_interval_seconds
+        .unwrap_or(SWARM_WAIT_DEFAULT_POLL_S);
+    wait_for_swarm_runs(context, &run_ids, wait_seconds, poll_interval_seconds, true).await
+}
+
+async fn wait_for_swarm_runs(
+    context: &ToolContext<'_>,
+    run_ids: &[String],
+    wait_seconds: f64,
+    poll_interval_seconds: f64,
+    emit_progress: bool,
+) -> Result<Value> {
+    let run_ids = dedupe_non_empty_strings(run_ids.to_vec());
+    if run_ids.is_empty() {
+        return Ok(json!({
+            "status": "error",
+            "total": 0,
+            "run_ids": [],
+            "items": [],
+        }));
+    }
+
+    let poll_interval = normalize_swarm_poll_interval(poll_interval_seconds);
+    let started_at = Instant::now();
+
+    loop {
+        let snapshots = collect_swarm_run_snapshots(context, &run_ids)?;
+        let total = snapshots.len();
+        let done_total = snapshots.iter().filter(|item| item.terminal).count();
+        let success_total = snapshots
+            .iter()
+            .filter(|item| item.status == "success")
+            .count();
+        let failed_total = snapshots.iter().filter(|item| item.failed).count();
+        let queued_total = snapshots
+            .iter()
+            .filter(|item| item.status == "queued")
+            .count();
+        let running_total = snapshots
+            .iter()
+            .filter(|item| item.status == "running")
+            .count();
+        let elapsed_s = started_at.elapsed().as_secs_f64();
+        let all_finished = done_total >= total;
+        let timed_out = wait_seconds > 0.0 && elapsed_s >= wait_seconds && !all_finished;
+
+        if all_finished || timed_out || wait_seconds <= 0.0 {
+            let status = if all_finished {
+                if failed_total == 0 {
+                    "ok"
+                } else {
+                    "partial"
+                }
+            } else if timed_out {
+                "timeout"
+            } else {
+                "running"
+            };
+            let items = snapshots
+                .into_iter()
+                .map(|item| item.payload)
+                .collect::<Vec<_>>();
+            return Ok(json!({
+                "status": status,
+                "wait_seconds": wait_seconds,
+                "elapsed_s": elapsed_s,
+                "all_finished": all_finished,
+                "total": total,
+                "done_total": done_total,
+                "success_total": success_total,
+                "failed_total": failed_total,
+                "queued_total": queued_total,
+                "running_total": running_total,
+                "run_ids": run_ids,
+                "items": items,
+            }));
+        }
+
+        if emit_progress {
+            if let Some(emitter) = context.event_emitter.as_ref() {
+                emitter.emit(
+                    "progress",
+                    json!({
+                        "stage": "swarm_wait",
+                        "summary": i18n::t("monitor.summary.swarm_wait"),
+                        "total": total,
+                        "done_total": done_total,
+                        "success_total": success_total,
+                        "failed_total": failed_total,
+                        "elapsed_s": elapsed_s,
+                    }),
+                );
+            }
+        }
+
+        sleep(Duration::from_secs_f64(poll_interval)).await;
+    }
+}
+
+fn collect_swarm_run_snapshots(
+    context: &ToolContext<'_>,
+    run_ids: &[String],
+) -> Result<Vec<SwarmRunSnapshot>> {
+    let mut output = Vec::with_capacity(run_ids.len());
+    for run_id in run_ids {
+        let record = context.storage.get_session_run(run_id)?;
+        if let Some(record) = record {
+            let status = record.status.trim().to_ascii_lowercase();
+            let terminal = is_swarm_run_terminal(&status);
+            let failed = is_swarm_run_failed(&status);
+            output.push(SwarmRunSnapshot {
+                status,
+                terminal,
+                failed,
+                payload: json!({
+                    "run_id": record.run_id,
+                    "status": record.status,
+                    "terminal": terminal,
+                    "failed": failed,
+                    "session_id": record.session_id,
+                    "parent_session_id": record.parent_session_id,
+                    "agent_id": record.agent_id,
+                    "model_name": record.model_name,
+                    "queued_time": record.queued_time,
+                    "started_time": record.started_time,
+                    "finished_time": record.finished_time,
+                    "elapsed_s": record.elapsed_s,
+                    "result": record.result,
+                    "error": record.error,
+                    "updated_time": record.updated_time,
+                }),
+            });
+        } else {
+            output.push(SwarmRunSnapshot {
+                status: "not_found".to_string(),
+                terminal: true,
+                failed: true,
+                payload: json!({
+                    "run_id": run_id,
+                    "status": "not_found",
+                    "terminal": true,
+                    "failed": true,
+                    "error": "run not found",
+                }),
+            });
+        }
+    }
+    Ok(output)
+}
+
+fn is_swarm_run_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "success" | "error" | "timeout" | "cancelled" | "failed" | "not_found"
+    )
+}
+
+fn is_swarm_run_failed(status: &str) -> bool {
+    matches!(
+        status,
+        "error" | "timeout" | "cancelled" | "failed" | "not_found"
+    )
+}
+
+fn normalize_swarm_poll_interval(value: f64) -> f64 {
+    if !value.is_finite() || value <= 0.0 {
+        return SWARM_WAIT_DEFAULT_POLL_S;
+    }
+    value.clamp(SWARM_WAIT_MIN_POLL_S, SWARM_WAIT_MAX_POLL_S)
+}
+
+fn dedupe_non_empty_strings(items: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for item in items {
+        let cleaned = item.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if seen.insert(cleaned.to_string()) {
+            output.push(cleaned.to_string());
+        }
+    }
+    output
 }
 
 async fn agent_swarm_history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

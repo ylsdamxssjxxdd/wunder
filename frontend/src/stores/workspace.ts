@@ -11,29 +11,65 @@ import { isDemoMode, loadDemoWorkspaceState, saveDemoWorkspaceState } from '@/ut
 
 const DEFAULT_TREE_DEPTH = 3;
 
-const buildDemoWorkspaceState = () => ({
+type WorkspaceEntry = {
+  type?: string;
+  name?: string;
+  path?: string;
+  size?: number;
+  updated_time?: string;
+  children?: WorkspaceEntry[];
+};
+
+type WorkspaceFolder = {
+  id: string;
+  name: string;
+  path: string;
+  children: WorkspaceFolder[];
+};
+
+type WorkspaceFile = {
+  name: string;
+  path: string;
+  size: number;
+  updated_time: string;
+  extension: string;
+};
+
+type DemoWorkspaceState = {
+  folders: WorkspaceFolder[];
+  files: WorkspaceFile[];
+  activePath: string;
+};
+
+type DemoWorkspacePatch = {
+  folders?: WorkspaceFolder[];
+  files?: WorkspaceFile[];
+  activePath?: string;
+};
+
+const buildDemoWorkspaceState = (): DemoWorkspaceState => ({
   folders: [],
   files: [],
   activePath: ''
 });
 
-const normalizeDemoWorkspaceState = (value: any) => {
-  if (!value || typeof value !== 'object') {
-    return buildDemoWorkspaceState();
-  }
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const normalizeDemoWorkspaceState = (value: unknown): DemoWorkspaceState => {
+  const source = asRecord(value);
   return {
-    folders: Array.isArray(value.folders) ? value.folders : [],
-    files: Array.isArray(value.files) ? value.files : [],
-    activePath: typeof value.activePath === 'string' ? value.activePath : ''
+    folders: Array.isArray(source.folders) ? (source.folders as WorkspaceFolder[]) : [],
+    files: Array.isArray(source.files) ? (source.files as WorkspaceFile[]) : [],
+    activePath: typeof source.activePath === 'string' ? source.activePath : ''
   };
 };
 
 const getDemoWorkspaceState = () => normalizeDemoWorkspaceState(loadDemoWorkspaceState());
 
-const persistDemoWorkspaceState = (state: { folders?: any[]; files?: any[]; activePath?: string }) =>
-  saveDemoWorkspaceState(state);
+const persistDemoWorkspaceState = (state: DemoWorkspaceState) => saveDemoWorkspaceState(state);
 
-const syncDemoWorkspaceCache = ({ folders, files, activePath }: any = {}) => {
+const syncDemoWorkspaceCache = ({ folders, files, activePath }: DemoWorkspacePatch = {}) => {
   if (!isDemoMode()) return;
   const state = getDemoWorkspaceState();
   if (Array.isArray(folders)) {
@@ -48,15 +84,15 @@ const syncDemoWorkspaceCache = ({ folders, files, activePath }: any = {}) => {
   persistDemoWorkspaceState(state);
 };
 
-const normalizeWorkspacePath = (value) =>
+const normalizeWorkspacePath = (value: unknown) =>
   String(value || '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
 
-const joinWorkspacePath = (basePath, name) =>
+const joinWorkspacePath = (basePath: unknown, name: unknown) =>
   [normalizeWorkspacePath(basePath), String(name || '').trim()]
     .filter(Boolean)
     .join('/');
 
-const getFileExtension = (name) => {
+const getFileExtension = (name: unknown) => {
   const trimmed = String(name || '').trim();
   if (!trimmed) return '';
   const dotIndex = trimmed.lastIndexOf('.');
@@ -66,7 +102,7 @@ const getFileExtension = (name) => {
   return trimmed.slice(dotIndex + 1).toLowerCase();
 };
 
-const mapFolderEntries = (entries = []) =>
+const mapFolderEntries = (entries: WorkspaceEntry[] = []): WorkspaceFolder[] =>
   entries
     .filter((entry) => entry?.type === 'dir')
     .map((entry) => ({
@@ -76,7 +112,7 @@ const mapFolderEntries = (entries = []) =>
       children: mapFolderEntries(entry.children || [])
     }));
 
-const mapFileEntries = (entries = []) =>
+const mapFileEntries = (entries: WorkspaceEntry[] = []): WorkspaceFile[] =>
   entries
     .filter((entry) => entry?.type === 'file')
     .map((entry) => {
@@ -92,8 +128,8 @@ const mapFileEntries = (entries = []) =>
 
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
-    folders: [],
-    files: [],
+    folders: [] as WorkspaceFolder[],
+    files: [] as WorkspaceFile[],
     activePath: '',
     loading: false
   }),
@@ -107,14 +143,16 @@ export const useWorkspaceStore = defineStore('workspace', {
         sort_by: 'name',
         order: 'asc'
       });
-      const payload = data || {};
-      const folders = mapFolderEntries(payload.entries || []);
+      const payload = asRecord(data);
+      const folderEntries = Array.isArray(payload.entries)
+        ? mapFolderEntries(payload.entries as WorkspaceEntry[])
+        : [];
       this.folders = [
         {
           id: '',
           name: t('workspace.folder.root'),
           path: '',
-          children: folders
+          children: folderEntries
         }
       ];
       syncDemoWorkspaceCache({ folders: this.folders });
@@ -129,13 +167,15 @@ export const useWorkspaceStore = defineStore('workspace', {
         sort_by: 'name',
         order: 'asc'
       });
-      const payload = data || {};
+      const payload = asRecord(data);
       this.activePath = normalizeWorkspacePath(payload.path || normalized);
-      this.files = mapFileEntries(payload.entries || []);
+      this.files = Array.isArray(payload.entries)
+        ? mapFileEntries(payload.entries as WorkspaceEntry[])
+        : [];
       syncDemoWorkspaceCache({ files: this.files, activePath: this.activePath });
       return this.files;
     },
-    async createFolder(payload) {
+    async createFolder(payload: { name?: string } | null | undefined) {
       const name = String(payload?.name || '').trim();
       if (!name) {
         return null;
@@ -145,7 +185,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.loadFolders();
       return data;
     },
-    async uploadFile(file, targetPath = null) {
+    async uploadFile(file: File, targetPath: string | null = null) {
       const formData = new FormData();
       formData.append('path', normalizeWorkspacePath(targetPath ?? this.activePath));
       formData.append('files', file, file.name);
@@ -153,7 +193,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.loadFiles(targetPath ?? this.activePath);
       return data;
     },
-    async deleteFile(path) {
+    async deleteFile(path: string) {
       const targetPath = normalizeWorkspacePath(path);
       if (!targetPath) {
         return;

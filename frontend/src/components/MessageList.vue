@@ -14,12 +14,14 @@
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
 
-defineProps({
-  messages: {
-    type: Array,
-    default: () => []
-  }
-});
+type MessageItem = {
+  role?: string;
+  content?: string;
+};
+
+defineProps<{
+  messages: MessageItem[];
+}>();
 
 const { t } = useI18n();
 </script>

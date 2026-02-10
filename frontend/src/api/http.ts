@@ -1,9 +1,19 @@
 import axios from 'axios';
+import type { AxiosError } from 'axios';
 
 import { getDemoToken, isDemoMode } from '@/utils/demo';
 import { getCurrentLanguage } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
+
+type HttpError = AxiosError & {
+  code?: string;
+  response?: {
+    status?: number;
+  };
+};
+
+const asHttpError = (error: unknown): HttpError => (error || {}) as HttpError;
 
 const api = axios.create({
   timeout: 30000
@@ -26,25 +36,27 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-const isCanceledRequest = (error) => error?.code === 'ERR_CANCELED';
+const isCanceledRequest = (error: unknown) => asHttpError(error)?.code === 'ERR_CANCELED';
 
-const shouldEnterMaintenance = (error) => {
+const shouldEnterMaintenance = (error: unknown) => {
   if (!error || isCanceledRequest(error)) return false;
-  const status = error?.response?.status;
+  const source = asHttpError(error);
+  const status = source.response?.status;
   if (isMaintenanceStatus(status)) {
     return true;
   }
   if (status) {
     return false;
   }
-  if (error?.code === 'ECONNABORTED') {
+  if (source.code === 'ECONNABORTED') {
     return false;
   }
   return true;
 };
 
-const shouldClearMaintenance = (error) => {
-  const status = error?.response?.status;
+const shouldClearMaintenance = (error: unknown) => {
+  const source = asHttpError(error);
+  const status = source.response?.status;
   if (!status) return false;
   return !isMaintenanceStatus(status);
 };
@@ -54,16 +66,17 @@ api.interceptors.response.use(
     clearMaintenance();
     return response;
   },
-  (error) => {
-    if (shouldEnterMaintenance(error)) {
+  (error: unknown) => {
+    const source = asHttpError(error);
+    if (shouldEnterMaintenance(source)) {
       markMaintenance({
-        status: error?.response?.status,
-        reason: error?.code || 'network'
+        status: source.response?.status,
+        reason: source.code || 'network'
       });
-    } else if (shouldClearMaintenance(error)) {
+    } else if (shouldClearMaintenance(source)) {
       clearMaintenance();
     }
-    return Promise.reject(error);
+    return Promise.reject(source);
   }
 );
 

@@ -20,6 +20,81 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
+type SnapshotAssistantMessage = {
+  role: string;
+  content: string;
+  created_at: string;
+  reasoning?: string;
+  reasoningStreaming?: boolean;
+  workflowStreaming?: boolean;
+  stream_incomplete?: boolean;
+  stream_event_id?: number;
+  stream_round?: number;
+  workflowItems?: unknown[];
+  plan?: unknown;
+  questionPanel?: unknown;
+  stats?: unknown;
+  planVisible?: boolean;
+  isGreeting?: boolean;
+};
+
+type DemoChatCachePatch = {
+  sessions?: unknown[];
+  sessionId?: string | number | null;
+  messages?: unknown[];
+};
+
+type GreetingMessageOptions = {
+  greeting?: unknown;
+  createdAt?: unknown;
+  sessionCreatedAt?: unknown;
+};
+
+type SessionWorkflowStateOptions = {
+  reset?: boolean;
+};
+
+type WorkflowEventRawPayload = {
+  data: unknown;
+  timestamp?: unknown;
+};
+
+type WorkflowProcessorOptions = {
+  finalizeWithNow?: boolean;
+};
+
+type UsageStatsOptions = {
+  updateUsage?: boolean;
+};
+
+type QuestionPanelApplyOptions = {
+  appendWorkflow?: boolean;
+};
+
+type InquiryPanelPatch = {
+  status?: unknown;
+  selected?: unknown[];
+};
+
+type LoadSessionsOptions = {
+  skipTransportRefresh?: boolean;
+  refresh_transport?: boolean;
+  agent_id?: string | number | boolean | null | undefined;
+};
+
+type OpenDraftSessionOptions = {
+  agent_id?: string | number | boolean | null | undefined;
+};
+
+type SendMessageOptions = {
+  attachments?: unknown[];
+};
+
+type ResumeStreamOptions = {
+  force?: boolean;
+  afterEventId?: number | string;
+};
+
 const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
@@ -539,7 +614,7 @@ const normalizeFlag = (value) => value === true || value === 'true';
 
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
-  const base: any = {
+  const base: SnapshotAssistantMessage = {
     role: message.role,
     content: typeof message.content === 'string' ? message.content : String(message.content || ''),
     created_at: message.created_at || ''
@@ -887,7 +962,7 @@ const getDemoChatState = () => normalizeDemoChatState(loadDemoChatState());
 
 const persistDemoChatState = (state) => saveDemoChatState(state);
 
-const syncDemoChatCache = ({ sessions, sessionId, messages }: any = {}) => {
+const syncDemoChatCache = ({ sessions, sessionId, messages }: DemoChatCachePatch = {}) => {
   if (!isDemoMode()) return;
   const state = getDemoChatState();
   if (Array.isArray(sessions)) {
@@ -945,7 +1020,7 @@ const resolveGreetingTimestamp = (messages, createdAt) => {
   return resolveTimestampIso(candidate);
 };
 
-const ensureGreetingMessage = (messages, options: any = {}) => {
+const ensureGreetingMessage = (messages, options: GreetingMessageOptions = {}) => {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const greetingText = resolveGreetingContent(options?.greeting);
   // 无论历史会话与否，都补一条问候语，保证提示词预览入口稳定可见
@@ -1197,7 +1272,7 @@ const normalizeSessionWorkflowState = (state) => {
   return state;
 };
 
-const getSessionWorkflowState = (sessionId, options: any = {}) => {
+const getSessionWorkflowState = (sessionId, options: SessionWorkflowStateOptions = {}) => {
   const sessionKey = sessionId ? String(sessionId) : '';
   if (!sessionKey) {
     return buildSessionWorkflowState();
@@ -1348,7 +1423,7 @@ const extractFinalAnswerFromToolCalls = (toolCalls) => {
 };
 
 const buildWorkflowEventRaw = (data, timestamp = undefined) => {
-  const payload: any = { data: data ?? null };
+  const payload: WorkflowEventRawPayload = { data: data ?? null };
   if (timestamp) {
     payload.timestamp = timestamp;
   }
@@ -1974,7 +2049,7 @@ const abortSendStream = (sessionId) => {
   runtime.sendRequestId = null;
 };
 
-const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: any = {}) => {
+const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: WorkflowProcessorOptions = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
   const toolOutputItemMap = new Map();
@@ -2073,7 +2148,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
-  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: any = {}) => {
+  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: UsageStatsOptions = {}) => {
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     if (normalizedUsage && options.updateUsage !== false) {
@@ -2342,7 +2417,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return outputItemId;
   };
 
-  const applyQuestionPanelPayload = (payload, options: any = {}) => {
+  const applyQuestionPanelPayload = (payload, options: QuestionPanelApplyOptions = {}) => {
     const normalized = normalizeInquiryPanelPayload(payload);
     if (!normalized) return false;
     assistantMessage.questionPanel = {
@@ -2861,7 +2936,7 @@ export const useChatStore = defineStore('chat', {
         this.scheduleSnapshot(true);
       }
     },
-    resolveInquiryPanel(message, patch: any = {}) {
+    resolveInquiryPanel(message, patch: InquiryPanelPatch = {}) {
       if (!message || message.role !== 'assistant') return;
       const panel = normalizeInquiryPanelState(message.questionPanel);
       if (!panel) return;
@@ -2881,22 +2956,23 @@ export const useChatStore = defineStore('chat', {
         return;
       }
     },
-    async loadSessions(options: any = {}) {
+    async loadSessions(options: LoadSessionsOptions = {}) {
       const shouldRefreshTransport =
         options.skipTransportRefresh !== true && options.refresh_transport !== false;
       if (shouldRefreshTransport) {
         await this.refreshStreamTransportPolicy();
       }
-      const params: any = {};
+      const params: { agent_id?: string } = {};
+
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
-        params.agent_id = options.agent_id ?? '';
+        params.agent_id = String(options.agent_id ?? '');
       }
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
       this.sessions = sortSessionsByActivity(data.data.items || []);
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },
-    openDraftSession(options: any = {}) {
+    openDraftSession(options: OpenDraftSessionOptions = {}) {
       const currentSessionId = this.activeSessionId;
       cacheSessionMessages(currentSessionId, this.messages);
       abortResumeStream(currentSessionId);
@@ -2922,7 +2998,7 @@ export const useChatStore = defineStore('chat', {
       }
       this.draftToolOverrides = [...overrides];
     },
-    async createSession(payload: any = {}) {
+    async createSession(payload: Record<string, unknown> = {}) {
       abortResumeStream(this.activeSessionId);
       clearSessionWatcher();
       const { data } = await createSession(payload);
@@ -3103,7 +3179,7 @@ export const useChatStore = defineStore('chat', {
       }
       return overrides;
     },
-    async sendMessage(content, options: any = {}) {
+    async sendMessage(content: string, options: SendMessageOptions = {}) {
       const initialSessionId = this.activeSessionId;
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
@@ -3315,7 +3391,7 @@ export const useChatStore = defineStore('chat', {
         startSessionWatcher(this, sessionId);
       }
     },
-    async resumeStream(sessionId, message, options: any = {}) {
+    async resumeStream(sessionId, message, options: ResumeStreamOptions = {}) {
       const force = options.force === true;
       if (!message || (!message.stream_incomplete && !force)) return;
       abortWatchStream(sessionId);
@@ -3339,8 +3415,8 @@ export const useChatStore = defineStore('chat', {
       let aborted = false;
       const forcedEventId = options.afterEventId;
       const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
-      const afterEventId = Number.isFinite(forcedEventId)
-        ? Number.parseInt(forcedEventId, 10)
+      const afterEventId = Number.isFinite(Number(forcedEventId))
+        ? Number.parseInt(String(forcedEventId), 10)
         : normalizedMessageEventId;
       const resumeAfterEventId = Number.isFinite(afterEventId) ? Math.max(afterEventId, 0) : 0;
       try {

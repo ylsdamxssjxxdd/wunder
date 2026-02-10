@@ -1,26 +1,31 @@
 const DEFAULT_FALLBACK_BASE = 'http://localhost:18000/wunder';
 
-let cachedConfig = null;
-let loadPromise = null;
+type RuntimeConfig = {
+  api_base: string;
+};
 
-const normalizeConfig = (raw) => {
-  if (!raw || typeof raw !== 'object') {
-    return {};
-  }
+let cachedConfig: RuntimeConfig | null = null;
+let loadPromise: Promise<RuntimeConfig> | null = null;
+
+const asRecord = (raw: unknown): Record<string, unknown> =>
+  raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+
+const normalizeConfig = (raw: unknown): RuntimeConfig => {
+  const source = asRecord(raw);
   const apiBase =
-    raw.api_base ||
-    raw.apiBase ||
-    raw.api_base_url ||
-    raw.apiBaseUrl ||
-    raw.api_url ||
-    raw.apiUrl ||
+    source.api_base ||
+    source.apiBase ||
+    source.api_base_url ||
+    source.apiBaseUrl ||
+    source.api_url ||
+    source.apiUrl ||
     '';
   return {
     api_base: typeof apiBase === 'string' ? apiBase.trim() : ''
   };
 };
 
-export const loadRuntimeConfig = async () => {
+export const loadRuntimeConfig = async (): Promise<RuntimeConfig> => {
   if (loadPromise) {
     return loadPromise;
   }
@@ -28,23 +33,23 @@ export const loadRuntimeConfig = async () => {
     try {
       const response = await fetch('/config.json', { cache: 'no-store' });
       if (!response.ok) {
-        cachedConfig = {};
+        cachedConfig = { api_base: '' };
         return cachedConfig;
       }
       const payload = await response.json();
       cachedConfig = normalizeConfig(payload);
       return cachedConfig;
-    } catch (error) {
-      cachedConfig = {};
+    } catch {
+      cachedConfig = { api_base: '' };
       return cachedConfig;
     }
   })();
   return loadPromise;
 };
 
-export const getRuntimeConfig = () => cachedConfig || {};
+export const getRuntimeConfig = (): RuntimeConfig => cachedConfig || { api_base: '' };
 
-export const resolveApiBase = () => {
+export const resolveApiBase = (): string => {
   const runtime = cachedConfig?.api_base;
   if (runtime) {
     return runtime;

@@ -6116,6 +6116,65 @@ impl StorageBackend for SqliteStorage {
         Ok((rows, total))
     }
 
+    fn list_team_runs_by_status(
+        &self,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.ensure_initialized()?;
+        let mut cleaned_statuses = statuses
+            .iter()
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .collect::<Vec<_>>();
+        cleaned_statuses.sort();
+        cleaned_statuses.dedup();
+        if cleaned_statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.open()?;
+        let placeholders = vec!["?"; cleaned_statuses.len()].join(",");
+        let query_sql = format!(
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status IN ({placeholders}) ORDER BY updated_time ASC LIMIT ? OFFSET ?"
+        );
+        let mut values = cleaned_statuses
+            .into_iter()
+            .map(SqlValue::from)
+            .collect::<Vec<_>>();
+        values.push(SqlValue::from(limit.max(1)));
+        values.push(SqlValue::from(offset.max(0)));
+
+        let mut stmt = conn.prepare(&query_sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(values), |row| {
+                Ok(TeamRunRecord {
+                    team_run_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    hive_id: normalize_hive_id(&row.get::<_, String>(2)?),
+                    parent_session_id: row.get(3)?,
+                    parent_agent_id: row.get(4)?,
+                    strategy: row.get(5)?,
+                    status: row.get(6)?,
+                    task_total: row.get(7)?,
+                    task_success: row.get(8)?,
+                    task_failed: row.get(9)?,
+                    context_tokens_total: row.get(10)?,
+                    context_tokens_peak: row.get(11)?,
+                    model_round_total: row.get(12)?,
+                    started_time: row.get(13)?,
+                    finished_time: row.get(14)?,
+                    elapsed_s: row.get(15)?,
+                    summary: row.get(16)?,
+                    error: row.get(17)?,
+                    updated_time: row.get(18)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<TeamRunRecord>, _>>()?;
+        Ok(rows)
+    }
+
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;

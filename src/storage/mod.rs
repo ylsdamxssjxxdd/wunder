@@ -967,6 +967,12 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<TeamRunRecord>, i64)>;
+    fn list_team_runs_by_status(
+        &self,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>>;
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()>;
     fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
 

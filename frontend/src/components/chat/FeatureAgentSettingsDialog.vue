@@ -119,14 +119,14 @@
                       class="agent-avatar-custom-input"
                       type="color"
                       :value="customColor || '#6ad9ff'"
-                      @input="updateCustomColor($event.target.value)"
+                      @input="updateCustomColor(($event.target as HTMLInputElement).value)"
                     />
                     <input
                       class="agent-avatar-custom-text"
                       type="text"
                       :value="customColor"
                       :placeholder="t('portal.agent.avatarCustom')"
-                      @input="updateCustomColor($event.target.value)"
+                      @input="updateCustomColor(($event.target as HTMLInputElement).value)"
                     />
                   </div>
                 </div>
@@ -169,6 +169,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
+import type { CSSProperties } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
@@ -201,6 +202,14 @@ const canEdit = computed(() => Boolean(normalizedAgentId.value));
 
 const DEFAULT_ICON_NAME = 'initial';
 
+type AvatarIconOption = {
+  name: string;
+  labelKey: string;
+  paths?: string[];
+  label?: string;
+  fa?: string;
+};
+
 const AVATAR_ICON_CLASS_MAP = {
   chat: 'fa-comment-dots',
   bot: 'fa-robot',
@@ -220,7 +229,7 @@ const AVATAR_ICON_CLASS_MAP = {
   spark: 'fa-wand-sparkles'
 };
 
-const AVATAR_ICON_OPTIONS = [
+const AVATAR_ICON_OPTIONS: AvatarIconOption[] = [
   { name: DEFAULT_ICON_NAME, labelKey: 'portal.agent.avatar.icon.initial' },
   { name: 'chat', labelKey: 'portal.agent.avatar.icon.chat' },
   { name: 'bot', labelKey: 'portal.agent.avatar.icon.bot' },
@@ -370,7 +379,7 @@ const getAvatarStyle = (config) => {
   const soft = hexToRgba(config.color, 0.12);
   const border = hexToRgba(config.color, 0.6);
   if (!strong || !soft || !border) return {};
-  const style = {
+  const style: CSSProperties = {
     background: `radial-gradient(circle at 30% 30%, ${strong}, ${soft})`,
     borderColor: border
   };
@@ -493,7 +502,7 @@ const saveAgent = async () => {
       const iconName = normalizeIconName(form.icon_name);
       const color = String(form.icon_color || '').trim();
       if (iconName === DEFAULT_ICON_NAME && !color) return '';
-      const payload = { name: iconName };
+      const payload: Record<string, string> = { name: iconName };
       if (color) {
         payload.color = color;
       }

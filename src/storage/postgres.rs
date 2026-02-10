@@ -6133,6 +6133,58 @@ impl StorageBackend for PostgresStorage {
         Ok((output, total))
     }
 
+    fn list_team_runs_by_status(
+        &self,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.ensure_initialized()?;
+        let mut cleaned_statuses = statuses
+            .iter()
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .collect::<Vec<_>>();
+        cleaned_statuses.sort();
+        cleaned_statuses.dedup();
+        if cleaned_statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let safe_limit = limit.max(1);
+        let safe_offset = offset.max(0);
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status = ANY($1::text[]) ORDER BY updated_time ASC LIMIT $2 OFFSET $3",
+            &[&cleaned_statuses, &safe_limit, &safe_offset],
+        )?;
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            output.push(TeamRunRecord {
+                team_run_id: row.get(0),
+                user_id: row.get(1),
+                hive_id: normalize_hive_id(&row.get::<_, String>(2)),
+                parent_session_id: row.get(3),
+                parent_agent_id: row.get(4),
+                strategy: row.get(5),
+                status: row.get(6),
+                task_total: row.get(7),
+                task_success: row.get(8),
+                task_failed: row.get(9),
+                context_tokens_total: row.get(10),
+                context_tokens_peak: row.get(11),
+                model_round_total: row.get(12),
+                started_time: row.get(13),
+                finished_time: row.get(14),
+                elapsed_s: row.get(15),
+                summary: row.get(16),
+                error: row.get(17),
+                updated_time: row.get(18),
+            });
+        }
+        Ok(output)
+    }
+
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

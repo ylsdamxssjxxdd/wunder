@@ -43,19 +43,25 @@ import { computed, ref } from 'vue';
 import { useI18n } from '@/i18n';
 
 // 工作流事件展示组件：承载 SSE 事件列表
-const props = defineProps({
-  items: {
-    type: Array,
-    default: () => []
-  },
-  loading: {
-    type: Boolean,
-    default: false
-  },
-  visible: {
-    type: Boolean,
-    default: false
-  }
+type WorkflowItem = {
+  id?: string | number;
+  title?: string;
+  detail?: string;
+  status?: string;
+  isTool?: boolean;
+  toolCategory?: string;
+};
+
+type Props = {
+  items?: WorkflowItem[];
+  loading?: boolean;
+  visible?: boolean;
+};
+
+const props = withDefaults(defineProps<Props>(), {
+  items: () => [],
+  loading: false,
+  visible: false
 });
 
 const { t } = useI18n();
@@ -67,14 +73,14 @@ const latestItem = computed(() =>
 );
 
 const dialogVisible = ref(false);
-const activeItem = ref(null);
+const activeItem = ref<WorkflowItem | null>(null);
 
-const openDetail = (item) => {
+const openDetail = (item: WorkflowItem) => {
   activeItem.value = item || null;
   dialogVisible.value = true;
 };
 
-const getItemClasses = (item) => {
+const getItemClasses = (item: WorkflowItem) => {
   if (!item?.isTool) return [];
   const category = item.toolCategory || 'default';
   return ['workflow-item--tool', `workflow-item--tool-${category}`];
@@ -87,7 +93,7 @@ const dialogTitle = computed(() =>
 );
 const dialogDetail = computed(() => activeItem.value?.detail || t('chat.workflow.nodeEmpty'));
 
-const formatWorkflowTitle = (rawTitle) => {
+const formatWorkflowTitle = (rawTitle: unknown) => {
   const title = String(rawTitle || '').trim();
   if (!title) return '';
   if (title === '模型输出') return t('chat.workflow.modelOutput');

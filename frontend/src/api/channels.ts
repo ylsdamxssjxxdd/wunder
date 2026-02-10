@@ -1,21 +1,28 @@
 import api from './http';
 
-export const listChannelAccounts = (params) => api.get('/channels/accounts', { params });
+import type { ApiId, ApiPayload, QueryParams } from './types';
 
-export const upsertChannelAccount = (payload) => api.post('/channels/accounts', payload);
+export const listChannelAccounts = (params: QueryParams | undefined = undefined) =>
+  api.get('/channels/accounts', { params });
 
-export const deleteChannelAccount = (channel, accountId) =>
+export const upsertChannelAccount = (payload: ApiPayload) => api.post('/channels/accounts', payload);
+
+export const deleteChannelAccount = (channel: string, accountId?: ApiId) =>
   accountId
-    ? api.delete(
-        `/channels/accounts/${encodeURIComponent(channel)}/${encodeURIComponent(accountId)}`
-      )
+    ? api.delete(`/channels/accounts/${encodeURIComponent(channel)}/${encodeURIComponent(accountId)}`)
     : api.delete(`/channels/accounts/${encodeURIComponent(channel)}`);
 
-export const listChannelBindings = (params) => api.get('/channels/bindings', { params });
+export const listChannelBindings = (params: QueryParams | undefined = undefined) =>
+  api.get('/channels/bindings', { params });
 
-export const upsertChannelBinding = (payload) => api.post('/channels/bindings', payload);
+export const upsertChannelBinding = (payload: ApiPayload) => api.post('/channels/bindings', payload);
 
-export const deleteChannelBinding = (channel, accountId, peerKind, peerId) =>
+export const deleteChannelBinding = (
+  channel: string,
+  accountId: ApiId,
+  peerKind: string,
+  peerId: ApiId
+) =>
   api.delete(
     `/channels/bindings/${encodeURIComponent(channel)}/${encodeURIComponent(
       accountId

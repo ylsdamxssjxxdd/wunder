@@ -118,6 +118,13 @@ const dragCounter = ref(0);
 const { t } = useI18n();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+
+type AttachmentPayload = {
+  type: string;
+  name: string;
+  content: string;
+  mime_type?: string;
+};
 const DOC_EXTENSIONS = [
   '.txt',
   '.md',
@@ -200,7 +207,7 @@ const buildAttachmentPayload = () =>
   attachments.value
     .filter((item) => String(item?.content || '').trim())
     .map((item) => {
-      const payload = {
+      const payload: AttachmentPayload = {
         type: item.type,
         name: item.name,
         content: item.content

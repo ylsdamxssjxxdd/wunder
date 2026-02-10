@@ -23,21 +23,23 @@
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
 
-defineProps({
-  sessions: {
-    type: Array,
-    default: () => []
-  },
-  activeId: {
-    type: [Number, String],
-    default: null
-  }
-});
+type SessionItem = {
+  id?: string | number;
+  title?: string;
+};
 
-const emit = defineEmits(['select', 'create']);
+const props = defineProps<{
+  sessions: SessionItem[];
+  activeId: string | number | null;
+}>();
+
+const emit = defineEmits<{
+  select: [value: number];
+  create: [];
+}>();
 const { t } = useI18n();
 
-const handleSelect = (value) => {
+const handleSelect = (value: string): void => {
   emit('select', Number(value));
 };
 </script>

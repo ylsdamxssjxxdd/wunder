@@ -296,6 +296,20 @@ const editForm = reactive({
   config_text: '{}'
 });
 
+type ChannelAccountPayload = {
+  channel: string;
+  create_new?: boolean;
+  account_id?: string;
+  account_name?: string;
+  enabled: boolean;
+  agent_id?: string;
+  app_id?: string;
+  app_secret?: string;
+  receive_group_chat?: boolean;
+  config?: Record<string, unknown>;
+  peer_kind?: string;
+};
+
 const selectedAccount = computed(
   () => accounts.value.find((item) => item.key === selectedKey.value) || null
 );
@@ -382,7 +396,7 @@ const normalizeAccount = (record) => {
   };
 };
 
-const parseJsonConfig = (rawText) => {
+const parseJsonConfig = (rawText: string): Record<string, unknown> | null => {
   const text = String(rawText || '').trim();
   if (!text) {
     return null;
@@ -440,7 +454,7 @@ const resetEditForm = () => {
   }
 };
 
-const loadAccounts = async (preferred) => {
+const loadAccounts = async (preferred = undefined) => {
   loading.value = true;
   try {
     const [accountsResp, bindingsResp] = await Promise.all([
@@ -528,7 +542,7 @@ const createAccount = async () => {
     return;
   }
 
-  const payload = {
+  const payload: ChannelAccountPayload = {
     channel,
     create_new: true,
     account_name: createForm.account_name || undefined,
@@ -589,7 +603,7 @@ const saveAccount = async () => {
     return;
   }
 
-  const payload = {
+  const payload: ChannelAccountPayload = {
     channel: account.channel,
     account_id: account.account_id,
     account_name: editForm.account_name || undefined,

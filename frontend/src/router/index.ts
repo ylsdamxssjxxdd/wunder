@@ -26,14 +26,19 @@ const USER_BEEHIVE_PATH = '/app/home';
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
 const isAuthRequiredError = (error: unknown): boolean => {
-  const source = error as any;
-  const status = Number(source?.response?.status || 0);
+  const source = asRecord(error);
+  const response = asRecord(source.response);
+  const status = Number(response.status || 0);
   if (status === 401) {
     return true;
   }
-  const payload = source?.response?.data;
-  const errorCode = String(payload?.error?.code || payload?.code || payload?.message || '')
+  const payload = asRecord(response.data);
+  const payloadError = asRecord(payload.error);
+  const errorCode = String(payloadError.code || payload.code || payload.message || '')
     .trim()
     .toLowerCase();
   return errorCode === 'auth_required' || errorCode === 'error.auth_required';

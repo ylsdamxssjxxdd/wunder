@@ -36,7 +36,7 @@
                 type="checkbox"
                 :checked="skill.enabled"
                 @click.stop
-                @change="toggleEnable(skill, $event.target.checked)"
+                @change="toggleEnable(skill, ($event.target as HTMLInputElement).checked)"
               />
               <span>{{ t('userTools.action.enable') }}</span>
             </label>
@@ -45,7 +45,7 @@
                 type="checkbox"
                 :checked="skill.shared"
                 @click.stop
-                @change="toggleShared(skill, $event.target.checked)"
+                @change="toggleShared(skill, ($event.target as HTMLInputElement).checked)"
               />
               <span>{{ t('userTools.action.share') }}</span>
             </label>
@@ -410,6 +410,10 @@ const refreshFileTreeMessage = () => {
   fileTreeMessage.value = '';
 };
 
+type LoadSkillsOptions = {
+  refreshDetail?: boolean;
+};
+
 const buildFileEntries = (entries) =>
   entries
     .map((entry) => {
@@ -425,7 +429,7 @@ const buildFileEntries = (entries) =>
     })
     .filter(Boolean);
 
-const loadSkills = async ({ refreshDetail } = {}) => {
+const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
   if (loading.value) return;
   loading.value = true;
   try {

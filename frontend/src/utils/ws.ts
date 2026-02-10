@@ -38,7 +38,7 @@ type PendingEntry = {
   abortHandler: (() => void) | null;
 };
 
-type WsMessagePayload = Record<string, any>;
+type WsMessagePayload = Record<string, unknown>;
 
 const buildAbortError = (): WsError => {
   try {
@@ -65,6 +65,9 @@ const normalizeRequestId = (value: unknown): string => {
 
 const buildEventText = (data: unknown): string =>
   typeof data === 'string' ? data : JSON.stringify(data ?? {});
+
+const asPayloadRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
 export const consumeWsStream = (
   socket: WebSocket,
@@ -150,10 +153,10 @@ export const consumeWsStream = (
       }
       const type = String(payload?.type || '').toLowerCase();
       if (type === 'event') {
-        const eventPayload = payload?.payload || {};
-        const eventType = eventPayload?.event || 'message';
-        const eventId = eventPayload?.id || '';
-        const dataText = buildEventText(eventPayload?.data);
+        const eventPayload = asPayloadRecord(payload?.payload);
+        const eventType = String(eventPayload.event || 'message');
+        const eventId = String(eventPayload.id || '');
+        const dataText = buildEventText(eventPayload.data);
         onEvent(eventType, dataText, eventId);
         if (options.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
           try {
@@ -165,9 +168,10 @@ export const consumeWsStream = (
         return;
       }
       if (type === 'error') {
-        const message = payload?.payload?.message || t('chat.error.requestFailed');
+        const errorPayload = asPayloadRecord(payload?.payload);
+        const message = String(errorPayload.message || t('chat.error.requestFailed'));
         const err = normalizeError(message, opened ? 'stream' : 'connect');
-        err.code = payload?.payload?.code;
+        err.code = errorPayload.code;
         try {
           socket.close(1000, 'error');
         } catch {
@@ -313,10 +317,10 @@ export const createWsMultiplexer = (
       if (!requestId) return;
       const entry = pending.get(requestId);
       if (!entry) return;
-      const eventPayload = payload?.payload || {};
-      const eventType = eventPayload?.event || 'message';
-      const eventId = eventPayload?.id || '';
-      const dataText = buildEventText(eventPayload?.data);
+      const eventPayload = asPayloadRecord(payload?.payload);
+      const eventType = String(eventPayload.event || 'message');
+      const eventId = String(eventPayload.id || '');
+      const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
       if (entry.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
         resolveRequest(requestId);
@@ -324,9 +328,10 @@ export const createWsMultiplexer = (
       return;
     }
     if (type === 'error') {
-      const message = payload?.payload?.message || t('chat.error.requestFailed');
+      const errorPayload = asPayloadRecord(payload?.payload);
+      const message = String(errorPayload.message || t('chat.error.requestFailed'));
       const err = normalizeError(message, opened ? 'stream' : 'connect');
-      err.code = payload?.payload?.code;
+      err.code = errorPayload.code;
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (requestId && pending.has(requestId)) {
         rejectRequest(requestId, err);

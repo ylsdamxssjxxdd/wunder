@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run typecheck:vue",
     "build:check": "npm run typecheck && vite build",
-    "typecheck:vue": "node ./node_modules/vue-tsc/bin/vue-tsc.js --noEmit"
+    "typecheck:vue": "node ./node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
+    "typecheck:ts": "tsc --noEmit",
+    "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false"
   },
   "dependencies": {
     "axios": "^1.7.9",
