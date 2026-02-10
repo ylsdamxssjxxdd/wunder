@@ -2338,12 +2338,13 @@
 - 请求体示例：
 ```json
 {
+  "run_id": "simlab_20260210_ab12cd",
   "projects": ["swarm_flow"],
   "mode": "parallel",
   "keep_artifacts": false,
   "options": {
     "swarm_flow": {
-      "workers": 4,
+      "workers": 100,
       "max_wait_s": 180,
       "mother_wait_s": 30,
       "poll_ms": 120,
@@ -2352,7 +2353,18 @@
   }
 }
 ```
+- 参数说明：`run_id` 可选，建议前端传入用于后续停止；未传时服务端自动生成。
 - 响应：`data` 返回 `run_id/mode/wall_time_s/project_total/project_success/project_failed/projects[]`，其中 `projects[]` 含每个项目的执行状态、耗时、报告与错误信息。
+
+#### 4.8.15 `/wunder/admin/sim_lab/runs/{run_id}/status`
+- 方法：`GET`
+- 说明：查询指定模拟测试运行是否仍在服务端活动中（`active=true|false`）。
+- 鉴权：管理员令牌（Bearer）。
+
+#### 4.8.16 `/wunder/admin/sim_lab/runs/{run_id}/cancel`
+- 方法：`POST`
+- 说明：停止指定模拟测试运行，服务端会对对应会话发起取消并等待收敛。
+- 鉴权：管理员令牌（Bearer）。
 
 #### 4.8.12 错误码
 - `SWARM_HIVE_UNRESOLVED`：蜂巢不存在或无法解析。
@@ -2367,3 +2379,17 @@
 - `/wunder/chat/team_runs` 与 `/wunder/chat/sessions/{session_id}/team_runs` 不再使用 `hive_id` 过滤参数。
 - 返回体中的 `hive_id` 保留为兼容字段，固定为 `default`。
 
+## wunder-cli ??????
+
+> ???wunder-cli ??????????? HTTP ??????? /wunder ??? orchestrator/tool/mcp/skills ?????
+
+- ?????????????? PROMPT ????????
+- `wunder-cli ask <PROMPT>`??????
+- `wunder-cli chat [PROMPT]`??????
+- `wunder-cli resume [SESSION_ID] [PROMPT] [--last]`??????
+- `wunder-cli tool run <name> --args <json>`????????
+- `wunder-cli exec|e <command...>`??????????
+- `wunder-cli mcp list|get|add|remove|enable|disable`??? MCP ?????
+- `wunder-cli skills list|enable|disable`??? skills ???????
+- `wunder-cli config show|set-tool-call-mode`???/???????
+- `wunder-cli doctor`?????????

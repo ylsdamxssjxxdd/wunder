@@ -9,6 +9,8 @@ let running = false;
 let projectsCache = [];
 let selectedProjectIds = new Set();
 let lastReport = null;
+let currentRunId = "";
+let stopping = false;
 
 const numberValue = (element, fallback) => {
   if (!element) {
@@ -37,6 +39,9 @@ const formatIsoTime = (value) => {
   return date.toLocaleString();
 };
 
+const createRunId = () =>
+  `simlab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
 const selectedProjects = () => {
   if (!elements.simLabProjects) {
     return [];
@@ -60,13 +65,63 @@ const setStatus = (message = "") => {
 };
 
 const updateRunButton = () => {
-  if (!elements.simLabRunBtn) {
+  if (elements.simLabRunBtn) {
+    elements.simLabRunBtn.disabled = running;
+    const runLabel = elements.simLabRunBtn.querySelector("span");
+    if (runLabel) {
+      runLabel.textContent = running ? t("simLab.action.running") : t("simLab.action.run");
+    }
+  }
+
+  if (elements.simLabStopBtn) {
+    elements.simLabStopBtn.hidden = !running;
+    elements.simLabStopBtn.disabled = !running || stopping;
+    const stopLabel = elements.simLabStopBtn.querySelector("span");
+    if (stopLabel) {
+      stopLabel.textContent = stopping ? t("simLab.action.stopping") : t("simLab.action.stop");
+    }
+  }
+
+  if (elements.simLabRunningIndicator) {
+    elements.simLabRunningIndicator.hidden = !running;
+  }
+};
+
+const resetRunState = () => {
+  running = false;
+  stopping = false;
+  currentRunId = "";
+  updateRunButton();
+};
+
+const reconcileRunningState = async () => {
+  if (!running) {
     return;
   }
-  elements.simLabRunBtn.disabled = running;
-  const label = elements.simLabRunBtn.querySelector("span");
-  if (label) {
-    label.textContent = running ? t("simLab.action.running") : t("simLab.action.run");
+  if (!currentRunId) {
+    resetRunState();
+    setStatus(t("simLab.status.recovered"));
+    return;
+  }
+  try {
+    const response = await fetch(
+      `${getWunderBase()}/admin/sim_lab/runs/${encodeURIComponent(currentRunId)}/status`
+    );
+    if (!response.ok) {
+      if (response.status === 404) {
+        resetRunState();
+        setStatus(t("simLab.status.recovered"));
+      }
+      return;
+    }
+    const payload = await response.json();
+    const active = Boolean(payload?.data?.active);
+    if (!active) {
+      resetRunState();
+      setStatus(t("simLab.status.recovered"));
+    }
+  } catch {
+    // keep current state when status probing fails due transient network issues
   }
 };
 
@@ -77,6 +132,9 @@ const statusLabel = (status) => {
   }
   if (normalized === "failed") {
     return t("simLab.result.status.failed");
+  }
+  if (normalized === "cancelled") {
+    return t("simLab.result.status.cancelled");
   }
   return status || "-";
 };
@@ -89,6 +147,9 @@ const statusClass = (status) => {
   if (normalized === "failed") {
     return "is-failed";
   }
+  if (normalized === "cancelled") {
+    return "is-cancelled";
+  }
   return "is-unknown";
 };
 
@@ -96,7 +157,7 @@ const applyDefaults = () => {
   const swarm = projectsCache.find((item) => item.project_id === "swarm_flow");
   const defaults = swarm?.defaults || {};
   if (elements.simLabWorkers) {
-    elements.simLabWorkers.value = String(defaults.workers || 4);
+    elements.simLabWorkers.value = String(defaults.workers || 100);
   }
   if (elements.simLabMaxWait) {
     elements.simLabMaxWait.value = String(defaults.max_wait_s || 180);
@@ -211,7 +272,9 @@ const renderProjects = () => {
 };
 
 const fetchProjects = async () => {
-  setStatus(t("simLab.status.loadingProjects"));
+  if (!running) {
+    setStatus(t("simLab.status.loadingProjects"));
+  }
   const response = await fetch(`${getWunderBase()}/admin/sim_lab/projects`);
   if (!response.ok) {
     throw new Error(await resolveApiErrorMessage(response, t("simLab.error.loadProjects")));
@@ -220,7 +283,9 @@ const fetchProjects = async () => {
   projectsCache = payload?.data?.items || [];
   renderProjects();
   applyDefaults();
-  setStatus(t("simLab.status.projectsReady", { count: projectsCache.length }));
+  if (!running) {
+    setStatus(t("simLab.status.projectsReady", { count: projectsCache.length }));
+  }
 };
 
 const projectTitle = (projectId) => {
@@ -448,18 +513,19 @@ const renderReport = (report) => {
   }
 };
 
-const buildRunPayload = () => {
+const buildRunPayload = (runId) => {
   const projects = selectedProjects();
   if (!projects.length) {
     throw new Error(t("simLab.error.noProject"));
   }
   return {
+    run_id: runId,
     projects,
     mode: elements.simLabMode?.value || "parallel",
     keep_artifacts: Boolean(elements.simLabKeepArtifacts?.checked),
     options: {
       swarm_flow: {
-        workers: Math.max(1, Math.floor(numberValue(elements.simLabWorkers, 4))),
+        workers: Math.max(1, Math.floor(numberValue(elements.simLabWorkers, 100))),
         max_wait_s: Math.max(10, Math.floor(numberValue(elements.simLabMaxWait, 180))),
         mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
@@ -469,15 +535,49 @@ const buildRunPayload = () => {
   };
 };
 
+const stopSimulation = async () => {
+  if (!running || stopping || !currentRunId) {
+    return;
+  }
+  stopping = true;
+  updateRunButton();
+  setStatus(t("simLab.status.stopping"));
+  try {
+    const response = await fetch(
+      `${getWunderBase()}/admin/sim_lab/runs/${encodeURIComponent(currentRunId)}/cancel`,
+      {
+        method: "POST",
+      }
+    );
+    if (!response.ok) {
+      if (response.status === 404) {
+        resetRunState();
+        setStatus(t("simLab.status.recovered"));
+        return;
+      }
+      throw new Error(await resolveApiErrorMessage(response, t("simLab.error.stopFailed")));
+    }
+  } catch (error) {
+    const message = error?.message || String(error);
+    setStatus(t("simLab.status.stopFailed", { message }));
+    notify(t("simLab.status.stopFailed", { message }), "error");
+  } finally {
+    stopping = false;
+    updateRunButton();
+  }
+};
+
 const runSimulation = async () => {
   if (running) {
     return;
   }
   running = true;
+  stopping = false;
+  currentRunId = createRunId();
   updateRunButton();
   setStatus(t("simLab.status.running"));
   try {
-    const payload = buildRunPayload();
+    const payload = buildRunPayload(currentRunId);
     const response = await fetch(`${getWunderBase()}/admin/sim_lab/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -489,20 +589,30 @@ const runSimulation = async () => {
     const data = await response.json();
     const report = data?.data || {};
     renderReport(report);
-    setStatus(
-      t("simLab.status.completed", {
-        success: Number(report?.project_success || 0),
-        total: Number(report?.project_total || 0),
-      })
-    );
-    notify(t("simLab.status.completedNotify"), "success");
+
+    const projects = Array.isArray(report?.projects) ? report.projects : [];
+    const cancelledCount = projects.filter(
+      (item) => String(item?.status || "").toLowerCase() === "cancelled"
+    ).length;
+
+    if (cancelledCount > 0) {
+      setStatus(t("simLab.status.cancelled", { cancelled: cancelledCount }));
+      notify(t("simLab.status.cancelledNotify"), "warning");
+    } else {
+      setStatus(
+        t("simLab.status.completed", {
+          success: Number(report?.project_success || 0),
+          total: Number(report?.project_total || 0),
+        })
+      );
+      notify(t("simLab.status.completedNotify"), "success");
+    }
   } catch (error) {
     const message = error?.message || String(error);
     setStatus(t("simLab.status.failed", { message }));
     notify(t("simLab.status.failed", { message }), "error");
   } finally {
-    running = false;
-    updateRunButton();
+    resetRunState();
   }
 };
 
@@ -511,6 +621,9 @@ export const initSimLabPanel = async () => {
     initialized = true;
     if (elements.simLabRunBtn) {
       elements.simLabRunBtn.addEventListener("click", runSimulation);
+    }
+    if (elements.simLabStopBtn) {
+      elements.simLabStopBtn.addEventListener("click", stopSimulation);
     }
     if (elements.simLabRefreshProjectsBtn) {
       elements.simLabRefreshProjectsBtn.addEventListener("click", () => {
@@ -529,5 +642,7 @@ export const initSimLabPanel = async () => {
     updateRunButton();
     renderReport(null);
   }
+  await reconcileRunningState();
   await fetchProjects();
+  await reconcileRunningState();
 };

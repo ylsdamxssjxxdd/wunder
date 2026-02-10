@@ -2,7 +2,7 @@ use crate::auth as guard_auth;
 use crate::services::sim_lab::{self, SimLabRunRequest};
 use crate::state::AppState;
 use crate::user_store::UserStore;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
@@ -13,6 +13,14 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/admin/sim_lab/projects", get(list_projects))
         .route("/wunder/admin/sim_lab/runs", post(run_simulations))
+        .route(
+            "/wunder/admin/sim_lab/runs/{run_id}/status",
+            get(get_simulation_run_status),
+        )
+        .route(
+            "/wunder/admin/sim_lab/runs/{run_id}/cancel",
+            post(cancel_simulation_run),
+        )
 }
 
 async fn list_projects(
@@ -27,6 +35,37 @@ async fn list_projects(
     })))
 }
 
+async fn get_simulation_run_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, Response> {
+    ensure_admin(&state, &headers)?;
+    Ok(Json(json!({
+        "data": {
+            "run_id": run_id,
+            "active": sim_lab::is_run_active(&run_id),
+        }
+    })))
+}
+async fn cancel_simulation_run(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, Response> {
+    ensure_admin(&state, &headers)?;
+    let cancelled = sim_lab::cancel_run(state.as_ref(), &run_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !cancelled {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "sim run not found".to_string(),
+        ));
+    }
+    Ok(Json(
+        json!({ "data": { "run_id": run_id, "cancelled": true } }),
+    ))
+}
 async fn run_simulations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

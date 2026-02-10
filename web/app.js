@@ -571,15 +571,13 @@ const bindNavigation = () => {
   if (elements.navSimLab) {
     elements.navSimLab.addEventListener("click", async () => {
       switchPanel("simLab");
-      if (!state.panelLoaded.simLab) {
-        try {
-          await initSimLabPanel();
-          state.panelLoaded.simLab = true;
-        } catch (error) {
-          appendLog(
-            t("app.panelLoadFailed", { panel: t("panel.simLab"), message: error.message })
-          );
-        }
+      try {
+        await initSimLabPanel();
+        state.panelLoaded.simLab = true;
+      } catch (error) {
+        appendLog(
+          t("app.panelLoadFailed", { panel: t("panel.simLab"), message: error.message })
+        );
       }
     });
   }

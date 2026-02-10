@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use serde_json::Value;
 use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
@@ -35,23 +35,24 @@ impl StreamRenderer {
 
         match event.event.as_str() {
             "llm_output_delta" => {
-                if let Some(delta) = event.data.get("delta").and_then(Value::as_str)
-                    && !delta.is_empty()
-                {
-                    print!("{delta}");
-                    io::stdout().flush().ok();
-                    self.line_open = true;
-                    self.saw_delta = true;
+                if let Some(delta) = event.data.get("delta").and_then(Value::as_str) {
+                    if !delta.is_empty() {
+                        print!("{delta}");
+                        io::stdout().flush().ok();
+                        self.line_open = true;
+                        self.saw_delta = true;
+                    }
                 }
             }
             "llm_output" => {
-                if !self.saw_delta
-                    && let Some(content) = event.data.get("content").and_then(Value::as_str)
-                    && !content.is_empty()
-                {
-                    print!("{content}");
-                    io::stdout().flush().ok();
-                    self.line_open = true;
+                if !self.saw_delta {
+                    if let Some(content) = event.data.get("content").and_then(Value::as_str) {
+                        if !content.is_empty() {
+                            print!("{content}");
+                            io::stdout().flush().ok();
+                            self.line_open = true;
+                        }
+                    }
                 }
             }
             "progress" => {
@@ -67,12 +68,17 @@ impl StreamRenderer {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if !stage.is_empty() || !summary.is_empty() {
-                    println!("[progress] {stage} {summary}".trim());
+                    let line = format!("[progress] {stage} {summary}");
+                    println!("{}", line.trim());
                 }
             }
             "tool_call" => {
                 self.ensure_newline();
-                let tool = event.data.get("tool").and_then(Value::as_str).unwrap_or("unknown");
+                let tool = event
+                    .data
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
                 let args = event
                     .data
                     .get("args")
@@ -82,7 +88,11 @@ impl StreamRenderer {
             }
             "tool_result" => {
                 self.ensure_newline();
-                let tool = event.data.get("tool").and_then(Value::as_str).unwrap_or("unknown");
+                let tool = event
+                    .data
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
                 let result = event
                     .data
                     .get("result")
@@ -102,7 +112,7 @@ impl StreamRenderer {
             "final" => {
                 self.ensure_newline();
                 let final_event = parse_final(event).unwrap_or_default();
-                if !final_event.answer.is_empty() {
+                if !self.saw_delta && !final_event.answer.is_empty() {
                     println!("{}", final_event.answer);
                 }
                 return Ok(Some(final_event));
@@ -135,7 +145,11 @@ fn parse_final(event: &StreamEvent) -> Option<FinalEvent> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        usage: event.data.get("usage").cloned().filter(|value| !value.is_null()),
+        usage: event
+            .data
+            .get("usage")
+            .cloned()
+            .filter(|value| !value.is_null()),
         stop_reason: event
             .data
             .get("stop_reason")

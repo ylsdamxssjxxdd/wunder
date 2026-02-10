@@ -2876,6 +2876,14 @@
                 <i class="fa-solid fa-play"></i>
                 <span data-i18n="simLab.action.run">开始测试</span>
               </button>
+              <button id="simLabStopBtn" class="danger btn-with-icon" type="button" disabled>
+                <i class="fa-solid fa-stop"></i>
+                <span data-i18n="simLab.action.stop">停止测试</span>
+              </button>
+              <div id="simLabRunningIndicator" class="simlab-running-indicator" hidden>
+                <span class="simlab-running-spinner" aria-hidden="true"></span>
+                <span data-i18n="simLab.action.runningHint">测试进行中</span>
+              </div>
               <button id="simLabRefreshProjectsBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-arrows-rotate"></i>
                 <span data-i18n="common.refresh">刷新</span>
@@ -2898,7 +2906,7 @@
                   </div>
                   <div class="form-row">
                     <label for="simLabWorkers" data-i18n="simLab.form.workers">工蜂数量</label>
-                    <input id="simLabWorkers" type="number" min="1" step="1" value="4" />
+                    <input id="simLabWorkers" type="number" min="1" step="1" value="100" />
                   </div>
                   <div class="form-row">
                     <label for="simLabMaxWait" data-i18n="simLab.form.maxWait">最大等待（秒）</label>

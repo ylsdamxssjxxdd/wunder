@@ -1,6 +1,9 @@
-﻿use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// Wunder CLI
+///
+/// If no subcommand is specified, options are applied to interactive mode.
 #[derive(Debug, Parser)]
 #[command(
     author,
@@ -84,7 +87,11 @@ pub enum Command {
     /// Start an interactive chat session.
     Chat(ChatCommand),
 
+    /// Resume a previous session.
+    Resume(ResumeCommand),
+
     /// Execute shell command via builtin tool.
+    #[command(visible_alias = "e")]
     Exec(ExecCommand),
 
     /// Run builtin/MCP/skill tools directly.
@@ -118,9 +125,28 @@ pub struct ChatCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct ResumeCommand {
+    /// Session id. If omitted, use --last or current saved session.
+    #[arg(value_name = "SESSION_ID")]
+    pub session_id: Option<String>,
+
+    /// Resume the most recent recorded session.
+    #[arg(long = "last", default_value_t = false)]
+    pub last: bool,
+
+    /// Optional prompt to send after resuming. Use '-' to read from stdin.
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Args)]
 pub struct ExecCommand {
     /// Command content to execute.
-    #[arg(value_name = "COMMAND", trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(
+        value_name = "COMMAND",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
     pub command: Vec<String>,
 
     /// Working directory, defaults to current launch dir.
@@ -165,11 +191,40 @@ pub struct McpCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum McpSubcommand {
-    List,
+    #[command(about = "List configured MCP servers")]
+    List(McpListCommand),
+
+    #[command(about = "Show one MCP server")]
+    Get(McpGetCommand),
+
+    #[command(about = "Add or replace an MCP server")]
     Add(McpAddCommand),
+
+    #[command(about = "Remove an MCP server")]
     Remove(McpNameCommand),
+
+    #[command(about = "Enable an MCP server")]
     Enable(McpNameCommand),
+
+    #[command(about = "Disable an MCP server")]
     Disable(McpNameCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct McpListCommand {
+    /// Output the configured servers as JSON.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct McpGetCommand {
+    /// MCP server name.
+    pub name: String,
+
+    /// Output the server configuration as JSON.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

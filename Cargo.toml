@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
 
+[[bin]]
+name = "wunder-cli"
+path = "wunder-cli/main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
 chrono-tz = "0.10"
 cron = "0.12"
 dashmap = "5"

@@ -191,6 +191,8 @@ export const elements = {
   performanceHistoryEmpty: document.getElementById("performanceHistoryEmpty"),
   performanceHistoryMeta: document.getElementById("performanceHistoryMeta"),
   simLabRunBtn: document.getElementById("simLabRunBtn"),
+  simLabStopBtn: document.getElementById("simLabStopBtn"),
+  simLabRunningIndicator: document.getElementById("simLabRunningIndicator"),
   simLabRefreshProjectsBtn: document.getElementById("simLabRefreshProjectsBtn"),
   simLabMode: document.getElementById("simLabMode"),
   simLabProjects: document.getElementById("simLabProjects"),

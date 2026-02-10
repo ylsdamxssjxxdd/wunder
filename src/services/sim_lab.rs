@@ -1,30 +1,26 @@
-use crate::config::LlmModelConfig;
-use crate::config_store::ConfigStore;
 use crate::schemas::WunderRequest;
 use crate::state::AppState;
 use crate::storage::{ChatSessionRecord, UserAgentRecord, DEFAULT_HIVE_ID};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use axum::{extract::State, routing::post, Json, Router};
 use chrono::{DateTime, Utc};
 use futures::stream::{FuturesUnordered, StreamExt};
-use parking_lot::RwLock;
-use rusqlite::{params, Connection};
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-const DEFAULT_WORKERS: usize = 4;
+const DEFAULT_WORKERS: usize = 100;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
 const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
 const DEFAULT_POLL_MS: u64 = 120;
@@ -34,6 +30,19 @@ const MOTHER_MARKER: &str = "MOTHER_SIM_START";
 const WORKER_MARKER: &str = "WORKER_SIM_TASK";
 const OBSERVATION_PREFIX: &str = "tool_response:";
 const PROJECT_SWARM_FLOW: &str = "swarm_flow";
+
+#[derive(Default)]
+struct SimRunControl {
+    cancel_requested: AtomicBool,
+    user_id: Mutex<Option<String>>,
+    mother_session_id: Mutex<Option<String>>,
+}
+
+static SIM_RUN_REGISTRY: OnceLock<Mutex<HashMap<String, Arc<SimRunControl>>>> = OnceLock::new();
+
+fn sim_run_registry() -> &'static Mutex<HashMap<String, Arc<SimRunControl>>> {
+    SIM_RUN_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SimLabRunRequest {
@@ -45,6 +54,8 @@ pub struct SimLabRunRequest {
     pub options: Option<Value>,
     #[serde(default)]
     pub keep_artifacts: Option<bool>,
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,65 +103,177 @@ pub fn list_projects() -> Vec<SimLabProject> {
     }]
 }
 
-pub async fn run_sim_lab(state: Arc<AppState>, request: SimLabRunRequest) -> Result<SimLabRunReport> {
-    let mut projects = normalize_project_list(&request.projects);
-    if projects.is_empty() {
-        projects.push(PROJECT_SWARM_FLOW.to_string());
+pub async fn run_sim_lab(
+    state: Arc<AppState>,
+    request: SimLabRunRequest,
+) -> Result<SimLabRunReport> {
+    let run_id = normalize_run_id(request.run_id.as_deref())
+        .unwrap_or_else(|| format!("simlab_{}", Uuid::new_v4().simple()));
+    let run_control = Arc::new(SimRunControl::default());
+    {
+        let mut registry = sim_run_registry().lock();
+        if registry.contains_key(&run_id) {
+            return Err(anyhow!("sim run id already exists: {run_id}"));
+        }
+        registry.insert(run_id.clone(), run_control.clone());
     }
 
-    let mode = normalize_run_mode(request.mode.as_deref());
-    let options_by_project = extract_options_by_project(request.options.as_ref());
-    let keep_artifacts = request.keep_artifacts.unwrap_or(false);
-    let started_at = Utc::now();
-    let started = Instant::now();
+    let run_result = async {
+        let mut projects = normalize_project_list(&request.projects);
+        if projects.is_empty() {
+            projects.push(PROJECT_SWARM_FLOW.to_string());
+        }
 
-    let mut reports = if mode == "sequential" {
-        let mut rows = Vec::with_capacity(projects.len());
-        for project_id in &projects {
-            rows.push(
-                run_project(
-                    state.clone(),
-                    project_id,
-                    options_by_project.get(project_id),
-                    keep_artifacts,
-                )
-                .await,
-            );
+        let mode = normalize_run_mode(request.mode.as_deref());
+        let options_by_project = extract_options_by_project(request.options.as_ref());
+        let keep_artifacts = request.keep_artifacts.unwrap_or(false);
+        let started_at = Utc::now();
+        let started = Instant::now();
+
+        let mut reports = if mode == "sequential" {
+            let mut rows = Vec::with_capacity(projects.len());
+            for project_id in &projects {
+                rows.push(
+                    run_project(
+                        state.clone(),
+                        run_control.clone(),
+                        project_id,
+                        options_by_project.get(project_id),
+                        keep_artifacts,
+                    )
+                    .await,
+                );
+            }
+            rows
+        } else {
+            let mut tasks = FuturesUnordered::new();
+            for project_id in projects {
+                let state = state.clone();
+                let run_control = run_control.clone();
+                let project_options = options_by_project.get(&project_id).cloned();
+                tasks.push(async move {
+                    run_project(
+                        state,
+                        run_control,
+                        &project_id,
+                        project_options.as_ref(),
+                        keep_artifacts,
+                    )
+                    .await
+                });
+            }
+            let mut rows = Vec::new();
+            while let Some(item) = tasks.next().await {
+                rows.push(item);
+            }
+            rows
+        };
+
+        reports.sort_by(|left, right| left.project_id.cmp(&right.project_id));
+        let project_success = reports
+            .iter()
+            .filter(|item| item.status == "success")
+            .count();
+        let project_failed = reports.len().saturating_sub(project_success);
+
+        Ok(SimLabRunReport {
+            run_id: run_id.clone(),
+            mode,
+            started_at,
+            finished_at: Utc::now(),
+            wall_time_s: started.elapsed().as_secs_f64(),
+            project_total: reports.len(),
+            project_success,
+            project_failed,
+            projects: reports,
+        })
+    }
+    .await;
+
+    sim_run_registry().lock().remove(&run_id);
+    run_result
+}
+
+fn normalize_run_id(raw: Option<&str>) -> Option<String> {
+    let mut output = String::new();
+    for ch in raw?.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            output.push(ch.to_ascii_lowercase());
         }
-        rows
+    }
+    if output.is_empty() {
+        None
     } else {
-        let mut tasks = FuturesUnordered::new();
-        for project_id in projects {
-            let project_options = options_by_project.get(&project_id).cloned();
-            tasks.push(async move {
-                run_project(state.clone(), &project_id, project_options.as_ref(), keep_artifacts).await
-            });
-        }
-        let mut rows = Vec::new();
-        while let Some(item) = tasks.next().await {
-            rows.push(item);
-        }
-        rows
+        Some(output)
+    }
+}
+
+fn cancelled_error() -> anyhow::Error {
+    anyhow!("simulation cancelled")
+}
+
+fn is_cancelled_error(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .to_ascii_lowercase()
+        .contains("simulation cancelled")
+}
+
+fn apply_cancel_signal(state: &AppState, run_control: &SimRunControl) {
+    if !run_control.cancel_requested.load(Ordering::Relaxed) {
+        return;
+    }
+
+    if let Some(session_id) = run_control.mother_session_id.lock().clone() {
+        let _ = state.monitor.cancel(&session_id);
+    }
+
+    let user_id = run_control.user_id.lock().clone();
+    let Some(user_id) = user_id else {
+        return;
     };
 
-    reports.sort_by(|left, right| left.project_id.cmp(&right.project_id));
-    let project_success = reports
-        .iter()
-        .filter(|item| item.status == "success")
-        .count();
-    let project_failed = reports.len().saturating_sub(project_success);
+    let active_sessions = state.monitor.list_sessions(true);
+    for session in active_sessions {
+        let same_user = session
+            .get("user_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .map(|value| value == user_id)
+            .unwrap_or(false);
+        if !same_user {
+            continue;
+        }
+        let Some(session_id) = session
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let _ = state.monitor.cancel(session_id);
+    }
+}
 
-    Ok(SimLabRunReport {
-        run_id: format!("simlab_{}", Uuid::new_v4().simple()),
-        mode,
-        started_at,
-        finished_at: Utc::now(),
-        wall_time_s: started.elapsed().as_secs_f64(),
-        project_total: reports.len(),
-        project_success,
-        project_failed,
-        projects: reports,
-    })
+pub fn cancel_run(state: &AppState, run_id: &str) -> Result<bool> {
+    let Some(run_id) = normalize_run_id(Some(run_id)) else {
+        return Ok(false);
+    };
+
+    let run_control = sim_run_registry().lock().get(&run_id).cloned();
+    let Some(run_control) = run_control else {
+        return Ok(false);
+    };
+
+    run_control.cancel_requested.store(true, Ordering::Relaxed);
+    apply_cancel_signal(state, run_control.as_ref());
+    Ok(true)
+}
+
+pub fn is_run_active(run_id: &str) -> bool {
+    normalize_run_id(Some(run_id))
+        .map(|cleaned| sim_run_registry().lock().contains_key(&cleaned))
+        .unwrap_or(false)
 }
 
 fn normalize_project_list(items: &[String]) -> Vec<String> {
@@ -187,6 +310,7 @@ fn extract_options_by_project(root: Option<&Value>) -> HashMap<String, Value> {
 
 async fn run_project(
     state: Arc<AppState>,
+    run_control: Arc<SimRunControl>,
     project_id: &str,
     options: Option<&Value>,
     keep_artifacts: bool,
@@ -195,7 +319,7 @@ async fn run_project(
     let result = match project_id {
         PROJECT_SWARM_FLOW => {
             let args = SimArgs::from_json(options, keep_artifacts);
-            run_swarm_flow(state, args)
+            run_swarm_flow(state, args, run_control)
                 .await
                 .map(|report| serde_json::to_value(report).unwrap_or(Value::Null))
         }
@@ -212,7 +336,11 @@ async fn run_project(
         },
         Err(err) => SimLabProjectReport {
             project_id: project_id.to_string(),
-            status: "failed".to_string(),
+            status: if is_cancelled_error(&err) {
+                "cancelled".to_string()
+            } else {
+                "failed".to_string()
+            },
             wall_time_s: started.elapsed().as_secs_f64(),
             report: None,
             error: Some(err.to_string()),
@@ -408,7 +536,11 @@ struct WorkerSessionRow {
     agent_id: String,
 }
 
-async fn run_swarm_flow(state: Arc<AppState>, args: SimArgs) -> Result<FlowReport> {
+async fn run_swarm_flow(
+    state: Arc<AppState>,
+    args: SimArgs,
+    run_control: Arc<SimRunControl>,
+) -> Result<FlowReport> {
     let started_at = Utc::now();
     let started = Instant::now();
 
@@ -422,8 +554,14 @@ async fn run_swarm_flow(state: Arc<AppState>, args: SimArgs) -> Result<FlowRepor
     let (llm_base_url, _server_addr, mock_server_task) =
         start_mock_llm_server(mock_state.clone()).await?;
 
+    let config_snapshot = state.config_store.get().await;
+    let db_path = config_snapshot.storage.db_path.clone();
+    let workspace_root = config_snapshot.workspace.root.clone();
+    let artifact_root_display = artifact_root.to_string_lossy().to_string();
+
     let run_result = async {
         let user_id = format!("swarm_flow_user_{}", Uuid::new_v4().simple());
+        *run_control.user_id.lock() = Some(user_id.clone());
         let (mother_agent_id, worker_agent_ids) =
             seed_agents(state.as_ref(), &user_id, args.workers)?;
 
@@ -434,7 +572,10 @@ async fn run_swarm_flow(state: Arc<AppState>, args: SimArgs) -> Result<FlowRepor
         }
 
         let mother_session_id = create_mother_session(state.as_ref(), &user_id, &mother_agent_id)?;
+        *run_control.mother_session_id.lock() = Some(mother_session_id.clone());
         let config_overrides = build_mock_request_overrides(&args, &llm_base_url);
+
+        apply_cancel_signal(state.as_ref(), run_control.as_ref());
 
         let mother_request = WunderRequest {
             user_id: user_id.clone(),
@@ -456,16 +597,29 @@ async fn run_swarm_flow(state: Arc<AppState>, args: SimArgs) -> Result<FlowRepor
             is_admin: false,
         };
 
+        if run_control.cancel_requested.load(Ordering::Relaxed) {
+            return Err(cancelled_error());
+        }
+
         let mother_response = state.orchestrator.run(mother_request).await?;
 
-        wait_until_no_active_runs(state.as_ref(), &user_id, args.max_wait_s, args.poll_ms).await?;
+        wait_until_no_active_runs(
+            state.as_ref(),
+            run_control.as_ref(),
+            &user_id,
+            args.max_wait_s,
+            args.poll_ms,
+        )
+        .await?;
         let _ = state.workspace.flush_writes_async().await;
 
         let report = build_report(
             &args,
             started_at,
             started.elapsed().as_secs_f64(),
-            &artifact_root,
+            &artifact_root_display,
+            &db_path,
+            &workspace_root,
             &llm_base_url,
             state.as_ref(),
             &user_id,
@@ -533,16 +687,22 @@ fn cleanup_swarm_flow_artifacts(
     mother_agent_id: &str,
     worker_agent_ids: &[String],
 ) -> Result<()> {
-    let (sessions, _) = state.user_store.list_chat_sessions(user_id, None, None, 0, 2048)?;
+    let (sessions, _) = state
+        .user_store
+        .list_chat_sessions(user_id, None, None, 0, 2048)?;
     for session in sessions {
-        let _ = state.storage.delete_chat_session(user_id, &session.session_id);
+        let _ = state
+            .storage
+            .delete_chat_session(user_id, &session.session_id);
         let _ = state.storage.delete_monitor_record(&session.session_id);
     }
 
     let _ = state.storage.delete_session_locks_by_user(user_id);
 
     let _ = state.user_store.delete_user_agent(user_id, mother_agent_id);
-    let _ = state.user_store.delete_agent_thread(user_id, mother_agent_id);
+    let _ = state
+        .user_store
+        .delete_agent_thread(user_id, mother_agent_id);
     for agent_id in worker_agent_ids {
         let _ = state.user_store.delete_user_agent(user_id, agent_id);
         let _ = state.user_store.delete_agent_thread(user_id, agent_id);
@@ -888,55 +1048,6 @@ fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWai
     None
 }
 
-async fn configure_app_state(
-    db_path: String,
-    workspace_root: String,
-    llm_base_url: String,
-    workers: usize,
-) -> Result<Arc<AppState>> {
-    let override_path = env::temp_dir().join(format!(
-        "wunder_swarm_flow_override_{}.yaml",
-        Uuid::new_v4().simple()
-    ));
-    let config_store = ConfigStore::new(override_path);
-    let model = mock_llm_model_config(&llm_base_url)?;
-
-    config_store
-        .update(move |cfg| {
-            cfg.storage.backend = "sqlite".to_string();
-            cfg.storage.db_path = db_path.clone();
-            cfg.workspace.root = workspace_root.clone();
-            cfg.server.max_active_sessions = (workers.saturating_mul(4)).max(16);
-            cfg.tools.swarm.max_parallel_tasks_per_team = workers.max(1);
-            cfg.tools.swarm.max_active_team_runs = workers.max(1);
-            cfg.tools.swarm.max_retry = 0;
-            cfg.llm.default = MOCK_MODEL_NAME.to_string();
-            cfg.llm.models.clear();
-            cfg.llm
-                .models
-                .insert(MOCK_MODEL_NAME.to_string(), model.clone());
-        })
-        .await?;
-
-    let config = config_store.get().await;
-    Ok(Arc::new(AppState::new(config_store, config)?))
-}
-
-fn mock_llm_model_config(base_url: &str) -> Result<LlmModelConfig> {
-    serde_json::from_value(json!({
-        "provider": "openai",
-        "base_url": base_url,
-        "api_key": "swarm-flow-mock-key",
-        "model": "mock-swarm-flow",
-        "stream": false,
-        "retry": 0,
-        "max_rounds": 6,
-        "tool_call_mode": "tool_call",
-        "temperature": 0.0
-    }))
-    .context("failed to build mock llm model config")
-}
-
 fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(String, Vec<String>)> {
     state.user_store.ensure_default_hive(user_id)?;
     let now = now_ts();
@@ -1008,26 +1119,44 @@ fn create_mother_session(state: &AppState, user_id: &str, mother_agent_id: &str)
 }
 
 async fn wait_until_no_active_runs(
-    db_path: &Path,
+    state: &AppState,
+    run_control: &SimRunControl,
     user_id: &str,
     max_wait_s: u64,
     poll_ms: u64,
 ) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(max_wait_s);
+    let mut cancelled = false;
     loop {
-        let conn = Connection::open(db_path)
-            .with_context(|| format!("failed to open sqlite db: {}", db_path.display()))?;
-        let active: i64 = conn.query_row(
-            "SELECT COUNT(1) FROM session_runs WHERE user_id = ? AND status IN ('queued', 'running')",
-            params![user_id],
-            |row| row.get(0),
-        )?;
-        if active <= 0 {
+        if run_control.cancel_requested.load(Ordering::Relaxed) {
+            cancelled = true;
+            apply_cancel_signal(state, run_control);
+        }
+
+        let active_locks = state.user_store.list_session_locks_by_user(user_id)?.len();
+        let active_sessions = state
+            .monitor
+            .list_sessions(true)
+            .into_iter()
+            .filter(|session| {
+                session
+                    .get("user_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .map(|value| value == user_id)
+                    .unwrap_or(false)
+            })
+            .count();
+
+        if active_locks == 0 && active_sessions == 0 {
+            if cancelled {
+                return Err(cancelled_error());
+            }
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(anyhow!(
-                "timed out waiting session_runs to settle, active={active}"
+                "timed out waiting active runs to settle, active_locks={active_locks}, active_sessions={active_sessions}"
             ));
         }
         sleep(Duration::from_millis(poll_ms)).await;
@@ -1039,9 +1168,9 @@ fn build_report(
     args: &SimArgs,
     started_at: DateTime<Utc>,
     wall_time_s: f64,
-    artifact_root: &Path,
-    db_path: &Path,
-    workspace_root: &Path,
+    artifact_root: &str,
+    db_path: &str,
+    workspace_root: &str,
     llm_base_url: &str,
     state: &AppState,
     user_id: &str,
@@ -1050,10 +1179,7 @@ fn build_report(
     mother_result: &crate::schemas::WunderResponse,
     mock_state: &MockLlmState,
 ) -> Result<FlowReport> {
-    let conn = Connection::open(db_path)
-        .with_context(|| format!("failed to open sqlite db: {}", db_path.display()))?;
-
-    let run_rows = load_session_runs(&conn, user_id)?;
+    let run_rows = load_session_runs(state, user_id)?;
     let mut run_status = BTreeMap::new();
     for row in &run_rows {
         *run_status.entry(row.status.clone()).or_insert(0) += 1;
@@ -1088,9 +1214,8 @@ fn build_report(
         .map(|session| session.session_id.clone())
         .collect::<Vec<_>>();
     let worker_status_map = latest_status_by_session(&run_rows);
-    let tool_calls_by_session =
-        load_tool_call_counts_by_session(&conn, user_id, &worker_session_ids)?;
-    let tool_calls_by_name = load_tool_call_counts_by_name(&conn, user_id)?;
+    let tool_calls_by_session = load_tool_call_counts_by_session(state, &worker_session_ids);
+    let tool_calls_by_name = load_tool_call_counts_by_name(state, user_id)?;
 
     let mut worker_items = Vec::new();
     let mut all_worker_success = true;
@@ -1119,9 +1244,12 @@ fn build_report(
     let worker_latency = build_worker_latency_stats(&run_rows, &worker_session_rows);
     let monitor_events = mother_event_counts(state, mother_session_id);
 
-    let active_left = run_rows
-        .iter()
-        .any(|row| matches!(row.status.as_str(), "queued" | "running"));
+    let active_left = run_rows.iter().any(|row| {
+        matches!(
+            row.status.as_str(),
+            "queued" | "running" | "waiting" | "cancelling"
+        )
+    });
 
     Ok(FlowReport {
         started_at,
@@ -1135,9 +1263,9 @@ fn build_report(
             worker_tool_loops: 2,
         },
         artifacts: FlowArtifacts {
-            root: artifact_root.to_string_lossy().to_string(),
-            db_path: db_path.to_string_lossy().to_string(),
-            workspace_root: workspace_root.to_string_lossy().to_string(),
+            root: artifact_root.to_string(),
+            db_path: db_path.to_string(),
+            workspace_root: workspace_root.to_string(),
             llm_base_url: llm_base_url.to_string(),
             kept: args.keep_artifacts,
         },
@@ -1175,24 +1303,46 @@ fn build_report(
     })
 }
 
-fn load_session_runs(conn: &Connection, user_id: &str) -> Result<Vec<SessionRunRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT session_id, status, COALESCE(queued_time, 0), COALESCE(started_time, 0), COALESCE(finished_time, 0) \
-         FROM session_runs WHERE user_id = ? ORDER BY queued_time ASC",
-    )?;
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok(SessionRunRow {
-            session_id: row.get(0)?,
-            status: normalize_status(row.get::<_, String>(1)?),
-            queued_time: row.get(2)?,
-            started_time: row.get(3)?,
-            finished_time: row.get(4)?,
-        })
-    })?;
-    let mut output = Vec::new();
-    for row in rows {
-        output.push(row?);
+fn load_session_runs(state: &AppState, user_id: &str) -> Result<Vec<SessionRunRow>> {
+    let (sessions, _) = state
+        .user_store
+        .list_chat_sessions(user_id, None, None, 0, 4096)?;
+    let mut output = Vec::with_capacity(sessions.len());
+
+    for session in sessions {
+        let record = state.monitor.get_record(&session.session_id);
+        let status = record
+            .as_ref()
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "missing".to_string());
+        let started_time = record
+            .as_ref()
+            .and_then(|value| value.get("start_time"))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let updated_time = record
+            .as_ref()
+            .and_then(|value| value.get("updated_time"))
+            .and_then(Value::as_f64)
+            .unwrap_or(started_time);
+        let finished_time = record
+            .as_ref()
+            .and_then(|value| value.get("ended_time"))
+            .and_then(Value::as_f64)
+            .unwrap_or(updated_time.max(started_time));
+
+        output.push(SessionRunRow {
+            session_id: session.session_id,
+            status: normalize_status(status),
+            queued_time: started_time,
+            started_time,
+            finished_time,
+        });
     }
+
+    output.sort_by(|left, right| left.queued_time.total_cmp(&right.queued_time));
     Ok(output)
 }
 
@@ -1205,38 +1355,72 @@ fn latest_status_by_session(rows: &[SessionRunRow]) -> HashMap<String, String> {
 }
 
 fn load_tool_call_counts_by_session(
-    conn: &Connection,
-    user_id: &str,
+    state: &AppState,
     session_ids: &[String],
-) -> Result<HashMap<String, usize>> {
+) -> HashMap<String, usize> {
     let mut output = HashMap::new();
-    let mut stmt =
-        conn.prepare("SELECT COUNT(1) FROM tool_logs WHERE user_id = ? AND session_id = ?")?;
     for session_id in session_ids {
-        let count: i64 = stmt.query_row(params![user_id, session_id], |row| row.get(0))?;
-        output.insert(session_id.clone(), count.max(0) as usize);
+        let count = state
+            .monitor
+            .get_record(session_id)
+            .as_ref()
+            .map(count_tool_result_events)
+            .unwrap_or(0);
+        output.insert(session_id.clone(), count);
     }
-    Ok(output)
+    output
 }
 
 fn load_tool_call_counts_by_name(
-    conn: &Connection,
+    state: &AppState,
     user_id: &str,
 ) -> Result<BTreeMap<String, usize>> {
-    let mut stmt = conn.prepare(
-        "SELECT tool, COUNT(1) FROM tool_logs WHERE user_id = ? GROUP BY tool ORDER BY tool ASC",
-    )?;
-    let rows = stmt.query_map(params![user_id], |row| {
-        let name: String = row.get(0)?;
-        let count: i64 = row.get(1)?;
-        Ok((name, count.max(0) as usize))
-    })?;
+    let (sessions, _) = state
+        .user_store
+        .list_chat_sessions(user_id, None, None, 0, 4096)?;
     let mut output = BTreeMap::new();
-    for row in rows {
-        let (name, count) = row?;
-        output.insert(name, count);
+
+    for session in sessions {
+        let Some(record) = state.monitor.get_record(&session.session_id) else {
+            continue;
+        };
+        for event in monitor_events(&record) {
+            if event.get("type").and_then(Value::as_str) != Some("tool_result") {
+                continue;
+            }
+            let Some(tool_name) = tool_name_from_event(event) else {
+                continue;
+            };
+            *output.entry(tool_name).or_insert(0) += 1;
+        }
     }
+
     Ok(output)
+}
+
+fn monitor_events(record: &Value) -> &[Value] {
+    record
+        .get("events")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn count_tool_result_events(record: &Value) -> usize {
+    monitor_events(record)
+        .iter()
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("tool_result"))
+        .count()
+}
+
+fn tool_name_from_event(event: &Value) -> Option<String> {
+    event
+        .get("data")
+        .and_then(|payload| payload.get("tool"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
 }
 
 fn build_worker_latency_stats(
@@ -1412,7 +1596,14 @@ fn compute_peak_concurrency(rows: &[SessionRunRow]) -> usize {
 }
 
 fn normalize_status(status: String) -> String {
-    status.trim().to_ascii_lowercase()
+    match status.trim().to_ascii_lowercase().as_str() {
+        "finished" | "success" => "success".to_string(),
+        "error" | "failed" | "cancelled" => "failed".to_string(),
+        "running" | "queued" => "running".to_string(),
+        "waiting" => "waiting".to_string(),
+        "cancelling" => "cancelling".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn now_ts() -> f64 {

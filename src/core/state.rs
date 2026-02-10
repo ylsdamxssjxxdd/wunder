@@ -1,4 +1,4 @@
-// ????????????????????
+// 全局应用状态：集中初始化核心服务并管理依赖注入。
 
 use crate::a2a_store::A2aStore;
 use crate::channels::ChannelHub;
@@ -115,7 +115,7 @@ impl AppState {
         let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
         let user_tool_store =
-            Arc::new(UserToolStore::new(&config).context("???????????")?);
+            Arc::new(UserToolStore::new(&config).context("初始化用户工具存储失败")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
 
@@ -222,7 +222,7 @@ impl AppState {
         })
     }
 
-    /// ????????????????????
+    /// 运行时重新加载技能注册表。
     pub async fn reload_skills(&self, config: &Config) {
         let registry = load_skills(config, true, true, true);
         let mut guard = self.skills.write().await;
@@ -241,12 +241,10 @@ fn init_storage(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     match backend.as_str() {
         "sqlite" | "default" => init_storage_strict(config),
         "postgres" | "postgresql" | "pg" => init_storage_strict(config).map_err(|err| {
-            anyhow!(
-                "Postgres ???????: {err}???? PostgreSQL ?? storage.backend ?? sqlite/auto?"
-            )
+            anyhow!("Postgres 初始化失败: {err}。请检查 PostgreSQL 配置，或将 storage.backend 改为 sqlite/auto。")
         }),
         "auto" => init_storage_auto(config),
-        other => Err(anyhow!("??????: {other}")),
+        other => Err(anyhow!("不支持的存储后端: {other}")),
     }
 }
 
@@ -260,7 +258,7 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     match init_storage_strict(config) {
         Ok(storage) => Ok(storage),
         Err(err) => {
-            warn!("Postgres ?????????? SQLite: {err}");
+            warn!("Postgres 初始化失败，已回退到 SQLite: {err}");
             let sqlite = Arc::new(SqliteStorage::new(config.storage.db_path.clone()));
             sqlite.ensure_initialized()?;
             Ok(sqlite)

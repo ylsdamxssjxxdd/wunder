@@ -1,4 +1,4 @@
-﻿use crate::args::GlobalArgs;
+use crate::args::GlobalArgs;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -126,10 +126,7 @@ impl CliRuntime {
     }
 
     pub fn resolve_session(&self, preferred: Option<&str>) -> String {
-        if let Some(value) = preferred
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(value) = preferred.map(str::trim).filter(|value| !value.is_empty()) {
             return value.to_string();
         }
         if let Some(saved) = self.load_saved_session() {
@@ -139,33 +136,26 @@ impl CliRuntime {
     }
 
     pub async fn resolve_model_name(&self, requested: Option<&str>) -> Option<String> {
-        if let Some(value) = requested
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(value) = requested.map(str::trim).filter(|value| !value.is_empty()) {
             return Some(value.to_string());
         }
         let config = self.state.config_store.get().await;
         if !config.llm.default.trim().is_empty() {
             return Some(config.llm.default.trim().to_string());
         }
-        config
-            .llm
-            .models
-            .iter()
-            .find_map(|(name, model)| {
-                let model_type = model
-                    .model_type
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .to_ascii_lowercase();
-                if matches!(model_type.as_str(), "embedding" | "embed" | "emb") {
-                    None
-                } else {
-                    Some(name.clone())
-                }
-            })
+        config.llm.models.iter().find_map(|(name, model)| {
+            let model_type = model
+                .model_type
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if matches!(model_type.as_str(), "embedding" | "embed" | "emb") {
+                None
+            } else {
+                Some(name.clone())
+            }
+        })
     }
 }
 
