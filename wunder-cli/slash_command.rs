@@ -134,6 +134,56 @@ pub fn help_lines() -> Vec<String> {
         .collect()
 }
 
+pub fn popup_lines(prefix: &str, limit: usize) -> Vec<String> {
+    let prefix = prefix.trim().to_ascii_lowercase();
+    let width = SLASH_COMMAND_DOCS
+        .iter()
+        .map(|entry| entry.usage.len())
+        .max()
+        .unwrap_or(0);
+
+    SLASH_COMMAND_DOCS
+        .iter()
+        .filter(|entry| entry.command != SlashCommand::Quit)
+        .filter(|entry| {
+            if prefix.is_empty() {
+                return true;
+            }
+            command_token(entry)
+                .trim_start_matches('/')
+                .to_ascii_lowercase()
+                .contains(prefix.as_str())
+        })
+        .take(limit)
+        .map(|entry| {
+            format!(
+                "{usage:<width$}  {description}",
+                usage = entry.usage,
+                description = entry.description,
+                width = width,
+            )
+        })
+        .collect()
+}
+
+pub fn first_command_completion(prefix: &str) -> Option<String> {
+    let prefix = prefix.trim().to_ascii_lowercase();
+    SLASH_COMMAND_DOCS
+        .iter()
+        .filter(|entry| entry.command != SlashCommand::Quit)
+        .find(|entry| {
+            let token = command_token(entry)
+                .trim_start_matches('/')
+                .to_ascii_lowercase();
+            token.starts_with(prefix.as_str())
+        })
+        .map(|entry| command_token(entry).trim_start_matches('/').to_string())
+}
+
+fn command_token(entry: &SlashCommandDoc) -> &str {
+    entry.usage.split_whitespace().next().unwrap_or(entry.usage)
+}
+
 fn split_head(input: &str) -> (&str, &str) {
     let cleaned = input.trim_start();
     if cleaned.is_empty() {

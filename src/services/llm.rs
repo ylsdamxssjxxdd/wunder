@@ -231,62 +231,69 @@ impl LlmClient {
                 let bytes = item?;
                 let part = String::from_utf8_lossy(&bytes);
                 buffer.push_str(&part);
-                while let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-                    if line.is_empty() || !line.starts_with("data:") {
-                        continue;
-                    }
-                    let data = line.trim_start_matches("data:").trim();
-                    if data == "[DONE]" {
+
+                while let Some(event_block) = take_next_sse_event(&mut buffer) {
+                    if process_sse_event_block(
+                        event_block.as_str(),
+                        &mut combined,
+                        &mut reasoning_combined,
+                        &mut usage,
+                        &mut tool_calls_accumulator,
+                        &mut on_delta,
+                    )
+                    .await?
+                    {
                         saw_done = true;
                         break;
                     }
-                    match serde_json::from_str::<Value>(data) {
-                        Ok(payload) => {
-                            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
-                                usage = Some(new_usage);
-                            }
-                            let delta = payload
-                                .get("choices")
-                                .and_then(|value| value.get(0))
-                                .and_then(|value| value.get("delta"))
-                                .cloned()
-                                .unwrap_or(Value::Null);
-                            let content_delta =
-                                delta.get("content").and_then(Value::as_str).unwrap_or("");
-                            let reasoning_delta = delta
-                                .get("reasoning_content")
-                                .or_else(|| delta.get("reasoning"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("");
-                            update_stream_tool_calls(&mut tool_calls_accumulator, &delta);
-                            if !content_delta.is_empty() {
-                                combined.push_str(content_delta);
-                            }
-                            if !reasoning_delta.is_empty() {
-                                reasoning_combined.push_str(reasoning_delta);
-                            }
-                            if !content_delta.is_empty() || !reasoning_delta.is_empty() {
-                                on_delta(content_delta.to_string(), reasoning_delta.to_string())
-                                    .await?;
-                            }
-                        }
-                        Err(err) => {
-                            warn!(
-                                "LLM stream json parse failed: {err}, data={}",
-                                truncate_text(data, 512)
-                            );
-                        }
-                    }
                 }
+
                 if saw_done {
                     break;
                 }
             }
+
+            while !saw_done {
+                let Some(event_block) = take_next_sse_event(&mut buffer) else {
+                    break;
+                };
+                if process_sse_event_block(
+                    event_block.as_str(),
+                    &mut combined,
+                    &mut reasoning_combined,
+                    &mut usage,
+                    &mut tool_calls_accumulator,
+                    &mut on_delta,
+                )
+                .await?
+                {
+                    saw_done = true;
+                    break;
+                }
+            }
+
+            if !saw_done && !buffer.trim().is_empty() {
+                if process_sse_event_block(
+                    buffer.as_str(),
+                    &mut combined,
+                    &mut reasoning_combined,
+                    &mut usage,
+                    &mut tool_calls_accumulator,
+                    &mut on_delta,
+                )
+                .await?
+                {
+                    saw_done = true;
+                }
+            }
+
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
-            if !saw_done {
-                warn!("LLM stream ended without [DONE]");
+            if !saw_done
+                && combined.trim().is_empty()
+                && reasoning_combined.trim().is_empty()
+                && tool_calls.is_none()
+            {
+                warn!("LLM stream ended without [DONE] and without payload");
             }
             return Ok(LlmResponse {
                 content: combined,
@@ -593,6 +600,169 @@ fn extract_tool_calls(message: &Value) -> Option<Value> {
         .cloned()
 }
 
+fn extract_stream_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    match value {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+                    .or_else(|| item.get("content").and_then(Value::as_str))
+            })
+            .collect::<String>(),
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| map.get("content").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
+    }
+}
+
+fn take_next_sse_event(buffer: &mut String) -> Option<String> {
+    let newline_event = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf_event = buffer.find("\r\n\r\n").map(|index| (index, 4));
+    let (index, delimiter_len) = match (newline_event, crlf_event) {
+        (Some(left), Some(right)) => {
+            if left.0 <= right.0 {
+                left
+            } else {
+                right
+            }
+        }
+        (Some(value), None) | (None, Some(value)) => value,
+        (None, None) => return None,
+    };
+
+    let event = buffer[..index].to_string();
+    *buffer = buffer[index + delimiter_len..].to_string();
+    Some(event)
+}
+
+async fn process_sse_event_block<F, Fut>(
+    block: &str,
+    combined: &mut String,
+    reasoning_combined: &mut String,
+    usage: &mut Option<TokenUsage>,
+    tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    on_delta: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let mut data_lines = Vec::new();
+    for raw_line in block.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            continue;
+        }
+        if let Some(data) = trimmed.strip_prefix("data:") {
+            data_lines.push(data.trim_start());
+        }
+    }
+
+    if data_lines.is_empty() {
+        return Ok(false);
+    }
+
+    let data = data_lines.join("\n");
+    process_stream_payload(
+        data.trim(),
+        combined,
+        reasoning_combined,
+        usage,
+        tool_calls_accumulator,
+        on_delta,
+    )
+    .await
+}
+
+async fn process_stream_payload<F, Fut>(
+    data: &str,
+    combined: &mut String,
+    reasoning_combined: &mut String,
+    usage: &mut Option<TokenUsage>,
+    tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    on_delta: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    if data.is_empty() {
+        return Ok(false);
+    }
+    if data == "[DONE]" {
+        return Ok(true);
+    }
+
+    match serde_json::from_str::<Value>(data) {
+        Ok(payload) => {
+            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+                *usage = Some(new_usage);
+            }
+            let choice = payload.get("choices").and_then(|value| value.get(0));
+            let delta = choice
+                .and_then(|value| value.get("delta"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let mut content_delta = extract_stream_text(delta.get("content"));
+            if content_delta.is_empty() {
+                content_delta = extract_stream_text(
+                    choice
+                        .and_then(|value| value.get("message"))
+                        .and_then(|value| value.get("content")),
+                );
+            }
+            let mut reasoning_delta = extract_stream_text(
+                delta
+                    .get("reasoning_content")
+                    .or_else(|| delta.get("reasoning")),
+            );
+            if reasoning_delta.is_empty() {
+                reasoning_delta =
+                    extract_stream_text(choice.and_then(|value| value.get("message")).and_then(
+                        |value| {
+                            value
+                                .get("reasoning_content")
+                                .or_else(|| value.get("reasoning"))
+                        },
+                    ));
+            }
+            update_stream_tool_calls(tool_calls_accumulator, &delta);
+            if delta.is_null() {
+                if let Some(message) = choice.and_then(|value| value.get("message")) {
+                    update_stream_tool_calls(tool_calls_accumulator, message);
+                }
+            }
+            if !content_delta.is_empty() {
+                combined.push_str(content_delta.as_str());
+            }
+            if !reasoning_delta.is_empty() {
+                reasoning_combined.push_str(reasoning_delta.as_str());
+            }
+            if !content_delta.is_empty() || !reasoning_delta.is_empty() {
+                on_delta(content_delta, reasoning_delta).await?;
+            }
+        }
+        Err(err) => {
+            warn!(
+                "LLM stream json parse failed: {err}, data={}",
+                truncate_text(data, 512)
+            );
+        }
+    }
+
+    Ok(false)
+}
+
 #[derive(Debug, Default, Clone)]
 struct StreamToolCall {
     id: Option<String>,
@@ -881,4 +1051,118 @@ fn select_model_entry<'a>(payload: &'a Value, model: &str) -> Option<&'a Value> 
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn take_next_sse_event_handles_crlf_and_lf_delimiters() {
+        let mut buffer = "data: {\"x\":1}\r\n\r\ndata: {\"y\":2}\n\n".to_string();
+        let first = take_next_sse_event(&mut buffer).expect("first event");
+        assert_eq!(first, "data: {\"x\":1}");
+        let second = take_next_sse_event(&mut buffer).expect("second event");
+        assert_eq!(second, "data: {\"y\":2}");
+        assert!(take_next_sse_event(&mut buffer).is_none());
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_parses_delta_without_done() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process sse block");
+
+        assert!(!done);
+        assert_eq!(combined, "hello");
+        assert!(reasoning.is_empty());
+        assert!(usage.is_none());
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_uses_message_content_fallback() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"message\":{\"content\":\"fallback\"}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process sse block");
+
+        assert!(!done);
+        assert_eq!(combined, "fallback");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_supports_multiline_json_data() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let block = "event: message\n\
+                     data: {\n\
+                     data: \"choices\": [{\"delta\": {\"content\": \"ok\"}}]\n\
+                     data: }";
+        let done = process_sse_event_block(
+            block,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process sse block");
+
+        assert!(!done);
+        assert_eq!(combined, "ok");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_stops_on_done_payload() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: [DONE]",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process sse block");
+
+        assert!(done);
+        assert!(combined.is_empty());
+        assert!(reasoning.is_empty());
+    }
 }

@@ -46,6 +46,10 @@ wunder-cli/
   runtime.rs                     # 运行时初始化（WUNDER_TEMP、环境覆盖、轻量状态）
   render.rs                      # 流式事件渲染（text/jsonl）
   slash_command.rs               # codex 风格斜杠命令解析与帮助文案
+  tui/
+    mod.rs                       # TUI 生命周期与事件循环
+    app.rs                       # TUI 状态机（输入/会话/流式事件/命令路由）
+    ui.rs                        # TUI 布局与样式渲染
 
 src/
   ...                            # 继续复用现有核心能力
@@ -183,8 +187,8 @@ CLI 初始化时设置：
 ## 7.2 子命令
 
 - `ask`：一次性提问。
-- `chat`：交互会话。
-- `resume [SESSION_ID] [PROMPT]`：恢复会话，支持 `--last`。
+- `chat`：经典行式交互会话（非 TUI 兜底模式）。
+- `resume [SESSION_ID] [PROMPT]`：恢复会话，支持 `--last`，终端场景默认进入 TUI。
 - `tool run|list`：工具直调/列表。
 - `exec`（别名 `e`）：命令执行快捷入口（映射 `执行命令` 工具）。
 - `mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
@@ -196,9 +200,9 @@ CLI 初始化时设置：
 ## 7.3 默认行为
 
 - 无子命令 + 有 `PROMPT`：执行一次任务。
-- 无子命令 + 终端输入：进入交互模式。
+- 无子命令 + 终端输入：默认进入 codex 风格 TUI 交互模式。
 - 无子命令 + 管道输入：读 stdin 执行一次任务。
-- `resume` 子命令默认恢复最近会话并进入交互，可通过 `--last` 或显式 `SESSION_ID` 指定会话。
+- `resume` 子命令默认恢复最近会话并进入 TUI；非 TTY 或 `--json` 场景回退到经典行式交互。
 
 这与 codex 的“默认进入主交互，子命令化扩展能力、支持会话恢复”保持一致。
 
@@ -210,7 +214,7 @@ CLI 初始化时设置：
 - `/tool-call-mode <tool_call|function_call> [model]`：快速切换工具调用协议（支持 `/mode` 别名）。
 - `/session`：查看当前会话 id。
 - `/new`：新建会话并切换。
-- `/config`：进入模型配置引导（三段输入）。
+- `/config`：TUI 下支持 `/config <base_url> <api_key> <model>` 一次性配置；经典 `chat` 模式支持三段引导输入。
 - `/config show`：打印当前运行配置。
 - `/exit`：退出交互。
 - 未识别 `/xxx` 指令会直接提示 unknown command，并引导使用 `/help`。

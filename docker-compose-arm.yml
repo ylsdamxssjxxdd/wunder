@@ -24,6 +24,8 @@ services:
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
       - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
+      - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
+      - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
       - WUNDER_API_KEY=${WUNDER_API_KEY}
@@ -63,6 +65,8 @@ services:
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
+      - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
+      - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
       - CARGO_HOME=/app/.cargo/arm64

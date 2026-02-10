@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// Wunder CLI
 ///
-/// If no subcommand is specified, options are applied to interactive mode.
+/// If no subcommand is specified, enters TUI on TTY (or handles one-shot input).
 #[derive(Debug, Parser)]
 #[command(
     author,
@@ -16,7 +16,7 @@ pub struct Cli {
     #[command(flatten)]
     pub global: GlobalArgs,
 
-    /// Initial prompt. When omitted, enters interactive mode.
+    /// Initial prompt. When omitted, enters TUI/interactive mode.
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 

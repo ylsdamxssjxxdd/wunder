@@ -2910,11 +2910,12 @@
                   <label data-i18n="simLab.form.projects">测试项目</label>
                   <div id="simLabProjects" class="simlab-project-list"></div>
                 </div>
-                <label class="checkbox-inline simlab-keep-artifacts">
-                  <input id="simLabKeepArtifacts" type="checkbox" />
-                  <span data-i18n="simLab.form.keepArtifacts">保留测试产物</span>
-                </label>
                 <div id="simLabStatus" class="muted"></div>
+                <div class="simlab-history-card">
+                  <div class="simlab-history-title" data-i18n="simLab.history.title">测试历史</div>
+                  <div id="simLabHistoryList" class="simlab-history-list"></div>
+                  <div id="simLabHistoryEmpty" class="muted" data-i18n="simLab.history.empty">暂无测试历史</div>
+                </div>
               </div>
             </div>
             <div class="simlab-main">
@@ -2923,6 +2924,13 @@
                   <h2 data-i18n="simLab.result.title">测试报告</h2>
                 </div>
                 <div id="simLabReportList" class="simlab-report-list-body"></div>
+              </div>
+              <div class="simlab-detail-card">
+                <div class="list-header">
+                  <h2 data-i18n="simLab.detail.title">详细报告</h2>
+                </div>
+                <div id="simLabDetailLabel" class="simlab-detail-label muted"></div>
+                <pre id="simLabDetailReport" class="simlab-detail-report"></pre>
               </div>
             </div>
           </div>

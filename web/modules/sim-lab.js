@@ -2,7 +2,7 @@ import { elements } from "./elements.js?v=20260118-07";
 import { getWunderBase } from "./api.js";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260118-07";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
 
 let initialized = false;
 let running = false;
@@ -11,6 +11,12 @@ let selectedProjectIds = new Set();
 let lastReport = null;
 let currentRunId = "";
 let stopping = false;
+let historyItems = [];
+let detailPayload = null;
+let detailLabel = "";
+
+const HISTORY_STORAGE_KEY = "wunder_sim_lab_history";
+const HISTORY_LIMIT = 20;
 
 const numberValue = (element, fallback) => {
   if (!element) {
@@ -28,6 +34,132 @@ const formatSeconds = (value) => {
   return `${numeric.toFixed(3)} s`;
 };
 
+const formatDateTime = (value) => {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleString(getCurrentLanguage());
+};
+
+const readHistoryStorage = () => {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveHistoryStorage = (items) => {
+  const normalized = Array.isArray(items) ? items.slice(0, HISTORY_LIMIT) : [];
+  historyItems = normalized;
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const hydrateHistory = () => {
+  historyItems = readHistoryStorage().slice(0, HISTORY_LIMIT);
+};
+
+const buildHistoryItem = (report) => ({
+  run_id: String(report?.run_id || createRunId()),
+  started_at: report?.started_at || new Date().toISOString(),
+  finished_at: report?.finished_at || new Date().toISOString(),
+  project_total: Number(report?.project_total || 0),
+  project_success: Number(report?.project_success || 0),
+  project_failed: Number(report?.project_failed || 0),
+  mode: String(report?.mode || "parallel"),
+  report,
+});
+
+const upsertHistory = (report) => {
+  if (!report || typeof report !== "object") {
+    return;
+  }
+  const item = buildHistoryItem(report);
+  const withoutCurrent = historyItems.filter((entry) => entry.run_id !== item.run_id);
+  saveHistoryStorage([item, ...withoutCurrent]);
+  renderHistory();
+};
+
+const setDetail = (label, payload) => {
+  detailLabel = label || "";
+  detailPayload = payload ?? null;
+  renderDetail();
+};
+
+const renderDetail = () => {
+  if (elements.simLabDetailLabel) {
+    elements.simLabDetailLabel.textContent = detailLabel;
+  }
+  if (!elements.simLabDetailReport) {
+    return;
+  }
+  if (!detailPayload) {
+    elements.simLabDetailReport.textContent = t("simLab.detail.empty");
+    return;
+  }
+  try {
+    elements.simLabDetailReport.textContent = JSON.stringify(detailPayload, null, 2);
+  } catch {
+    elements.simLabDetailReport.textContent = String(detailPayload);
+  }
+};
+
+const restoreHistory = (runId) => {
+  const selected = historyItems.find((item) => item.run_id === runId);
+  if (!selected) {
+    return;
+  }
+  renderReport(selected.report || null);
+  setStatus(t("simLab.status.restored", { runId: selected.run_id }));
+};
+
+const renderHistory = () => {
+  if (!elements.simLabHistoryList || !elements.simLabHistoryEmpty) {
+    return;
+  }
+  elements.simLabHistoryList.innerHTML = "";
+  const list = Array.isArray(historyItems) ? historyItems : [];
+  elements.simLabHistoryEmpty.hidden = list.length > 0;
+  if (!list.length) {
+    return;
+  }
+
+  list.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "simlab-history-item";
+
+    const title = document.createElement("div");
+    title.className = "simlab-history-item-title";
+    title.textContent = `${item.run_id}`;
+
+    const meta = document.createElement("div");
+    meta.className = "simlab-history-item-meta";
+    meta.textContent = t("simLab.history.itemMeta", {
+      time: formatDateTime(item.finished_at || item.started_at),
+      success: Number(item.project_success || 0),
+      total: Number(item.project_total || 0),
+    });
+
+    button.appendChild(title);
+    button.appendChild(meta);
+    button.addEventListener("click", () => restoreHistory(item.run_id));
+    elements.simLabHistoryList.appendChild(button);
+  });
+};
 
 const createRunId = () =>
   `simlab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -159,9 +291,6 @@ const applyDefaults = () => {
   }
   if (elements.simLabPollMs) {
     elements.simLabPollMs.value = String(defaults.poll_ms || 120);
-  }
-  if (elements.simLabKeepArtifacts) {
-    elements.simLabKeepArtifacts.checked = Boolean(defaults.keep_artifacts);
   }
 };
 
@@ -344,15 +473,12 @@ const renderProjectReports = (projects) => {
     return;
   }
 
-  list.forEach((project, index) => {
-    const row = document.createElement("details");
+  list.forEach((project) => {
+    const row = document.createElement("div");
     row.className = "simlab-report-item";
-    if (index === 0) {
-      row.open = true;
-    }
 
-    const summary = document.createElement("summary");
-    summary.className = "simlab-report-summary";
+    const header = document.createElement("div");
+    header.className = "simlab-report-summary";
 
     const left = document.createElement("div");
     left.className = "simlab-report-left";
@@ -379,20 +505,34 @@ const renderProjectReports = (projects) => {
     status.className = `simlab-status-pill ${statusClass(project.status)}`;
     status.textContent = statusLabel(project.status);
 
+    const detailBtn = document.createElement("button");
+    detailBtn.type = "button";
+    detailBtn.className = "simlab-detail-btn";
+    detailBtn.textContent = t("simLab.result.viewDetail");
+    detailBtn.addEventListener("click", () => {
+      const label = t("simLab.detail.projectLabel", {
+        title: projectTitle(project.project_id),
+        runId: lastReport?.run_id || "-",
+      });
+      setDetail(label, {
+        project_id: project.project_id,
+        status: project.status,
+        wall_time_s: project.wall_time_s,
+        error: project.error,
+        report: project.report,
+      });
+    });
+
     right.appendChild(duration);
     right.appendChild(status);
+    right.appendChild(detailBtn);
 
-    summary.appendChild(left);
-    summary.appendChild(right);
-    row.appendChild(summary);
+    header.appendChild(left);
+    header.appendChild(right);
+    row.appendChild(header);
 
     const content = document.createElement("div");
     content.className = "simlab-report-content";
-
-    const hint = document.createElement("div");
-    hint.className = "simlab-expand-hint";
-    hint.textContent = t("simLab.result.expandHint");
-    content.appendChild(hint);
 
     if (project.error) {
       const errorBox = document.createElement("div");
@@ -429,6 +569,16 @@ const renderProjectReports = (projects) => {
 const renderReport = (report) => {
   lastReport = report || null;
   renderProjectReports(lastReport?.projects || []);
+  if (!lastReport) {
+    setDetail("", null);
+    return;
+  }
+  setDetail(
+    t("simLab.detail.runLabel", {
+      runId: String(lastReport.run_id || "-"),
+    }),
+    lastReport
+  );
 };
 
 const buildRunPayload = (runId) => {
@@ -439,14 +589,12 @@ const buildRunPayload = (runId) => {
   return {
     run_id: runId,
     projects,
-    keep_artifacts: Boolean(elements.simLabKeepArtifacts?.checked),
     options: {
       swarm_flow: {
         workers: Math.max(1, Math.floor(numberValue(elements.simLabWorkers, 100))),
         max_wait_s: Math.max(10, Math.floor(numberValue(elements.simLabMaxWait, 180))),
         mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
-        keep_artifacts: Boolean(elements.simLabKeepArtifacts?.checked),
       },
     },
   };
@@ -514,6 +662,7 @@ const runSimulation = async () => {
     const data = await response.json();
     const report = data?.data || {};
     renderReport(report);
+    upsertHistory(report);
 
     const projects = Array.isArray(report?.projects) ? report.projects : [];
     const cancelledCount = projects.filter(
@@ -559,10 +708,15 @@ export const initSimLabPanel = async () => {
     window.addEventListener("wunder:language-changed", () => {
       renderProjects();
       renderReport(lastReport);
+      renderHistory();
+      renderDetail();
       updateRunButton();
     });
+    hydrateHistory();
     updateRunButton();
     renderReport(null);
+    renderHistory();
+    renderDetail();
   }
   await reconcileRunningState();
   await fetchProjects();

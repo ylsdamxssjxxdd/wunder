@@ -12,6 +12,7 @@ use wunder_server::state::{AppState, AppStateInitOptions};
 
 pub const CLI_DEFAULT_USER_ID: &str = "cli_user";
 
+#[derive(Clone)]
 pub struct CliRuntime {
     pub state: Arc<AppState>,
     pub launch_dir: PathBuf,

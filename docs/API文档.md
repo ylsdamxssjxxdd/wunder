@@ -2383,16 +2383,17 @@
 
 > 说明：wunder-cli 为本地命令行入口，不走 HTTP 路由，但复用与 /wunder 相同的 orchestrator/tool/mcp/skills 核心链路。
 
-- 默认无子命令进入交互模式；有 PROMPT 时执行单次任务。
+- 默认无子命令在 TTY 进入 codex 风格 TUI；有 PROMPT 时执行单次任务。
 - `wunder-cli ask <PROMPT>`：单次提问。
-- `wunder-cli chat [PROMPT]`：交互会话。
-- `wunder-cli resume [SESSION_ID] [PROMPT] [--last]`：恢复会话。
+- `wunder-cli chat [PROMPT]`：经典行式交互会话（非 TUI 兜底）。
+- `wunder-cli resume [SESSION_ID] [PROMPT] [--last]`：恢复会话（TTY 默认进入 TUI，非 TTY 回退行式交互）。
 - `wunder-cli tool run <name> --args <json>`：直接工具调用。
 - `wunder-cli exec|e <command...>`：命令执行快捷入口。
 - `wunder-cli mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
 - `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
 - `wunder-cli config show|set-tool-call-mode`：查看/设置运行配置。
 - `wunder-cli doctor`：运行时环境诊断。
+- 无子命令且终端可用时，默认进入 codex 风格 TUI（顶部状态栏 + 会话区 + 命令提示 + 输入区）。
 - 默认读取 `--config` 指定或 `config/wunder.yaml`；若 CLI 未找到仓库配置，会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为基础配置。
 
 - 交互态内置 codex 风格 slash 命令：
@@ -2400,7 +2401,7 @@
   - `/status`：输出会话状态（session/model/tool_call_mode/workspace/db）。
   - `/model [name]`：查看当前模型，或切换默认模型。
   - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
-  - `/config`：依次提示输入 `base_url`、`api_key`、`model`，写入 `WUNDER_TEMP/config/wunder.override.yaml` 并设为默认模型。
+  - `/config`：TUI 下使用 `/config <base_url> <api_key> <model>` 一次性配置；`chat` 行式模式仍支持三段引导输入。
   - `/config show`：输出当前运行配置。
   - `/new`、`/session`、`/exit`：会话控制。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。

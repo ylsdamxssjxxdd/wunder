@@ -2,6 +2,7 @@ mod args;
 mod render;
 mod runtime;
 mod slash_command;
+mod tui;
 
 use anyhow::{anyhow, Context, Result};
 use args::{
@@ -88,6 +89,10 @@ async fn run_default(
         return Ok(());
     }
 
+    if should_run_tui(global) {
+        return tui::run_main(runtime, global, None, None).await;
+    }
+
     run_chat_loop(runtime, global, None, None).await
 }
 
@@ -140,7 +145,18 @@ async fn handle_resume(
         Some(prompt) => Some(resolve_prompt_text(Some(prompt))?),
         None => None,
     };
+    if should_run_tui(global) {
+        return tui::run_main(runtime, global, first_prompt, Some(session_id)).await;
+    }
+
     run_chat_loop(runtime, global, first_prompt, Some(session_id)).await
+}
+
+fn should_run_tui(global: &GlobalArgs) -> bool {
+    if global.json {
+        return false;
+    }
+    io::stdin().is_terminal() && io::stdout().is_terminal() && io::stderr().is_terminal()
 }
 
 async fn run_chat_loop(
@@ -1003,18 +1019,18 @@ async fn handle_doctor(
     Ok(())
 }
 
-async fn run_prompt_once(
+pub(crate) async fn build_wunder_request(
     runtime: &CliRuntime,
     global: &GlobalArgs,
     prompt: &str,
     session_id: &str,
-) -> Result<FinalEvent> {
+) -> WunderRequest {
     let config = runtime.state.config_store.get().await;
     let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
     let request_overrides =
         build_request_overrides(&config, model_name.as_deref(), global.tool_call_mode);
 
-    let request = WunderRequest {
+    WunderRequest {
         user_id: runtime.user_id.clone(),
         question: prompt.trim().to_string(),
         tool_names: Vec::new(),
@@ -1023,14 +1039,23 @@ async fn run_prompt_once(
         debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: None,
-        model_name: model_name.clone(),
+        model_name,
         language: global.language.clone(),
         config_overrides: request_overrides,
         agent_prompt: None,
         attachments: None,
         allow_queue: true,
         is_admin: false,
-    };
+    }
+}
+
+async fn run_prompt_once(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    prompt: &str,
+    session_id: &str,
+) -> Result<FinalEvent> {
+    let request = build_wunder_request(runtime, global, prompt, session_id).await;
 
     if global.no_stream {
         let response = runtime.state.orchestrator.run(request).await?;

@@ -1127,17 +1127,23 @@ fn merge_yaml(base: &mut Value, override_value: Value) {
                 match base_map.get_mut(&key) {
                     Some(existing) => merge_yaml(existing, value),
                     None => {
-                        base_map.insert(key, value);
+                        if !is_blank_yaml_string(&value) {
+                            base_map.insert(key, value);
+                        }
                     }
                 }
             }
         }
         (base_slot, override_value) => {
-            if !override_value.is_null() {
+            if !override_value.is_null() && !is_blank_yaml_string(&override_value) {
                 *base_slot = override_value;
             }
         }
     }
+}
+
+fn is_blank_yaml_string(value: &Value) -> bool {
+    matches!(value, Value::String(text) if text.trim().is_empty())
 }
 
 fn expand_yaml_env(value: &mut Value) {
@@ -1255,5 +1261,46 @@ user_agents:
         assert_eq!(preset.icon_name, "spark");
         assert_eq!(preset.icon_color, "#123456");
         assert_eq!(preset.sandbox_container_id, 8);
+    }
+    #[test]
+    fn test_merge_yaml_keeps_base_when_override_has_blank_strings() {
+        let mut base = serde_yaml::from_str::<Value>(
+            r#"
+storage:
+  backend: auto
+  db_path: ./data/wunder.db
+  postgres:
+    dsn: postgresql://wunder:wunder@postgres:5432/wunder
+    connect_timeout_s: 5
+    pool_size: 64
+sandbox:
+  endpoint: http://sandbox:9001
+"#,
+        )
+        .expect("parse base yaml");
+
+        let override_value = serde_yaml::from_str::<Value>(
+            r#"
+storage:
+  backend: ''
+  db_path: ''
+  postgres:
+    dsn: ''
+sandbox:
+  endpoint: ''
+"#,
+        )
+        .expect("parse override yaml");
+
+        merge_yaml(&mut base, override_value);
+        let merged: Config = serde_yaml::from_value(base).expect("parse merged config");
+
+        assert_eq!(merged.storage.backend, "auto");
+        assert_eq!(merged.storage.db_path, "./data/wunder.db");
+        assert_eq!(
+            merged.storage.postgres.dsn,
+            "postgresql://wunder:wunder@postgres:5432/wunder"
+        );
+        assert_eq!(merged.sandbox.endpoint, "http://sandbox:9001");
     }
 }
