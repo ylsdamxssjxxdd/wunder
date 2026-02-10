@@ -867,8 +867,9 @@ const historyPaddingTop = computed(() =>
 const historyPaddingBottom = computed(() =>
   historyVirtual.value ? Math.max(0, (historyTotal.value - historyEndIndex.value) * HISTORY_ROW_HEIGHT) : 0
 );
-  let pendingAssistantCenter = false;
-  let pendingAssistantCenterCount = 0;
+let pendingAssistantCenter = false;
+let pendingAssistantCenterCount = 0;
+let pendingEnterBottomScroll = true;
 
 const resolveInitialSessionId = (agentId) => {
   const mainSession = chatStore.sessions.find((session) => session.is_main);
@@ -1921,7 +1922,31 @@ const buildMessageStatsEntries = (message) => {
 
 const shouldShowMessageStats = (message) => buildMessageStatsEntries(message).length > 0;
 
-  const scrollLatestAssistantToCenter = async () => {
+const scrollMessagesToBottom = async () => {
+  await nextTick();
+  const applyBottomScroll = () => {
+    const container = messagesContainerRef.value;
+    if (!container) return false;
+    container.scrollTop = container.scrollHeight;
+    return true;
+  };
+  const applied = applyBottomScroll();
+  requestAnimationFrame(() => {
+    applyBottomScroll();
+  });
+  return applied;
+};
+
+const ensureEnterScrollToBottom = async () => {
+  if (!pendingEnterBottomScroll) return;
+  if (!chatStore.activeSessionId && chatStore.messages.length === 0) return;
+  const applied = await scrollMessagesToBottom();
+  if (applied) {
+    pendingEnterBottomScroll = false;
+  }
+};
+
+const scrollLatestAssistantToCenter = async () => {
     await nextTick();
     const container = messagesContainerRef.value;
     if (!container) return;
@@ -1940,6 +1965,7 @@ const shouldShowMessageStats = (message) => buildMessageStatsEntries(message).le
 
 onMounted(async () => {
   await init();
+  await ensureEnterScrollToBottom();
   loadToolSummary();
   scheduleWorkspaceResourceHydration();
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
@@ -2009,8 +2035,11 @@ watch(
 
 watch(
   () => chatStore.messages.length,
-  () => {
+  (value) => {
     scheduleWorkspaceResourceHydration();
+    if (value > 0) {
+      void ensureEnterScrollToBottom();
+    }
   }
 );
 
