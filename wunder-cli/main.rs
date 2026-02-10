@@ -875,6 +875,7 @@ async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> 
             entry.api_key = Some(api_key_for_update.clone());
             entry.model = Some(model_for_update.clone());
             entry.tool_call_mode = Some("tool_call".to_string());
+            entry.max_rounds = Some(entry.max_rounds.unwrap_or(8).max(2));
             if entry
                 .model_type
                 .as_deref()
@@ -933,7 +934,7 @@ fn build_cli_llm_model_config(
         temperature: None,
         timeout_s: None,
         retry: None,
-        max_rounds: None,
+        max_rounds: Some(8),
         max_context: None,
         max_output: None,
         support_vision: None,

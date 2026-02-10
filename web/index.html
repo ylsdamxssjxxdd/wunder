@@ -2894,6 +2894,10 @@
                     <input id="simLabWorkers" type="number" min="1" step="1" value="100" />
                   </div>
                   <div class="form-row">
+                    <label for="simLabWorkerStep" data-i18n="simLab.form.workerStep">????</label>
+                    <input id="simLabWorkerStep" type="number" min="1" step="1" value="10" />
+                  </div>
+                  <div class="form-row">
                     <label for="simLabMaxWait" data-i18n="simLab.form.maxWait">最大等待（秒）</label>
                     <input id="simLabMaxWait" type="number" min="10" step="1" value="180" />
                   </div>
@@ -2910,7 +2914,14 @@
                   <label data-i18n="simLab.form.projects">测试项目</label>
                   <div id="simLabProjects" class="simlab-project-list"></div>
                 </div>
+                <div class="muted" data-i18n="simLab.form.stepHint">
+                  ??? 1 ???????????????
+                </div>
                 <div id="simLabStatus" class="muted"></div>
+                <div class="simlab-curve-card monitor-block">
+                  <div class="monitor-block-title" data-i18n="simLab.chart.title">??????</div>
+                  <div id="simLabChart" class="monitor-chart"></div>
+                </div>
                 <div class="simlab-history-card">
                   <div class="simlab-history-title" data-i18n="simLab.history.title">测试历史</div>
                   <div id="simLabHistoryList" class="simlab-history-list"></div>
@@ -4771,7 +4782,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260210-05"></script>
+    <script type="module" src="./app.js?v=20260210-06"></script>
 </body>
 </html>
 

@@ -1,8 +1,8 @@
-import { elements } from "./elements.js?v=20260118-07";
+import { elements } from "./elements.js?v=20260210-06";
 import { getWunderBase } from "./api.js";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260118-07";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260210-06";
 
 let initialized = false;
 let running = false;
@@ -11,12 +11,35 @@ let selectedProjectIds = new Set();
 let lastReport = null;
 let currentRunId = "";
 let stopping = false;
+let cancelRequested = false;
 let historyItems = [];
 let detailPayload = null;
 let detailLabel = "";
+let curveChart = null;
 
 const HISTORY_STORAGE_KEY = "wunder_sim_lab_history";
 const HISTORY_LIMIT = 20;
+const DEFAULT_WORKER_STEP = 10;
+const CURVE_SERIES = [
+  {
+    key: "wall_time_s",
+    labelKey: "simLab.chart.metric.wallTime",
+    color: "#3b82f6",
+    resolve: (sample) => Number(sample?.wall_time_s),
+  },
+  {
+    key: "peak_concurrency",
+    labelKey: "simLab.chart.metric.peakConcurrency",
+    color: "#22c55e",
+    resolve: (sample) => Number(sample?.report?.session_runs?.peak_concurrency),
+  },
+  {
+    key: "end_to_end_p95",
+    labelKey: "simLab.chart.metric.endToEndP95",
+    color: "#f97316",
+    resolve: (sample) => Number(sample?.report?.worker_latency?.end_to_end_ms_p95),
+  },
+];
 
 const numberValue = (element, fallback) => {
   if (!element) {
@@ -24,6 +47,11 @@ const numberValue = (element, fallback) => {
   }
   const value = Number(element.value);
   return Number.isFinite(value) ? value : fallback;
+};
+
+const readPositiveInt = (element, fallback) => {
+  const value = Math.floor(numberValue(element, fallback));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
 const formatSeconds = (value) => {
@@ -173,6 +201,153 @@ const renderHistory = () => {
 const createRunId = () =>
   `simlab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+const buildWorkerSequence = (maxWorkers, step) => {
+  if (maxWorkers <= 0 || step <= 0) {
+    return [];
+  }
+  const sequence = [];
+  let current = 1;
+  while (current < maxWorkers) {
+    sequence.push(current);
+    current += step;
+  }
+  if (!sequence.length || sequence[sequence.length - 1] !== maxWorkers) {
+    sequence.push(maxWorkers);
+  }
+  return sequence;
+};
+
+const ensureCurveChart = () => {
+  if (!elements.simLabChart || !window.echarts) {
+    return null;
+  }
+  if (!curveChart) {
+    curveChart = window.echarts.init(elements.simLabChart);
+  }
+  return curveChart;
+};
+
+const listSamplesFromReport = (report) => {
+  if (!report || typeof report !== "object") {
+    return [];
+  }
+  const normalized = [];
+  if (Array.isArray(report.samples)) {
+    report.samples.forEach((sample, index) => {
+      const workers = Number(sample?.workers);
+      if (!Number.isFinite(workers) || workers <= 0) {
+        return;
+      }
+      normalized.push({
+        workers,
+        wall_time_s: Number(sample?.wall_time_s) || 0,
+        report: sample?.report || null,
+        status: sample?.status || "unknown",
+        run_id: sample?.run_id || report?.run_id || "",
+        project_id: sample?.project_id || "swarm_flow",
+        error: sample?.error || null,
+        order: Number(sample?.order) || index + 1,
+      });
+    });
+    if (normalized.length) {
+      return normalized.sort((left, right) => left.workers - right.workers);
+    }
+  }
+
+  const projects = Array.isArray(report.projects) ? report.projects : [];
+  projects.forEach((project, index) => {
+    const workers = Number(project?.report?.config?.workers);
+    if (!Number.isFinite(workers) || workers <= 0) {
+      return;
+    }
+    normalized.push({
+      workers,
+      wall_time_s: Number(project?.wall_time_s) || 0,
+      report: project?.report || null,
+      status: project?.status || "unknown",
+      run_id: report?.run_id || "",
+      project_id: project?.project_id || "swarm_flow",
+      error: project?.error || null,
+      order: index + 1,
+    });
+  });
+  return normalized.sort((left, right) => left.workers - right.workers);
+};
+
+const renderCurveChart = (report) => {
+  const chart = ensureCurveChart();
+  if (!chart) {
+    return;
+  }
+  const samples = listSamplesFromReport(report);
+  if (!samples.length) {
+    chart.clear();
+    chart.resize();
+    return;
+  }
+
+  const baseline = samples[0];
+  const baselineValues = Object.fromEntries(
+    CURVE_SERIES.map((series) => {
+      const value = Number(series.resolve(baseline));
+      return [series.key, Number.isFinite(value) && value > 0 ? value : null];
+    })
+  );
+
+  const xValues = samples.map((sample) => sample.workers);
+  const series = CURVE_SERIES.map((seriesDef) => ({
+    name: t(seriesDef.labelKey),
+    type: "line",
+    smooth: true,
+    showSymbol: false,
+    lineStyle: { color: seriesDef.color, width: 2 },
+    itemStyle: { color: seriesDef.color },
+    data: samples.map((sample) => {
+      const current = Number(seriesDef.resolve(sample));
+      const base = baselineValues[seriesDef.key];
+      if (!Number.isFinite(current) || !Number.isFinite(base) || base <= 0) {
+        return null;
+      }
+      const delta = ((current - base) / base) * 100;
+      return Number.isFinite(delta) ? Number(delta.toFixed(2)) : null;
+    }),
+  }));
+
+  chart.setOption(
+    {
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) =>
+          Number.isFinite(value) ? `${Number(value).toFixed(1)}%` : "-",
+      },
+      legend: {
+        data: CURVE_SERIES.map((item) => t(item.labelKey)),
+        textStyle: { color: "#64748b" },
+      },
+      grid: { left: 50, right: 24, top: 30, bottom: 30 },
+      xAxis: {
+        type: "category",
+        name: t("simLab.chart.axis.workers"),
+        data: xValues,
+        axisLabel: { color: "#94a3b8" },
+        axisLine: { lineStyle: { color: "#e2e8f0" } },
+      },
+      yAxis: {
+        type: "value",
+        name: t("simLab.chart.axis.delta"),
+        axisLabel: {
+          color: "#94a3b8",
+          formatter: (value) => `${value}%`,
+        },
+        splitLine: { lineStyle: { color: "#e2e8f0" } },
+      },
+      series,
+    },
+    false
+  );
+  chart.resize();
+};
+
 const selectedProjects = () => {
   if (!elements.simLabProjects) {
     return [];
@@ -204,6 +379,26 @@ const updateRunButton = () => {
   elements.simLabRunBtn.classList.toggle("is-running", running);
   elements.simLabRunBtn.classList.toggle("danger", running);
 
+  [
+    elements.simLabWorkers,
+    elements.simLabWorkerStep,
+    elements.simLabMaxWait,
+    elements.simLabMotherWait,
+    elements.simLabPollMs,
+    elements.simLabRefreshProjectsBtn,
+  ].forEach((field) => {
+    if (field) {
+      field.disabled = running;
+    }
+  });
+  if (elements.simLabProjects) {
+    elements.simLabProjects
+      .querySelectorAll('input[type="checkbox"][data-project-id]')
+      .forEach((input) => {
+        input.disabled = running;
+      });
+  }
+
   const icon = elements.simLabRunBtn.querySelector("i");
   if (icon) {
     icon.className = `fa-solid ${running ? "fa-stop" : "fa-play"}`;
@@ -223,6 +418,7 @@ const updateRunButton = () => {
 const resetRunState = () => {
   running = false;
   stopping = false;
+  cancelRequested = false;
   currentRunId = "";
   updateRunButton();
 };
@@ -259,7 +455,7 @@ const reconcileRunningState = async () => {
 };
 
 const statusLabel = (status) => {
-  const normalized = String(status || "").trim().toLowerCase();
+  const normalized = normalizeRunStatus(status);
   if (normalized === "success") {
     return t("simLab.result.status.success");
   }
@@ -273,7 +469,7 @@ const statusLabel = (status) => {
 };
 
 const statusClass = (status) => {
-  const normalized = String(status || "").trim().toLowerCase();
+  const normalized = normalizeRunStatus(status);
   if (normalized === "success") {
     return "is-success";
   }
@@ -291,6 +487,9 @@ const applyDefaults = () => {
   const defaults = swarm?.defaults || {};
   if (elements.simLabWorkers) {
     elements.simLabWorkers.value = String(defaults.workers || 100);
+  }
+  if (elements.simLabWorkerStep) {
+    elements.simLabWorkerStep.value = String(DEFAULT_WORKER_STEP);
   }
   if (elements.simLabMaxWait) {
     elements.simLabMaxWait.value = String(defaults.max_wait_s || 180);
@@ -468,12 +667,103 @@ const extractHighlights = (project) => {
   return highlights;
 };
 
+const normalizeRunStatus = (status) => {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) {
+    return "unknown";
+  }
+  if (normalized === "error") {
+    return "failed";
+  }
+  return normalized;
+};
+
+const extractPrimaryProject = (runReport) => {
+  const projects = Array.isArray(runReport?.projects) ? runReport.projects : [];
+  if (!projects.length) {
+    return null;
+  }
+  return projects.find((item) => item?.project_id === "swarm_flow") || projects[0] || null;
+};
+
+const buildStepSample = (workers, order, runReport) => {
+  const project = extractPrimaryProject(runReport);
+  const projectStatus = normalizeRunStatus(project?.status);
+  const status = projectStatus === "unknown" ? "failed" : projectStatus;
+  return {
+    order,
+    workers,
+    run_id: String(runReport?.run_id || ""),
+    started_at: runReport?.started_at || new Date().toISOString(),
+    finished_at: runReport?.finished_at || new Date().toISOString(),
+    wall_time_s: Number(runReport?.wall_time_s || 0),
+    project_id: project?.project_id || "swarm_flow",
+    status,
+    error: project?.error || null,
+    report: project?.report || null,
+  };
+};
+
+const toProjectReportRow = (sample) => ({
+  project_id: sample.project_id || "swarm_flow",
+  status: sample.status || "unknown",
+  wall_time_s: Number(sample.wall_time_s || 0),
+  error: sample.error || null,
+  report: sample.report || null,
+  workers: Number(sample.workers) || 0,
+  run_id: sample.run_id || "",
+  order: Number(sample.order) || 0,
+});
+
+const buildSuiteReport = ({
+  suiteRunId,
+  startedAt,
+  finishedAt,
+  maxWorkers,
+  workerStep,
+  sequence,
+  samples,
+}) => {
+  const rows = (Array.isArray(samples) ? samples : []).map(toProjectReportRow);
+  const success = rows.filter((item) => normalizeRunStatus(item.status) === "success").length;
+  const failed = rows.length - success;
+  const wallTimeS =
+    (new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000;
+  return {
+    run_id: suiteRunId,
+    mode: "parallel",
+    started_at: startedAt,
+    finished_at: finishedAt,
+    wall_time_s: Number.isFinite(wallTimeS) ? Math.max(0, wallTimeS) : 0,
+    project_total: rows.length,
+    planned_total: Array.isArray(sequence) ? sequence.length : rows.length,
+    project_success: success,
+    project_failed: failed,
+    worker_max: maxWorkers,
+    worker_step: workerStep,
+    workers_sequence: Array.isArray(sequence) ? sequence : [],
+    samples: rows.map((item) => ({
+      order: item.order,
+      workers: item.workers,
+      run_id: item.run_id,
+      project_id: item.project_id,
+      status: item.status,
+      wall_time_s: item.wall_time_s,
+      error: item.error,
+      report: item.report,
+    })),
+    projects: rows,
+  };
+};
+
 const renderProjectReports = (projects) => {
   if (!elements.simLabReportList) {
     return;
   }
   elements.simLabReportList.innerHTML = "";
-  const list = Array.isArray(projects) ? projects : [];
+  const list = (Array.isArray(projects) ? projects.slice() : []).sort(
+    (left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0)
+  );
   if (!list.length) {
     const empty = document.createElement("div");
     empty.className = "muted";
@@ -492,13 +782,21 @@ const renderProjectReports = (projects) => {
     const left = document.createElement("div");
     left.className = "simlab-report-left";
 
+    const workers = Number(project?.workers);
+    const hasWorkers = Number.isFinite(workers) && workers > 0;
+    const rowTitle = hasWorkers
+      ? t("simLab.result.stepTitle", { workers })
+      : projectTitle(project.project_id);
+
     const title = document.createElement("div");
     title.className = "simlab-report-title";
-    title.textContent = projectTitle(project.project_id);
+    title.textContent = rowTitle;
 
     const subtitle = document.createElement("div");
     subtitle.className = "simlab-report-subtitle";
-    subtitle.textContent = project.project_id;
+    subtitle.textContent = project.run_id
+      ? `${project.project_id} ? ${project.run_id}`
+      : project.project_id;
 
     left.appendChild(title);
     left.appendChild(subtitle);
@@ -520,10 +818,13 @@ const renderProjectReports = (projects) => {
     detailBtn.textContent = t("simLab.result.viewDetail");
     detailBtn.addEventListener("click", () => {
       const label = t("simLab.detail.projectLabel", {
-        title: projectTitle(project.project_id),
-        runId: lastReport?.run_id || "-",
+        title: rowTitle,
+        runId: project.run_id || lastReport?.run_id || "-",
       });
       setDetail(label, {
+        order: project.order,
+        workers: hasWorkers ? workers : null,
+        run_id: project.run_id,
         project_id: project.project_id,
         status: project.status,
         wall_time_s: project.wall_time_s,
@@ -578,6 +879,7 @@ const renderProjectReports = (projects) => {
 const renderReport = (report) => {
   lastReport = report || null;
   renderProjectReports(lastReport?.projects || []);
+  renderCurveChart(lastReport);
   if (!lastReport) {
     setDetail("", null);
     return;
@@ -590,17 +892,20 @@ const renderReport = (report) => {
   );
 };
 
-const buildRunPayload = (runId) => {
+const buildRunPayload = (runId, workersOverride) => {
   const projects = selectedProjects();
   if (!projects.length) {
     throw new Error(t("simLab.error.noProject"));
   }
+  const workers = Number.isFinite(Number(workersOverride))
+    ? Number(workersOverride)
+    : numberValue(elements.simLabWorkers, 100);
   return {
     run_id: runId,
     projects,
     options: {
       swarm_flow: {
-        workers: Math.max(1, Math.floor(numberValue(elements.simLabWorkers, 100))),
+        workers: Math.max(1, Math.floor(workers)),
         max_wait_s: Math.max(10, Math.floor(numberValue(elements.simLabMaxWait, 180))),
         mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
@@ -609,11 +914,25 @@ const buildRunPayload = (runId) => {
   };
 };
 
+const executeRunPayload = async (payload) => {
+  const response = await fetch(`${getWunderBase()}/admin/sim_lab/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await resolveApiErrorMessage(response, t("simLab.error.runFailed")));
+  }
+  const data = await response.json();
+  return data?.data || {};
+};
+
 const stopSimulation = async () => {
   if (!running || stopping || !currentRunId) {
     return;
   }
   stopping = true;
+  cancelRequested = true;
   updateRunButton();
   setStatus(t("simLab.status.stopping"));
   try {
@@ -632,11 +951,12 @@ const stopSimulation = async () => {
       throw new Error(await resolveApiErrorMessage(response, t("simLab.error.stopFailed")));
     }
   } catch (error) {
+    cancelRequested = false;
+    stopping = false;
     const message = error?.message || String(error);
     setStatus(t("simLab.status.stopFailed", { message }));
     notify(t("simLab.status.stopFailed", { message }), "error");
   } finally {
-    stopping = false;
     updateRunButton();
   }
 };
@@ -653,39 +973,111 @@ const runSimulation = async () => {
   if (running) {
     return;
   }
+
+  const maxWorkers = readPositiveInt(elements.simLabWorkers, 100);
+  const workerStep = readPositiveInt(elements.simLabWorkerStep, DEFAULT_WORKER_STEP);
+  if (workerStep <= 0) {
+    const message = t("simLab.error.step");
+    setStatus(message);
+    notify(message, "error");
+    return;
+  }
+
+  const sequence = buildWorkerSequence(maxWorkers, workerStep);
+  if (!sequence.length) {
+    const message = t("simLab.error.step");
+    setStatus(message);
+    notify(message, "error");
+    return;
+  }
+
   running = true;
   stopping = false;
+  cancelRequested = false;
   currentRunId = createRunId();
+  const suiteRunId = currentRunId;
+  const startedAt = new Date().toISOString();
+  const samples = [];
   updateRunButton();
   setStatus(t("simLab.status.running"));
-  try {
-    const payload = buildRunPayload(currentRunId);
-    const response = await fetch(`${getWunderBase()}/admin/sim_lab/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(await resolveApiErrorMessage(response, t("simLab.error.runFailed")));
-    }
-    const data = await response.json();
-    const report = data?.data || {};
-    renderReport(report);
-    upsertHistory(report);
 
-    const projects = Array.isArray(report?.projects) ? report.projects : [];
-    const cancelledCount = projects.filter(
-      (item) => String(item?.status || "").toLowerCase() === "cancelled"
+  try {
+    renderReport(
+      buildSuiteReport({
+        suiteRunId,
+        startedAt,
+        finishedAt: startedAt,
+        maxWorkers,
+        workerStep,
+        sequence,
+        samples,
+      })
+    );
+
+    for (let index = 0; index < sequence.length; index += 1) {
+      if (!running || stopping || cancelRequested) {
+        break;
+      }
+      const workers = sequence[index];
+      currentRunId = `${suiteRunId}_${workers}_${index + 1}`;
+      setStatus(
+        t("simLab.status.runningStep", {
+          current: index + 1,
+          total: sequence.length,
+          workers,
+        })
+      );
+
+      const payload = buildRunPayload(currentRunId, workers);
+      const runReport = await executeRunPayload(payload);
+      const sample = buildStepSample(workers, index + 1, runReport);
+      samples.push(sample);
+
+      renderReport(
+        buildSuiteReport({
+          suiteRunId,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          maxWorkers,
+          workerStep,
+          sequence,
+          samples,
+        })
+      );
+
+      if (normalizeRunStatus(sample.status) === "cancelled") {
+        stopping = true;
+        cancelRequested = true;
+        break;
+      }
+    }
+
+    const finalReport = buildSuiteReport({
+      suiteRunId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      maxWorkers,
+      workerStep,
+      sequence,
+      samples,
+    });
+    renderReport(finalReport);
+    if (finalReport.project_total > 0) {
+      upsertHistory(finalReport);
+    }
+
+    const cancelledCount = finalReport.projects.filter(
+      (item) => normalizeRunStatus(item?.status) === "cancelled"
     ).length;
 
-    if (cancelledCount > 0) {
-      setStatus(t("simLab.status.cancelled", { cancelled: cancelledCount }));
+    if (stopping || cancelRequested || cancelledCount > 0) {
+      setStatus(t("simLab.status.cancelled", { cancelled: cancelledCount || 1 }));
       notify(t("simLab.status.cancelledNotify"), "warning");
     } else {
       setStatus(
         t("simLab.status.completed", {
-          success: Number(report?.project_success || 0),
-          total: Number(report?.project_total || 0),
+          success: Number(finalReport?.project_success || 0),
+          total: Number(finalReport?.project_total || 0),
         })
       );
       notify(t("simLab.status.completedNotify"), "success");

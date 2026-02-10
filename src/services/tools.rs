@@ -33,6 +33,7 @@ use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use chrono::{Local, Utc};
+use futures::stream::{self, StreamExt};
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
@@ -1952,76 +1953,55 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         .collect::<Result<Vec<_>>>()?;
 
     let dispatch_parallelism = dispatch_plan.len().min(max_tasks).max(1);
+    let mut dispatches = stream::iter(dispatch_plan.into_iter().map(
+        |(index, send_args)| async move {
+            let result = agent_swarm_send(context, &send_args).await;
+            (index, result)
+        },
+    ))
+    .buffer_unordered(dispatch_parallelism);
+
     let mut indexed_items = Vec::new();
     let mut run_ids = Vec::new();
-
-    for chunk in dispatch_plan.chunks(dispatch_parallelism) {
-        let chunk_results = tokio::task::scope(|scope| {
-            let mut handles = Vec::with_capacity(chunk.len());
-            for (index, send_args) in chunk {
-                let index = *index;
-                let send_args = send_args.clone();
-                handles.push((
+    while let Some((index, result)) = dispatches.next().await {
+        match result {
+            Ok(result) => {
+                let run_id = result
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_string();
+                if !run_id.is_empty() {
+                    run_ids.push(run_id.clone());
+                }
+                let mut item = json!({
+                    "index": index,
+                    "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
+                    "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
+                    "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
+                    "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                    "created_session": result
+                        .get("created_session")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                });
+                if let Some(error) = result.get("error") {
+                    if let Value::Object(ref mut map) = item {
+                        map.insert("error".to_string(), error.clone());
+                    }
+                }
+                indexed_items.push((index, item));
+            }
+            Err(err) => {
+                indexed_items.push((
                     index,
-                    scope.spawn(async move { agent_swarm_send(context, &send_args).await }),
-                ));
-            }
-            async move {
-                let mut outputs = Vec::with_capacity(handles.len());
-                for (index, handle) in handles {
-                    let result = match handle.await {
-                        Ok(result) => result,
-                        Err(err) => Err(anyhow!(
-                            "agent_swarm batch_send dispatch join failed: {err}"
-                        )),
-                    };
-                    outputs.push((index, result));
-                }
-                outputs
-            }
-        })
-        .await;
-
-        for (index, result) in chunk_results {
-            match result {
-                Ok(result) => {
-                    let run_id = result
-                        .get("run_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .unwrap_or("")
-                        .to_string();
-                    if !run_id.is_empty() {
-                        run_ids.push(run_id.clone());
-                    }
-                    let mut item = json!({
+                    json!({
                         "index": index,
-                        "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
-                        "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
-                        "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
-                        "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
-                        "created_session": result
-                            .get("created_session")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                    });
-                    if let Some(error) = result.get("error") {
-                        if let Value::Object(ref mut map) = item {
-                            map.insert("error".to_string(), error.clone());
-                        }
-                    }
-                    indexed_items.push((index, item));
-                }
-                Err(err) => {
-                    indexed_items.push((
-                        index,
-                        json!({
-                            "index": index,
-                            "status": "error",
-                            "error": err.to_string(),
-                        }),
-                    ));
-                }
+                        "status": "error",
+                        "error": err.to_string(),
+                    }),
+                ));
             }
         }
     }

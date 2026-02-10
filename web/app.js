@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260118-07";
+import { elements } from "./modules/elements.js?v=20260210-06";
 
 import { state } from "./modules/state.js";
 
@@ -77,11 +77,11 @@ import { initApiDocsPanel } from "./modules/api-docs.js?v=20260126-01";
 import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
-import { initSimLabPanel } from "./modules/sim-lab.js?v=20260210-04";
+import { initSimLabPanel } from "./modules/sim-lab.js?v=20260210-06";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260118-07";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260210-06";
 
 
 

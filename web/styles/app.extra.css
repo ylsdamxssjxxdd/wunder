@@ -809,6 +809,18 @@
   font-size: 11px;
 }
 
+.simlab-curve-card {
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.simlab-curve-card .monitor-chart {
+  flex: 1 1 auto;
+  min-height: 200px;
+}
+
 .simlab-history-card {
   margin-top: auto;
   border: 1px solid #e2e8f0;

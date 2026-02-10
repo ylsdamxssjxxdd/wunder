@@ -18,6 +18,10 @@ pub struct StreamRenderer {
     saw_delta: bool,
 }
 
+fn event_payload(data: &Value) -> &Value {
+    data.get("data").unwrap_or(data)
+}
+
 impl StreamRenderer {
     pub fn new(json: bool) -> Self {
         Self {
@@ -33,9 +37,10 @@ impl StreamRenderer {
             return Ok(parse_final(event));
         }
 
+        let payload = event_payload(&event.data);
         match event.event.as_str() {
             "llm_output_delta" => {
-                if let Some(delta) = event.data.get("delta").and_then(Value::as_str) {
+                if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
                     if !delta.is_empty() {
                         print!("{delta}");
                         io::stdout().flush().ok();
@@ -46,7 +51,7 @@ impl StreamRenderer {
             }
             "llm_output" => {
                 if !self.saw_delta {
-                    if let Some(content) = event.data.get("content").and_then(Value::as_str) {
+                    if let Some(content) = payload.get("content").and_then(Value::as_str) {
                         if !content.is_empty() {
                             print!("{content}");
                             io::stdout().flush().ok();
@@ -57,16 +62,8 @@ impl StreamRenderer {
             }
             "progress" => {
                 self.ensure_newline();
-                let stage = event
-                    .data
-                    .get("stage")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let summary = event
-                    .data
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let stage = payload.get("stage").and_then(Value::as_str).unwrap_or("");
+                let summary = payload.get("summary").and_then(Value::as_str).unwrap_or("");
                 if !stage.is_empty() || !summary.is_empty() {
                     let line = format!("[progress] {stage} {summary}");
                     println!("{}", line.trim());
@@ -74,13 +71,11 @@ impl StreamRenderer {
             }
             "tool_call" => {
                 self.ensure_newline();
-                let tool = event
-                    .data
+                let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let args = event
-                    .data
+                let args = payload
                     .get("args")
                     .map(compact_json)
                     .unwrap_or_else(|| "{}".to_string());
@@ -88,37 +83,33 @@ impl StreamRenderer {
             }
             "tool_result" => {
                 self.ensure_newline();
-                let tool = event
-                    .data
+                let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let result = event
-                    .data
+                let result = payload
                     .get("result")
                     .map(compact_json)
-                    .unwrap_or_else(|| compact_json(&event.data));
+                    .unwrap_or_else(|| compact_json(payload));
                 println!("[tool_result] {tool} {result}");
             }
             "error" => {
                 self.ensure_newline();
-                let nested_message = event
-                    .data
+                let nested_message = payload
                     .get("data")
                     .and_then(Value::as_object)
                     .and_then(|inner| inner.get("message"))
                     .and_then(Value::as_str);
-                let message = event
-                    .data
+                let message = payload
                     .as_str()
-                    .or_else(|| event.data.get("message").and_then(Value::as_str))
-                    .or_else(|| event.data.get("detail").and_then(Value::as_str))
-                    .or_else(|| event.data.get("error").and_then(Value::as_str))
+                    .or_else(|| payload.get("message").and_then(Value::as_str))
+                    .or_else(|| payload.get("detail").and_then(Value::as_str))
+                    .or_else(|| payload.get("error").and_then(Value::as_str))
                     .or(nested_message)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| compact_json(&event.data));
+                    .unwrap_or_else(|| compact_json(payload));
                 eprintln!("[error] {message}");
             }
             "final" => {
@@ -150,20 +141,18 @@ fn parse_final(event: &StreamEvent) -> Option<FinalEvent> {
     if event.event != "final" {
         return None;
     }
+    let payload = event_payload(&event.data);
     Some(FinalEvent {
-        answer: event
-            .data
+        answer: payload
             .get("answer")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        usage: event
-            .data
+        usage: payload
             .get("usage")
             .cloned()
             .filter(|value| !value.is_null()),
-        stop_reason: event
-            .data
+        stop_reason: payload
             .get("stop_reason")
             .and_then(Value::as_str)
             .map(ToString::to_string),

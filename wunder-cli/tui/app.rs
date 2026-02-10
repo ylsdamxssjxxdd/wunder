@@ -416,9 +416,10 @@ impl TuiApp {
     }
 
     fn apply_stream_event(&mut self, event: StreamEvent) {
+        let payload = event_payload(&event.data);
         match event.event.as_str() {
             "llm_output_delta" => {
-                if let Some(delta) = event.data.get("delta").and_then(Value::as_str) {
+                if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
                     if !delta.is_empty() {
                         self.stream_saw_output = true;
                         let index = self.ensure_assistant_entry();
@@ -429,7 +430,7 @@ impl TuiApp {
                 }
             }
             "llm_output" => {
-                if let Some(content) = event.data.get("content").and_then(Value::as_str) {
+                if let Some(content) = payload.get("content").and_then(Value::as_str) {
                     if !content.is_empty() {
                         self.stream_saw_output = true;
                         let index = self.ensure_assistant_entry();
@@ -442,13 +443,11 @@ impl TuiApp {
                 }
             }
             "progress" => {
-                let stage = event
-                    .data
+                let stage = payload
                     .get("stage")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let summary = event
-                    .data
+                let summary = payload
                     .get("summary")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
@@ -458,41 +457,36 @@ impl TuiApp {
                 }
             }
             "tool_call" => {
-                let tool = event
-                    .data
+                let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let args = event
-                    .data
+                let args = payload
                     .get("args")
                     .map(compact_json)
                     .unwrap_or_else(|| "{}".to_string());
                 self.push_log(LogKind::Tool, format!("[tool_call] {tool} {args}"));
             }
             "tool_result" => {
-                let tool = event
-                    .data
+                let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let result = event
-                    .data
+                let result = payload
                     .get("result")
                     .map(compact_json)
-                    .unwrap_or_else(|| compact_json(&event.data));
+                    .unwrap_or_else(|| compact_json(payload));
                 self.push_log(LogKind::Tool, format!("[tool_result] {tool} {result}"));
             }
             "error" => {
                 self.push_log(
                     LogKind::Error,
-                    format!("[error] {}", parse_error_message(&event.data)),
+                    format!("[error] {}", parse_error_message(payload)),
                 );
             }
             "final" => {
                 self.stream_saw_final = true;
-                let answer = event
-                    .data
+                let answer = payload
                     .get("answer")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
@@ -505,8 +499,7 @@ impl TuiApp {
                         }
                     }
                 }
-                self.last_usage = event
-                    .data
+                self.last_usage = payload
                     .get("usage")
                     .and_then(|value| value.get("total_tokens"))
                     .and_then(Value::as_u64)
@@ -708,6 +701,7 @@ impl TuiApp {
                 entry.api_key = Some(api_key_for_update.clone());
                 entry.model = Some(model_for_update.clone());
                 entry.tool_call_mode = Some("tool_call".to_string());
+                entry.max_rounds = Some(entry.max_rounds.unwrap_or(8).max(2));
                 if entry
                     .model_type
                     .as_deref()
@@ -936,20 +930,26 @@ fn short_session_id(session_id: &str) -> String {
 }
 
 fn parse_error_message(data: &Value) -> String {
-    let nested_message = data
+    let payload = event_payload(data);
+    let nested_message = payload
         .get("data")
         .and_then(Value::as_object)
         .and_then(|inner| inner.get("message"))
         .and_then(Value::as_str);
-    data.as_str()
-        .or_else(|| data.get("message").and_then(Value::as_str))
-        .or_else(|| data.get("detail").and_then(Value::as_str))
-        .or_else(|| data.get("error").and_then(Value::as_str))
+    payload
+        .as_str()
+        .or_else(|| payload.get("message").and_then(Value::as_str))
+        .or_else(|| payload.get("detail").and_then(Value::as_str))
+        .or_else(|| payload.get("error").and_then(Value::as_str))
         .or(nested_message)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| compact_json(data))
+        .unwrap_or_else(|| compact_json(payload))
+}
+
+fn event_payload(data: &Value) -> &Value {
+    data.get("data").unwrap_or(data)
 }
 
 fn compact_json(value: &Value) -> String {
