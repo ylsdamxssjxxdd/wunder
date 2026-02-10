@@ -30,7 +30,7 @@ use super::events::{
 const RUNNER_CHANNEL_CAPACITY: usize = 128;
 const RUNNER_POLL_INTERVAL_MS: u64 = 600;
 const RUNNER_SCAN_BATCH: i64 = 256;
-const TEAM_TASK_SESSION_TITLE: &str = "铚傜兢浠诲姟";
+const TEAM_TASK_SESSION_TITLE: &str = "蜂群任务";
 const TEAM_TASK_RESULT_MAX_CHARS: usize = 1500;
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 const TEAM_QUESTION_MAX_CHARS: usize = 4000;
