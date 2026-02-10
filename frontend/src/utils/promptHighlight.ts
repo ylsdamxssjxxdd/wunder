@@ -1,5 +1,10 @@
-// 系统提示词高亮工具：仅输出已转义的 HTML，避免 XSS 风险
-const escapeHtml = (text) =>
+type AnyRecord = Record<string, any>;
+
+type PromptSegmentState = {
+  inSkills: boolean;
+};
+
+const escapeHtml = (text: unknown): string =>
   String(text ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -7,8 +12,7 @@ const escapeHtml = (text) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-// 规范化工具名称列表，兼容字符串/对象
-const normalizeToolNames = (list) => {
+const normalizeToolNames = (list: unknown): string[] => {
   if (!Array.isArray(list)) {
     return [];
   }
@@ -16,15 +20,15 @@ const normalizeToolNames = (list) => {
     .map((item) => {
       if (!item) return '';
       if (typeof item === 'string') return item;
-      return item.name || item.tool_name || item.toolName || item.id || '';
+      const obj = item as AnyRecord;
+      return obj.name || obj.tool_name || obj.toolName || obj.id || '';
     })
     .map((name) => String(name).trim())
     .filter(Boolean);
 };
 
-// 渲染系统提示词非 tools 段落，识别技能区并高亮技能条目
-const renderPromptSegmentWithSkills = (segment, segmentState) => {
-  const skillHeaders = new Set(['[Mounted Skills]', '[已挂载技能]']);
+const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegmentState): string => {
+  const skillHeaders = new Set(['[Mounted Skills]', '[\u5df2\u6302\u8f7d\u6280\u80fd]']);
   const lines = String(segment ?? '').split(/\r?\n/);
   const output = lines.map((line) => {
     const trimmed = line.trim();
@@ -47,8 +51,10 @@ const renderPromptSegmentWithSkills = (segment, segmentState) => {
   return output.join('\n');
 };
 
-// 渲染系统提示词，按 Wunder 的规则高亮 tools 段内工具名称与技能名称
-export const renderSystemPromptHighlight = (rawText, toolsPayload = {}) => {
+export const renderSystemPromptHighlight = (
+  rawText: string,
+  toolsPayload: AnyRecord = {}
+): string => {
   if (!rawText) {
     return '';
   }
@@ -69,7 +75,7 @@ export const renderSystemPromptHighlight = (rawText, toolsPayload = {}) => {
   const endTag = '</tools>';
   let output = '';
   let cursor = 0;
-  const skillState = { inSkills: false };
+  const skillState: PromptSegmentState = { inSkills: false };
 
   while (true) {
     const start = rawText.indexOf(startTag, cursor);

@@ -17,7 +17,7 @@ const buildDemoWorkspaceState = () => ({
   activePath: ''
 });
 
-const normalizeDemoWorkspaceState = (value) => {
+const normalizeDemoWorkspaceState = (value: any) => {
   if (!value || typeof value !== 'object') {
     return buildDemoWorkspaceState();
   }
@@ -30,9 +30,10 @@ const normalizeDemoWorkspaceState = (value) => {
 
 const getDemoWorkspaceState = () => normalizeDemoWorkspaceState(loadDemoWorkspaceState());
 
-const persistDemoWorkspaceState = (state) => saveDemoWorkspaceState(state);
+const persistDemoWorkspaceState = (state: { folders?: any[]; files?: any[]; activePath?: string }) =>
+  saveDemoWorkspaceState(state);
 
-const syncDemoWorkspaceCache = ({ folders, files, activePath }) => {
+const syncDemoWorkspaceCache = ({ folders, files, activePath }: any = {}) => {
   if (!isDemoMode()) return;
   const state = getDemoWorkspaceState();
   if (Array.isArray(folders)) {

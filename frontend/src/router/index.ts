@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import type { RouteRecordRaw } from 'vue-router';
 
 import UserLayout from '@/layouts/UserLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
@@ -25,19 +26,20 @@ const USER_BEEHIVE_PATH = '/app/home';
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
-const isAuthRequiredError = (error) => {
-  const status = Number(error?.response?.status || 0);
+const isAuthRequiredError = (error: unknown): boolean => {
+  const source = error as any;
+  const status = Number(source?.response?.status || 0);
   if (status === 401) {
     return true;
   }
-  const payload = error?.response?.data;
+  const payload = source?.response?.data;
   const errorCode = String(payload?.error?.code || payload?.code || payload?.message || '')
     .trim()
     .toLowerCase();
   return errorCode === 'auth_required' || errorCode === 'error.auth_required';
 };
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
     redirect: () => (hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH)

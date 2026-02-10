@@ -42,7 +42,7 @@ export const useAgentStore = defineStore('agents', {
       }
     },
 
-    async getAgent(id, options = {}) {
+    async getAgent(id, options: { force?: boolean } = {}) {
       const key = String(id || '').trim();
       if (!key) return null;
       if (!options.force && this.agentMap[key]) {

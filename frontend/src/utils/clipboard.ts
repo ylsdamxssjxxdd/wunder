@@ -1,7 +1,7 @@
-const ensureFallbackTextarea = () => {
+const ensureFallbackTextarea = (): HTMLTextAreaElement | null => {
   if (typeof document === 'undefined') return null;
   const existing = document.getElementById('wunder-clipboard-helper');
-  if (existing) return existing;
+  if (existing instanceof HTMLTextAreaElement) return existing;
   const textarea = document.createElement('textarea');
   textarea.id = 'wunder-clipboard-helper';
   textarea.setAttribute('readonly', '');
@@ -15,7 +15,7 @@ const ensureFallbackTextarea = () => {
   return textarea;
 };
 
-export const copyText = async (rawText) => {
+export const copyText = async (rawText: unknown): Promise<boolean> => {
   const text = String(rawText ?? '');
   if (!text.trim()) return false;
 
@@ -23,7 +23,7 @@ export const copyText = async (rawText) => {
     try {
       await navigator.clipboard.writeText(text);
       return true;
-    } catch (error) {
+    } catch {
       // Fallback to execCommand for older/blocked clipboard API.
     }
   }
@@ -36,7 +36,7 @@ export const copyText = async (rawText) => {
   textarea.setSelectionRange(0, textarea.value.length);
   try {
     return document.execCommand('copy');
-  } catch (error) {
+  } catch {
     return false;
   }
 };

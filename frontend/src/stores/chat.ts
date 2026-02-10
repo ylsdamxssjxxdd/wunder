@@ -305,7 +305,7 @@ const resolveTimestampIso = (value) => {
   return millis === null ? '' : new Date(millis).toISOString();
 };
 
-const buildMessage = (role, content, createdAt) => ({
+const buildMessage = (role, content, createdAt = undefined) => ({
   role,
   content,
   created_at: resolveTimestampIso(createdAt) || new Date().toISOString(),
@@ -539,7 +539,7 @@ const normalizeFlag = (value) => value === true || value === 'true';
 
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
-  const base = {
+  const base: any = {
     role: message.role,
     content: typeof message.content === 'string' ? message.content : String(message.content || ''),
     created_at: message.created_at || ''
@@ -887,7 +887,7 @@ const getDemoChatState = () => normalizeDemoChatState(loadDemoChatState());
 
 const persistDemoChatState = (state) => saveDemoChatState(state);
 
-const syncDemoChatCache = ({ sessions, sessionId, messages }) => {
+const syncDemoChatCache = ({ sessions, sessionId, messages }: any = {}) => {
   if (!isDemoMode()) return;
   const state = getDemoChatState();
   if (Array.isArray(sessions)) {
@@ -945,7 +945,7 @@ const resolveGreetingTimestamp = (messages, createdAt) => {
   return resolveTimestampIso(candidate);
 };
 
-const ensureGreetingMessage = (messages, options = {}) => {
+const ensureGreetingMessage = (messages, options: any = {}) => {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const greetingText = resolveGreetingContent(options?.greeting);
   // 无论历史会话与否，都补一条问候语，保证提示词预览入口稳定可见
@@ -1197,7 +1197,7 @@ const normalizeSessionWorkflowState = (state) => {
   return state;
 };
 
-const getSessionWorkflowState = (sessionId, options = {}) => {
+const getSessionWorkflowState = (sessionId, options: any = {}) => {
   const sessionKey = sessionId ? String(sessionId) : '';
   if (!sessionKey) {
     return buildSessionWorkflowState();
@@ -1347,8 +1347,8 @@ const extractFinalAnswerFromToolCalls = (toolCalls) => {
   return '';
 };
 
-const buildWorkflowEventRaw = (data, timestamp) => {
-  const payload = { data: data ?? null };
+const buildWorkflowEventRaw = (data, timestamp = undefined) => {
+  const payload: any = { data: data ?? null };
   if (timestamp) {
     payload.timestamp = timestamp;
   }
@@ -1974,7 +1974,7 @@ const abortSendStream = (sessionId) => {
   runtime.sendRequestId = null;
 };
 
-const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options = {}) => {
+const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: any = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
   const toolOutputItemMap = new Map();
@@ -2073,7 +2073,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
-  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options = {}) => {
+  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: any = {}) => {
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     if (normalizedUsage && options.updateUsage !== false) {
@@ -2342,7 +2342,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return outputItemId;
   };
 
-  const applyQuestionPanelPayload = (payload, options = {}) => {
+  const applyQuestionPanelPayload = (payload, options: any = {}) => {
     const normalized = normalizeInquiryPanelPayload(payload);
     if (!normalized) return false;
     assistantMessage.questionPanel = {
@@ -2861,7 +2861,7 @@ export const useChatStore = defineStore('chat', {
         this.scheduleSnapshot(true);
       }
     },
-    resolveInquiryPanel(message, patch = {}) {
+    resolveInquiryPanel(message, patch: any = {}) {
       if (!message || message.role !== 'assistant') return;
       const panel = normalizeInquiryPanelState(message.questionPanel);
       if (!panel) return;
@@ -2881,13 +2881,13 @@ export const useChatStore = defineStore('chat', {
         return;
       }
     },
-    async loadSessions(options = {}) {
+    async loadSessions(options: any = {}) {
       const shouldRefreshTransport =
         options.skipTransportRefresh !== true && options.refresh_transport !== false;
       if (shouldRefreshTransport) {
         await this.refreshStreamTransportPolicy();
       }
-      const params = {};
+      const params: any = {};
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
         params.agent_id = options.agent_id ?? '';
       }
@@ -2896,7 +2896,7 @@ export const useChatStore = defineStore('chat', {
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },
-    openDraftSession(options = {}) {
+    openDraftSession(options: any = {}) {
       const currentSessionId = this.activeSessionId;
       cacheSessionMessages(currentSessionId, this.messages);
       abortResumeStream(currentSessionId);
@@ -2922,7 +2922,7 @@ export const useChatStore = defineStore('chat', {
       }
       this.draftToolOverrides = [...overrides];
     },
-    async createSession(payload = {}) {
+    async createSession(payload: any = {}) {
       abortResumeStream(this.activeSessionId);
       clearSessionWatcher();
       const { data } = await createSession(payload);
@@ -3103,7 +3103,7 @@ export const useChatStore = defineStore('chat', {
       }
       return overrides;
     },
-    async sendMessage(content, options = {}) {
+    async sendMessage(content, options: any = {}) {
       const initialSessionId = this.activeSessionId;
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
@@ -3315,7 +3315,7 @@ export const useChatStore = defineStore('chat', {
         startSessionWatcher(this, sessionId);
       }
     },
-    async resumeStream(sessionId, message, options = {}) {
+    async resumeStream(sessionId, message, options: any = {}) {
       const force = options.force === true;
       if (!message || (!message.stream_incomplete && !force)) return;
       abortWatchStream(sessionId);

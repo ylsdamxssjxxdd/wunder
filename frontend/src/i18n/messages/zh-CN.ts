@@ -491,7 +491,6 @@ export default {
   'common.noDescription': '暂无描述',
   'common.notice': '提示',
   'common.remove': '移除',
-  'common.requestFailed': '请求失败',
   'common.saved': '已保存',
   'common.saving': '保存中...',
   'common.selectAll': '全选',

@@ -1,38 +1,83 @@
 import { t } from '@/i18n';
 
-const buildAbortError = () => {
+type WsError = Error & {
+  phase?: string;
+  code?: unknown;
+};
+
+type StreamEventHandler = (eventType: string, data: string, eventId: string) => void;
+
+type ConsumeWsStreamOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onOpen?: () => void;
+  closeOnFinal?: boolean;
+};
+
+type MultiplexerOptions = {
+  idleTimeoutMs?: number;
+  connectTimeoutMs?: number;
+};
+
+type WsRequestPayload = {
+  requestId?: string;
+  onEvent?: StreamEventHandler;
+  closeOnFinal?: boolean;
+  signal?: AbortSignal;
+  cancelOnAbort?: boolean;
+  sessionId?: string;
+  message: unknown;
+};
+
+type PendingEntry = {
+  onEvent: StreamEventHandler;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  closeOnFinal: boolean;
+  signal?: AbortSignal;
+  abortHandler: (() => void) | null;
+};
+
+type WsMessagePayload = Record<string, any>;
+
+const buildAbortError = (): WsError => {
   try {
-    return new DOMException('Aborted', 'AbortError');
-  } catch (error) {
-    const err = new Error('Aborted');
+    return new DOMException('Aborted', 'AbortError') as WsError;
+  } catch {
+    const err = new Error('Aborted') as WsError;
     err.name = 'AbortError';
     return err;
   }
 };
 
-const normalizeError = (message, phase) => {
-  const err = new Error(message || t('chat.error.requestFailed'));
+const normalizeError = (message: string, phase?: string): WsError => {
+  const err = new Error(message || t('chat.error.requestFailed')) as WsError;
   if (phase) {
     err.phase = phase;
   }
   return err;
 };
 
-const normalizeRequestId = (value) => {
+const normalizeRequestId = (value: unknown): string => {
   const cleaned = String(value || '').trim();
   return cleaned || '';
 };
 
-const buildEventText = (data) => (typeof data === 'string' ? data : JSON.stringify(data ?? {}));
+const buildEventText = (data: unknown): string =>
+  typeof data === 'string' ? data : JSON.stringify(data ?? {});
 
-export const consumeWsStream = (socket, onEvent, options = {}) =>
-  new Promise((resolve, reject) => {
+export const consumeWsStream = (
+  socket: WebSocket,
+  onEvent: StreamEventHandler,
+  options: ConsumeWsStreamOptions = {}
+): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
     let opened = false;
     let settled = false;
-    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 10000;
-    let timeout = null;
+    const timeoutMs = Number.isFinite(options.timeoutMs) ? Number(options.timeoutMs) : 10000;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
@@ -42,24 +87,24 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
       }
     };
 
-    const settleReject = (error) => {
+    const settleReject = (error: unknown): void => {
       if (settled) return;
       settled = true;
       cleanup();
       reject(error);
     };
 
-    const settleResolve = () => {
+    const settleResolve = (): void => {
       if (settled) return;
       settled = true;
       cleanup();
       resolve();
     };
 
-    const onAbort = () => {
+    const onAbort = (): void => {
       try {
         socket.close(1000, 'aborted');
-      } catch (error) {
+      } catch {
         // ignore
       }
       const err = buildAbortError();
@@ -79,7 +124,7 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
       if (opened || settled) return;
       try {
         socket.close();
-      } catch (error) {
+      } catch {
         // ignore
       }
       settleReject(normalizeError(t('chat.error.requestFailed'), 'connect'));
@@ -96,11 +141,11 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
       }
     };
 
-    socket.onmessage = (event) => {
-      let payload = null;
+    socket.onmessage = (event: MessageEvent<string>) => {
+      let payload: WsMessagePayload | null = null;
       try {
         payload = JSON.parse(event.data);
-      } catch (error) {
+      } catch {
         return;
       }
       const type = String(payload?.type || '').toLowerCase();
@@ -108,13 +153,12 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
         const eventPayload = payload?.payload || {};
         const eventType = eventPayload?.event || 'message';
         const eventId = eventPayload?.id || '';
-        const data = eventPayload?.data;
-        const dataText = typeof data === 'string' ? data : JSON.stringify(data ?? {});
+        const dataText = buildEventText(eventPayload?.data);
         onEvent(eventType, dataText, eventId);
         if (options.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
           try {
             socket.close(1000, eventType === 'final' ? 'final' : 'error_event');
-          } catch (error) {
+          } catch {
             // ignore
           }
         }
@@ -126,11 +170,10 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
         err.code = payload?.payload?.code;
         try {
           socket.close(1000, 'error');
-        } catch (error) {
+        } catch {
           // ignore
         }
         settleReject(err);
-        return;
       }
     };
 
@@ -138,7 +181,7 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
       const phase = opened ? 'stream' : 'connect';
       try {
         socket.close();
-      } catch (error) {
+      } catch {
         // ignore
       }
       settleReject(normalizeError(t('chat.error.requestFailed'), phase));
@@ -149,33 +192,38 @@ export const consumeWsStream = (socket, onEvent, options = {}) =>
     };
   });
 
-export const createWsMultiplexer = (createSocket, options = {}) => {
-  const idleTimeoutMs = Number.isFinite(options.idleTimeoutMs) ? options.idleTimeoutMs : 30000;
-  const connectTimeoutMs = Number.isFinite(options.connectTimeoutMs) ? options.connectTimeoutMs : 10000;
-  const pending = new Map();
-  let socket = null;
+export const createWsMultiplexer = (
+  createSocket: () => WebSocket,
+  options: MultiplexerOptions = {}
+) => {
+  const idleTimeoutMs = Number.isFinite(options.idleTimeoutMs) ? Number(options.idleTimeoutMs) : 30000;
+  const connectTimeoutMs = Number.isFinite(options.connectTimeoutMs)
+    ? Number(options.connectTimeoutMs)
+    : 10000;
+  const pending = new Map<string, PendingEntry>();
+  let socket: WebSocket | null = null;
   let opened = false;
-  let connectPromise = null;
-  let connectResolve = null;
-  let connectReject = null;
-  let connectTimer = null;
-  let idleTimer = null;
+  let connectPromise: Promise<void> | null = null;
+  let connectResolve: (() => void) | null = null;
+  let connectReject: ((error: unknown) => void) | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const clearConnectTimer = () => {
+  const clearConnectTimer = (): void => {
     if (connectTimer) {
       clearTimeout(connectTimer);
       connectTimer = null;
     }
   };
 
-  const clearIdleTimer = () => {
+  const clearIdleTimer = (): void => {
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
   };
 
-  const scheduleIdleClose = () => {
+  const scheduleIdleClose = (): void => {
     if (idleTimeoutMs <= 0 || pending.size > 0) {
       return;
     }
@@ -184,13 +232,13 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
       if (pending.size > 0) return;
       try {
         socket?.close(1000, 'idle');
-      } catch (error) {
+      } catch {
         // ignore
       }
     }, idleTimeoutMs);
   };
 
-  const cleanupSocket = () => {
+  const cleanupSocket = (): void => {
     clearConnectTimer();
     clearIdleTimer();
     socket = null;
@@ -200,13 +248,13 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     connectReject = null;
   };
 
-  const cleanupRequest = (entry) => {
-    if (entry?.signal && entry?.abortHandler) {
+  const cleanupRequest = (entry: PendingEntry | undefined): void => {
+    if (entry?.signal && entry.abortHandler) {
       entry.signal.removeEventListener('abort', entry.abortHandler);
     }
   };
 
-  const resolveRequest = (requestId) => {
+  const resolveRequest = (requestId: string): void => {
     const entry = pending.get(requestId);
     if (!entry) return;
     pending.delete(requestId);
@@ -215,7 +263,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     scheduleIdleClose();
   };
 
-  const rejectRequest = (requestId, error) => {
+  const rejectRequest = (requestId: string, error: unknown): void => {
     const entry = pending.get(requestId);
     if (!entry) return;
     pending.delete(requestId);
@@ -224,7 +272,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     scheduleIdleClose();
   };
 
-  const failAll = (error) => {
+  const failAll = (error: unknown): void => {
     if (pending.size === 0) {
       scheduleIdleClose();
       return;
@@ -232,31 +280,31 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     [...pending.keys()].forEach((requestId) => rejectRequest(requestId, error));
   };
 
-  const sendMessage = (message) => {
+  const sendMessage = (message: unknown): void => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not ready');
     }
     socket.send(JSON.stringify(message));
   };
 
-  const sendCancel = (requestId, sessionId) => {
+  const sendCancel = (requestId: string, sessionId?: string): void => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const payload = { type: 'cancel', request_id: requestId };
+    const payload: WsMessagePayload = { type: 'cancel', request_id: requestId };
     if (sessionId) {
       payload.session_id = sessionId;
     }
     try {
       sendMessage(payload);
-    } catch (error) {
+    } catch {
       // ignore
     }
   };
 
-  const handleMessage = (event) => {
-    let payload = null;
+  const handleMessage = (event: MessageEvent<string>): void => {
+    let payload: WsMessagePayload | null = null;
     try {
       payload = JSON.parse(event.data);
-    } catch (error) {
+    } catch {
       return;
     }
     const type = String(payload?.type || '').toLowerCase();
@@ -288,7 +336,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     }
   };
 
-  const bindSocket = () => {
+  const bindSocket = (): void => {
     if (!socket) return;
     socket.onmessage = handleMessage;
     socket.onopen = () => {
@@ -323,7 +371,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     };
   };
 
-  const ensureConnected = () => {
+  const ensureConnected = (): Promise<void> => {
     if (socket && socket.readyState === WebSocket.OPEN) {
       return Promise.resolve();
     }
@@ -332,7 +380,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     }
     socket = createSocket();
     opened = false;
-    connectPromise = new Promise((resolve, reject) => {
+    connectPromise = new Promise<void>((resolve, reject) => {
       connectResolve = resolve;
       connectReject = reject;
     });
@@ -343,7 +391,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
       const err = normalizeError(t('chat.error.requestFailed'), 'connect');
       try {
         socket?.close();
-      } catch (error) {
+      } catch {
         // ignore
       }
       if (connectReject) {
@@ -354,14 +402,14 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
     return connectPromise;
   };
 
-  const request = (payload) =>
-    new Promise((resolve, reject) => {
+  const request = (payload: WsRequestPayload): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
       const requestId = normalizeRequestId(payload?.requestId);
       if (!requestId) {
         reject(new Error('request_id required'));
         return;
       }
-      const entry = {
+      const entry: PendingEntry = {
         onEvent: typeof payload?.onEvent === 'function' ? payload.onEvent : () => {},
         resolve,
         reject,
@@ -371,7 +419,7 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
       };
       pending.set(requestId, entry);
       clearIdleTimer();
-      const handleAbort = () => {
+      const handleAbort = (): void => {
         if (!pending.has(requestId)) return;
         if (payload?.cancelOnAbort !== false) {
           sendCancel(requestId, payload?.sessionId);
@@ -393,7 +441,8 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
           try {
             sendMessage(payload.message);
           } catch (error) {
-            rejectRequest(requestId, normalizeError(error?.message, opened ? 'stream' : 'connect'));
+            const source = error as { message?: string };
+            rejectRequest(requestId, normalizeError(source?.message || '', opened ? 'stream' : 'connect'));
           }
         })
         .catch((error) => {
@@ -401,16 +450,16 @@ export const createWsMultiplexer = (createSocket, options = {}) => {
         });
     });
 
-  const close = (code, reason) => {
+  const close = (code?: number, reason?: string): void => {
     if (!socket) return;
     try {
       socket.close(code, reason);
-    } catch (error) {
+    } catch {
       // ignore
     }
   };
 
-  const isOpen = () => Boolean(socket && socket.readyState === WebSocket.OPEN);
+  const isOpen = (): boolean => Boolean(socket && socket.readyState === WebSocket.OPEN);
 
   return {
     request,

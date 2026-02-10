@@ -5,10 +5,27 @@ import { t } from '@/i18n';
 
 const HEADER_TRACE_ID = 'x-trace-id';
 
-const readHeader = (headers, key) => {
+type HeaderBag = Headers | Record<string, unknown> | undefined | null;
+type ErrorPayload = Record<string, any>;
+
+type ResolvedApiError = {
+  message: string;
+  code: string;
+  traceId: string;
+  status: number | null;
+  hint: string;
+};
+
+type NotificationOptions = {
+  title?: string;
+  copyLabel?: string;
+  duration?: number;
+};
+
+const readHeader = (headers: HeaderBag, key: string): string => {
   if (!headers) return '';
-  if (typeof headers.get === 'function') {
-    return String(headers.get(key) || '').trim();
+  if (typeof (headers as Headers).get === 'function') {
+    return String((headers as Headers).get(key) || '').trim();
   }
   const lowered = key.toLowerCase();
   for (const [name, value] of Object.entries(headers)) {
@@ -19,7 +36,7 @@ const readHeader = (headers, key) => {
   return '';
 };
 
-const pickString = (...values) => {
+const pickString = (...values: unknown[]): string => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
       return value.trim();
@@ -28,21 +45,22 @@ const pickString = (...values) => {
   return '';
 };
 
-const normalizeDetailMessage = (detail) => {
-  if (!detail) return '';
+const normalizeDetailMessage = (detail: unknown): string => {
+  const payload = detail as ErrorPayload;
+  if (!payload) return '';
   if (typeof detail === 'string') return detail;
-  if (typeof detail.message === 'string' && detail.message.trim()) return detail.message.trim();
-  if (typeof detail.error === 'string' && detail.error.trim()) return detail.error.trim();
-  if (detail.detail) {
-    if (typeof detail.detail === 'string' && detail.detail.trim()) return detail.detail.trim();
-    if (typeof detail.detail.message === 'string' && detail.detail.message.trim()) {
-      return detail.detail.message.trim();
+  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
+  if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
+  if (payload.detail) {
+    if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail.trim();
+    if (typeof payload.detail.message === 'string' && payload.detail.message.trim()) {
+      return payload.detail.message.trim();
     }
   }
   return '';
 };
 
-const parseErrorPayload = (payload) => {
+const parseErrorPayload = (payload: unknown) => {
   if (!payload || typeof payload !== 'object') {
     return {
       message: '',
@@ -52,24 +70,25 @@ const parseErrorPayload = (payload) => {
       hint: ''
     };
   }
-  const error = payload.error && typeof payload.error === 'object' ? payload.error : {};
-  const detail = payload.detail;
+  const source = payload as ErrorPayload;
+  const error = source.error && typeof source.error === 'object' ? source.error : {};
+  const detail = source.detail;
   return {
     message: pickString(
       error.message,
       normalizeDetailMessage(detail),
-      payload.message,
-      payload.error_message,
-      payload.error
+      source.message,
+      source.error_message,
+      source.error
     ),
-    code: pickString(error.code, detail?.code, payload.code),
-    traceId: pickString(error.trace_id, detail?.trace_id, payload.trace_id),
+    code: pickString(error.code, detail?.code, source.code),
+    traceId: pickString(error.trace_id, detail?.trace_id, source.trace_id),
     status: Number.isFinite(Number(error.status)) ? Number(error.status) : null,
-    hint: pickString(error.hint, detail?.hint, payload.hint)
+    hint: pickString(error.hint, detail?.hint, source.hint)
   };
 };
 
-const copyWithExecCommand = (text) => {
+const copyWithExecCommand = (text: string): void => {
   const textarea = document.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', 'readonly');
@@ -85,7 +104,7 @@ const copyWithExecCommand = (text) => {
   }
 };
 
-const copyTraceId = async (traceId) => {
+const copyTraceId = async (traceId: string): Promise<void> => {
   if (!traceId) return;
   if (navigator?.clipboard?.writeText) {
     await navigator.clipboard.writeText(traceId);
@@ -94,7 +113,7 @@ const copyTraceId = async (traceId) => {
   copyWithExecCommand(traceId);
 };
 
-export const resolveApiError = (source, fallback = '') => {
+export const resolveApiError = (source: any, fallback = ''): ResolvedApiError => {
   const response = source?.response;
   const payload = response?.data;
   const parsed = parseErrorPayload(payload);
@@ -109,12 +128,12 @@ export const resolveApiError = (source, fallback = '') => {
   };
 };
 
-const buildNotificationMessage = (resolved, options = {}) => {
+const buildNotificationMessage = (resolved: ResolvedApiError, options: NotificationOptions = {}) => {
   const copyLabel = options.copyLabel || t('common.copy');
   return h('div', { style: 'display:flex;flex-direction:column;gap:8px;line-height:1.5;' }, [
     h('div', resolved.message),
     h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;opacity:.92;' }, [
-      h('span', t('common.traceId') + ': ' + resolved.traceId),
+      h('span', `${t('common.traceId')}: ${resolved.traceId}`),
       h(
         'button',
         {
@@ -125,7 +144,7 @@ const buildNotificationMessage = (resolved, options = {}) => {
             try {
               await copyTraceId(resolved.traceId);
               ElMessage.success(t('common.traceIdCopied'));
-            } catch (error) {
+            } catch {
               ElMessage.error(t('common.traceIdCopyFailed'));
             }
           }
@@ -137,7 +156,7 @@ const buildNotificationMessage = (resolved, options = {}) => {
   ]);
 };
 
-export const showApiError = (source, fallback = '', options = {}) => {
+export const showApiError = (source: any, fallback = '', options: NotificationOptions = {}): void => {
   const resolved = resolveApiError(source, fallback);
   if (!resolved.message) {
     return;

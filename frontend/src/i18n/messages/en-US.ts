@@ -491,7 +491,6 @@ export default {
   'common.noDescription': 'No description',
   'common.notice': 'Notice',
   'common.remove': 'Remove',
-  'common.requestFailed': 'Request failed',
   'common.saved': 'Saved',
   'common.saving': 'Saving...',
   'common.selectAll': 'Select all',

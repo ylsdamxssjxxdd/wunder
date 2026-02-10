@@ -4,12 +4,32 @@ import { getDemoToken, isDemoMode } from '@/utils/demo';
 import { resolveApiBase } from '@/config/runtime';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
-const buildUrl = (path) => {
+type QueryValue = string | number | boolean | null | undefined;
+type QueryParams = Record<string, QueryValue>;
+
+type SocketProtocolOptions = {
+  protocols?: string[] | string;
+};
+
+type StreamRequestOptions = {
+  signal?: AbortSignal;
+};
+
+type ResumeRequestOptions = StreamRequestOptions & {
+  afterEventId?: number;
+};
+
+type OpenChatSocketOptions = SocketProtocolOptions & {
+  allowQueryToken?: boolean;
+  params?: QueryParams;
+};
+
+const buildUrl = (path: string): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   return `${base.replace(/\/$/, '')}${path}`;
 };
 
-const resolveWsBase = () => {
+const resolveWsBase = (): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   const trimmed = base.replace(/\/$/, '');
   if (!trimmed) {
@@ -25,18 +45,21 @@ const resolveWsBase = () => {
   return trimmed;
 };
 
-const buildWsUrl = (path, params) => {
+const buildWsUrl = (path: string, params: URLSearchParams): string => {
   const base = resolveWsBase();
-  const suffix = params?.toString();
+  const suffix = params.toString();
   if (!suffix) {
     return `${base}${path}`;
   }
   return `${base}${path}?${suffix}`;
 };
 
-const buildWsProtocols = (token, options = {}) => {
-  const protocols = [];
-  const appendProtocol = (value) => {
+const buildWsProtocols = (
+  token: string | null,
+  options: SocketProtocolOptions = {}
+): string[] | null => {
+  const protocols: string[] = [];
+  const appendProtocol = (value: unknown): void => {
     const cleaned = String(value || '').trim();
     if (!cleaned || /\s/.test(cleaned)) return;
     if (!protocols.includes(cleaned)) {
@@ -55,12 +78,12 @@ const buildWsProtocols = (token, options = {}) => {
   return protocols.length ? protocols : null;
 };
 
-const handleStreamResponse = (response) => {
-  if (response?.ok) {
+const handleStreamResponse = (response: Response): Response => {
+  if (response.ok) {
     clearMaintenance();
     return response;
   }
-  const status = response?.status;
+  const status = response.status;
   if (isMaintenanceStatus(status)) {
     markMaintenance({ status, reason: 'http' });
   } else if (status) {
@@ -69,31 +92,37 @@ const handleStreamResponse = (response) => {
   return response;
 };
 
-const handleStreamError = (error) => {
-  if (error?.name === 'AbortError') {
+const handleStreamError = (error: unknown): never => {
+  if (error instanceof DOMException && error.name === 'AbortError') {
     throw error;
   }
-  markMaintenance({ reason: error?.name || error?.message || 'network' });
+  const cause = error as { name?: string; message?: string };
+  markMaintenance({ reason: cause?.name || cause?.message || 'network' });
   throw error;
 };
 
-export const createSession = (payload) => api.post('/chat/sessions', payload);
+export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
 export const fetchChatTransportProfile = () => api.get('/chat/transport');
-export const listSessions = (params) => api.get('/chat/sessions', { params });
-export const getSession = (id) => api.get(`/chat/sessions/${id}`);
-export const getSessionEvents = (id) => api.get(`/chat/sessions/${id}/events`);
-export const deleteSession = (id) => api.delete(`/chat/sessions/${id}`);
-export const sendMessage = (id, payload) => api.post(`/chat/sessions/${id}/messages`, payload);
-export const fetchSessionSystemPrompt = (id, payload) =>
+export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
+export const getSession = (id: string) => api.get(`/chat/sessions/${id}`);
+export const getSessionEvents = (id: string) => api.get(`/chat/sessions/${id}/events`);
+export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
+export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);
+export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);
-export const fetchRealtimeSystemPrompt = (payload) => api.post('/chat/system-prompt', payload);
-export const updateSessionTools = (id, payload) => api.post(`/chat/sessions/${id}/tools`, payload);
-export const convertChatAttachment = (file) => {
+export const fetchRealtimeSystemPrompt = (payload: unknown) => api.post('/chat/system-prompt', payload);
+export const updateSessionTools = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/tools`, payload);
+export const convertChatAttachment = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
   return api.post('/chat/attachments/convert', formData);
 };
-export const sendMessageStream = (id, payload, options = {}) => {
+
+export const sendMessageStream = (
+  id: string,
+  payload: unknown,
+  options: StreamRequestOptions = {}
+) => {
   // 浏览器端流式需要使用 fetch 才能读取 SSE 数据
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   return fetch(buildUrl(`/chat/sessions/${id}/messages`), {
@@ -109,10 +138,10 @@ export const sendMessageStream = (id, payload, options = {}) => {
     .catch(handleStreamError);
 };
 
-export const resumeMessageStream = (id, options = {}) => {
+export const resumeMessageStream = (id: string, options: ResumeRequestOptions = {}) => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   const params = new URLSearchParams();
-  if (Number.isFinite(options.afterEventId) && options.afterEventId >= 0) {
+  if (Number.isFinite(options.afterEventId) && Number(options.afterEventId) >= 0) {
     params.set('after_event_id', String(options.afterEventId));
   }
   const suffix = params.toString();
@@ -130,9 +159,9 @@ export const resumeMessageStream = (id, options = {}) => {
     .catch(handleStreamError);
 };
 
-export const cancelMessageStream = (id) => api.post(`/chat/sessions/${id}/cancel`);
+export const cancelMessageStream = (id: string) => api.post(`/chat/sessions/${id}/cancel`);
 
-export const openChatSocket = (options = {}) => {
+export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   const params = new URLSearchParams();
   const allowQueryToken = options.allowQueryToken === true;

@@ -4,12 +4,30 @@ import enUS from './messages/en-US';
 import zhCN from './messages/zh-CN';
 import { resolveApiBase } from '@/config/runtime';
 
-const LOCALES = {
+type LocaleMessages = Record<string, string>;
+
+type LanguageAliases = Record<string, string>;
+type LanguageLabels = Record<string, string>;
+
+type SetLanguageOptions = {
+  force?: boolean;
+  persist?: boolean;
+  emit?: boolean;
+};
+
+type I18nConfigPayload = {
+  supported_languages?: string[];
+  aliases?: Record<string, string>;
+  labels?: Record<string, string>;
+  default_language?: string;
+};
+
+const LOCALES: Record<string, LocaleMessages> = {
   'zh-CN': zhCN,
   'en-US': enUS
 };
 
-const DEFAULT_LANGUAGE_ALIASES = {
+const DEFAULT_LANGUAGE_ALIASES: LanguageAliases = {
   zh: 'zh-CN',
   'zh-cn': 'zh-CN',
   'zh-hans': 'zh-CN',
@@ -19,8 +37,8 @@ const DEFAULT_LANGUAGE_ALIASES = {
   'en-gb': 'en-US'
 };
 
-const DEFAULT_LANGUAGE_LABELS = {
-  'zh-CN': '简体中文',
+const DEFAULT_LANGUAGE_LABELS: LanguageLabels = {
+  'zh-CN': '\u7b80\u4f53\u4e2d\u6587',
   'en-US': 'English'
 };
 
@@ -28,10 +46,10 @@ const STORAGE_KEY = 'wunder_language';
 
 let defaultLanguage = 'zh-CN';
 let supportedLanguages = Object.keys(LOCALES);
-let languageAliases = { ...DEFAULT_LANGUAGE_ALIASES };
-let languageLabels = { ...DEFAULT_LANGUAGE_LABELS };
+let languageAliases: LanguageAliases = { ...DEFAULT_LANGUAGE_ALIASES };
+let languageLabels: LanguageLabels = { ...DEFAULT_LANGUAGE_LABELS };
 
-const resolveLocale = (language) => {
+const resolveLocale = (language: string): LocaleMessages => {
   if (language && LOCALES[language]) {
     return LOCALES[language];
   }
@@ -42,7 +60,7 @@ const resolveLocale = (language) => {
   return fallbackKey ? LOCALES[fallbackKey] : {};
 };
 
-const resolveLanguageCode = (raw) => {
+const resolveLanguageCode = (raw: unknown): string => {
   const cleaned = String(raw || '').trim();
   if (!cleaned) {
     return '';
@@ -62,18 +80,18 @@ const resolveLanguageCode = (raw) => {
   );
 };
 
-const formatMessage = (template, params) => {
+const formatMessage = (template: string, params: Record<string, unknown>): string => {
   if (!params || typeof params !== 'object') {
     return template;
   }
   return Object.keys(params).reduce(
     (result, key) =>
-      result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(params[key] ?? '')),
+      result.replace(new RegExp(`\{${key}\}`, 'g'), String(params[key] ?? '')),
     template
   );
 };
 
-const resolveInitialLanguage = () => {
+const resolveInitialLanguage = (): string => {
   const stored = resolveLanguageCode(localStorage.getItem(STORAGE_KEY));
   if (stored) {
     return stored;
@@ -86,25 +104,25 @@ const resolveInitialLanguage = () => {
 
 const currentLanguage = ref(resolveInitialLanguage());
 
-export const t = (key, params = {}) => {
+export const t = (key: string, params: Record<string, unknown> = {}): string => {
   const locale = resolveLocale(currentLanguage.value);
   const fallbackLocale = resolveLocale(defaultLanguage);
   const template = locale[key] || fallbackLocale[key] || key;
   return formatMessage(template, params);
 };
 
-export const getCurrentLanguage = () => currentLanguage.value;
+export const getCurrentLanguage = (): string => currentLanguage.value;
 
-export const getSupportedLanguages = () => [...supportedLanguages];
+export const getSupportedLanguages = (): string[] => [...supportedLanguages];
 
-export const getLanguageLabel = (language) => {
+export const getLanguageLabel = (language: string): string => {
   const code = String(language || '').trim();
   const key = `language.${code}`;
   const locale = resolveLocale(currentLanguage.value);
   return locale[key] || languageLabels[code] || code;
 };
 
-export const setLanguage = (language, options = {}) => {
+export const setLanguage = (language: unknown, options: SetLanguageOptions = {}): string => {
   const next = resolveLanguageCode(language) || defaultLanguage;
   if (next === currentLanguage.value && !options.force) {
     return currentLanguage.value;
@@ -126,7 +144,7 @@ export const setLanguage = (language, options = {}) => {
   return currentLanguage.value;
 };
 
-export const configureI18n = (config = {}) => {
+export const configureI18n = (config: I18nConfigPayload = {}): void => {
   const nextSupported = Array.isArray(config.supported_languages)
     ? config.supported_languages.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
@@ -134,7 +152,7 @@ export const configureI18n = (config = {}) => {
     ? Array.from(new Set(nextSupported))
     : Object.keys(LOCALES);
 
-  const mergedAliases = { ...DEFAULT_LANGUAGE_ALIASES };
+  const mergedAliases: LanguageAliases = { ...DEFAULT_LANGUAGE_ALIASES };
   if (config && typeof config.aliases === 'object') {
     Object.entries(config.aliases).forEach(([key, value]) => {
       const aliasKey = String(key || '').trim().toLowerCase();
@@ -151,7 +169,7 @@ export const configureI18n = (config = {}) => {
   languageAliases = mergedAliases;
 
   if (config && typeof config.labels === 'object') {
-    const nextLabels = { ...languageLabels };
+    const nextLabels: LanguageLabels = { ...languageLabels };
     Object.entries(config.labels).forEach(([key, value]) => {
       const lang = String(key || '').trim();
       const label = String(value || '').trim();
@@ -162,26 +180,26 @@ export const configureI18n = (config = {}) => {
     languageLabels = nextLabels;
   }
 
-  const resolvedDefault = resolveLanguageCode(config?.default_language);
+  const resolvedDefault = resolveLanguageCode(config.default_language);
   if (resolvedDefault) {
     defaultLanguage = resolvedDefault;
   }
 };
 
-const resolveI18nEndpoint = () => {
+const resolveI18nEndpoint = (): string => {
   const base = resolveApiBase();
   return `${base.replace(/\/+$/, '')}/i18n`;
 };
 
-export const initI18n = async () => {
+export const initI18n = async (): Promise<void> => {
   try {
     const response = await fetch(resolveI18nEndpoint(), { method: 'GET' });
     if (response.ok) {
-      const payload = await response.json();
-      configureI18n(payload?.data || payload || {});
+      const payload = (await response.json()) as { data?: I18nConfigPayload } & Record<string, unknown>;
+      configureI18n((payload.data as I18nConfigPayload) || (payload as I18nConfigPayload) || {});
     }
-  } catch (error) {
-    // 保持本地默认配置即可
+  } catch {
+    // keep local defaults when remote i18n config is unavailable
   }
   setLanguage(resolveInitialLanguage(), { force: true, persist: false, emit: false });
 };
