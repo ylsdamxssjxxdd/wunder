@@ -29,6 +29,8 @@ use wunder_server::tools::{
 };
 use wunder_server::user_tools::UserMcpServer;
 
+const CLI_MIN_MAX_ROUNDS: u32 = 8;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -265,17 +267,20 @@ async fn print_runtime_status(
         .resolve_model_name(global.model.as_deref())
         .await
         .unwrap_or_else(|| "<none>".to_string());
-    let tool_call_mode = config
-        .llm
-        .models
-        .get(&model_name)
+    let model_entry = config.llm.models.get(&model_name);
+    let tool_call_mode = model_entry
         .and_then(|model| model.tool_call_mode.as_deref())
         .unwrap_or("tool_call");
+    let max_rounds = model_entry
+        .and_then(|model| model.max_rounds)
+        .unwrap_or(CLI_MIN_MAX_ROUNDS)
+        .max(CLI_MIN_MAX_ROUNDS);
 
     println!("status");
     println!("- session: {session_id}");
     println!("- model: {model_name}");
     println!("- tool_call_mode: {tool_call_mode}");
+    println!("- max_rounds: {max_rounds}");
     println!("- workspace: {}", config.workspace.root);
     println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
     println!("- db_path: {}", config.storage.db_path);
@@ -332,13 +337,15 @@ async fn show_model_status(runtime: &CliRuntime, global: &GlobalArgs) -> Result<
     println!("available models:");
     for name in models {
         let marker = if name == active_model { "*" } else { " " };
-        let mode = config
-            .llm
-            .models
-            .get(&name)
+        let model_entry = config.llm.models.get(&name);
+        let mode = model_entry
             .and_then(|model| model.tool_call_mode.as_deref())
             .unwrap_or("tool_call");
-        println!("{marker} {name} ({mode})");
+        let max_rounds = model_entry
+            .and_then(|model| model.max_rounds)
+            .unwrap_or(CLI_MIN_MAX_ROUNDS)
+            .max(CLI_MIN_MAX_ROUNDS);
+        println!("{marker} {name} ({mode}, max_rounds={max_rounds})");
     }
     Ok(())
 }
@@ -766,11 +773,14 @@ async fn handle_config(
 async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let config = runtime.state.config_store.get().await;
     let model = runtime.resolve_model_name(global.model.as_deref()).await;
-    let tool_call_mode = model
-        .as_ref()
-        .and_then(|name| config.llm.models.get(name))
+    let model_entry = model.as_ref().and_then(|name| config.llm.models.get(name));
+    let tool_call_mode = model_entry
         .and_then(|model| model.tool_call_mode.clone())
         .unwrap_or_else(|| "tool_call".to_string());
+    let max_rounds = model_entry
+        .and_then(|model| model.max_rounds)
+        .unwrap_or(CLI_MIN_MAX_ROUNDS)
+        .max(CLI_MIN_MAX_ROUNDS);
 
     let payload = json!({
         "launch_dir": runtime.launch_dir,
@@ -781,6 +791,7 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         "db_path": config.storage.db_path,
         "model": model,
         "tool_call_mode": tool_call_mode,
+        "max_rounds": max_rounds,
         "override_path": runtime.temp_root.join("config/wunder.override.yaml"),
     });
     println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -875,7 +886,12 @@ async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> 
             entry.api_key = Some(api_key_for_update.clone());
             entry.model = Some(model_for_update.clone());
             entry.tool_call_mode = Some("tool_call".to_string());
-            entry.max_rounds = Some(entry.max_rounds.unwrap_or(8).max(2));
+            entry.max_rounds = Some(
+                entry
+                    .max_rounds
+                    .unwrap_or(CLI_MIN_MAX_ROUNDS)
+                    .max(CLI_MIN_MAX_ROUNDS),
+            );
             if entry
                 .model_type
                 .as_deref()
@@ -934,7 +950,7 @@ fn build_cli_llm_model_config(
         temperature: None,
         timeout_s: None,
         retry: None,
-        max_rounds: Some(8),
+        max_rounds: Some(CLI_MIN_MAX_ROUNDS),
         max_context: None,
         max_output: None,
         support_vision: None,
@@ -1102,8 +1118,42 @@ fn build_request_overrides(
     model_name: Option<&str>,
     tool_call_mode: Option<ToolCallModeArg>,
 ) -> Option<Value> {
-    let mode = tool_call_mode?;
-    let selected_model = model_name
+    let selected_model = resolve_selected_model(config, model_name)?;
+    let mut model_overrides = serde_json::Map::new();
+
+    if let Some(mode) = tool_call_mode {
+        model_overrides.insert("tool_call_mode".to_string(), json!(mode.as_str()));
+    }
+
+    let max_rounds = config
+        .llm
+        .models
+        .get(&selected_model)
+        .and_then(|entry| entry.max_rounds);
+    if max_rounds.unwrap_or(0) < CLI_MIN_MAX_ROUNDS {
+        model_overrides.insert(
+            "max_rounds".to_string(),
+            json!(max_rounds
+                .unwrap_or(CLI_MIN_MAX_ROUNDS)
+                .max(CLI_MIN_MAX_ROUNDS)),
+        );
+    }
+
+    if model_overrides.is_empty() {
+        return None;
+    }
+
+    Some(json!({
+        "llm": {
+            "models": {
+                selected_model: model_overrides
+            }
+        }
+    }))
+}
+
+fn resolve_selected_model(config: &Config, model_name: Option<&str>) -> Option<String> {
+    model_name
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
@@ -1114,17 +1164,7 @@ fn build_request_overrides(
                 Some(config.llm.default.trim().to_string())
             }
         })
-        .or_else(|| config.llm.models.keys().next().cloned())?;
-
-    Some(json!({
-        "llm": {
-            "models": {
-                selected_model: {
-                    "tool_call_mode": mode.as_str()
-                }
-            }
-        }
-    }))
+        .or_else(|| config.llm.models.keys().next().cloned())
 }
 
 fn resolve_prompt_text(prompt: Option<String>) -> Result<String> {
@@ -1179,4 +1219,76 @@ fn normalize_name_list(values: Vec<String>) -> Vec<String> {
         output.push(cleaned.to_string());
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_request_overrides_sets_default_max_rounds_when_missing() {
+        let mut config = Config::default();
+        let model_name = "demo";
+        config.llm.default = model_name.to_string();
+        let mut model = build_cli_llm_model_config(
+            "openai_compatible",
+            "https://example.com/v1",
+            "test-key",
+            model_name,
+        );
+        model.max_rounds = None;
+        config.llm.models.insert(model_name.to_string(), model);
+
+        let overrides = build_request_overrides(&config, None, None).expect("overrides expected");
+        assert_eq!(
+            overrides["llm"]["models"][model_name]["max_rounds"],
+            json!(8)
+        );
+    }
+
+    #[test]
+    fn build_request_overrides_raises_low_max_rounds() {
+        let mut config = Config::default();
+        let model_name = "demo";
+        config.llm.default = model_name.to_string();
+        let mut model = build_cli_llm_model_config(
+            "openai_compatible",
+            "https://example.com/v1",
+            "test-key",
+            model_name,
+        );
+        model.max_rounds = Some(1);
+        config.llm.models.insert(model_name.to_string(), model);
+
+        let overrides = build_request_overrides(&config, None, None).expect("overrides expected");
+        assert_eq!(
+            overrides["llm"]["models"][model_name]["max_rounds"],
+            json!(CLI_MIN_MAX_ROUNDS)
+        );
+    }
+
+    #[test]
+    fn build_request_overrides_keeps_safe_max_rounds_and_applies_mode() {
+        let mut config = Config::default();
+        let model_name = "demo";
+        config.llm.default = model_name.to_string();
+        let mut model = build_cli_llm_model_config(
+            "openai_compatible",
+            "https://example.com/v1",
+            "test-key",
+            model_name,
+        );
+        model.max_rounds = Some(12);
+        config.llm.models.insert(model_name.to_string(), model);
+
+        let overrides = build_request_overrides(&config, None, Some(ToolCallModeArg::FunctionCall))
+            .expect("overrides expected");
+        assert_eq!(
+            overrides["llm"]["models"][model_name]["tool_call_mode"],
+            json!("function_call")
+        );
+        assert!(overrides["llm"]["models"][model_name]["max_rounds"].is_null());
+
+        assert!(build_request_overrides(&config, None, None).is_none());
+    }
 }

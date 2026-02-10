@@ -877,7 +877,7 @@
 }
 
 .simlab-report-list-card,
-.simlab-detail-card {
+.simlab-chart-card {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   background: #fff;
@@ -892,12 +892,17 @@
   flex: 1 1 55%;
 }
 
-.simlab-detail-card {
+.simlab-chart-card {
   flex: 1 1 45%;
 }
 
+.simlab-chart-card .monitor-chart {
+  flex: 1 1 0;
+  min-height: 220px;
+}
+
 .simlab-report-list-card .list-header h2,
-.simlab-detail-card .list-header h2 {
+.simlab-chart-card .list-header h2 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;

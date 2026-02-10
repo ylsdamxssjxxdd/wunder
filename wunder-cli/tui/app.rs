@@ -53,6 +53,7 @@ pub struct TuiApp {
     stream_rx: Option<UnboundedReceiver<StreamMessage>>,
     model_name: String,
     tool_call_mode: String,
+    model_max_rounds: u32,
     last_usage: Option<String>,
     config_wizard: Option<ConfigWizardState>,
     stream_saw_output: bool,
@@ -85,6 +86,7 @@ impl TuiApp {
             stream_rx: None,
             model_name: "<none>".to_string(),
             tool_call_mode: "tool_call".to_string(),
+            model_max_rounds: crate::CLI_MIN_MAX_ROUNDS,
             last_usage: None,
             config_wizard: None,
             stream_saw_output: false,
@@ -116,10 +118,11 @@ impl TuiApp {
             String::new()
         };
         format!(
-            "wunder-cli  session:{}  model:{}  mode:{}  state:{}{}{}  (PgUp/PgDn scroll, Ctrl+C exit)",
+            "wunder-cli  session:{}  model:{}  mode:{}  rounds:{}  state:{}{}{}  (PgUp/PgDn scroll, Ctrl+C exit)",
             short_session_id(&self.session_id),
             self.model_name,
             self.tool_call_mode,
+            self.model_max_rounds,
             busy,
             usage,
             scroll,
@@ -585,6 +588,7 @@ impl TuiApp {
             "db_path": config.storage.db_path,
             "model": model,
             "tool_call_mode": tool_call_mode,
+            "max_rounds": self.model_max_rounds,
             "override_path": self.runtime.temp_root.join("config/wunder.override.yaml"),
         });
 
@@ -701,7 +705,12 @@ impl TuiApp {
                 entry.api_key = Some(api_key_for_update.clone());
                 entry.model = Some(model_for_update.clone());
                 entry.tool_call_mode = Some("tool_call".to_string());
-                entry.max_rounds = Some(entry.max_rounds.unwrap_or(8).max(2));
+                entry.max_rounds = Some(
+                    entry
+                        .max_rounds
+                        .unwrap_or(crate::CLI_MIN_MAX_ROUNDS)
+                        .max(crate::CLI_MIN_MAX_ROUNDS),
+                );
                 if entry
                     .model_type
                     .as_deref()
@@ -885,12 +894,14 @@ impl TuiApp {
             .resolve_model_name(self.global.model.as_deref())
             .await
             .unwrap_or_else(|| "<none>".to_string());
-        self.tool_call_mode = config
-            .llm
-            .models
-            .get(&self.model_name)
+        let model_entry = config.llm.models.get(&self.model_name);
+        self.tool_call_mode = model_entry
             .and_then(|model| model.tool_call_mode.clone())
             .unwrap_or_else(|| "tool_call".to_string());
+        self.model_max_rounds = model_entry
+            .and_then(|model| model.max_rounds)
+            .unwrap_or(crate::CLI_MIN_MAX_ROUNDS)
+            .max(crate::CLI_MIN_MAX_ROUNDS);
     }
 
     fn status_lines(&self) -> Vec<String> {
@@ -899,6 +910,7 @@ impl TuiApp {
             format!("- session: {}", self.session_id),
             format!("- model: {}", self.model_name),
             format!("- tool_call_mode: {}", self.tool_call_mode),
+            format!("- max_rounds: {}", self.model_max_rounds),
             format!("- workspace: {}", self.runtime.launch_dir.to_string_lossy()),
             format!("- temp_root: {}", self.runtime.temp_root.to_string_lossy()),
         ]

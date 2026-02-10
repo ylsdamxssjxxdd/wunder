@@ -203,8 +203,6 @@ export const elements = {
   simLabHistoryList: document.getElementById("simLabHistoryList"),
   simLabHistoryEmpty: document.getElementById("simLabHistoryEmpty"),
   simLabReportList: document.getElementById("simLabReportList"),
-  simLabDetailLabel: document.getElementById("simLabDetailLabel"),
-  simLabDetailReport: document.getElementById("simLabDetailReport"),
   evaluationPanel: document.getElementById("evaluationPanel"),
   evaluationActionBtn: document.getElementById("evaluationActionBtn"),
   evaluationStatusIndicator: document.getElementById("evaluationStatusIndicator"),

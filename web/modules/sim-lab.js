@@ -13,8 +13,6 @@ let currentRunId = "";
 let stopping = false;
 let cancelRequested = false;
 let historyItems = [];
-let detailPayload = null;
-let detailLabel = "";
 let curveChart = null;
 
 const HISTORY_STORAGE_KEY = "wunder_sim_lab_history";
@@ -119,35 +117,6 @@ const upsertHistory = (report) => {
   const withoutCurrent = historyItems.filter((entry) => entry.run_id !== item.run_id);
   saveHistoryStorage([item, ...withoutCurrent]);
   renderHistory();
-};
-
-const setDetail = (label, payload) => {
-  detailLabel = label || "";
-  detailPayload = payload ?? null;
-  renderDetail();
-};
-
-const renderDetail = () => {
-  const detailLabelEl =
-    elements.simLabDetailLabel || document.getElementById("simLabDetailLabel");
-  const detailReportEl =
-    elements.simLabDetailReport || document.getElementById("simLabDetailReport");
-
-  if (detailLabelEl) {
-    detailLabelEl.textContent = detailLabel;
-  }
-  if (!detailReportEl) {
-    return;
-  }
-  if (!detailPayload) {
-    detailReportEl.textContent = t("simLab.detail.empty");
-    return;
-  }
-  try {
-    detailReportEl.textContent = JSON.stringify(detailPayload, null, 2);
-  } catch {
-    detailReportEl.textContent = String(detailPayload);
-  }
 };
 
 const restoreHistory = (runId) => {
@@ -795,7 +764,7 @@ const renderProjectReports = (projects) => {
     const subtitle = document.createElement("div");
     subtitle.className = "simlab-report-subtitle";
     subtitle.textContent = project.run_id
-      ? `${project.project_id} ? ${project.run_id}`
+      ? `${project.project_id} · ${project.run_id}`
       : project.project_id;
 
     left.appendChild(title);
@@ -812,30 +781,8 @@ const renderProjectReports = (projects) => {
     status.className = `simlab-status-pill ${statusClass(project.status)}`;
     status.textContent = statusLabel(project.status);
 
-    const detailBtn = document.createElement("button");
-    detailBtn.type = "button";
-    detailBtn.className = "simlab-detail-btn";
-    detailBtn.textContent = t("simLab.result.viewDetail");
-    detailBtn.addEventListener("click", () => {
-      const label = t("simLab.detail.projectLabel", {
-        title: rowTitle,
-        runId: project.run_id || lastReport?.run_id || "-",
-      });
-      setDetail(label, {
-        order: project.order,
-        workers: hasWorkers ? workers : null,
-        run_id: project.run_id,
-        project_id: project.project_id,
-        status: project.status,
-        wall_time_s: project.wall_time_s,
-        error: project.error,
-        report: project.report,
-      });
-    });
-
     right.appendChild(duration);
     right.appendChild(status);
-    right.appendChild(detailBtn);
 
     header.appendChild(left);
     header.appendChild(right);
@@ -880,16 +827,6 @@ const renderReport = (report) => {
   lastReport = report || null;
   renderProjectReports(lastReport?.projects || []);
   renderCurveChart(lastReport);
-  if (!lastReport) {
-    setDetail("", null);
-    return;
-  }
-  setDetail(
-    t("simLab.detail.runLabel", {
-      runId: String(lastReport.run_id || "-"),
-    }),
-    lastReport
-  );
 };
 
 const buildRunPayload = (runId, workersOverride) => {

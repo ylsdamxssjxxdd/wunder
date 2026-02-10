@@ -1,4 +1,4 @@
-// API 路由汇总入口，按领域拆分以保持结构清晰。
+﻿// API 路由聚合入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
 pub mod admin_sim_lab;
@@ -53,6 +53,25 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(team_runs::router())
         .merge(user_channels::router())
         .merge(a2a::router())
+        .merge(crate::mcp::router(state.clone()))
+        .with_state(state)
+}
+
+/// Build a reduced router for local desktop mode.
+///
+/// It intentionally omits admin/channel/gateway/cron routes to keep the local
+/// surface minimal while still reusing the same orchestrator/tooling pipeline.
+pub fn build_desktop_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(chat::router())
+        .merge(chat_ws::router())
+        .merge(core_ws::router())
+        .merge(core::router())
+        .merge(temp_dir::router())
+        .merge(workspace::router())
+        .merge(user_tools::router())
+        .merge(user_agents::router())
+        .merge(user_channels::router())
         .merge(crate::mcp::router(state.clone()))
         .with_state(state)
 }

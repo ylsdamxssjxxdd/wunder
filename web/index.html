@@ -2894,7 +2894,7 @@
                     <input id="simLabWorkers" type="number" min="1" step="1" value="100" />
                   </div>
                   <div class="form-row">
-                    <label for="simLabWorkerStep" data-i18n="simLab.form.workerStep">????</label>
+                    <label for="simLabWorkerStep" data-i18n="simLab.form.workerStep">工蜂步增</label>
                     <input id="simLabWorkerStep" type="number" min="1" step="1" value="10" />
                   </div>
                   <div class="form-row">
@@ -2915,13 +2915,9 @@
                   <div id="simLabProjects" class="simlab-project-list"></div>
                 </div>
                 <div class="muted" data-i18n="simLab.form.stepHint">
-                  ??? 1 ???????????????
+                  从工蜂 1 开始，按步增测试到最大工蜂数。
                 </div>
                 <div id="simLabStatus" class="muted"></div>
-                <div class="simlab-curve-card monitor-block">
-                  <div class="monitor-block-title" data-i18n="simLab.chart.title">??????</div>
-                  <div id="simLabChart" class="monitor-chart"></div>
-                </div>
                 <div class="simlab-history-card">
                   <div class="simlab-history-title" data-i18n="simLab.history.title">测试历史</div>
                   <div id="simLabHistoryList" class="simlab-history-list"></div>
@@ -2936,12 +2932,11 @@
                 </div>
                 <div id="simLabReportList" class="simlab-report-list-body"></div>
               </div>
-              <div class="simlab-detail-card">
+              <div class="simlab-chart-card simlab-curve-card">
                 <div class="list-header">
-                  <h2 data-i18n="simLab.detail.title">详细报告</h2>
+                  <h2 data-i18n="simLab.chart.title">蜂群性能曲线</h2>
                 </div>
-                <div id="simLabDetailLabel" class="simlab-detail-label muted"></div>
-                <pre id="simLabDetailReport" class="simlab-detail-report"></pre>
+                <div id="simLabChart" class="monitor-chart"></div>
               </div>
             </div>
           </div>
