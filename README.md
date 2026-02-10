@@ -48,6 +48,21 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 2. 进入 `/home` 新建或选择智能体应用（也可直接进入聊天页）。
 3. 在聊天页进行对话，所需资料可先整理到工作区。
 
+### 会话控制命令（用户侧前端 + 渠道入站）
+用户侧聊天输入框和渠道入站都支持会话控制命令：
+
+- `/new` 或 `/reset`：新建线程，并切换为当前会话。
+- `/stop` 或 `/cancel`：请求停止当前会话执行。
+- `/help` 或 `/?`：返回命令帮助说明。
+
+用户侧前端额外支持：
+
+- `/compact`：主动触发当前会话上下文压缩。
+
+补充说明：
+- 命令不区分大小写，只解析文本首个 token（例如 `/new hello` 等价 `/new`）。
+- 渠道命令解析位于 `src/channels/service.rs`；用户侧命令处理位于 `frontend/src/views/ChatView.vue`。
+
 ## 快速开始
 ### 1) 更新配置
 拷贝示例配置：`config/wunder-example.yaml` -> `config/wunder.yaml`

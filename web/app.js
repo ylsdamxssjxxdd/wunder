@@ -77,6 +77,7 @@ import { initApiDocsPanel } from "./modules/api-docs.js?v=20260126-01";
 import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
 import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
+import { initSimLabPanel } from "./modules/sim-lab.js?v=20260210-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
 
@@ -185,6 +186,8 @@ const panelMap = {
   throughput: { panel: elements.throughputPanel, nav: elements.navThroughput },
 
   performance: { panel: elements.performancePanel, nav: elements.navPerformance },
+
+  simLab: { panel: elements.simLabPanel, nav: elements.navSimLab },
 
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
 
@@ -561,6 +564,22 @@ const bindNavigation = () => {
         appendLog(
           t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
         );
+      }
+    });
+  }
+
+  if (elements.navSimLab) {
+    elements.navSimLab.addEventListener("click", async () => {
+      switchPanel("simLab");
+      if (!state.panelLoaded.simLab) {
+        try {
+          await initSimLabPanel();
+          state.panelLoaded.simLab = true;
+        } catch (error) {
+          appendLog(
+            t("app.panelLoadFailed", { panel: t("panel.simLab"), message: error.message })
+          );
+        }
       }
     });
   }
@@ -1298,6 +1317,18 @@ const bootstrap = async () => {
         t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
       );
     }
+  }
+
+  if (initialPanel === "simLab" && !state.panelLoaded.simLab) {
+    initSimLabPanel()
+      .then(() => {
+        state.panelLoaded.simLab = true;
+      })
+      .catch((error) => {
+        appendLog(
+          t("app.panelLoadFailed", { panel: t("panel.simLab"), message: error.message })
+        );
+      });
   }
 
   if (initialPanel === "evaluation" && !state.panelLoaded.evaluation) {

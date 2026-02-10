@@ -67,6 +67,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/chat/sessions/{session_id}/cancel",
             post(cancel_session),
         )
+        .route(
+            "/wunder/chat/sessions/{session_id}/compaction",
+            post(compact_session),
+        )
         .route("/wunder/chat/system-prompt", post(system_prompt))
         .route(
             "/wunder/chat/sessions/{session_id}/system-prompt",
@@ -164,6 +168,12 @@ struct ResumeQuery {
 struct SessionToolsUpdateRequest {
     #[serde(default)]
     tool_overrides: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionCompactionRequest {
+    #[serde(default)]
+    model_name: Option<String>,
 }
 
 async fn create_session(
@@ -839,6 +849,79 @@ async fn cancel_session(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let cancelled = state.monitor.cancel(&session_id);
     Ok(Json(json!({ "data": { "cancelled": cancelled } })))
+}
+
+async fn compact_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SessionCompactionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let session_record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+
+    if let Some(record) = state.monitor.get_record(&session_id) {
+        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+        if status == MonitorState::STATUS_RUNNING
+            || status == MonitorState::STATUS_CANCELLING
+            || status == MonitorState::STATUS_WAITING
+        {
+            return Err(error_response(
+                StatusCode::CONFLICT,
+                i18n::t("error.session_not_found_or_running"),
+            ));
+        }
+    }
+
+    let agent_id = session_record.agent_id.clone();
+    let agent_prompt = agent_id
+        .as_deref()
+        .and_then(|agent_id| {
+            state
+                .user_store
+                .get_user_agent_by_id(agent_id)
+                .ok()
+                .flatten()
+        })
+        .and_then(|record| {
+            let prompt = record.system_prompt.trim();
+            if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt.to_string())
+            }
+        });
+
+    state
+        .orchestrator
+        .force_compact_session(
+            &resolved.user.user_id,
+            &session_id,
+            UserStore::is_admin(&resolved.user),
+            payload.model_name.as_deref(),
+            agent_id.as_deref(),
+            agent_prompt.as_deref(),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "message": i18n::t("message.updated"),
+        }
+    })))
 }
 
 async fn system_prompt(

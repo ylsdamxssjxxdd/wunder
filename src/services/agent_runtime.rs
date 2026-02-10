@@ -550,11 +550,9 @@ impl AgentRuntime {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             if status == crate::monitor::MonitorState::STATUS_RUNNING
                 || status == crate::monitor::MonitorState::STATUS_CANCELLING
+                || status == crate::monitor::MonitorState::STATUS_WAITING
             {
                 return false;
-            }
-            if status == crate::monitor::MonitorState::STATUS_WAITING {
-                return true;
             }
         }
         if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {

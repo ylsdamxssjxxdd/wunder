@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const USER_TOOLS_ROOT_ENV: &str = "WUNDER_USER_TOOLS_ROOT";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserMcpServer {
     pub name: String,
@@ -149,7 +151,7 @@ pub struct UserToolStore {
 
 impl UserToolStore {
     pub fn new(_config: &Config) -> Result<Self> {
-        let base = PathBuf::from("data").join("user_tools");
+        let base = resolve_user_tools_root();
         std::fs::create_dir_all(&base)?;
         Ok(Self {
             root: base,
@@ -1371,6 +1373,15 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+fn resolve_user_tools_root() -> PathBuf {
+    std::env::var(USER_TOOLS_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("data").join("user_tools"))
 }
 
 fn safe_user_id(user_id: &str) -> String {

@@ -705,6 +705,10 @@ impl UserStore {
         self.storage.list_team_tasks(team_run_id)
     }
 
+    pub fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>> {
+        self.storage.get_team_task(task_id)
+    }
+
     pub fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {
         self.storage.list_session_locks_by_user(user_id)
     }

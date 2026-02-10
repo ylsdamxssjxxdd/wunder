@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 pub struct SqliteStorage {
     db_path: PathBuf,
@@ -55,6 +56,8 @@ impl SqliteStorage {
     fn open(&self) -> Result<Connection> {
         self.ensure_db_dir()?;
         let conn = Connection::open(&self.db_path)?;
+        // Parallel swarm workers can briefly contend on SQLite writes.
+        conn.busy_timeout(Duration::from_secs(5)).ok();
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
         Ok(conn)
@@ -6237,6 +6240,41 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
+    fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok(TeamTaskRecord {
+                        task_id: row.get(0)?,
+                        team_run_id: row.get(1)?,
+                        user_id: row.get(2)?,
+                        hive_id: normalize_hive_id(&row.get::<_, String>(3)?),
+                        agent_id: row.get(4)?,
+                        target_session_id: row.get(5)?,
+                        spawned_session_id: row.get(6)?,
+                        status: row.get(7)?,
+                        retry_count: row.get(8)?,
+                        priority: row.get(9)?,
+                        started_time: row.get(10)?,
+                        finished_time: row.get(11)?,
+                        elapsed_s: row.get(12)?,
+                        result_summary: row.get(13)?,
+                        error: row.get(14)?,
+                        updated_time: row.get(15)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
     fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;

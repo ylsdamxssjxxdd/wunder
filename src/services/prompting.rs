@@ -20,6 +20,7 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
 const DEFAULT_CACHE_MAX_ITEMS: usize = 128;
+const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 
 pub struct PromptComposer {
     cache: Mutex<PromptCache>,
@@ -514,10 +515,15 @@ fn render_template(template: &str, mapping: &HashMap<String, String>) -> String 
 }
 
 fn resolve_prompt_path(path: &Path) -> PathBuf {
+    let mut resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        resolve_prompts_root().join(path)
+    };
     let language = i18n::get_language();
     if language.starts_with("en") {
-        if let Some(parent) = path.parent() {
-            if let Some(name) = path.file_name() {
+        if let Some(parent) = resolved.parent() {
+            if let Some(name) = resolved.file_name() {
                 let candidate = parent.join("en").join(name);
                 if candidate.exists() {
                     return candidate;
@@ -525,7 +531,19 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
             }
         }
     }
-    path.to_path_buf()
+    if !resolved.exists() && !path.is_absolute() {
+        resolved = path.to_path_buf();
+    }
+    resolved
+}
+
+fn resolve_prompts_root() -> PathBuf {
+    std::env::var(PROMPTS_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn absolute_path_str(path: &Path) -> String {

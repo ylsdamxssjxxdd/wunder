@@ -103,6 +103,10 @@
                 <i class="fa-solid fa-chart-line"></i>
                 <span data-i18n="panel.performance">性能测试</span>
               </button>
+              <button id="navSimLab" class="nav-btn">
+                <i class="fa-solid fa-flask-vial"></i>
+                <span data-i18n="panel.simLab">模拟测试</span>
+              </button>
               <button id="navPrompt" class="nav-btn">
                 <i class="fa-solid fa-file-lines"></i>
                 <span data-i18n="panel.prompt">系统提示词</span>
@@ -2861,6 +2865,77 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+        <section id="simLabPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="panel.simLab">模拟测试</h1>
+            <div class="header-actions">
+              <button id="simLabRunBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-play"></i>
+                <span data-i18n="simLab.action.run">开始测试</span>
+              </button>
+              <button id="simLabRefreshProjectsBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="simLab.tip">
+            直接在服务端运行预制流程，不依赖外部大模型，便于观察蜂群全链路表现。
+          </div>
+          <div class="simlab-layout">
+            <div class="simlab-side">
+              <div class="simlab-form">
+                <div class="simlab-form-grid">
+                  <div class="form-row">
+                    <label for="simLabMode" data-i18n="simLab.form.mode">运行模式</label>
+                    <select id="simLabMode">
+                      <option value="parallel" data-i18n="simLab.mode.parallel">并行</option>
+                      <option value="sequential" data-i18n="simLab.mode.sequential">串行</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="simLabWorkers" data-i18n="simLab.form.workers">工蜂数量</label>
+                    <input id="simLabWorkers" type="number" min="1" step="1" value="4" />
+                  </div>
+                  <div class="form-row">
+                    <label for="simLabMaxWait" data-i18n="simLab.form.maxWait">最大等待（秒）</label>
+                    <input id="simLabMaxWait" type="number" min="10" step="1" value="180" />
+                  </div>
+                  <div class="form-row">
+                    <label for="simLabMotherWait" data-i18n="simLab.form.motherWait">母蜂等待（秒）</label>
+                    <input id="simLabMotherWait" type="number" min="1" step="0.5" value="30" />
+                  </div>
+                  <div class="form-row">
+                    <label for="simLabPollMs" data-i18n="simLab.form.pollMs">轮询间隔（毫秒）</label>
+                    <input id="simLabPollMs" type="number" min="40" step="10" value="120" />
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label data-i18n="simLab.form.projects">测试项目</label>
+                  <div id="simLabProjects" class="simlab-project-list"></div>
+                </div>
+                <label class="checkbox-inline simlab-keep-artifacts">
+                  <input id="simLabKeepArtifacts" type="checkbox" />
+                  <span data-i18n="simLab.form.keepArtifacts">保留测试产物</span>
+                </label>
+                <div id="simLabStatus" class="muted"></div>
+              </div>
+            </div>
+            <div class="simlab-main">
+              <div class="simlab-summary-grid" id="simLabSummaryGrid"></div>
+              <div class="simlab-report-list-card">
+                <div class="list-header">
+                  <h2 data-i18n="simLab.result.title">测试报告</h2>
+                </div>
+                <div id="simLabReportList" class="simlab-report-list-body"></div>
+              </div>
+              <details class="simlab-raw-report">
+                <summary data-i18n="simLab.result.rawToggle">查看原始测试报告</summary>
+                <pre id="simLabResult" class="code-preview"></pre>
+              </details>
             </div>
           </div>
         </section>

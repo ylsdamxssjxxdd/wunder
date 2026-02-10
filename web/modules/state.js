@@ -44,6 +44,7 @@ export const state = {
     channels: false,
     throughput: false,
     performance: false,
+    simLab: false,
     evaluation: false,
     paper: false,
     mcp: false,

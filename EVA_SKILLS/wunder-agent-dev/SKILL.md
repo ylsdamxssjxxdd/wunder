@@ -180,3 +180,25 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
   - 同一智能体 + 不同会话并行；
   - 不同智能体并行；
   - 运行中切换会话/新建会话时，旧会话流不被中止。
+
+
+## 近期补充经验（蜂群 TeamRun 稳定性）
+- TeamRun 创建要避免“先 queued 再写 tasks”：应先写 `preparing`，待 `team_tasks` 全量落库后再切 `queued` 并入队。
+- Runner 启动时建议按 `task_total` 做短暂就绪等待（例如 1~2s 轮询），防止并发扫描命中“任务尚未写完”的窗口期。
+- 收敛阶段必须保证一致性：终态 TeamRun 不应再存在 `queued/running` 的 TeamTask，必要时将未终态任务兜底标记为 `failed/cancelled`。
+- SQLite 在高并发蜂群场景建议统一设置 `busy_timeout`，否则短暂写锁冲突会放大为任务状态丢失。
+- 做蜂群回归时增加一条硬性校验：`team_runs.status in terminal` 时，`team_tasks` 不允许存在 `queued/running`，否则视为回归失败。
+
+## Recent Additions (Swarm Simulation & Metrics)
+- For end-to-end swarm simulation, do not read SQLite immediately; call `workspace.flush_writes_async` before collecting metrics to avoid undercounting tool calls.
+- Drive worker rounds by observed tool names rather than only observation count, so duplicate observations do not skip intended tool loops.
+- In mother-agent aggregation, parse the swarm tool `wait` block (`success_total/failed_total/elapsed_s`) directly instead of polling worker status repeatedly.
+- Prefer worker session mapping from mother `tool_result.data.items` (`session_id/agent_id`), then fallback to `parent_session_id` linkage.
+- Keep latency metrics stable with fixed P50/P95 for queue delay, execution delay, and end-to-end delay to support parallelism tuning.
+
+## 近期补充经验（Simulation Lab 管理端接入）
+- 新增调试面板时必须同步四处：`web/index.html`（导航+面板）、`web/modules/elements.js`（DOM 引用）、`web/app.js`（panelMap+点击绑定）、`web/modules/i18n.js`（中英文键）。
+- 管理端模拟测试接口建议走独立前缀 `/wunder/admin/sim_lab/*`，并复用 `ensure_admin` 校验，避免和用户侧接口混用权限语义。
+- 模拟测试报告尽量输出统一结构：`project_total/project_success/project_failed/projects[]`，便于后续扩展多测试项目并支持并行/串行切换。
+- 蜂群仿真中若依赖 mock 模型，建议固定母蜂/工蜂预制文本与工具调用序列，再用报告指标验证并发与收敛，不要把“模型随机输出”当作稳定性信号。
+- TeamRun 并发问题回归时优先验证三条链路：请求是否携带会话隔离、子会话是否继承配置覆盖、面板是否错误复用全局中止控制器。

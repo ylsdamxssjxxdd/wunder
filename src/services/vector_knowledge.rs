@@ -19,6 +19,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 const VECTOR_ROOT_DIR: &str = "vector_knowledge";
+const VECTOR_ROOT_DIR_ENV: &str = "WUNDER_VECTOR_KNOWLEDGE_ROOT";
 const VECTOR_SHARED_DIR: &str = "shared";
 const VECTOR_USERS_DIR: &str = "users";
 const VECTOR_DOCS_DIR: &str = "documents";
@@ -152,7 +153,7 @@ pub fn resolve_vector_root(
     if cleaned.contains('/') || cleaned.contains('\\') || cleaned.contains("..") {
         return Err(anyhow!(i18n::t("error.knowledge_name_invalid_path")));
     }
-    let root = PathBuf::from(VECTOR_ROOT_DIR);
+    let root = resolve_vector_root_dir();
     let owner_root = match owner_id {
         Some(user_id) => root.join(VECTOR_USERS_DIR).join(safe_user_id(user_id)),
         None => root.join(VECTOR_SHARED_DIR),
@@ -653,6 +654,15 @@ impl VectorDocumentMeta {
             updated_at: self.updated_at,
         }
     }
+}
+
+fn resolve_vector_root_dir() -> PathBuf {
+    std::env::var(VECTOR_ROOT_DIR_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(VECTOR_ROOT_DIR))
 }
 
 fn safe_user_id(user_id: &str) -> String {

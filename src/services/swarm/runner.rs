@@ -17,6 +17,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{sleep, timeout, Duration};
@@ -35,6 +36,8 @@ const TEAM_TASK_RESULT_MAX_CHARS: usize = 1500;
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 const TEAM_QUESTION_MAX_CHARS: usize = 4000;
 const TEAM_HISTORY_LOOKBACK: i64 = 80;
+const TEAM_TASK_READY_WAIT_MS: u64 = 1_500;
+const TEAM_TASK_READY_POLL_MS: u64 = 80;
 
 const TEAM_RUN_STATUS_QUEUED: &str = "queued";
 const TEAM_RUN_STATUS_RUNNING: &str = "running";
@@ -293,7 +296,7 @@ impl TeamRunRunner {
         }
 
         let question = self.resolve_parent_question(&run);
-        let mut tasks = self.user_store.list_team_tasks(&run.team_run_id)?;
+        let mut tasks = self.load_ready_tasks(&run).await?;
         tasks.sort_by(|a, b| {
             b.priority
                 .cmp(&a.priority)
@@ -306,6 +309,7 @@ impl TeamRunRunner {
 
         let max_parallel = swarm_config.max_parallel_tasks_per_team.max(1);
         let mut join_set = JoinSet::new();
+        let mut runner_error_count = 0usize;
         while !pending.is_empty() || !join_set.is_empty() {
             let cancelled =
                 cancel_flag.load(Ordering::Relaxed) || self.is_run_cancelled(&run.team_run_id)?;
@@ -317,6 +321,7 @@ impl TeamRunRunner {
                 let Some(task) = pending.pop_front() else {
                     break;
                 };
+                let task_id = task.task_id.clone();
                 let runner = self.clone();
                 let run_snapshot = run.clone();
                 let question_snapshot = question.clone();
@@ -325,7 +330,7 @@ impl TeamRunRunner {
                 let timeout_s = options.timeout_s;
                 let max_retry = swarm_config.max_retry;
                 join_set.spawn(async move {
-                    runner
+                    let result = runner
                         .execute_team_task(
                             run_snapshot,
                             task,
@@ -335,7 +340,8 @@ impl TeamRunRunner {
                             cancel_for_task,
                             sessions_for_task,
                         )
-                        .await
+                        .await;
+                    (task_id, result)
                 });
             }
 
@@ -349,25 +355,69 @@ impl TeamRunRunner {
 
             if let Some(result) = join_set.join_next().await {
                 match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(err)) => {
+                    Ok((_, Ok(()))) => {}
+                    Ok((task_id, Err(err))) => {
+                        runner_error_count += 1;
                         warn!(
                             "team task execution failed in run {}: {err}",
                             run.team_run_id
-                        )
+                        );
+                        if let Err(mark_err) = self.mark_task_failed_from_runner_error(
+                            &run,
+                            &task_id,
+                            &err.to_string(),
+                        ) {
+                            warn!(
+                                "team task failure mark failed in run {} task {}: {mark_err}",
+                                run.team_run_id, task_id
+                            );
+                        }
                     }
-                    Err(err) => warn!("team task join failed in run {}: {err}", run.team_run_id),
+                    Err(err) => {
+                        runner_error_count += 1;
+                        warn!("team task join failed in run {}: {err}", run.team_run_id);
+                    }
                 }
                 self.refresh_team_run_progress(&run.team_run_id, false)?;
             }
         }
 
+        let runner_error = if runner_error_count == 0 {
+            None
+        } else {
+            Some(format!("runner_error_count={runner_error_count}"))
+        };
         self.finalize_team_run(
             &run.team_run_id,
             &options,
             cancel_flag.load(Ordering::Relaxed),
+            runner_error.as_deref(),
         )?;
         Ok(())
+    }
+
+    async fn load_ready_tasks(&self, run: &TeamRunRecord) -> Result<Vec<TeamTaskRecord>> {
+        let expected_total = run.task_total.max(0) as usize;
+        let mut tasks = self.user_store.list_team_tasks(&run.team_run_id)?;
+        if expected_total == 0 || tasks.len() >= expected_total {
+            return Ok(tasks);
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(TEAM_TASK_READY_WAIT_MS);
+        while tasks.len() < expected_total && Instant::now() < deadline {
+            sleep(Duration::from_millis(TEAM_TASK_READY_POLL_MS)).await;
+            tasks = self.user_store.list_team_tasks(&run.team_run_id)?;
+        }
+
+        if tasks.len() < expected_total {
+            warn!(
+                "team run {} tasks not fully ready before execution, expected={}, loaded={}",
+                run.team_run_id,
+                expected_total,
+                tasks.len()
+            );
+        }
+        Ok(tasks)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -697,10 +747,56 @@ impl TeamRunRunner {
         let now = now_ts();
         task.status = TEAM_TASK_STATUS_CANCELLED.to_string();
         task.finished_time = Some(now);
-        task.elapsed_s = task.started_time.map(|started| (now - started).max(0.0));
+        let started = task.started_time.unwrap_or(now);
+        task.elapsed_s = Some((now - started).max(0.0));
         task.updated_time = now;
         task.error = Some("cancelled".to_string());
         self.user_store.upsert_team_task(task)?;
+        self.emit_team_event(
+            &run.parent_session_id,
+            TEAM_TASK_UPDATE,
+            json!({
+                "team_run_id": task.team_run_id,
+                "task_id": task.task_id,
+                "hive_id": DEFAULT_HIVE_ID,
+                "agent_id": task.agent_id,
+                "status": task.status,
+            }),
+        );
+        Ok(())
+    }
+
+    fn mark_task_failed_from_runner_error(
+        &self,
+        run: &TeamRunRecord,
+        task_id: &str,
+        message: &str,
+    ) -> Result<()> {
+        let Some(mut task) = self.user_store.get_team_task(task_id)? else {
+            return Ok(());
+        };
+        if task.team_run_id.trim() != run.team_run_id.trim() {
+            return Ok(());
+        }
+        if is_terminal_task_status(&task.status) {
+            return Ok(());
+        }
+        let now = now_ts();
+        task.status = TEAM_TASK_STATUS_FAILED.to_string();
+        if task.started_time.is_none() {
+            task.started_time = Some(now);
+        }
+        task.finished_time = Some(now);
+        let started = task.started_time.unwrap_or(now);
+        task.elapsed_s = Some((now - started).max(0.0));
+        task.updated_time = now;
+        let cleaned = message.trim();
+        if cleaned.is_empty() {
+            task.error = Some("runner_error".to_string());
+        } else {
+            task.error = Some(truncate_text(cleaned, TEAM_TASK_RESULT_MAX_CHARS));
+        }
+        self.user_store.upsert_team_task(&task)?;
         self.emit_team_event(
             &run.parent_session_id,
             TEAM_TASK_UPDATE,
@@ -722,6 +818,55 @@ impl TeamRunRunner {
     ) -> Result<()> {
         while let Some(mut task) = pending.pop_front() {
             self.mark_task_cancelled(run, &mut task)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_unfinished_tasks(
+        &self,
+        run: &TeamRunRecord,
+        cancelled: bool,
+        runner_error: Option<&str>,
+    ) -> Result<()> {
+        let tasks = self.user_store.list_team_tasks(&run.team_run_id)?;
+        let fallback = if cancelled {
+            "cancelled"
+        } else {
+            "runner_incomplete"
+        };
+        let error = runner_error
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(fallback);
+
+        for mut task in tasks {
+            if is_terminal_task_status(&task.status) {
+                continue;
+            }
+            let now = now_ts();
+            task.status = if cancelled {
+                TEAM_TASK_STATUS_CANCELLED.to_string()
+            } else {
+                TEAM_TASK_STATUS_FAILED.to_string()
+            };
+            let started = task.started_time.unwrap_or(now);
+            task.started_time = Some(started);
+            task.finished_time = Some(now);
+            task.elapsed_s = Some((now - started).max(0.0));
+            task.updated_time = now;
+            task.error = Some(truncate_text(error, TEAM_TASK_RESULT_MAX_CHARS));
+            self.user_store.upsert_team_task(&task)?;
+            self.emit_team_event(
+                &run.parent_session_id,
+                TEAM_TASK_UPDATE,
+                json!({
+                    "team_run_id": task.team_run_id,
+                    "task_id": task.task_id,
+                    "hive_id": DEFAULT_HIVE_ID,
+                    "agent_id": task.agent_id,
+                    "status": task.status,
+                }),
+            );
         }
         Ok(())
     }
@@ -763,7 +908,14 @@ impl TeamRunRunner {
         team_run_id: &str,
         options: &TeamRunOptions,
         cancelled_flag: bool,
+        runner_error: Option<&str>,
     ) -> Result<()> {
+        let Some(snapshot) = self.user_store.get_team_run(team_run_id)? else {
+            return Ok(());
+        };
+        let cancelled =
+            cancelled_flag || normalize_status(&snapshot.status) == TEAM_RUN_STATUS_CANCELLED;
+        self.reconcile_unfinished_tasks(&snapshot, cancelled, runner_error)?;
         self.refresh_team_run_progress(team_run_id, true)?;
 
         let Some(mut run) = self.user_store.get_team_run(team_run_id)? else {
@@ -771,9 +923,7 @@ impl TeamRunRunner {
         };
         let tasks = self.user_store.list_team_tasks(team_run_id)?;
         let progress = TeamProgress::from_tasks(&tasks);
-
-        let cancelled =
-            cancelled_flag || normalize_status(&run.status) == TEAM_RUN_STATUS_CANCELLED;
+        let all_done = progress.done >= run.task_total.max(0);
         let merge_summary = build_merge_summary(options.merge_policy.as_str(), &tasks);
 
         if !merge_summary.is_empty() {
@@ -792,6 +942,8 @@ impl TeamRunRunner {
         let now = now_ts();
         run.status = if cancelled {
             TEAM_RUN_STATUS_CANCELLED.to_string()
+        } else if !all_done {
+            TEAM_RUN_STATUS_FAILED.to_string()
         } else if progress.timeout > 0 && progress.success <= 0 {
             TEAM_RUN_STATUS_TIMEOUT.to_string()
         } else if progress.failed > 0 {
@@ -808,6 +960,28 @@ impl TeamRunRunner {
             ))
         } else {
             Some(truncate_text(&merge_summary, TEAM_RUN_SUMMARY_MAX_CHARS))
+        };
+        run.error = match normalize_status(&run.status).as_str() {
+            TEAM_RUN_STATUS_SUCCESS => None,
+            TEAM_RUN_STATUS_CANCELLED => Some("cancelled".to_string()),
+            TEAM_RUN_STATUS_TIMEOUT => Some("timeout".to_string()),
+            _ => {
+                let detail = if !all_done {
+                    format!(
+                        "incomplete_tasks={}/{}",
+                        progress.done,
+                        run.task_total.max(0)
+                    )
+                } else {
+                    format!("task_failed={}", run.task_failed.max(0))
+                };
+                let message = runner_error
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!("{value}; {detail}"))
+                    .unwrap_or(detail);
+                Some(truncate_text(&message, TEAM_TASK_RESULT_MAX_CHARS))
+            }
         };
         run.updated_time = now;
         self.user_store.upsert_team_run(&run)?;

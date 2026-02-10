@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod memory;
 pub mod org_units;
 pub mod prompting;
+pub mod sim_lab;
 pub mod skills;
 pub mod swarm;
 pub mod tools;

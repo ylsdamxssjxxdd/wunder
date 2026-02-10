@@ -11,6 +11,7 @@ use tokio::process::Command;
 
 const SKILL_FILE_NAME: &str = "SKILL.md";
 const ENTRY_FILES: [&str; 3] = ["run.py", "skill.py", "main.py"];
+const SKILL_RUNNER_PATH_ENV: &str = "WUNDER_SKILL_RUNNER_PATH";
 
 #[derive(Clone, Debug)]
 pub struct SkillSpec {
@@ -137,7 +138,7 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
             &HashMap::from([("name".to_string(), spec.name.clone())]),
         ))
     })?;
-    let runner = PathBuf::from("scripts/skill_runner.py");
+    let runner = resolve_skill_runner_path();
     if !runner.exists() {
         return Err(anyhow!(i18n::t_with_params(
             "tool.invoke.skill_failed",
@@ -195,6 +196,15 @@ fn skill_timeout_message() -> String {
     } else {
         "技能执行超时".to_string()
     }
+}
+
+fn resolve_skill_runner_path() -> PathBuf {
+    std::env::var(SKILL_RUNNER_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("scripts/skill_runner.py"))
 }
 
 fn discover_skill_dirs(base: &Path) -> Vec<PathBuf> {

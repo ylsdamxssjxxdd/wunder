@@ -1,4 +1,4 @@
-// 全局状态：配置存储、工作区管理与调度器。
+// ????????????????????
 
 use crate::a2a_store::A2aStore;
 use crate::channels::ChannelHub;
@@ -25,6 +25,46 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
 
+#[derive(Debug, Clone, Copy)]
+pub struct AppStateInitOptions {
+    pub seed_org_units: bool,
+    pub ensure_default_admin: bool,
+    pub spawn_gateway_maintenance: bool,
+    pub start_team_run_runner: bool,
+    pub start_agent_runtime: bool,
+    pub start_cron: bool,
+}
+
+impl AppStateInitOptions {
+    pub const fn server_default() -> Self {
+        Self {
+            seed_org_units: true,
+            ensure_default_admin: true,
+            spawn_gateway_maintenance: true,
+            start_team_run_runner: true,
+            start_agent_runtime: true,
+            start_cron: true,
+        }
+    }
+
+    pub const fn cli_default() -> Self {
+        Self {
+            seed_org_units: false,
+            ensure_default_admin: false,
+            spawn_gateway_maintenance: false,
+            start_team_run_runner: false,
+            start_agent_runtime: false,
+            start_cron: false,
+        }
+    }
+}
+
+impl Default for AppStateInitOptions {
+    fn default() -> Self {
+        Self::server_default()
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config_store: ConfigStore,
@@ -50,6 +90,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config_store: ConfigStore, config: Config) -> Result<Self> {
+        Self::new_with_options(config_store, config, AppStateInitOptions::server_default())
+    }
+
+    pub fn new_with_options(
+        config_store: ConfigStore,
+        config: Config,
+        options: AppStateInitOptions,
+    ) -> Result<Self> {
         let storage = init_storage(&config)?;
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
@@ -67,18 +115,25 @@ impl AppState {
         let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
         let user_tool_store =
-            Arc::new(UserToolStore::new(&config).context("用户工具目录初始化失败")?);
+            Arc::new(UserToolStore::new(&config).context("???????????")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
-        org_units::seed_org_units_if_empty(user_store.as_ref())
-            .context("Failed to seed org unit structure")?;
-        user_store
-            .ensure_default_admin()
-            .context("Failed to ensure default admin account")?;
+
+        if options.seed_org_units {
+            org_units::seed_org_units_if_empty(user_store.as_ref())
+                .context("Failed to seed org unit structure")?;
+        }
+        if options.ensure_default_admin {
+            user_store
+                .ensure_default_admin()
+                .context("Failed to ensure default admin account")?;
+        }
+
         let gateway = Arc::new(GatewayHub::new(storage.clone()));
-        if tokio::runtime::Handle::try_current().is_ok() {
+        if options.spawn_gateway_maintenance && tokio::runtime::Handle::try_current().is_ok() {
             gateway.clone().spawn_maintenance();
         }
+
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
             config.clone(),
@@ -99,14 +154,20 @@ impl AppState {
             monitor.clone(),
             orchestrator.clone(),
         );
-        team_run_runner.clone().start();
+        if options.start_team_run_runner {
+            team_run_runner.clone().start();
+        }
+
         let agent_runtime = AgentRuntime::new(
             config_store.clone(),
             user_store.clone(),
             monitor.clone(),
             orchestrator.clone(),
         );
-        agent_runtime.clone().start();
+        if options.start_agent_runtime {
+            agent_runtime.clone().start();
+        }
+
         let memory = Arc::new(MemoryStore::new(storage.clone()));
         let channels = Arc::new(ChannelHub::new(
             config_store.clone(),
@@ -124,7 +185,10 @@ impl AppState {
             user_tool_manager.clone(),
             skills.clone(),
         );
-        cron.start();
+        if options.start_cron {
+            cron.start();
+        }
+
         let throughput = ThroughputManager::new();
         let evaluation = EvaluationManager::new(
             config_store.clone(),
@@ -158,7 +222,7 @@ impl AppState {
         })
     }
 
-    /// 重新加载技能注册表，供管理端更新后调用。
+    /// ????????????????????
     pub async fn reload_skills(&self, config: &Config) {
         let registry = load_skills(config, true, true, true);
         let mut guard = self.skills.write().await;
@@ -178,11 +242,11 @@ fn init_storage(config: &Config) -> Result<Arc<dyn StorageBackend>> {
         "sqlite" | "default" => init_storage_strict(config),
         "postgres" | "postgresql" | "pg" => init_storage_strict(config).map_err(|err| {
             anyhow!(
-                "Postgres 存储初始化失败: {err}（请启动 PostgreSQL 或将 storage.backend 改为 sqlite/auto）"
+                "Postgres ???????: {err}???? PostgreSQL ?? storage.backend ?? sqlite/auto?"
             )
         }),
         "auto" => init_storage_auto(config),
-        other => Err(anyhow!("未知存储后端: {other}")),
+        other => Err(anyhow!("??????: {other}")),
     }
 }
 
@@ -196,7 +260,7 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     match init_storage_strict(config) {
         Ok(storage) => Ok(storage),
         Err(err) => {
-            warn!("Postgres 存储不可用，自动降级 SQLite: {err}");
+            warn!("Postgres ?????????? SQLite: {err}");
             let sqlite = Arc::new(SqliteStorage::new(config.storage.db_path.clone()));
             sqlite.ensure_initialized()?;
             Ok(sqlite)

@@ -1,6 +1,7 @@
-﻿// API 路由汇总入口，按领域拆分以保持结构清晰。
+// API 路由汇总入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
+pub mod admin_sim_lab;
 pub mod admin_swarm;
 pub(crate) mod attachment_convert;
 pub mod auth;
@@ -44,6 +45,7 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .merge(workspace::router())
         .merge(admin::router())
         .merge(admin_swarm::router())
+        .merge(admin_sim_lab::router())
         .merge(evaluation::router())
         .merge(external_links::router())
         .merge(user_tools::router())

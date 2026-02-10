@@ -417,6 +417,7 @@ impl Orchestrator {
                     user_tool_manager: Some(self.user_tool_manager.clone()),
                     user_tool_bindings: Some(&user_tool_bindings),
                     user_tool_store: Some(self.user_tool_manager.store()),
+                    request_config_overrides: prepared.config_overrides.as_ref(),
                     allow_roots: Some(tool_roots.allow_roots.clone()),
                     read_roots: Some(tool_roots.read_roots.clone()),
                     event_emitter: Some(tool_event_emitter.clone()),

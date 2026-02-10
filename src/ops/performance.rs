@@ -462,6 +462,7 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         user_tool_manager: None,
         user_tool_bindings: Some(context.user_tool_bindings.as_ref()),
         user_tool_store: None,
+        request_config_overrides: None,
         allow_roots: Some(context.tool_roots.allow_roots.clone()),
         read_roots: Some(context.tool_roots.read_roots.clone()),
         event_emitter: None,

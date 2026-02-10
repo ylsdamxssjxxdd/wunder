@@ -160,6 +160,8 @@ export const resumeMessageStream = (id: string, options: ResumeRequestOptions = 
 };
 
 export const cancelMessageStream = (id: string) => api.post(`/chat/sessions/${id}/cancel`);
+export const compactSession = (id: string, payload: unknown = {}) =>
+  api.post(`/chat/sessions/${id}/compaction`, payload);
 
 export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');

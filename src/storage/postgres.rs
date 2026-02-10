@@ -6248,6 +6248,36 @@ impl StorageBackend for PostgresStorage {
         Ok(output)
     }
 
+    fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = $1",
+            &[&cleaned],
+        )?;
+        Ok(row.map(|row| TeamTaskRecord {
+            task_id: row.get(0),
+            team_run_id: row.get(1),
+            user_id: row.get(2),
+            hive_id: normalize_hive_id(&row.get::<_, String>(3)),
+            agent_id: row.get(4),
+            target_session_id: row.get(5),
+            spawned_session_id: row.get(6),
+            status: row.get(7),
+            retry_count: row.get(8),
+            priority: row.get(9),
+            started_time: row.get(10),
+            finished_time: row.get(11),
+            elapsed_s: row.get(12),
+            result_summary: row.get(13),
+            error: row.get(14),
+            updated_time: row.get(15),
+        }))
+    }
     fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

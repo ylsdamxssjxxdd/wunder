@@ -48,6 +48,21 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 2. Enter `/home` to create or select an agent app (or go straight to chat).
 3. Use chat to interact; prepare required files in the workspace.
 
+### Session Control Commands (User Frontend + Channel Inbound)
+Session control commands are available in both the user chat input and channel inbound adapters:
+
+- `/new` or `/reset`: create a new thread and switch to it.
+- `/stop` or `/cancel`: request cancellation of the current running session.
+- `/help` or `/?`: return command help text.
+
+User frontend also supports:
+
+- `/compact`: trigger context compaction for the current session.
+
+Notes:
+- Commands are case-insensitive and only the first token is parsed (for example, `/new hello` is treated as `/new`).
+- Channel command parsing is in `src/channels/service.rs`; user-side command handling is in `frontend/src/views/ChatView.vue`.
+
 ## Quick Start
 ### 1) Update configuration
 Copy the example config: `config/wunder-example.yaml` -> `config/wunder.yaml`

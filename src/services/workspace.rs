@@ -12,6 +12,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::cmp::Ordering;
+use std::env;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
@@ -36,6 +37,7 @@ const TEMP_FILES_IDLE_TTL_S: f64 = 86_400.0;
 const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
 const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
+const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
 
 type WorkspaceEntriesPage = (Vec<WorkspaceEntry>, u64, String, Option<String>, u64);
 
@@ -177,6 +179,7 @@ pub struct PurgeResult {
 
 pub struct WorkspaceManager {
     root: PathBuf,
+    single_root: bool,
     storage: Arc<dyn StorageBackend>,
     write_queue: StorageWriteQueue,
     retention_days: i64,
@@ -203,12 +206,14 @@ pub struct WorkspaceManager {
 impl WorkspaceManager {
     pub fn new(root: &str, storage: Arc<dyn StorageBackend>, retention_days: i64) -> Self {
         let retention_days = normalize_retention_days(retention_days);
+        let single_root = workspace_single_root_enabled();
         if let Err(err) = storage.ensure_initialized() {
             warn!("storage initialization failed: {err}");
         }
         let write_queue = StorageWriteQueue::new(storage.clone());
         Self {
             root: PathBuf::from(root),
+            single_root,
             storage,
             write_queue,
             retention_days,
@@ -244,12 +249,18 @@ impl WorkspaceManager {
     }
 
     pub fn workspace_root(&self, user_id: &str) -> PathBuf {
+        if self.single_root {
+            return self.root.clone();
+        }
         let safe_id = self.safe_user_id(user_id);
         self.root.join(safe_id)
     }
 
     pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
         let safe_user = self.safe_user_id(user_id);
+        if self.single_root {
+            return safe_user;
+        }
         let agent_id = agent_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty());
@@ -303,6 +314,9 @@ impl WorkspaceManager {
 
     pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
         let safe_user = self.safe_user_id(user_id);
+        if self.single_root {
+            return safe_user;
+        }
         let container_id = normalize_sandbox_container_id(sandbox_container_id);
         if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
             return safe_user;
@@ -312,6 +326,9 @@ impl WorkspaceManager {
 
     pub fn scoped_user_id_variants(&self, user_id: &str, agent_id: Option<&str>) -> Vec<String> {
         let safe_user = self.safe_user_id(user_id);
+        if self.single_root {
+            return vec![safe_user];
+        }
         let agent_id = agent_id
             .map(|value| value.trim())
             .filter(|value| !value.is_empty());
@@ -415,6 +432,9 @@ impl WorkspaceManager {
     }
 
     pub fn public_root(&self, user_id: &str) -> PathBuf {
+        if self.single_root {
+            return PathBuf::from(PUBLIC_WORKSPACE_ROOT);
+        }
         let safe_id = self.safe_user_id(user_id);
         PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(safe_id)
     }
@@ -1694,6 +1714,16 @@ fn normalize_retention_days(value: i64) -> i64 {
     } else {
         value
     }
+}
+
+fn workspace_single_root_enabled() -> bool {
+    let Some(raw) = env::var(WORKSPACE_SINGLE_ROOT_ENV).ok() else {
+        return false;
+    };
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn fnv1a_hash64(data: &[u8]) -> u64 {

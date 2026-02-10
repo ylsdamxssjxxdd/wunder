@@ -39,9 +39,29 @@
         ref="inputRef"
         :placeholder="inputPlaceholder"
         rows="1"
-        @input="resizeInput"
+        @input="handleInput"
+        @click="syncCaretPosition"
+        @keyup="syncCaretPosition"
+        @keydown="handleInputKeydown"
         @keydown.enter.exact.prevent="handleSend"
       />
+      <div v-if="commandSuggestionsVisible" class="command-menu" role="listbox">
+        <button
+          v-for="(item, index) in commandSuggestions"
+          :key="item.command"
+          class="command-menu-item"
+          :class="{ active: index === commandMenuIndex }"
+          type="button"
+          role="option"
+          :aria-selected="index === commandMenuIndex"
+          @mousedown.prevent="applyCommandSuggestion(index)"
+          @mouseenter="setCommandMenuIndex(index)"
+        >
+          <span class="command-menu-name">{{ item.command }}</span>
+          <span class="command-menu-desc">{{ item.description }}</span>
+        </button>
+        <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
+      </div>
       <button
         class="input-icon-btn upload-btn"
         type="button"
@@ -115,6 +135,9 @@ const attachments = ref([]);
 const attachmentBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
+const caretPosition = ref(0);
+const commandMenuIndex = ref(0);
+const commandMenuDismissed = ref(false);
 const { t } = useI18n();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
@@ -124,6 +147,12 @@ type AttachmentPayload = {
   name: string;
   content: string;
   mime_type?: string;
+};
+
+type SlashCommandDefinition = {
+  command: string;
+  aliases: string[];
+  descriptionKey: string;
 };
 const DOC_EXTENSIONS = [
   '.txt',
@@ -163,7 +192,7 @@ const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
 const inputPlaceholder = computed(() =>
-  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholder')
+  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholderCommands')
 );
 const canSendOrStop = computed(() => {
   if (props.loading) return true;
@@ -174,6 +203,56 @@ const canSendOrStop = computed(() => {
     hasInquirySelection.value
   );
 });
+
+const slashCommandDefinitions: SlashCommandDefinition[] = [
+  { command: '/new', aliases: ['/reset'], descriptionKey: 'chat.commandMenu.new' },
+  { command: '/stop', aliases: ['/cancel'], descriptionKey: 'chat.commandMenu.stop' },
+  { command: '/compact', aliases: [], descriptionKey: 'chat.commandMenu.compact' },
+  { command: '/help', aliases: ['/?'], descriptionKey: 'chat.commandMenu.help' }
+];
+
+const commandQuery = computed(() => {
+  const raw = String(inputText.value || '');
+  const cursor = Math.max(0, Math.min(caretPosition.value, raw.length));
+  const beforeCursor = raw.slice(0, cursor);
+  const trimmedLeading = beforeCursor.replace(/^\s+/, '');
+  if (!trimmedLeading.startsWith('/')) {
+    return null;
+  }
+  const token = trimmedLeading.split(/\s+/, 1)[0];
+  if (!/^\/[a-zA-Z?]*$/.test(token)) {
+    return null;
+  }
+  if (trimmedLeading.length > token.length) {
+    return null;
+  }
+  return token.slice(1).toLowerCase();
+});
+
+const commandSuggestions = computed(() => {
+  const query = commandQuery.value;
+  if (query === null) {
+    return [];
+  }
+  return slashCommandDefinitions
+    .filter((item) => {
+      if (!query) {
+        return true;
+      }
+      const keywords = [item.command, ...item.aliases].map((value) =>
+        value.replace(/^\//, '').toLowerCase()
+      );
+      return keywords.some((value) => value.startsWith(query));
+    })
+    .map((item) => ({
+      command: item.command,
+      description: t(item.descriptionKey)
+    }));
+});
+
+const commandSuggestionsVisible = computed(
+  () => !commandMenuDismissed.value && commandSuggestions.value.length > 0
+);
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
@@ -226,6 +305,88 @@ const resizeInput = () => {
   el.style.height = `${nextHeight}px`;
   el.style.overflowY = el.scrollHeight > INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
 };
+
+const syncCaretPosition = () => {
+  const el = inputRef.value;
+  const fallback = String(inputText.value || '').length;
+  const selectionStart = Number(el?.selectionStart);
+  caretPosition.value = Number.isFinite(selectionStart) ? selectionStart : fallback;
+};
+
+const handleInput = () => {
+  commandMenuDismissed.value = false;
+  resizeInput();
+  syncCaretPosition();
+};
+
+const setCommandMenuIndex = (index) => {
+  const total = commandSuggestions.value.length;
+  if (total <= 0) {
+    commandMenuIndex.value = 0;
+    return;
+  }
+  commandMenuIndex.value = Math.max(0, Math.min(index, total - 1));
+};
+
+const moveCommandMenuIndex = (delta) => {
+  const total = commandSuggestions.value.length;
+  if (total <= 0) {
+    commandMenuIndex.value = 0;
+    return;
+  }
+  const next = (commandMenuIndex.value + delta + total) % total;
+  commandMenuIndex.value = next;
+};
+
+const applyCommandSuggestion = (index = commandMenuIndex.value) => {
+  const item = commandSuggestions.value[index];
+  if (!item) {
+    return false;
+  }
+  const leading = String(inputText.value || '').match(/^\s*/)?.[0] || '';
+  inputText.value = `${leading}${item.command} `;
+  commandMenuDismissed.value = false;
+  nextTick(() => {
+    resizeInput();
+    const el = inputRef.value;
+    if (!el) return;
+    const cursor = inputText.value.length;
+    if (typeof el.focus === 'function') {
+      el.focus();
+    }
+    if (typeof el.setSelectionRange === 'function') {
+      el.setSelectionRange(cursor, cursor);
+    }
+    caretPosition.value = cursor;
+  });
+  return true;
+};
+
+const handleInputKeydown = (event) => {
+  if (!commandSuggestionsVisible.value) {
+    return;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveCommandMenuIndex(1);
+    return;
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveCommandMenuIndex(-1);
+    return;
+  }
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    applyCommandSuggestion();
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    commandMenuDismissed.value = true;
+  }
+};
+
 
 const resetInputHeight = () => {
   const el = inputRef.value;
@@ -354,6 +515,9 @@ const clearAttachments = () => {
 
 const handleSend = async () => {
   if (props.loading) return;
+  if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
+    return;
+  }
   // 附件解析未完成时禁止发送，避免请求缺少必要内容
   if (attachmentBusy.value > 0) {
     ElMessage.warning(t('chat.attachments.busy'));
@@ -364,6 +528,8 @@ const handleSend = async () => {
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   emit('send', { content, attachments: payloadAttachments });
   inputText.value = '';
+  commandMenuDismissed.value = false;
+  caretPosition.value = 0;
   resetInputHeight();
   clearAttachments();
 };
@@ -379,9 +545,32 @@ const handleSendOrStop = async () => {
 onMounted(async () => {
   await nextTick();
   resizeInput();
+  syncCaretPosition();
 });
 
-// 演示模式切换时清理附件缓存，避免状态残留
+// Reset command suggestion state whenever command input changes.
+watch(
+  () => commandQuery.value,
+  () => {
+    commandMenuDismissed.value = false;
+    commandMenuIndex.value = 0;
+  }
+);
+
+watch(
+  () => commandSuggestions.value.length,
+  (value) => {
+    if (!value) {
+      commandMenuIndex.value = 0;
+      return;
+    }
+    if (commandMenuIndex.value >= value) {
+      commandMenuIndex.value = 0;
+    }
+  }
+);
+
+// Clear attachments when demo mode toggles to avoid stale state.
 watch(
   () => props.demoMode,
   (value) => {

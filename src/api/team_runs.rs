@@ -154,7 +154,7 @@ async fn create_team_run(
         parent_session_id: parent_session_id.clone(),
         parent_agent_id: resolve_parent_agent_id(&state, &user_id, &parent_session_id),
         strategy,
-        status: "queued".to_string(),
+        status: "preparing".to_string(),
         task_total,
         task_success: 0,
         task_failed: 0,
@@ -227,14 +227,25 @@ async fn create_team_run(
         );
     }
 
-    state.team_run_runner.enqueue(&record.team_run_id).await;
+    let mut queued_record = record.clone();
+    queued_record.status = "queued".to_string();
+    queued_record.updated_time = now_ts();
+    state
+        .user_store
+        .upsert_team_run(&queued_record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    state
+        .team_run_runner
+        .enqueue(&queued_record.team_run_id)
+        .await;
 
     Ok(Json(json!({
         "data": {
-            "team_run_id": record.team_run_id,
+            "team_run_id": queued_record.team_run_id,
             "hive_id": DEFAULT_HIVE_ID,
-            "task_total": record.task_total,
-            "status": record.status,
+            "task_total": queued_record.task_total,
+            "status": queued_record.status,
         }
     })))
 }

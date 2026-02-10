@@ -1036,7 +1036,7 @@
 - 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
-- 吞吐量/性能/评估：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`。
+- 吞吐量/性能/评估/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`、`/wunder/admin/sim_lab/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
 
@@ -1775,6 +1775,10 @@
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
 - `POST /wunder/chat/sessions/{session_id}/cancel`：取消会话
   - 返回：`data.cancelled`
+- `POST /wunder/chat/sessions/{session_id}/compaction`：主动触发会话上下文压缩
+  - 入参（JSON）：`model_name`（可选，指定压缩模型）
+  - 限制：会话处于 `running`/`cancelling`/`waiting` 时返回 409
+  - 返回：`data.ok`、`data.message`
 - `POST /wunder/chat/sessions/{session_id}/tools`：设置会话工具覆盖
   - 入参（JSON）：`tool_overrides`（字符串数组，空数组表示恢复默认；传入 `__no_tools__` 表示禁用全部工具）
   - 返回：`data.id`、`data.tool_overrides`
@@ -2296,6 +2300,7 @@
   - `hive_id` 可选，不传时按父会话推导。
   - `strategy/merge_policy/timeout_s` 可选。
   - `tasks[]` 必填，元素包含 `agent_id` 与可选 `target_session_id/priority`。
+  - 创建阶段先落库为 `preparing`，待 `tasks[]` 全部写入后再切换为 `queued` 并入队，避免 Runner 并发扫描抢跑导致任务遗漏。
 
 #### 4.8.6 `/wunder/chat/team_runs/{team_run_id}`
 - 方法：`GET`
@@ -2320,6 +2325,34 @@
 #### 4.8.11 `/wunder/admin/hives/{hive_id}/team_runs`
 - 方法：`GET`
 - 说明：管理端按蜂巢查询 TeamRun，支持 `user_id` 过滤。
+
+#### 4.8.13 `/wunder/admin/sim_lab/projects`
+- 方法：`GET`
+- 说明：返回模拟测试项目列表与默认参数，当前内置 `swarm_flow` 项目。
+- 鉴权：管理员令牌（Bearer）。
+
+#### 4.8.14 `/wunder/admin/sim_lab/runs`
+- 方法：`POST`
+- 说明：执行模拟测试任务，支持单项目或多项目（并行/串行）运行。
+- 鉴权：管理员令牌（Bearer）。
+- 请求体示例：
+```json
+{
+  "projects": ["swarm_flow"],
+  "mode": "parallel",
+  "keep_artifacts": false,
+  "options": {
+    "swarm_flow": {
+      "workers": 4,
+      "max_wait_s": 180,
+      "mother_wait_s": 30,
+      "poll_ms": 120,
+      "keep_artifacts": false
+    }
+  }
+}
+```
+- 响应：`data` 返回 `run_id/mode/wall_time_s/project_total/project_success/project_failed/projects[]`，其中 `projects[]` 含每个项目的执行状态、耗时、报告与错误信息。
 
 #### 4.8.12 错误码
 - `SWARM_HIVE_UNRESOLVED`：蜂巢不存在或无法解析。

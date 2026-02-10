@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 
 import {
   cancelMessageStream,
+  compactSession as compactSessionApi,
   createSession,
   deleteSession as deleteSessionApi,
   fetchChatTransportProfile,
@@ -88,6 +89,12 @@ type OpenDraftSessionOptions = {
 
 type SendMessageOptions = {
   attachments?: unknown[];
+};
+
+type AppendLocalMessageOptions = {
+  createdAt?: unknown;
+  sessionId?: unknown;
+  immediate?: boolean;
 };
 
 type ResumeStreamOptions = {
@@ -2956,6 +2963,22 @@ export const useChatStore = defineStore('chat', {
         return;
       }
     },
+    appendLocalMessage(role: string, content: string, options: AppendLocalMessageOptions = {}) {
+      const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
+      const text = String(content || '').trim();
+      if (!text) return null;
+      const message = buildMessage(normalizedRole, text, options.createdAt);
+      this.messages.push(message);
+      const targetSessionId = String(options.sessionId ?? this.activeSessionId ?? '').trim();
+      if (targetSessionId) {
+        cacheSessionMessages(targetSessionId, this.messages);
+        touchSessionUpdatedAt(this, targetSessionId, message.created_at || Date.now());
+        notifySessionSnapshot(this, targetSessionId, this.messages, options.immediate !== false);
+      } else {
+        this.scheduleSnapshot(options.immediate !== false);
+      }
+      return message;
+    },
     async loadSessions(options: LoadSessionsOptions = {}) {
       const shouldRefreshTransport =
         options.skipTransportRefresh !== true && options.refresh_transport !== false;
@@ -3179,6 +3202,15 @@ export const useChatStore = defineStore('chat', {
       }
       return overrides;
     },
+    async compactSession(sessionId, payload: Record<string, unknown> = {}) {
+      const targetId = String(sessionId || this.activeSessionId || '').trim();
+      if (!targetId) {
+        throw new Error(t('chat.command.compactMissingSession'));
+      }
+      const { data } = await compactSessionApi(targetId, payload);
+      return data?.data?.message || data?.message || '';
+    },
+
     async sendMessage(content: string, options: SendMessageOptions = {}) {
       const initialSessionId = this.activeSessionId;
       abortResumeStream(initialSessionId);
@@ -3373,7 +3405,7 @@ export const useChatStore = defineStore('chat', {
     },
     async stopStream() {
       if (!this.activeSessionId) {
-        return;
+        return false;
       }
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
@@ -3381,15 +3413,18 @@ export const useChatStore = defineStore('chat', {
         runtime.stopRequested = true;
       }
       abortSendStream(sessionId);
+      let cancelled = false;
       try {
-        await cancelMessageStream(sessionId);
+        const { data } = await cancelMessageStream(sessionId);
+        cancelled = Boolean(data?.data?.cancelled);
       } catch (error) {
-        // 终止失败时仅记录状态，不影响前端中止动作
+        // Ignore cancel API failures; local stop behavior still applies.
       }
       setSessionLoading(this, sessionId, false);
       if (!pageUnloading) {
         startSessionWatcher(this, sessionId);
       }
+      return cancelled;
     },
     async resumeStream(sessionId, message, options: ResumeStreamOptions = {}) {
       const force = options.force === true;

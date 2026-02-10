@@ -1350,6 +1350,87 @@ const downloadWorkspaceResource = async (publicPath) => {
   }
 };
 
+type ChatLocalCommand = 'new' | 'stop' | 'help' | 'compact';
+
+const parseLocalCommand = (value): ChatLocalCommand | '' => {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/')) return '';
+  const token = raw.split(/\s+/, 1)[0].replace(/^\/+/, '').toLowerCase();
+  if (!token) return '';
+  if (token === 'new' || token === 'reset') return 'new';
+  if (token === 'stop' || token === 'cancel') return 'stop';
+  if (token === 'help' || token === '?') return 'help';
+  if (token === 'compact') return 'compact';
+  return '';
+};
+
+const resolveCommandErrorMessage = (error) =>
+  String(error?.response?.data?.detail || error?.message || t('common.requestFailed')).trim();
+
+const appendLocalCommandMessages = (commandText, replyText) => {
+  chatStore.appendLocalMessage('user', commandText);
+  chatStore.appendLocalMessage('assistant', replyText);
+};
+
+const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
+  if (command === 'help') {
+    appendLocalCommandMessages(rawText, t('chat.command.help'));
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  if (command === 'new') {
+    try {
+      const agentId = String(activeAgentId.value || '').trim();
+      await chatStore.createSession(agentId ? { agent_id: agentId } : {});
+      appendLocalCommandMessages(rawText, t('chat.command.newSuccess'));
+    } catch (error) {
+      appendLocalCommandMessages(
+        rawText,
+        t('chat.command.newFailed', { message: resolveCommandErrorMessage(error) })
+      );
+    }
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  if (command === 'stop') {
+    const activeId = String(chatStore.activeSessionId || '').trim();
+    if (!activeId) {
+      appendLocalCommandMessages(rawText, t('chat.command.stopNoSession'));
+      await scrollMessagesToBottom();
+      return;
+    }
+    const cancelled = await chatStore.stopStream();
+    appendLocalCommandMessages(
+      rawText,
+      cancelled ? t('chat.command.stopRequested') : t('chat.command.stopNoRunning')
+    );
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  if (command === 'compact') {
+    const activeId = String(chatStore.activeSessionId || '').trim();
+    if (!activeId) {
+      appendLocalCommandMessages(rawText, t('chat.command.compactMissingSession'));
+      await scrollMessagesToBottom();
+      return;
+    }
+    try {
+      await chatStore.compactSession(activeId);
+      appendLocalCommandMessages(rawText, t('chat.command.compactSuccess'));
+      scheduleExternalSessionSync(true);
+    } catch (error) {
+      appendLocalCommandMessages(
+        rawText,
+        t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) })
+      );
+    }
+    await scrollMessagesToBottom();
+  }
+};
+
 const handleComposerSend = async ({ content, attachments }) => {
   const payloadAttachments = Array.isArray(attachments) ? attachments : [];
   const trimmedContent = String(content || '').trim();
@@ -1357,6 +1438,22 @@ const handleComposerSend = async ({ content, attachments }) => {
   const selectedRoutes = resolveInquirySelectionRoutes(active?.panel, inquirySelection.value);
   const hasSelection = selectedRoutes.length > 0;
   if (!trimmedContent && payloadAttachments.length === 0 && !hasSelection) return;
+
+  const localCommand = parseLocalCommand(trimmedContent);
+  if (localCommand && !hasSelection) {
+    if (active) {
+      chatStore.resolveInquiryPanel(active.message, { status: 'dismissed' });
+    }
+    if (payloadAttachments.length > 0) {
+      appendLocalCommandMessages(trimmedContent, t('chat.command.attachmentsUnsupported'));
+      inquirySelection.value = [];
+      await scrollMessagesToBottom();
+      return;
+    }
+    await handleLocalCommand(localCommand, trimmedContent);
+    inquirySelection.value = [];
+    return;
+  }
 
   let finalContent = trimmedContent;
   if (active) {
@@ -1377,18 +1474,18 @@ const handleComposerSend = async ({ content, attachments }) => {
     }
   }
 
-    pendingAssistantCenter = true;
-    pendingAssistantCenterCount = chatStore.messages.length;
-    try {
-      await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
-    } catch (error) {
-      pendingAssistantCenter = false;
-      pendingAssistantCenterCount = 0;
-      throw error;
-    } finally {
-      inquirySelection.value = [];
-    }
-  };
+  pendingAssistantCenter = true;
+  pendingAssistantCenterCount = chatStore.messages.length;
+  try {
+    await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
+  } catch (error) {
+    pendingAssistantCenter = false;
+    pendingAssistantCenterCount = 0;
+    throw error;
+  } finally {
+    inquirySelection.value = [];
+  }
+};
 
 const handleStop = async () => {
   await chatStore.stopStream();

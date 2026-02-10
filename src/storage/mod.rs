@@ -975,6 +975,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<TeamRunRecord>>;
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()>;
     fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
+    fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
 
     fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
 }
