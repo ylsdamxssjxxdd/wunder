@@ -2395,8 +2395,14 @@
 - `wunder-cli doctor`：运行时环境诊断。
 - 默认读取 `--config` 指定或 `config/wunder.yaml`；若 CLI 未找到仓库配置，会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为基础配置。
 
-- 交互态支持 `/config` 与 `/config show`：
-  - `/config` 会依次提示输入 `base_url`、`api_key`、`model`，写入 `WUNDER_TEMP/config/wunder.override.yaml` 并设为默认模型。
-  - provider 根据 `base_url` 自动推断（含 dashscope -> qwen），默认 `tool_call_mode=tool_call`，可通过 `config set-tool-call-mode` 再切换。
+- 交互态内置 codex 风格 slash 命令：
+  - `/help`：输出命令帮助清单（含描述）。
+  - `/status`：输出会话状态（session/model/tool_call_mode/workspace/db）。
+  - `/model [name]`：查看当前模型，或切换默认模型。
+  - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
+  - `/config`：依次提示输入 `base_url`、`api_key`、`model`，写入 `WUNDER_TEMP/config/wunder.override.yaml` 并设为默认模型。
+  - `/config show`：输出当前运行配置。
+  - `/new`、`/session`、`/exit`：会话控制。
+- 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。

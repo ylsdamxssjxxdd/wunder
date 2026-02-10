@@ -45,6 +45,7 @@ wunder-cli/
   args.rs                        # clap 参数模型
   runtime.rs                     # 运行时初始化（WUNDER_TEMP、环境覆盖、轻量状态）
   render.rs                      # 流式事件渲染（text/jsonl）
+  slash_command.rs               # codex 风格斜杠命令解析与帮助文案
 
 src/
   ...                            # 继续复用现有核心能力
@@ -203,12 +204,16 @@ CLI 初始化时设置：
 
 ## 7.4 交互态快捷命令
 
-- `/help`：展示交互命令。
+- `/help`：展示交互命令帮助（命令+说明）。
+- `/status`：查看当前会话运行状态（session/model/tool_call_mode/workspace/db）。
+- `/model [name]`：查看当前模型，或将默认模型切到指定名称。
+- `/tool-call-mode <tool_call|function_call> [model]`：快速切换工具调用协议（支持 `/mode` 别名）。
 - `/session`：查看当前会话 id。
 - `/new`：新建会话并切换。
 - `/config`：进入模型配置引导（三段输入）。
 - `/config show`：打印当前运行配置。
 - `/exit`：退出交互。
+- 未识别 `/xxx` 指令会直接提示 unknown command，并引导使用 `/help`。
 
 ## 8. 交互与事件输出
 

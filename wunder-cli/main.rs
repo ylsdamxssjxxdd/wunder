@@ -1,6 +1,7 @@
 mod args;
 mod render;
 mod runtime;
+mod slash_command;
 
 use anyhow::{anyhow, Context, Result};
 use args::{
@@ -14,6 +15,7 @@ use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
 use runtime::CliRuntime;
 use serde_json::{json, Value};
+use slash_command::{ParsedSlashCommand, SlashCommand};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
 use tracing_subscriber::EnvFilter;
@@ -155,6 +157,7 @@ async fn run_chat_loop(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     println!("wunder-cli interactive mode. type /help for commands.");
+    println!("session: {session_id}");
 
     loop {
         let input = if let Some(prompt) = first.take() {
@@ -167,35 +170,19 @@ async fn run_chat_loop(
         if trimmed.is_empty() {
             continue;
         }
-        match trimmed {
-            "/exit" | "/quit" => break,
-            "/help" => {
-                println!("/new        create a new session");
-                println!("/session    show current session id");
-                println!("/config     configure model endpoint/api key/model");
-                println!("/config show print current runtime config");
-                println!("/exit       exit interactive mode");
+
+        if trimmed.starts_with('/') {
+            if let Some(command) = slash_command::parse_slash_command(trimmed) {
+                let should_exit =
+                    handle_chat_slash_command(runtime, global, &mut session_id, command).await?;
+                if should_exit {
+                    break;
+                }
                 continue;
             }
-            "/session" => {
-                println!("current session: {session_id}");
-                continue;
-            }
-            "/new" => {
-                session_id = uuid::Uuid::new_v4().simple().to_string();
-                runtime.save_session(&session_id).ok();
-                println!("switched to session: {session_id}");
-                continue;
-            }
-            "/config" => {
-                config_interactive_setup(runtime, global).await?;
-                continue;
-            }
-            "/config show" => {
-                config_show(runtime, global).await?;
-                continue;
-            }
-            _ => {}
+            println!("[error] unknown command: {trimmed}");
+            println!("type /help to list available slash commands");
+            continue;
         }
 
         run_prompt_once(runtime, global, trimmed, &session_id).await?;
@@ -203,6 +190,198 @@ async fn run_chat_loop(
     }
 
     Ok(())
+}
+
+async fn handle_chat_slash_command(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &mut String,
+    command: ParsedSlashCommand<'_>,
+) -> Result<bool> {
+    match command.command {
+        SlashCommand::Help => {
+            for line in slash_command::help_lines() {
+                println!("{line}");
+            }
+            Ok(false)
+        }
+        SlashCommand::Status => {
+            print_runtime_status(runtime, global, session_id.as_str()).await?;
+            Ok(false)
+        }
+        SlashCommand::Session => {
+            println!("current session: {session_id}");
+            Ok(false)
+        }
+        SlashCommand::New => {
+            *session_id = uuid::Uuid::new_v4().simple().to_string();
+            runtime.save_session(session_id).ok();
+            println!("switched to session: {session_id}");
+            Ok(false)
+        }
+        SlashCommand::Config => {
+            config_interactive_setup(runtime, global).await?;
+            Ok(false)
+        }
+        SlashCommand::ConfigShow => {
+            config_show(runtime, global).await?;
+            Ok(false)
+        }
+        SlashCommand::Model => {
+            handle_slash_model(runtime, global, command.args).await?;
+            Ok(false)
+        }
+        SlashCommand::ToolCallMode => {
+            handle_slash_tool_call_mode(runtime, global, command.args).await?;
+            Ok(false)
+        }
+        SlashCommand::Exit | SlashCommand::Quit => Ok(true),
+    }
+}
+
+async fn print_runtime_status(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &str,
+) -> Result<()> {
+    let config = runtime.state.config_store.get().await;
+    let model_name = runtime
+        .resolve_model_name(global.model.as_deref())
+        .await
+        .unwrap_or_else(|| "<none>".to_string());
+    let tool_call_mode = config
+        .llm
+        .models
+        .get(&model_name)
+        .and_then(|model| model.tool_call_mode.as_deref())
+        .unwrap_or("tool_call");
+
+    println!("status");
+    println!("- session: {session_id}");
+    println!("- model: {model_name}");
+    println!("- tool_call_mode: {tool_call_mode}");
+    println!("- workspace: {}", config.workspace.root);
+    println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
+    println!("- db_path: {}", config.storage.db_path);
+    Ok(())
+}
+
+async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &str) -> Result<()> {
+    let target = args.trim();
+    if target.is_empty() {
+        show_model_status(runtime, global).await?;
+        return Ok(());
+    }
+
+    let config = runtime.state.config_store.get().await;
+    if !config.llm.models.contains_key(target) {
+        println!("[error] model not found: {target}");
+        let models = sorted_model_names(&config);
+        if models.is_empty() {
+            println!("no models configured. run /config first.");
+        } else {
+            println!("available models: {}", models.join(", "));
+        }
+        return Ok(());
+    }
+
+    let target_name = target.to_string();
+    runtime
+        .state
+        .config_store
+        .update(move |config| {
+            config.llm.default = target_name.clone();
+        })
+        .await?;
+
+    println!("model set: {target}");
+    show_model_status(runtime, global).await?;
+    Ok(())
+}
+
+async fn show_model_status(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    let config = runtime.state.config_store.get().await;
+    let active_model = runtime
+        .resolve_model_name(global.model.as_deref())
+        .await
+        .unwrap_or_else(|| "<none>".to_string());
+    println!("current model: {active_model}");
+
+    let models = sorted_model_names(&config);
+    if models.is_empty() {
+        println!("no models configured. run /config first.");
+        return Ok(());
+    }
+
+    println!("available models:");
+    for name in models {
+        let marker = if name == active_model { "*" } else { " " };
+        let mode = config
+            .llm
+            .models
+            .get(&name)
+            .and_then(|model| model.tool_call_mode.as_deref())
+            .unwrap_or("tool_call");
+        println!("{marker} {name} ({mode})");
+    }
+    Ok(())
+}
+
+async fn handle_slash_tool_call_mode(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    args: &str,
+) -> Result<()> {
+    let cleaned = args.trim();
+    if cleaned.is_empty() {
+        let config = runtime.state.config_store.get().await;
+        let model_name = runtime
+            .resolve_model_name(global.model.as_deref())
+            .await
+            .unwrap_or_else(|| "<none>".to_string());
+        let mode = config
+            .llm
+            .models
+            .get(&model_name)
+            .and_then(|model| model.tool_call_mode.as_deref())
+            .unwrap_or("tool_call");
+        println!("tool_call_mode: model={model_name} mode={mode}");
+        println!("usage: /tool-call-mode <tool_call|function_call> [model]");
+        return Ok(());
+    }
+
+    let mut parts = cleaned.split_whitespace();
+    let Some(mode_token) = parts.next() else {
+        return Ok(());
+    };
+    let Some(mode) = parse_tool_call_mode(mode_token) else {
+        println!("[error] invalid mode: {mode_token}");
+        println!("valid modes: tool_call, function_call");
+        return Ok(());
+    };
+
+    let model = parts.next().map(str::to_string);
+    if parts.next().is_some() {
+        println!("[error] too many arguments");
+        println!("usage: /tool-call-mode <tool_call|function_call> [model]");
+        return Ok(());
+    }
+
+    config_set_tool_call_mode(runtime, global, SetToolCallModeCommand { mode, model }).await
+}
+
+fn parse_tool_call_mode(raw: &str) -> Option<ToolCallModeArg> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "tool_call" | "tool-call" | "tool" => Some(ToolCallModeArg::ToolCall),
+        "function_call" | "function-call" | "function" => Some(ToolCallModeArg::FunctionCall),
+        _ => None,
+    }
+}
+
+fn sorted_model_names(config: &Config) -> Vec<String> {
+    let mut names: Vec<String> = config.llm.models.keys().cloned().collect();
+    names.sort();
+    names
 }
 
 async fn handle_exec(
