@@ -100,20 +100,25 @@ const setDetail = (label, payload) => {
 };
 
 const renderDetail = () => {
-  if (elements.simLabDetailLabel) {
-    elements.simLabDetailLabel.textContent = detailLabel;
+  const detailLabelEl =
+    elements.simLabDetailLabel || document.getElementById("simLabDetailLabel");
+  const detailReportEl =
+    elements.simLabDetailReport || document.getElementById("simLabDetailReport");
+
+  if (detailLabelEl) {
+    detailLabelEl.textContent = detailLabel;
   }
-  if (!elements.simLabDetailReport) {
+  if (!detailReportEl) {
     return;
   }
   if (!detailPayload) {
-    elements.simLabDetailReport.textContent = t("simLab.detail.empty");
+    detailReportEl.textContent = t("simLab.detail.empty");
     return;
   }
   try {
-    elements.simLabDetailReport.textContent = JSON.stringify(detailPayload, null, 2);
+    detailReportEl.textContent = JSON.stringify(detailPayload, null, 2);
   } catch {
-    elements.simLabDetailReport.textContent = String(detailPayload);
+    detailReportEl.textContent = String(detailPayload);
   }
 };
 
@@ -127,12 +132,16 @@ const restoreHistory = (runId) => {
 };
 
 const renderHistory = () => {
-  if (!elements.simLabHistoryList || !elements.simLabHistoryEmpty) {
+  const historyListEl =
+    elements.simLabHistoryList || document.getElementById("simLabHistoryList");
+  const historyEmptyEl =
+    elements.simLabHistoryEmpty || document.getElementById("simLabHistoryEmpty");
+  if (!historyListEl || !historyEmptyEl) {
     return;
   }
-  elements.simLabHistoryList.innerHTML = "";
+  historyListEl.innerHTML = "";
   const list = Array.isArray(historyItems) ? historyItems : [];
-  elements.simLabHistoryEmpty.hidden = list.length > 0;
+  historyEmptyEl.hidden = list.length > 0;
   if (!list.length) {
     return;
   }
@@ -157,7 +166,7 @@ const renderHistory = () => {
     button.appendChild(title);
     button.appendChild(meta);
     button.addEventListener("click", () => restoreHistory(item.run_id));
-    elements.simLabHistoryList.appendChild(button);
+    historyListEl.appendChild(button);
   });
 };
 

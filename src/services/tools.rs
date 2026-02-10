@@ -1916,75 +1916,121 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 
     let shared_message = normalize_optional_string(payload.message.clone());
     let shared_label = normalize_optional_string(payload.label.clone());
-    let mut items = Vec::with_capacity(payload.tasks.len());
+    let dispatch_plan = payload
+        .tasks
+        .into_iter()
+        .enumerate()
+        .map(|(index, task)| {
+            let message = normalize_optional_string(task.message)
+                .or_else(|| shared_message.clone())
+                .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
+
+            let mut send_args = json!({
+                "action": "send",
+                "message": message,
+                "timeoutSeconds": 0.0,
+            });
+            if let Some(agent_id) = normalize_optional_string(task.agent_id) {
+                send_args["agentId"] = json!(agent_id);
+            }
+            if let Some(session_key) = normalize_optional_string(task.session_key) {
+                send_args["session_id"] = json!(session_key);
+            }
+            if let Some(label) =
+                normalize_optional_string(task.label).or_else(|| shared_label.clone())
+            {
+                send_args["label"] = json!(label);
+            }
+            if let Some(create_if_missing) = task.create_if_missing.or(payload.create_if_missing) {
+                send_args["createIfMissing"] = json!(create_if_missing);
+            }
+            if let Some(include_current) = task.include_current.or(payload.include_current) {
+                send_args["includeCurrent"] = json!(include_current);
+            }
+            Ok((index, send_args))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let dispatch_parallelism = dispatch_plan.len().min(max_tasks).max(1);
+    let mut indexed_items = Vec::new();
     let mut run_ids = Vec::new();
 
-    for (index, task) in payload.tasks.into_iter().enumerate() {
-        let message = normalize_optional_string(task.message)
-            .or_else(|| shared_message.clone())
-            .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
-
-        let mut send_args = json!({
-            "action": "send",
-            "message": message,
-            "timeoutSeconds": 0.0,
-        });
-        if let Some(agent_id) = normalize_optional_string(task.agent_id) {
-            send_args["agentId"] = json!(agent_id);
-        }
-        if let Some(session_key) = normalize_optional_string(task.session_key) {
-            send_args["session_id"] = json!(session_key);
-        }
-        if let Some(label) = normalize_optional_string(task.label).or_else(|| shared_label.clone())
-        {
-            send_args["label"] = json!(label);
-        }
-        if let Some(create_if_missing) = task.create_if_missing.or(payload.create_if_missing) {
-            send_args["createIfMissing"] = json!(create_if_missing);
-        }
-        if let Some(include_current) = task.include_current.or(payload.include_current) {
-            send_args["includeCurrent"] = json!(include_current);
-        }
-
-        match agent_swarm_send(context, &send_args).await {
-            Ok(result) => {
-                let run_id = result
-                    .get("run_id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .unwrap_or("")
-                    .to_string();
-                if !run_id.is_empty() {
-                    run_ids.push(run_id.clone());
-                }
-                let mut item = json!({
-                    "index": index,
-                    "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
-                    "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
-                    "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
-                    "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
-                    "created_session": result
-                        .get("created_session")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                });
-                if let Some(error) = result.get("error") {
-                    if let Value::Object(ref mut map) = item {
-                        map.insert("error".to_string(), error.clone());
-                    }
-                }
-                items.push(item);
+    for chunk in dispatch_plan.chunks(dispatch_parallelism) {
+        let chunk_results = tokio::task::scope(|scope| {
+            let mut handles = Vec::with_capacity(chunk.len());
+            for (index, send_args) in chunk {
+                let index = *index;
+                let send_args = send_args.clone();
+                handles.push((
+                    index,
+                    scope.spawn(async move { agent_swarm_send(context, &send_args).await }),
+                ));
             }
-            Err(err) => {
-                items.push(json!({
-                    "index": index,
-                    "status": "error",
-                    "error": err.to_string(),
-                }));
+            async move {
+                let mut outputs = Vec::with_capacity(handles.len());
+                for (index, handle) in handles {
+                    let result = match handle.await {
+                        Ok(result) => result,
+                        Err(err) => Err(anyhow!(
+                            "agent_swarm batch_send dispatch join failed: {err}"
+                        )),
+                    };
+                    outputs.push((index, result));
+                }
+                outputs
+            }
+        })
+        .await;
+
+        for (index, result) in chunk_results {
+            match result {
+                Ok(result) => {
+                    let run_id = result
+                        .get("run_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("")
+                        .to_string();
+                    if !run_id.is_empty() {
+                        run_ids.push(run_id.clone());
+                    }
+                    let mut item = json!({
+                        "index": index,
+                        "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
+                        "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
+                        "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
+                        "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                        "created_session": result
+                            .get("created_session")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    });
+                    if let Some(error) = result.get("error") {
+                        if let Value::Object(ref mut map) = item {
+                            map.insert("error".to_string(), error.clone());
+                        }
+                    }
+                    indexed_items.push((index, item));
+                }
+                Err(err) => {
+                    indexed_items.push((
+                        index,
+                        json!({
+                            "index": index,
+                            "status": "error",
+                            "error": err.to_string(),
+                        }),
+                    ));
+                }
             }
         }
     }
 
+    indexed_items.sort_by_key(|(index, _)| *index);
+    let items = indexed_items
+        .into_iter()
+        .map(|(_, item)| item)
+        .collect::<Vec<_>>();
     let run_ids = dedupe_non_empty_strings(run_ids);
     let accepted_total = items
         .iter()

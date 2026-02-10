@@ -272,8 +272,9 @@ impl LlmClient {
                 }
             }
 
-            if !saw_done && !buffer.trim().is_empty() {
-                if process_sse_event_block(
+            if !saw_done
+                && !buffer.trim().is_empty()
+                && process_sse_event_block(
                     buffer.as_str(),
                     &mut combined,
                     &mut reasoning_combined,
@@ -282,9 +283,8 @@ impl LlmClient {
                     &mut on_delta,
                 )
                 .await?
-                {
-                    saw_done = true;
-                }
+            {
+                saw_done = true;
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
@@ -669,6 +669,18 @@ where
     }
 
     if data_lines.is_empty() {
+        let fallback = block.trim();
+        if fallback.starts_with('{') || fallback.starts_with('[') {
+            return process_stream_payload(
+                fallback,
+                combined,
+                reasoning_combined,
+                usage,
+                tool_calls_accumulator,
+                on_delta,
+            )
+            .await;
+        }
         return Ok(false);
     }
 
@@ -1140,6 +1152,103 @@ mod tests {
 
         assert!(!done);
         assert_eq!(combined, "ok");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_accepts_raw_json_without_data_prefix() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            r#"{"choices":[{"message":{"content":"raw-json"}}]}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process raw json block");
+
+        assert!(!done);
+        assert_eq!(combined, "raw-json");
+        assert!(reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_complete_accepts_tail_event_without_done_or_newline() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use bytes::Bytes;
+        use futures::stream;
+        use tokio::net::TcpListener;
+
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                let stream = stream::iter(vec![Ok::<_, std::convert::Infallible>(Bytes::from(
+                    r#"data: {"choices":[{"delta":{"content":"tail"}}]}"#,
+                ))]);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(stream))
+                    .expect("build sse response")
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect("stream complete");
+
+        assert_eq!(response.content, "tail");
+        assert!(response.reasoning.is_empty());
     }
 
     #[tokio::test]

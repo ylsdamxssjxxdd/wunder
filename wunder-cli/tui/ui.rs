@@ -20,16 +20,19 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
     frame.render_widget(status, vertical[0]);
 
     let transcript_lines: Vec<Line> = app
-        .visible_logs(220)
+        .visible_logs(usize::MAX)
         .into_iter()
         .map(|entry| log_line(entry.kind, entry.text))
         .collect();
+    let transcript_viewport = inner_rect(vertical[1]);
+    let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
     let transcript = Paragraph::new(Text::from(transcript_lines))
         .block(
             Block::default()
                 .title(" Conversation ")
                 .borders(Borders::ALL),
         )
+        .scroll((transcript_scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(transcript, vertical[1]);
 

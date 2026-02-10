@@ -57,6 +57,7 @@ pub struct TuiApp {
     config_wizard: Option<ConfigWizardState>,
     stream_saw_output: bool,
     stream_saw_final: bool,
+    transcript_offset_from_bottom: u16,
 }
 
 impl TuiApp {
@@ -88,6 +89,7 @@ impl TuiApp {
             config_wizard: None,
             stream_saw_output: false,
             stream_saw_final: false,
+            transcript_offset_from_bottom: 0,
         };
         app.sync_model_status().await;
         app.push_log(
@@ -108,13 +110,19 @@ impl TuiApp {
             .as_deref()
             .map(|value| format!(" usage:{value}"))
             .unwrap_or_default();
+        let scroll = if self.transcript_offset_from_bottom > 0 {
+            format!(" scroll:-{}", self.transcript_offset_from_bottom)
+        } else {
+            String::new()
+        };
         format!(
-            "wunder-cli  session:{}  model:{}  mode:{}  state:{}{}  (Ctrl+C exit)",
+            "wunder-cli  session:{}  model:{}  mode:{}  state:{}{}{}  (PgUp/PgDn scroll, Ctrl+C exit)",
             short_session_id(&self.session_id),
             self.model_name,
             self.tool_call_mode,
             busy,
             usage,
+            scroll,
         )
     }
 
@@ -132,6 +140,47 @@ impl TuiApp {
             return self.logs.clone();
         }
         self.logs[len - max_entries..].to_vec()
+    }
+
+    pub fn transcript_scroll(&self, viewport_height: u16) -> u16 {
+        let max_scroll = self.max_transcript_scroll(viewport_height);
+        let offset = self.transcript_offset_from_bottom.min(max_scroll);
+        max_scroll.saturating_sub(offset)
+    }
+
+    fn scroll_transcript_up(&mut self, lines: u16) {
+        self.transcript_offset_from_bottom =
+            self.transcript_offset_from_bottom.saturating_add(lines);
+    }
+
+    fn scroll_transcript_down(&mut self, lines: u16) {
+        self.transcript_offset_from_bottom =
+            self.transcript_offset_from_bottom.saturating_sub(lines);
+    }
+
+    fn scroll_transcript_to_top(&mut self) {
+        self.transcript_offset_from_bottom = u16::MAX;
+    }
+
+    fn scroll_transcript_to_bottom(&mut self) {
+        self.transcript_offset_from_bottom = 0;
+    }
+
+    fn max_transcript_scroll(&self, viewport_height: u16) -> u16 {
+        let viewport = viewport_height.max(1);
+        self.total_transcript_lines().saturating_sub(viewport)
+    }
+
+    fn total_transcript_lines(&self) -> u16 {
+        let total = self
+            .logs
+            .iter()
+            .map(|entry| {
+                let count = entry.text.lines().count();
+                count.max(1)
+            })
+            .sum::<usize>();
+        total.min(u16::MAX as usize) as u16
     }
 
     pub fn popup_lines(&self) -> Vec<String> {
@@ -197,6 +246,18 @@ impl TuiApp {
             }
             KeyCode::Tab => {
                 self.apply_first_suggestion();
+            }
+            KeyCode::PageUp => {
+                self.scroll_transcript_up(8);
+            }
+            KeyCode::PageDown => {
+                self.scroll_transcript_down(8);
+            }
+            KeyCode::Home => {
+                self.scroll_transcript_to_top();
+            }
+            KeyCode::End => {
+                self.scroll_transcript_to_bottom();
             }
             KeyCode::Up => {
                 self.history_up();
