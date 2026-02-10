@@ -2379,17 +2379,17 @@
 - `/wunder/chat/team_runs` 与 `/wunder/chat/sessions/{session_id}/team_runs` 不再使用 `hive_id` 过滤参数。
 - 返回体中的 `hive_id` 保留为兼容字段，固定为 `default`。
 
-## wunder-cli ??????
+## wunder-cli 本地命令入口
 
-> ???wunder-cli ??????????? HTTP ??????? /wunder ??? orchestrator/tool/mcp/skills ?????
+> 说明：wunder-cli 为本地命令行入口，不走 HTTP 路由，但复用与 /wunder 相同的 orchestrator/tool/mcp/skills 核心链路。
 
-- ?????????????? PROMPT ????????
-- `wunder-cli ask <PROMPT>`??????
-- `wunder-cli chat [PROMPT]`??????
-- `wunder-cli resume [SESSION_ID] [PROMPT] [--last]`??????
-- `wunder-cli tool run <name> --args <json>`????????
-- `wunder-cli exec|e <command...>`??????????
-- `wunder-cli mcp list|get|add|remove|enable|disable`??? MCP ?????
-- `wunder-cli skills list|enable|disable`??? skills ???????
-- `wunder-cli config show|set-tool-call-mode`???/???????
-- `wunder-cli doctor`?????????
+- 默认无子命令进入交互模式；有 PROMPT 时执行单次任务。
+- `wunder-cli ask <PROMPT>`：单次提问。
+- `wunder-cli chat [PROMPT]`：交互会话。
+- `wunder-cli resume [SESSION_ID] [PROMPT] [--last]`：恢复会话。
+- `wunder-cli tool run <name> --args <json>`：直接工具调用。
+- `wunder-cli exec|e <command...>`：命令执行快捷入口。
+- `wunder-cli mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
+- `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
+- `wunder-cli config show|set-tool-call-mode`：查看/设置运行配置。
+- `wunder-cli doctor`：运行时环境诊断。

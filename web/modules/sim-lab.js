@@ -1,8 +1,8 @@
-import { elements } from "./elements.js?v=20260124-01";
+import { elements } from "./elements.js?v=20260210-02";
 import { getWunderBase } from "./api.js";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260124-01";
+import { t } from "./i18n.js?v=20260210-02";
 
 let initialized = false;
 let running = false;
@@ -28,16 +28,6 @@ const formatSeconds = (value) => {
   return `${numeric.toFixed(3)} s`;
 };
 
-const formatIsoTime = (value) => {
-  if (!value) {
-    return "-";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return date.toLocaleString();
-};
 
 const createRunId = () =>
   `simlab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -295,61 +285,6 @@ const projectTitle = (projectId) => {
 
 const boolLabel = (value) => (value ? t("common.yes") : t("common.no"));
 
-const renderSummary = (report) => {
-  if (!elements.simLabSummaryGrid) {
-    return;
-  }
-  elements.simLabSummaryGrid.innerHTML = "";
-
-  const modeValue =
-    report?.mode === "sequential" ? t("simLab.mode.sequential") : t("simLab.mode.parallel");
-  const summaryRows = [
-    {
-      label: t("simLab.result.summary.runId"),
-      value: report?.run_id || "-",
-    },
-    {
-      label: t("simLab.result.summary.mode"),
-      value: report ? modeValue : "-",
-    },
-    {
-      label: t("simLab.result.summary.wallTime"),
-      value: report ? formatSeconds(report.wall_time_s) : "-",
-    },
-    {
-      label: t("simLab.result.summary.success"),
-      value: report
-        ? `${Number(report.project_success || 0)}/${Number(report.project_total || 0)}`
-        : "-",
-    },
-    {
-      label: t("simLab.result.summary.failed"),
-      value: report ? String(Number(report.project_failed || 0)) : "-",
-    },
-    {
-      label: t("simLab.result.summary.startedAt"),
-      value: report ? formatIsoTime(report.started_at) : "-",
-    },
-  ];
-
-  summaryRows.forEach((row) => {
-    const card = document.createElement("div");
-    card.className = "simlab-summary-card";
-
-    const label = document.createElement("div");
-    label.className = "simlab-summary-label";
-    label.textContent = row.label;
-
-    const value = document.createElement("div");
-    value.className = "simlab-summary-value";
-    value.textContent = row.value;
-
-    card.appendChild(label);
-    card.appendChild(value);
-    elements.simLabSummaryGrid.appendChild(card);
-  });
-};
-
 const extractHighlights = (project) => {
   const report = project?.report;
   if (!report || typeof report !== "object") {
@@ -504,13 +439,7 @@ const renderProjectReports = (projects) => {
 
 const renderReport = (report) => {
   lastReport = report || null;
-  renderSummary(lastReport);
   renderProjectReports(lastReport?.projects || []);
-  if (elements.simLabResult) {
-    elements.simLabResult.textContent = lastReport
-      ? JSON.stringify(lastReport, null, 2)
-      : t("simLab.result.rawEmpty");
-  }
 };
 
 const buildRunPayload = (runId) => {
@@ -521,7 +450,6 @@ const buildRunPayload = (runId) => {
   return {
     run_id: runId,
     projects,
-    mode: elements.simLabMode?.value || "parallel",
     keep_artifacts: Boolean(elements.simLabKeepArtifacts?.checked),
     options: {
       swarm_flow: {

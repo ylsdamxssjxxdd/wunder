@@ -658,7 +658,7 @@
   }
 }
 
-/* Simulation Lab */
+/* Swarm Test */
 #simLabPanel {
   gap: 12px;
   min-height: 0;
@@ -694,6 +694,7 @@
 .simlab-layout {
   flex: 1 1 0;
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
   gap: 16px;
@@ -709,13 +710,18 @@
   min-height: 0;
 }
 
+.simlab-side {
+  overflow: hidden;
+}
+
 .simlab-main {
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 2px;
 }
 
 
 .simlab-form {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -816,35 +822,6 @@
 
 .simlab-keep-artifacts {
   margin-top: 4px;
-}
-
-.simlab-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.simlab-summary-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-height: 76px;
-}
-
-.simlab-summary-label {
-  font-size: 12px;
-  color: #64748b;
-}
-
-.simlab-summary-value {
-  font-size: 15px;
-  color: #0f172a;
-  font-weight: 600;
-  word-break: break-word;
 }
 
 .simlab-report-list-card {
@@ -1009,34 +986,27 @@
   font-weight: 600;
 }
 
-.simlab-project-raw,
-.simlab-raw-report {
+.simlab-project-raw {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px 10px;
 }
 
-.simlab-project-raw > summary,
-.simlab-raw-report > summary {
+.simlab-project-raw > summary {
   cursor: pointer;
   color: #334155;
   font-size: 12px;
   font-weight: 600;
 }
 
-.simlab-project-raw pre,
-.simlab-raw-report pre {
+.simlab-project-raw pre {
   margin: 10px 0 0;
   max-height: 320px;
   overflow: auto;
 }
 
 @media (max-width: 1400px) {
-  .simlab-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .simlab-highlight-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1051,7 +1021,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .simlab-summary-grid,
   .simlab-highlight-grid {
     grid-template-columns: minmax(0, 1fr);
   }

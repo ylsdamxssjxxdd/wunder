@@ -25,10 +25,11 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
+        let request_config = self.resolve_config(prepared.config_overrides.as_ref()).await;
         let max_active_sessions = if prepared.is_admin {
             i64::MAX as usize
         } else {
-            self.config_store.get().await.server.max_active_sessions
+            request_config.server.max_active_sessions
         };
         let limiter = RequestLimiter::new(self.storage.clone(), max_active_sessions);
         let session_id = prepared.session_id.clone();
@@ -116,9 +117,7 @@ impl Orchestrator {
             }
             emitter.emit("progress", start_payload).await;
 
-            let config = self
-                .resolve_config(prepared.config_overrides.as_ref())
-                .await;
+            let config = request_config.clone();
             let log_payload =
                 is_debug_log_level(&config.observability.log_level) || prepared.debug_payload;
             let (_llm_name, llm_config) =

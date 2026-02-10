@@ -169,24 +169,24 @@ CLI 初始化时设置：
 
 ## 7.2 子命令
 
-- `ask`：一次性提问
-- `chat`：交互会话
-- `tool run|list`：工具直调/列表
-- `exec`：命令执行快捷入口（映射 `执行命令` 工具）
-- `mcp list|add|remove|enable|disable`
-- `skills list|enable|disable`
-- `config show|set-tool-call-mode`
-- `doctor`
+- `ask`：一次性提问。
+- `chat`：交互会话。
+- `resume [SESSION_ID] [PROMPT]`：恢复会话，支持 `--last`。
+- `tool run|list`：工具直调/列表。
+- `exec`（别名 `e`）：命令执行快捷入口（映射 `执行命令` 工具）。
+- `mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
+- `skills list|enable|disable`：本地 skills 启用状态管理。
+- `config show|set-tool-call-mode`：查看/设置运行配置。
+- `doctor`：运行时环境诊断。
 
 ## 7.3 默认行为
 
 - 无子命令 + 有 `PROMPT`：执行一次任务。
 - 无子命令 + 终端输入：进入交互模式。
 - 无子命令 + 管道输入：读 stdin 执行一次任务。
+- `resume` 子命令默认恢复最近会话并进入交互，可通过 `--last` 或显式 `SESSION_ID` 指定会话。
 
-这与 codex 的“默认进入主交互，子命令化扩展能力”保持一致。
-
----
+这与 codex 的“默认进入主交互，子命令化扩展能力、支持会话恢复”保持一致。
 
 ## 8. 交互与事件输出
 
@@ -242,7 +242,7 @@ CLI 初始化时设置：
 ### M1（已启动）
 
 - 搭建 `wunder-cli/` 目录与 `[[bin]]`。
-- 打通 `ask/chat/tool/exec/mcp/skills/config/doctor` 基础命令。
+- 打通 `ask/chat/resume/tool/exec/mcp/skills/config/doctor` 基础命令。
 - 完成 `WUNDER_TEMP` 持久化与单根工作区模式。
 
 ### M2

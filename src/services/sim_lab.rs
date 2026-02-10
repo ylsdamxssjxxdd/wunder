@@ -24,7 +24,6 @@ const DEFAULT_WORKERS: usize = 100;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
 const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
 const DEFAULT_POLL_MS: u64 = 120;
-const DEFAULT_RUN_MODE: &str = "parallel";
 const MOCK_MODEL_NAME: &str = "__swarm_flow_mock__";
 const MOTHER_MARKER: &str = "MOTHER_SIM_START";
 const WORKER_MARKER: &str = "WORKER_SIM_TASK";
@@ -124,50 +123,33 @@ pub async fn run_sim_lab(
             projects.push(PROJECT_SWARM_FLOW.to_string());
         }
 
-        let mode = normalize_run_mode(request.mode.as_deref());
+        let mode = "parallel".to_string();
         let options_by_project = extract_options_by_project(request.options.as_ref());
         let keep_artifacts = request.keep_artifacts.unwrap_or(false);
         let started_at = Utc::now();
         let started = Instant::now();
 
-        let mut reports = if mode == "sequential" {
-            let mut rows = Vec::with_capacity(projects.len());
-            for project_id in &projects {
-                rows.push(
-                    run_project(
-                        state.clone(),
-                        run_control.clone(),
-                        project_id,
-                        options_by_project.get(project_id),
-                        keep_artifacts,
-                    )
-                    .await,
-                );
-            }
-            rows
-        } else {
-            let mut tasks = FuturesUnordered::new();
-            for project_id in projects {
-                let state = state.clone();
-                let run_control = run_control.clone();
-                let project_options = options_by_project.get(&project_id).cloned();
-                tasks.push(async move {
-                    run_project(
-                        state,
-                        run_control,
-                        &project_id,
-                        project_options.as_ref(),
-                        keep_artifacts,
-                    )
-                    .await
-                });
-            }
-            let mut rows = Vec::new();
-            while let Some(item) = tasks.next().await {
-                rows.push(item);
-            }
-            rows
-        };
+        let mut tasks = FuturesUnordered::new();
+        for project_id in projects {
+            let state = state.clone();
+            let run_control = run_control.clone();
+            let project_options = options_by_project.get(&project_id).cloned();
+            tasks.push(async move {
+                run_project(
+                    state,
+                    run_control,
+                    &project_id,
+                    project_options.as_ref(),
+                    keep_artifacts,
+                )
+                .await
+            });
+        }
+
+        let mut reports = Vec::new();
+        while let Some(item) = tasks.next().await {
+            reports.push(item);
+        }
 
         reports.sort_by(|left, right| left.project_id.cmp(&right.project_id));
         let project_success = reports
@@ -287,15 +269,6 @@ fn normalize_project_list(items: &[String]) -> Vec<String> {
         values.push(project_id);
     }
     values
-}
-
-fn normalize_run_mode(raw: Option<&str>) -> String {
-    let mode = raw.unwrap_or(DEFAULT_RUN_MODE).trim().to_ascii_lowercase();
-    if mode == "sequential" {
-        "sequential".to_string()
-    } else {
-        "parallel".to_string()
-    }
 }
 
 fn extract_options_by_project(root: Option<&Value>) -> HashMap<String, Value> {
@@ -573,6 +546,7 @@ async fn run_swarm_flow(
 
         let mother_session_id = create_mother_session(state.as_ref(), &user_id, &mother_agent_id)?;
         *run_control.mother_session_id.lock() = Some(mother_session_id.clone());
+        seed_swarm_workspace(state.as_ref(), &user_id)?;
         let config_overrides = build_mock_request_overrides(&args, &llm_base_url);
 
         apply_cancel_signal(state.as_ref(), run_control.as_ref());
@@ -748,7 +722,7 @@ async fn mock_chat_completions(
         mother_mock_response(&state.scenario.read(), &observation_payloads)
     } else if first_user.contains(WORKER_MARKER) {
         state.worker_calls.fetch_add(1, Ordering::Relaxed);
-        worker_mock_response(&observed_tools)
+        worker_mock_response(&first_user, &observed_tools)
     } else {
         state.fallback_calls.fetch_add(1, Ordering::Relaxed);
         fallback_mock_response(&first_user)
@@ -806,37 +780,241 @@ fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value])
     )
 }
 
-fn worker_mock_response(observed_tools: &HashSet<String>) -> Value {
-    let has_list_files = observed_tools.iter().any(|name| is_list_files_tool(name));
-    let has_search_content = observed_tools
-        .iter()
-        .any(|name| is_search_content_tool(name));
+#[derive(Debug, Clone, Copy)]
+enum WorkerToolKind {
+    ListFiles,
+    SearchContent,
+    ReadFile,
+    WriteFile,
+    ReplaceText,
+    EditFile,
+    ExecuteCommand,
+    ProgrammaticToolCall,
+    FinalResponse,
+}
 
-    if !has_list_files {
-        let args = json!({ "path": ".", "max_depth": 2 });
+impl WorkerToolKind {
+    fn function_name(self) -> &'static str {
+        match self {
+            Self::ListFiles => "list_files",
+            Self::SearchContent => "search_content",
+            Self::ReadFile => "read_file",
+            Self::WriteFile => "write_file",
+            Self::ReplaceText => "replace_text",
+            Self::EditFile => "edit_file",
+            Self::ExecuteCommand => "execute_command",
+            Self::ProgrammaticToolCall => "programmatic_tool_call",
+            Self::FinalResponse => "final_response",
+        }
+    }
+
+    fn observed_by(self, observed_tools: &HashSet<String>) -> bool {
+        observed_tools.iter().any(|tool| self.matches_tool(tool))
+    }
+
+    fn matches_tool(self, tool_name: &str) -> bool {
+        match self {
+            Self::ListFiles => is_list_files_tool(tool_name),
+            Self::SearchContent => is_search_content_tool(tool_name),
+            Self::ReadFile => is_read_file_tool(tool_name),
+            Self::WriteFile => is_write_file_tool(tool_name),
+            Self::ReplaceText => is_replace_text_tool(tool_name),
+            Self::EditFile => is_edit_file_tool(tool_name),
+            Self::ExecuteCommand => is_execute_command_tool(tool_name),
+            Self::ProgrammaticToolCall => is_ptc_tool(tool_name),
+            Self::FinalResponse => is_final_response_tool(tool_name),
+        }
+    }
+
+    fn args(self, worker_tag: &str) -> Value {
+        let worker_file = format!("sim_lab/workers/{worker_tag}.txt");
+        match self {
+            Self::ListFiles => json!({
+                "path": ".",
+                "max_depth": 2,
+            }),
+            Self::SearchContent => json!({
+                "query": "swarm",
+                "path": ".",
+                "max_depth": 2,
+                "max_files": 40,
+            }),
+            Self::ReadFile => json!({
+                "files": [{
+                    "path": "sim_lab/shared/context.txt",
+                    "start_line": 1,
+                    "end_line": 40,
+                }]
+            }),
+            Self::WriteFile => json!({
+                "path": worker_file,
+                "content": format!("worker={worker_tag}\nphase=alpha\nresult=pending\n"),
+            }),
+            Self::ReplaceText => json!({
+                "path": worker_file,
+                "old_string": "phase=alpha",
+                "new_string": "phase=beta",
+                "expected_replacements": 1,
+            }),
+            Self::EditFile => json!({
+                "path": worker_file,
+                "edits": [{
+                    "action": "replace",
+                    "start_line": 3,
+                    "end_line": 3,
+                    "new_content": "result=edited",
+                }],
+                "ensure_newline_at_eof": true,
+            }),
+            Self::ExecuteCommand => json!({
+                "content": format!("echo swarm-worker-{worker_tag}"),
+                "workdir": ".",
+                "timeout_s": 5,
+            }),
+            Self::ProgrammaticToolCall => json!({
+                "filename": format!("sim_worker_{worker_tag}.py"),
+                "workdir": ".",
+                "content": "print('swarm worker script prepared')",
+            }),
+            Self::FinalResponse => json!({
+                "content": format!("worker {worker_tag} final response via tool"),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorkerToolProfile {
+    InspectSearch,
+    InspectRead,
+    WriteReplace,
+    WriteEdit,
+    CommandRead,
+    SearchFinal,
+    PtcSearch,
+    CommandPtc,
+}
+
+impl WorkerToolProfile {
+    fn label(self) -> &'static str {
+        match self {
+            Self::InspectSearch => "inspect_search",
+            Self::InspectRead => "inspect_read",
+            Self::WriteReplace => "write_replace",
+            Self::WriteEdit => "write_edit",
+            Self::CommandRead => "command_read",
+            Self::SearchFinal => "search_final",
+            Self::PtcSearch => "ptc_search",
+            Self::CommandPtc => "command_ptc",
+        }
+    }
+
+    fn round_tools(self) -> (WorkerToolKind, WorkerToolKind) {
+        match self {
+            Self::InspectSearch => (WorkerToolKind::ListFiles, WorkerToolKind::SearchContent),
+            Self::InspectRead => (WorkerToolKind::ListFiles, WorkerToolKind::ReadFile),
+            Self::WriteReplace => (WorkerToolKind::WriteFile, WorkerToolKind::ReplaceText),
+            Self::WriteEdit => (WorkerToolKind::WriteFile, WorkerToolKind::EditFile),
+            Self::CommandRead => (WorkerToolKind::ExecuteCommand, WorkerToolKind::ReadFile),
+            Self::SearchFinal => (WorkerToolKind::SearchContent, WorkerToolKind::FinalResponse),
+            Self::PtcSearch => (
+                WorkerToolKind::ProgrammaticToolCall,
+                WorkerToolKind::SearchContent,
+            ),
+            Self::CommandPtc => (
+                WorkerToolKind::ExecuteCommand,
+                WorkerToolKind::ProgrammaticToolCall,
+            ),
+        }
+    }
+}
+
+fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> Value {
+    let worker_tag = worker_tag(first_user);
+    let profile = choose_worker_profile(first_user);
+    let (round_one_tool, round_two_tool) = profile.round_tools();
+
+    if !round_one_tool.observed_by(observed_tools) {
+        let args = round_one_tool.args(&worker_tag);
         return openai_chat_response(
-            "Worker preset round-1: call list_files to inspect workspace context.",
-            Some(vec![function_tool_call("list_files", &args)]),
+            &format!(
+                "Worker preset round-1 ({}) call {}.",
+                profile.label(),
+                round_one_tool.function_name()
+            ),
+            Some(vec![function_tool_call(round_one_tool.function_name(), &args)]),
         );
     }
 
-    if !has_search_content {
-        let args = json!({
-            "query": "swarm",
-            "path": ".",
-            "max_depth": 2,
-            "max_files": 40
-        });
+    if !round_two_tool.observed_by(observed_tools) {
+        let args = round_two_tool.args(&worker_tag);
         return openai_chat_response(
-            "Worker preset round-2: call search_content based on previous tool output.",
-            Some(vec![function_tool_call("search_content", &args)]),
+            &format!(
+                "Worker preset round-2 ({}) call {}.",
+                profile.label(),
+                round_two_tool.function_name()
+            ),
+            Some(vec![function_tool_call(round_two_tool.function_name(), &args)]),
         );
     }
 
     openai_chat_response(
-        "Worker preset final: two tool loops completed, returning deterministic summary.",
+        &format!(
+            "Worker preset final: profile={} two rounds complete for {}.",
+            profile.label(),
+            worker_tag
+        ),
         None,
     )
+}
+
+fn choose_worker_profile(first_user: &str) -> WorkerToolProfile {
+    let source = extract_worker_agent_hint(first_user).unwrap_or_else(|| first_user.to_string());
+    let hash = source
+        .bytes()
+        .fold(0u64, |state, byte| state.wrapping_mul(131).wrapping_add(byte as u64));
+    match (hash % 8) as usize {
+        0 => WorkerToolProfile::InspectSearch,
+        1 => WorkerToolProfile::InspectRead,
+        2 => WorkerToolProfile::WriteReplace,
+        3 => WorkerToolProfile::WriteEdit,
+        4 => WorkerToolProfile::CommandRead,
+        5 => WorkerToolProfile::SearchFinal,
+        6 => WorkerToolProfile::PtcSearch,
+        _ => WorkerToolProfile::CommandPtc,
+    }
+}
+
+fn extract_worker_agent_hint(first_user: &str) -> Option<String> {
+    let marker = "worker=";
+    let marker_pos = first_user.find(marker)?;
+    let value = &first_user[marker_pos + marker.len()..];
+    let raw = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.to_string())
+    }
+}
+
+fn worker_tag(first_user: &str) -> String {
+    let raw = extract_worker_agent_hint(first_user).unwrap_or_else(|| "worker".to_string());
+    let mut cleaned = raw
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(18)
+        .collect::<String>();
+    if cleaned.is_empty() {
+        cleaned = "worker".to_string();
+    }
+    cleaned
 }
 
 fn fallback_mock_response(first_user: &str) -> Value {
@@ -1004,6 +1182,52 @@ fn is_search_content_tool(name: &str) -> bool {
     )
 }
 
+fn is_read_file_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "read_file" | "\u{8bfb}\u{53d6}\u{6587}\u{4ef6}"
+    )
+}
+
+fn is_write_file_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "write_file" | "\u{5199}\u{5165}\u{6587}\u{4ef6}"
+    )
+}
+
+fn is_replace_text_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "replace_text" | "\u{66ff}\u{6362}\u{6587}\u{672c}"
+    )
+}
+
+fn is_edit_file_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "edit_file" | "\u{7f16}\u{8f91}\u{6587}\u{4ef6}"
+    )
+}
+
+fn is_execute_command_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "execute_command" | "\u{6267}\u{884c}\u{547d}\u{4ee4}"
+    )
+}
+
+fn is_ptc_tool(name: &str) -> bool {
+    matches!(name.trim(), "programmatic_tool_call" | "ptc")
+}
+
+fn is_final_response_tool(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "final_response" | "\u{6700}\u{7ec8}\u{56de}\u{590d}"
+    )
+}
+
 fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWaitSummary> {
     for payload in observation_payloads.iter().rev() {
         let Some(data) = payload.get("data") else {
@@ -1048,6 +1272,21 @@ fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWai
     None
 }
 
+fn seed_swarm_workspace(state: &AppState, user_id: &str) -> Result<()> {
+    let shared_context = [
+        "swarm simulation context",
+        "- deterministic worker loops",
+        "- validate tool orchestration",
+        "- collect concurrency metrics",
+    ]
+    .join("
+");
+    state
+        .workspace
+        .write_file(user_id, "sim_lab/shared/context.txt", &shared_context, true)?;
+    Ok(())
+}
+
 fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(String, Vec<String>)> {
     state.user_store.ensure_default_hive(user_id)?;
     let now = now_ts();
@@ -1081,7 +1320,17 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
             name: format!("SwarmWorkerSim{}", index + 1),
             description: "Deterministic worker agent for tool-loop simulation".to_string(),
             system_prompt: "Execute two tool loops then return final summary.".to_string(),
-            tool_names: vec!["list_files".to_string(), "search_content".to_string()],
+            tool_names: vec![
+                "list_files".to_string(),
+                "search_content".to_string(),
+                "read_file".to_string(),
+                "write_file".to_string(),
+                "replace_text".to_string(),
+                "edit_file".to_string(),
+                "execute_command".to_string(),
+                "programmatic_tool_call".to_string(),
+                "final_response".to_string(),
+            ],
             access_level: "A".to_string(),
             is_shared: false,
             status: "active".to_string(),
