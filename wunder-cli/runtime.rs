@@ -36,22 +36,19 @@ impl CliRuntime {
             .unwrap_or_else(|| launch_dir.join("WUNDER_TEMP"));
         ensure_runtime_dirs(&temp_root)?;
 
-        let base_config = global
-            .config_path
-            .clone()
-            .unwrap_or_else(|| repo_root.join("config/wunder.yaml"));
+        let base_config = prepare_base_config_path(global, &repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
-        let prompts_root = repo_root.clone();
+        let prompts_root = repo_root.join("prompts");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
         let vector_root = temp_root.join("vector_knowledge");
 
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
-        set_env_path("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
-        set_env_path("WUNDER_PROMPTS_ROOT", &prompts_root);
-        set_env_path("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
+        set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
+        set_env_path_if_exists("WUNDER_PROMPTS_ROOT", &prompts_root);
+        set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
@@ -184,6 +181,50 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
 
 fn set_env_path(key: &str, value: &Path) {
     std::env::set_var(key, value.to_string_lossy().to_string());
+}
+
+fn set_env_path_if_exists(key: &str, value: &Path) {
+    if value.exists() {
+        set_env_path(key, value);
+    }
+}
+
+fn prepare_base_config_path(
+    global: &GlobalArgs,
+    repo_root: &Path,
+    temp_root: &Path,
+) -> Result<PathBuf> {
+    if let Some(path) = global.config_path.clone() {
+        return Ok(path);
+    }
+    let repo_config = repo_root.join("config/wunder.yaml");
+    if repo_config.exists() {
+        return Ok(repo_config);
+    }
+    let generated = temp_root.join("config/wunder.base.yaml");
+    ensure_generated_base_config(&generated)?;
+    Ok(generated)
+}
+
+fn ensure_generated_base_config(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("invalid generated base config path: {}", path.display()))?;
+    fs::create_dir_all(parent)?;
+    let mut config = Config::default();
+    config.server.mode = "cli".to_string();
+    let content =
+        serde_yaml::to_string(&config).context("serialize generated cli base config failed")?;
+    fs::write(path, content).with_context(|| {
+        format!(
+            "write generated cli base config failed: {}",
+            path.to_string_lossy()
+        )
+    })?;
+    Ok(())
 }
 
 fn apply_cli_defaults(config: &mut Config, launch_dir: &Path, temp_root: &Path, repo_root: &Path) {

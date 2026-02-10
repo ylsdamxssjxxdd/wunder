@@ -1,5 +1,15 @@
 # wunder-cli实现方案
 
+## 0. 用户原始问题（保留）
+
+- 新增 `wunder-cli`，本地单用户运行，核心复用 `src/` 现有编排与能力。
+- 产物只要一个 `wunder-cli` 可执行文件，运行目录下 `WUNDER_TEMP/` 持久化 SQLite 与配置。
+- 智能体工作目录等于 CLI 启动目录；支持 MCP/skills 配置，可直接执行命令或调用内置工具。
+- CLI 交互样式与行为对齐参考项目 `codex-main`，并保留 wunder 特色（`tool_call/function_call` 可切换）。
+- 提示词、工作链路与网关能力沿用 wunder；面向单用户语义适配，不按多租户设计。
+
+---
+
 ## 1. 目标与定位
 
 `wunder-cli` 是 wunder 的本地单用户运行形态，目标是在任意项目目录快速获得与 `/wunder` 同源的编排、工具与流式体验。
@@ -86,7 +96,7 @@ path = "wunder-cli/main.rs"
 
 ## 5.1 分层优先级（低 -> 高）
 
-1. 基础配置：`config/wunder.yaml`（可由 `--config` 指定）
+1. 基础配置：默认读取 `config/wunder.yaml`，可由 `--config` 指定；若仓库配置缺失，CLI 会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为兜底。
 2. 本地覆盖：`WUNDER_TEMP/config/wunder.override.yaml`
 3. CLI flag（当前进程）
 4. 请求级 `config_overrides`（单次请求）
@@ -102,6 +112,7 @@ path = "wunder-cli/main.rs"
 - `agent_queue.enabled = false`
 - `cron.enabled = false`
 - `sandbox.mode = local`
+- 若基础配置缺失会自动生成 CLI 基础配置文件，保证首次运行可启动。
 
 ## 5.3 路径类能力环境变量化
 

@@ -1287,10 +1287,16 @@ pub fn read_prompt_template(path: &Path) -> String {
             return cached_text.clone();
         }
     }
-    let text = std::fs::read_to_string(&resolved)
-        .ok()
-        .or_else(|| embedded_prompt_template(path, &resolved))
-        .unwrap_or_default();
+    let text = if prompt_template_override_enabled() {
+        std::fs::read_to_string(&resolved)
+            .ok()
+            .or_else(|| embedded_prompt_template(path, &resolved))
+            .unwrap_or_default()
+    } else {
+        embedded_prompt_template(path, &resolved)
+            .or_else(|| std::fs::read_to_string(&resolved).ok())
+            .unwrap_or_default()
+    };
     cache.lock().insert(cache_key, (mtime, text.clone()));
     text
 }
@@ -1858,6 +1864,13 @@ fn resolve_prompts_root() -> PathBuf {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn prompt_template_override_enabled() -> bool {
+    std::env::var(PROMPTS_ROOT_ENV)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn absolute_path_str(path: &Path) -> String {

@@ -102,12 +102,19 @@ impl StreamRenderer {
             }
             "error" => {
                 self.ensure_newline();
+                let nested_message = event
+                    .data
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .and_then(|inner| inner.get("message"))
+                    .and_then(Value::as_str);
                 let message = event
                     .data
-                    .get("message")
-                    .or_else(|| event.data.get("detail"))
-                    .or_else(|| event.data.get("error"))
-                    .and_then(Value::as_str)
+                    .as_str()
+                    .or_else(|| event.data.get("message").and_then(Value::as_str))
+                    .or_else(|| event.data.get("detail").and_then(Value::as_str))
+                    .or_else(|| event.data.get("error").and_then(Value::as_str))
+                    .or(nested_message)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToString::to_string)

@@ -2393,6 +2393,7 @@
 - `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
 - `wunder-cli config show|set-tool-call-mode`：查看/设置运行配置。
 - `wunder-cli doctor`：运行时环境诊断。
+- 默认读取 `--config` 指定或 `config/wunder.yaml`；若 CLI 未找到仓库配置，会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为基础配置。
 
 - 交互态支持 `/config` 与 `/config show`：
   - `/config` 会依次提示输入 `base_url`、`api_key`、`model`，写入 `WUNDER_TEMP/config/wunder.override.yaml` 并设为默认模型。

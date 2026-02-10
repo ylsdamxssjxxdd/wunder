@@ -760,6 +760,12 @@ async fn handle_doctor(
 ) -> Result<()> {
     let config = runtime.state.config_store.get().await;
     let model = runtime.resolve_model_name(global.model.as_deref()).await;
+    let prompts_root = std::env::var("WUNDER_PROMPTS_ROOT").unwrap_or_default();
+    let prompts_status_path = if prompts_root.trim().is_empty() {
+        "<embedded>".to_string()
+    } else {
+        prompts_root
+    };
     let checks = vec![
         (
             "base_config",
@@ -776,11 +782,7 @@ async fn handle_doctor(
             std::env::var("WUNDER_I18N_MESSAGES_PATH").unwrap_or_default(),
             true,
         ),
-        (
-            "prompts_root",
-            std::env::var("WUNDER_PROMPTS_ROOT").unwrap_or_default(),
-            true,
-        ),
+        ("prompts_root", prompts_status_path, false),
         (
             "skill_runner",
             std::env::var("WUNDER_SKILL_RUNNER_PATH").unwrap_or_default(),
