@@ -383,5 +383,47 @@ desktop 默认配置建议：
 - 安装器、自动升级、更多原生系统集成（托盘/通知/文件关联）可作为后续增强，不影响当前单二进制可用性。
 
 
+## 14. 容器管理与系统设置落地细节（M4 补充）
 
+### 14.1 后端设置模型
+
+- `wunder-desktop/runtime.rs` 的 `DesktopSettings` 已扩展：
+  - `container_roots: HashMap<i32, String>`
+  - `language: String`
+  - `remote_gateway`（预留连接 server）
+- 启动时会做归一化：
+  - 容器 1 默认落到 `<app_dir>/WUNDER_WORK`；
+  - 相对路径按 `app_dir` 解析为绝对路径；
+  - 自动创建目录并写回 `WUNDER_TEMPD/config/desktop.settings.json`。
+
+### 14.2 Desktop 设置接口
+
+- 新增 `GET/PUT /wunder/desktop/settings`（`src/api/desktop.rs`）。
+- `GET` 返回：
+  - `workspace_root`（容器 1）
+  - `container_roots`（容器到目录映射）
+  - `language/supported_languages`
+  - `llm`
+  - `remote_gateway`
+- `PUT` 更新后同步三处：
+  1. `desktop.settings.json`
+  2. `ConfigStore`（llm/i18n/workspace.container_roots）
+  3. `WorkspaceManager.set_container_roots(...)`（即时生效）
+
+### 14.3 前端页面与 TS 位置
+
+- API 封装：`frontend/src/api/desktop.ts`。
+- 容器管理页：`frontend/src/views/DesktopContainerSettingsView.vue`。
+- 系统设置页：`frontend/src/views/DesktopSystemSettingsView.vue`。
+- 路由入口：`frontend/src/router/index.ts`（`/desktop/containers` 与 `/desktop/system`）。
+- 设置页入口：`frontend/src/views/SettingsView.vue`。
+
+### 14.4 远程接入（预留阶段）
+
+- 当前 `remote_gateway` 仅负责配置持久化，不发起真实连接。
+- 后续按三步接入：
+  1. **握手鉴权**：desktop 以“注册角色”连接 wunder-server；
+  2. **会话路由切换**：用户会话切到远端 `/wunder`；
+  3. **容器映射切换**：本地 `container_roots` 转换为服务端虚拟容器 id。
+- 预留目标：在保持本地 UI 交互一致的前提下，将桌面端平滑切到 server 模式。
 

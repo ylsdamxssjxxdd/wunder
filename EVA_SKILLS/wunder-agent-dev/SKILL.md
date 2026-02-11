@@ -205,3 +205,5 @@ user_id → agent_id → session_id → agent_loop → WS/SSE 事件
 - 并发压测若发现峰值长期卡在 20 左右，优先检查 `RequestLimiter` 是否在解析 `config_overrides` 之前初始化；应先合并配置再取 `server.max_active_sessions`。
 - 蜂群仿真要贴近真实链路时，建议固定使用专用账号（如 `wunder-sim`）并在每轮前执行“账号存在校验 + 会话/应用重置 + 按 workers 重建工蜂应用（容器随机 1..10）”。
 - 管理端“开始/停止”按钮建议用单按钮切换状态并直接调用 `cancel` 接口，避免额外状态指示器与多按钮状态竞争导致 UI 假运行。
+- sessions_send/spawn_session_run 不要再用 spawn_blocking + Handle::block_on(orchestrator.run) 包异步请求，这会把蜂群 fan-out 误绑到阻塞线程池/运行时线程，峰值并发常被压在 20 左右；应直接 tokio::spawn(async move { orchestrator.run(request).await })。
+- 蜂群测试的“峰值并发”建议拆成两种口径：worker-only（工蜂）与 all（母蜂+工蜂）；默认展示工蜂口径，避免 1 工蜂时出现峰值=2 的认知偏差。

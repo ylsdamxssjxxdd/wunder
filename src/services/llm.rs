@@ -684,6 +684,37 @@ where
         return Ok(false);
     }
 
+    if data_lines.len() > 1 {
+        let mut is_line_delimited_payload = true;
+        for data in &data_lines {
+            let payload = data.trim();
+            if payload.is_empty() || payload == "[DONE]" {
+                continue;
+            }
+            if serde_json::from_str::<Value>(payload).is_err() {
+                is_line_delimited_payload = false;
+                break;
+            }
+        }
+        if is_line_delimited_payload {
+            for data in data_lines {
+                if process_stream_payload(
+                    data.trim(),
+                    combined,
+                    reasoning_combined,
+                    usage,
+                    tool_calls_accumulator,
+                    on_delta,
+                )
+                .await?
+                {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+    }
+
     let data = data_lines.join("\n");
     process_stream_payload(
         data.trim(),
@@ -749,10 +780,17 @@ where
                     ));
             }
             update_stream_tool_calls(tool_calls_accumulator, &delta);
-            if delta.is_null() {
-                if let Some(message) = choice.and_then(|value| value.get("message")) {
-                    update_stream_tool_calls(tool_calls_accumulator, message);
-                }
+            if let Some(message) = choice.and_then(|value| value.get("message")) {
+                update_stream_tool_calls(tool_calls_accumulator, message);
+            }
+            if let Some(choice_payload) = choice {
+                update_stream_tool_calls(tool_calls_accumulator, choice_payload);
+            }
+            if let Some(payload_tool_calls) = payload.get("tool_calls") {
+                update_stream_tool_calls(tool_calls_accumulator, payload_tool_calls);
+            }
+            if let Some(payload_function_call) = payload.get("function_call") {
+                update_stream_tool_calls(tool_calls_accumulator, payload_function_call);
             }
             if !content_delta.is_empty() {
                 combined.push_str(content_delta.as_str());
@@ -782,48 +820,91 @@ struct StreamToolCall {
     arguments: String,
 }
 
-fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, delta: &Value) {
-    let tool_calls_raw = delta.get("tool_calls").or_else(|| delta.get("tool_call"));
-    let tool_calls = match tool_calls_raw {
-        Some(Value::Array(items)) => Some(items.as_slice()),
-        Some(Value::Object(_)) => tool_calls_raw.map(std::slice::from_ref),
-        _ => None,
-    };
-    if let Some(items) = tool_calls {
-        for item in items {
-            if let Value::Object(map) = item {
-                let index = map.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
-                while acc.len() <= index {
+fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
+    match payload {
+        Value::Array(items) => {
+            for item in items {
+                merge_stream_tool_call_item(acc, item);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(tool_calls) = map.get("tool_calls").or_else(|| map.get("tool_call")) {
+                update_stream_tool_calls(acc, tool_calls);
+            } else if map.contains_key("function")
+                || map.contains_key("name")
+                || map.contains_key("arguments")
+            {
+                merge_stream_tool_call_item(acc, payload);
+            }
+
+            if let Some(function_call) = map.get("function_call") {
+                if acc.is_empty() {
                     acc.push(StreamToolCall::default());
                 }
-                let slot = &mut acc[index];
-                if let Some(id) = map.get("id").and_then(Value::as_str) {
-                    slot.id = Some(id.to_string());
-                }
-                if let Some(function) = map.get("function") {
-                    apply_function_delta(slot, function);
-                }
+                apply_function_delta(&mut acc[0], function_call);
             }
+        }
+        _ => {}
+    }
+}
+
+fn merge_stream_tool_call_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
+    let Value::Object(map) = item else {
+        return;
+    };
+
+    let index = map.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+    while acc.len() <= index {
+        acc.push(StreamToolCall::default());
+    }
+
+    let slot = &mut acc[index];
+    if let Some(id) = map.get("id").and_then(Value::as_str).map(str::trim) {
+        if !id.is_empty() {
+            slot.id = Some(id.to_string());
         }
     }
 
-    if let Some(function_call) = delta.get("function_call") {
-        if acc.is_empty() {
-            acc.push(StreamToolCall::default());
-        }
-        apply_function_delta(&mut acc[0], function_call);
+    if let Some(function) = map.get("function") {
+        apply_function_delta(slot, function);
+    } else {
+        apply_function_delta(slot, item);
     }
 }
 
 fn apply_function_delta(slot: &mut StreamToolCall, function: &Value) {
     if let Value::Object(map) = function {
         if let Some(name) = map.get("name").and_then(Value::as_str) {
-            slot.name.push_str(name);
+            merge_stream_text_field(&mut slot.name, name);
         }
         if let Some(arguments) = map.get("arguments").and_then(Value::as_str) {
-            slot.arguments.push_str(arguments);
+            merge_stream_text_field(&mut slot.arguments, arguments);
         }
     }
+}
+
+fn merge_stream_text_field(target: &mut String, fragment: &str) {
+    let cleaned = fragment.trim();
+    if cleaned.is_empty() {
+        return;
+    }
+
+    if target.is_empty() {
+        target.push_str(cleaned);
+        return;
+    }
+
+    if target.as_str() == cleaned || target.ends_with(cleaned) {
+        return;
+    }
+
+    if cleaned.starts_with(target.as_str()) {
+        target.clear();
+        target.push_str(cleaned);
+        return;
+    }
+
+    target.push_str(cleaned);
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
@@ -1152,6 +1233,109 @@ mod tests {
 
         assert!(!done);
         assert_eq!(combined, "ok");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_supports_line_delimited_json_without_event_separator() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let block = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"B\"}}]}"
+        );
+        let done = process_sse_event_block(
+            block,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process line-delimited block");
+
+        assert!(!done);
+        assert_eq!(combined, "AB");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_reads_tool_calls_from_message_payload() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{},\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"notes.txt\\\"}\"}}]}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process tool-call message block");
+
+        assert!(!done);
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "read_file");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"path\":\"notes.txt\"}"
+        );
+    }
+
+    #[test]
+    fn update_stream_tool_calls_merges_delta_and_snapshot_without_duplicates() {
+        let mut acc = Vec::new();
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "name": "read_",
+                        "arguments": "{\"path\":\""
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "name": "file",
+                        "arguments": "demo.txt\"}"
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "name": "read_file",
+                        "arguments": "{\"path\":\"demo.txt\"}"
+                    }
+                }]
+            }),
+        );
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "read_file");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"path\":\"demo.txt\"}"
+        );
     }
 
     #[tokio::test]

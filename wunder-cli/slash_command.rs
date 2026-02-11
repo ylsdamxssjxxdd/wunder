@@ -5,6 +5,7 @@ pub enum SlashCommand {
     Status,
     Session,
     System,
+    Mouse,
     New,
     Config,
     ConfigShow,
@@ -26,7 +27,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 11] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 12] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -51,6 +52,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 11] = [
         command: SlashCommand::System,
         usage: "/system [set <extra_prompt>|clear]",
         description: "show current system prompt or manage extra prompt",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Mouse,
+        usage: "/mouse [scroll|select]",
+        description: "toggle mouse mode for wheel scroll or text selection",
     },
     SlashCommandDoc {
         command: SlashCommand::New,
@@ -98,6 +104,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "status" => (SlashCommand::Status, remaining),
         "session" => (SlashCommand::Session, remaining),
         "system" => (SlashCommand::System, remaining),
+        "mouse" => (SlashCommand::Mouse, remaining),
         "new" => (SlashCommand::New, remaining),
         "model" => (SlashCommand::Model, remaining),
         "tool-call-mode" | "mode" => (SlashCommand::ToolCallMode, remaining),
@@ -208,6 +215,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "status" => SlashCommand::Status,
         "session" => SlashCommand::Session,
         "system" => SlashCommand::System,
+        "mouse" => SlashCommand::Mouse,
         "new" => SlashCommand::New,
         "model" => SlashCommand::Model,
         "tool-call-mode" | "mode" => SlashCommand::ToolCallMode,
@@ -274,5 +282,19 @@ mod tests {
         let lines = popup_lines("mode tool_call", 7);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("/tool-call-mode <tool_call|function_call> [model]"));
+    }
+
+    #[test]
+    fn parse_mouse_command_with_args() {
+        let parsed = parse_slash_command("/mouse select").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Mouse);
+        assert_eq!(parsed.args, "select");
+    }
+
+    #[test]
+    fn popup_lines_show_mouse_usage_for_argument_entry() {
+        let lines = popup_lines("mouse scroll", 7);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("/mouse [scroll|select]"));
     }
 }

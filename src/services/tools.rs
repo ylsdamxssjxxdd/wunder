@@ -44,7 +44,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::sync::{oneshot, RwLock};
@@ -1626,6 +1626,89 @@ struct AgentSwarmRuntime {
     running_sessions: HashSet<String>,
 }
 
+#[derive(Debug, Clone)]
+struct SwarmBatchDispatchTask {
+    index: usize,
+    message: String,
+    label: Option<String>,
+    agent_id: String,
+    session_id: String,
+    created_session: bool,
+    tool_names: Vec<String>,
+    agent_prompt: Option<String>,
+}
+
+fn resolve_swarm_batch_tool_names(
+    allowed_tools: &HashSet<String>,
+    session: &ChatSessionRecord,
+    agent: &UserAgentRecord,
+) -> Vec<String> {
+    let overrides = resolve_session_tool_overrides(session, Some(agent));
+    let filtered = apply_tool_overrides(allowed_tools.clone(), &overrides);
+    finalize_tool_names(filtered)
+}
+
+async fn dispatch_swarm_batch_task(
+    context: &ToolContext<'_>,
+    task: SwarmBatchDispatchTask,
+) -> Result<Value> {
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+
+    let request = WunderRequest {
+        user_id: user_id.to_string(),
+        question: task.message,
+        tool_names: task.tool_names,
+        skip_tool_calls: false,
+        stream: false,
+        debug_payload: false,
+        session_id: Some(task.session_id.clone()),
+        agent_id: Some(task.agent_id.clone()),
+        model_name: None,
+        language: Some(i18n::get_language()),
+        config_overrides: context.request_config_overrides.cloned(),
+        agent_prompt: task.agent_prompt,
+        attachments: None,
+        allow_queue: true,
+        is_admin: context.is_admin,
+    };
+
+    let parent_session_id = context.session_id.trim();
+    let announce = if parent_session_id.is_empty() || parent_session_id == task.session_id.as_str()
+    {
+        None
+    } else {
+        Some(AnnounceConfig {
+            parent_session_id: parent_session_id.to_string(),
+            label: task.label,
+        })
+    };
+
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let _receiver = spawn_session_run(
+        context,
+        request,
+        run_id.clone(),
+        Some(context.session_id.to_string()),
+        Some(task.agent_id.clone()),
+        None,
+        announce,
+        SessionCleanup::Keep,
+        None,
+    )
+    .await?;
+
+    Ok(json!({
+        "status": "accepted",
+        "run_id": run_id,
+        "session_id": task.session_id,
+        "agent_id": task.agent_id,
+        "created_session": task.created_session,
+    }))
+}
+
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: AgentSwarmControlArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
@@ -1901,6 +1984,12 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     if payload.tasks.is_empty() {
         return Err(anyhow!("agent_swarm batch_send requires non-empty tasks"));
     }
+
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+
     let max_tasks = context
         .config
         .tools
@@ -1917,48 +2006,188 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 
     let shared_message = normalize_optional_string(payload.message.clone());
     let shared_label = normalize_optional_string(payload.label.clone());
-    let dispatch_plan = payload
-        .tasks
-        .into_iter()
-        .enumerate()
-        .map(|(index, task)| {
-            let message = normalize_optional_string(task.message)
-                .or_else(|| shared_message.clone())
-                .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
+    let default_create_if_missing = payload.create_if_missing.unwrap_or(true);
+    let default_include_current = payload.include_current.unwrap_or(false);
+    let current_agent_id = current_agent_id(context);
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
+    let allowed_tools = collect_user_allowed_tools(context, user_id)?;
 
-            let mut send_args = json!({
-                "action": "send",
-                "message": message,
-                "timeoutSeconds": 0.0,
-            });
-            if let Some(agent_id) = normalize_optional_string(task.agent_id) {
-                send_args["agentId"] = json!(agent_id);
+    let agent_access = context.storage.get_user_agent_access(user_id)?;
+    let mut agent_map = HashMap::new();
+    let mut agents = context.storage.list_user_agents(user_id)?;
+    agents.extend(context.storage.list_shared_user_agents(user_id)?);
+    for agent in agents {
+        if agent.agent_id.trim().is_empty() {
+            continue;
+        }
+        if !is_agent_allowed_by_access(user_id, agent_access.as_ref(), &agent) {
+            continue;
+        }
+        ensure_swarm_agent_in_hive(&agent, &swarm_hive_id)?;
+        agent_map.entry(agent.agent_id.clone()).or_insert(agent);
+    }
+
+    let (sessions, _) = context
+        .storage
+        .list_chat_sessions(user_id, None, None, 0, 4096)?;
+    let mut sessions_by_id = HashMap::with_capacity(sessions.len());
+    let mut latest_session_by_agent = HashMap::new();
+    for session in sessions {
+        sessions_by_id.insert(session.session_id.clone(), session.clone());
+        if let Some(agent_id) = normalize_optional_string(session.agent_id.clone()) {
+            let should_replace = latest_session_by_agent
+                .get(&agent_id)
+                .map(|existing: &ChatSessionRecord| session.updated_at > existing.updated_at)
+                .unwrap_or(true);
+            if should_replace {
+                latest_session_by_agent.insert(agent_id, session);
             }
-            if let Some(session_key) = normalize_optional_string(task.session_key) {
-                send_args["session_id"] = json!(session_key);
+        }
+    }
+
+    let mut dispatch_plan = Vec::with_capacity(payload.tasks.len());
+    for (index, task) in payload.tasks.into_iter().enumerate() {
+        let message = normalize_optional_string(task.message)
+            .or_else(|| shared_message.clone())
+            .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
+        let label = normalize_optional_string(task.label).or_else(|| shared_label.clone());
+        let include_current = task.include_current.unwrap_or(default_include_current);
+        let create_if_missing = task.create_if_missing.unwrap_or(default_create_if_missing);
+        let requested_agent_id = normalize_optional_string(task.agent_id);
+        let requested_session_id = task
+            .session_key
+            .map(|value| resolve_session_key(Some(value)))
+            .transpose()?;
+
+        let (agent_record, session_record, created_session) = if let Some(session_id) =
+            requested_session_id
+        {
+            let session_record = if let Some(record) = sessions_by_id.get(&session_id).cloned() {
+                record
+            } else {
+                context
+                    .storage
+                    .get_chat_session(user_id, &session_id)?
+                    .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?
+            };
+
+            let resolved_agent_id = normalize_optional_string(session_record.agent_id.clone())
+                .ok_or_else(|| anyhow!("agent_swarm send target session is missing agent_id"))?;
+            if !include_current {
+                ensure_swarm_target_not_current(&resolved_agent_id, current_agent_id.as_deref())?;
             }
-            if let Some(label) =
-                normalize_optional_string(task.label).or_else(|| shared_label.clone())
-            {
-                send_args["label"] = json!(label);
+            if let Some(requested) = requested_agent_id.as_ref() {
+                if requested != &resolved_agent_id {
+                    return Err(anyhow!(
+                        "agent_swarm send agent_id does not match target session"
+                    ));
+                }
             }
-            if let Some(create_if_missing) = task.create_if_missing.or(payload.create_if_missing) {
-                send_args["createIfMissing"] = json!(create_if_missing);
+
+            let agent_record = if let Some(agent) = agent_map.get(&resolved_agent_id).cloned() {
+                agent
+            } else {
+                load_agent_record(
+                    context.storage.as_ref(),
+                    user_id,
+                    Some(&resolved_agent_id),
+                    false,
+                )?
+                .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?
+            };
+            ensure_swarm_agent_in_hive(&agent_record, &swarm_hive_id)?;
+
+            sessions_by_id.insert(session_record.session_id.clone(), session_record.clone());
+            let should_replace = latest_session_by_agent
+                .get(&resolved_agent_id)
+                .map(|existing| session_record.updated_at > existing.updated_at)
+                .unwrap_or(true);
+            if should_replace {
+                latest_session_by_agent.insert(resolved_agent_id, session_record.clone());
             }
-            if let Some(include_current) = task.include_current.or(payload.include_current) {
-                send_args["includeCurrent"] = json!(include_current);
+
+            (agent_record, session_record, false)
+        } else {
+            let agent_id = requested_agent_id
+                .ok_or_else(|| anyhow!("agent_swarm send requires agent_id or session_id"))?;
+            if !include_current {
+                ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
             }
-            Ok((index, send_args))
-        })
-        .collect::<Result<Vec<_>>>()?;
+            let agent_record = if let Some(agent) = agent_map.get(&agent_id).cloned() {
+                agent
+            } else {
+                load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
+                    .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?
+            };
+            ensure_swarm_agent_in_hive(&agent_record, &swarm_hive_id)?;
+
+            if let Some(existing) = latest_session_by_agent.get(&agent_id).cloned() {
+                (agent_record, existing, false)
+            } else if create_if_missing {
+                let now = now_ts();
+                let session_id = format!("sess_{}", Uuid::new_v4().simple());
+                let title = label
+                    .clone()
+                    .unwrap_or_else(|| format!("swarm-{}", agent_record.name));
+                let parent_session_id = if context.session_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(context.session_id.to_string())
+                };
+                let record = ChatSessionRecord {
+                    session_id: session_id.clone(),
+                    user_id: user_id.to_string(),
+                    title,
+                    created_at: now,
+                    updated_at: now,
+                    last_message_at: now,
+                    agent_id: Some(agent_id.clone()),
+                    tool_overrides: agent_record.tool_names.clone(),
+                    parent_session_id,
+                    parent_message_id: None,
+                    spawn_label: label.clone(),
+                    spawned_by: Some("swarm".to_string()),
+                };
+                context.storage.upsert_chat_session(&record)?;
+                sessions_by_id.insert(session_id, record.clone());
+                latest_session_by_agent.insert(agent_id, record.clone());
+                (agent_record, record, true)
+            } else {
+                return Err(anyhow!(
+                    "target agent session not found and createIfMissing is false"
+                ));
+            }
+        };
+
+        let tool_names =
+            resolve_swarm_batch_tool_names(&allowed_tools, &session_record, &agent_record);
+        let agent_prompt = {
+            let prompt = agent_record.system_prompt.trim();
+            if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt.to_string())
+            }
+        };
+
+        dispatch_plan.push(SwarmBatchDispatchTask {
+            index,
+            message,
+            label,
+            agent_id: agent_record.agent_id,
+            session_id: session_record.session_id,
+            created_session,
+            tool_names,
+            agent_prompt,
+        });
+    }
 
     let dispatch_parallelism = dispatch_plan.len().min(max_tasks).max(1);
-    let mut dispatches = stream::iter(dispatch_plan.into_iter().map(
-        |(index, send_args)| async move {
-            let result = agent_swarm_send(context, &send_args).await;
-            (index, result)
-        },
-    ))
+    let mut dispatches = stream::iter(dispatch_plan.into_iter().map(|task| async move {
+        let index = task.index;
+        let result = dispatch_swarm_batch_task(context, task).await;
+        (index, result)
+    }))
     .buffer_unordered(dispatch_parallelism);
 
     let mut indexed_items = Vec::new();
@@ -2883,6 +3112,22 @@ fn resolve_child_agent(
     Ok((None, None))
 }
 
+fn session_run_runtime() -> &'static tokio::runtime::Runtime {
+    static SESSION_RUN_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    SESSION_RUN_RUNTIME.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get().clamp(8, 128))
+            .unwrap_or(16);
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(threads)
+            .max_blocking_threads(1024)
+            .thread_name("wunder-session-run")
+            .enable_all()
+            .build()
+            .expect("build session run runtime")
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_session_run(
     context: &ToolContext<'_>,
@@ -2922,7 +3167,13 @@ async fn spawn_session_run(
         error: None,
         updated_time: now,
     };
-    context.storage.upsert_session_run(&record)?;
+    {
+        let queued_storage = context.storage.clone();
+        let queued_record = record.clone();
+        tokio::task::spawn_blocking(move || queued_storage.upsert_session_run(&queued_record))
+            .await
+            .map_err(|err| anyhow!(err.to_string()))??;
+    }
 
     let storage = context.storage.clone();
     let workspace = context.workspace.clone();
@@ -2930,17 +3181,33 @@ async fn spawn_session_run(
     let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
     tokio::spawn(async move {
         let started = now_ts();
-        let _ = storage.touch_chat_session(&user_id, &session_id, started, started);
         let running = SessionRunRecord {
             status: "running".to_string(),
             started_time: started,
             updated_time: started,
             ..record.clone()
         };
-        let _ = storage.upsert_session_run(&running);
+        {
+            let storage_for_start = storage.clone();
+            let user_for_start = user_id.clone();
+            let session_for_start = session_id.clone();
+            let running_for_start = running.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = storage_for_start.touch_chat_session(
+                    &user_for_start,
+                    &session_for_start,
+                    started,
+                    started,
+                );
+                let _ = storage_for_start.upsert_session_run(&running_for_start);
+            })
+            .await;
+        }
 
-        // Keep child session runs fully async so swarm fan-out is not constrained by blocking threads.
-        let mut run_handle = tokio::spawn(async move { orchestrator.run(request).await });
+        // Use a dedicated runtime so high fan-out runs do not contend with the main runtime worker pool.
+        let mut run_handle = tokio::task::spawn_blocking(move || {
+            session_run_runtime().block_on(orchestrator.run(request))
+        });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
             let timeout_duration = Duration::from_secs_f64(timeout_s);
@@ -2988,7 +3255,14 @@ async fn spawn_session_run(
             updated_time: finished,
             ..running
         };
-        let _ = storage.upsert_session_run(&finished_record);
+        {
+            let storage_for_finish = storage.clone();
+            let finished_for_write = finished_record.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = storage_for_finish.upsert_session_run(&finished_for_write);
+            })
+            .await;
+        }
 
         if let Some(announce) = announce {
             if !should_skip_announce(answer.as_deref()) {

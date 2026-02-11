@@ -215,12 +215,13 @@ CLI 初始化时设置：
 - `/session`：查看当前会话统计（已占用上下文/总上下文、模型调用次数、工具调用次数、token 使用）。
 - `/system [set <extra_prompt>|clear]`：查看当前系统提示词，可设置/清空额外提示词（持久化到 `WUNDER_TEMP/config/extra_prompt.txt`）。
 - `/new`：新建会话并切换。
+- `/mouse [scroll|select]`：切换鼠标模式（`scroll` 支持滚轮；`select` 关闭鼠标捕获以便框选复制）。
 - `/config`：TUI 与 `chat` 行式模式都支持向导式配置（`base_url -> api_key -> model -> max_context`），`max_context` 可留空自动探测。
 - `/config <base_url> <api_key> <model> [max_context]`：支持一行完成模型配置，方便脚本化。
 - `/config show`：打印当前运行配置（含 `max_context/context_used/context_left_percent`）。
 - `/exit`：退出交互。
-- TUI 顶部状态栏对齐 codex 风格（`? for shortcuts` + `xx% context left`）；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
-- 支持 `?` 快捷键面板与 `Ctrl+N/Ctrl+L/Ctrl+C` 快捷操作（新会话/清屏/退出）。
+- TUI 顶部状态栏对齐 codex 风格（`shortcuts` + `xx% context left`）；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
+- 支持 `?` 快捷键面板与 `Ctrl+N/Ctrl+L/Ctrl+C` 快捷操作（新会话/清屏/退出）；`F2` 可切换鼠标滚轮/复制模式。
 - 在 TUI 中，输入区已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Left/Right/Home/End` + `Up/Down` 移动光标，`Ctrl+A/E/W/U/K` 与 `Alt+B/F/Left/Right` 用于行内/按词导航与删除。
 - 未识别 `/xxx` 指令会明确提示 unknown command，并引导使用 `/help`。
 
@@ -311,7 +312,7 @@ CLI 初始化时设置：
 - `/config <base_url> <api_key> <model> [max_context|auto]` 优先按行内参数解析，不会误进入交互向导。
 - 无 prompts 目录时仍可运行（提示词由二进制内嵌提供）。
 - TUI 输入区会按面板宽度自动折行，并在按键长按（Repeat）时保持光标移动顺滑。
-- TUI 支持 codex 风格快捷提示与面板：顶部显示 `? for shortcuts`，`?` 打开快捷键面板，`Ctrl+N/Ctrl+L/Ctrl+C` 可直接操作。
+- TUI 支持 codex 风格快捷提示与面板：顶部显示 `shortcuts`，`?` 打开快捷键面板，`Ctrl+N/Ctrl+L/Ctrl+C` 可直接操作；`F2` 切换鼠标滚轮/复制模式。
 
 ---
 

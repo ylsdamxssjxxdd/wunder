@@ -2403,10 +2403,11 @@
   - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
   - `/config`：TUI 与 `chat` 行式模式统一为向导式配置（`base_url -> api_key -> model -> max_context`），并支持 `/config <base_url> <api_key> <model> [max_context]` 一行配置。
   - `/config show`：输出当前运行配置。
-  - `/new` / `/session` / `/system` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计）。
+  - `/new` / `/session` / `/system` / `/mouse` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计，`/mouse` 切换滚轮/复制模式）。
 - TUI 顶部状态栏突出 `xx% context left`，隐藏低价值 mode/state 字段；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
 - TUI 多行编辑体验已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Ctrl+B/F` 字符移动，`Alt+B/F/Left/Right` 按词导航，`Ctrl+W`/`Alt+Backspace`/`Alt+Delete` 按词删除。
 - 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
+- 鼠标模式可通过 `F2` 或 `/mouse [scroll|select]` 切换：`scroll` 启用滚轮滚动，`select` 关闭捕获以便直接框选复制。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。
@@ -2428,6 +2429,30 @@
 - `GET /wunder/desktop/bootstrap`
   - 用途：桌面启动器/诊断查看完整运行时信息。
   - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`。
+
+### desktop 本地设置接口
+
+- `GET /wunder/desktop/settings`
+  - 用途：读取 desktop 本地设置快照。
+  - 返回字段：
+    - `workspace_root`：容器 1 的默认工作目录
+    - `container_roots`：数组，元素 `{ container_id, root }`
+    - `language` / `supported_languages`
+    - `llm`（`default` + `models`）
+    - `remote_gateway`（服务端连接预留配置）
+    - `updated_at`
+- `PUT /wunder/desktop/settings`
+  - 用途：更新 desktop 本地设置并同步到运行态。
+  - 请求字段（均可选）：
+    - `workspace_root`：字符串，容器 1 工作目录
+    - `container_roots`：数组，元素 `{ container_id, root }`
+    - `language`：字符串，例如 `zh-CN` / `en-US`
+    - `llm`：对象（`default` + `models`）
+    - `remote_gateway`：对象（预留，当前仅持久化）
+  - 行为约束：
+    - 容器 id 会归一化到 `1..10`；容器 1 默认指向 `WUNDER_WORK`。
+    - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
+    - 更新后会同步写入 `WUNDER_TEMPD/config/desktop.settings.json`、运行中的 `ConfigStore` 与 `WorkspaceManager`。
 
 ### Tauri command（桌面窗口内）
 

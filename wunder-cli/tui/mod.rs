@@ -44,8 +44,21 @@ async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut TuiApp,
 ) -> Result<()> {
+    let mut mouse_capture_enabled = true;
+
     loop {
         app.drain_stream_events().await;
+
+        let desired_mouse_capture = app.mouse_capture_enabled();
+        if desired_mouse_capture != mouse_capture_enabled {
+            if desired_mouse_capture {
+                execute!(terminal.backend_mut(), EnableMouseCapture)?;
+            } else {
+                execute!(terminal.backend_mut(), DisableMouseCapture)?;
+            }
+            mouse_capture_enabled = desired_mouse_capture;
+        }
+
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         if app.should_quit() {

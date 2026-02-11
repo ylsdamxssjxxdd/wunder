@@ -1880,7 +1880,10 @@ fn mother_event_counts(state: &AppState, mother_session_id: &str) -> BTreeMap<St
     counts
 }
 
-fn compute_peak_concurrency(rows: &[SessionRunRow], include_sessions: Option<&HashSet<String>>) -> usize {
+fn compute_peak_concurrency(
+    rows: &[SessionRunRow],
+    include_sessions: Option<&HashSet<String>>,
+) -> usize {
     let mut events = Vec::<(f64, i32)>::new();
     for row in rows {
         if include_sessions

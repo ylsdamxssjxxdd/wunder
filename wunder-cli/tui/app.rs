@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use futures::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
+use unicode_width::UnicodeWidthChar;
 use wunder_server::schemas::StreamEvent;
 
 use crate::args::GlobalArgs;
@@ -45,6 +46,12 @@ struct WrappedInputLine {
     end: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseMode {
+    Scroll,
+    Select,
+}
+
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
@@ -72,6 +79,7 @@ pub struct TuiApp {
     transcript_offset_from_bottom: u16,
     session_stats_dirty: bool,
     shortcuts_visible: bool,
+    mouse_mode: MouseMode,
 }
 
 impl TuiApp {
@@ -111,6 +119,7 @@ impl TuiApp {
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
+            mouse_mode: MouseMode::Scroll,
         };
         app.sync_model_status().await;
         app.reload_session_stats().await;
@@ -139,11 +148,7 @@ impl TuiApp {
                 self.session_stats.context_used_tokens.max(0)
             )
         };
-        let running_hint = if self.busy {
-            "working..."
-        } else {
-            "? for shortcuts"
-        };
+        let running_hint = if self.busy { "working..." } else { "shortcuts" };
         let usage_hint = self
             .last_usage
             .as_deref()
@@ -154,14 +159,26 @@ impl TuiApp {
         } else {
             String::new()
         };
-        format!("  {running_hint}{usage_hint}{scroll_hint}    {context_summary}")
+        let mouse_hint = match self.mouse_mode {
+            MouseMode::Scroll => " | mouse scroll",
+            MouseMode::Select => " | mouse select",
+        };
+        format!("  {running_hint}{usage_hint}{scroll_hint}{mouse_hint} (F2)    {context_summary}")
     }
 
     pub fn shortcuts_visible(&self) -> bool {
         self.shortcuts_visible
     }
 
+    pub fn mouse_capture_enabled(&self) -> bool {
+        self.mouse_mode == MouseMode::Scroll
+    }
+
     pub fn shortcuts_lines(&self) -> Vec<String> {
+        let mouse_mode = match self.mouse_mode {
+            MouseMode::Scroll => "scroll",
+            MouseMode::Select => "select/copy",
+        };
         vec![
             "Esc / ?               close shortcuts".to_string(),
             "Enter                 send message".to_string(),
@@ -177,7 +194,8 @@ impl TuiApp {
             "Up / Down             history (or move line in multiline)".to_string(),
             "Tab                   complete slash command".to_string(),
             "PgUp/PgDn             scroll transcript".to_string(),
-            "Mouse Wheel           scroll transcript".to_string(),
+            "Mouse Wheel           scroll transcript (scroll mode)".to_string(),
+            format!("F2                   toggle mouse mode ({mouse_mode})"),
             "Ctrl+N / Ctrl+L       new session / clear transcript".to_string(),
             "Ctrl+C                exit".to_string(),
         ]
@@ -187,15 +205,40 @@ impl TuiApp {
         self.input_viewport_width = viewport_width.max(1);
     }
 
+    fn set_mouse_mode(&mut self, mode: MouseMode) {
+        if self.mouse_mode == mode {
+            return;
+        }
+        self.mouse_mode = mode;
+        let notice = match mode {
+            MouseMode::Scroll => "mouse mode: scroll (wheel enabled)",
+            MouseMode::Select => "mouse mode: select/copy (wheel disabled)",
+        };
+        self.push_log(LogKind::Info, notice.to_string());
+    }
+
+    fn toggle_mouse_mode(&mut self) {
+        let next = if self.mouse_mode == MouseMode::Scroll {
+            MouseMode::Select
+        } else {
+            MouseMode::Scroll
+        };
+        self.set_mouse_mode(next);
+    }
+
     pub fn input_view(&self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
         let width = viewport_width.max(1) as usize;
         let height = viewport_height.max(1) as usize;
         let lines = build_wrapped_input_lines(&self.input, width);
 
         let cursor = self.input_cursor.min(self.input.len());
-        let (cursor_row, cursor_col) = cursor_visual_position(&self.input, &lines, cursor);
+        let (cursor_row, cursor_col) = normalize_wrapped_cursor_position(
+            cursor_visual_position(&self.input, &lines, cursor),
+            width,
+        );
 
-        let mut start_line = lines.len().saturating_sub(height);
+        let visual_line_count = lines.len().max(cursor_row.saturating_add(1));
+        let mut start_line = visual_line_count.saturating_sub(height);
         if cursor_row < start_line {
             start_line = cursor_row;
         }
@@ -203,14 +246,19 @@ impl TuiApp {
             start_line = cursor_row.saturating_sub(height.saturating_sub(1));
         }
 
-        let end_line = (start_line + height).min(lines.len());
-        let display = lines[start_line..end_line]
-            .iter()
-            .map(|line| self.input[line.start..line.end].to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let end_line = (start_line + height).min(visual_line_count);
+        let mut display_lines = Vec::with_capacity(end_line.saturating_sub(start_line));
+        for line_index in start_line..end_line {
+            if let Some(line) = lines.get(line_index) {
+                display_lines.push(self.input[line.start..line.end].to_string());
+            } else {
+                display_lines.push(String::new());
+            }
+        }
+
+        let display = display_lines.join("\n");
         let cursor_y = cursor_row.saturating_sub(start_line) as u16;
-        let cursor_x = cursor_col.min(width.saturating_sub(1)) as u16;
+        let cursor_x = cursor_col as u16;
         (display, cursor_x, cursor_y)
     }
 
@@ -488,6 +536,9 @@ impl TuiApp {
             KeyCode::Tab => {
                 self.apply_first_suggestion();
             }
+            KeyCode::F(2) => {
+                self.toggle_mouse_mode();
+            }
             KeyCode::PageUp => {
                 self.scroll_transcript_up(8);
             }
@@ -542,6 +593,9 @@ impl TuiApp {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.mouse_mode != MouseMode::Scroll {
+            return;
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
             MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
@@ -997,14 +1051,9 @@ impl TuiApp {
             }
             "llm_output" => {
                 if let Some(content) = payload.get("content").and_then(Value::as_str) {
-                    if !content.is_empty() {
+                    if !content.trim().is_empty() {
                         self.stream_saw_output = true;
-                        let index = self.ensure_assistant_entry();
-                        if let Some(entry) = self.logs.get_mut(index) {
-                            if entry.text.is_empty() {
-                                entry.text = content.to_string();
-                            }
-                        }
+                        self.merge_assistant_content(content);
                     }
                 }
             }
@@ -1096,14 +1145,9 @@ impl TuiApp {
                     .get("answer")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                if !answer.is_empty() {
+                if !answer.trim().is_empty() {
                     self.stream_saw_output = true;
-                    let index = self.ensure_assistant_entry();
-                    if let Some(entry) = self.logs.get_mut(index) {
-                        if entry.text.trim().is_empty() {
-                            entry.text = answer.to_string();
-                        }
-                    }
+                    self.merge_final_answer(answer);
                 }
                 self.last_usage = payload
                     .get("usage")
@@ -1144,6 +1188,9 @@ impl TuiApp {
             }
             SlashCommand::System => {
                 self.handle_system_slash(command.args).await?;
+            }
+            SlashCommand::Mouse => {
+                self.handle_mouse_slash(command.args);
             }
             SlashCommand::New => {
                 if self.busy {
@@ -1369,6 +1416,41 @@ impl TuiApp {
         }
         self.push_log(LogKind::Info, "- tool_call_mode: tool_call".to_string());
         Ok(())
+    }
+
+    fn handle_mouse_slash(&mut self, args: &str) {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            let mode = if self.mouse_mode == MouseMode::Scroll {
+                "scroll"
+            } else {
+                "select"
+            };
+            self.push_log(LogKind::Info, format!("mouse mode: {mode}"));
+            self.push_log(
+                LogKind::Info,
+                "usage: /mouse [scroll|select]  (F2 to toggle)".to_string(),
+            );
+            return;
+        }
+
+        if cleaned.eq_ignore_ascii_case("scroll") {
+            self.set_mouse_mode(MouseMode::Scroll);
+            return;
+        }
+        if cleaned.eq_ignore_ascii_case("select")
+            || cleaned.eq_ignore_ascii_case("copy")
+            || cleaned.eq_ignore_ascii_case("selection")
+        {
+            self.set_mouse_mode(MouseMode::Select);
+            return;
+        }
+
+        self.push_log(LogKind::Error, format!("invalid /mouse args: {cleaned}"));
+        self.push_log(
+            LogKind::Info,
+            "usage: /mouse [scroll|select]  (F2 to toggle)".to_string(),
+        );
     }
 
     async fn handle_model_slash(&mut self, args: &str) -> Result<()> {
@@ -1654,6 +1736,14 @@ impl TuiApp {
             format!("- model: {}", self.model_name),
             format!("- tool_call_mode: {}", self.tool_call_mode),
             format!("- max_rounds: {}", self.model_max_rounds),
+            format!(
+                "- mouse_mode: {}",
+                if self.mouse_mode == MouseMode::Scroll {
+                    "scroll"
+                } else {
+                    "select"
+                }
+            ),
             format!("- workspace: {}", self.runtime.launch_dir.to_string_lossy()),
             format!("- temp_root: {}", self.runtime.temp_root.to_string_lossy()),
         ]
@@ -1666,6 +1756,69 @@ impl TuiApp {
         let index = self.push_log(LogKind::Assistant, String::new());
         self.active_assistant = Some(index);
         index
+    }
+
+    fn merge_assistant_content(&mut self, content: &str) {
+        let cleaned = content.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+
+        let index = self.ensure_assistant_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            if entry.text.trim().is_empty() {
+                entry.text = cleaned.to_string();
+                return;
+            }
+
+            if entry.text == cleaned || entry.text.ends_with(cleaned) {
+                return;
+            }
+
+            if cleaned.starts_with(entry.text.as_str()) {
+                entry.text = cleaned.to_string();
+                return;
+            }
+
+            if !entry.text.contains(cleaned) {
+                if !entry.text.ends_with('\n') {
+                    entry.text.push('\n');
+                }
+                entry.text.push_str(cleaned);
+            }
+        }
+    }
+
+    fn merge_final_answer(&mut self, answer: &str) {
+        let cleaned = answer.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+
+        let index = self.ensure_assistant_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            if entry.text.trim().is_empty() {
+                entry.text = cleaned.to_string();
+                return;
+            }
+
+            if entry.text.trim() == cleaned || entry.text.ends_with(cleaned) {
+                return;
+            }
+
+            if cleaned.starts_with(entry.text.trim()) {
+                entry.text = cleaned.to_string();
+                return;
+            }
+
+            if !entry.text.ends_with("\n\n") {
+                if !entry.text.ends_with('\n') {
+                    entry.text.push('\n');
+                }
+                entry.text.push('\n');
+            }
+            entry.text.push_str(cleaned);
+        }
     }
 
     fn push_log(&mut self, kind: LogKind, text: String) -> usize {
@@ -1697,7 +1850,7 @@ fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> u
     }
 
     let target = lines[target_row];
-    byte_index_for_char_column(text, target.start, target.end, col)
+    byte_index_for_display_column(text, target.start, target.end, col)
 }
 
 fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> {
@@ -1717,7 +1870,8 @@ fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> 
             continue;
         }
 
-        if line_columns == width {
+        let char_width = display_char_width(ch);
+        if line_columns > 0 && line_columns.saturating_add(char_width) > width {
             lines.push(WrappedInputLine {
                 start: line_start,
                 end: index,
@@ -1725,7 +1879,7 @@ fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> 
             line_start = index;
             line_columns = 0;
         }
-        line_columns = line_columns.saturating_add(1);
+        line_columns = line_columns.saturating_add(char_width);
     }
 
     lines.push(WrappedInputLine {
@@ -1749,7 +1903,7 @@ fn cursor_visual_position(
             if cursor == line.end && row + 1 < lines.len() && lines[row + 1].start == cursor {
                 continue;
             }
-            let col = text[line.start..cursor].chars().count();
+            let col = display_width(&text[line.start..cursor]);
             return (row, col);
         }
     }
@@ -1758,10 +1912,30 @@ fn cursor_visual_position(
         .last()
         .copied()
         .unwrap_or(WrappedInputLine { start: 0, end: 0 });
-    let col = text[fallback.start..cursor.min(fallback.end)]
-        .chars()
-        .count();
+    let col = display_width(&text[fallback.start..cursor.min(fallback.end)]);
     (lines.len().saturating_sub(1), col)
+}
+
+fn display_char_width(ch: char) -> usize {
+    UnicodeWidthChar::width_cjk(ch)
+        .or_else(|| UnicodeWidthChar::width(ch))
+        .unwrap_or(0)
+        .max(1)
+}
+
+fn display_width(text: &str) -> usize {
+    text.chars().map(display_char_width).sum()
+}
+
+fn normalize_wrapped_cursor_position((row, col): (usize, usize), width: usize) -> (usize, usize) {
+    if width == 0 {
+        return (row, 0);
+    }
+    if col < width {
+        return (row, col);
+    }
+
+    (row.saturating_add(col / width), col % width)
 }
 
 #[cfg(windows)]
@@ -1800,21 +1974,23 @@ fn next_char_boundary(text: &str, index: usize) -> usize {
     cursor.min(text.len())
 }
 
-fn byte_index_for_char_column(text: &str, start: usize, end: usize, column: usize) -> usize {
-    let mut remaining = column;
+fn byte_index_for_display_column(text: &str, start: usize, end: usize, column: usize) -> usize {
+    let mut consumed = 0usize;
     let mut cursor = start;
+
     for (offset, ch) in text[start..end].char_indices() {
-        if remaining == 0 {
+        if consumed >= column {
             return start + offset;
         }
-        remaining = remaining.saturating_sub(1);
+        let width = display_char_width(ch);
+        consumed = consumed.saturating_add(width);
         cursor = start + offset + ch.len_utf8();
+        if consumed >= column {
+            return cursor;
+        }
     }
-    if remaining == 0 {
-        cursor
-    } else {
-        end
-    }
+
+    cursor.min(end)
 }
 
 fn is_word_char(ch: char) -> bool {
@@ -1900,5 +2076,33 @@ b";
 cdef";
         assert_eq!(move_cursor_vertical(text, 16, 5, -1), 2);
         assert_eq!(move_cursor_vertical(text, 16, 1, 1), 4);
+    }
+
+    #[test]
+    fn cursor_visual_position_handles_cjk_width() {
+        let text = "\u{4f60}\u{597d}a";
+        let lines = build_wrapped_input_lines(text, 8);
+        let cursor_after_nihao = "\u{4f60}\u{597d}".len();
+        assert_eq!(
+            cursor_visual_position(text, &lines, cursor_after_nihao),
+            (0, 4)
+        );
+        assert_eq!(cursor_visual_position(text, &lines, text.len()), (0, 5));
+    }
+
+    #[test]
+    fn wrapped_input_lines_wrap_cjk_without_splitting_char() {
+        let text = "\u{4f60}\u{597d}ab";
+        let lines = build_wrapped_input_lines(text, 4);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(&text[lines[0].start..lines[0].end], "\u{4f60}\u{597d}");
+        assert_eq!(&text[lines[1].start..lines[1].end], "ab");
+    }
+
+    #[test]
+    fn normalize_wrapped_cursor_position_wraps_boundary_columns() {
+        assert_eq!(normalize_wrapped_cursor_position((2, 3), 4), (2, 3));
+        assert_eq!(normalize_wrapped_cursor_position((2, 4), 4), (3, 0));
+        assert_eq!(normalize_wrapped_cursor_position((2, 9), 4), (4, 1));
     }
 }

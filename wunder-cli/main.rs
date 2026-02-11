@@ -243,6 +243,10 @@ async fn handle_chat_slash_command(
             handle_slash_system(runtime, global, session_id.as_str(), command.args).await?;
             Ok(false)
         }
+        SlashCommand::Mouse => {
+            println!("/mouse is available in TUI mode only (default `wunder-cli` on TTY)");
+            Ok(false)
+        }
         SlashCommand::New => {
             *session_id = uuid::Uuid::new_v4().simple().to_string();
             runtime.save_session(session_id).ok();
