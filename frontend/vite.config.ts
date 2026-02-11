@@ -5,6 +5,14 @@ import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
+
+const makeProxyRule = () => ({
+  target: devProxyTarget,
+  changeOrigin: true,
+  ws: true,
+  secure: false
+});
 
 export default defineConfig({
   envDir: path.resolve(__dirname, '..'),
@@ -16,6 +24,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 18001
+    port: 18001,
+    proxy: {
+      '/wunder': makeProxyRule(),
+      '/a2a': makeProxyRule(),
+      '/.well-known/agent-card.json': makeProxyRule()
+    }
   }
 });

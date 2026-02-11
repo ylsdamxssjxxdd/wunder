@@ -26,16 +26,17 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         .collect();
     let transcript_viewport = inner_rect(vertical[1]);
     app.set_transcript_viewport(transcript_viewport.width, transcript_viewport.height);
-    let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
-    let transcript = Paragraph::new(Text::from(transcript_lines))
+    let transcript_text = Text::from(transcript_lines);
+    let transcript = Paragraph::new(transcript_text)
         .block(
             Block::default()
                 .title(" Conversation ")
                 .borders(Borders::ALL),
         )
-        .scroll((transcript_scroll, 0))
         .wrap(Wrap { trim: false });
-    frame.render_widget(transcript, vertical[1]);
+    app.set_transcript_rendered_lines(transcript.line_count(transcript_viewport.width));
+    let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
+    frame.render_widget(transcript.scroll((transcript_scroll, 0)), vertical[1]);
 
     let input_index = if popup_lines.is_empty() { 2 } else { 3 };
 

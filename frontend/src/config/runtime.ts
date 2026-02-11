@@ -1,6 +1,6 @@
 import { getDesktopRuntime, getDesktopRemoteApiBaseOverride } from '@/config/desktop';
 
-const DEFAULT_FALLBACK_BASE = 'http://localhost:18000/wunder';
+const DEFAULT_FALLBACK_BASE = '/wunder';
 
 type RuntimeConfig = {
   api_base: string;

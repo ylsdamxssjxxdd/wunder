@@ -61,6 +61,7 @@ pub struct TuiApp {
     input_viewport_width: u16,
     transcript_viewport_width: u16,
     transcript_viewport_height: u16,
+    transcript_rendered_lines: u16,
     logs: Vec<LogEntry>,
     busy: bool,
     should_quit: bool,
@@ -104,6 +105,7 @@ impl TuiApp {
             input_viewport_width: 1,
             transcript_viewport_width: 1,
             transcript_viewport_height: 1,
+            transcript_rendered_lines: 0,
             logs: Vec::new(),
             busy: false,
             should_quit: false,
@@ -217,6 +219,10 @@ impl TuiApp {
         self.transcript_viewport_height = viewport_height.max(1);
     }
 
+    pub fn set_transcript_rendered_lines(&mut self, rendered_lines: usize) {
+        self.transcript_rendered_lines = rendered_lines.min(u16::MAX as usize) as u16;
+    }
+
     fn set_mouse_mode(&mut self, mode: MouseMode) {
         if self.mouse_mode == mode {
             return;
@@ -315,6 +321,10 @@ impl TuiApp {
     }
 
     fn total_transcript_lines(&self) -> u16 {
+        if self.transcript_rendered_lines > 0 {
+            return self.transcript_rendered_lines;
+        }
+
         let width = usize::from(self.transcript_viewport_width.max(1));
         let total = self
             .logs
@@ -1147,11 +1157,8 @@ impl TuiApp {
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let args = payload
-                    .get("args")
-                    .map(compact_json)
-                    .unwrap_or_else(|| "{}".to_string());
-                self.push_log(LogKind::Tool, format!("[tool_call] {tool} {args}"));
+                let args = payload.get("args").unwrap_or(&Value::Null);
+                self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
             }
             "tool_result" => {
                 self.session_stats.tool_results = self.session_stats.tool_results.saturating_add(1);
@@ -1159,11 +1166,9 @@ impl TuiApp {
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let result = payload
-                    .get("result")
-                    .map(compact_json)
-                    .unwrap_or_else(|| compact_json(payload));
-                self.push_log(LogKind::Tool, format!("[tool_result] {tool} {result}"));
+                for line in format_tool_result_lines(tool, payload) {
+                    self.push_log(LogKind::Tool, line);
+                }
             }
             "error" => {
                 self.push_log(
@@ -2171,6 +2176,165 @@ fn strip_tag_block(mut text: String, start_tag: &str, end_tag: &str) -> String {
         }
     }
     text
+}
+
+fn format_tool_call_line(tool: &str, args: &Value) -> String {
+    if tool == "执行命令" {
+        if let Some(command) = args
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return format!("[tool_call] {tool} `{command}`");
+        }
+    }
+
+    format!("[tool_call] {tool} {}", compact_json(args))
+}
+
+fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> {
+    let result = payload.get("result").unwrap_or(payload);
+    if tool == "执行命令" {
+        let lines = format_execute_command_result_lines(tool, result);
+        if !lines.is_empty() {
+            return lines;
+        }
+    }
+
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let mut headline = format!("[tool_result] {tool}");
+    if let Some(ok) = ok {
+        headline.push_str(if ok { " ok" } else { " failed" });
+    }
+
+    let mut lines = vec![headline];
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  error: {error}"));
+    }
+
+    let data = result.get("data").unwrap_or(result);
+    lines.push(format!("  data: {}", compact_json(data)));
+    lines
+}
+
+fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String> {
+    let data = result.get("data").unwrap_or(result);
+    let Some(first) = data
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let command = first
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let returncode = value_as_i64(first.get("returncode"))
+        .or_else(|| value_as_i64(result.get("meta").and_then(|meta| meta.get("exit_code"))));
+    let duration_ms = value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms")));
+
+    let mut header = format!("[tool_result] {tool}");
+    if let Some(returncode) = returncode {
+        header.push_str(&format!(" exit={returncode}"));
+    }
+    if let Some(duration_ms) = duration_ms {
+        header.push_str(&format!(" {duration_ms}ms"));
+    }
+
+    let mut lines = vec![header];
+    if !command.is_empty() {
+        lines.push(format!("  cmd: {command}"));
+    }
+
+    if let Some(stdout) = first.get("stdout").and_then(Value::as_str) {
+        append_text_preview(&mut lines, "stdout", stdout, 8, 1200);
+    }
+    if let Some(stderr) = first.get("stderr").and_then(Value::as_str) {
+        append_text_preview(&mut lines, "stderr", stderr, 8, 1200);
+    }
+
+    if lines.len() <= 2 {
+        lines.push("  output: <empty>".to_string());
+    }
+
+    lines
+}
+
+fn append_text_preview(
+    lines: &mut Vec<String>,
+    label: &str,
+    text: &str,
+    max_lines: usize,
+    max_chars: usize,
+) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_end_matches('\n').trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let (preview, chars_truncated) = truncate_by_chars(trimmed, max_chars);
+    let parts = preview.lines().collect::<Vec<_>>();
+    if parts.is_empty() {
+        return;
+    }
+
+    lines.push(format!("  {label}: {}", parts[0]));
+    for line in parts.iter().skip(1).take(max_lines.saturating_sub(1)) {
+        lines.push(format!("    {line}"));
+    }
+
+    let hidden_lines = parts.len().saturating_sub(max_lines);
+    if hidden_lines > 0 || chars_truncated {
+        let mut suffix = String::new();
+        if hidden_lines > 0 {
+            suffix.push_str(&format!("{hidden_lines} more lines"));
+        }
+        if chars_truncated {
+            if !suffix.is_empty() {
+                suffix.push_str(", ");
+            }
+            suffix.push_str("truncated");
+        }
+        lines.push(format!("    ... ({suffix})"));
+    }
+}
+
+fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+
+    if text.chars().count() <= max_chars {
+        return (text.to_string(), false);
+    }
+
+    let mut output = String::new();
+    for ch in text.chars().take(max_chars) {
+        output.push(ch);
+    }
+    (output, true)
+}
+
+fn value_as_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(|item| {
+        item.as_i64()
+            .or_else(|| item.as_u64().map(|num| num.min(i64::MAX as u64) as i64))
+            .or_else(|| {
+                item.as_str()
+                    .and_then(|text| text.trim().parse::<i64>().ok())
+            })
+    })
 }
 
 fn parse_error_message(data: &Value) -> String {

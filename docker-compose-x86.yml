@@ -14,7 +14,7 @@ services:
     platform: linux/amd64
     working_dir: /app
     ports:
-      - "${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
+      - "127.0.0.1:${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
     volumes:
       - ./:/app
       - wunder_workspaces:/workspaces
@@ -93,7 +93,7 @@ services:
     volumes:
       - ./:/app
     ports:
-      - "${MCP_PORT:-9010}:${MCP_PORT:-9010}"
+      - "127.0.0.1:${MCP_PORT:-9010}:${MCP_PORT:-9010}"
     environment:
       - TZ=Asia/Shanghai
       - MCP_TRANSPORT=streamable-http
@@ -114,7 +114,7 @@ services:
       - POSTGRES_USER=wunder
       - POSTGRES_PASSWORD=wunder
     ports:
-      - "${WUNDER_POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${WUNDER_POSTGRES_PORT:-5432}:5432"
     volumes:
       - wunder_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -139,7 +139,7 @@ services:
       - ENABLE_MODULES=
       - CLUSTER_HOSTNAME=node1
     ports:
-      - "${WEAVIATE_PORT:-18003}:8080"
+      - "127.0.0.1:${WEAVIATE_PORT:-18003}:8080"
     volumes:
       - wunder_weaviate:/var/lib/weaviate
     restart: always
@@ -160,7 +160,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
-      - VITE_API_BASE=${VITE_API_BASE:-http://localhost:18000/wunder}
+      - VITE_API_BASE=${VITE_API_BASE:-/wunder}
+      - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder_engine:18000}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
     command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"

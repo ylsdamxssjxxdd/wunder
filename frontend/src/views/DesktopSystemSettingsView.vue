@@ -145,7 +145,16 @@
                         <el-input
                           v-model="workspaceRoot"
                           :placeholder="t('desktop.containers.pathPlaceholder')"
-                        />
+                        >
+                          <template #append>
+                            <el-button
+                              :disabled="!canBrowseLocalPaths"
+                              @click="openPathPickerForWorkspace"
+                            >
+                              {{ t('desktop.common.browse') }}
+                            </el-button>
+                          </template>
+                        </el-input>
                         <p class="desktop-settings-hint">{{ t('desktop.containers.defaultHint') }}</p>
                       </el-form-item>
                     </el-form>
@@ -161,7 +170,16 @@
                           <el-input
                             v-model="row.root"
                             :placeholder="t('desktop.containers.pathPlaceholder')"
-                          />
+                          >
+                            <template #append>
+                              <el-button
+                                :disabled="!canBrowseLocalPaths"
+                                @click="openPathPickerForContainer(row.container_id, row.root)"
+                              >
+                                {{ t('desktop.common.browse') }}
+                              </el-button>
+                            </template>
+                          </el-input>
                         </template>
                       </el-table-column>
                       <el-table-column :label="t('desktop.common.actions')" width="140" align="center">
@@ -226,6 +244,61 @@
         </div>
       </section>
     </main>
+
+    <el-dialog
+      v-model="pathPickerVisible"
+      :title="t('desktop.containers.pathPickerTitle')"
+      width="760px"
+      class="desktop-path-picker-dialog"
+    >
+      <div class="desktop-path-picker" v-loading="pathPickerLoading">
+        <div class="desktop-path-picker-toolbar">
+          <el-button plain :disabled="!pathPickerParentPath" @click="openPathPickerParent">
+            <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+            <span>{{ t('desktop.containers.pathPickerUp') }}</span>
+          </el-button>
+          <el-input :model-value="pathPickerCurrentPath" readonly />
+        </div>
+
+        <div v-if="pathPickerRoots.length" class="desktop-path-picker-roots">
+          <el-button
+            v-for="root in pathPickerRoots"
+            :key="root"
+            text
+            @click="openPathPickerDirectory(root)"
+          >
+            {{ root }}
+          </el-button>
+        </div>
+
+        <div class="desktop-path-picker-list">
+          <button
+            v-for="item in pathPickerItems"
+            :key="item.path"
+            type="button"
+            class="desktop-path-picker-item"
+            @click="openPathPickerDirectory(item.path)"
+          >
+            <i class="fa-solid fa-folder" aria-hidden="true"></i>
+            <span>{{ item.name }}</span>
+          </button>
+          <div v-if="!pathPickerLoading && !pathPickerItems.length" class="desktop-path-picker-empty">
+            {{ t('desktop.containers.pathPickerEmpty') }}
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="pathPickerVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :disabled="!pathPickerCurrentPath"
+          @click="applyPathPickerSelection"
+        >
+          {{ t('desktop.containers.pathPickerUseCurrent') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -236,8 +309,11 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   fetchDesktopSettings,
+  listDesktopDirectories,
   updateDesktopSettings,
   type DesktopContainerRoot,
+  type DesktopDirectoryEntry,
+  type DesktopDirectoryListData,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
 import {
@@ -258,6 +334,10 @@ type ModelRow = {
   model: string;
   raw: Record<string, unknown>;
 };
+
+type PathPickerTarget =
+  | { kind: 'workspace' }
+  | { kind: 'container'; containerId: number };
 
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
@@ -320,6 +400,15 @@ const containerRows = ref<DesktopContainerRoot[]>([]);
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
 
+const canBrowseLocalPaths = computed(() => !remoteConnected.value);
+const pathPickerVisible = ref(false);
+const pathPickerLoading = ref(false);
+const pathPickerCurrentPath = ref('');
+const pathPickerParentPath = ref('');
+const pathPickerRoots = ref<string[]>([]);
+const pathPickerItems = ref<DesktopDirectoryEntry[]>([]);
+const pathPickerTarget = ref<PathPickerTarget | null>(null);
+
 const currentSection = computed(() => {
   if (activeSection.value === 'containers') {
     return {
@@ -368,6 +457,114 @@ const parseContainerRows = (raw: unknown): DesktopContainerRoot[] => {
       root: String(item?.root || '').trim()
     }))
     .filter((item) => Number.isFinite(item.container_id) && item.container_id > 0);
+};
+
+const parseDirectoryListData = (raw: unknown): DesktopDirectoryListData => {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const roots = Array.isArray(source.roots)
+    ? source.roots.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const items = Array.isArray(source.items)
+    ? source.items
+        .map((item) => {
+          const entry = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+          return {
+            name: String(entry.name || '').trim(),
+            path: String(entry.path || '').trim()
+          };
+        })
+        .filter((item) => item.name && item.path)
+    : [];
+  return {
+    current_path: String(source.current_path || '').trim(),
+    parent_path: String(source.parent_path || '').trim() || null,
+    roots,
+    items
+  };
+};
+
+const ensureLocalPathPicker = (): boolean => {
+  if (canBrowseLocalPaths.value) {
+    return true;
+  }
+  ElMessage.warning(t('desktop.containers.pathPickerLocalOnly'));
+  return false;
+};
+
+const loadPathPickerDirectory = async (path?: string) => {
+  pathPickerLoading.value = true;
+  try {
+    const response = await listDesktopDirectories(path);
+    const data = parseDirectoryListData(response?.data?.data);
+    pathPickerCurrentPath.value = data.current_path;
+    pathPickerParentPath.value = data.parent_path || '';
+    pathPickerRoots.value = data.roots;
+    pathPickerItems.value = data.items;
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.containers.pathPickerLoadFailed'));
+  } finally {
+    pathPickerLoading.value = false;
+  }
+};
+
+const openPathPickerForWorkspace = async () => {
+  if (!ensureLocalPathPicker()) {
+    return;
+  }
+  pathPickerTarget.value = { kind: 'workspace' };
+  pathPickerVisible.value = true;
+  await loadPathPickerDirectory(workspaceRoot.value);
+};
+
+const openPathPickerForContainer = async (containerId: number, root: string) => {
+  if (!ensureLocalPathPicker()) {
+    return;
+  }
+  pathPickerTarget.value = { kind: 'container', containerId };
+  pathPickerVisible.value = true;
+  await loadPathPickerDirectory(root || workspaceRoot.value);
+};
+
+const openPathPickerDirectory = async (path: string) => {
+  const targetPath = String(path || '').trim();
+  if (!targetPath) {
+    return;
+  }
+  await loadPathPickerDirectory(targetPath);
+};
+
+const openPathPickerParent = async () => {
+  if (!pathPickerParentPath.value) {
+    return;
+  }
+  await loadPathPickerDirectory(pathPickerParentPath.value);
+};
+
+const applyPathPickerSelection = () => {
+  const selected = pathPickerCurrentPath.value.trim();
+  if (!selected) {
+    return;
+  }
+  const target = pathPickerTarget.value;
+  if (!target) {
+    return;
+  }
+
+  if (target.kind === 'workspace') {
+    workspaceRoot.value = selected;
+    ensureDefaultContainer();
+  } else {
+    const row = containerRows.value.find((item) => item.container_id === target.containerId);
+    if (row) {
+      row.root = selected;
+      if (target.containerId === 1) {
+        workspaceRoot.value = selected;
+      }
+    }
+  }
+
+  pathPickerVisible.value = false;
 };
 
 const applySettingsData = (data: Record<string, any>) => {
@@ -651,15 +848,26 @@ onMounted(() => {
   --desktop-table-row-hover-bg: rgba(15, 23, 42, 0.03);
 }
 
+.desktop-system-shell .portal-main-scroll {
+  min-height: 0;
+}
+
+.desktop-system-shell .portal-section {
+  flex: 1;
+  min-height: 0;
+}
+
 .desktop-system-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 16px;
-  min-height: calc(100vh - 170px);
+  min-height: 100%;
+  height: 100%;
   align-items: stretch;
 }
 
 .desktop-system-sidebar {
+  box-sizing: border-box;
   border: 1px solid var(--portal-border);
   border-radius: 12px;
   background: var(--portal-panel);
@@ -667,9 +875,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  align-self: stretch;
-  height: 100%;
-  min-height: calc(100vh - 194px);
+  min-height: 100%;
 }
 
 .desktop-system-sidebar-title {
@@ -710,19 +916,15 @@ onMounted(() => {
 }
 
 .desktop-system-sidebar-foot {
-  margin-top: 0;
-  flex: 1;
+  margin-top: auto;
   border: 1px dashed var(--portal-border);
   border-radius: 10px;
   background: rgba(var(--portal-primary-rgb), 0.08);
   padding: 10px 12px;
-  display: flex;
-  align-items: flex-end;
 }
 
 .desktop-system-sidebar-foot p {
   margin: 0;
-  width: 100%;
   color: var(--portal-muted);
   font-size: 12px;
   line-height: 1.5;
@@ -830,6 +1032,61 @@ onMounted(() => {
   color: var(--portal-muted);
 }
 
+.desktop-path-picker {
+  display: grid;
+  gap: 12px;
+}
+
+.desktop-path-picker-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.desktop-path-picker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.desktop-path-picker-list {
+  border: 1px solid var(--portal-border);
+  border-radius: 10px;
+  background: var(--portal-panel);
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.desktop-path-picker-item {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--portal-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desktop-path-picker-item:hover {
+  border-color: var(--portal-border);
+  background: rgba(var(--portal-primary-rgb), 0.1);
+}
+
+.desktop-path-picker-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--portal-muted);
+  font-size: 12px;
+}
+
 .desktop-system-shell :deep(.el-card) {
   border: 1px solid var(--portal-border);
   background: var(--portal-panel);
@@ -907,6 +1164,10 @@ onMounted(() => {
   .desktop-system-header-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .desktop-path-picker-toolbar {
+    grid-template-columns: 1fr;
   }
 }
 </style>

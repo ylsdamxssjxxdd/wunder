@@ -29,6 +29,18 @@ export type DesktopSettingsData = {
   updated_at: number;
 };
 
+export type DesktopDirectoryEntry = {
+  name: string;
+  path: string;
+};
+
+export type DesktopDirectoryListData = {
+  current_path: string;
+  parent_path: string | null;
+  roots: string[];
+  items: DesktopDirectoryEntry[];
+};
+
 const desktopApi = axios.create({
   timeout: 30000
 });
@@ -52,4 +64,10 @@ export const fetchDesktopSettings = () =>
 export const updateDesktopSettings = (payload: ApiPayload) =>
   desktopApi.put('/wunder/desktop/settings', payload, {
     headers: buildDesktopHeaders()
+  });
+
+export const listDesktopDirectories = (path?: string) =>
+  desktopApi.get('/wunder/desktop/fs/list', {
+    headers: buildDesktopHeaders(),
+    params: path && path.trim() ? { path: path.trim() } : undefined
   });

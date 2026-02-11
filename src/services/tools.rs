@@ -33,6 +33,8 @@ use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use chrono::{Local, Utc};
+#[cfg(windows)]
+use encoding_rs::GBK;
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -4214,7 +4216,7 @@ where
     }
 
     if !pending_bytes.is_empty() {
-        pending_text.push_str(&String::from_utf8_lossy(&pending_bytes));
+        pending_text.push_str(decode_command_output(&pending_bytes).as_str());
         pending_bytes.clear();
     }
     emit_tool_output_chunks(
@@ -4246,6 +4248,49 @@ async fn join_output_task(
             Err(err) => Err(anyhow!(err.to_string())),
         },
         None => Ok(Vec::new()),
+    }
+}
+
+fn decode_command_output(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(text) = decode_utf16_output(bytes) {
+            return text;
+        }
+
+        let (decoded, _, had_errors) = GBK.decode(bytes);
+        if !had_errors {
+            return decoded.into_owned();
+        }
+    }
+
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+#[cfg(windows)]
+fn decode_utf16_output(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return None;
+    }
+
+    let units = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    let text = String::from_utf16(&units).ok()?;
+    let cleaned = text.trim_matches('\u{FEFF}').to_string();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
     }
 }
 
@@ -4329,8 +4374,8 @@ async fn run_command_streaming(
 
     let stdout_bytes = join_output_task(stdout_task).await?;
     let stderr_bytes = join_output_task(stderr_task).await?;
-    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
-    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+    let stdout = decode_command_output(&stdout_bytes);
+    let stderr = decode_command_output(&stderr_bytes);
     let returncode = status.and_then(|value| value.code()).unwrap_or(-1);
 
     Ok(CommandRunResult {

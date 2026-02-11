@@ -2,7 +2,7 @@
 use crate::config::{Config, LlmConfig};
 use crate::state::AppState;
 use crate::storage::normalize_sandbox_container_id;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, Json, Router};
@@ -19,10 +19,12 @@ const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
 const DESKTOP_DEFAULT_WORKSPACE_ROOT_ENV: &str = "WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT";
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route(
-        "/wunder/desktop/settings",
-        get(desktop_settings_get).put(desktop_settings_update),
-    )
+    Router::new()
+        .route(
+            "/wunder/desktop/settings",
+            get(desktop_settings_get).put(desktop_settings_update),
+        )
+        .route("/wunder/desktop/fs/list", get(desktop_fs_list))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -88,6 +90,18 @@ struct DesktopSettingsUpdateRequest {
     remote_gateway: Option<DesktopRemoteGatewaySettings>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct DesktopDirectoryItem {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct DesktopDirectoryListQuery {
+    #[serde(default)]
+    path: Option<String>,
+}
+
 async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
@@ -107,6 +121,94 @@ async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json
     Ok(Json(
         json!({ "data": build_settings_payload(&config, &settings) }),
     ))
+}
+
+async fn desktop_fs_list(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<DesktopDirectoryListQuery>,
+) -> Result<Json<Value>, Response> {
+    let (settings_path, app_dir, default_workspace_root) =
+        resolve_desktop_paths().map_err(bad_request)?;
+    let settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+
+    if settings.remote_gateway.enabled {
+        return Err(bad_request(
+            "desktop filesystem browsing is only available in local mode".to_string(),
+        ));
+    }
+
+    let current_path = resolve_desktop_list_path(
+        query.path.as_deref(),
+        &settings,
+        &default_workspace_root,
+        &app_dir,
+    );
+    if !current_path.exists() {
+        return Err(bad_request(format!(
+            "path not found: {}",
+            current_path.display()
+        )));
+    }
+    if !current_path.is_dir() {
+        return Err(bad_request(format!(
+            "path is not a directory: {}",
+            current_path.display()
+        )));
+    }
+
+    let mut items = Vec::new();
+    let entries = fs::read_dir(&current_path).map_err(|err| {
+        internal_error(format!(
+            "read desktop directory failed {}: {err}",
+            current_path.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            internal_error(format!(
+                "iterate desktop directory failed {}: {err}",
+                current_path.display()
+            ))
+        })?;
+        let file_type = entry.file_type().map_err(|err| {
+            internal_error(format!(
+                "read desktop directory entry type failed {}: {err}",
+                entry.path().display()
+            ))
+        })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.trim().is_empty() {
+            continue;
+        }
+        items.push(DesktopDirectoryItem {
+            name,
+            path: path.to_string_lossy().to_string(),
+        });
+    }
+    items.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then(left.name.cmp(&right.name))
+    });
+
+    let parent_path = current_path
+        .parent()
+        .map(|value| value.to_string_lossy().to_string());
+    let roots = list_desktop_directory_roots();
+
+    Ok(Json(json!({
+        "data": {
+            "current_path": current_path.to_string_lossy().to_string(),
+            "parent_path": parent_path,
+            "roots": roots,
+            "items": items,
+        }
+    })))
 }
 
 async fn desktop_settings_update(
@@ -353,6 +455,43 @@ fn desktop_settings_backup_path(path: &Path) -> PathBuf {
 
 fn desktop_settings_temp_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
+}
+
+fn resolve_desktop_list_path(
+    raw_path: Option<&str>,
+    settings: &DesktopSettingsFile,
+    default_workspace_root: &Path,
+    app_dir: &Path,
+) -> PathBuf {
+    let fallback = settings
+        .container_roots
+        .get(&1)
+        .cloned()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
+
+    let cleaned = raw_path.map(str::trim).filter(|value| !value.is_empty());
+    let selected = cleaned.unwrap_or(fallback.as_str());
+    resolve_workspace_path(selected, app_dir)
+}
+
+fn list_desktop_directory_roots() -> Vec<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut roots = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let root = format!("{}:\\", letter as char);
+            if Path::new(&root).exists() {
+                roots.push(root);
+            }
+        }
+        return roots;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec!["/".to_string()]
+    }
 }
 
 fn normalize_desktop_container_roots(
