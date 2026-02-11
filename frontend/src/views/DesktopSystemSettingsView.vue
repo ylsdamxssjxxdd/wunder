@@ -1,130 +1,142 @@
 <template>
-  <div class="desktop-settings-page" v-loading="loading">
-    <el-card>
-      <template #header>
-        <div class="desktop-settings-header">
-          <div>
-            <h3>{{ t('desktop.system.title') }}</h3>
-            <p>{{ t('desktop.system.subtitle') }}</p>
-          </div>
-          <el-button @click="goBackToSettings">{{ t('desktop.common.backSettings') }}</el-button>
+  <div class="portal-shell desktop-settings-shell">
+    <UserTopbar
+      :title="t('desktop.system.title')"
+      :subtitle="t('desktop.system.subtitle')"
+      :hide-chat="true"
+    />
+    <main class="portal-content">
+      <section class="portal-main">
+        <div class="portal-main-scroll">
+          <section class="portal-section">
+            <div class="desktop-settings-page" v-loading="loading">
+              <el-card>
+                <template #header>
+                  <div class="desktop-settings-header">
+                    <span class="desktop-settings-card-title">{{ t('desktop.system.language') }}</span>
+                    <el-button @click="goBackToSettings">{{ t('desktop.common.backSettings') }}</el-button>
+                  </div>
+                </template>
+
+                <el-form label-position="top" class="desktop-form-grid">
+                  <el-form-item :label="t('desktop.system.language')">
+                    <el-select v-model="language" class="desktop-full-width">
+                      <el-option
+                        v-for="item in supportedLanguages"
+                        :key="item"
+                        :label="getLanguageLabel(item)"
+                        :value="item"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+
+              <el-card>
+                <template #header>
+                  <div class="desktop-settings-title-row">
+                    <span>{{ t('desktop.system.llm') }}</span>
+                    <el-button type="primary" plain @click="addModel">{{ t('desktop.system.modelAdd') }}</el-button>
+                  </div>
+                </template>
+
+                <el-form label-position="top" class="desktop-form-grid">
+                  <el-form-item :label="t('desktop.system.defaultModel')">
+                    <el-select v-model="defaultModel" class="desktop-full-width" filterable allow-create>
+                      <el-option
+                        v-for="item in modelRows"
+                        :key="item.key"
+                        :label="item.key || t('desktop.system.modelUnnamed')"
+                        :value="item.key"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-form>
+
+                <el-table :data="modelRows" border>
+                  <el-table-column :label="t('desktop.system.modelKey')" width="180">
+                    <template #default="{ row }">
+                      <el-input v-model="row.key" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.provider')" width="150">
+                    <template #default="{ row }">
+                      <el-input v-model="row.provider" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.baseUrl')" min-width="220">
+                    <template #default="{ row }">
+                      <el-input v-model="row.base_url" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.apiKey')" width="180">
+                    <template #default="{ row }">
+                      <el-input v-model="row.api_key" show-password />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.modelName')" min-width="180">
+                    <template #default="{ row }">
+                      <el-input v-model="row.model" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.maxContext')" width="120">
+                    <template #default="{ row }">
+                      <el-input-number v-model="row.max_context" :min="1" :step="1024" controls-position="right" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.system.toolCallMode')" width="160">
+                    <template #default="{ row }">
+                      <el-select v-model="row.tool_call_mode" class="desktop-full-width">
+                        <el-option label="tool_call" value="tool_call" />
+                        <el-option label="function_call" value="function_call" />
+                      </el-select>
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.common.actions')" width="120" align="center">
+                    <template #default="{ row }">
+                      <el-button link type="danger" @click="removeModel(row)">
+                        {{ t('desktop.common.remove') }}
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <p class="desktop-settings-hint">{{ t('desktop.system.llmHint') }}</p>
+              </el-card>
+
+              <el-card>
+                <template #header>
+                  <span>{{ t('desktop.system.remote.title') }}</span>
+                </template>
+                <el-form label-position="top" class="desktop-form-grid">
+                  <el-form-item :label="t('desktop.system.remote.enabled')">
+                    <el-switch v-model="remoteGateway.enabled" />
+                  </el-form-item>
+                  <el-form-item :label="t('desktop.system.remote.serverBaseUrl')">
+                    <el-input v-model="remoteGateway.server_base_url" :placeholder="t('desktop.system.remote.serverPlaceholder')" />
+                  </el-form-item>
+                  <el-form-item :label="t('desktop.system.remote.apiKey')">
+                    <el-input v-model="remoteGateway.api_key" show-password />
+                  </el-form-item>
+                  <el-form-item :label="t('desktop.system.remote.roleName')">
+                    <el-input v-model="remoteGateway.role_name" :placeholder="t('desktop.system.remote.rolePlaceholder')" />
+                  </el-form-item>
+                  <el-form-item :label="t('desktop.system.remote.useRemoteSandbox')">
+                    <el-switch v-model="remoteGateway.use_remote_sandbox" />
+                  </el-form-item>
+                </el-form>
+                <p class="desktop-settings-hint">{{ t('desktop.system.remote.hint') }}</p>
+              </el-card>
+
+              <div class="desktop-settings-footer">
+                <el-button type="primary" :loading="saving" @click="saveSettings">
+                  {{ t('desktop.common.save') }}
+                </el-button>
+              </div>
+            </div>
+          </section>
         </div>
-      </template>
-
-      <el-form label-position="top" class="desktop-form-grid">
-        <el-form-item :label="t('desktop.system.language')">
-          <el-select v-model="language" class="desktop-full-width">
-            <el-option
-              v-for="item in supportedLanguages"
-              :key="item"
-              :label="getLanguageLabel(item)"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card>
-      <template #header>
-        <div class="desktop-settings-title-row">
-          <span>{{ t('desktop.system.llm') }}</span>
-          <el-button type="primary" plain @click="addModel">{{ t('desktop.system.modelAdd') }}</el-button>
-        </div>
-      </template>
-
-      <el-form label-position="top" class="desktop-form-grid">
-        <el-form-item :label="t('desktop.system.defaultModel')">
-          <el-select v-model="defaultModel" class="desktop-full-width" filterable allow-create>
-            <el-option
-              v-for="item in modelRows"
-              :key="item.key"
-              :label="item.key || t('desktop.system.modelUnnamed')"
-              :value="item.key"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-
-      <el-table :data="modelRows" border>
-        <el-table-column :label="t('desktop.system.modelKey')" width="180">
-          <template #default="{ row }">
-            <el-input v-model="row.key" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.provider')" width="150">
-          <template #default="{ row }">
-            <el-input v-model="row.provider" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.baseUrl')" min-width="220">
-          <template #default="{ row }">
-            <el-input v-model="row.base_url" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.apiKey')" width="180">
-          <template #default="{ row }">
-            <el-input v-model="row.api_key" show-password />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.modelName')" min-width="180">
-          <template #default="{ row }">
-            <el-input v-model="row.model" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.maxContext')" width="120">
-          <template #default="{ row }">
-            <el-input-number v-model="row.max_context" :min="1" :step="1024" controls-position="right" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.system.toolCallMode')" width="160">
-          <template #default="{ row }">
-            <el-select v-model="row.tool_call_mode" class="desktop-full-width">
-              <el-option label="tool_call" value="tool_call" />
-              <el-option label="function_call" value="function_call" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.common.actions')" width="120" align="center">
-          <template #default="{ row }">
-            <el-button link type="danger" @click="removeModel(row)">
-              {{ t('desktop.common.remove') }}
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <p class="desktop-settings-hint">{{ t('desktop.system.llmHint') }}</p>
-    </el-card>
-
-    <el-card>
-      <template #header>
-        <span>{{ t('desktop.system.remote.title') }}</span>
-      </template>
-      <el-form label-position="top" class="desktop-form-grid">
-        <el-form-item :label="t('desktop.system.remote.enabled')">
-          <el-switch v-model="remoteGateway.enabled" />
-        </el-form-item>
-        <el-form-item :label="t('desktop.system.remote.serverBaseUrl')">
-          <el-input v-model="remoteGateway.server_base_url" :placeholder="t('desktop.system.remote.serverPlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('desktop.system.remote.apiKey')">
-          <el-input v-model="remoteGateway.api_key" show-password />
-        </el-form-item>
-        <el-form-item :label="t('desktop.system.remote.roleName')">
-          <el-input v-model="remoteGateway.role_name" :placeholder="t('desktop.system.remote.rolePlaceholder')" />
-        </el-form-item>
-        <el-form-item :label="t('desktop.system.remote.useRemoteSandbox')">
-          <el-switch v-model="remoteGateway.use_remote_sandbox" />
-        </el-form-item>
-      </el-form>
-      <p class="desktop-settings-hint">{{ t('desktop.system.remote.hint') }}</p>
-    </el-card>
-
-    <div class="desktop-settings-footer">
-      <el-button type="primary" :loading="saving" @click="saveSettings">
-        {{ t('desktop.common.save') }}
-      </el-button>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 
@@ -140,6 +152,7 @@ import {
 } from '@/api/desktop';
 import { useI18n, getLanguageLabel, setLanguage } from '@/i18n';
 import { setDesktopToolCallMode } from '@/config/desktop';
+import UserTopbar from '@/components/user/UserTopbar.vue';
 
 type ToolCallMode = 'tool_call' | 'function_call';
 
@@ -373,18 +386,13 @@ onMounted(loadSettings);
 .desktop-settings-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
 }
 
-.desktop-settings-header h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.desktop-settings-header p {
-  margin: 4px 0 0;
-  color: var(--dark-muted);
+.desktop-settings-card-title {
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .desktop-form-grid {
@@ -415,7 +423,6 @@ onMounted(loadSettings);
   justify-content: flex-end;
 }
 
-:root[data-user-theme='light'] .desktop-settings-header p,
 :root[data-user-theme='light'] .desktop-settings-hint {
   color: #64748b;
 }

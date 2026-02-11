@@ -121,13 +121,33 @@ const { t } = useI18n();
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
+const desktopMode = computed(() => basePath.value === '/desktop');
 const navItems = computed(() => {
   const items = [
     { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-earth-asia' },
-    { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-toolbox' },
-    { key: 'nav.chat', label: t('nav.chat'), path: `${basePath.value}/chat`, icon: 'fa-comment-dots' }
+    { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-toolbox' }
   ];
-  return props.hideChat ? items.filter((item) => item.key !== 'nav.chat') : items;
+
+  if (!props.hideChat) {
+    items.push({ key: 'nav.chat', label: t('nav.chat'), path: `${basePath.value}/chat`, icon: 'fa-comment-dots' });
+  }
+
+  if (desktopMode.value) {
+    items.push({
+      key: 'desktop.containers',
+      label: t('desktop.settings.containers'),
+      path: '/desktop/containers',
+      icon: 'fa-box-archive'
+    });
+    items.push({
+      key: 'desktop.system',
+      label: t('desktop.settings.system'),
+      path: '/desktop/system',
+      icon: 'fa-sliders'
+    });
+  }
+
+  return items;
 });
 
 const userName = computed(() => authStore.user?.username || t('user.guest'));

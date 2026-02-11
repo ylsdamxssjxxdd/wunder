@@ -1,57 +1,69 @@
 <template>
-  <div class="desktop-settings-page" v-loading="loading">
-    <el-card>
-      <template #header>
-        <div class="desktop-settings-header">
-          <div>
-            <h3>{{ t('desktop.containers.title') }}</h3>
-            <p>{{ t('desktop.containers.subtitle') }}</p>
-          </div>
-          <el-button @click="goBackToSettings">{{ t('desktop.common.backSettings') }}</el-button>
+  <div class="portal-shell desktop-settings-shell">
+    <UserTopbar
+      :title="t('desktop.containers.title')"
+      :subtitle="t('desktop.containers.subtitle')"
+      :hide-chat="true"
+    />
+    <main class="portal-content">
+      <section class="portal-main">
+        <div class="portal-main-scroll">
+          <section class="portal-section">
+            <div class="desktop-settings-page" v-loading="loading">
+              <el-card>
+                <template #header>
+                  <div class="desktop-settings-header">
+                    <span class="desktop-settings-card-title">{{ t('desktop.containers.defaultWorkspace') }}</span>
+                    <el-button @click="goBackToSettings">{{ t('desktop.common.backSettings') }}</el-button>
+                  </div>
+                </template>
+
+                <el-form label-position="top" class="desktop-form">
+                  <el-form-item :label="t('desktop.containers.defaultWorkspace')">
+                    <el-input v-model="workspaceRoot" :placeholder="t('desktop.containers.pathPlaceholder')" />
+                    <p class="desktop-settings-hint">{{ t('desktop.containers.defaultHint') }}</p>
+                  </el-form-item>
+                </el-form>
+
+                <div class="desktop-container-toolbar">
+                  <el-button type="primary" plain @click="addContainer">
+                    {{ t('desktop.containers.add') }}
+                  </el-button>
+                </div>
+
+                <el-table :data="rows" border>
+                  <el-table-column prop="container_id" :label="t('desktop.containers.id')" width="120" />
+                  <el-table-column :label="t('desktop.containers.path')">
+                    <template #default="{ row }">
+                      <el-input v-model="row.root" :placeholder="t('desktop.containers.pathPlaceholder')" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="t('desktop.common.actions')" width="140" align="center">
+                    <template #default="{ row }">
+                      <el-button
+                        v-if="row.container_id !== 1"
+                        link
+                        type="danger"
+                        @click="removeContainer(row.container_id)"
+                      >
+                        {{ t('desktop.common.remove') }}
+                      </el-button>
+                      <span v-else class="desktop-container-fixed">{{ t('desktop.containers.fixed') }}</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+
+                <div class="desktop-settings-footer">
+                  <el-button type="primary" :loading="saving" @click="saveSettings">
+                    {{ t('desktop.common.save') }}
+                  </el-button>
+                </div>
+              </el-card>
+            </div>
+          </section>
         </div>
-      </template>
-
-      <el-form label-position="top" class="desktop-form">
-        <el-form-item :label="t('desktop.containers.defaultWorkspace')">
-          <el-input v-model="workspaceRoot" :placeholder="t('desktop.containers.pathPlaceholder')" />
-          <p class="desktop-settings-hint">{{ t('desktop.containers.defaultHint') }}</p>
-        </el-form-item>
-      </el-form>
-
-      <div class="desktop-container-toolbar">
-        <el-button type="primary" plain @click="addContainer">
-          {{ t('desktop.containers.add') }}
-        </el-button>
-      </div>
-
-      <el-table :data="rows" border>
-        <el-table-column prop="container_id" :label="t('desktop.containers.id')" width="120" />
-        <el-table-column :label="t('desktop.containers.path')">
-          <template #default="{ row }">
-            <el-input v-model="row.root" :placeholder="t('desktop.containers.pathPlaceholder')" />
-          </template>
-        </el-table-column>
-        <el-table-column :label="t('desktop.common.actions')" width="140" align="center">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.container_id !== 1"
-              link
-              type="danger"
-              @click="removeContainer(row.container_id)"
-            >
-              {{ t('desktop.common.remove') }}
-            </el-button>
-            <span v-else class="desktop-container-fixed">{{ t('desktop.containers.fixed') }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="desktop-settings-footer">
-        <el-button type="primary" :loading="saving" @click="saveSettings">
-          {{ t('desktop.common.save') }}
-        </el-button>
-      </div>
-    </el-card>
+      </section>
+    </main>
   </div>
 </template>
 
@@ -61,6 +73,7 @@ import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
 import { fetchDesktopSettings, updateDesktopSettings, type DesktopContainerRoot } from '@/api/desktop';
+import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 
 const { t } = useI18n();
@@ -181,18 +194,13 @@ onMounted(loadSettings);
 .desktop-settings-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
 }
 
-.desktop-settings-header h3 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.desktop-settings-header p {
-  margin: 4px 0 0;
-  color: var(--dark-muted);
+.desktop-settings-card-title {
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .desktop-form {
@@ -222,7 +230,6 @@ onMounted(loadSettings);
   color: var(--dark-muted);
 }
 
-:root[data-user-theme='light'] .desktop-settings-header p,
 :root[data-user-theme='light'] .desktop-settings-hint,
 :root[data-user-theme='light'] .desktop-container-fixed {
   color: #64748b;

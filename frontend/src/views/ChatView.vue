@@ -55,6 +55,26 @@
           >
             <i class="fa-solid fa-earth-asia topbar-icon" aria-hidden="true"></i>
           </button>
+          <button
+            v-if="desktopMode"
+            class="topbar-icon-btn"
+            type="button"
+            :title="t('desktop.settings.containers')"
+            :aria-label="t('desktop.settings.containers')"
+            @click="handleOpenContainerSettings"
+          >
+            <i class="fa-solid fa-box-archive topbar-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            v-if="desktopMode"
+            class="topbar-icon-btn"
+            type="button"
+            :title="t('desktop.settings.system')"
+            :aria-label="t('desktop.settings.system')"
+            @click="handleOpenSystemSettings"
+          >
+            <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
+          </button>
           <div ref="featureMenuRef" class="topbar-feature-menu-wrap">
             <button
               class="topbar-panel-btn topbar-feature-btn"
@@ -658,6 +678,7 @@ const currentUserUnitLabel = computed(() => {
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
+const desktopMode = computed(() => basePath.value === '/desktop');
 const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
 const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
 const featureTransportText = computed(() =>
@@ -932,6 +953,20 @@ const handleOpenProfile = () => {
 
 const handleOpenPortal = () => {
   router.push(basePath.value + '/home');
+};
+
+const handleOpenContainerSettings = () => {
+  if (!desktopMode.value) {
+    return;
+  }
+  router.push('/desktop/containers');
+};
+
+const handleOpenSystemSettings = () => {
+  if (!desktopMode.value) {
+    return;
+  }
+  router.push('/desktop/system');
 };
 
 const closeFeatureMenu = () => {

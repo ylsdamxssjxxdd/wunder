@@ -585,13 +585,6 @@ fn parse_read_file_path_from_shell_block(body: &str) -> Option<String> {
     }
 
     let command = commands[0];
-    if command
-        .chars()
-        .any(|ch| matches!(ch, '|' | ';' | '&' | '>' | '<'))
-    {
-        return None;
-    }
-
     let parts = shell_words::split(command).ok()?;
     if parts.is_empty() {
         return None;
@@ -599,17 +592,31 @@ fn parse_read_file_path_from_shell_block(body: &str) -> Option<String> {
 
     let command_name = parts[0].to_ascii_lowercase();
     if command_name == "cat" || command_name == "type" {
-        return parts
-            .get(1)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        for token in parts.iter().skip(1) {
+            let cleaned = token.trim();
+            if cleaned.is_empty() || cleaned.starts_with('-') {
+                continue;
+            }
+            if matches!(cleaned, "|" | "||" | "&&" | ";") {
+                break;
+            }
+            return Some(cleaned.to_string());
+        }
+        return None;
     }
 
     if command_name == "head" {
-        return parts
-            .last()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        for token in parts.iter().skip(1) {
+            let cleaned = token.trim();
+            if cleaned.is_empty() || cleaned.starts_with('-') {
+                continue;
+            }
+            if matches!(cleaned, "|" | "||" | "&&" | ";") {
+                break;
+            }
+            return Some(cleaned.to_string());
+        }
+        return None;
     }
 
     None
@@ -938,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_parse_tool_call_shell_read_file_fallback_from_cat_block() {
-        let content = "???????\n```bash\ncat /workspaces/Cargo.toml\n```";
+        let content = "read file with shell block\n```bash\ncat /workspaces/Cargo.toml\n```";
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
@@ -949,9 +956,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_tool_call_shell_read_file_fallback_skips_pipes() {
+    fn test_parse_tool_call_shell_read_file_fallback_extracts_path_before_pipe() {
         let content = "```bash\ncat Cargo.toml | grep name\n```";
         let calls = parse_tool_calls_from_text(content);
-        assert!(calls.is_empty());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("Cargo.toml")
+        );
     }
 }
