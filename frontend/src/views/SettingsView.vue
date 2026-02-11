@@ -106,7 +106,7 @@ const openSystemSettings = () => {
   margin: 10px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dark-muted);
+  color: var(--portal-muted);
 }
 
 :root[data-user-theme='light'] .settings-desktop-hint {

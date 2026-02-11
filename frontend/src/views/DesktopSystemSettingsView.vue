@@ -54,42 +54,24 @@
                 </el-form>
 
                 <el-table :data="modelRows" border>
-                  <el-table-column :label="t('desktop.system.modelKey')" width="180">
+                  <el-table-column :label="t('desktop.system.modelKey')" width="200">
                     <template #default="{ row }">
                       <el-input v-model="row.key" />
                     </template>
                   </el-table-column>
-                  <el-table-column :label="t('desktop.system.provider')" width="150">
+                  <el-table-column :label="t('desktop.system.baseUrl')" min-width="260">
                     <template #default="{ row }">
-                      <el-input v-model="row.provider" />
+                      <el-input v-model="row.base_url" :placeholder="t('desktop.system.baseUrlPlaceholder')" />
                     </template>
                   </el-table-column>
-                  <el-table-column :label="t('desktop.system.baseUrl')" min-width="220">
-                    <template #default="{ row }">
-                      <el-input v-model="row.base_url" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="t('desktop.system.apiKey')" width="180">
+                  <el-table-column :label="t('desktop.system.apiKey')" min-width="220">
                     <template #default="{ row }">
                       <el-input v-model="row.api_key" show-password />
                     </template>
                   </el-table-column>
-                  <el-table-column :label="t('desktop.system.modelName')" min-width="180">
+                  <el-table-column :label="t('desktop.system.modelName')" min-width="220">
                     <template #default="{ row }">
-                      <el-input v-model="row.model" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="t('desktop.system.maxContext')" width="120">
-                    <template #default="{ row }">
-                      <el-input-number v-model="row.max_context" :min="1" :step="1024" controls-position="right" />
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="t('desktop.system.toolCallMode')" width="160">
-                    <template #default="{ row }">
-                      <el-select v-model="row.tool_call_mode" class="desktop-full-width">
-                        <el-option label="tool_call" value="tool_call" />
-                        <el-option label="function_call" value="function_call" />
-                      </el-select>
+                      <el-input v-model="row.model" :placeholder="t('desktop.system.modelNamePlaceholder')" />
                     </template>
                   </el-table-column>
                   <el-table-column :label="t('desktop.common.actions')" width="120" align="center">
@@ -105,25 +87,31 @@
 
               <el-card>
                 <template #header>
-                  <span>{{ t('desktop.system.remote.title') }}</span>
+                  <div class="desktop-settings-title-row">
+                    <span>{{ t('desktop.system.remote.title') }}</span>
+                    <span class="desktop-settings-remote-state" :class="{ connected: remoteConnected }">
+                      {{ remoteConnected ? t('desktop.system.remote.connected') : t('desktop.system.remote.disconnected') }}
+                    </span>
+                  </div>
                 </template>
+
                 <el-form label-position="top" class="desktop-form-grid">
-                  <el-form-item :label="t('desktop.system.remote.enabled')">
-                    <el-switch v-model="remoteGateway.enabled" />
-                  </el-form-item>
                   <el-form-item :label="t('desktop.system.remote.serverBaseUrl')">
-                    <el-input v-model="remoteGateway.server_base_url" :placeholder="t('desktop.system.remote.serverPlaceholder')" />
-                  </el-form-item>
-                  <el-form-item :label="t('desktop.system.remote.apiKey')">
-                    <el-input v-model="remoteGateway.api_key" show-password />
-                  </el-form-item>
-                  <el-form-item :label="t('desktop.system.remote.roleName')">
-                    <el-input v-model="remoteGateway.role_name" :placeholder="t('desktop.system.remote.rolePlaceholder')" />
-                  </el-form-item>
-                  <el-form-item :label="t('desktop.system.remote.useRemoteSandbox')">
-                    <el-switch v-model="remoteGateway.use_remote_sandbox" />
+                    <el-input
+                      v-model="remoteServerBaseUrl"
+                      :placeholder="t('desktop.system.remote.serverPlaceholder')"
+                    />
                   </el-form-item>
                 </el-form>
+
+                <div class="desktop-settings-remote-actions">
+                  <el-button type="primary" :loading="connectingRemote" @click="connectRemoteServer">
+                    {{ t('desktop.system.remote.connect') }}
+                  </el-button>
+                  <el-button :disabled="!remoteConnected" @click="disconnectRemoteServer">
+                    {{ t('desktop.system.remote.disconnect') }}
+                  </el-button>
+                </div>
                 <p class="desktop-settings-hint">{{ t('desktop.system.remote.hint') }}</p>
               </el-card>
 
@@ -141,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
@@ -150,46 +138,29 @@ import {
   updateDesktopSettings,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
-import { useI18n, getLanguageLabel, setLanguage } from '@/i18n';
-import { setDesktopToolCallMode } from '@/config/desktop';
+import {
+  clearDesktopRemoteApiBaseOverride,
+  getDesktopLocalToken,
+  isDesktopRemoteAuthMode,
+  setDesktopRemoteApiBaseOverride
+} from '@/config/desktop';
 import UserTopbar from '@/components/user/UserTopbar.vue';
-
-type ToolCallMode = 'tool_call' | 'function_call';
+import { useI18n, getLanguageLabel, setLanguage } from '@/i18n';
 
 type ModelRow = {
   key: string;
-  provider: string;
   base_url: string;
   api_key: string;
   model: string;
-  max_context: number | null;
-  tool_call_mode: ToolCallMode;
   raw: Record<string, unknown>;
-};
-
-const normalizeToolCallMode = (value: unknown): ToolCallMode =>
-  String(value || '').trim().toLowerCase() === 'function_call' ? 'function_call' : 'tool_call';
-
-const toNullableNumber = (value: unknown): number | null => {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return null;
-  }
-  return Math.floor(parsed);
 };
 
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
     key,
-    provider: String(raw.provider || ''),
     base_url: String(raw.base_url || ''),
     api_key: String(raw.api_key || ''),
     model: String(raw.model || ''),
-    max_context: toNullableNumber(raw.max_context),
-    tool_call_mode: normalizeToolCallMode(raw.tool_call_mode),
     raw: { ...raw }
   }));
 
@@ -205,20 +176,9 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     }
   };
 
-  const setNumber = (key: string, value: number | null) => {
-    if (value === null || value === undefined) {
-      delete output[key];
-    } else {
-      output[key] = value;
-    }
-  };
-
-  setText('provider', row.provider);
   setText('base_url', row.base_url);
   setText('api_key', row.api_key);
   setText('model', row.model);
-  setNumber('max_context', row.max_context);
-  output.tool_call_mode = row.tool_call_mode;
 
   return output;
 };
@@ -228,17 +188,18 @@ const router = useRouter();
 
 const loading = ref(false);
 const saving = ref(false);
+const connectingRemote = ref(false);
 const language = ref('zh-CN');
 const supportedLanguages = ref<string[]>(['zh-CN', 'en-US']);
 const defaultModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
-const remoteGateway = reactive<DesktopRemoteGatewaySettings>({
-  enabled: false,
-  server_base_url: '',
-  api_key: '',
-  role_name: '',
-  use_remote_sandbox: false
-});
+const remoteServerBaseUrl = ref('');
+
+const remoteConnected = ref(false);
+
+const refreshRemoteConnected = () => {
+  remoteConnected.value = isDesktopRemoteAuthMode();
+};
 
 const goBackToSettings = () => {
   router.push('/desktop/settings');
@@ -247,18 +208,18 @@ const goBackToSettings = () => {
 const addModel = () => {
   modelRows.value.push({
     key: '',
-    provider: '',
     base_url: '',
     api_key: '',
     model: '',
-    max_context: null,
-    tool_call_mode: 'tool_call',
     raw: {}
   });
 };
 
 const removeModel = (target: ModelRow) => {
   modelRows.value = modelRows.value.filter((item) => item !== target);
+  if (!modelRows.value.some((item) => item.key.trim() === defaultModel.value.trim())) {
+    defaultModel.value = modelRows.value[0]?.key || '';
+  }
 };
 
 const loadSettings = async () => {
@@ -281,27 +242,12 @@ const loadSettings = async () => {
     if (!modelRows.value.length) {
       addModel();
     }
-
-    if (defaultModel.value && !modelRows.value.some((item) => item.key === defaultModel.value)) {
-      modelRows.value.unshift({
-        key: defaultModel.value,
-        provider: '',
-        base_url: '',
-        api_key: '',
-        model: '',
-        max_context: null,
-        tool_call_mode: 'tool_call',
-        raw: {}
-      });
+    if (!defaultModel.value) {
+      defaultModel.value = modelRows.value[0]?.key || '';
     }
 
-    Object.assign(remoteGateway, {
-      enabled: Boolean(data.remote_gateway?.enabled),
-      server_base_url: String(data.remote_gateway?.server_base_url || ''),
-      api_key: String(data.remote_gateway?.api_key || ''),
-      role_name: String(data.remote_gateway?.role_name || ''),
-      use_remote_sandbox: Boolean(data.remote_gateway?.use_remote_sandbox)
-    });
+    remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
+    refreshRemoteConnected();
   } catch (error) {
     console.error(error);
     ElMessage.error(t('desktop.common.loadFailed'));
@@ -326,7 +272,7 @@ const saveSettings = async () => {
     models[key] = buildModelPayload(row);
   }
 
-  const currentDefaultModel = defaultModel.value.trim();
+  const currentDefaultModel = defaultModel.value.trim() || Object.keys(models)[0] || '';
   if (!currentDefaultModel) {
     ElMessage.warning(t('desktop.system.defaultModelRequired'));
     return;
@@ -349,22 +295,11 @@ const saveSettings = async () => {
       llm: {
         default: currentDefaultModel,
         models
-      },
-      remote_gateway: {
-        enabled: Boolean(remoteGateway.enabled),
-        server_base_url: String(remoteGateway.server_base_url || '').trim(),
-        api_key: String(remoteGateway.api_key || '').trim(),
-        role_name: String(remoteGateway.role_name || '').trim(),
-        use_remote_sandbox: Boolean(remoteGateway.use_remote_sandbox)
       }
     });
 
-    const defaultRow = modelRows.value.find((item) => item.key.trim() === currentDefaultModel);
-    if (defaultRow) {
-      setDesktopToolCallMode(defaultRow.tool_call_mode);
-    }
+    defaultModel.value = currentDefaultModel;
     setLanguage(selectedLanguage, { force: true });
-
     ElMessage.success(t('desktop.common.saveSuccess'));
   } catch (error) {
     console.error(error);
@@ -374,10 +309,98 @@ const saveSettings = async () => {
   }
 };
 
-onMounted(loadSettings);
+const connectRemoteServer = async () => {
+  const rawUrl = remoteServerBaseUrl.value.trim();
+  if (!rawUrl) {
+    ElMessage.warning(t('desktop.system.remote.serverRequired'));
+    return;
+  }
+
+  const normalizedApiBase = setDesktopRemoteApiBaseOverride(rawUrl);
+  if (!normalizedApiBase) {
+    ElMessage.warning(t('desktop.system.remote.serverInvalid'));
+    return;
+  }
+
+  connectingRemote.value = true;
+  try {
+    const payload: { remote_gateway: DesktopRemoteGatewaySettings } = {
+      remote_gateway: {
+        enabled: true,
+        server_base_url: rawUrl
+      }
+    };
+    await updateDesktopSettings(payload);
+
+    try {
+      localStorage.removeItem('access_token');
+    } catch {
+      // ignore localStorage failures
+    }
+
+    refreshRemoteConnected();
+    ElMessage.success(t('desktop.system.remote.connectSuccess'));
+    router.push('/login');
+  } catch (error) {
+    clearDesktopRemoteApiBaseOverride();
+    console.error(error);
+    ElMessage.error(t('desktop.system.remote.connectFailed'));
+  } finally {
+    connectingRemote.value = false;
+  }
+};
+
+const disconnectRemoteServer = async () => {
+  connectingRemote.value = true;
+  try {
+    await updateDesktopSettings({
+      remote_gateway: {
+        enabled: false,
+        server_base_url: ''
+      }
+    });
+
+    clearDesktopRemoteApiBaseOverride();
+    const localToken = getDesktopLocalToken();
+    if (localToken) {
+      try {
+        localStorage.setItem('access_token', localToken);
+      } catch {
+        // ignore localStorage failures
+      }
+    }
+
+    remoteServerBaseUrl.value = '';
+    refreshRemoteConnected();
+    ElMessage.success(t('desktop.system.remote.disconnectSuccess'));
+    router.push('/desktop/home');
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.system.remote.disconnectFailed'));
+  } finally {
+    connectingRemote.value = false;
+  }
+};
+
+onMounted(() => {
+  refreshRemoteConnected();
+  loadSettings();
+});
 </script>
 
 <style scoped>
+.desktop-settings-shell {
+  --desktop-input-bg: rgba(255, 255, 255, 0.06);
+  --desktop-table-header-bg: rgba(255, 255, 255, 0.05);
+  --desktop-table-row-hover-bg: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-user-theme='light'] .desktop-settings-shell {
+  --desktop-input-bg: rgba(15, 23, 42, 0.04);
+  --desktop-table-header-bg: rgba(15, 23, 42, 0.05);
+  --desktop-table-row-hover-bg: rgba(15, 23, 42, 0.03);
+}
+
 .desktop-settings-page {
   display: grid;
   gap: 16px;
@@ -412,10 +435,25 @@ onMounted(loadSettings);
   gap: 12px;
 }
 
+.desktop-settings-remote-state {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.desktop-settings-remote-state.connected {
+  color: #22c55e;
+}
+
+.desktop-settings-remote-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .desktop-settings-hint {
   margin: 12px 0 0;
   font-size: 12px;
-  color: var(--dark-muted);
+  color: var(--portal-muted);
 }
 
 .desktop-settings-footer {
@@ -423,7 +461,49 @@ onMounted(loadSettings);
   justify-content: flex-end;
 }
 
-:root[data-user-theme='light'] .desktop-settings-hint {
-  color: #64748b;
+.desktop-settings-shell :deep(.el-card) {
+  border: 1px solid var(--portal-border);
+  background: var(--portal-panel);
+  color: var(--portal-text);
+}
+
+.desktop-settings-shell :deep(.el-card__header) {
+  border-bottom: 1px solid var(--portal-border);
+}
+
+.desktop-settings-shell :deep(.el-input__wrapper),
+.desktop-settings-shell :deep(.el-select__wrapper),
+.desktop-settings-shell :deep(.el-textarea__inner) {
+  background: var(--desktop-input-bg);
+  box-shadow: 0 0 0 1px var(--portal-border) inset;
+}
+
+.desktop-settings-shell :deep(.el-form-item__label),
+.desktop-settings-shell :deep(.el-input__inner),
+.desktop-settings-shell :deep(.el-select__placeholder),
+.desktop-settings-shell :deep(.el-textarea__inner) {
+  color: var(--portal-text);
+}
+
+.desktop-settings-shell :deep(.el-input__inner::placeholder),
+.desktop-settings-shell :deep(.el-textarea__inner::placeholder) {
+  color: var(--portal-muted);
+}
+
+.desktop-settings-shell :deep(.el-table) {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--desktop-table-header-bg);
+  --el-table-border-color: var(--portal-border);
+  --el-table-text-color: var(--portal-text);
+  --el-table-header-text-color: var(--portal-muted);
+}
+
+.desktop-settings-shell :deep(.el-table__row:hover > td.el-table__cell) {
+  background: var(--desktop-table-row-hover-bg);
+}
+
+:root[data-user-theme='light'] .desktop-settings-remote-state.connected {
+  color: #16a34a;
 }
 </style>

@@ -390,7 +390,7 @@ desktop 默认配置建议：
 - `wunder-desktop/runtime.rs` 的 `DesktopSettings` 已扩展：
   - `container_roots: HashMap<i32, String>`
   - `language: String`
-  - `remote_gateway`（支持连接远端 wunder-server）
+  - `remote_gateway`（仅 `enabled` 与 `server_base_url`，用于连接远端 wunder-server）
 - 启动时会做归一化：
   - 容器 1 默认落到 `<app_dir>/WUNDER_WORK`；
   - 相对路径按 `app_dir` 解析为绝对路径；
@@ -404,7 +404,7 @@ desktop 默认配置建议：
   - `container_roots`（容器到目录映射）
   - `language/supported_languages`
   - `llm`
-  - `remote_gateway`
+  - `remote_gateway`（仅 `enabled` 与 `server_base_url`）
 - `PUT` 更新后同步三处：
   1. `desktop.settings.json`
   2. `ConfigStore`（llm/i18n/workspace.container_roots）
@@ -418,15 +418,12 @@ desktop 默认配置建议：
 - 路由入口：`frontend/src/router/index.ts`（`/desktop/containers` 与 `/desktop/system`）。
 - 设置页入口：`frontend/src/views/SettingsView.vue`。
 
-### 14.4 远程接入（一期已落地）
+### 14.4 服务端接入（一期）
 
-- `remote_gateway.enabled=true` 时，desktop 会把 runtime 的 `api_base/ws_base` 指向远端 wunder-server。
-- 远端身份改为“正常登录流程”：
-  - 不自动创建账号；
-  - 不自动登录；
-  - 用户在桌面端按常规 `register/login` 完成鉴权。
-- 远端模式下，runtime 的 `token` 默认为空；登录成功后前端走常规鉴权链路写入 `access_token`。
-- 本地 `desktop.settings` 仍通过 `desktop_token` 走本地接口，保证“远端业务请求 + 本地设置管理”并存。
-- 若远端地址无效则回退本地模式，并在 runtime 暴露 `remote_error` 便于排障。
-- 二期目标：补齐“远端虚拟容器映射同步”和在线切换（不重启）能力。
-
+- 系统设置仅保留 1 个参数：`server_base_url`（服务端地址）。
+- 点击“接入服务端”后，前端会立即切换到远端 API 基址并跳转到 `/login`。
+- Desktop 不会自动创建账号、不会自动登录；用户按常规流程注册或登录。
+- 服务端地址会持久化到 `desktop.settings.json`，并通过前端运行时覆盖机制即时生效（无需重启）。
+- 远端模式下 runtime `token` 为空；登录成功后由正常鉴权流程写入 `access_token`。
+- 本地 `desktop.settings` 接口继续使用 `desktop_token` 独立鉴权，确保本地设置管理始终可用。
+- 当地址非法或不可达时保持本地模式，并通过 `remote_error` 返回诊断信息。

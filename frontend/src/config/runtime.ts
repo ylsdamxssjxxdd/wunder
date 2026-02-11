@@ -1,4 +1,4 @@
-import { getDesktopRuntime } from '@/config/desktop';
+import { getDesktopRuntime, getDesktopRemoteApiBaseOverride } from '@/config/desktop';
 
 const DEFAULT_FALLBACK_BASE = 'http://localhost:18000/wunder';
 
@@ -88,13 +88,22 @@ export const loadRuntimeConfig = async (): Promise<RuntimeConfig> => {
 export const getRuntimeConfig = (): RuntimeConfig => cachedConfig || { ...EMPTY_RUNTIME };
 
 export const resolveApiBase = (): string => {
+  const remoteOverride = getDesktopRemoteApiBaseOverride();
+  if (remoteOverride) {
+    return remoteOverride;
+  }
+
+  const desktopRuntime = getDesktopRuntime();
+  if (desktopRuntime) {
+    const localWebBase = (desktopRuntime.web_base || window.location.origin || '').replace(/\/+$/, '');
+    if (localWebBase) {
+      return `${localWebBase}/wunder`;
+    }
+  }
+
   const runtime = cachedConfig?.api_base;
   if (runtime) {
     return runtime;
-  }
-  const desktopRuntime = getDesktopRuntime();
-  if (desktopRuntime?.api_base) {
-    return desktopRuntime.api_base;
   }
   const envBase = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE;
   return envBase || DEFAULT_FALLBACK_BASE;

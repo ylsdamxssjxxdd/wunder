@@ -31,12 +31,6 @@ struct DesktopRemoteGatewaySettings {
     enabled: bool,
     #[serde(default)]
     server_base_url: String,
-    #[serde(default)]
-    api_key: String,
-    #[serde(default)]
-    role_name: String,
-    #[serde(default)]
-    use_remote_sandbox: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +41,8 @@ struct DesktopSettingsFile {
     container_roots: HashMap<i32, String>,
     #[serde(default)]
     language: String,
+    #[serde(default)]
+    llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: DesktopRemoteGatewaySettings,
     updated_at: f64,
@@ -59,6 +55,7 @@ impl Default for DesktopSettingsFile {
             desktop_token: String::new(),
             container_roots: HashMap::new(),
             language: String::new(),
+            llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             updated_at: now_ts(),
         }
@@ -157,6 +154,10 @@ async fn desktop_settings_update(
         }
     }
 
+    if let Some(llm) = payload.llm.clone() {
+        settings.llm = Some(llm);
+    }
+
     if let Some(remote_gateway) = payload.remote_gateway {
         settings.remote_gateway = remote_gateway;
     }
@@ -166,7 +167,7 @@ async fn desktop_settings_update(
 
     let next_container_roots = settings.container_roots.clone();
     let next_language = settings.language.clone();
-    let llm_update = payload.llm.clone();
+    let llm_update = settings.llm.clone();
     let updated_config = state
         .config_store
         .update(move |config| {
@@ -228,12 +229,14 @@ fn build_settings_payload(config: &Config, settings: &DesktopSettingsFile) -> Va
         settings.language.clone()
     };
 
+    let llm = settings.llm.clone().unwrap_or_else(|| config.llm.clone());
+
     json!({
         "workspace_root": workspace_root,
         "container_roots": container_roots,
         "language": language,
         "supported_languages": config.i18n.supported_languages,
-        "llm": config.llm,
+        "llm": llm,
         "remote_gateway": settings.remote_gateway,
         "updated_at": settings.updated_at,
     })

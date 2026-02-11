@@ -2425,10 +2425,10 @@
 
 - `GET /config.json`
   - 用途：前端运行时配置注入。
-  - 返回字段：`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`mode`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_role_name`、`remote_error`。
+  - 返回字段：`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`mode`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_error`。
 - `GET /wunder/desktop/bootstrap`
   - 用途：桌面启动器/诊断查看完整运行时信息。
-  - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_role_name`、`remote_error`。
+  - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_error`。
 
 ### desktop 本地设置接口
 
@@ -2439,7 +2439,7 @@
     - `container_roots`：数组，元素 `{ container_id, root }`
     - `language` / `supported_languages`
     - `llm`（`default` + `models`）
-    - `remote_gateway`（服务端连接配置）
+    - `remote_gateway`（服务端连接配置，仅含 `enabled` 与 `server_base_url`）
     - `updated_at`
 - `PUT /wunder/desktop/settings`
   - 用途：更新 desktop 本地设置并同步到运行态。
@@ -2448,7 +2448,7 @@
     - `container_roots`：数组，元素 `{ container_id, root }`
     - `language`：字符串，例如 `zh-CN` / `en-US`
     - `llm`：对象（`default` + `models`）
-    - `remote_gateway`：对象（启动后可用于远端连接）
+    - `remote_gateway`：对象（仅 `enabled` 与 `server_base_url`）
   - 行为约束：
     - 容器 id 会归一化到 `1..10`；容器 1 默认指向 `WUNDER_WORK`。
     - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
@@ -2457,6 +2457,7 @@
 ### desktop 远端接入（一期）
 
 - 当 `remote_gateway.enabled=true` 且 `server_base_url` 可解析时，desktop 会把 runtime 的 `api_base/ws_base` 切到远端 `wunder-server`。
+- 前端在系统设置页仅需填写服务端地址；点击“接入服务端”后会跳转 `/login`，按常规注册/登录流程鉴权。
 - desktop **不会自动创建账号或自动登录**；用户需按常规流程调用：
   - `POST <server_base_url>/wunder/auth/register` 注册，或
   - `POST <server_base_url>/wunder/auth/login` 登录。

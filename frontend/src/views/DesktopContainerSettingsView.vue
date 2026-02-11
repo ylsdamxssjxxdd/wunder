@@ -186,6 +186,18 @@ onMounted(loadSettings);
 </script>
 
 <style scoped>
+.desktop-settings-shell {
+  --desktop-input-bg: rgba(255, 255, 255, 0.06);
+  --desktop-table-header-bg: rgba(255, 255, 255, 0.05);
+  --desktop-table-row-hover-bg: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-user-theme='light'] .desktop-settings-shell {
+  --desktop-input-bg: rgba(15, 23, 42, 0.04);
+  --desktop-table-header-bg: rgba(15, 23, 42, 0.05);
+  --desktop-table-row-hover-bg: rgba(15, 23, 42, 0.03);
+}
+
 .desktop-settings-page {
   display: grid;
   gap: 16px;
@@ -210,7 +222,7 @@ onMounted(loadSettings);
 .desktop-settings-hint {
   margin: 8px 0 0;
   font-size: 12px;
-  color: var(--dark-muted);
+  color: var(--portal-muted);
 }
 
 .desktop-container-toolbar {
@@ -227,7 +239,50 @@ onMounted(loadSettings);
 
 .desktop-container-fixed {
   font-size: 12px;
-  color: var(--dark-muted);
+  color: var(--portal-muted);
+}
+
+
+.desktop-settings-shell :deep(.el-card) {
+  border: 1px solid var(--portal-border);
+  background: var(--portal-panel);
+  color: var(--portal-text);
+}
+
+.desktop-settings-shell :deep(.el-card__header) {
+  border-bottom: 1px solid var(--portal-border);
+}
+
+.desktop-settings-shell :deep(.el-input__wrapper),
+.desktop-settings-shell :deep(.el-select__wrapper),
+.desktop-settings-shell :deep(.el-textarea__inner) {
+  background: var(--desktop-input-bg);
+  box-shadow: 0 0 0 1px var(--portal-border) inset;
+}
+
+.desktop-settings-shell :deep(.el-form-item__label),
+.desktop-settings-shell :deep(.el-input__inner),
+.desktop-settings-shell :deep(.el-select__placeholder),
+.desktop-settings-shell :deep(.el-textarea__inner) {
+  color: var(--portal-text);
+}
+
+.desktop-settings-shell :deep(.el-input__inner::placeholder),
+.desktop-settings-shell :deep(.el-textarea__inner::placeholder) {
+  color: var(--portal-muted);
+}
+
+.desktop-settings-shell :deep(.el-table) {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--desktop-table-header-bg);
+  --el-table-border-color: var(--portal-border);
+  --el-table-text-color: var(--portal-text);
+  --el-table-header-text-color: var(--portal-muted);
+}
+
+.desktop-settings-shell :deep(.el-table__row:hover > td.el-table__cell) {
+  background: var(--desktop-table-row-hover-bg);
 }
 
 :root[data-user-theme='light'] .desktop-settings-hint,

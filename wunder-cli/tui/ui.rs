@@ -26,6 +26,12 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         .collect();
     let transcript_viewport = inner_rect(vertical[1]);
     app.set_transcript_viewport(transcript_viewport.width);
+    app.set_transcript_mouse_region(
+        vertical[1].x,
+        vertical[1].y,
+        vertical[1].width,
+        vertical[1].height,
+    );
     let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
     let transcript = Paragraph::new(Text::from(transcript_lines))
         .block(

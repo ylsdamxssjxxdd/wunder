@@ -48,7 +48,6 @@ pub struct DesktopRuntimeInfo {
     pub remote_enabled: bool,
     pub remote_connected: bool,
     pub remote_server_base_url: String,
-    pub remote_role_name: String,
     pub remote_error: Option<String>,
 }
 
@@ -158,7 +157,6 @@ impl DesktopBridge {
                     "- remote_gateway: connected ({})",
                     self.runtime_info.remote_server_base_url
                 );
-                println!("- remote_role: {}", self.runtime_info.remote_role_name);
             } else {
                 println!(
                     "- remote_gateway: enabled but disconnected ({})",
@@ -227,7 +225,6 @@ fn build_runtime_info(
         remote_enabled: runtime.remote_gateway.enabled,
         remote_connected,
         remote_server_base_url: runtime.remote_gateway.server_base_url.trim().to_string(),
-        remote_role_name: runtime.remote_gateway.role_name.trim().to_string(),
         remote_error: runtime.remote_error.clone(),
     }
 }
@@ -335,7 +332,6 @@ async fn runtime_config_handler(
         "remote_enabled": state.runtime.remote_enabled,
         "remote_connected": state.runtime.remote_connected,
         "remote_server_base_url": state.runtime.remote_server_base_url,
-        "remote_role_name": state.runtime.remote_role_name,
         "remote_error": state.runtime.remote_error,
     })))
 }

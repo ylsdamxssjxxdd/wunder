@@ -1804,8 +1804,49 @@ impl TuiApp {
         index
     }
 
+    fn remove_log_entry(&mut self, index: usize) {
+        if index >= self.logs.len() {
+            return;
+        }
+        self.logs.remove(index);
+        if let Some(active) = self.active_assistant {
+            self.active_assistant = if active == index {
+                None
+            } else if active > index {
+                Some(active.saturating_sub(1))
+            } else {
+                Some(active)
+            };
+        }
+    }
+
+    fn emit_tool_phase_notice(&mut self) {
+        if self.tool_phase_notice_emitted {
+            return;
+        }
+
+        let mut has_meaningful_assistant = false;
+        if let Some(index) = self.active_assistant {
+            if let Some(entry) = self.logs.get_mut(index) {
+                let cleaned = sanitize_assistant_text(entry.text.as_str());
+                if !cleaned.is_empty() && !looks_like_tool_payload(cleaned.as_str()) {
+                    entry.text = cleaned;
+                    has_meaningful_assistant = true;
+                }
+            }
+            if !has_meaningful_assistant {
+                self.remove_log_entry(index);
+            }
+        }
+
+        if !has_meaningful_assistant {
+            self.push_log(LogKind::Assistant, "正在调用工具...".to_string());
+        }
+        self.tool_phase_notice_emitted = true;
+    }
+
     fn merge_assistant_content(&mut self, content: &str) {
-        let cleaned = content.trim();
+        let cleaned = sanitize_assistant_text(content);
         if cleaned.is_empty() {
             return;
         }
@@ -1813,30 +1854,30 @@ impl TuiApp {
         let index = self.ensure_assistant_entry();
         if let Some(entry) = self.logs.get_mut(index) {
             if entry.text.trim().is_empty() {
-                entry.text = cleaned.to_string();
+                entry.text = cleaned.clone();
                 return;
             }
 
-            if entry.text == cleaned || entry.text.ends_with(cleaned) {
+            if entry.text == cleaned || entry.text.ends_with(cleaned.as_str()) {
                 return;
             }
 
             if cleaned.starts_with(entry.text.as_str()) {
-                entry.text = cleaned.to_string();
+                entry.text = cleaned;
                 return;
             }
 
-            if !entry.text.contains(cleaned) {
+            if !entry.text.contains(cleaned.as_str()) {
                 if !entry.text.ends_with('\n') {
                     entry.text.push('\n');
                 }
-                entry.text.push_str(cleaned);
+                entry.text.push_str(cleaned.as_str());
             }
         }
     }
 
     fn merge_final_answer(&mut self, answer: &str) {
-        let cleaned = answer.trim();
+        let cleaned = sanitize_assistant_text(answer);
         if cleaned.is_empty() {
             return;
         }
@@ -1844,16 +1885,16 @@ impl TuiApp {
         let index = self.ensure_assistant_entry();
         if let Some(entry) = self.logs.get_mut(index) {
             if entry.text.trim().is_empty() {
-                entry.text = cleaned.to_string();
+                entry.text = cleaned.clone();
                 return;
             }
 
-            if entry.text.trim() == cleaned || entry.text.ends_with(cleaned) {
+            if entry.text.trim() == cleaned || entry.text.ends_with(cleaned.as_str()) {
                 return;
             }
 
             if cleaned.starts_with(entry.text.trim()) {
-                entry.text = cleaned.to_string();
+                entry.text = cleaned;
                 return;
             }
 
@@ -1863,7 +1904,7 @@ impl TuiApp {
                 }
                 entry.text.push('\n');
             }
-            entry.text.push_str(cleaned);
+            entry.text.push_str(cleaned.as_str());
         }
     }
 
@@ -2083,6 +2124,69 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
+fn payload_has_tool_calls(payload: &Value) -> bool {
+    match payload.get("tool_calls") {
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Object(map)) => !map.is_empty(),
+        Some(Value::String(value)) => !value.trim().is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
+fn sanitize_assistant_delta(delta: &str) -> String {
+    if delta.trim().is_empty() {
+        return String::new();
+    }
+    let cleaned = strip_tool_block_tags(delta);
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
+        return String::new();
+    }
+    cleaned
+}
+
+fn sanitize_assistant_text(text: &str) -> String {
+    strip_tool_block_tags(text).trim().to_string()
+}
+
+fn looks_like_tool_payload(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains("<tool_call")
+        || lowered.contains("</tool_call>")
+        || lowered.contains("\"name\"") && lowered.contains("\"arguments\"")
+}
+
+fn strip_tool_block_tags(text: &str) -> String {
+    let without_tool_call = strip_tag_block(text.to_string(), "<tool_call", "</tool_call>");
+    strip_tag_block(without_tool_call, "<tool", "</tool>")
+}
+
+fn strip_tag_block(mut text: String, start_tag: &str, end_tag: &str) -> String {
+    loop {
+        let lowered = text.to_ascii_lowercase();
+        let Some(start) = lowered.find(start_tag) else {
+            break;
+        };
+
+        let after_start = start + start_tag.len();
+        let Some(close_offset) = lowered[after_start..].find('>') else {
+            text.truncate(start);
+            break;
+        };
+        let body_start = after_start + close_offset + 1;
+
+        if let Some(end_offset) = lowered[body_start..].find(end_tag) {
+            let end = body_start + end_offset + end_tag.len();
+            text.replace_range(start..end, "");
+        } else {
+            text.truncate(start);
+            break;
+        }
+    }
+    text
+}
+
 fn parse_error_message(data: &Value) -> String {
     let payload = event_payload(data);
     let nested_message = payload
@@ -2198,5 +2302,23 @@ cdef";
         assert_eq!(wrapped_visual_line_count("abcdef", 3), 2);
         assert_eq!(wrapped_visual_line_count("ab\ncd", 8), 2);
         assert_eq!(wrapped_visual_line_count("\u{4f60}\u{597d}\u{5417}", 4), 2);
+    }
+
+    #[test]
+    fn sanitize_assistant_text_strips_tool_markup_blocks() {
+        let raw = "before <tool_call>{\"name\":\"读取文件\"}</tool_call> after";
+        assert_eq!(sanitize_assistant_text(raw), "before  after");
+    }
+
+    #[test]
+    fn sanitize_assistant_delta_filters_tool_payload_fragments() {
+        assert!(sanitize_assistant_delta("<tool_call>{").is_empty());
+        assert!(sanitize_assistant_delta("{\"name\":\"读取文件\",\"arguments\":{}}").is_empty());
+    }
+
+    #[test]
+    fn payload_has_tool_calls_accepts_non_empty_array() {
+        let payload = serde_json::json!({ "tool_calls": [{ "name": "读取文件" }] });
+        assert!(payload_has_tool_calls(&payload));
     }
 }

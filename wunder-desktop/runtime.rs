@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 use url::Url;
-use wunder_server::config::Config;
+use wunder_server::config::{Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::state::{AppState, AppStateInitOptions};
 use wunder_server::storage::UserTokenRecord;
@@ -39,12 +39,6 @@ pub struct DesktopRemoteGatewaySettings {
     pub enabled: bool,
     #[serde(default)]
     pub server_base_url: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub role_name: String,
-    #[serde(default)]
-    pub use_remote_sandbox: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +49,8 @@ pub struct DesktopSettings {
     pub container_roots: HashMap<i32, String>,
     #[serde(default)]
     pub language: String,
+    #[serde(default)]
+    pub llm: Option<LlmConfig>,
     #[serde(default)]
     pub remote_gateway: DesktopRemoteGatewaySettings,
     pub updated_at: f64,
@@ -67,6 +63,7 @@ impl Default for DesktopSettings {
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
             container_roots: HashMap::new(),
             language: String::new(),
+            llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             updated_at: now_ts(),
         }
@@ -135,6 +132,7 @@ impl DesktopRuntime {
         let token_for_update = desktop_token.clone();
         let container_roots_for_update = settings.container_roots.clone();
         let language_for_update = settings.language.clone();
+        let llm_for_update = settings.llm.clone();
         let config = config_store
             .update(move |config| {
                 apply_desktop_defaults(
@@ -142,9 +140,12 @@ impl DesktopRuntime {
                     &workspace_for_update,
                     &temp_root_for_update,
                     &repo_root_for_update,
-                    &token_for_update,
-                    &container_roots_for_update,
-                    &language_for_update,
+                    DesktopDefaultsInput {
+                        desktop_token: &token_for_update,
+                        container_roots: &container_roots_for_update,
+                        language: &language_for_update,
+                        llm: llm_for_update.as_ref(),
+                    },
                 );
             })
             .await
@@ -349,16 +350,7 @@ fn resolve_remote_endpoints(
         let ws_base = build_remote_ws_base(&api_base_url)?;
         Ok((api_base, ws_base))
     }) {
-        Ok((api_base, ws_base)) => {
-            let role_name = remote_gateway.role_name.trim();
-            if role_name.is_empty() {
-                warn!(
-                    "desktop remote gateway enabled without role_name: {}",
-                    remote_gateway.server_base_url
-                );
-            }
-            (Some(api_base), Some(ws_base), None)
-        }
+        Ok((api_base, ws_base)) => (Some(api_base), Some(ws_base), None),
         Err(err) => {
             let message = err.to_string();
             warn!("desktop remote gateway endpoint invalid: {message}");
@@ -472,14 +464,19 @@ fn ensure_generated_base_config(path: &Path) -> Result<()> {
     Ok(())
 }
 
+struct DesktopDefaultsInput<'a> {
+    desktop_token: &'a str,
+    container_roots: &'a HashMap<i32, String>,
+    language: &'a str,
+    llm: Option<&'a LlmConfig>,
+}
+
 fn apply_desktop_defaults(
     config: &mut Config,
     workspace_root: &Path,
     temp_root: &Path,
     repo_root: &Path,
-    desktop_token: &str,
-    container_roots: &HashMap<i32, String>,
-    language: &str,
+    defaults: DesktopDefaultsInput<'_>,
 ) {
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
@@ -488,10 +485,14 @@ fn apply_desktop_defaults(
         .to_string_lossy()
         .to_string();
     config.workspace.root = workspace_root.to_string_lossy().to_string();
-    config.workspace.container_roots = container_roots.clone();
+    config.workspace.container_roots = defaults.container_roots.clone();
 
-    if !language.trim().is_empty() {
-        config.i18n.default_language = language.trim().to_string();
+    if !defaults.language.trim().is_empty() {
+        config.i18n.default_language = defaults.language.trim().to_string();
+    }
+
+    if let Some(llm) = defaults.llm {
+        config.llm = llm.clone();
     }
 
     config.channels.enabled = false;
@@ -500,8 +501,8 @@ fn apply_desktop_defaults(
     config.cron.enabled = false;
     config.sandbox.mode = "local".to_string();
 
-    if !desktop_token.trim().is_empty() {
-        config.security.api_key = Some(desktop_token.to_string());
+    if !defaults.desktop_token.trim().is_empty() {
+        config.security.api_key = Some(defaults.desktop_token.to_string());
     }
 
     let launch_skills = workspace_root.join("skills");

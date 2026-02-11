@@ -12,9 +12,6 @@ export type DesktopContainerRoot = {
 export type DesktopRemoteGatewaySettings = {
   enabled: boolean;
   server_base_url: string;
-  api_key: string;
-  role_name: string;
-  use_remote_sandbox: boolean;
 };
 
 export type DesktopLlmConfig = {
