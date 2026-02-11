@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 struct DesktopGuardState {
@@ -61,10 +61,7 @@ impl DesktopBridge {
     pub async fn launch(args: &DesktopArgs) -> Result<Self> {
         let runtime = DesktopRuntime::init(args).await?;
         let bind_host = sanitize_host(&args.host)?;
-        let bind_addr = format!("{bind_host}:{}", args.port);
-        let listener = tokio::net::TcpListener::bind(bind_addr.as_str())
-            .await
-            .with_context(|| format!("bind desktop bridge failed: {bind_addr}"))?;
+        let listener = bind_desktop_listener(&bind_host, args.port).await?;
         let local_addr = listener
             .local_addr()
             .context("resolve desktop bridge local addr failed")?;
@@ -298,6 +295,23 @@ fn sanitize_host(host: &str) -> Result<String> {
         return Err(anyhow!("invalid host: {cleaned}"));
     }
     Ok(cleaned.to_string())
+}
+
+async fn bind_desktop_listener(host: &str, preferred_port: u16) -> Result<tokio::net::TcpListener> {
+    let bind_addr = format!("{host}:{preferred_port}");
+    match tokio::net::TcpListener::bind(bind_addr.as_str()).await {
+        Ok(listener) => Ok(listener),
+        Err(err) if preferred_port != 0 && err.kind() == std::io::ErrorKind::AddrInUse => {
+            warn!(
+                "desktop bridge port {preferred_port} already in use, fallback to random free port"
+            );
+            let fallback_addr = format!("{host}:0");
+            tokio::net::TcpListener::bind(fallback_addr.as_str())
+                .await
+                .with_context(|| format!("bind desktop bridge failed: {fallback_addr}"))
+        }
+        Err(err) => Err(anyhow!("bind desktop bridge failed: {bind_addr}: {err}")),
+    }
 }
 
 fn resolve_public_addr(local_addr: SocketAddr) -> SocketAddr {
