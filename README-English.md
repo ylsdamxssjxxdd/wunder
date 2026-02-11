@@ -47,6 +47,11 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 - Communication strategy is WebSocket first, with SSE as fallback.
 
 ## Entrypoints & Usage
+### Role-based access (recommended)
+- **Administrators**: use the admin frontend (`web`) for model/tool governance, permissions, monitoring, and operations.
+- **Users**: choose the user web frontend (`frontend`), `wunder-desktop`, or `wunder-cli` based on the usage scenario.
+- **Channel access**: users can also connect through channels (such as Feishu/WhatsApp/QQ), which route into the same orchestration pipeline.
+
 ### Server entrypoints (multi-tenant / platform deployment)
 - Admin debug UI: `http://127.0.0.1:18000`
 - User frontend (development, default): `http://127.0.0.1:18001`

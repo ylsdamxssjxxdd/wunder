@@ -81,6 +81,8 @@ pub struct TuiApp {
     session_stats_dirty: bool,
     shortcuts_visible: bool,
     mouse_mode: MouseMode,
+    tool_phase_notice_emitted: bool,
+    transcript_mouse_region: Option<(u16, u16, u16, u16)>,
 }
 
 impl TuiApp {
@@ -122,6 +124,8 @@ impl TuiApp {
             session_stats_dirty: false,
             shortcuts_visible: false,
             mouse_mode: MouseMode::Select,
+            tool_phase_notice_emitted: false,
+            transcript_mouse_region: None,
         };
         app.sync_model_status().await;
         app.reload_session_stats().await;
@@ -209,6 +213,23 @@ impl TuiApp {
 
     pub fn set_transcript_viewport(&mut self, viewport_width: u16) {
         self.transcript_viewport_width = viewport_width.max(1);
+    }
+
+    pub fn set_transcript_mouse_region(&mut self, x: u16, y: u16, width: u16, height: u16) {
+        if width == 0 || height == 0 {
+            self.transcript_mouse_region = None;
+            return;
+        }
+        self.transcript_mouse_region = Some((x, y, width, height));
+    }
+
+    fn mouse_over_transcript(&self, column: u16, row: u16) -> bool {
+        let Some((x, y, width, height)) = self.transcript_mouse_region else {
+            return false;
+        };
+        let x_end = x.saturating_add(width);
+        let y_end = y.saturating_add(height);
+        column >= x && column < x_end && row >= y && row < y_end
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -599,7 +620,9 @@ impl TuiApp {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.mouse_mode != MouseMode::Scroll {
+        if self.mouse_mode != MouseMode::Scroll
+            || !self.mouse_over_transcript(mouse.column, mouse.row)
+        {
             return;
         }
         match mouse.kind {
@@ -639,6 +662,7 @@ impl TuiApp {
         self.last_usage = None;
         self.stream_saw_output = false;
         self.stream_saw_final = false;
+        self.tool_phase_notice_emitted = false;
         self.push_log(LogKind::User, prompt.clone());
         self.busy = true;
         self.active_assistant = None;
@@ -1023,6 +1047,7 @@ impl TuiApp {
                 self.stream_rx = None;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
             StreamMessage::Done => {
@@ -1037,6 +1062,7 @@ impl TuiApp {
                 self.stream_rx = None;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
         }
@@ -1047,20 +1073,27 @@ impl TuiApp {
         match event.event.as_str() {
             "llm_output_delta" => {
                 if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
-                    if !delta.is_empty() {
+                    let cleaned_delta = sanitize_assistant_delta(delta);
+                    if !cleaned_delta.is_empty() {
                         self.stream_saw_output = true;
                         let index = self.ensure_assistant_entry();
                         if let Some(entry) = self.logs.get_mut(index) {
-                            entry.text.push_str(delta);
+                            entry.text.push_str(cleaned_delta.as_str());
                         }
                     }
                 }
             }
             "llm_output" => {
+                if payload_has_tool_calls(payload) {
+                    self.emit_tool_phase_notice();
+                    self.active_assistant = None;
+                    return;
+                }
                 if let Some(content) = payload.get("content").and_then(Value::as_str) {
-                    if !content.trim().is_empty() {
+                    let cleaned = sanitize_assistant_text(content);
+                    if !cleaned.is_empty() {
                         self.stream_saw_output = true;
-                        self.merge_assistant_content(content);
+                        self.merge_assistant_content(cleaned.as_str());
                     }
                 }
             }
@@ -1080,6 +1113,8 @@ impl TuiApp {
             }
             "llm_request" => {
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
+                self.active_assistant = None;
+                self.tool_phase_notice_emitted = false;
             }
             "context_usage" => {
                 if let Some(tokens) = payload.get("context_tokens").and_then(Value::as_i64) {
@@ -1118,6 +1153,10 @@ impl TuiApp {
             }
             "tool_call" => {
                 self.session_stats.tool_calls = self.session_stats.tool_calls.saturating_add(1);
+                if !self.tool_phase_notice_emitted {
+                    self.emit_tool_phase_notice();
+                }
+                self.active_assistant = None;
                 let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
