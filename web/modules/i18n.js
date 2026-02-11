@@ -3,8 +3,8 @@ const LOCALES = {
   "zh-CN": {
     "language.zh-CN": "简体中文",
     "language.en-US": "English",
-    "page.title": "wunder 引擎",
-    "sidebar.title": "wunder 引擎",
+    "page.title": "wunder 服务",
+    "sidebar.title": "wunder 服务",
     "sidebar.group.system": "系统",
     "sidebar.group.agent": "智能体",
     "sidebar.group.tools": "工具",

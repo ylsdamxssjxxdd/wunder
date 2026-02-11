@@ -5,7 +5,7 @@ x-rust-build: &rust-build
     RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
 
 services:
-  wunder_engine:
+  wunder_server:
     build: *rust-build
     privileged: true
     security_opt:
@@ -161,7 +161,7 @@ services:
       - TZ=Asia/Shanghai
       - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
       - VITE_API_BASE=${VITE_API_BASE:-/wunder}
-      - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder_engine:18000}
+      - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder_server:18000}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
     command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
@@ -177,7 +177,7 @@ services:
   #   environment:
   #     - TZ=Asia/Shanghai
   #   depends_on:
-  #     - wunder_engine
+  #     - wunder_server
   #   restart: always
   #   volumes:
   #     - ./frontend/dist:/usr/share/nginx/html:ro
