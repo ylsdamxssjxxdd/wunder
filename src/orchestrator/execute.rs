@@ -201,7 +201,9 @@ impl Orchestrator {
             messages.push(user_message.clone());
             let mut user_message_appended = false;
 
-            let max_rounds = if is_admin {
+            let desktop_unlimited_rounds =
+                config.server.mode.trim().eq_ignore_ascii_case("desktop");
+            let max_rounds = if is_admin || desktop_unlimited_rounds {
                 None
             } else {
                 Some(resolve_non_admin_max_rounds(
