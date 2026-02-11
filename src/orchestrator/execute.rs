@@ -19,6 +19,7 @@ enum TerminalTool {
 
 const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 8;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
+const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = DEFAULT_NON_ADMIN_MAX_ROUNDS;
 
 impl Orchestrator {
     pub(super) async fn execute_request(
@@ -203,11 +204,9 @@ impl Orchestrator {
             let max_rounds = if is_admin {
                 None
             } else {
-                Some(i64::from(
-                    llm_config
-                        .max_rounds
-                        .unwrap_or(DEFAULT_NON_ADMIN_MAX_ROUNDS)
-                        .max(MIN_NON_ADMIN_MAX_ROUNDS),
+                Some(resolve_non_admin_max_rounds(
+                    &llm_config,
+                    prepared.skip_tool_calls,
                 ))
             };
             let mut reached_max_rounds = false;
@@ -966,6 +965,18 @@ fn build_planned_tool_calls(calls: Vec<ToolCall>) -> Vec<PlannedToolCall> {
 fn resolve_tool_parallelism(total: usize) -> usize {
     let desired = DEFAULT_TOOL_PARALLELISM.max(1);
     total.max(1).min(desired)
+}
+
+fn resolve_non_admin_max_rounds(llm_config: &LlmModelConfig, skip_tool_calls: bool) -> i64 {
+    let configured = llm_config
+        .max_rounds
+        .unwrap_or(DEFAULT_NON_ADMIN_MAX_ROUNDS);
+    let minimum = if skip_tool_calls {
+        MIN_NON_ADMIN_MAX_ROUNDS
+    } else {
+        MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS
+    };
+    i64::from(configured.max(minimum))
 }
 
 fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {

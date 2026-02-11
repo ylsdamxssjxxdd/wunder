@@ -534,7 +534,21 @@ fn normalize_user_id(raw: Option<&str>) -> String {
 }
 
 fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str) -> Result<()> {
-    if state.user_store.get_user_by_id(user_id)?.is_none() {
+    if let Some(mut existing) = state.user_store.get_user_by_id(user_id)? {
+        let mut changed = false;
+        if existing.status.trim().to_lowercase() != "active" {
+            existing.status = "active".to_string();
+            changed = true;
+        }
+        if !UserStore::is_admin(&existing) {
+            existing.roles.push("admin".to_string());
+            changed = true;
+        }
+        if changed {
+            existing.updated_at = now_ts();
+            state.user_store.update_user(&existing)?;
+        }
+    } else {
         let password = format!("wunder_desktop_{}", uuid::Uuid::new_v4().simple());
         state.user_store.create_user(
             user_id,
@@ -542,7 +556,7 @@ fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str)
             &password,
             Some("A"),
             None,
-            vec!["user".to_string()],
+            vec!["admin".to_string()],
             "active",
             false,
         )?;
