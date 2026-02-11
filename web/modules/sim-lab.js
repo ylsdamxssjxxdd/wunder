@@ -320,7 +320,13 @@ const renderCurveChart = (report) => {
 const selectedProjects = () => {
   const fromState = [...selectedProjectIds].filter((projectId) => projectId && projectId.trim());
   if (!elements.simLabProjects) {
-    return fromState;
+    if (fromState.length) {
+      return fromState;
+    }
+    if (projectsCache.length) {
+      return [projectsCache[0].project_id];
+    }
+    return [];
   }
   const values = [];
   elements.simLabProjects
@@ -492,10 +498,10 @@ const ensureProjectSelection = () => {
 };
 
 const renderProjects = () => {
+  ensureProjectSelection();
   if (!elements.simLabProjects) {
     return;
   }
-  ensureProjectSelection();
   elements.simLabProjects.innerHTML = "";
   if (!projectsCache.length) {
     elements.simLabProjects.textContent = t("simLab.projects.empty");

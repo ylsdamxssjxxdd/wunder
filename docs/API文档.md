@@ -2401,34 +2401,68 @@
   - `/status`：输出会话状态（session/model/tool_call_mode/workspace/db）。
   - `/model [name]`：查看当前模型，或切换默认模型。
   - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
-  - `/config`：TUI 下使用 `/config <base_url> <api_key> <model>` 一次性配置；`chat` 行式模式仍支持三段引导输入。
+  - `/config`：TUI 与 `chat` 行式模式统一为向导式配置（`base_url -> api_key -> model -> max_context`），并支持 `/config <base_url> <api_key> <model> [max_context]` 一行配置。
   - `/config show`：输出当前运行配置。
-  - `/new`、`/session`、`/exit`：会话控制。
+  - `/new` / `/session` / `/system` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计）。
+- TUI 顶部状态栏突出 `xx% context left`，隐藏低价值 mode/state 字段；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。
 
-## wunder-desktop 本地桥接接口约定（M0/M1）
+## wunder-desktop 本地桥接接口约定（M0/M4 已落地）
 
-> wunder-desktop 复用既有 `/wunder` 协议，不新增独立业务协议版本；差异主要在运行时绑定与鉴权方式。
+> wunder-desktop 复用既有 `/wunder` 协议，不引入新业务协议版本；差异主要在 Tauri 桌面壳、运行时引导、免登录注入与本地路由约束。
 
-- 运行地址：默认绑定 `127.0.0.1`，端口支持 `0`（自动分配）。
-- API 基址：`http://127.0.0.1:<port>/wunder`
-- 鉴权：
-  - 使用 desktop 本地 token（启动时生成并落盘到 `WUNDER_TEMPD/config/desktop.settings.json`）。
-  - 支持从以下位置携带 token：
-    - `x-api-key`
-    - `Authorization: Bearer <token>`
-    - `sec-websocket-protocol` 中的 `wunder-auth.<token>`
-    - 查询参数 `access_token` / `api_key`
-- 流式：
-  - WebSocket：沿用 `/wunder/chat/ws`
-  - SSE：沿用 chat stream/resume 路径作为回退
+- 默认地址：`http://127.0.0.1:18000`（支持 `--host/--port` 覆盖，`--port 0` 自动分配）。
+- API 基址：`http://<host>:<port>/wunder`
+- WS 基址：`ws://<host>:<port>/wunder/chat/ws`
+- 默认启动模式：Tauri GUI；`--bridge-only` 用于诊断与无窗口运行。
+
+### desktop 运行时引导接口
+
+- `GET /config.json`
+  - 用途：前端运行时配置注入。
+  - 返回字段：`api_base`、`ws_base`、`token`、`user_id`、`workspace_root`、`mode`。
+- `GET /wunder/desktop/bootstrap`
+  - 用途：桌面启动器/诊断查看完整运行时信息。
+  - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`。
+
+### Tauri command（桌面窗口内）
+
+- `desktop_runtime_info`
+  - 来源：`wunder-desktop/main.rs` 的 `#[tauri::command]`。
+  - 返回：与 `/wunder/desktop/bootstrap.data` 同构的 runtime 快照。
+  - 用途：桌面 UI 在不发 HTTP 请求时获取 runtime 信息。
+
+### desktop 鉴权与免登录约定
+
+- 使用 desktop 本地 token（启动时生成并持久化到 `WUNDER_TEMPD/config/desktop.settings.json`）。
+- token guard 仅作用于 `/wunder/**` 业务接口；静态页与引导接口可无 token 访问。
+- 桌面模式会在 `index.html` 注入 runtime，并写入 `localStorage.access_token`；用户侧无需登录流程即可进入 `/desktop/home`。
+- 支持从以下位置携带 token：
+  - `x-api-key`
+  - `Authorization: Bearer <token>`
+  - `sec-websocket-protocol` 中的 `wunder-auth.<token>`
+  - 查询参数 `access_token` / `api_key`
+
+### desktop 会话请求扩展
+
+- `POST /wunder/chat/sessions/{id}/messages`
+  - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+- `WS /wunder/chat/ws` 的 `start` payload
+  - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+- 当携带 `tool_call_mode` 时，服务端会在本次请求中生成 `config_overrides.llm.models.<default>.tool_call_mode`，仅影响当前轮请求。
 
 ### desktop 暴露路由范围（当前）
 
-- 包含：chat/chat_ws/core/core_ws/workspace/user_tools/user_agents/user_channels/mcp/temp_dir
-- 不包含：admin/channel/gateway/cron/a2a 等管理或多租户侧路由
+- 包含：`auth/chat/chat_ws/core/core_ws/external_links/workspace/user_tools/user_agents/user_channels/mcp/temp_dir`
+- 不包含：`admin/channel/gateway/cron/a2a` 等管理或多租户路由
+
+### 前端托管约定
+
+- 默认托管目录：`frontend/dist`（支持 `--frontend-root` 自定义）。
+- `GET /`、`GET /index.html`、`GET /{*path}` 回退到前端 `index.html`。
+- 服务端在 `index.html` 注入 `window.__WUNDER_DESKTOP_RUNTIME__`，并写入 `localStorage.access_token`，确保用户端前端可直接进入会话。
 
 ### 启动期目录与持久化
 
@@ -2437,3 +2471,5 @@
 - `WUNDER_TEMPD/config/desktop.settings.json`
 - `WUNDER_TEMPD/user_tools/*`
 - `WUNDER_TEMPD/vector_knowledge/*`
+
+

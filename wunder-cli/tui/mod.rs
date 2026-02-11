@@ -1,9 +1,9 @@
-﻿mod app;
+mod app;
 mod ui;
 
 use anyhow::Result;
 use app::TuiApp;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -45,7 +45,7 @@ async fn run_loop(
     app: &mut TuiApp,
 ) -> Result<()> {
     loop {
-        app.drain_stream_events();
+        app.drain_stream_events().await;
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         if app.should_quit() {
@@ -53,10 +53,14 @@ async fn run_loop(
         }
 
         if event::poll(Duration::from_millis(40))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     app.on_key(key).await?;
                 }
+                Event::Mouse(mouse) => {
+                    app.on_mouse(mouse);
+                }
+                _ => {}
             }
         }
     }
@@ -66,7 +70,7 @@ async fn run_loop(
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -75,7 +79,11 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }

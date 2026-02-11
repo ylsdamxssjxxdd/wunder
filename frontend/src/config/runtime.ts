@@ -1,7 +1,23 @@
+import { getDesktopRuntime } from '@/config/desktop';
+
 const DEFAULT_FALLBACK_BASE = 'http://localhost:18000/wunder';
 
 type RuntimeConfig = {
   api_base: string;
+  ws_base: string;
+  token: string;
+  user_id: string;
+  mode: string;
+  workspace_root: string;
+};
+
+const EMPTY_RUNTIME: RuntimeConfig = {
+  api_base: '',
+  ws_base: '',
+  token: '',
+  user_id: '',
+  mode: '',
+  workspace_root: ''
 };
 
 let cachedConfig: RuntimeConfig | null = null;
@@ -9,6 +25,8 @@ let loadPromise: Promise<RuntimeConfig> | null = null;
 
 const asRecord = (raw: unknown): Record<string, unknown> =>
   raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+
+const asString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 const normalizeConfig = (raw: unknown): RuntimeConfig => {
   const source = asRecord(raw);
@@ -21,7 +39,27 @@ const normalizeConfig = (raw: unknown): RuntimeConfig => {
     source.apiUrl ||
     '';
   return {
-    api_base: typeof apiBase === 'string' ? apiBase.trim() : ''
+    api_base: asString(apiBase),
+    ws_base: asString(source.ws_base || source.wsBase),
+    token: asString(source.token),
+    user_id: asString(source.user_id || source.userId),
+    mode: asString(source.mode),
+    workspace_root: asString(source.workspace_root || source.workspaceRoot)
+  };
+};
+
+const mergeDesktopFallback = (runtime: RuntimeConfig): RuntimeConfig => {
+  const desktopRuntime = getDesktopRuntime();
+  if (!desktopRuntime) {
+    return runtime;
+  }
+  return {
+    api_base: runtime.api_base || desktopRuntime.api_base,
+    ws_base: runtime.ws_base || desktopRuntime.ws_base,
+    token: runtime.token || desktopRuntime.token,
+    user_id: runtime.user_id || desktopRuntime.user_id,
+    mode: runtime.mode || desktopRuntime.mode,
+    workspace_root: runtime.workspace_root || desktopRuntime.workspace_root
   };
 };
 
@@ -33,26 +71,30 @@ export const loadRuntimeConfig = async (): Promise<RuntimeConfig> => {
     try {
       const response = await fetch('/config.json', { cache: 'no-store' });
       if (!response.ok) {
-        cachedConfig = { api_base: '' };
+        cachedConfig = mergeDesktopFallback({ ...EMPTY_RUNTIME });
         return cachedConfig;
       }
       const payload = await response.json();
-      cachedConfig = normalizeConfig(payload);
+      cachedConfig = mergeDesktopFallback(normalizeConfig(payload));
       return cachedConfig;
     } catch {
-      cachedConfig = { api_base: '' };
+      cachedConfig = mergeDesktopFallback({ ...EMPTY_RUNTIME });
       return cachedConfig;
     }
   })();
   return loadPromise;
 };
 
-export const getRuntimeConfig = (): RuntimeConfig => cachedConfig || { api_base: '' };
+export const getRuntimeConfig = (): RuntimeConfig => cachedConfig || { ...EMPTY_RUNTIME };
 
 export const resolveApiBase = (): string => {
   const runtime = cachedConfig?.api_base;
   if (runtime) {
     return runtime;
+  }
+  const desktopRuntime = getDesktopRuntime();
+  if (desktopRuntime?.api_base) {
+    return desktopRuntime.api_base;
   }
   const envBase = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE;
   return envBase || DEFAULT_FALLBACK_BASE;

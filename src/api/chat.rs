@@ -118,6 +118,8 @@ struct SendMessageRequest {
     stream: Option<bool>,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
+    #[serde(default)]
+    tool_call_mode: Option<String>,
 }
 
 async fn chat_transport(
@@ -497,6 +499,7 @@ async fn send_message(
         payload.content,
         payload.stream.unwrap_or(true),
         payload.attachments,
+        payload.tool_call_mode,
     )
     .await?;
     let wants_stream = request.stream;
@@ -581,6 +584,7 @@ pub(crate) async fn build_chat_request(
     content: String,
     stream: bool,
     attachments: Option<Vec<ChatAttachment>>,
+    tool_call_mode: Option<String>,
 ) -> Result<WunderRequest, Response> {
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
@@ -665,6 +669,27 @@ pub(crate) async fn build_chat_request(
         Some(attachments)
     };
 
+    let tool_call_mode = normalize_tool_call_mode(tool_call_mode.as_deref())?;
+    let config_overrides = if let Some(mode) = tool_call_mode {
+        let config = state.config_store.get().await;
+        let selected_model = config.llm.default.trim().to_string();
+        if selected_model.is_empty() {
+            None
+        } else {
+            Some(json!({
+                "llm": {
+                    "models": {
+                        selected_model: {
+                            "tool_call_mode": mode
+                        }
+                    }
+                }
+            }))
+        }
+    } else {
+        None
+    };
+
     Ok(WunderRequest {
         user_id: user.user_id.clone(),
         question: content,
@@ -676,12 +701,26 @@ pub(crate) async fn build_chat_request(
         agent_id: record.agent_id.clone(),
         model_name: None,
         language: Some(i18n::get_language()),
-        config_overrides: None,
+        config_overrides,
         agent_prompt,
         attachments,
         allow_queue: true,
         is_admin: UserStore::is_admin(user),
     })
+}
+
+fn normalize_tool_call_mode(raw: Option<&str>) -> Result<Option<String>, Response> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let normalized = raw.to_ascii_lowercase();
+    if normalized == "tool_call" || normalized == "function_call" {
+        return Ok(Some(normalized));
+    }
+    Err(error_response(
+        StatusCode::BAD_REQUEST,
+        "invalid tool_call_mode, expected tool_call or function_call".to_string(),
+    ))
 }
 
 async fn resume_session(

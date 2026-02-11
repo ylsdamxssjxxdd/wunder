@@ -332,3 +332,56 @@ desktop 默认配置建议：
 - `docs/API文档.md`：补充 desktop bridge 命令与内部通信协议说明。
 - `docs/系统介绍.md`：补充本地普通用户使用路径与目录结构说明。
 
+
+---
+
+## 13. 当前落地状态（2026-02-11）
+
+### 13.1 已完成（与本轮目标直接对应）
+
+- `wunder-desktop` 默认启动形态已切到 **Tauri GUI**：双击程序直接打开桌面窗口；保留 `--bridge-only` 作为诊断模式。
+- release 版本启用 `windows_subsystem = "windows"`，Windows 双击不再弹出终端窗口。
+- 运行后自动创建 `WUNDER_TEMPD` 与默认 `WUNDER_WORK`，并落盘：
+  - `WUNDER_TEMPD/wunder_desktop.sqlite3`
+  - `WUNDER_TEMPD/config/wunder.override.yaml`
+  - `WUNDER_TEMPD/config/desktop.settings.json`
+- 已复用 `src/` 核心能力：提示词、智能体编排链路、工具系统、MCP/Skills、WS/SSE 流式链路。
+- 桌面端 UI 已回归用户侧前端布局（不再使用桌面专属侧边栏）。
+  - 聊天页复用 `ChatView`
+  - 智能体应用页复用 `PortalView`
+  - 设置页复用 `SettingsView`，并提供 MCP/Skills 入口与 `tool_call/function_call` 切换
+- desktop 模式默认免登录：
+  - 注入 `window.__WUNDER_DESKTOP_RUNTIME__`
+  - 自动写入 `localStorage.access_token`
+  - 路由默认进入 `/desktop/home`
+- 已补齐运行时引导接口：`GET /config.json` 与 `GET /wunder/desktop/bootstrap`。
+- 已提供 Tauri command：`desktop_runtime_info`（前端可直接读取 runtime 快照）。
+- Tauri 相关工程资产已统一收敛到 wunder-desktop/（含 build.rs、tauri.conf.json、capabilities/、icons/）。
+- 已支持 `--workspace`、`--temp-root`、`--frontend-root`、`--user`、`--bridge-only` 等运行参数。
+
+### 13.2 协议与链路更新
+
+- 聊天请求新增可选字段 `tool_call_mode`（`tool_call` / `function_call`）：
+  - `POST /wunder/chat/sessions/{id}/messages`
+  - `WS /wunder/chat/ws` 的 `start` payload
+- 服务端会基于该字段生成本次请求的 `config_overrides.llm.models.<default>.tool_call_mode`，用于请求级协议切换。
+
+### 13.3 已验证结果
+
+- `npm run typecheck`（frontend）通过。
+- `npm run build`（frontend）通过。
+- `cargo check --bin wunder-server --bin wunder-cli --bin wunder-desktop` 通过。
+- `cargo clippy --bin wunder-server --bin wunder-desktop -- -D warnings` 通过。
+- 本地 smoke 测试通过：
+  - `/config.json` 与 `/wunder/desktop/bootstrap` 返回 `mode=desktop` 和 runtime 信息；
+  - `/wunder/chat/transport` 无 token 为 `401`，携带 token 可成功返回；
+  - `/` 返回注入后的前端首页并包含 `__WUNDER_DESKTOP_RUNTIME__`。
+
+### 13.4 当前范围说明
+
+- 本轮已完成“本地普通用户双击可用”的 desktop 主链路落地（Tauri 桌面窗口 + 本地 bridge + 免登录 UI）。
+- 安装器、自动升级、更多原生系统集成（托盘/通知/文件关联）可作为后续增强，不影响当前单二进制可用性。
+
+
+
+

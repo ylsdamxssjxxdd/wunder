@@ -95,7 +95,7 @@ impl Default for ServerConfig {
             host: "0.0.0.0".to_string(),
             port: 8000,
             stream_chunk_size: 1024,
-            max_active_sessions: 30,
+            max_active_sessions: 300,
             chat_stream_channel: default_chat_stream_channel(),
             mode: "api".to_string(),
         }
@@ -382,11 +382,11 @@ fn default_agent_swarm_runner() -> String {
 }
 
 fn default_agent_swarm_max_active_team_runs() -> usize {
-    32
+    256
 }
 
 fn default_agent_swarm_max_parallel_tasks_per_team() -> usize {
-    16
+    256
 }
 
 fn default_agent_swarm_default_timeout_s() -> u64 {

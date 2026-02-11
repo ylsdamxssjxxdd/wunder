@@ -40,7 +40,6 @@ impl CliRuntime {
         let base_config = prepare_base_config_path(global, &repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
-        let prompts_root = repo_root.join("prompts");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
         let vector_root = temp_root.join("vector_knowledge");
@@ -48,7 +47,6 @@ impl CliRuntime {
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
-        set_env_path_if_exists("WUNDER_PROMPTS_ROOT", &prompts_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
@@ -95,6 +93,40 @@ impl CliRuntime {
 
     pub fn sessions_file(&self) -> PathBuf {
         self.temp_root.join("sessions/current_session.json")
+    }
+
+    pub fn extra_prompt_file(&self) -> PathBuf {
+        self.temp_root.join("config/extra_prompt.txt")
+    }
+
+    pub fn load_extra_prompt(&self) -> Option<String> {
+        let path = self.extra_prompt_file();
+        let text = fs::read_to_string(path).ok()?;
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned.to_string())
+        }
+    }
+
+    pub fn save_extra_prompt(&self, prompt: &str) -> Result<()> {
+        let cleaned = prompt.trim();
+        if cleaned.is_empty() {
+            return Err(anyhow!("extra prompt is empty"));
+        }
+        fs::write(self.extra_prompt_file(), cleaned.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn clear_extra_prompt(&self) -> Result<()> {
+        let path = self.extra_prompt_file();
+        if let Err(err) = fs::remove_file(path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err.into());
+            }
+        }
+        Ok(())
     }
 
     pub fn load_saved_session(&self) -> Option<String> {

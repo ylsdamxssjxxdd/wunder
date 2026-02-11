@@ -45,6 +45,8 @@ struct WsStartPayload {
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
     #[serde(default)]
+    tool_call_mode: Option<String>,
+    #[serde(default)]
     session_id: Option<String>,
 }
 
@@ -311,6 +313,7 @@ async fn handle_ws(
                             payload.content,
                             stream,
                             payload.attachments,
+                            payload.tool_call_mode,
                         )
                         .await
                         {

@@ -1,66 +1,91 @@
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod args;
+mod bridge;
 mod runtime;
 
 use anyhow::{anyhow, Context, Result};
 use args::DesktopArgs;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, HeaderMap, Method, Request, StatusCode};
-use axum::middleware::{from_fn_with_state, Next};
-use axum::response::{IntoResponse, Response};
+use bridge::{DesktopBridge, DesktopRuntimeInfo};
 use clap::Parser;
-use runtime::DesktopRuntime;
-use serde_json::json;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
-use tracing::info;
+use std::process::Command;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Clone)]
-struct DesktopGuardState {
-    token: String,
+struct DesktopAppState {
+    runtime: DesktopRuntimeInfo,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[tauri::command]
+fn desktop_runtime_info(state: tauri::State<'_, DesktopAppState>) -> DesktopRuntimeInfo {
+    state.runtime.clone()
+}
+
+fn main() -> Result<()> {
     init_tracing();
     let args = DesktopArgs::parse();
-    let runtime = DesktopRuntime::init(&args).await?;
 
-    let guard_state = Arc::new(DesktopGuardState {
-        token: runtime.desktop_token.clone(),
-    });
-
-    let app = wunder_server::build_desktop_router(runtime.state.clone())
-        .layer(from_fn_with_state(guard_state, desktop_token_guard))
-        .layer(TraceLayer::new_for_http())
-        .layer(build_cors())
-        .with_state(runtime.state.clone());
-
-    let bind_host = sanitize_host(&args.host)?;
-    let bind_addr = format!("{bind_host}:{}", args.port);
-    let listener = tokio::net::TcpListener::bind(bind_addr.as_str())
-        .await
-        .with_context(|| format!("bind desktop bridge failed: {bind_addr}"))?;
-    let local_addr = listener
-        .local_addr()
-        .context("resolve desktop bridge local addr failed")?;
-
-    print_runtime_banner(&runtime, local_addr, args.print_token);
-
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(wunder_server::shutdown::shutdown_signal());
-
-    if let Err(err) = server.await {
-        return Err(anyhow!("desktop bridge exited with error: {err}"));
+    if args.bridge_only {
+        return run_bridge_only(args);
     }
 
-    Ok(())
+    run_gui(args)
+}
+
+fn run_bridge_only(args: DesktopArgs) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("create tokio runtime failed")?;
+
+    rt.block_on(async move {
+        let mut bridge = DesktopBridge::launch(&args).await?;
+        bridge.print_banner(args.print_token);
+        if args.open {
+            open_external_browser(&bridge.info().web_base)?;
+        }
+        wunder_server::shutdown::shutdown_signal().await;
+        bridge.shutdown().await;
+        Ok(())
+    })
+}
+
+fn run_gui(args: DesktopArgs) -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("create tokio runtime failed")?;
+    let mut bridge = rt.block_on(DesktopBridge::launch(&args))?;
+
+    let runtime_info = bridge.info().clone();
+    if args.print_token {
+        println!("desktop_token={}", runtime_info.token);
+    }
+
+    let web_url = runtime_info.web_base.clone();
+    let run_result = tauri::Builder::default()
+        .manage(DesktopAppState {
+            runtime: runtime_info,
+        })
+        .invoke_handler(tauri::generate_handler![desktop_runtime_info])
+        .setup(move |app| {
+            let external = url::Url::parse(&web_url)
+                .with_context(|| format!("invalid desktop web url: {web_url}"))?;
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(external))
+                .title("Wunder Desktop")
+                .inner_size(1360.0, 860.0)
+                .min_inner_size(1024.0, 700.0)
+                .resizable(true)
+                .center()
+                .build()
+                .map_err(|err| anyhow!("create desktop window failed: {err}"))?;
+            Ok(())
+        })
+        .run(tauri::generate_context!("wunder-desktop/tauri.conf.json"));
+
+    rt.block_on(bridge.shutdown());
+    run_result.map_err(|err| anyhow!("tauri runtime exited with error: {err}"))
 }
 
 fn init_tracing() {
@@ -68,126 +93,27 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
-fn sanitize_host(host: &str) -> Result<String> {
-    let cleaned = host.trim();
-    if cleaned.is_empty() {
-        return Ok("127.0.0.1".to_string());
-    }
-    if cleaned.contains(' ') {
-        return Err(anyhow!("invalid host: {cleaned}"));
-    }
-    Ok(cleaned.to_string())
-}
-
-fn build_cors() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-}
-
-fn print_runtime_banner(runtime: &DesktopRuntime, addr: SocketAddr, print_token: bool) {
-    let api_base = format!("http://{addr}/wunder");
-    info!("wunder-desktop ready: {api_base}");
-
-    println!("wunder-desktop ready");
-    println!("- api_base: {api_base}");
-    println!("- app_dir: {}", runtime.app_dir.to_string_lossy());
-    println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
-    println!(
-        "- workspace_root: {}",
-        runtime.workspace_root.to_string_lossy()
-    );
-    println!("- repo_root: {}", runtime.repo_root.to_string_lossy());
-    println!("- user_id: {}", runtime.user_id);
-
-    if print_token {
-        println!("- desktop_token: {}", runtime.desktop_token);
-    } else {
-        println!("- desktop_token: {}", mask_token(&runtime.desktop_token));
-        println!("  (use --print-token to print full token)");
-    }
-}
-
-fn mask_token(token: &str) -> String {
-    if token.len() <= 10 {
-        return "********".to_string();
-    }
-    let head = &token[..6];
-    let tail = &token[token.len().saturating_sub(4)..];
-    format!("{head}****{tail}")
-}
-
-async fn desktop_token_guard(
-    State(state): State<Arc<DesktopGuardState>>,
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if request.method() == Method::OPTIONS {
-        return Ok(next.run(request).await);
-    }
-
-    let provided = extract_request_token(request.headers(), request.uri().query());
-    if provided.as_deref() == Some(state.token.as_str()) {
-        return Ok(next.run(request).await);
-    }
-
-    Ok((
-        StatusCode::UNAUTHORIZED,
-        axum::Json(json!({
-            "error": "UNAUTHORIZED",
-            "message": "invalid desktop token"
-        })),
-    )
-        .into_response())
-}
-
-fn extract_request_token(headers: &HeaderMap, query: Option<&str>) -> Option<String> {
-    if let Some(value) = headers
-        .get("x-api-key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+fn open_external_browser(web_base: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
     {
-        return Some(value.to_string());
+        Command::new("cmd")
+            .args(["/C", "start", "", web_base])
+            .spawn()
+            .with_context(|| format!("open browser failed: {web_base}"))?;
     }
-
-    if let Some(value) = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    #[cfg(target_os = "macos")]
     {
-        if let Some(token) = value.strip_prefix("Bearer ") {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
-        }
+        Command::new("open")
+            .arg(web_base)
+            .spawn()
+            .with_context(|| format!("open browser failed: {web_base}"))?;
     }
-
-    if let Some(value) = headers
-        .get("sec-websocket-protocol")
-        .and_then(|value| value.to_str().ok())
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        for item in value.split(',') {
-            let item = item.trim();
-            if let Some(token) = item.strip_prefix("wunder-auth.") {
-                let token = token.trim();
-                if !token.is_empty() {
-                    return Some(token.to_string());
-                }
-            }
-        }
+        Command::new("xdg-open")
+            .arg(web_base)
+            .spawn()
+            .with_context(|| format!("open browser failed: {web_base}"))?;
     }
-
-    if let Some(query) = query {
-        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
-            if (key == "access_token" || key == "api_key") && !value.trim().is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-
-    None
+    Ok(())
 }

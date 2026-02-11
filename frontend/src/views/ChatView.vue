@@ -642,6 +642,7 @@ import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { resolveUserBasePath } from '@/utils/basePath';
 
 const router = useRouter();
 const route = useRoute();
@@ -656,7 +657,7 @@ const currentUserUnitLabel = computed(() => {
 });
 // 演示模式用于快速体验
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
-const basePath = computed(() => (demoMode.value ? '/demo' : '/app'));
+const basePath = computed(() => resolveUserBasePath(route.path));
 const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
 const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
 const featureTransportText = computed(() =>
@@ -1620,6 +1621,10 @@ const handleMessageClick = async (event) => {
 };
 
 const handleLogout = () => {
+  if (basePath.value === '/desktop') {
+    router.push('/desktop/home');
+    return;
+  }
   if (demoMode.value) {
     router.push('/login');
     return;

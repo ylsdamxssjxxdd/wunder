@@ -20,9 +20,11 @@ import AdminAgentsView from '@/views/AdminAgentsView.vue';
 import AdminSystemView from '@/views/AdminSystemView.vue';
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
+import { isDesktopModeEnabled } from '@/config/desktop';
 
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
+const DESKTOP_HOME_PATH = '/desktop/home';
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
@@ -47,15 +49,15 @@ const isAuthRequiredError = (error: unknown): boolean => {
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: () => (hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH)
+    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH)
   },
   {
     path: '/home',
-    redirect: USER_BEEHIVE_PATH
+    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : USER_BEEHIVE_PATH)
   },
   {
     path: '/portal',
-    redirect: '/home'
+    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : '/home')
   },
   {
     path: '/login',
@@ -66,6 +68,22 @@ const routes: RouteRecordRaw[] = [
     path: '/register',
     name: 'register',
     component: RegisterView
+  },
+  {
+    path: '/desktop',
+    component: UserLayout,
+    redirect: DESKTOP_HOME_PATH,
+    children: [
+      { path: 'home', name: 'desktop-home', component: PortalView },
+      { path: 'external/:linkId', name: 'desktop-external-app', component: ExternalAppView },
+      { path: 'tools', name: 'desktop-tools', component: ToolManagerView },
+      { path: 'cron', name: 'desktop-cron', component: CronManagerView },
+      { path: 'channels', name: 'desktop-channels', component: ChannelManagerView },
+      { path: 'chat', name: 'desktop-chat', component: ChatView },
+      { path: 'workspace', name: 'desktop-workspace', component: WorkspaceView },
+      { path: 'settings', name: 'desktop-settings', component: SettingsView },
+      { path: 'profile', name: 'desktop-profile', component: ProfileView }
+    ]
   },
   {
     path: '/app',
@@ -124,13 +142,42 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
-  // Enable demo mode only for /demo routes.
-  if (to.path.startsWith('/demo')) {
+  const desktopMode = isDesktopModeEnabled();
+
+  if (!desktopMode && to.path.startsWith('/desktop')) {
+    return hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH;
+  }
+
+  if (to.path.startsWith('/demo') && !desktopMode) {
     enableDemoMode();
     const authStore = useAuthStore();
     await authStore.loadProfile();
   } else {
     disableDemoMode();
+  }
+
+  if (desktopMode && !to.path.startsWith('/admin')) {
+    if (to.path.startsWith('/desktop')) {
+      const authStore = useAuthStore();
+      if (!authStore.user) {
+        try {
+          await authStore.loadProfile();
+        } catch {
+          // Ignore initial desktop profile load failures.
+        }
+      }
+      return true;
+    }
+    if (to.path === '/app') {
+      return DESKTOP_HOME_PATH;
+    }
+    if (to.path.startsWith('/app/')) {
+      return to.fullPath.replace(/^\/app\//, '/desktop/');
+    }
+    if (to.path === '/home' || to.path === '/portal') {
+      return DESKTOP_HOME_PATH;
+    }
+    return DESKTOP_HOME_PATH;
   }
 
   const token = hasAccessToken();
@@ -169,4 +216,3 @@ router.beforeEach(async (to) => {
 });
 
 export default router;
-

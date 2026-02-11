@@ -183,6 +183,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-kor \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Tauri (Linux, GTK/WebKit) build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libjavascriptcoregtk-4.1-dev \
+    libsoup-3.0-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]

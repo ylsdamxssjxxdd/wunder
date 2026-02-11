@@ -22,6 +22,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
 use wunder_server::config::{Config, LlmModelConfig};
+use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_window};
 use wunder_server::schemas::WunderRequest;
 use wunder_server::skills::load_skills;
 use wunder_server::tools::{
@@ -30,6 +31,8 @@ use wunder_server::tools::{
 use wunder_server::user_tools::UserMcpServer;
 
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
+const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
+const CONFIG_SLASH_USAGE: &str = "/config [<base_url> <api_key> <model> [max_context|auto]]";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -181,7 +184,12 @@ async fn run_chat_loop(
         let input = if let Some(prompt) = first.take() {
             prompt
         } else {
-            read_line("wunder> ")?
+            let line = read_line("wunder> ")?;
+            if line.is_empty() {
+                println!();
+                break;
+            }
+            line
         };
 
         let trimmed = input.trim();
@@ -228,7 +236,11 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Session => {
-            println!("current session: {session_id}");
+            print_session_stats(runtime, global, session_id.as_str()).await?;
+            Ok(false)
+        }
+        SlashCommand::System => {
+            handle_slash_system(runtime, global, session_id.as_str(), command.args).await?;
             Ok(false)
         }
         SlashCommand::New => {
@@ -238,7 +250,7 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Config => {
-            config_interactive_setup(runtime, global).await?;
+            config_setup_from_slash(runtime, global, command.args).await?;
             Ok(false)
         }
         SlashCommand::ConfigShow => {
@@ -255,6 +267,110 @@ async fn handle_chat_slash_command(
         }
         SlashCommand::Exit | SlashCommand::Quit => Ok(true),
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionStatsSnapshot {
+    pub context_used_tokens: i64,
+    pub context_peak_tokens: i64,
+    pub model_calls: u64,
+    pub tool_calls: u64,
+    pub tool_results: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tokens: u64,
+}
+
+fn stream_event_payload(record: &Value) -> &Value {
+    let data = record.get("data").unwrap_or(record);
+    data.get("data").unwrap_or(data)
+}
+
+fn context_left_percent(used_tokens: i64, max_context: Option<u32>) -> Option<u32> {
+    let total = u64::from(max_context?.max(1));
+    let used = used_tokens.max(0) as u64;
+    let left = total.saturating_sub(used);
+    Some(((left as f64 / total as f64) * 100.0).round() as u32)
+}
+
+pub(crate) async fn load_session_stats(
+    runtime: &CliRuntime,
+    session_id: &str,
+) -> SessionStatsSnapshot {
+    let storage = runtime.state.storage.clone();
+    let session_id_for_load = session_id.to_string();
+    let mut stats = tokio::task::spawn_blocking(move || -> Result<SessionStatsSnapshot> {
+        let mut output = SessionStatsSnapshot::default();
+        let max_event_id = storage.get_max_stream_event_id(&session_id_for_load)?;
+        if max_event_id <= 0 {
+            return Ok(output);
+        }
+        let limit = max_event_id.saturating_add(64).max(1);
+        let events = storage.load_stream_events(&session_id_for_load, 0, limit)?;
+        for record in events {
+            let event_name = record
+                .get("event")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let payload = stream_event_payload(&record);
+            match event_name {
+                "context_usage" => {
+                    if let Some(tokens) = payload.get("context_tokens").and_then(Value::as_i64) {
+                        output.context_used_tokens = tokens.max(0);
+                        output.context_peak_tokens = output.context_peak_tokens.max(tokens.max(0));
+                    }
+                }
+                "llm_request" => {
+                    output.model_calls = output.model_calls.saturating_add(1);
+                }
+                "tool_call" => {
+                    output.tool_calls = output.tool_calls.saturating_add(1);
+                }
+                "tool_result" => {
+                    output.tool_results = output.tool_results.saturating_add(1);
+                }
+                "token_usage" => {
+                    output.total_input_tokens = output.total_input_tokens.saturating_add(
+                        payload
+                            .get("input_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    );
+                    output.total_output_tokens = output.total_output_tokens.saturating_add(
+                        payload
+                            .get("output_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    );
+                    output.total_tokens = output.total_tokens.saturating_add(
+                        payload
+                            .get("total_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    );
+                }
+                _ => {}
+            }
+        }
+        Ok(output)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+
+    let workspace_tokens = runtime
+        .state
+        .workspace
+        .load_session_context_tokens_async(&runtime.user_id, session_id)
+        .await
+        .max(0);
+    stats.context_peak_tokens = stats.context_peak_tokens.max(workspace_tokens);
+    if stats.context_used_tokens <= 0 {
+        stats.context_used_tokens = workspace_tokens;
+    }
+
+    stats
 }
 
 async fn print_runtime_status(
@@ -275,16 +391,142 @@ async fn print_runtime_status(
         .and_then(|model| model.max_rounds)
         .unwrap_or(CLI_MIN_MAX_ROUNDS)
         .max(CLI_MIN_MAX_ROUNDS);
+    let max_context = model_entry
+        .and_then(|model| model.max_context)
+        .filter(|value| *value > 0);
+    let stats = load_session_stats(runtime, session_id).await;
 
     println!("status");
     println!("- session: {session_id}");
     println!("- model: {model_name}");
     println!("- tool_call_mode: {tool_call_mode}");
     println!("- max_rounds: {max_rounds}");
+    if let Some(total) = max_context {
+        let used = stats.context_used_tokens.max(0) as u64;
+        let left = context_left_percent(stats.context_used_tokens, Some(total)).unwrap_or(0);
+        println!("- context: {used}/{total} ({left}% left)");
+    } else {
+        println!("- context: {}/unknown", stats.context_used_tokens.max(0));
+    }
     println!("- workspace: {}", config.workspace.root);
     println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
     println!("- db_path: {}", config.storage.db_path);
     Ok(())
+}
+
+async fn print_session_stats(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &str,
+) -> Result<()> {
+    let config = runtime.state.config_store.get().await;
+    let model_name = runtime
+        .resolve_model_name(global.model.as_deref())
+        .await
+        .unwrap_or_else(|| "<none>".to_string());
+    let model_entry = config.llm.models.get(&model_name);
+    let max_context = model_entry
+        .and_then(|model| model.max_context)
+        .filter(|value| *value > 0);
+    let stats = load_session_stats(runtime, session_id).await;
+
+    println!("session");
+    println!("- id: {session_id}");
+    println!("- model: {model_name}");
+    if let Some(total) = max_context {
+        let used = stats.context_used_tokens.max(0) as u64;
+        let left = context_left_percent(stats.context_used_tokens, Some(total)).unwrap_or(0);
+        println!("- context: {used}/{total} ({left}% left)");
+    } else {
+        println!("- context: {}/unknown", stats.context_used_tokens.max(0));
+    }
+    println!("- model_calls: {}", stats.model_calls);
+    println!("- tool_calls: {}", stats.tool_calls);
+    println!("- tool_results: {}", stats.tool_results);
+    println!(
+        "- token_usage: input={} output={} total={}",
+        stats.total_input_tokens, stats.total_output_tokens, stats.total_tokens
+    );
+    Ok(())
+}
+
+async fn handle_slash_system(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &str,
+    args: &str,
+) -> Result<()> {
+    let cleaned = args.trim();
+    if cleaned.eq_ignore_ascii_case("clear") {
+        runtime.clear_extra_prompt()?;
+        println!("extra prompt cleared");
+        return Ok(());
+    }
+    if let Some(rest) = cleaned.strip_prefix("set ") {
+        let prompt = rest.trim();
+        if prompt.is_empty() {
+            println!("[error] extra prompt is empty");
+            println!("usage: /system [set <extra_prompt>|clear]");
+            return Ok(());
+        }
+        runtime.save_extra_prompt(prompt)?;
+        println!("extra prompt saved ({} chars)", prompt.chars().count());
+    } else if !cleaned.is_empty() && !cleaned.eq_ignore_ascii_case("show") {
+        println!("[error] invalid /system args");
+        println!("usage: /system [set <extra_prompt>|clear]");
+        return Ok(());
+    }
+
+    let prompt = build_current_system_prompt(runtime, global).await?;
+    let extra = runtime.load_extra_prompt();
+    println!("system");
+    println!("- session: {session_id}");
+    println!(
+        "- extra_prompt: {}",
+        extra
+            .as_ref()
+            .map(|value| format!("enabled ({} chars)", value.chars().count()))
+            .unwrap_or_else(|| "none".to_string())
+    );
+    println!("--- system prompt ---");
+    println!("{prompt}");
+    println!("--- end system prompt ---");
+    Ok(())
+}
+
+pub(crate) async fn build_current_system_prompt(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+) -> Result<String> {
+    let config = runtime.state.config_store.get().await;
+    let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
+    let request_overrides =
+        build_request_overrides(&config, model_name.as_deref(), global.tool_call_mode);
+    let skills = runtime.state.skills.read().await.clone();
+    let user_tool_bindings =
+        runtime
+            .state
+            .user_tool_manager
+            .build_bindings(&config, &skills, &runtime.user_id);
+    let workspace_id = runtime
+        .state
+        .workspace
+        .scoped_user_id(&runtime.user_id, None);
+    Ok(runtime
+        .state
+        .orchestrator
+        .build_system_prompt(
+            &config,
+            &[],
+            &skills,
+            Some(&user_tool_bindings),
+            &runtime.user_id,
+            false,
+            &workspace_id,
+            request_overrides.as_ref(),
+            runtime.load_extra_prompt().as_deref(),
+        )
+        .await)
 }
 
 async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &str) -> Result<()> {
@@ -345,7 +587,12 @@ async fn show_model_status(runtime: &CliRuntime, global: &GlobalArgs) -> Result<
             .and_then(|model| model.max_rounds)
             .unwrap_or(CLI_MIN_MAX_ROUNDS)
             .max(CLI_MIN_MAX_ROUNDS);
-        println!("{marker} {name} ({mode}, max_rounds={max_rounds})");
+        let max_context = model_entry
+            .and_then(|model| model.max_context)
+            .filter(|value| *value > 0)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        println!("{marker} {name} ({mode}, max_rounds={max_rounds}, max_context={max_context})");
     }
     Ok(())
 }
@@ -770,6 +1017,145 @@ async fn handle_config(
     }
 }
 
+async fn config_setup_from_slash(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    args: &str,
+) -> Result<()> {
+    let cleaned = args.trim();
+    if cleaned.is_empty() {
+        return config_interactive_setup(runtime, global).await;
+    }
+
+    let values = match shell_words::split(cleaned) {
+        Ok(parts) => parts,
+        Err(err) => {
+            println!("[error] failed to parse /config args: {err}");
+            println!("usage: {CONFIG_SLASH_USAGE}");
+            return Ok(());
+        }
+    };
+
+    if !(values.len() == 3 || values.len() == 4) {
+        println!("[error] invalid /config args");
+        println!("usage: {CONFIG_SLASH_USAGE}");
+        return Ok(());
+    }
+
+    let base_url = values[0].trim();
+    let api_key = values[1].trim();
+    let model_name = values[2].trim();
+    if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
+        println!("[error] /config requires non-empty base_url, api_key and model");
+        println!("usage: {CONFIG_SLASH_USAGE}");
+        return Ok(());
+    }
+
+    let manual_max_context = if let Some(raw) = values.get(3) {
+        match parse_optional_max_context_value(raw) {
+            Ok(value) => value,
+            Err(err) => {
+                println!("[error] {err}");
+                println!("usage: {CONFIG_SLASH_USAGE}");
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
+    let (provider, resolved_max_context) =
+        apply_cli_model_config(runtime, base_url, api_key, model_name, manual_max_context).await?;
+
+    println!("model configured");
+    println!("- provider: {provider}");
+    println!("- base_url: {base_url}");
+    println!("- model: {model_name}");
+    if let Some(value) = resolved_max_context {
+        println!("- max_context: {value}");
+    } else {
+        println!("- max_context: auto probe unavailable (or keep existing)");
+    }
+    println!("- tool_call_mode: tool_call");
+    Ok(())
+}
+
+pub(crate) async fn apply_cli_model_config(
+    runtime: &CliRuntime,
+    base_url: &str,
+    api_key: &str,
+    model_name: &str,
+    manual_max_context: Option<u32>,
+) -> Result<(String, Option<u32>)> {
+    let base_url = base_url.trim().to_string();
+    let api_key = api_key.trim().to_string();
+    let model_name = model_name.trim().to_string();
+    if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
+        return Err(anyhow!("base_url, api_key and model are required"));
+    }
+
+    let provider = infer_provider_from_base_url(&base_url);
+    let resolved_max_context = resolve_model_max_context_value(
+        &provider,
+        &base_url,
+        &api_key,
+        &model_name,
+        manual_max_context,
+    )
+    .await;
+
+    let model_for_update = model_name.clone();
+    let provider_for_update = provider.clone();
+    let base_url_for_update = base_url.clone();
+    let api_key_for_update = api_key.clone();
+
+    runtime
+        .state
+        .config_store
+        .update(move |config| {
+            let entry = config
+                .llm
+                .models
+                .entry(model_for_update.clone())
+                .or_insert_with(|| {
+                    build_cli_llm_model_config(
+                        provider_for_update.as_str(),
+                        base_url_for_update.as_str(),
+                        api_key_for_update.as_str(),
+                        model_for_update.as_str(),
+                    )
+                });
+            entry.enable = Some(true);
+            entry.provider = Some(provider_for_update.clone());
+            entry.base_url = Some(base_url_for_update.clone());
+            entry.api_key = Some(api_key_for_update.clone());
+            entry.model = Some(model_for_update.clone());
+            entry.tool_call_mode = Some("tool_call".to_string());
+            entry.max_rounds = Some(
+                entry
+                    .max_rounds
+                    .unwrap_or(CLI_MIN_MAX_ROUNDS)
+                    .max(CLI_MIN_MAX_ROUNDS),
+            );
+            if let Some(value) = resolved_max_context {
+                entry.max_context = Some(value.max(1));
+            }
+            if entry
+                .model_type
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                entry.model_type = Some("llm".to_string());
+            }
+            config.llm.default = model_for_update.clone();
+        })
+        .await?;
+
+    Ok((provider, resolved_max_context))
+}
+
 async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let config = runtime.state.config_store.get().await;
     let model = runtime.resolve_model_name(global.model.as_deref()).await;
@@ -781,6 +1167,11 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         .and_then(|model| model.max_rounds)
         .unwrap_or(CLI_MIN_MAX_ROUNDS)
         .max(CLI_MIN_MAX_ROUNDS);
+    let max_context = model_entry
+        .and_then(|model| model.max_context)
+        .filter(|value| *value > 0);
+    let session_id = runtime.resolve_session(global.session.as_deref());
+    let stats = load_session_stats(runtime, &session_id).await;
 
     let payload = json!({
         "launch_dir": runtime.launch_dir,
@@ -792,6 +1183,9 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         "model": model,
         "tool_call_mode": tool_call_mode,
         "max_rounds": max_rounds,
+        "max_context": max_context,
+        "context_used": stats.context_used_tokens.max(0),
+        "context_left_percent": context_left_percent(stats.context_used_tokens, max_context),
         "override_path": runtime.temp_root.join("config/wunder.override.yaml"),
     });
     println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -843,7 +1237,7 @@ async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> 
     if let Some(model) = runtime.resolve_model_name(global.model.as_deref()).await {
         println!("current model: {model}");
     }
-    println!("configure llm model (press Enter on any field to cancel)");
+    println!("configure llm model (press Enter on required field to cancel)");
 
     let Some(base_url) = prompt_config_value("base_url: ")? else {
         println!("config cancelled");
@@ -857,60 +1251,63 @@ async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> 
         println!("config cancelled");
         return Ok(());
     };
+    let manual_max_context = parse_optional_max_context_value(
+        read_line("max_context (optional, Enter for auto probe): ")?.as_str(),
+    )?;
 
-    let provider = infer_provider_from_base_url(&base_url);
-    let model_for_update = model_name.clone();
-    let provider_for_update = provider.clone();
-    let base_url_for_update = base_url.clone();
-    let api_key_for_update = api_key.clone();
-
-    runtime
-        .state
-        .config_store
-        .update(move |config| {
-            let entry = config
-                .llm
-                .models
-                .entry(model_for_update.clone())
-                .or_insert_with(|| {
-                    build_cli_llm_model_config(
-                        provider_for_update.as_str(),
-                        base_url_for_update.as_str(),
-                        api_key_for_update.as_str(),
-                        model_for_update.as_str(),
-                    )
-                });
-            entry.enable = Some(true);
-            entry.provider = Some(provider_for_update.clone());
-            entry.base_url = Some(base_url_for_update.clone());
-            entry.api_key = Some(api_key_for_update.clone());
-            entry.model = Some(model_for_update.clone());
-            entry.tool_call_mode = Some("tool_call".to_string());
-            entry.max_rounds = Some(
-                entry
-                    .max_rounds
-                    .unwrap_or(CLI_MIN_MAX_ROUNDS)
-                    .max(CLI_MIN_MAX_ROUNDS),
-            );
-            if entry
-                .model_type
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
-            {
-                entry.model_type = Some("llm".to_string());
-            }
-            config.llm.default = model_for_update.clone();
-        })
-        .await?;
+    let (provider, resolved_max_context) = apply_cli_model_config(
+        runtime,
+        &base_url,
+        &api_key,
+        &model_name,
+        manual_max_context,
+    )
+    .await?;
 
     println!("model configured");
     println!("- provider: {provider}");
     println!("- base_url: {base_url}");
     println!("- model: {model_name}");
+    if let Some(value) = resolved_max_context {
+        println!("- max_context: {value}");
+    } else {
+        println!("- max_context: auto probe unavailable (or keep existing)");
+    }
     println!("- tool_call_mode: tool_call");
     Ok(())
+}
+
+fn parse_optional_max_context_value(raw: &str) -> Result<Option<u32>> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+    let value = cleaned
+        .parse::<u32>()
+        .map_err(|_| anyhow!("max_context must be a positive integer"))?;
+    if value == 0 {
+        return Err(anyhow!("max_context must be greater than 0"));
+    }
+    Ok(Some(value))
+}
+
+pub(crate) async fn resolve_model_max_context_value(
+    provider: &str,
+    base_url: &str,
+    api_key: &str,
+    model_name: &str,
+    manual_value: Option<u32>,
+) -> Option<u32> {
+    if let Some(value) = manual_value.filter(|value| *value > 0) {
+        return Some(value);
+    }
+    if !is_openai_compatible_provider(provider) {
+        return None;
+    }
+    probe_openai_context_window(base_url, api_key, model_name, CLI_CONTEXT_PROBE_TIMEOUT_S)
+        .await
+        .ok()
+        .flatten()
 }
 
 fn prompt_config_value(prompt: &str) -> Result<Option<String>> {
@@ -1059,7 +1456,7 @@ pub(crate) async fn build_wunder_request(
         model_name,
         language: global.language.clone(),
         config_overrides: request_overrides,
-        agent_prompt: None,
+        agent_prompt: runtime.load_extra_prompt(),
         attachments: None,
         allow_queue: true,
         is_admin: false,
@@ -1290,5 +1687,26 @@ mod tests {
         assert!(overrides["llm"]["models"][model_name]["max_rounds"].is_null());
 
         assert!(build_request_overrides(&config, None, None).is_none());
+    }
+
+    #[test]
+    fn parse_optional_max_context_value_supports_auto_and_numbers() {
+        assert_eq!(parse_optional_max_context_value(" ").unwrap(), None);
+        assert_eq!(parse_optional_max_context_value("auto").unwrap(), None);
+        assert_eq!(
+            parse_optional_max_context_value("32768").unwrap(),
+            Some(32768)
+        );
+        assert!(parse_optional_max_context_value("0").is_err());
+        assert!(parse_optional_max_context_value("not-a-number").is_err());
+    }
+
+    #[test]
+    fn context_left_percent_handles_bounds() {
+        assert_eq!(context_left_percent(0, Some(1000)), Some(100));
+        assert_eq!(context_left_percent(250, Some(1000)), Some(75));
+        assert_eq!(context_left_percent(1200, Some(1000)), Some(0));
+        assert_eq!(context_left_percent(-10, Some(1000)), Some(100));
+        assert_eq!(context_left_percent(100, None), None);
     }
 }

@@ -2,7 +2,7 @@ use super::app::{LogKind, TuiApp};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &TuiApp) {
@@ -51,17 +51,62 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
     }
 
     let input_area = vertical[input_index];
-    let input = Paragraph::new(app.input())
+    let inner = inner_rect(input_area);
+    let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
+    let input = Paragraph::new(input_text)
         .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().title(" Input ").borders(Borders::ALL));
+        .block(Block::default().title(" Input ").borders(Borders::ALL))
+        .wrap(Wrap { trim: false });
     frame.render_widget(input, input_area);
 
-    let inner = inner_rect(input_area);
-    if inner.width > 0 {
-        let max_cursor = inner.width.saturating_sub(1) as usize;
-        let cursor = app.cursor_offset().min(max_cursor) as u16;
-        frame.set_cursor_position((inner.x + cursor, inner.y));
+    if inner.width > 0 && inner.height > 0 {
+        let x = inner.x + cursor_x.min(inner.width.saturating_sub(1));
+        let y = inner.y + cursor_y.min(inner.height.saturating_sub(1));
+        frame.set_cursor_position((x, y));
     }
+
+    if app.shortcuts_visible() {
+        draw_shortcuts_modal(frame, frame.area(), app.shortcuts_lines());
+    }
+}
+
+fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
+    if area.width < 8 || area.height < 6 {
+        return;
+    }
+
+    let max_line_width = lines
+        .iter()
+        .map(|line| line.chars().count() as u16)
+        .max()
+        .unwrap_or(0);
+    let width = max_line_width
+        .saturating_add(6)
+        .max(26)
+        .min(area.width.saturating_sub(2));
+    let content_height = lines.len() as u16;
+    let height = content_height
+        .saturating_add(4)
+        .max(8)
+        .min(area.height.saturating_sub(2));
+
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+
+    frame.render_widget(Clear, popup);
+    let widget = Paragraph::new(lines.join("\n"))
+        .block(
+            Block::default()
+                .title(" Shortcuts ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White).bg(Color::Black)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, popup);
 }
 
 fn build_layout(area: Rect, popup_len: usize) -> Vec<Rect> {
@@ -71,7 +116,7 @@ fn build_layout(area: Rect, popup_len: usize) -> Vec<Rect> {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Min(8),
-                Constraint::Length(3),
+                Constraint::Length(6),
             ])
             .split(area)
             .to_vec();
@@ -84,7 +129,7 @@ fn build_layout(area: Rect, popup_len: usize) -> Vec<Rect> {
             Constraint::Length(1),
             Constraint::Min(6),
             Constraint::Length(popup_height),
-            Constraint::Length(3),
+            Constraint::Length(6),
         ])
         .split(area)
         .to_vec()
@@ -102,7 +147,7 @@ fn inner_rect(rect: Rect) -> Rect {
 fn log_line(kind: LogKind, text: String) -> Line<'static> {
     let (prefix, style) = match kind {
         LogKind::Info => (
-            "• ",
+            "- ",
             Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         ),
         LogKind::User => ("you> ", Style::default().fg(Color::LightBlue)),

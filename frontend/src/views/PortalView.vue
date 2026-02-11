@@ -534,6 +534,7 @@ import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { showApiError } from '@/utils/apiError';
+import { resolveUserBasePath } from '@/utils/basePath';
 
 const router = useRouter();
 const route = useRoute();
@@ -759,7 +760,7 @@ const form = reactive({
   icon_color: ''
 });
 
-const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
+const basePath = computed(() => resolveUserBasePath(route.path));
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
 const matchesQuery = (agent, query) => {

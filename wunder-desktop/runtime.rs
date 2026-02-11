@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use wunder_server::config::Config;
 use wunder_server::config_store::ConfigStore;
 use wunder_server::state::{AppState, AppStateInitOptions};
+use wunder_server::storage::UserTokenRecord;
+use wunder_server::user_store::UserStore;
 
 pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
 
@@ -17,7 +19,9 @@ pub struct DesktopRuntime {
     pub state: Arc<AppState>,
     pub app_dir: PathBuf,
     pub temp_root: PathBuf,
+    pub settings_path: PathBuf,
     pub workspace_root: PathBuf,
+    pub frontend_root: Option<PathBuf>,
     pub repo_root: PathBuf,
     pub user_id: String,
     pub desktop_token: String,
@@ -69,7 +73,7 @@ impl DesktopRuntime {
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
 
-        let base_config = prepare_base_config_path(args, &repo_root, &temp_root)?;
+        let base_config = prepare_base_config_path(&repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let prompts_root = repo_root.join("prompts");
@@ -86,7 +90,9 @@ impl DesktopRuntime {
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
+        let user_id = normalize_user_id(args.user.as_deref());
         let desktop_token = settings.desktop_token.clone();
+
         let config_store = ConfigStore::new(override_path);
         let workspace_for_update = workspace_root.clone();
         let temp_root_for_update = temp_root.clone();
@@ -114,17 +120,18 @@ impl DesktopRuntime {
             .context("initialize desktop state failed")?,
         );
         state.lsp_manager.sync_with_config(&config).await;
+        ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
 
-        let user_id = args
-            .user
-            .clone()
-            .unwrap_or_else(|| DESKTOP_DEFAULT_USER_ID.to_string());
+        let frontend_root =
+            resolve_frontend_root(args.frontend_root.as_deref(), &repo_root, &app_dir);
 
         Ok(Self {
             state,
             app_dir,
             temp_root,
+            settings_path,
             workspace_root,
+            frontend_root,
             repo_root,
             user_id,
             desktop_token,
@@ -182,6 +189,30 @@ fn resolve_workspace_root(
     }
 }
 
+fn resolve_frontend_root(
+    arg_frontend_root: Option<&Path>,
+    repo_root: &Path,
+    app_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(path) = arg_frontend_root {
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            app_dir.join(path)
+        };
+        if resolved.exists() {
+            return Some(resolved);
+        }
+        return None;
+    }
+
+    let candidates = [
+        repo_root.join("frontend/dist"),
+        app_dir.join("frontend/dist"),
+    ];
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
 fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
     for dir in [
         temp_root.to_path_buf(),
@@ -226,18 +257,13 @@ fn set_env_path_if_exists(key: &str, value: &Path) {
     }
 }
 
-fn prepare_base_config_path(
-    args: &DesktopArgs,
-    repo_root: &Path,
-    temp_root: &Path,
-) -> Result<PathBuf> {
+fn prepare_base_config_path(repo_root: &Path, temp_root: &Path) -> Result<PathBuf> {
     let repo_config = repo_root.join("config/wunder.yaml");
     if repo_config.exists() {
         return Ok(repo_config);
     }
     let generated = temp_root.join("config/wunder.base.yaml");
     ensure_generated_base_config(&generated)?;
-    let _ = args;
     Ok(generated)
 }
 
@@ -306,6 +332,45 @@ fn apply_desktop_defaults(
     allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
+}
+
+fn normalize_user_id(raw: Option<&str>) -> String {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return DESKTOP_DEFAULT_USER_ID.to_string();
+    };
+    UserStore::normalize_user_id(raw).unwrap_or_else(|| DESKTOP_DEFAULT_USER_ID.to_string())
+}
+
+fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str) -> Result<()> {
+    if state.user_store.get_user_by_id(user_id)?.is_none() {
+        let password = format!("wunder_desktop_{}", uuid::Uuid::new_v4().simple());
+        state.user_store.create_user(
+            user_id,
+            None,
+            &password,
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )?;
+    }
+
+    if desktop_token.trim().is_empty() {
+        return Ok(());
+    }
+
+    let _ = state.storage.delete_user_token(desktop_token);
+    let now = now_ts();
+    let record = UserTokenRecord {
+        token: desktop_token.to_string(),
+        user_id: user_id.to_string(),
+        expires_at: now + 10.0 * 365.0 * 24.0 * 3600.0,
+        created_at: now,
+        last_used_at: now,
+    };
+    state.storage.create_user_token(&record)?;
+    Ok(())
 }
 
 fn resolve_maybe_relative_path(raw: &str, repo_root: &Path, workspace_root: &Path) -> PathBuf {

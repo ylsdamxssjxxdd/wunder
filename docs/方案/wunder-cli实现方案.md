@@ -194,7 +194,7 @@ CLI 初始化时设置：
 - `mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
 - `skills list|enable|disable`：本地 skills 启用状态管理。
 - `config show|set-tool-call-mode`：查看/设置运行配置。
-- 交互内置命令 `/config`：按提示依次输入 base_url / api_key / model，自动写入 override 并设为默认模型。
+- 交互内置命令 `/config`：向导依次输入 `base_url / api_key / model / max_context`（max_context 可留空自动探测），自动写入 override 并设为默认模型。
 - `doctor`：运行时环境诊断。
 
 ## 7.3 默认行为
@@ -208,16 +208,21 @@ CLI 初始化时设置：
 
 ## 7.4 交互态快捷命令
 
-- `/help`：展示交互命令帮助（命令+说明）。
-- `/status`：查看当前会话运行状态（session/model/tool_call_mode/workspace/db）。
-- `/model [name]`：查看当前模型，或将默认模型切到指定名称。
-- `/tool-call-mode <tool_call|function_call> [model]`：快速切换工具调用协议（支持 `/mode` 别名）。
-- `/session`：查看当前会话 id。
+- `/help`：展示交互命令帮助（命令 + 说明）。
+- `/status`：查看当前运行状态（session/model/tool_call_mode/workspace/db）。
+- `/model [name]`：查看当前模型，或切换默认模型。
+- `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换工具调用协议。
+- `/session`：查看当前会话统计（已占用上下文/总上下文、模型调用次数、工具调用次数、token 使用）。
+- `/system [set <extra_prompt>|clear]`：查看当前系统提示词，可设置/清空额外提示词（持久化到 `WUNDER_TEMP/config/extra_prompt.txt`）。
 - `/new`：新建会话并切换。
-- `/config`：TUI 下支持 `/config <base_url> <api_key> <model>` 一次性配置；经典 `chat` 模式支持三段引导输入。
-- `/config show`：打印当前运行配置。
+- `/config`：TUI 与 `chat` 行式模式都支持向导式配置（`base_url -> api_key -> model -> max_context`），`max_context` 可留空自动探测。
+- `/config <base_url> <api_key> <model> [max_context]`：支持一行完成模型配置，方便脚本化。
+- `/config show`：打印当前运行配置（含 `max_context/context_used/context_left_percent`）。
 - `/exit`：退出交互。
-- 未识别 `/xxx` 指令会直接提示 unknown command，并引导使用 `/help`。
+- TUI 顶部状态栏对齐 codex 风格（`? for shortcuts` + `xx% context left`）；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
+- 支持 `?` 快捷键面板与 `Ctrl+N/Ctrl+L/Ctrl+C` 快捷操作（新会话/清屏/退出）。
+- ??????????`Shift+Enter`/`Ctrl+J` ???`Left/Right/Home/End` ?????`Up/Down` ???????????????? `Ctrl+A/E/W/U/K` ? `Alt+B/F` ???/?????
+- 未识别 `/xxx` 指令会明确提示 unknown command，并引导使用 `/help`。
 
 ## 8. 交互与事件输出
 
@@ -276,12 +281,12 @@ CLI 初始化时设置：
 - 搭建 `wunder-cli/` 目录与 `[[bin]]`。
 - 打通 `ask/chat/resume/tool/exec/mcp/skills/config/doctor` 基础命令。
 - 完成 `WUNDER_TEMP` 持久化与单根工作区模式。
-- 完成交互态 `/config` 三段引导配置（base_url/api_key/model）。
+- 完成交互态 `/config` 四段引导配置（`base_url/api_key/model/max_context`），支持上下文窗口自动探测。
 - 修复 SQLite `MAX(event_id)` 在空会话下的 NULL 读取问题，避免流式偏移告警。
 
 ### M2
 
-- 强化交互体验（更接近 codex 的提示与状态输出）。
+- 强化交互体验（更接近 codex 的提示与状态输出，包含顶部 `context left` 指示与鼠标滚轮滚动）。
 - 补齐命令层的错误提示与诊断信息（含 `LLM unavailable` 的 detail 展示）。
 - 增加更多 mcp/skills 管理动作（如导入/测试）。
 
@@ -300,8 +305,13 @@ CLI 初始化时设置：
 - `wunder-cli` 默认可进入交互会话。
 - `WUNDER_TEMP` 目录完整自动创建。
 - `config set-tool-call-mode` 可持久化并可被 `config show` 读取。
-- 交互 `/config` 完成后可直接发起对话，无 `MAX(event_id)` 空值告警。
+- 交互 `/config` 完成后可直接发起对话，支持 `max_context` 手工输入或自动探测，且无 `MAX(event_id)` 空值告警。
+- `/session` 与 `/system` 在交互态可用：可查看会话统计、系统提示词并管理额外提示词。
+- `chat` 行式模式在 `stdin EOF` 时自动退出，避免 `wunder> wunder>` 无限提示循环。
+- `/config <base_url> <api_key> <model> [max_context|auto]` 优先按行内参数解析，不会误进入交互向导。
 - 无 prompts 目录时仍可运行（提示词由二进制内嵌提供）。
+- TUI ???????????????????????????????????????????/????????
+- TUI 支持 codex 风格快捷提示与面板：顶部显示 `? for shortcuts`，`?` 打开快捷键面板，`Ctrl+N/Ctrl+L/Ctrl+C` 可直接操作。
 
 ---
 

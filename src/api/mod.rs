@@ -1,4 +1,4 @@
-﻿// API 路由聚合入口，按领域拆分以保持结构清晰。
+// API 路由聚合入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
 pub mod admin_sim_lab;
@@ -30,7 +30,7 @@ use crate::state::AppState;
 use axum::Router;
 use std::sync::Arc;
 
-pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
+pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
         .merge(channel::router())
@@ -62,12 +62,14 @@ pub fn build_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
 /// It intentionally omits admin/channel/gateway/cron routes to keep the local
 /// surface minimal while still reusing the same orchestrator/tooling pipeline.
 #[allow(dead_code)]
-pub fn build_desktop_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
+pub fn build_desktop_router(state: Arc<AppState>) -> Router {
     Router::new()
+        .merge(auth::router())
         .merge(chat::router())
         .merge(chat_ws::router())
         .merge(core_ws::router())
         .merge(core::router())
+        .merge(external_links::router())
         .merge(temp_dir::router())
         .merge(workspace::router())
         .merge(user_tools::router())

@@ -83,6 +83,7 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import { useAuthStore } from '@/stores/auth';
 import { isDemoMode } from '@/utils/demo';
 import { useI18n } from '@/i18n';
+import { resolveUserBasePath } from '@/utils/basePath';
 
 const props = defineProps({
   title: {
@@ -119,7 +120,7 @@ const authStore = useAuthStore();
 const { t } = useI18n();
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
-const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
+const basePath = computed(() => resolveUserBasePath(route.path));
 const navItems = computed(() => {
   const items = [
     { key: 'nav.world', label: t('nav.world'), path: `${basePath.value}/home`, icon: 'fa-earth-asia' },
@@ -154,6 +155,10 @@ const handleOpenProfile = () => {
 };
 
 const handleLogout = () => {
+  if (basePath.value === '/desktop') {
+    router.push('/desktop/home');
+    return;
+  }
   if (demoMode.value) {
     router.push('/login');
     return;

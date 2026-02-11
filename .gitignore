@@ -47,3 +47,5 @@ download
 temp_dir
 vector_knowledge
 WUNDER_TEMP
+gen/
+wunder-desktop/gen/

@@ -89,8 +89,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(from_fn_with_state(state.clone(), language_guard))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .layer(from_fn(panic_guard))
-        .with_state(state.clone());
+        .layer(from_fn(panic_guard));
 
     let addr = bind_address(&config);
     let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;

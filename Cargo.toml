@@ -2,7 +2,12 @@
 name = "wunder-server"
 version = "0.1.0"
 edition = "2021"
+build = "wunder-desktop/build.rs"
 rust-version = "1.92"
+
+[features]
+default = []
+desktop = ["dep:tauri", "dep:tauri-build"]
 
 [[bin]]
 name = "wunder-cli"
@@ -11,6 +16,7 @@ path = "wunder-cli/main.rs"
 [[bin]]
 name = "wunder-desktop"
 path = "wunder-desktop/main.rs"
+required-features = ["desktop"]
 
 [dependencies]
 anyhow = "1"
@@ -52,6 +58,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tauri = { version = "2", features = ["wry"], optional = true }
 url = "2"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 walkdir = "2"
@@ -75,5 +82,8 @@ aes = "0.8"
 cbc = "0.1"
 prost = "0.13"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["codegen"], optional = true }
 
 [dev-dependencies]

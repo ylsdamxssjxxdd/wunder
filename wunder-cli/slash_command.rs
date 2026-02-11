@@ -4,6 +4,7 @@ pub enum SlashCommand {
     ToolCallMode,
     Status,
     Session,
+    System,
     New,
     Config,
     ConfigShow,
@@ -25,7 +26,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 10] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 11] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -44,7 +45,12 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 10] = [
     SlashCommandDoc {
         command: SlashCommand::Session,
         usage: "/session",
-        description: "show current session id",
+        description: "show current session statistics",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::System,
+        usage: "/system [set <extra_prompt>|clear]",
+        description: "show current system prompt or manage extra prompt",
     },
     SlashCommandDoc {
         command: SlashCommand::New,
@@ -53,8 +59,8 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 10] = [
     },
     SlashCommandDoc {
         command: SlashCommand::Config,
-        usage: "/config",
-        description: "interactive model setup (base_url/api_key/model)",
+        usage: "/config [<base_url> <api_key> <model> [max_context|auto]]",
+        description: "interactive model setup or direct one-line model config",
     },
     SlashCommandDoc {
         command: SlashCommand::ConfigShow,
@@ -91,6 +97,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "help" | "h" => (SlashCommand::Help, remaining),
         "status" => (SlashCommand::Status, remaining),
         "session" => (SlashCommand::Session, remaining),
+        "system" => (SlashCommand::System, remaining),
         "new" => (SlashCommand::New, remaining),
         "model" => (SlashCommand::Model, remaining),
         "tool-call-mode" | "mode" => (SlashCommand::ToolCallMode, remaining),
@@ -135,24 +142,38 @@ pub fn help_lines() -> Vec<String> {
 }
 
 pub fn popup_lines(prefix: &str, limit: usize) -> Vec<String> {
-    let prefix = prefix.trim().to_ascii_lowercase();
+    let cleaned = prefix.trim();
+    let (head, tail) = split_head(cleaned);
     let width = SLASH_COMMAND_DOCS
         .iter()
         .map(|entry| entry.usage.len())
         .max()
         .unwrap_or(0);
 
+    if !tail.is_empty() {
+        if let Some(entry) = command_doc_by_name(head) {
+            return vec![format!(
+                "{usage:<width$}  {description}",
+                usage = entry.usage,
+                description = entry.description,
+                width = width,
+            )];
+        }
+        return Vec::new();
+    }
+
+    let lookup = head.to_ascii_lowercase();
     SLASH_COMMAND_DOCS
         .iter()
         .filter(|entry| entry.command != SlashCommand::Quit)
         .filter(|entry| {
-            if prefix.is_empty() {
+            if lookup.is_empty() {
                 return true;
             }
             command_token(entry)
                 .trim_start_matches('/')
                 .to_ascii_lowercase()
-                .contains(prefix.as_str())
+                .contains(lookup.as_str())
         })
         .take(limit)
         .map(|entry| {
@@ -180,6 +201,27 @@ pub fn first_command_completion(prefix: &str) -> Option<String> {
         .map(|entry| command_token(entry).trim_start_matches('/').to_string())
 }
 
+fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
+    let normalized = name.trim().trim_start_matches('/').to_ascii_lowercase();
+    let command = match normalized.as_str() {
+        "help" | "h" => SlashCommand::Help,
+        "status" => SlashCommand::Status,
+        "session" => SlashCommand::Session,
+        "system" => SlashCommand::System,
+        "new" => SlashCommand::New,
+        "model" => SlashCommand::Model,
+        "tool-call-mode" | "mode" => SlashCommand::ToolCallMode,
+        "config" => SlashCommand::Config,
+        "exit" => SlashCommand::Exit,
+        "quit" | "q" => SlashCommand::Quit,
+        _ => return None,
+    };
+
+    SLASH_COMMAND_DOCS
+        .iter()
+        .find(|entry| entry.command == command)
+}
+
 fn command_token(entry: &SlashCommandDoc) -> &str {
     entry.usage.split_whitespace().next().unwrap_or(entry.usage)
 }
@@ -195,5 +237,42 @@ fn split_head(input: &str) -> (&str, &str) {
         (head, tail)
     } else {
         (cleaned, "")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_config_with_inline_args_keeps_arguments() {
+        let parsed = parse_slash_command("/config https://example.com/v1 sk-test demo-model 32000")
+            .expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Config);
+        assert_eq!(
+            parsed.args,
+            "https://example.com/v1 sk-test demo-model 32000"
+        );
+    }
+
+    #[test]
+    fn parse_config_show_uses_config_show_command() {
+        let parsed = parse_slash_command("/config show").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::ConfigShow);
+        assert_eq!(parsed.args, "");
+    }
+
+    #[test]
+    fn popup_lines_show_usage_for_argument_entry() {
+        let lines = popup_lines("tool-call-mode function_call", 7);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("/tool-call-mode <tool_call|function_call> [model]"));
+    }
+
+    #[test]
+    fn popup_lines_accepts_mode_alias_for_argument_entry() {
+        let lines = popup_lines("mode tool_call", 7);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("/tool-call-mode <tool_call|function_call> [model]"));
     }
 }

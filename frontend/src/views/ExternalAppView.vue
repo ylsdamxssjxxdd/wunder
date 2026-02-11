@@ -29,6 +29,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { useI18n } from '@/i18n';
+import { resolveUserBasePath } from '@/utils/basePath';
 
 const route = useRoute();
 const router = useRouter();
@@ -51,7 +52,7 @@ let dragStartClientY = 0;
 let dragStartFabX = 0;
 let dragStartFabY = 0;
 
-const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
+const basePath = computed(() => resolveUserBasePath(route.path));
 const floatingButtonStyle = computed(() => ({
   left: `${fabPosition.value.x}px`,
   top: `${fabPosition.value.y}px`

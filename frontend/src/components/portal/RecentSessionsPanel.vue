@@ -38,6 +38,7 @@ import { ElMessage } from 'element-plus';
 
 import { useChatStore } from '@/stores/chat';
 import { useI18n } from '@/i18n';
+import { resolveUserBasePath } from '@/utils/basePath';
 
 const props = defineProps({
   maxCount: {
@@ -53,7 +54,7 @@ const loading = ref(false);
 const error = ref('');
 const { t } = useI18n();
 
-const basePath = computed(() => (route.path.startsWith('/demo') ? '/demo' : '/app'));
+const basePath = computed(() => resolveUserBasePath(route.path));
 const recentSessions = computed(() => chatStore.sessions.slice(0, props.maxCount));
 
 const loadSessions = async () => {

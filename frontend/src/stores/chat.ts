@@ -20,6 +20,7 @@ import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { getDesktopToolCallModeForRequest } from '@/config/desktop';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -3283,10 +3284,12 @@ export const useChatStore = defineStore('chat', {
         if (runtime) {
           runtime.sendController = new AbortController();
         }
+        const desktopToolCallMode = getDesktopToolCallModeForRequest();
         const payload = {
           content,
           stream: true,
-          ...(attachments.length > 0 ? { attachments } : {})
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
