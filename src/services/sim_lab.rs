@@ -462,6 +462,8 @@ struct SessionRunStats {
     total: usize,
     by_status: BTreeMap<String, usize>,
     peak_concurrency: usize,
+    peak_concurrency_workers: usize,
+    peak_concurrency_all: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1516,6 +1518,9 @@ fn build_report(
         .iter()
         .map(|session| session.session_id.clone())
         .collect::<Vec<_>>();
+    let worker_session_set = worker_session_ids.iter().cloned().collect::<HashSet<_>>();
+    let peak_concurrency_workers = compute_peak_concurrency(&run_rows, Some(&worker_session_set));
+    let peak_concurrency_all = compute_peak_concurrency(&run_rows, None);
     let worker_status_map = latest_status_by_session(&run_rows);
     let tool_calls_by_session = load_tool_call_counts_by_session(state, &worker_session_ids);
     let tool_calls_by_name = load_tool_call_counts_by_name(state, user_id)?;
@@ -1586,7 +1591,9 @@ fn build_report(
         session_runs: SessionRunStats {
             total: run_rows.len(),
             by_status: run_status,
-            peak_concurrency: compute_peak_concurrency(&run_rows),
+            peak_concurrency: peak_concurrency_workers,
+            peak_concurrency_workers,
+            peak_concurrency_all,
         },
         worker_sessions: WorkerSessionStats {
             expected: args.workers,
@@ -1873,9 +1880,15 @@ fn mother_event_counts(state: &AppState, mother_session_id: &str) -> BTreeMap<St
     counts
 }
 
-fn compute_peak_concurrency(rows: &[SessionRunRow]) -> usize {
+fn compute_peak_concurrency(rows: &[SessionRunRow], include_sessions: Option<&HashSet<String>>) -> usize {
     let mut events = Vec::<(f64, i32)>::new();
     for row in rows {
+        if include_sessions
+            .as_ref()
+            .is_some_and(|session_ids| !session_ids.contains(&row.session_id))
+        {
+            continue;
+        }
         if row.started_time <= 0.0 || row.finished_time <= 0.0 {
             continue;
         }

@@ -2405,6 +2405,8 @@
   - `/config show`：输出当前运行配置。
   - `/new` / `/session` / `/system` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计）。
 - TUI 顶部状态栏突出 `xx% context left`，隐藏低价值 mode/state 字段；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
+- TUI 多行编辑体验已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Ctrl+B/F` 字符移动，`Alt+B/F/Left/Right` 按词导航，`Ctrl+W`/`Alt+Backspace`/`Alt+Delete` 按词删除。
+- 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。

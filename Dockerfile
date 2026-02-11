@@ -158,23 +158,6 @@ RUN python3 -m pip install --break-system-packages \
     cartopy \
   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-RUN mkdir -p "$CARTOPY_DATA_DIR" && \
-    python3 - <<'PY'
-import cartopy.io.shapereader as shpreader
-
-targets = [
-    ("110m", "physical", "land"),
-    ("110m", "physical", "ocean"),
-    ("110m", "physical", "coastline"),
-    ("110m", "physical", "lakes"),
-    ("110m", "cultural", "admin_0_countries"),
-    ("110m", "cultural", "admin_1_states_provinces"),
-]
-
-for res, cat, name in targets:
-    shpreader.natural_earth(resolution=res, category=cat, name=name)
-PY
-
 # Tesseract language packs (append-only)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-chi-sim \
@@ -193,10 +176,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-dev \
     patchelf \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+  
+RUN mkdir -p "$CARTOPY_DATA_DIR" && \
+    python3 - <<'PY'
+import cartopy.io.shapereader as shpreader
+
+targets = [
+    ("110m", "physical", "land"),
+    ("110m", "physical", "ocean"),
+    ("110m", "physical", "coastline"),
+    ("110m", "physical", "lakes"),
+    ("110m", "cultural", "admin_0_countries"),
+    ("110m", "cultural", "admin_1_states_provinces"),
+]
+
+for res, cat, name in targets:
+    shpreader.natural_earth(resolution=res, category=cat, name=name)
+PY
 
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]
 
-# docker build -t wunder-x86 --platform linux/amd64 -f Dockerfile.rust .
-# docker build -t wunder-arm --platform linux/arm64 -f Dockerfile.rust .
+# docker build -t wunder-x86 --platform linux/amd64 -f Dockerfile .
+# docker build -t wunder-arm --platform linux/arm64 -f Dockerfile .

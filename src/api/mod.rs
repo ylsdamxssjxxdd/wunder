@@ -11,6 +11,7 @@ pub mod chat_ws;
 pub mod core;
 pub mod core_ws;
 pub mod cron;
+pub mod desktop;
 pub mod doc2md;
 pub(crate) mod errors;
 pub mod evaluation;
@@ -69,6 +70,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(chat_ws::router())
         .merge(core_ws::router())
         .merge(core::router())
+        .merge(desktop::router())
         .merge(external_links::router())
         .merge(temp_dir::router())
         .merge(workspace::router())

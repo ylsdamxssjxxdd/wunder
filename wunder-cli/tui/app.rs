@@ -51,6 +51,7 @@ pub struct TuiApp {
     session_id: String,
     input: String,
     input_cursor: usize,
+    input_viewport_width: u16,
     logs: Vec<LogEntry>,
     busy: bool,
     should_quit: bool,
@@ -89,6 +90,7 @@ impl TuiApp {
             session_id,
             input: String::new(),
             input_cursor: 0,
+            input_viewport_width: 1,
             logs: Vec::new(),
             busy: false,
             should_quit: false,
@@ -181,6 +183,10 @@ impl TuiApp {
         ]
     }
 
+    pub fn set_input_viewport(&mut self, viewport_width: u16) {
+        self.input_viewport_width = viewport_width.max(1);
+    }
+
     pub fn input_view(&self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
         let width = viewport_width.max(1) as usize;
         let height = viewport_height.max(1) as usize;
@@ -202,8 +208,7 @@ impl TuiApp {
             .iter()
             .map(|line| self.input[line.start..line.end].to_string())
             .collect::<Vec<_>>()
-            .join("
-");
+            .join("\n");
         let cursor_y = cursor_row.saturating_sub(start_line) as u16;
         let cursor_x = cursor_col.min(width.saturating_sub(1)) as u16;
         (display, cursor_x, cursor_y)
@@ -307,7 +312,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 KeyCode::Char('\u{0010}') => {
-                    if self.input.contains('\n') && self.config_wizard.is_none() {
+                    if self.should_use_multiline_navigation() {
                         self.move_cursor_up();
                     } else {
                         self.history_up();
@@ -315,7 +320,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 KeyCode::Char('\u{000e}') => {
-                    if self.input.contains('\n') && self.config_wizard.is_none() {
+                    if self.should_use_multiline_navigation() {
                         self.move_cursor_down();
                     } else {
                         self.history_down();
@@ -377,7 +382,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 KeyCode::Char('p') => {
-                    if self.input.contains('\n') && self.config_wizard.is_none() {
+                    if self.should_use_multiline_navigation() {
                         self.move_cursor_up();
                     } else {
                         self.history_up();
@@ -504,14 +509,14 @@ impl TuiApp {
                 }
             }
             KeyCode::Up => {
-                if self.input.contains('\n') && self.config_wizard.is_none() {
+                if self.should_use_multiline_navigation() {
                     self.move_cursor_up();
                 } else {
                     self.history_up();
                 }
             }
             KeyCode::Down => {
-                if self.input.contains('\n') && self.config_wizard.is_none() {
+                if self.should_use_multiline_navigation() {
                     self.move_cursor_down();
                 } else {
                     self.history_down();
@@ -617,6 +622,15 @@ impl TuiApp {
             self.input = format!("/{suggestion} ");
             self.input_cursor = self.input.len();
         }
+    }
+
+    fn should_use_multiline_navigation(&self) -> bool {
+        if self.config_wizard.is_some() {
+            return false;
+        }
+        let lines =
+            build_wrapped_input_lines(&self.input, usize::from(self.input_viewport_width.max(1)));
+        lines.len() > 1
     }
 
     fn history_up(&mut self) {
@@ -862,7 +876,6 @@ impl TuiApp {
         self.input_cursor = start;
     }
 
-
     fn delete_word_right(&mut self) {
         let start = self.input_cursor.min(self.input.len());
         let len = self.input.len();
@@ -922,52 +935,21 @@ impl TuiApp {
     }
 
     fn move_cursor_up(&mut self) {
-        let cursor = self.input_cursor.min(self.input.len());
-        let current_start = self
-            .input
-            .get(..cursor)
-            .and_then(|value| value.rfind('\n').map(|idx| idx + 1))
-            .unwrap_or(0);
-        if current_start == 0 {
-            return;
-        }
-
-        let current_column = self.input[current_start..cursor].chars().count();
-        let prev_end = current_start.saturating_sub(1);
-        let prev_start = self
-            .input
-            .get(..prev_end)
-            .and_then(|value| value.rfind('\n').map(|idx| idx + 1))
-            .unwrap_or(0);
-        self.input_cursor =
-            byte_index_for_char_column(&self.input, prev_start, prev_end, current_column);
+        self.input_cursor = move_cursor_vertical(
+            &self.input,
+            usize::from(self.input_viewport_width.max(1)),
+            self.input_cursor,
+            -1,
+        );
     }
 
     fn move_cursor_down(&mut self) {
-        let cursor = self.input_cursor.min(self.input.len());
-        let current_start = self
-            .input
-            .get(..cursor)
-            .and_then(|value| value.rfind('\n').map(|idx| idx + 1))
-            .unwrap_or(0);
-        let current_end = self
-            .input
-            .get(cursor..)
-            .and_then(|value| value.find('\n').map(|offset| cursor + offset))
-            .unwrap_or(self.input.len());
-        if current_end >= self.input.len() {
-            return;
-        }
-
-        let current_column = self.input[current_start..cursor].chars().count();
-        let next_start = current_end + 1;
-        let next_end = self
-            .input
-            .get(next_start..)
-            .and_then(|value| value.find('\n').map(|offset| next_start + offset))
-            .unwrap_or(self.input.len());
-        self.input_cursor =
-            byte_index_for_char_column(&self.input, next_start, next_end, current_column);
+        self.input_cursor = move_cursor_vertical(
+            &self.input,
+            usize::from(self.input_viewport_width.max(1)),
+            self.input_cursor,
+            1,
+        );
     }
 
     fn handle_stream_message(&mut self, message: StreamMessage) {
@@ -1698,6 +1680,26 @@ impl TuiApp {
     }
 }
 
+fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> usize {
+    let lines = build_wrapped_input_lines(text, width);
+    if lines.len() <= 1 {
+        return cursor.min(text.len());
+    }
+
+    let (row, col) = cursor_visual_position(text, &lines, cursor.min(text.len()));
+    let target_row = if delta < 0 {
+        row.saturating_sub(1)
+    } else {
+        (row + 1).min(lines.len().saturating_sub(1))
+    };
+    if target_row == row {
+        return cursor.min(text.len());
+    }
+
+    let target = lines[target_row];
+    byte_index_for_char_column(text, target.start, target.end, col)
+}
+
 fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -1705,8 +1707,7 @@ fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> 
     let mut line_columns = 0usize;
 
     for (index, ch) in text.char_indices() {
-        if ch == '
-' {
+        if ch == '\n' {
             lines.push(WrappedInputLine {
                 start: line_start,
                 end: index,
@@ -1757,7 +1758,9 @@ fn cursor_visual_position(
         .last()
         .copied()
         .unwrap_or(WrappedInputLine { start: 0, end: 0 });
-    let col = text[fallback.start..cursor.min(fallback.end)].chars().count();
+    let col = text[fallback.start..cursor.min(fallback.end)]
+        .chars()
+        .count();
     (lines.len().saturating_sub(1), col)
 }
 
@@ -1849,4 +1852,53 @@ fn compact_json(value: &Value) -> String {
         text.push_str("...");
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapped_input_lines_wrap_by_viewport_width() {
+        let lines = build_wrapped_input_lines("abcdef", 3);
+        assert_eq!(lines.len(), 2);
+        assert_eq!((lines[0].start, lines[0].end), (0, 3));
+        assert_eq!((lines[1].start, lines[1].end), (3, 6));
+    }
+
+    #[test]
+    fn cursor_visual_position_prefers_next_wrapped_line_boundary() {
+        let text = "abcdef";
+        let lines = build_wrapped_input_lines(text, 3);
+        assert_eq!(cursor_visual_position(text, &lines, 2), (0, 2));
+        assert_eq!(cursor_visual_position(text, &lines, 3), (1, 0));
+    }
+
+    #[test]
+    fn wrapped_input_lines_keep_explicit_newlines() {
+        let text = "a
+
+b";
+        let lines = build_wrapped_input_lines(text, 8);
+        assert_eq!(lines.len(), 3);
+        assert_eq!((lines[0].start, lines[0].end), (0, 1));
+        assert_eq!((lines[1].start, lines[1].end), (2, 2));
+        assert_eq!((lines[2].start, lines[2].end), (3, 4));
+        assert_eq!(cursor_visual_position(text, &lines, 2), (1, 0));
+    }
+
+    #[test]
+    fn move_cursor_vertical_uses_wrapped_lines_without_newline() {
+        let text = "abcdef";
+        assert_eq!(move_cursor_vertical(text, 3, 4, -1), 1);
+        assert_eq!(move_cursor_vertical(text, 3, 1, 1), 4);
+    }
+
+    #[test]
+    fn move_cursor_vertical_clamps_to_line_end() {
+        let text = "ab
+cdef";
+        assert_eq!(move_cursor_vertical(text, 16, 5, -1), 2);
+        assert_eq!(move_cursor_vertical(text, 16, 1, 1), 4);
+    }
 }

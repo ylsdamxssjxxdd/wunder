@@ -29,7 +29,11 @@ const CURVE_SERIES = [
     key: "peak_concurrency",
     labelKey: "simLab.chart.metric.peakConcurrency",
     color: "#22c55e",
-    resolve: (sample) => Number(sample?.report?.session_runs?.peak_concurrency),
+    resolve: (sample) =>
+      Number(
+        sample?.report?.session_runs?.peak_concurrency_workers ??
+          sample?.report?.session_runs?.peak_concurrency
+      ),
   },
   {
     key: "end_to_end_p95",
@@ -609,6 +613,15 @@ const formatInteger = (value) => {
   return Number.isFinite(numeric) ? String(Math.floor(numeric)) : "-";
 };
 
+const resolvePeakConcurrency = (report) => {
+  const workersPeak = Number(report?.session_runs?.peak_concurrency_workers);
+  if (Number.isFinite(workersPeak)) {
+    return workersPeak;
+  }
+  const legacyPeak = Number(report?.session_runs?.peak_concurrency);
+  return Number.isFinite(legacyPeak) ? legacyPeak : Number.NaN;
+};
+
 const formatWorkerSessions = (report) => {
   const expected = Number(report?.worker_sessions?.expected);
   const created = Number(report?.worker_sessions?.created);
@@ -774,7 +787,7 @@ const renderProjectReports = (projects) => {
     row.className = `simlab-report-row ${statusClass(project.status)}`;
 
     const report = project?.report && typeof project.report === "object" ? project.report : null;
-    const peakConcurrency = formatInteger(report?.session_runs?.peak_concurrency);
+    const peakConcurrency = formatInteger(resolvePeakConcurrency(report));
     const workerSessions = formatWorkerSessions(report);
     const llmCalls = formatInteger(report?.llm_calls?.total);
     const checks = formatChecks(report);

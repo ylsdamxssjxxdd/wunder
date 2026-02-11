@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-pub fn draw(frame: &mut Frame, app: &TuiApp) {
+pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let popup_lines = app.popup_lines();
     let vertical = build_layout(frame.area(), popup_lines.len());
 
@@ -52,6 +52,7 @@ pub fn draw(frame: &mut Frame, app: &TuiApp) {
 
     let input_area = vertical[input_index];
     let inner = inner_rect(input_area);
+    app.set_input_viewport(inner.width);
     let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
     let input = Paragraph::new(input_text)
         .style(Style::default().fg(Color::Yellow))

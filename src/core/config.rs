@@ -405,6 +405,8 @@ fn default_agent_swarm_max_depth() -> u32 {
 pub struct WorkspaceConfig {
     pub root: String,
     #[serde(default)]
+    pub container_roots: HashMap<i32, String>,
+    #[serde(default)]
     pub max_history_items: i64,
     #[serde(default)]
     pub retention_days: i64,
@@ -414,6 +416,7 @@ impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
             root: "./workspaces".to_string(),
+            container_roots: HashMap::new(),
             max_history_items: 0,
             retention_days: 0,
         }

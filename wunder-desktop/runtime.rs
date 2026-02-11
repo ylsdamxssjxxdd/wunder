@@ -1,7 +1,7 @@
 use crate::args::DesktopArgs;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,10 +27,30 @@ pub struct DesktopRuntime {
     pub desktop_token: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DesktopRemoteGatewaySettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub server_base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub role_name: String,
+    #[serde(default)]
+    pub use_remote_sandbox: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopSettings {
     pub workspace_root: String,
     pub desktop_token: String,
+    #[serde(default)]
+    pub container_roots: HashMap<i32, String>,
+    #[serde(default)]
+    pub language: String,
+    #[serde(default)]
+    pub remote_gateway: DesktopRemoteGatewaySettings,
     pub updated_at: f64,
 }
 
@@ -39,6 +59,9 @@ impl Default for DesktopSettings {
         Self {
             workspace_root: String::new(),
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
+            container_roots: HashMap::new(),
+            language: String::new(),
+            remote_gateway: DesktopRemoteGatewaySettings::default(),
             updated_at: now_ts(),
         }
     }
@@ -70,6 +93,9 @@ impl DesktopRuntime {
             settings.desktop_token = uuid::Uuid::new_v4().simple().to_string();
         }
         settings.workspace_root = workspace_root.to_string_lossy().to_string();
+        settings.container_roots =
+            normalize_desktop_container_roots(&settings.container_roots, &workspace_root, &app_dir);
+        ensure_container_root_dirs(&settings.container_roots)?;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
 
@@ -88,6 +114,9 @@ impl DesktopRuntime {
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
+        set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
+        set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
+        set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
         let user_id = normalize_user_id(args.user.as_deref());
@@ -98,6 +127,8 @@ impl DesktopRuntime {
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
         let token_for_update = desktop_token.clone();
+        let container_roots_for_update = settings.container_roots.clone();
+        let language_for_update = settings.language.clone();
         let config = config_store
             .update(move |config| {
                 apply_desktop_defaults(
@@ -106,6 +137,8 @@ impl DesktopRuntime {
                     &temp_root_for_update,
                     &repo_root_for_update,
                     &token_for_update,
+                    &container_roots_for_update,
+                    &language_for_update,
                 );
             })
             .await
@@ -227,7 +260,7 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
+pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
     if !path.exists() {
         return Ok(DesktopSettings::default());
     }
@@ -240,11 +273,54 @@ fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
         .with_context(|| format!("parse desktop settings failed: {}", path.display()))
 }
 
-fn save_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()> {
+pub(crate) fn save_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()> {
     let text =
         serde_json::to_string_pretty(settings).context("serialize desktop settings failed")?;
     fs::write(path, text)
         .with_context(|| format!("write desktop settings failed: {}", path.to_string_lossy()))
+}
+
+pub(crate) fn normalize_desktop_container_roots(
+    source: &HashMap<i32, String>,
+    default_workspace_root: &Path,
+    app_dir: &Path,
+) -> HashMap<i32, String> {
+    let mut output = HashMap::new();
+    output.insert(1, default_workspace_root.to_string_lossy().to_string());
+    for (container_id, root) in source {
+        let normalized_id = wunder_server::storage::normalize_sandbox_container_id(*container_id);
+        if normalized_id == 1 {
+            continue;
+        }
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let resolved = resolve_workspace_path_input(trimmed, app_dir);
+        output.insert(normalized_id, resolved.to_string_lossy().to_string());
+    }
+    output
+}
+
+pub(crate) fn ensure_container_root_dirs(container_roots: &HashMap<i32, String>) -> Result<()> {
+    for root in container_roots.values() {
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        fs::create_dir_all(trimmed)
+            .with_context(|| format!("create desktop container workspace failed: {trimmed}"))?;
+    }
+    Ok(())
+}
+
+fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        app_dir.join(path)
+    }
 }
 
 fn set_env_path(key: &str, value: &Path) {
@@ -294,6 +370,8 @@ fn apply_desktop_defaults(
     temp_root: &Path,
     repo_root: &Path,
     desktop_token: &str,
+    container_roots: &HashMap<i32, String>,
+    language: &str,
 ) {
     config.server.mode = "desktop".to_string();
     config.storage.backend = "sqlite".to_string();
@@ -302,6 +380,11 @@ fn apply_desktop_defaults(
         .to_string_lossy()
         .to_string();
     config.workspace.root = workspace_root.to_string_lossy().to_string();
+    config.workspace.container_roots = container_roots.clone();
+
+    if !language.trim().is_empty() {
+        config.i18n.default_language = language.trim().to_string();
+    }
 
     config.channels.enabled = false;
     config.gateway.enabled = false;

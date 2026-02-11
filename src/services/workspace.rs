@@ -7,7 +7,7 @@ use crate::storage::{
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use dashmap::DashMap;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -180,6 +180,7 @@ pub struct PurgeResult {
 pub struct WorkspaceManager {
     root: PathBuf,
     single_root: bool,
+    container_roots: RwLock<HashMap<i32, PathBuf>>,
     storage: Arc<dyn StorageBackend>,
     write_queue: StorageWriteQueue,
     retention_days: i64,
@@ -204,16 +205,23 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    pub fn new(root: &str, storage: Arc<dyn StorageBackend>, retention_days: i64) -> Self {
+    pub fn new(
+        root: &str,
+        storage: Arc<dyn StorageBackend>,
+        retention_days: i64,
+        container_roots: &HashMap<i32, String>,
+    ) -> Self {
         let retention_days = normalize_retention_days(retention_days);
         let single_root = workspace_single_root_enabled();
         if let Err(err) = storage.ensure_initialized() {
             warn!("storage initialization failed: {err}");
         }
         let write_queue = StorageWriteQueue::new(storage.clone());
+        let normalized_container_roots = normalize_container_roots(container_roots);
         Self {
             root: PathBuf::from(root),
             single_root,
+            container_roots: RwLock::new(normalized_container_roots),
             storage,
             write_queue,
             retention_days,
@@ -248,11 +256,32 @@ impl WorkspaceManager {
         &self.root
     }
 
+    pub fn container_roots(&self) -> HashMap<i32, String> {
+        self.container_roots
+            .read()
+            .iter()
+            .map(|(container_id, path)| (*container_id, path.to_string_lossy().to_string()))
+            .collect()
+    }
+
+    pub fn set_container_roots(&self, container_roots: HashMap<i32, String>) {
+        let normalized = normalize_container_roots(&container_roots);
+        let mut guard = self.container_roots.write();
+        *guard = normalized;
+    }
+
     pub fn workspace_root(&self, user_id: &str) -> PathBuf {
-        if self.single_root {
-            return self.root.clone();
-        }
         let safe_id = self.safe_user_id(user_id);
+        let container_id = extract_container_id_from_scoped_user(&safe_id);
+        if let Some(path) = self.container_roots.read().get(&container_id).cloned() {
+            return path;
+        }
+        if self.single_root {
+            if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
+                return self.root.clone();
+            }
+            return self.root.join(safe_id);
+        }
         self.root.join(safe_id)
     }
 
@@ -314,9 +343,6 @@ impl WorkspaceManager {
 
     pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
         let safe_user = self.safe_user_id(user_id);
-        if self.single_root {
-            return safe_user;
-        }
         let container_id = normalize_sandbox_container_id(sandbox_container_id);
         if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
             return safe_user;
@@ -1777,6 +1803,28 @@ fn workspace_single_root_enabled() -> bool {
         raw.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+fn normalize_container_roots(container_roots: &HashMap<i32, String>) -> HashMap<i32, PathBuf> {
+    let mut output = HashMap::new();
+    for (container_id, root) in container_roots {
+        let normalized_id = normalize_sandbox_container_id(*container_id);
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        output.insert(normalized_id, PathBuf::from(trimmed));
+    }
+    output
+}
+
+fn extract_container_id_from_scoped_user(user_id: &str) -> i32 {
+    if let Some((_, suffix)) = user_id.rsplit_once("__c__") {
+        if let Ok(parsed) = suffix.parse::<i32>() {
+            return normalize_sandbox_container_id(parsed);
+        }
+    }
+    DEFAULT_SANDBOX_CONTAINER_ID
 }
 
 fn fnv1a_hash64(data: &[u8]) -> u64 {

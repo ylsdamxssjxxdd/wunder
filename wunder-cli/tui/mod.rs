@@ -54,7 +54,9 @@ async fn run_loop(
 
         if event::poll(Duration::from_millis(40))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
                     app.on_key(key).await?;
                 }
                 Event::Mouse(mouse) => {

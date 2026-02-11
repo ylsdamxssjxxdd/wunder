@@ -521,7 +521,8 @@ mod tests {
             std::env::temp_dir().join(format!("wunder-test-{}.db", Uuid::new_v4().simple()));
         let root_text = root.to_string_lossy().to_string();
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        let workspace = WorkspaceManager::new(&root_text, storage, 0);
+        let workspace =
+            WorkspaceManager::new(&root_text, storage, 0, &std::collections::HashMap::new());
 
         let mut config = Config::default();
         config.workspace.root = "./workspaces".to_string();

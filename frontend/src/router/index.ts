@@ -14,6 +14,8 @@ import ProfileView from '@/views/ProfileView.vue';
 import ToolManagerView from '@/views/ToolManagerView.vue';
 import CronManagerView from '@/views/CronManagerView.vue';
 import ChannelManagerView from '@/views/ChannelManagerView.vue';
+import DesktopContainerSettingsView from '@/views/DesktopContainerSettingsView.vue';
+import DesktopSystemSettingsView from '@/views/DesktopSystemSettingsView.vue';
 import AdminLoginView from '@/views/AdminLoginView.vue';
 import AdminUsersView from '@/views/AdminUsersView.vue';
 import AdminAgentsView from '@/views/AdminAgentsView.vue';
@@ -82,6 +84,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'chat', name: 'desktop-chat', component: ChatView },
       { path: 'workspace', name: 'desktop-workspace', component: WorkspaceView },
       { path: 'settings', name: 'desktop-settings', component: SettingsView },
+      { path: 'containers', name: 'desktop-containers', component: DesktopContainerSettingsView },
+      { path: 'system', name: 'desktop-system', component: DesktopSystemSettingsView },
       { path: 'profile', name: 'desktop-profile', component: ProfileView }
     ]
   },

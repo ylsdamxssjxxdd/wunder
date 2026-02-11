@@ -2939,9 +2939,8 @@ async fn spawn_session_run(
         };
         let _ = storage.upsert_session_run(&running);
 
-        let runtime_handle = tokio::runtime::Handle::current();
-        let mut run_handle =
-            tokio::task::spawn_blocking(move || runtime_handle.block_on(orchestrator.run(request)));
+        // Keep child session runs fully async so swarm fan-out is not constrained by blocking threads.
+        let mut run_handle = tokio::spawn(async move { orchestrator.run(request).await });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
             let timeout_duration = Duration::from_secs_f64(timeout_s);

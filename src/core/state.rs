@@ -114,6 +114,7 @@ impl AppState {
             &config.workspace.root,
             storage.clone(),
             config.workspace.retention_days,
+            &config.workspace.container_roots,
         ));
         let lsp_manager = LspManager::new(workspace.clone());
         let monitor = Arc::new(MonitorState::new(
