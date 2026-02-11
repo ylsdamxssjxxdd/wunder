@@ -4256,41 +4256,132 @@ fn decode_command_output(bytes: &[u8]) -> String {
         return String::new();
     }
 
+    #[cfg(windows)]
+    {
+        if looks_like_utf16_output(bytes) {
+            if let Some(text) = decode_utf16_output(bytes) {
+                return text;
+            }
+        }
+    }
+
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_string();
     }
 
+    let utf8_lossy = String::from_utf8_lossy(bytes).to_string();
+
     #[cfg(windows)]
     {
-        if let Some(text) = decode_utf16_output(bytes) {
-            return text;
+        let (decoded, _, _) = GBK.decode(bytes);
+        let gbk_text = decoded.into_owned();
+        if should_prefer_decoded_text(&gbk_text, &utf8_lossy) {
+            return gbk_text;
         }
 
-        let (decoded, _, had_errors) = GBK.decode(bytes);
-        if !had_errors {
-            return decoded.into_owned();
+        if let Some(text) = decode_utf16_output(bytes) {
+            if should_prefer_decoded_text(&text, &utf8_lossy) {
+                return text;
+            }
         }
     }
 
-    String::from_utf8_lossy(bytes).to_string()
+    utf8_lossy
+}
+
+#[cfg(windows)]
+fn looks_like_utf16_output(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 || !bytes.len().is_multiple_of(2) {
+        return false;
+    }
+
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+        return true;
+    }
+
+    let odd_bytes = bytes.len() / 2;
+    if odd_bytes == 0 {
+        return false;
+    }
+
+    let zero_odd = bytes
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .filter(|byte| **byte == 0)
+        .count();
+    zero_odd * 100 >= odd_bytes * 20
+}
+
+#[cfg(windows)]
+fn should_prefer_decoded_text(candidate: &str, fallback: &str) -> bool {
+    if candidate.trim().is_empty() {
+        return false;
+    }
+
+    let candidate_replacement = candidate.chars().filter(|ch| *ch == '\u{FFFD}').count();
+    let fallback_replacement = fallback.chars().filter(|ch| *ch == '\u{FFFD}').count();
+
+    if candidate_replacement < fallback_replacement {
+        return true;
+    }
+    if candidate_replacement > fallback_replacement {
+        return false;
+    }
+
+    fallback_replacement > 0 && contains_cjk(candidate) && !contains_cjk(fallback)
+}
+
+#[cfg(windows)]
+fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{3400}'..='\u{4DBF}'
+                | '\u{4E00}'..='\u{9FFF}'
+                | '\u{F900}'..='\u{FAFF}'
+                | '\u{20000}'..='\u{2A6DF}'
+                | '\u{2A700}'..='\u{2B73F}'
+                | '\u{2B740}'..='\u{2B81F}'
+                | '\u{2B820}'..='\u{2CEAF}'
+        )
+    })
 }
 
 #[cfg(windows)]
 fn decode_utf16_output(bytes: &[u8]) -> Option<String> {
-    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+    if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
         return None;
     }
 
-    let units = bytes
+    let (is_big_endian, start) = if bytes.starts_with(&[0xFE, 0xFF]) {
+        (true, 2)
+    } else if bytes.starts_with(&[0xFF, 0xFE]) {
+        (false, 2)
+    } else {
+        (false, 0)
+    };
+
+    let payload = &bytes[start..];
+    if payload.is_empty() || !payload.len().is_multiple_of(2) {
+        return None;
+    }
+
+    let units = payload
         .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .map(|chunk| {
+            if is_big_endian {
+                u16::from_be_bytes([chunk[0], chunk[1]])
+            } else {
+                u16::from_le_bytes([chunk[0], chunk[1]])
+            }
+        })
         .collect::<Vec<_>>();
     let text = String::from_utf16(&units).ok()?;
-    let cleaned = text.trim_matches('\u{FEFF}').to_string();
-    if cleaned.is_empty() {
+    if text.is_empty() {
         None
     } else {
-        Some(cleaned)
+        Some(text.trim_matches('\u{FEFF}').to_string())
     }
 }
 
@@ -6552,5 +6643,27 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "Cargo.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn decode_command_output_prefers_gbk_when_utf8_lossy_contains_replacements() {
+        let expected = "\u{65e0}\u{6cd5}\u{5c06} pip \u{8bc6}\u{522b}\u{4e3a} cmdlet";
+        let (encoded, _, _) = GBK.encode(expected);
+        let decoded = decode_command_output(encoded.as_ref());
+        assert!(decoded.contains("\u{65e0}\u{6cd5}\u{5c06}"));
+        assert!(decoded.contains("cmdlet"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn decode_command_output_handles_utf16_le_streams() {
+        let expected = "PowerShell output";
+        let utf16_bytes = expected
+            .encode_utf16()
+            .flat_map(|unit| unit.to_le_bytes())
+            .collect::<Vec<_>>();
+        let decoded = decode_command_output(&utf16_bytes);
+        assert_eq!(decoded, expected);
     }
 }

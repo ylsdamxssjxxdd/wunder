@@ -43,17 +43,20 @@ pub fn build_direct_command(command: &str, cwd: &Path) -> Option<Command> {
 pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
     #[cfg(windows)]
     {
-        let mut cmd = if prefer_powershell() {
-            let mut command = Command::new("powershell.exe");
-            command.arg("-Command");
-            command
+        if prefer_powershell() {
+            let mut cmd = Command::new("powershell.exe");
+            cmd.arg("-NoLogo").arg("-NoProfile").arg("-Command");
+            // Force UTF-8 output for better cross-terminal decoding.
+            let wrapped = format!(
+                "$Utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::InputEncoding = $Utf8; [Console]::OutputEncoding = $Utf8; $OutputEncoding = $Utf8; {command}"
+            );
+            cmd.arg(wrapped).current_dir(cwd);
+            cmd
         } else {
-            let mut command = Command::new("cmd.exe");
-            command.arg("/C");
-            command
-        };
-        cmd.arg(command).current_dir(cwd);
-        cmd
+            let mut cmd = Command::new("cmd.exe");
+            cmd.arg("/C").arg(command).current_dir(cwd);
+            cmd
+        }
     }
 
     #[cfg(not(windows))]

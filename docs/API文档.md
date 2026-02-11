@@ -2419,7 +2419,7 @@
 
 > wunder-desktop 复用既有 `/wunder` 协议，不引入新业务协议版本；差异主要在 Tauri 桌面壳、运行时引导、免登录注入与本地路由约束。
 
-- 默认地址：`http://127.0.0.1:18000`（支持 `--host/--port` 覆盖，`--port 0` 自动分配）。
+- 默认地址：`http://127.0.0.1:27653`（支持 `--host/--port` 覆盖，`--port 0` 自动分配）。
 - API 基址：`http://<host>:<port>/wunder`
 - WS 基址：`ws://<host>:<port>/wunder/chat/ws`
 - 默认启动模式：Tauri GUI；`--bridge-only` 用于诊断与无窗口运行。
@@ -2456,6 +2456,17 @@
     - 容器 id 会归一化到 `1..10`；容器 1 默认指向 `WUNDER_WORK`。
     - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
     - 更新后会同步写入 `WUNDER_TEMPD/config/desktop.settings.json`、运行中的 `ConfigStore` 与 `WorkspaceManager`。
+
+- `GET /wunder/desktop/fs/list`
+  - Purpose: local filesystem directory browsing for desktop container path picker.
+  - Query:
+    - `path` (optional): directory to list; when omitted, starts from container 1 workspace root.
+  - Response fields:
+    - `current_path`: current absolute directory path
+    - `parent_path`: parent directory (`null` at filesystem root)
+    - `roots`: switchable root entries (Windows returns available drive roots)
+    - `items`: child directories under current path, each `{ name, path }`
+  - Constraint: local mode only; returns `BAD_REQUEST` when `remote_gateway.enabled=true`.
 
 ### desktop 远端接入（一期）
 

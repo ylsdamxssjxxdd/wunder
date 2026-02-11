@@ -2243,12 +2243,22 @@ fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String
         .or_else(|| value_as_i64(result.get("meta").and_then(|meta| meta.get("exit_code"))));
     let duration_ms = value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms")));
 
-    let mut header = format!("[tool_result] {tool}");
+    let status = match returncode {
+        Some(0) => "ok",
+        Some(_) => "failed",
+        None => "done",
+    };
+
+    let mut header = format!("[tool_result] {tool} {status}");
+    let mut metrics = Vec::new();
     if let Some(returncode) = returncode {
-        header.push_str(&format!(" exit={returncode}"));
+        metrics.push(format!("exit={returncode}"));
     }
     if let Some(duration_ms) = duration_ms {
-        header.push_str(&format!(" {duration_ms}ms"));
+        metrics.push(format!("{duration_ms}ms"));
+    }
+    if !metrics.is_empty() {
+        header.push_str(&format!(" ({})", metrics.join(", ")));
     }
 
     let mut lines = vec![header];
@@ -2256,14 +2266,19 @@ fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String
         lines.push(format!("  cmd: {command}"));
     }
 
-    if let Some(stdout) = first.get("stdout").and_then(Value::as_str) {
-        append_text_preview(&mut lines, "stdout", stdout, 8, 1200);
-    }
-    if let Some(stderr) = first.get("stderr").and_then(Value::as_str) {
-        append_text_preview(&mut lines, "stderr", stderr, 8, 1200);
+    let stdout = first.get("stdout").and_then(Value::as_str).unwrap_or_default();
+    let stderr = first.get("stderr").and_then(Value::as_str).unwrap_or_default();
+
+    let mut has_output = false;
+    if returncode.unwrap_or(0) == 0 {
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 4, 300);
+    } else {
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 4, 300);
     }
 
-    if lines.len() <= 2 {
+    if !has_output {
         lines.push("  output: <empty>".to_string());
     }
 
@@ -2276,17 +2291,17 @@ fn append_text_preview(
     text: &str,
     max_lines: usize,
     max_chars: usize,
-) {
+) -> bool {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim_end_matches('\n').trim();
     if trimmed.is_empty() {
-        return;
+        return false;
     }
 
     let (preview, chars_truncated) = truncate_by_chars(trimmed, max_chars);
     let parts = preview.lines().collect::<Vec<_>>();
     if parts.is_empty() {
-        return;
+        return false;
     }
 
     lines.push(format!("  {label}: {}", parts[0]));
@@ -2308,6 +2323,8 @@ fn append_text_preview(
         }
         lines.push(format!("    ... ({suffix})"));
     }
+
+    true
 }
 
 fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
@@ -2474,6 +2491,40 @@ cdef";
     fn payload_has_tool_calls_accepts_non_empty_array() {
         let payload = serde_json::json!({ "tool_calls": [{ "name": "读取文件" }] });
         assert!(payload_has_tool_calls(&payload));
+    }
+
+    #[test]
+    fn format_execute_command_result_lines_prioritizes_failure_output() {
+        let payload = serde_json::json!({
+            "data": {
+                "results": [{
+                    "command": "pip list",
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": "pip is not recognized as a cmdlet
+at line:1 char:1"
+                }]
+            },
+            "meta": {
+                "duration_ms": 15,
+                "exit_code": 1
+            }
+        });
+
+        let lines = format_execute_command_result_lines("exec", &payload);
+        assert!(!lines.is_empty());
+        assert!(lines[0].contains("failed"));
+        assert!(lines.iter().any(|line| line.starts_with("  stderr:")));
+        assert!(!lines.iter().any(|line| line.starts_with("  output: <empty>")));
+    }
+
+    #[test]
+    fn append_text_preview_truncates_long_output() {
+        let mut lines = Vec::new();
+        let value = "line1\nline2\nline3\nline4\nline5\nline6\nline7\n";
+        let has_output = append_text_preview(&mut lines, "stdout", value, 4, 64);
+        assert!(has_output);
+        assert!(lines.iter().any(|line| line.contains("more lines")));
     }
 
     #[test]

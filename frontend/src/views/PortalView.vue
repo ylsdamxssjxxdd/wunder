@@ -120,7 +120,7 @@
                   </span>
                 </div>
               </div>
-              <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
+              <div v-if="showOwnedAgentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
                 v-else
                 v-for="agent in filteredAgents"
@@ -197,7 +197,7 @@
               <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredSharedAgents.length }) }}</div>
             </div>
             <div class="agent-grid portal-agent-grid">
-              <div v-if="agentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
+              <div v-if="showSharedAgentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
               <div
                 v-else
                 v-for="agent in filteredSharedAgents"
@@ -923,6 +923,8 @@ onBeforeUnmount(() => {
 const agents = computed(() => agentStore.agents || []);
 const sharedAgents = computed(() => agentStore.sharedAgents || []);
 const agentLoading = computed(() => agentStore.loading);
+const showOwnedAgentLoading = computed(() => agentLoading.value && agents.value.length === 0);
+const showSharedAgentLoading = computed(() => agentLoading.value && sharedAgents.value.length === 0);
 const filteredAgents = computed(() => {
   const query = normalizedQuery.value;
   const matched = query ? agents.value.filter((agent) => matchesQuery(agent, query)) : agents.value;

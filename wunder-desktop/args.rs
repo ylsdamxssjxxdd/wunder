@@ -14,7 +14,7 @@ pub struct DesktopArgs {
     pub host: String,
 
     /// Bind port for local desktop bridge (0 = random free port).
-    #[arg(long, default_value_t = 18000)]
+    #[arg(long, default_value_t = 27653)]
     pub port: u16,
 
     /// Workspace root. Defaults to <app_dir>/WUNDER_WORK.

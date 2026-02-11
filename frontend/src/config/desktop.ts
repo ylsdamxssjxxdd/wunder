@@ -140,6 +140,14 @@ const readInjectedRuntime = (): DesktopRuntime | null =>
 
 let runtimeCache: DesktopRuntime | null = readInjectedRuntime();
 
+const isDesktopShell = (): boolean => {
+  const runtimeWindow = window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(runtimeWindow.__TAURI__ || runtimeWindow.__TAURI_INTERNALS__);
+};
+
 const syncDesktopIdentity = (runtime: DesktopRuntime | null): void => {
   if (!runtime || runtime.mode !== DESKTOP_MODE) {
     return;
@@ -203,6 +211,11 @@ export const initDesktopRuntime = async (): Promise<DesktopRuntime | null> => {
     ensureDesktopDefaultToolCallMode();
     return runtimeCache;
   }
+
+  if (!isDesktopShell()) {
+    return null;
+  }
+
   try {
     const response = await fetch(DESKTOP_BOOTSTRAP_PATH, { cache: 'no-store' });
     if (!response.ok) {

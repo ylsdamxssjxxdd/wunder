@@ -17,6 +17,9 @@ enum TerminalTool {
     Final,
 }
 
+const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 8;
+const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
+
 impl Orchestrator {
     pub(super) async fn execute_request(
         &self,
@@ -200,7 +203,12 @@ impl Orchestrator {
             let max_rounds = if is_admin {
                 None
             } else {
-                Some(llm_config.max_rounds.unwrap_or(1).max(1) as i64)
+                Some(i64::from(
+                    llm_config
+                        .max_rounds
+                        .unwrap_or(DEFAULT_NON_ADMIN_MAX_ROUNDS)
+                        .max(MIN_NON_ADMIN_MAX_ROUNDS),
+                ))
             };
             let mut reached_max_rounds = false;
             let mut round_usage = TokenUsage {

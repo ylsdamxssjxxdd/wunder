@@ -170,6 +170,7 @@
                           <el-input
                             v-model="row.root"
                             :placeholder="t('desktop.containers.pathPlaceholder')"
+                            @input="syncWorkspaceFromContainer(row)"
                           >
                             <template #append>
                               <el-button
@@ -635,6 +636,19 @@ const removeContainer = (containerId: number) => {
   }
   containerRows.value = containerRows.value.filter((item) => item.container_id !== containerId);
 };
+
+const syncWorkspaceFromContainer = (row: DesktopContainerRoot) => {
+  if (row.container_id === 1) {
+    workspaceRoot.value = String(row.root || '').trim();
+  }
+};
+
+watch(workspaceRoot, (value) => {
+  const first = containerRows.value.find((item) => item.container_id === 1);
+  if (first) {
+    first.root = String(value || '').trim();
+  }
+});
 
 const loadSettings = async () => {
   loading.value = true;
