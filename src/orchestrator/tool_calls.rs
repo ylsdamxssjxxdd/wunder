@@ -520,8 +520,99 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
         if calls.is_empty() && content.contains("```") {
             calls.extend(parse_tool_calls_payload(content, true));
         }
+        if calls.is_empty() {
+            calls.extend(parse_shell_read_file_fallback(content));
+        }
     }
     dedupe_tool_calls(calls)
+}
+
+fn fenced_code_block_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        compile_regex(
+            r"(?is)```(?P<lang>[a-zA-Z0-9_+\-]*)[ \t]*\r?\n(?P<body>.*?)```",
+            "fenced_code_block",
+        )
+    })
+    .as_ref()
+}
+
+fn parse_shell_read_file_fallback(content: &str) -> Vec<ToolCall> {
+    let Some(regex) = fenced_code_block_regex() else {
+        return Vec::new();
+    };
+
+    let mut calls = Vec::new();
+    for captures in regex.captures_iter(content) {
+        let lang = captures
+            .name("lang")
+            .map(|value| value.as_str().trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        if !lang.is_empty()
+            && !matches!(
+                lang.as_str(),
+                "bash" | "sh" | "zsh" | "shell" | "cmd" | "powershell" | "pwsh"
+            )
+        {
+            continue;
+        }
+
+        let body = captures
+            .name("body")
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        if let Some(path) = parse_read_file_path_from_shell_block(body) {
+            calls.push(ToolCall {
+                id: None,
+                name: "read_file".to_string(),
+                arguments: json!({ "path": path }),
+            });
+        }
+    }
+
+    calls
+}
+
+fn parse_read_file_path_from_shell_block(body: &str) -> Option<String> {
+    let commands = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if commands.len() != 1 {
+        return None;
+    }
+
+    let command = commands[0];
+    if command
+        .chars()
+        .any(|ch| matches!(ch, '|' | ';' | '&' | '>' | '<'))
+    {
+        return None;
+    }
+
+    let parts = shell_words::split(command).ok()?;
+    if parts.is_empty() {
+        return None;
+    }
+
+    let command_name = parts[0].to_ascii_lowercase();
+    if command_name == "cat" || command_name == "type" {
+        return parts
+            .get(1)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    if command_name == "head" {
+        return parts
+            .last()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+    }
+
+    None
 }
 
 fn tool_call_name_args_signature(call: &ToolCall) -> String {
@@ -843,5 +934,24 @@ mod tests {
             calls[0].arguments.get("file_path").and_then(Value::as_str),
             Some("Cargo.toml")
         );
+    }
+
+    #[test]
+    fn test_parse_tool_call_shell_read_file_fallback_from_cat_block() {
+        let content = "???????\n```bash\ncat /workspaces/Cargo.toml\n```";
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("/workspaces/Cargo.toml")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_shell_read_file_fallback_skips_pipes() {
+        let content = "```bash\ncat Cargo.toml | grep name\n```";
+        let calls = parse_tool_calls_from_text(content);
+        assert!(calls.is_empty());
     }
 }

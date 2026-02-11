@@ -4703,14 +4703,15 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
 }
 
 fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<ReadFileSpec> {
-    let path = obj
-        .get("path")
-        .or_else(|| obj.get("file_path"))
-        .or_else(|| obj.get("file"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let path = normalize_read_path_hint(
+        obj.get("path")
+            .or_else(|| obj.get("file_path"))
+            .or_else(|| obj.get("file"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    );
     if path.is_empty() {
         return None;
     }
@@ -4747,6 +4748,24 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
     }
 
     Some(ReadFileSpec { path, ranges })
+}
+
+fn normalize_read_path_hint(path: String) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    for prefix in ["/workspaces/", "\\workspaces\\", "/workspace/"] {
+        if let Some(value) = trimmed.strip_prefix(prefix) {
+            let candidate = value.trim_matches(|ch| matches!(ch, '/' | '\\')).trim();
+            if !candidate.is_empty() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    trimmed.to_string()
 }
 
 fn parse_line_number(value: &Value) -> Option<usize> {
@@ -6447,5 +6466,16 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "README.md");
         assert_eq!(specs[0].ranges, vec![(1, MAX_READ_LINES)]);
+    }
+
+    #[test]
+    fn parse_read_file_specs_normalizes_workspace_prefixed_path() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "/workspaces/Cargo.toml",
+        }))
+        .expect("workspace-prefixed path should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "Cargo.toml");
     }
 }
