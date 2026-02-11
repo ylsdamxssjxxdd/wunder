@@ -17,6 +17,7 @@ pub enum LogKind {
     Info,
     User,
     Assistant,
+    Reasoning,
     Tool,
     Error,
 }
@@ -69,6 +70,7 @@ pub struct TuiApp {
     history_cursor: Option<usize>,
     history_draft: String,
     active_assistant: Option<usize>,
+    active_reasoning: Option<usize>,
     stream_rx: Option<UnboundedReceiver<StreamMessage>>,
     model_name: String,
     tool_call_mode: String,
@@ -79,6 +81,8 @@ pub struct TuiApp {
     config_wizard: Option<ConfigWizardState>,
     stream_saw_output: bool,
     stream_saw_final: bool,
+    stream_received_content_delta: bool,
+    stream_tool_markup_open: bool,
     transcript_offset_from_bottom: u16,
     session_stats_dirty: bool,
     shortcuts_visible: bool,
@@ -113,6 +117,7 @@ impl TuiApp {
             history_cursor: None,
             history_draft: String::new(),
             active_assistant: None,
+            active_reasoning: None,
             stream_rx: None,
             model_name: "<none>".to_string(),
             tool_call_mode: "tool_call".to_string(),
@@ -123,6 +128,8 @@ impl TuiApp {
             config_wizard: None,
             stream_saw_output: false,
             stream_saw_final: false,
+            stream_received_content_delta: false,
+            stream_tool_markup_open: false,
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
@@ -357,6 +364,9 @@ impl TuiApp {
                     self.stream_rx = None;
                     self.busy = false;
                     self.active_assistant = None;
+                    self.active_reasoning = None;
+                    self.stream_received_content_delta = false;
+                    self.stream_tool_markup_open = false;
                     self.session_stats_dirty = true;
                     break;
                 }
@@ -413,6 +423,7 @@ impl TuiApp {
                 KeyCode::Char('l') => {
                     self.logs.clear();
                     self.active_assistant = None;
+                    self.active_reasoning = None;
                     self.transcript_offset_from_bottom = 0;
                     return Ok(());
                 }
@@ -658,10 +669,13 @@ impl TuiApp {
         self.last_usage = None;
         self.stream_saw_output = false;
         self.stream_saw_final = false;
+        self.stream_received_content_delta = false;
+        self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
         self.push_log(LogKind::User, prompt.clone());
         self.busy = true;
         self.active_assistant = None;
+        self.active_reasoning = None;
 
         let request =
             crate::build_wunder_request(&self.runtime, &self.global, &prompt, &self.session_id)
@@ -1040,9 +1054,12 @@ impl TuiApp {
                 self.push_log(LogKind::Error, err);
                 self.busy = false;
                 self.active_assistant = None;
+                self.active_reasoning = None;
                 self.stream_rx = None;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.stream_received_content_delta = false;
+                self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
@@ -1055,9 +1072,12 @@ impl TuiApp {
                 }
                 self.busy = false;
                 self.active_assistant = None;
+                self.active_reasoning = None;
                 self.stream_rx = None;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.stream_received_content_delta = false;
+                self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
@@ -1068,14 +1088,23 @@ impl TuiApp {
         let payload = event_payload(&event.data);
         match event.event.as_str() {
             "llm_output_delta" => {
+                if let Some(reasoning_delta) = payload.get("reasoning_delta").and_then(Value::as_str) {
+                    let cleaned_reasoning = sanitize_reasoning_text(reasoning_delta);
+                    if !cleaned_reasoning.is_empty() {
+                        self.stream_saw_output = true;
+                        self.merge_reasoning_delta(cleaned_reasoning.as_str());
+                    }
+                }
+
                 if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
-                    let cleaned_delta = sanitize_assistant_delta(delta);
+                    let cleaned_delta = sanitize_assistant_delta_streaming(
+                        delta,
+                        &mut self.stream_tool_markup_open,
+                    );
                     if !cleaned_delta.is_empty() {
                         self.stream_saw_output = true;
-                        let index = self.ensure_assistant_entry();
-                        if let Some(entry) = self.logs.get_mut(index) {
-                            entry.text.push_str(cleaned_delta.as_str());
-                        }
+                        self.stream_received_content_delta = true;
+                        self.merge_assistant_delta(cleaned_delta.as_str());
                     }
                 }
             }
@@ -1083,15 +1112,32 @@ impl TuiApp {
                 if payload_has_tool_calls(payload) {
                     self.emit_tool_phase_notice();
                     self.active_assistant = None;
+                    self.active_reasoning = None;
+                    self.stream_tool_markup_open = false;
                     return;
                 }
+
+                if let Some(reasoning) = payload.get("reasoning").and_then(Value::as_str) {
+                    let cleaned_reasoning = sanitize_reasoning_text(reasoning);
+                    if !cleaned_reasoning.is_empty() {
+                        self.stream_saw_output = true;
+                        self.merge_reasoning_content(cleaned_reasoning.as_str());
+                    }
+                }
+
                 if let Some(content) = payload.get("content").and_then(Value::as_str) {
                     let cleaned = sanitize_assistant_text(content);
                     if !cleaned.is_empty() {
                         self.stream_saw_output = true;
-                        self.merge_assistant_content(cleaned.as_str());
+                        if self.stream_received_content_delta {
+                            self.replace_assistant_content(cleaned.as_str());
+                        } else {
+                            self.merge_assistant_content(cleaned.as_str());
+                        }
                     }
                 }
+
+                self.stream_tool_markup_open = false;
             }
             "progress" => {
                 let stage = payload
@@ -1110,6 +1156,9 @@ impl TuiApp {
             "llm_request" => {
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
                 self.active_assistant = None;
+                self.active_reasoning = None;
+                self.stream_received_content_delta = false;
+                self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
             }
             "context_usage" => {
@@ -1153,6 +1202,8 @@ impl TuiApp {
                     self.emit_tool_phase_notice();
                 }
                 self.active_assistant = None;
+                self.active_reasoning = None;
+                self.stream_tool_markup_open = false;
                 let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
@@ -1178,6 +1229,13 @@ impl TuiApp {
             }
             "final" => {
                 self.stream_saw_final = true;
+                if let Some(reasoning) = payload.get("reasoning").and_then(Value::as_str) {
+                    let cleaned_reasoning = sanitize_reasoning_text(reasoning);
+                    if !cleaned_reasoning.is_empty() {
+                        self.stream_saw_output = true;
+                        self.merge_reasoning_content(cleaned_reasoning.as_str());
+                    }
+                }
                 let answer = payload
                     .get("answer")
                     .and_then(Value::as_str)
@@ -1186,6 +1244,7 @@ impl TuiApp {
                     self.stream_saw_output = true;
                     self.merge_final_answer(answer);
                 }
+                self.stream_tool_markup_open = false;
                 self.last_usage = payload
                     .get("usage")
                     .and_then(|value| value.get("total_tokens"))
@@ -1758,6 +1817,13 @@ impl TuiApp {
         self.history_cursor = None;
         self.config_wizard = None;
         self.last_usage = None;
+        self.active_assistant = None;
+        self.active_reasoning = None;
+        self.stream_saw_output = false;
+        self.stream_saw_final = false;
+        self.stream_received_content_delta = false;
+        self.stream_tool_markup_open = false;
+        self.tool_phase_notice_emitted = false;
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;
         self.push_log(
@@ -1795,6 +1861,15 @@ impl TuiApp {
         index
     }
 
+    fn ensure_reasoning_entry(&mut self) -> usize {
+        if let Some(index) = self.active_reasoning {
+            return index;
+        }
+        let index = self.push_log(LogKind::Reasoning, String::new());
+        self.active_reasoning = Some(index);
+        index
+    }
+
     fn remove_log_entry(&mut self, index: usize) {
         if index >= self.logs.len() {
             return;
@@ -1802,6 +1877,15 @@ impl TuiApp {
         self.logs.remove(index);
         if let Some(active) = self.active_assistant {
             self.active_assistant = if active == index {
+                None
+            } else if active > index {
+                Some(active.saturating_sub(1))
+            } else {
+                Some(active)
+            };
+        }
+        if let Some(active) = self.active_reasoning {
+            self.active_reasoning = if active == index {
                 None
             } else if active > index {
                 Some(active.saturating_sub(1))
@@ -1836,6 +1920,72 @@ impl TuiApp {
         self.tool_phase_notice_emitted = true;
     }
 
+    fn merge_assistant_delta(&mut self, delta: &str) {
+        if delta.trim().is_empty() {
+            return;
+        }
+
+        let index = self.ensure_assistant_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            merge_stream_text(&mut entry.text, delta);
+        }
+    }
+
+    fn replace_assistant_content(&mut self, content: &str) {
+        let cleaned = sanitize_assistant_text(content);
+        if cleaned.is_empty() {
+            return;
+        }
+
+        let index = self.ensure_assistant_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            if is_equivalent_text(entry.text.as_str(), cleaned.as_str())
+                && entry.text.chars().count() >= cleaned.chars().count()
+            {
+                return;
+            }
+            entry.text = cleaned;
+        }
+    }
+
+    fn merge_reasoning_delta(&mut self, delta: &str) {
+        let cleaned = sanitize_reasoning_text(delta);
+        if cleaned.is_empty() {
+            return;
+        }
+
+        let index = self.ensure_reasoning_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            merge_stream_text(&mut entry.text, cleaned.as_str());
+        }
+    }
+
+    fn merge_reasoning_content(&mut self, reasoning: &str) {
+        let cleaned = sanitize_reasoning_text(reasoning);
+        if cleaned.is_empty() {
+            return;
+        }
+
+        let index = self.ensure_reasoning_entry();
+        if let Some(entry) = self.logs.get_mut(index) {
+            if is_equivalent_text(entry.text.as_str(), cleaned.as_str()) {
+                if cleaned.chars().count() >= entry.text.chars().count() {
+                    entry.text = cleaned;
+                }
+                return;
+            }
+
+            if compact_text_for_compare(cleaned.as_str())
+                .starts_with(compact_text_for_compare(entry.text.as_str()).as_str())
+            {
+                entry.text = cleaned;
+                return;
+            }
+
+            merge_stream_text(&mut entry.text, cleaned.as_str());
+        }
+    }
+
     fn merge_assistant_content(&mut self, content: &str) {
         let cleaned = sanitize_assistant_text(content);
         if cleaned.is_empty() {
@@ -1844,26 +1994,30 @@ impl TuiApp {
 
         let index = self.ensure_assistant_entry();
         if let Some(entry) = self.logs.get_mut(index) {
-            if entry.text.trim().is_empty() {
-                entry.text = cleaned.clone();
-                return;
-            }
-
-            if entry.text == cleaned || entry.text.ends_with(cleaned.as_str()) {
-                return;
-            }
-
-            if cleaned.starts_with(entry.text.as_str()) {
+            let current = entry.text.trim();
+            if current.is_empty() {
                 entry.text = cleaned;
                 return;
             }
 
-            if !entry.text.contains(cleaned.as_str()) {
-                if !entry.text.ends_with('\n') {
-                    entry.text.push('\n');
-                }
-                entry.text.push_str(cleaned.as_str());
+            if is_equivalent_text(current, cleaned.as_str())
+                || compact_text_for_compare(current)
+                    .ends_with(compact_text_for_compare(cleaned.as_str()).as_str())
+            {
+                return;
             }
+
+            if compact_text_for_compare(cleaned.as_str())
+                .starts_with(compact_text_for_compare(current).as_str())
+            {
+                entry.text = cleaned;
+                return;
+            }
+
+            if !entry.text.ends_with('\n') {
+                entry.text.push('\n');
+            }
+            entry.text.push_str(cleaned.as_str());
         }
     }
 
@@ -1875,16 +2029,25 @@ impl TuiApp {
 
         let index = self.ensure_assistant_entry();
         if let Some(entry) = self.logs.get_mut(index) {
-            if entry.text.trim().is_empty() {
-                entry.text = cleaned.clone();
+            let current = entry.text.trim();
+            if current.is_empty() {
+                entry.text = cleaned;
                 return;
             }
 
-            if entry.text.trim() == cleaned || entry.text.ends_with(cleaned.as_str()) {
+            if is_equivalent_text(current, cleaned.as_str())
+                || compact_text_for_compare(current)
+                    .ends_with(compact_text_for_compare(cleaned.as_str()).as_str())
+            {
+                if cleaned.chars().count() > current.chars().count() {
+                    entry.text = cleaned;
+                }
                 return;
             }
 
-            if cleaned.starts_with(entry.text.trim()) {
+            if compact_text_for_compare(cleaned.as_str())
+                .starts_with(compact_text_for_compare(current).as_str())
+            {
                 entry.text = cleaned;
                 return;
             }
@@ -1906,6 +2069,9 @@ impl TuiApp {
             if let Some(index) = self.active_assistant.as_mut() {
                 *index = index.saturating_sub(1);
             }
+            if let Some(index) = self.active_reasoning.as_mut() {
+                *index = index.saturating_sub(1);
+            }
         }
         self.logs.len().saturating_sub(1)
     }
@@ -1920,6 +2086,7 @@ pub(super) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Info => "- ",
         LogKind::User => "you> ",
         LogKind::Assistant => "assistant> ",
+        LogKind::Reasoning => "think> ",
         LogKind::Tool => "tool> ",
         LogKind::Error => "error> ",
     }
@@ -2125,16 +2292,33 @@ fn payload_has_tool_calls(payload: &Value) -> bool {
     }
 }
 
+#[cfg(test)]
 fn sanitize_assistant_delta(delta: &str) -> String {
+    let mut in_tool_markup = false;
+    sanitize_assistant_delta_streaming(delta, &mut in_tool_markup)
+}
+
+fn sanitize_assistant_delta_streaming(delta: &str, in_tool_markup: &mut bool) -> String {
     if delta.trim().is_empty() {
         return String::new();
     }
-    let cleaned = strip_tool_block_tags(delta);
+
+    let stripped = strip_streaming_tool_markup(delta, in_tool_markup);
+    if stripped.trim().is_empty() {
+        return String::new();
+    }
+
+    let cleaned = strip_tool_block_tags(stripped.as_str());
     let trimmed = cleaned.trim();
     if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
         return String::new();
     }
+
     cleaned
+}
+
+fn sanitize_reasoning_text(text: &str) -> String {
+    text.trim().to_string()
 }
 
 fn sanitize_assistant_text(text: &str) -> String {
@@ -2176,6 +2360,117 @@ fn strip_tag_block(mut text: String, start_tag: &str, end_tag: &str) -> String {
         }
     }
     text
+}
+
+fn strip_streaming_tool_markup(text: &str, in_tool_markup: &mut bool) -> String {
+    let mut output = String::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if *in_tool_markup {
+            let lowered = remaining.to_ascii_lowercase();
+            let end_call = lowered.find("</tool_call>");
+            let end_tool = lowered.find("</tool>");
+            let Some((end_index, end_tag)) = (match (end_call, end_tool) {
+                (Some(left), Some(right)) if left <= right => Some((left, "</tool_call>")),
+                (Some(_), Some(right)) => Some((right, "</tool>")),
+                (Some(left), None) => Some((left, "</tool_call>")),
+                (None, Some(right)) => Some((right, "</tool>")),
+                (None, None) => None,
+            }) else {
+                return output;
+            };
+
+            let after_end = end_index + end_tag.len();
+            remaining = &remaining[after_end..];
+            *in_tool_markup = false;
+            continue;
+        }
+
+        let lowered = remaining.to_ascii_lowercase();
+        let start_call = lowered.find("<tool_call");
+        let start_tool = lowered.find("<tool");
+        let Some(start_index) = (match (start_call, start_tool) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        }) else {
+            output.push_str(remaining);
+            break;
+        };
+
+        output.push_str(&remaining[..start_index]);
+        let after_start = &remaining[start_index..];
+        let lowered_after = after_start.to_ascii_lowercase();
+        let Some(close_offset) = lowered_after.find('>') else {
+            *in_tool_markup = true;
+            return output;
+        };
+
+        let body_start = start_index + close_offset + 1;
+        remaining = &remaining[body_start..];
+        *in_tool_markup = true;
+    }
+
+    output
+}
+
+fn merge_stream_text(existing: &mut String, incoming: &str) {
+    if incoming.is_empty() {
+        return;
+    }
+    if existing.is_empty() {
+        existing.push_str(incoming);
+        return;
+    }
+    if existing == incoming {
+        return;
+    }
+    if incoming.starts_with(existing.as_str()) {
+        *existing = incoming.to_string();
+        return;
+    }
+    if existing.ends_with(incoming) {
+        return;
+    }
+
+    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
+    if overlap > 0 {
+        existing.push_str(&incoming[overlap..]);
+        return;
+    }
+
+    if !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(incoming);
+}
+
+fn longest_suffix_prefix_overlap(left: &str, right: &str) -> usize {
+    let mut len = left.len().min(right.len());
+    while len > 0 {
+        if !left.is_char_boundary(left.len() - len) || !right.is_char_boundary(len) {
+            len = len.saturating_sub(1);
+            continue;
+        }
+        if left[left.len() - len..] == right[..len] {
+            return len;
+        }
+        len = len.saturating_sub(1);
+    }
+    0
+}
+
+fn compact_text_for_compare(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn is_equivalent_text(left: &str, right: &str) -> bool {
+    if left.trim().is_empty() || right.trim().is_empty() {
+        return false;
+    }
+    compact_text_for_compare(left) == compact_text_for_compare(right)
 }
 
 fn format_tool_call_line(tool: &str, args: &Value) -> String {
@@ -2485,6 +2780,40 @@ cdef";
     fn sanitize_assistant_delta_filters_tool_payload_fragments() {
         assert!(sanitize_assistant_delta("<tool_call>{").is_empty());
         assert!(sanitize_assistant_delta("{\"name\":\"读取文件\",\"arguments\":{}}").is_empty());
+    }
+
+    #[test]
+    fn sanitize_assistant_delta_streaming_strips_split_tool_call_block() {
+        let mut in_tool_markup = false;
+        let first = sanitize_assistant_delta_streaming(
+            "<tool_call>{\"name\":\"final_reply\",\"arguments\":{\"content\":\"",
+            &mut in_tool_markup,
+        );
+        assert!(first.is_empty());
+        assert!(in_tool_markup);
+
+        let second = sanitize_assistant_delta_streaming(
+            "hello\"}}</tool_call>hello world",
+            &mut in_tool_markup,
+        );
+        assert_eq!(second, "hello world");
+        assert!(!in_tool_markup);
+    }
+
+    #[test]
+    fn merge_stream_text_reuses_snapshot_without_duplicate_append() {
+        let mut output = "hello".to_string();
+        merge_stream_text(&mut output, "hello world");
+        assert_eq!(output, "hello world");
+
+        merge_stream_text(&mut output, "world");
+        assert_eq!(output, "hello world");
+    }
+
+    #[test]
+    fn equivalent_text_ignores_whitespace_differences() {
+        assert!(is_equivalent_text("hello  world", "hello world"));
+        assert!(is_equivalent_text("- run command", "-run command"));
     }
 
     #[test]

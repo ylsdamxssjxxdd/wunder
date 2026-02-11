@@ -5,7 +5,7 @@ x-rust-build: &rust-build
     RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
 
 services:
-  wunder_server:
+  wunder-server:
     build: *rust-build
     privileged: true
     security_opt:
@@ -21,8 +21,8 @@ services:
       - ./fonts:/usr/share/fonts/wunder:ro
     environment:
       - TZ=Asia/Shanghai
-      - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001}
-      - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@postgres:5432/wunder}
+      - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://wunder-sandbox:9001}
+      - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
@@ -39,15 +39,15 @@ services:
       - CARGO_TARGET_DIR=/app/target/x86
     command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; echo "wunder-server missing or stale, waiting for sandbox build..." >&2; while true; do if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; sleep 1; done']
     depends_on:
-      sandbox:
+      wunder-sandbox:
         condition: service_started
-      postgres:
+      wunder-postgres:
         condition: service_healthy
-      weaviate:
+      wunder-weaviate:
         condition: service_started
     restart: always
 
-  sandbox:
+  wunder-sandbox:
     build: *rust-build
     privileged: true
     security_opt:
@@ -83,7 +83,7 @@ services:
       retries: 20
     restart: always
 
-  wunder_mcp:
+  wunder-mcp:
     image: wunder-x86
     platform: linux/amd64
     privileged: true
@@ -102,7 +102,7 @@ services:
     command: ["bash", "-lc", "python3 -m mcp_server.main"]
     restart: always
 
-  postgres:
+  wunder-postgres:
     image: postgres:16
     privileged: true
     security_opt:
@@ -124,7 +124,7 @@ services:
       retries: 10
     restart: always
 
-  weaviate:
+  wunder-weaviate:
     image: semitechnologies/weaviate:1.27.0
     platform: linux/amd64
     privileged: true
@@ -144,7 +144,7 @@ services:
       - wunder_weaviate:/var/lib/weaviate
     restart: always
 
-  wunder_frontend:
+  wunder-frontend:
     image: node:22.14
     privileged: true
     security_opt:
@@ -161,13 +161,13 @@ services:
       - TZ=Asia/Shanghai
       - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
       - VITE_API_BASE=${VITE_API_BASE:-/wunder}
-      - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder_server:18000}
+      - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder-server:18000}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
     command: sh -c "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"
     # command: sh -c "npm install && npm run build"
 
-  # wunder_nginx:
+  # wunder-nginx:
   #   image: nginx:latest
   #   privileged: true
   #   security_opt:
@@ -177,7 +177,7 @@ services:
   #   environment:
   #     - TZ=Asia/Shanghai
   #   depends_on:
-  #     - wunder_server
+  #     - wunder-server
   #   restart: always
   #   volumes:
   #     - ./frontend/dist:/usr/share/nginx/html:ro

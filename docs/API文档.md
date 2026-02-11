@@ -6,7 +6,7 @@
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
 - 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
-- MCP 服务容器：`wunder_mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
+- MCP 服务容器：`wunder-mcp` 用于运行 `mcp_server/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `mcp_server/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`mcp_server/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
 - Database query tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query` tools (`db_query` for single table, `db_query_<key>` for multiple). Each tool is hard-bound to its table and embeds compact schema hints (`column + type`) in description.
@@ -19,7 +19,7 @@
 - 配置分层：基础配置为 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖），管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：建议使用仓库根目录 `.env` 统一管理常用变量，docker compose 默认读取（如 `WUNDER_HOST`/`WUNDER_PORT`/`WUNDER_API_KEY`/`WUNDER_POSTGRES_DSN`/`WUNDER_SANDBOX_ENDPOINT`）。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
-- Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder_server:18000`; keep `postgres`/`weaviate`/`wunder_mcp` bound to `127.0.0.1`.
+- Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`wunder-mcp` bound to `127.0.0.1`.
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
@@ -2233,7 +2233,7 @@
 #### 4.6.4 运行说明
 
 - 共享沙盒服务不创建子容器，依赖同一镜像运行与工作区挂载即可。
-- docker compose 内网部署推荐使用容器内部 DNS（默认 `http://sandbox:9001`）直连沙盒且无需对外暴露 9001 端口；运行时会优先读取 `WUNDER_SANDBOX_ENDPOINT` 并在常见地址间自动回退以降低 IP 配置失败概率。
+- docker compose 内网部署推荐使用容器内部 DNS（默认 `http://wunder-sandbox:9001`）直连沙盒且无需对外暴露 9001 端口；运行时会优先读取 `WUNDER_SANDBOX_ENDPOINT` 并在常见地址间自动回退以降低 IP 配置失败概率。
 - 如需在 ptc/Matplotlib 或其他字体依赖中渲染中文，建议将仓库 `fonts/` 挂载到 `/usr/share/fonts/wunder`，并使用 `FONTCONFIG_FILE=/app/config/fonts.conf`、`XDG_CACHE_HOME=/workspaces/.cache`、`MATPLOTLIBRC=/app/config/matplotlibrc` 与 `MPLCONFIGDIR=/workspaces/.matplotlib`（docker compose 已默认配置）。
 
 ### 4.7 A2A 标准接口

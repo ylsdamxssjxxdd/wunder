@@ -7,11 +7,11 @@ flowchart LR
   end
 
   subgraph Runtime["运行服务"]
-    Nginx["前端静态服务<br/>wunder_nginx"]
-    FrontendDev["前端开发服务<br/>wunder_frontend"]
-    RustAPI["核心服务/网关<br/>wunder_server"]
+    Nginx["前端静态服务<br/>wunder-nginx"]
+    FrontendDev["前端开发服务<br/>wunder-frontend"]
+    RustAPI["核心服务/网关<br/>wunder-server"]
     Sandbox["沙盒<br/>sandbox"]
-    MCP["MCP 服务<br/>wunder_mcp"]
+    MCP["MCP 服务<br/>wunder-mcp"]
     PG[("数据库<br/>postgres")]
     VectorDB["向量数据库<br/>Weaviate"]
   end

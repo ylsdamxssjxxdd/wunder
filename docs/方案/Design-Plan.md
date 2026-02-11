@@ -336,7 +336,7 @@ security:
 
 sandbox:
   mode: local
-  endpoint: http://sandbox:9001
+  endpoint: http://wunder-sandbox:9001
   image: wunder:20250105-x86
   container_root: /workspaces
   network: bridge
