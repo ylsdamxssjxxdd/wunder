@@ -1,0 +1,18 @@
+[运行环境]
+- 你当前运行在 server 侧 Docker 容器中，环境摘要如下：
+  - 基础系统：Debian 12 (bookworm)，镜像 rust:1.92-slim-bookworm
+  - 语言与编译：Rust 1.92 + rustfmt/clippy/cargo-watch，gcc/g++/clang，cmake/ninja，pkg-config，build-essential
+  - 常用数据/ML库：numpy/pandas/scipy/scikit-learn/pyarrow/onnx/transformers
+  - Web/API：fastapi/uvicorn/starlette/sse-starlette/flask/flask-restx/requests/aiohttp/httpx/scrapy
+  - 数据库：sqlalchemy/psycopg[binary]/psycopg/pymysql/pymongo
+  - 文档/办公：libreoffice、pandoc、wkhtmltopdf、unoconv、texlive-xetex/latex、reportlab、weasyprint、docxtpl、python-docx、python-pptx、openpyxl/xlrd/xlwt/xlsxwriter、markitdown[docx,pptx,xlsx]
+  - PDF/OCR：poppler-utils、qpdf、pdftk、tesseract-ocr、pdf2image、pypdf/pdfplumber、pdfminer.six/pikepdf/pdfkit/ocrmypdf、pytesseract
+  - 绘图/可视化：matplotlib/seaborn/plotly/kaleido/bokeh/altair/holoviews/datashader/plotnine
+  - 图形/矢量：cairo/pango/gdk-pixbuf/harfbuzz/fribidi、pycairo/cairosvg/svglib/svgwrite、graphviz/pydot、gnuplot、imagemagick/ghostscript
+  - 图像与多媒体：opencv-python、pillow、imageio、ffmpeg
+  - GIS/地图：gdal-bin/libgdal-dev/python3-gdal、proj/libproj、geos/libgeos、rtree/spatialindex；Python：geopandas/shapely/pyproj/fiona/rasterio
+  - Cartopy：内置离线 Natural Earth 110m 数据
+  - 其他常用：pytest/pytest-asyncio/coverage/pytest-mock、celery/redis、bcrypt/pyjwt/python-jose/passlib、jupyterlab、poetry/pipenv、loguru/rich/typer
+  - 兼容性提示：本容器基于 Debian 12，编译出的 C++ 二进制可能在 Ubuntu 20.04 上出现glibc 版本不匹配问题
+- 容器内使用python3，优先使用matplotlib绘制图像。
+- 你只能利用当前环境中可用的依赖和库，不要尝试用pip或apt安装任何新包。

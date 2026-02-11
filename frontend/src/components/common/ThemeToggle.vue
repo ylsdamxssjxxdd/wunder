@@ -1,6 +1,6 @@
 <template>
   <button class="theme-toggle" type="button" :aria-label="toggleLabel" @click="toggleMode">
-    <i v-if="isDark" class="fa-solid fa-sun theme-toggle-icon" aria-hidden="true"></i>
+    <i v-if="isDark" class="fa-solid fa-lightbulb theme-toggle-icon" aria-hidden="true"></i>
     <i v-else class="fa-solid fa-moon theme-toggle-icon" aria-hidden="true"></i>
   </button>
 </template>

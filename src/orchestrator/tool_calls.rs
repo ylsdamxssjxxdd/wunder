@@ -436,6 +436,59 @@ fn normalize_tool_calls(value: Value) -> Vec<ToolCall> {
     calls
 }
 
+fn extract_tagged_text(payload: &str, tag: &str) -> Option<String> {
+    let lower = payload.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = lower.find(open.as_str())?;
+    let after_open = start + open.len();
+    let close_open = lower[after_open..].find('>')?;
+    let content_start = after_open + close_open + 1;
+    let content_end = content_start + lower[content_start..].find(close.as_str())?;
+    payload
+        .get(content_start..content_end)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_tool_call_arguments(value: Value) -> Value {
+    match value {
+        Value::Null => json!({}),
+        Value::String(inner) => {
+            let trimmed = inner.trim();
+            if trimmed.is_empty() {
+                json!({})
+            } else if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                normalize_tool_call_arguments(parsed)
+            } else {
+                json!({ "raw": inner })
+            }
+        }
+        Value::Object(_) => value,
+        other => json!({ "value": other }),
+    }
+}
+
+fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
+    let name = extract_tagged_text(payload, "name")
+        .or_else(|| extract_tagged_text(payload, "tool"))
+        .map(|value| clean_tool_call_name(value.as_str()))
+        .filter(|value| !value.is_empty())?;
+    let arguments_text = extract_tagged_text(payload, "arguments")
+        .or_else(|| extract_tagged_text(payload, "args"))
+        .unwrap_or_else(|| "{}".to_string());
+    let arguments = serde_json::from_str::<Value>(arguments_text.as_str())
+        .map(normalize_tool_call_arguments)
+        .unwrap_or_else(|_| json!({ "raw": arguments_text }));
+
+    Some(ToolCall {
+        id: None,
+        name,
+        arguments,
+    })
+}
+
 fn parse_tool_calls_payload(payload: &str, allow_prefixed: bool) -> Vec<ToolCall> {
     let payload = payload.trim();
     if payload.is_empty() {
@@ -451,6 +504,11 @@ fn parse_tool_calls_payload(payload: &str, allow_prefixed: bool) -> Vec<ToolCall
     let mut calls = Vec::new();
     for (_, _, value) in &segments {
         calls.extend(normalize_tool_calls(value.clone()));
+    }
+    if calls.is_empty() {
+        if let Some(call) = parse_tagged_tool_call_payload(payload) {
+            calls.push(call);
+        }
     }
     if allow_prefixed && calls.is_empty() && !segments.is_empty() {
         calls.extend(parse_prefixed_tool_calls(payload, &segments));
@@ -779,6 +837,30 @@ mod tests {
         assert_eq!(
             calls[0].arguments.get("content").and_then(Value::as_str),
             Some("echo hi")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_name_arguments_tags_payload() {
+        let content = r#"<tool_call><name>执行命令</name><arguments>{"content":"pwd"}</arguments></tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "执行命令");
+        assert_eq!(
+            calls[0].arguments.get("content").and_then(Value::as_str),
+            Some("pwd")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_name_arguments_tags_stringified_arguments() {
+        let content = r#"<tool_call><name>read_file</name><arguments>"{\"path\":\"Cargo.toml\"}"</arguments></tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("Cargo.toml")
         );
     }
 

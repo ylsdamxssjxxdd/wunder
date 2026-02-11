@@ -134,16 +134,10 @@ const navItems = computed(() => {
 
   if (desktopMode.value) {
     items.push({
-      key: 'desktop.containers',
-      label: t('desktop.settings.containers'),
-      path: '/desktop/containers',
-      icon: 'fa-box-archive'
-    });
-    items.push({
       key: 'desktop.system',
       label: t('desktop.settings.system'),
       path: '/desktop/system',
-      icon: 'fa-sliders'
+      icon: 'fa-gear'
     });
   }
 

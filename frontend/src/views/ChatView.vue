@@ -59,21 +59,11 @@
             v-if="desktopMode"
             class="topbar-icon-btn"
             type="button"
-            :title="t('desktop.settings.containers')"
-            :aria-label="t('desktop.settings.containers')"
-            @click="handleOpenContainerSettings"
-          >
-            <i class="fa-solid fa-box-archive topbar-icon" aria-hidden="true"></i>
-          </button>
-          <button
-            v-if="desktopMode"
-            class="topbar-icon-btn"
-            type="button"
             :title="t('desktop.settings.system')"
             :aria-label="t('desktop.settings.system')"
             @click="handleOpenSystemSettings"
           >
-            <i class="fa-solid fa-sliders topbar-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-gear topbar-icon" aria-hidden="true"></i>
           </button>
           <div ref="featureMenuRef" class="topbar-feature-menu-wrap">
             <button
@@ -953,13 +943,6 @@ const handleOpenProfile = () => {
 
 const handleOpenPortal = () => {
   router.push(basePath.value + '/home');
-};
-
-const handleOpenContainerSettings = () => {
-  if (!desktopMode.value) {
-    return;
-  }
-  router.push('/desktop/containers');
 };
 
 const handleOpenSystemSettings = () => {

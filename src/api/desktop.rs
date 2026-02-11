@@ -273,8 +273,28 @@ fn load_desktop_settings(path: &Path) -> Result<DesktopSettingsFile, String> {
     if text.trim().is_empty() {
         return Ok(DesktopSettingsFile::default());
     }
-    serde_json::from_str::<DesktopSettingsFile>(&text)
-        .map_err(|err| format!("parse desktop settings failed {}: {err}", path.display()))
+
+    match serde_json::from_str::<DesktopSettingsFile>(&text) {
+        Ok(settings) => Ok(settings),
+        Err(primary_err) => {
+            let backup_path = desktop_settings_backup_path(path);
+            if backup_path.exists() {
+                if let Ok(backup_text) = fs::read_to_string(&backup_path) {
+                    if !backup_text.trim().is_empty() {
+                        if let Ok(settings) =
+                            serde_json::from_str::<DesktopSettingsFile>(&backup_text)
+                        {
+                            return Ok(settings);
+                        }
+                    }
+                }
+            }
+            Err(format!(
+                "parse desktop settings failed {}: {primary_err}",
+                path.display()
+            ))
+        }
+    }
 }
 
 fn save_desktop_settings(path: &Path, settings: &DesktopSettingsFile) -> Result<(), String> {
@@ -288,8 +308,51 @@ fn save_desktop_settings(path: &Path, settings: &DesktopSettingsFile) -> Result<
             )
         })?;
     }
-    fs::write(path, serialized)
-        .map_err(|err| format!("write desktop settings failed {}: {err}", path.display()))
+
+    let backup_path = desktop_settings_backup_path(path);
+    let temp_path = desktop_settings_temp_path(path);
+    fs::write(&temp_path, &serialized).map_err(|err| {
+        format!(
+            "write desktop settings temp failed {}: {err}",
+            temp_path.display()
+        )
+    })?;
+
+    if path.exists() {
+        fs::copy(path, &backup_path).map_err(|err| {
+            format!(
+                "backup desktop settings failed {} -> {}: {err}",
+                path.display(),
+                backup_path.display()
+            )
+        })?;
+    }
+
+    if let Err(initial_err) = fs::rename(&temp_path, path) {
+        if let Err(remove_err) = fs::remove_file(path) {
+            if remove_err.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "remove old desktop settings failed {}: {remove_err}",
+                    path.display()
+                ));
+            }
+        }
+        fs::rename(&temp_path, path).map_err(|rename_err| {
+            format!(
+                "replace desktop settings failed {}: {rename_err} (initial rename error: {initial_err})",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn desktop_settings_backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+fn desktop_settings_temp_path(path: &Path) -> PathBuf {
+    path.with_extension("json.tmp")
 }
 
 fn normalize_desktop_container_roots(

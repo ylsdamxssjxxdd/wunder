@@ -624,6 +624,35 @@ pub fn resolve_tool_name(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
+    match canonical {
+        "问询面板" => Some("question_panel"),
+        "技能调用" => Some("skill_call"),
+        "智能体蜂群" => Some("agent_swarm"),
+        "节点调用" => Some("node_invoke"),
+        _ => None,
+    }
+}
+
+fn select_english_tool_alias(
+    canonical: &str,
+    aliases: &[String],
+    allowed_names: &HashSet<String>,
+) -> Option<String> {
+    if aliases.is_empty() {
+        return None;
+    }
+    if let Some(preferred) = preferred_english_alias(canonical).filter(|value| {
+        aliases.iter().any(|alias| alias == *value) && allowed_names.contains(*value)
+    }) {
+        return Some(preferred.to_string());
+    }
+    aliases
+        .iter()
+        .find(|alias| allowed_names.contains(*alias))
+        .cloned()
+}
+
 /// 工具调度入口：优先处理 A2A 与 MCP，再回落到内置工具。
 pub async fn execute_tool(context: &ToolContext<'_>, name: &str, args: &Value) -> Result<Value> {
     let _ = context.session_id;
@@ -755,6 +784,9 @@ pub fn collect_prompt_tool_specs_with_language(
     for (alias, canonical) in alias_map {
         canonical_aliases.entry(canonical).or_default().push(alias);
     }
+    for aliases in canonical_aliases.values_mut() {
+        aliases.sort();
+    }
     for spec in builtin_tool_specs_with_language(language) {
         let aliases: &[String] = canonical_aliases
             .get(&spec.name)
@@ -766,13 +798,11 @@ pub fn collect_prompt_tool_specs_with_language(
             continue;
         }
         let preferred_alias = if language_lower.starts_with("en") {
-            aliases.iter().find(|alias| allowed_names.contains(*alias))
+            select_english_tool_alias(&spec.name, aliases, allowed_names)
         } else {
             None
         };
-        let name = preferred_alias
-            .cloned()
-            .unwrap_or_else(|| spec.name.clone());
+        let name = preferred_alias.unwrap_or_else(|| spec.name.clone());
         if !seen.insert(name.clone()) {
             continue;
         }

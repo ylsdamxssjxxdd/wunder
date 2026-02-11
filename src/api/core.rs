@@ -201,21 +201,27 @@ async fn wunder_tools(
     for (alias, canonical) in alias_map {
         canonical_aliases.entry(canonical).or_default().push(alias);
     }
+    for aliases in canonical_aliases.values_mut() {
+        aliases.sort();
+    }
     for spec in builtin_tool_specs() {
         if !enabled_builtin.contains(&spec.name) {
             continue;
         }
-        if language.starts_with("en") {
-            if let Some(aliases) = canonical_aliases.get(&spec.name) {
-                if let Some(alias) = aliases.first() {
-                    builtin_tools.push(ToolSpec {
-                        name: alias.clone(),
-                        description: spec.description.clone(),
-                        input_schema: spec.input_schema.clone(),
-                    });
-                    continue;
-                }
-            }
+        let english_alias = if language.starts_with("en") {
+            canonical_aliases
+                .get(&spec.name)
+                .and_then(|aliases| select_english_alias(&spec.name, aliases))
+        } else {
+            None
+        };
+        if let Some(alias) = english_alias {
+            builtin_tools.push(ToolSpec {
+                name: alias,
+                description: spec.description.clone(),
+                input_schema: spec.input_schema.clone(),
+            });
+            continue;
         }
         builtin_tools.push(spec);
     }
@@ -625,6 +631,20 @@ async fn wunder_i18n(
 async fn wunder_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Response> {
     let conversions = convert_multipart_list(multipart).await?;
     Ok(Json(build_ok_conversion_payload(conversions)))
+}
+
+fn select_english_alias(canonical: &str, aliases: &[String]) -> Option<String> {
+    let preferred = match canonical {
+        "问询面板" => Some("question_panel"),
+        "技能调用" => Some("skill_call"),
+        "智能体蜂群" => Some("agent_swarm"),
+        "节点调用" => Some("node_invoke"),
+        _ => None,
+    };
+    if let Some(preferred) = preferred.filter(|value| aliases.iter().any(|alias| alias == *value)) {
+        return Some(preferred.to_string());
+    }
+    aliases.first().cloned()
 }
 
 fn map_orchestrator_error(err: Error) -> Response {

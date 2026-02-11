@@ -368,6 +368,7 @@ export default {
   'desktop.system.defaultModel': 'Default model',
   'desktop.system.defaultModelRequired': 'Please set a default model',
   'desktop.system.defaultModelMissing': 'Default model must exist in model list',
+  'desktop.system.defaultModelConfigRequired': 'Default model requires both Base URL and model name',
   'desktop.system.modelUnnamed': 'Unnamed model',
   'desktop.system.modelKey': 'Model key',
   'desktop.system.modelKeyRequired': 'Model key cannot be empty',

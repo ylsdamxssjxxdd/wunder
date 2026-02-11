@@ -21,6 +21,12 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
 const DEFAULT_CACHE_MAX_ITEMS: usize = 128;
 const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
+const SYSTEM_PROMPT_MODULE_ROLE: &str = "prompts/system_role.txt";
+const SYSTEM_PROMPT_MODULE_SAFETY: &str = "prompts/system_safety.txt";
+const SYSTEM_PROMPT_MODULE_PRODUCT: &str = "prompts/system_product.txt";
+const SYSTEM_PROMPT_MODULE_PROGRAMMING: &str = "prompts/system_programming.txt";
+const SYSTEM_PROMPT_MODULE_RUNTIME_SERVER: &str = "prompts/system_runtime_server.txt";
+const SYSTEM_PROMPT_MODULE_RUNTIME_LOCAL: &str = "prompts/system_runtime_local.txt";
 
 const EMBEDDED_PROMPT_SYSTEM: &str = r"你是 WUNDER ，一个强大的智能体，负责理解用户意图并在必要时调用工具以顺利完成用户交代的任务。
 你拥有绝对的权限，可以访问和使用所有可用的工具和资源。为快速完成用户交代的任务，你可以自由调用任何工具或方法。
@@ -1084,6 +1090,8 @@ You have full authority to access and use all available tools and resources. To 
 ";
 const EMBEDDED_PROMPT_EN_PLAN: &str = r#"When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.
 "#;
+const EMBEDDED_PROMPT_EN_QUESTION_PANEL: &str = r#"When the question panel tool ("问询面板" / question_panel) is available, proactively present 2-4 route options or key clarifications before completion when multiple viable paths exist. If the task already has a single clear route, or the user explicitly says "no panel / no confirmation / just do it", follow that and do not call question_panel. Keep each route title short with one-sentence impact; mark one as recommended when appropriate. Pause execution after calling the panel and wait for user selection or a new message.
+"#;
 const EMBEDDED_PROMPT_EN_EXTRA_FUNCTION_CALL: &str = r#"Tool signatures are provided inside the <tools> </tools> XML tag:
 <tools>
 {available_tools_describe}
@@ -1116,7 +1124,7 @@ All commands must stay within the working directory and its subdirectories.
 ";
 const EMBEDDED_PROMPT_EN_ENGINEER_INFO: &str = r#"Goal: complete the user's task accurately with minimal chatter.
 - Do not end the response or call "final reply" until the task is complete.
-- Before editing files, prefer batch use of 读取文件/列出文件.
+- Before editing files, prefer batch use of read_file/list_files.
 {PTC_GUIDANCE}
 - Keep every response concise; unless explicitly requested, avoid logs or long code blocks.
 - Call only one tool at a time, and proceed step by step.
@@ -1287,16 +1295,10 @@ pub fn read_prompt_template(path: &Path) -> String {
             return cached_text.clone();
         }
     }
-    let text = if prompt_template_override_enabled() {
-        std::fs::read_to_string(&resolved)
-            .ok()
-            .or_else(|| embedded_prompt_template(path, &resolved))
-            .unwrap_or_default()
-    } else {
-        embedded_prompt_template(path, &resolved)
-            .or_else(|| std::fs::read_to_string(&resolved).ok())
-            .unwrap_or_default()
-    };
+    let text = std::fs::read_to_string(&resolved)
+        .ok()
+        .or_else(|| embedded_prompt_template(path, &resolved))
+        .unwrap_or_default();
     cache.lock().insert(cache_key, (mtime, text.clone()));
     text
 }
@@ -1427,7 +1429,7 @@ impl PromptComposer {
             } else {
                 Vec::new()
             };
-            let base_prompt = read_prompt_template(Path::new("prompts/system.txt"));
+            let base_prompt = build_base_system_prompt(&config.server.mode);
             let workdir_display = workspace.display_path(user_id, workdir);
             let mut prompt = build_system_prompt(
                 &base_prompt,
@@ -1617,6 +1619,47 @@ fn build_system_prompt(
     format!("{}\n\n{}", base_prompt.trim(), extra_prompt.trim())
 }
 
+fn build_base_system_prompt(server_mode: &str) -> String {
+    let runtime_module = if is_local_runtime_mode(server_mode) {
+        SYSTEM_PROMPT_MODULE_RUNTIME_LOCAL
+    } else {
+        SYSTEM_PROMPT_MODULE_RUNTIME_SERVER
+    };
+    let role = load_system_module(SYSTEM_PROMPT_MODULE_ROLE);
+    let safety = load_system_module(SYSTEM_PROMPT_MODULE_SAFETY);
+    let product = load_system_module(SYSTEM_PROMPT_MODULE_PRODUCT);
+    let programming = load_system_module(SYSTEM_PROMPT_MODULE_PROGRAMMING);
+    let runtime = load_system_module(runtime_module);
+    let system_template = read_prompt_template(Path::new("prompts/system.txt"));
+    if !system_template.trim().is_empty() {
+        return render_template(
+            &system_template,
+            &HashMap::from([
+                ("SYSTEM_ROLE".to_string(), role),
+                ("SYSTEM_SAFETY".to_string(), safety),
+                ("SYSTEM_PRODUCT".to_string(), product),
+                ("SYSTEM_PROGRAMMING".to_string(), programming),
+                ("SYSTEM_RUNTIME".to_string(), runtime),
+            ]),
+        );
+    }
+    let mut blocks = vec![role, safety, product, programming, runtime];
+    blocks.retain(|value| !value.trim().is_empty());
+    blocks.push("{ENGINEER_SYSTEM_INFO}".to_string());
+    blocks.join("\n\n")
+}
+
+fn load_system_module(path: &str) -> String {
+    read_prompt_template(Path::new(path)).trim().to_string()
+}
+
+fn is_local_runtime_mode(server_mode: &str) -> bool {
+    matches!(
+        server_mode.trim().to_ascii_lowercase().as_str(),
+        "cli" | "desktop"
+    )
+}
+
 fn build_engineer_system_info(workdir_display: &str, workspace_tree: &str) -> String {
     let template_path = Path::new("prompts/engineer_system_info.txt");
     let template = read_prompt_template(template_path);
@@ -1748,12 +1791,11 @@ fn embedded_prompt_template(path: &Path, resolved: &Path) -> Option<String> {
     push_prompt_key(&mut keys, resolved);
 
     let mut candidates = Vec::new();
-    if i18n::get_language().starts_with("en") {
-        for key in &keys {
-            if let Some(en_key) = to_english_prompt_key(key) {
-                if !candidates.contains(&en_key) {
-                    candidates.push(en_key);
-                }
+    let language = i18n::get_language();
+    for key in &keys {
+        if let Some(localized_key) = to_localized_prompt_key(key, &language) {
+            if !candidates.contains(&localized_key) {
+                candidates.push(localized_key);
             }
         }
     }
@@ -1797,13 +1839,21 @@ fn normalize_prompt_key(path: &Path) -> Option<String> {
         .map(|index| normalized[index + 1..].to_string())
 }
 
-fn to_english_prompt_key(key: &str) -> Option<String> {
+fn to_localized_prompt_key(key: &str, language: &str) -> Option<String> {
+    let locale = match language.trim().to_ascii_lowercase() {
+        value if value.starts_with("en") => "en",
+        value if value.starts_with("zh") => "zh",
+        _ => return None,
+    };
     let normalized = key.trim().to_ascii_lowercase();
-    if !normalized.starts_with("prompts/") || normalized.starts_with("prompts/en/") {
+    if !normalized.starts_with("prompts/")
+        || normalized.starts_with("prompts/en/")
+        || normalized.starts_with("prompts/zh/")
+    {
         return None;
     }
     Some(format!(
-        "prompts/en/{}",
+        "prompts/{locale}/{}",
         normalized.trim_start_matches("prompts/")
     ))
 }
@@ -1823,6 +1873,7 @@ fn embedded_prompt_by_key(key: &str) -> Option<&'static str> {
         "prompts/memory_summary.txt" => Some(EMBEDDED_PROMPT_MEMORY_SUMMARY),
         "prompts/en/system.txt" => Some(EMBEDDED_PROMPT_EN_SYSTEM),
         "prompts/en/plan_prompt.txt" => Some(EMBEDDED_PROMPT_EN_PLAN),
+        "prompts/en/question_panel_prompt.txt" => Some(EMBEDDED_PROMPT_EN_QUESTION_PANEL),
         "prompts/en/extra_prompt_function_call.txt" => Some(EMBEDDED_PROMPT_EN_EXTRA_FUNCTION_CALL),
         "prompts/en/extra_prompt_template.txt" => Some(EMBEDDED_PROMPT_EN_EXTRA_TOOL_CALL),
         "prompts/en/engineer_system_info.txt" => Some(EMBEDDED_PROMPT_EN_ENGINEER_SYSTEM_INFO),
@@ -1840,14 +1891,23 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
     } else {
         resolve_prompts_root().join(path)
     };
-    let language = i18n::get_language();
-    if language.starts_with("en") {
-        if let Some(parent) = resolved.parent() {
-            if let Some(name) = resolved.file_name() {
-                let candidate = parent.join("en").join(name);
-                if candidate.exists() {
-                    return candidate;
-                }
+    let locale = match i18n::get_language().to_ascii_lowercase() {
+        language if language.starts_with("en") => Some("en"),
+        language if language.starts_with("zh") => Some("zh"),
+        _ => None,
+    };
+    if let (Some(locale), Some(parent), Some(name)) =
+        (locale, resolved.parent(), resolved.file_name())
+    {
+        let localized_parent = parent
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("en") || value.eq_ignore_ascii_case("zh"))
+            .unwrap_or(false);
+        if !localized_parent {
+            let candidate = parent.join(locale).join(name);
+            if candidate.exists() {
+                return candidate;
             }
         }
     }
@@ -1864,13 +1924,6 @@ fn resolve_prompts_root() -> PathBuf {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn prompt_template_override_enabled() -> bool {
-    std::env::var(PROMPTS_ROOT_ENV)
-        .ok()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
 }
 
 fn absolute_path_str(path: &Path) -> String {

@@ -1,0 +1,5 @@
+[Runtime Environment]
+- You are running in a local runtime (cli/desktop), not a unified server Docker image.
+- Do not assume any language runtime or package is preinstalled; probe the local environment first (version/path/capability) before execution.
+- In cli/desktop mode, do not install new dependencies (pip/apt/npm/brew/choco). Prefer existing tools and provide no-install alternatives.
+- Keep operations minimal, reversible, and confined to the current working directory plus allowed paths.

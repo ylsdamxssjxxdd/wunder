@@ -1,0 +1,18 @@
+[Runtime Environment]
+- You are running in the server-side Docker runtime. Environment summary:
+  - Base system: Debian 12 (bookworm), image rust:1.92-slim-bookworm
+  - Languages/build: Rust 1.92 + rustfmt/clippy/cargo-watch, gcc/g++/clang, cmake/ninja, pkg-config, build-essential
+  - Common data/ML libs: numpy/pandas/scipy/scikit-learn/pyarrow/onnx/transformers
+  - Web/API: fastapi/uvicorn/starlette/sse-starlette/flask/flask-restx/requests/aiohttp/httpx/scrapy
+  - Databases: sqlalchemy/psycopg[binary]/psycopg/pymysql/pymongo
+  - Docs/office: libreoffice, pandoc, wkhtmltopdf, unoconv, texlive-xetex/latex, reportlab, weasyprint, docxtpl, python-docx, python-pptx, openpyxl/xlrd/xlwt/xlsxwriter, markitdown[docx,pptx,xlsx]
+  - PDF/OCR: poppler-utils, qpdf, pdftk, tesseract-ocr, pdf2image, pypdf/pdfplumber, pdfminer.six/pikepdf/pdfkit/ocrmypdf, pytesseract
+  - Plotting/viz: matplotlib/seaborn/plotly/kaleido/bokeh/altair/holoviews/datashader/plotnine
+  - Graphics/vector: cairo/pango/gdk-pixbuf/harfbuzz/fribidi, pycairo/cairosvg/svglib/svgwrite, graphviz/pydot, gnuplot, imagemagick/ghostscript
+  - Images/media: opencv-python, pillow, imageio, ffmpeg
+  - GIS/maps: gdal-bin/libgdal-dev/python3-gdal, proj/libproj, geos/libgeos, rtree/spatialindex; Python: geopandas/shapely/pyproj/fiona/rasterio
+  - Cartopy: offline Natural Earth 110m data included
+  - Other common: pytest/pytest-asyncio/coverage/pytest-mock, celery/redis, bcrypt/pyjwt/python-jose/passlib, jupyterlab, poetry/pipenv, loguru/rich/typer
+  - Compatibility note: this container is based on Debian 12; C++ binaries built here may hit glibc version mismatch on Ubuntu 20.04
+- Prefer using python3 for coding, and use matplotlib for plotting when needed.
+- Only use dependencies available in the current environment; do not install new packages with pip or apt.

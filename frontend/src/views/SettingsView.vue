@@ -26,13 +26,6 @@
           </el-button>
         </el-form-item>
 
-        <el-form-item :label="t('desktop.settings.containers')">
-          <p class="settings-desktop-hint">{{ t('desktop.settings.containersHint') }}</p>
-          <el-button type="primary" plain @click="openContainerSettings">
-            {{ t('desktop.settings.openContainers') }}
-          </el-button>
-        </el-form-item>
-
         <el-form-item :label="t('desktop.settings.system')">
           <p class="settings-desktop-hint">{{ t('desktop.settings.systemHint') }}</p>
           <el-button type="primary" plain @click="openSystemSettings">
@@ -74,13 +67,6 @@ const openToolsManager = () => {
     return;
   }
   router.push('/desktop/tools');
-};
-
-const openContainerSettings = () => {
-  if (!desktopMode.value) {
-    return;
-  }
-  router.push('/desktop/containers');
 };
 
 const openSystemSettings = () => {

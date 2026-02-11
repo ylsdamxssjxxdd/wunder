@@ -60,6 +60,7 @@ pub struct TuiApp {
     input_cursor: usize,
     input_viewport_width: u16,
     transcript_viewport_width: u16,
+    transcript_viewport_height: u16,
     logs: Vec<LogEntry>,
     busy: bool,
     should_quit: bool,
@@ -82,7 +83,6 @@ pub struct TuiApp {
     shortcuts_visible: bool,
     mouse_mode: MouseMode,
     tool_phase_notice_emitted: bool,
-    transcript_mouse_region: Option<(u16, u16, u16, u16)>,
 }
 
 impl TuiApp {
@@ -103,6 +103,7 @@ impl TuiApp {
             input_cursor: 0,
             input_viewport_width: 1,
             transcript_viewport_width: 1,
+            transcript_viewport_height: 1,
             logs: Vec::new(),
             busy: false,
             should_quit: false,
@@ -123,9 +124,8 @@ impl TuiApp {
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
-            mouse_mode: MouseMode::Select,
+            mouse_mode: MouseMode::Scroll,
             tool_phase_notice_emitted: false,
-            transcript_mouse_region: None,
         };
         app.sync_model_status().await;
         app.reload_session_stats().await;
@@ -200,7 +200,8 @@ impl TuiApp {
             "Up / Down             history (or move line in multiline)".to_string(),
             "Tab                   complete slash command".to_string(),
             "PgUp/PgDn             scroll transcript".to_string(),
-            "Mouse Wheel           scroll transcript (scroll mode)".to_string(),
+            "Mouse Wheel           scroll transcript".to_string(),
+            "Shift+Drag            select/copy (terminal bypass, if supported)".to_string(),
             format!("F2                   toggle mouse mode ({mouse_mode})"),
             "Ctrl+N / Ctrl+L       new session / clear transcript".to_string(),
             "Ctrl+C                exit".to_string(),
@@ -211,25 +212,9 @@ impl TuiApp {
         self.input_viewport_width = viewport_width.max(1);
     }
 
-    pub fn set_transcript_viewport(&mut self, viewport_width: u16) {
+    pub fn set_transcript_viewport(&mut self, viewport_width: u16, viewport_height: u16) {
         self.transcript_viewport_width = viewport_width.max(1);
-    }
-
-    pub fn set_transcript_mouse_region(&mut self, x: u16, y: u16, width: u16, height: u16) {
-        if width == 0 || height == 0 {
-            self.transcript_mouse_region = None;
-            return;
-        }
-        self.transcript_mouse_region = Some((x, y, width, height));
-    }
-
-    fn mouse_over_transcript(&self, column: u16, row: u16) -> bool {
-        let Some((x, y, width, height)) = self.transcript_mouse_region else {
-            return false;
-        };
-        let x_end = x.saturating_add(width);
-        let y_end = y.saturating_add(height);
-        column >= x && column < x_end && row >= y && row < y_end
+        self.transcript_viewport_height = viewport_height.max(1);
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -304,17 +289,20 @@ impl TuiApp {
     }
 
     fn scroll_transcript_up(&mut self, lines: u16) {
-        self.transcript_offset_from_bottom =
-            self.transcript_offset_from_bottom.saturating_add(lines);
+        let max_scroll = self.max_transcript_scroll(self.transcript_viewport_height);
+        let current = self.transcript_offset_from_bottom.min(max_scroll);
+        self.transcript_offset_from_bottom = current.saturating_add(lines).min(max_scroll);
     }
 
     fn scroll_transcript_down(&mut self, lines: u16) {
-        self.transcript_offset_from_bottom =
-            self.transcript_offset_from_bottom.saturating_sub(lines);
+        let max_scroll = self.max_transcript_scroll(self.transcript_viewport_height);
+        let current = self.transcript_offset_from_bottom.min(max_scroll);
+        self.transcript_offset_from_bottom = current.saturating_sub(lines);
     }
 
     fn scroll_transcript_to_top(&mut self) {
-        self.transcript_offset_from_bottom = u16::MAX;
+        self.transcript_offset_from_bottom =
+            self.max_transcript_scroll(self.transcript_viewport_height);
     }
 
     fn scroll_transcript_to_bottom(&mut self) {
@@ -620,9 +608,7 @@ impl TuiApp {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.mouse_mode != MouseMode::Scroll
-            || !self.mouse_over_transcript(mouse.column, mouse.row)
-        {
+        if self.mouse_mode != MouseMode::Scroll {
             return;
         }
         match mouse.kind {
@@ -2214,7 +2200,11 @@ fn compact_json(value: &Value) -> String {
     const MAX_INLINE_JSON_CHARS: usize = 200;
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
     if text.len() > MAX_INLINE_JSON_CHARS {
-        text.truncate(MAX_INLINE_JSON_CHARS);
+        let mut safe_boundary = MAX_INLINE_JSON_CHARS;
+        while safe_boundary > 0 && !text.is_char_boundary(safe_boundary) {
+            safe_boundary = safe_boundary.saturating_sub(1);
+        }
+        text.truncate(safe_boundary);
         text.push_str("...");
     }
     text
@@ -2320,5 +2310,12 @@ cdef";
     fn payload_has_tool_calls_accepts_non_empty_array() {
         let payload = serde_json::json!({ "tool_calls": [{ "name": "读取文件" }] });
         assert!(payload_has_tool_calls(&payload));
+    }
+
+    #[test]
+    fn compact_json_handles_multibyte_truncation() {
+        let value = serde_json::json!({ "message": "你".repeat(400) });
+        let output = compact_json(&value);
+        assert!(output.ends_with("..."));
     }
 }

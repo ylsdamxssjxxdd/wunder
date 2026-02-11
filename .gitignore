@@ -49,3 +49,4 @@ vector_knowledge
 WUNDER_TEMP
 gen/
 wunder-desktop/gen/
+.tmp*

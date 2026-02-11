@@ -368,6 +368,7 @@ export default {
   'desktop.system.defaultModel': '默认模型',
   'desktop.system.defaultModelRequired': '请设置默认模型',
   'desktop.system.defaultModelMissing': '默认模型必须存在于模型列表中',
+  'desktop.system.defaultModelConfigRequired': '默认模型至少需要填写 Base URL 和模型名称',
   'desktop.system.modelUnnamed': '未命名模型',
   'desktop.system.modelKey': '模型标识',
   'desktop.system.modelKeyRequired': '模型标识不能为空',

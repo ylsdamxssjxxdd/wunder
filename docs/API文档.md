@@ -2161,6 +2161,8 @@
 - `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
 - `function_call` 模式下系统提示词不再注入工具清单与工具调用引导，工具清单仅通过请求 `tools` 传入；技能提示词仍会注入。
 - `function_call` 模式需要在后续请求中携带历史的 assistant `tool_calls` 与 role=tool/tool_call_id 结果；wunder 会将其写入对话历史并自动回填。
+- 系统提示词按职能模块拼装（角色/安全/产品/编程/运行环境/协议/工程师信息）；运行环境模块按 `server.mode` 选择：`api/sandbox` 使用 server 运行模块，`cli/desktop` 使用本地运行模块（无固定依赖清单）。
+- 提示词模板按语言优先读取 `prompts/zh` 或 `prompts/en`；英文模式下内置工具名在提示词与 `/wunder/tools` 输出中优先英文别名。
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
 - 工具结果以 `tool_response: ` 前缀的 user 消息回填给模型，用于下一轮判断（`tool_call` 模式）。
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式对模型可用；`tool_call` 模式下注入系统提示词。
@@ -2409,7 +2411,7 @@
 - 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
 - 鼠标模式可通过 `F2` 或 `/mouse [scroll|select]` 切换：`scroll` 启用滚轮滚动，`select` 关闭捕获以便直接框选复制。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
-- CLI 提示词默认由二进制内嵌（内置模板）提供；如配置 `WUNDER_PROMPTS_ROOT` 且存在同名文件，则可外部覆盖。
+- CLI 提示词优先读取 `prompts/zh|en` 文件（可通过 `WUNDER_PROMPTS_ROOT` 指定根目录），缺失时自动回退二进制内嵌模板。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。
 
 ## wunder-desktop 本地桥接接口约定（M0/M4 已落地）
