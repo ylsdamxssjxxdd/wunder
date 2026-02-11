@@ -59,6 +59,7 @@ pub struct TuiApp {
     input: String,
     input_cursor: usize,
     input_viewport_width: u16,
+    transcript_viewport_width: u16,
     logs: Vec<LogEntry>,
     busy: bool,
     should_quit: bool,
@@ -99,6 +100,7 @@ impl TuiApp {
             input: String::new(),
             input_cursor: 0,
             input_viewport_width: 1,
+            transcript_viewport_width: 1,
             logs: Vec::new(),
             busy: false,
             should_quit: false,
@@ -119,7 +121,7 @@ impl TuiApp {
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
-            mouse_mode: MouseMode::Scroll,
+            mouse_mode: MouseMode::Select,
         };
         app.sync_model_status().await;
         app.reload_session_stats().await;
@@ -203,6 +205,10 @@ impl TuiApp {
 
     pub fn set_input_viewport(&mut self, viewport_width: u16) {
         self.input_viewport_width = viewport_width.max(1);
+    }
+
+    pub fn set_transcript_viewport(&mut self, viewport_width: u16) {
+        self.transcript_viewport_width = viewport_width.max(1);
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -300,12 +306,12 @@ impl TuiApp {
     }
 
     fn total_transcript_lines(&self) -> u16 {
+        let width = usize::from(self.transcript_viewport_width.max(1));
         let total = self
             .logs
             .iter()
             .map(|entry| {
-                let count = entry.text.lines().count();
-                count.max(1)
+                wrapped_visual_line_count(visual_log_text(entry.kind, &entry.text).as_str(), width)
             })
             .sum::<usize>();
         total.min(u16::MAX as usize) as u16
@@ -614,6 +620,7 @@ impl TuiApp {
             return Ok(());
         }
 
+        self.scroll_transcript_to_bottom();
         self.push_history(prompt.trim());
 
         if prompt.trim_start().starts_with('/') {
@@ -1833,6 +1840,46 @@ impl TuiApp {
     }
 }
 
+fn visual_log_text(kind: LogKind, text: &str) -> String {
+    format!("{}{text}", log_prefix(kind))
+}
+
+pub(super) fn log_prefix(kind: LogKind) -> &'static str {
+    match kind {
+        LogKind::Info => "- ",
+        LogKind::User => "you> ",
+        LogKind::Assistant => "assistant> ",
+        LogKind::Tool => "tool> ",
+        LogKind::Error => "error> ",
+    }
+}
+
+fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
+    let width = width.max(1);
+    if text.is_empty() {
+        return 1;
+    }
+
+    let mut line_count = 1usize;
+    let mut line_columns = 0usize;
+    for ch in text.chars() {
+        if ch == '\n' {
+            line_count = line_count.saturating_add(1);
+            line_columns = 0;
+            continue;
+        }
+
+        let char_width = display_char_width(ch);
+        if line_columns > 0 && line_columns.saturating_add(char_width) > width {
+            line_count = line_count.saturating_add(1);
+            line_columns = 0;
+        }
+        line_columns = line_columns.saturating_add(char_width).min(width);
+    }
+
+    line_count
+}
+
 fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> usize {
     let lines = build_wrapped_input_lines(text, width);
     if lines.len() <= 1 {
@@ -2104,5 +2151,13 @@ cdef";
         assert_eq!(normalize_wrapped_cursor_position((2, 3), 4), (2, 3));
         assert_eq!(normalize_wrapped_cursor_position((2, 4), 4), (3, 0));
         assert_eq!(normalize_wrapped_cursor_position((2, 9), 4), (4, 1));
+    }
+
+    #[test]
+    fn wrapped_visual_line_count_tracks_wrap_and_newlines() {
+        assert_eq!(wrapped_visual_line_count("", 8), 1);
+        assert_eq!(wrapped_visual_line_count("abcdef", 3), 2);
+        assert_eq!(wrapped_visual_line_count("ab\ncd", 8), 2);
+        assert_eq!(wrapped_visual_line_count("\u{4f60}\u{597d}\u{5417}", 4), 2);
     }
 }

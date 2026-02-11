@@ -22,7 +22,7 @@ import AdminAgentsView from '@/views/AdminAgentsView.vue';
 import AdminSystemView from '@/views/AdminSystemView.vue';
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
@@ -161,17 +161,47 @@ router.beforeEach(async (to) => {
   }
 
   if (desktopMode && !to.path.startsWith('/admin')) {
-    if (to.path.startsWith('/desktop')) {
-      const authStore = useAuthStore();
+    const remoteAuthMode = isDesktopRemoteAuthMode();
+    const authStore = useAuthStore();
+
+    if (remoteAuthMode && (to.path === '/login' || to.path === '/register')) {
+      if (!hasAccessToken()) {
+        return true;
+      }
       if (!authStore.user) {
         try {
           await authStore.loadProfile();
-        } catch {
-          // Ignore initial desktop profile load failures.
+          return DESKTOP_HOME_PATH;
+        } catch (error) {
+          if (isAuthRequiredError(error)) {
+            authStore.logout();
+          }
+          return true;
+        }
+      }
+      return DESKTOP_HOME_PATH;
+    }
+
+    if (to.path.startsWith('/desktop')) {
+      if (remoteAuthMode && !hasAccessToken()) {
+        return USER_LOGIN_PATH;
+      }
+      if (!authStore.user) {
+        try {
+          await authStore.loadProfile();
+        } catch (error) {
+          if (remoteAuthMode && isAuthRequiredError(error)) {
+            authStore.logout();
+            return USER_LOGIN_PATH;
+          }
+          if (!remoteAuthMode) {
+            // Ignore initial desktop profile load failures in local mode.
+          }
         }
       }
       return true;
     }
+
     if (to.path === '/app') {
       return DESKTOP_HOME_PATH;
     }
@@ -179,7 +209,11 @@ router.beforeEach(async (to) => {
       return to.fullPath.replace(/^\/app\//, '/desktop/');
     }
     if (to.path === '/home' || to.path === '/portal') {
-      return DESKTOP_HOME_PATH;
+      return remoteAuthMode && !hasAccessToken() ? USER_LOGIN_PATH : DESKTOP_HOME_PATH;
+    }
+
+    if (remoteAuthMode && !hasAccessToken()) {
+      return USER_LOGIN_PATH;
     }
     return DESKTOP_HOME_PATH;
   }

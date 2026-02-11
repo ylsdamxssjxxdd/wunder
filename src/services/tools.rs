@@ -4666,57 +4666,87 @@ struct ReadFileSpec {
 }
 
 fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>, String> {
-    let Some(files) = args.get("files").and_then(Value::as_array) else {
-        return Err(i18n::t("tool.read.no_path"));
-    };
     let mut specs = Vec::new();
-    for file in files.iter().take(MAX_READ_FILES) {
-        let Some(obj) = file.as_object() else {
-            continue;
-        };
-        let path = obj
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if path.is_empty() {
-            continue;
-        }
-        let mut ranges = Vec::new();
-        if let Some(Value::Array(items)) = obj.get("line_ranges") {
-            for item in items {
-                let Some(pair) = item.as_array() else {
-                    continue;
-                };
-                if pair.len() < 2 {
-                    continue;
-                }
-                let Some(start) = pair.first().and_then(parse_line_number) else {
-                    continue;
-                };
-                let Some(end) = pair.get(1).and_then(parse_line_number) else {
-                    continue;
-                };
-                ranges.push(normalize_range(start, end));
+
+    if let Some(files) = args.get("files").and_then(Value::as_array) {
+        for file in files.iter().take(MAX_READ_FILES) {
+            let Some(obj) = file.as_object() else {
+                continue;
+            };
+            if let Some(spec) = parse_read_file_spec_object(obj) {
+                specs.push(spec);
             }
         }
-        if let Some(start) = obj.get("start_line").and_then(parse_line_number) {
-            let end = obj
-                .get("end_line")
-                .and_then(parse_line_number)
-                .unwrap_or(start);
-            ranges.push(normalize_range(start, end));
-        }
-        if ranges.is_empty() {
-            ranges.push((1, MAX_READ_LINES));
-        }
-        specs.push(ReadFileSpec { path, ranges });
     }
+
+    if specs.is_empty() {
+        if let Some(obj) = args.as_object() {
+            if let Some(spec) = parse_read_file_spec_object(obj) {
+                specs.push(spec);
+            }
+        } else if let Some(path) = args
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            specs.push(ReadFileSpec {
+                path: path.to_string(),
+                ranges: vec![(1, MAX_READ_LINES)],
+            });
+        }
+    }
+
     if specs.is_empty() {
         return Err(i18n::t("tool.read.no_path"));
     }
     Ok(specs)
+}
+
+fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<ReadFileSpec> {
+    let path = obj
+        .get("path")
+        .or_else(|| obj.get("file_path"))
+        .or_else(|| obj.get("file"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if path.is_empty() {
+        return None;
+    }
+
+    let mut ranges = Vec::new();
+    if let Some(Value::Array(items)) = obj.get("line_ranges") {
+        for item in items {
+            let Some(pair) = item.as_array() else {
+                continue;
+            };
+            if pair.len() < 2 {
+                continue;
+            }
+            let Some(start) = pair.first().and_then(parse_line_number) else {
+                continue;
+            };
+            let Some(end) = pair.get(1).and_then(parse_line_number) else {
+                continue;
+            };
+            ranges.push(normalize_range(start, end));
+        }
+    }
+
+    if let Some(start) = obj.get("start_line").and_then(parse_line_number) {
+        let end = obj
+            .get("end_line")
+            .and_then(parse_line_number)
+            .unwrap_or(start);
+        ranges.push(normalize_range(start, end));
+    }
+
+    if ranges.is_empty() {
+        ranges.push((1, MAX_READ_LINES));
+    }
+
+    Some(ReadFileSpec { path, ranges })
 }
 
 fn parse_line_number(value: &Value) -> Option<usize> {
@@ -6386,4 +6416,36 @@ fn is_a2a_task_finished(status: &str) -> bool {
         status.to_lowercase().as_str(),
         "completed" | "failed" | "cancelled" | "rejected"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_read_file_specs_accepts_shorthand_path_payload() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "Cargo.toml",
+            "start_line": 2,
+            "end_line": 5,
+        }))
+        .expect("shorthand path should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "Cargo.toml");
+        assert_eq!(specs[0].ranges, vec![(2, 5)]);
+    }
+
+    #[test]
+    fn parse_read_file_specs_accepts_file_path_alias() {
+        let specs = parse_read_file_specs(&json!({
+            "file_path": "README.md",
+        }))
+        .expect("file_path alias should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "README.md");
+        assert_eq!(specs[0].ranges, vec![(1, MAX_READ_LINES)]);
+    }
 }

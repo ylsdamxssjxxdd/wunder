@@ -1,4 +1,6 @@
-import api from './http';
+import axios from 'axios';
+
+import { getDesktopLocalToken } from '@/config/desktop';
 
 import type { ApiPayload } from './types';
 
@@ -30,6 +32,27 @@ export type DesktopSettingsData = {
   updated_at: number;
 };
 
-export const fetchDesktopSettings = () => api.get('/desktop/settings');
+const desktopApi = axios.create({
+  timeout: 30000
+});
 
-export const updateDesktopSettings = (payload: ApiPayload) => api.put('/desktop/settings', payload);
+const buildDesktopHeaders = (): Record<string, string> => {
+  const token = getDesktopLocalToken();
+  if (!token) {
+    return {};
+  }
+  return {
+    'x-api-key': token,
+    Authorization: `Bearer ${token}`
+  };
+};
+
+export const fetchDesktopSettings = () =>
+  desktopApi.get('/wunder/desktop/settings', {
+    headers: buildDesktopHeaders()
+  });
+
+export const updateDesktopSettings = (payload: ApiPayload) =>
+  desktopApi.put('/wunder/desktop/settings', payload, {
+    headers: buildDesktopHeaders()
+  });

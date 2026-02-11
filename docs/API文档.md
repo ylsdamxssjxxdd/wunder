@@ -2425,10 +2425,10 @@
 
 - `GET /config.json`
   - 用途：前端运行时配置注入。
-  - 返回字段：`api_base`、`ws_base`、`token`、`user_id`、`workspace_root`、`mode`。
+  - 返回字段：`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`mode`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_role_name`、`remote_error`。
 - `GET /wunder/desktop/bootstrap`
   - 用途：桌面启动器/诊断查看完整运行时信息。
-  - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`。
+  - 返回字段：`web_base`、`api_base`、`ws_base`、`token`、`desktop_token`、`user_id`、`workspace_root`、`temp_root`、`settings_path`、`frontend_root`、`remote_enabled`、`remote_connected`、`remote_server_base_url`、`remote_role_name`、`remote_error`。
 
 ### desktop 本地设置接口
 
@@ -2439,7 +2439,7 @@
     - `container_roots`：数组，元素 `{ container_id, root }`
     - `language` / `supported_languages`
     - `llm`（`default` + `models`）
-    - `remote_gateway`（服务端连接预留配置）
+    - `remote_gateway`（服务端连接配置）
     - `updated_at`
 - `PUT /wunder/desktop/settings`
   - 用途：更新 desktop 本地设置并同步到运行态。
@@ -2448,11 +2448,24 @@
     - `container_roots`：数组，元素 `{ container_id, root }`
     - `language`：字符串，例如 `zh-CN` / `en-US`
     - `llm`：对象（`default` + `models`）
-    - `remote_gateway`：对象（预留，当前仅持久化）
+    - `remote_gateway`：对象（启动后可用于远端连接）
   - 行为约束：
     - 容器 id 会归一化到 `1..10`；容器 1 默认指向 `WUNDER_WORK`。
     - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
     - 更新后会同步写入 `WUNDER_TEMPD/config/desktop.settings.json`、运行中的 `ConfigStore` 与 `WorkspaceManager`。
+
+### desktop 远端接入（一期）
+
+- 当 `remote_gateway.enabled=true` 且 `server_base_url` 可解析时，desktop 会把 runtime 的 `api_base/ws_base` 切到远端 `wunder-server`。
+- desktop **不会自动创建账号或自动登录**；用户需按常规流程调用：
+  - `POST <server_base_url>/wunder/auth/register` 注册，或
+  - `POST <server_base_url>/wunder/auth/login` 登录。
+- 远端模式下：
+  - runtime 的 `token` 默认为空；
+  - 本地桌面设置接口继续使用 `desktop_token` 独立鉴权。
+- 若远端地址无效：
+  - 自动回退到本地模式继续可用；
+  - 失败原因写入 runtime 的 `remote_error` 字段。
 
 ### Tauri command（桌面窗口内）
 
@@ -2466,6 +2479,7 @@
 - 使用 desktop 本地 token（启动时生成并持久化到 `WUNDER_TEMPD/config/desktop.settings.json`）。
 - token guard 仅作用于 `/wunder/**` 业务接口；静态页与引导接口可无 token 访问。
 - 桌面模式会在 `index.html` 注入 runtime，并写入 `localStorage.access_token`；用户侧无需登录流程即可进入 `/desktop/home`。
+- 远端模式下不再自动写入远端 token；用户登录/注册成功后由正常鉴权流程写入 `localStorage.access_token`，本地设置接口仍使用 `desktop_token` 独立鉴权。
 - 支持从以下位置携带 token：
   - `x-api-key`
   - `Authorization: Bearer <token>`

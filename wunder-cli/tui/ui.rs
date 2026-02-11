@@ -25,6 +25,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         .map(|entry| log_line(entry.kind, entry.text))
         .collect();
     let transcript_viewport = inner_rect(vertical[1]);
+    app.set_transcript_viewport(transcript_viewport.width);
     let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
     let transcript = Paragraph::new(Text::from(transcript_lines))
         .block(
@@ -146,24 +147,18 @@ fn inner_rect(rect: Rect) -> Rect {
 }
 
 fn log_line(kind: LogKind, text: String) -> Line<'static> {
-    let (prefix, style) = match kind {
-        LogKind::Info => (
-            "- ",
-            Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        ),
-        LogKind::User => ("you> ", Style::default().fg(Color::LightBlue)),
-        LogKind::Assistant => ("assistant> ", Style::default().fg(Color::Green)),
-        LogKind::Tool => (
-            "tool> ",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::ITALIC),
-        ),
-        LogKind::Error => (
-            "error> ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
+    let style = match kind {
+        LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        LogKind::User => Style::default().fg(Color::LightBlue),
+        LogKind::Assistant => Style::default().fg(Color::Green),
+        LogKind::Tool => Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::ITALIC),
+        LogKind::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     };
 
-    Line::from(Span::styled(format!("{prefix}{text}"), style))
+    Line::from(Span::styled(
+        format!("{}{text}", super::app::log_prefix(kind)),
+        style,
+    ))
 }

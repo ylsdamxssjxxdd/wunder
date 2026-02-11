@@ -136,19 +136,48 @@ fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let candidate = trimmed.split_whitespace().last().unwrap_or("");
-    let cleaned = clean_tool_call_name(candidate);
+
+    if let Some(token) = trimmed.split_whitespace().last() {
+        let cleaned = clean_tool_call_name(token);
+        if is_tool_name_token(cleaned.as_str()) {
+            return Some(cleaned);
+        }
+    }
+
+    for token in trimmed.split_whitespace().rev() {
+        let cleaned = clean_tool_call_name(token);
+        if !is_tool_name_token(cleaned.as_str()) {
+            continue;
+        }
+        if cleaned.contains('_') || cleaned.contains('-') {
+            return Some(cleaned);
+        }
+    }
+
+    None
+}
+
+fn is_tool_name_token(cleaned: &str) -> bool {
     if cleaned.is_empty() || cleaned.len() > 64 {
-        return None;
+        return false;
     }
     if cleaned.contains('{')
         || cleaned.contains('[')
         || cleaned.contains('}')
         || cleaned.contains(']')
     {
-        return None;
+        return false;
     }
-    Some(cleaned)
+
+    let lowered = cleaned.to_ascii_lowercase();
+    if matches!(
+        lowered.as_str(),
+        "tool" | "tool_call" | "function_call" | "json" | "bash" | "shell"
+    ) {
+        return false;
+    }
+
+    true
 }
 
 fn clean_tool_call_name(raw: &str) -> String {
@@ -456,6 +485,9 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
 
     if !strict {
         calls.extend(parse_tool_calls_payload(content, false));
+        if calls.is_empty() && content.contains("```") {
+            calls.extend(parse_tool_calls_payload(content, true));
+        }
     }
     dedupe_tool_calls(calls)
 }
@@ -745,5 +777,27 @@ mod tests {
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_parse_tool_call_prefixed_json_fenced_block() {
+        let content = r#"run read_file with fenced json
+
+```json
+{"path":"Cargo.toml"}
+```"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("Cargo.toml")
+        );
+    }
+
+    #[test]
+    fn test_extract_prefixed_tool_name_supports_fullwidth_colon() {
+        let name = extract_prefixed_tool_name("?????read_file ");
+        assert_eq!(name.as_deref(), Some("read_file"));
     }
 }

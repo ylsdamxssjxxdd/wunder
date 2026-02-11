@@ -37,6 +37,7 @@ pub struct DesktopRuntimeInfo {
     pub api_base: String,
     pub ws_base: String,
     pub token: String,
+    pub desktop_token: String,
     pub user_id: String,
     pub app_dir: String,
     pub workspace_root: String,
@@ -44,6 +45,11 @@ pub struct DesktopRuntimeInfo {
     pub settings_path: String,
     pub repo_root: String,
     pub frontend_root: Option<String>,
+    pub remote_enabled: bool,
+    pub remote_connected: bool,
+    pub remote_server_base_url: String,
+    pub remote_role_name: String,
+    pub remote_error: Option<String>,
 }
 
 pub struct DesktopBridge {
@@ -137,10 +143,31 @@ impl DesktopBridge {
         println!("- user_id: {}", self.runtime_info.user_id);
 
         if print_token {
-            println!("- desktop_token: {}", self.runtime_info.token);
+            println!("- desktop_token: {}", self.runtime_info.desktop_token);
         } else {
-            println!("- desktop_token: {}", mask_token(&self.runtime_info.token));
+            println!(
+                "- desktop_token: {}",
+                mask_token(&self.runtime_info.desktop_token)
+            );
             println!("  (use --print-token to print full token)");
+        }
+
+        if self.runtime_info.remote_enabled {
+            if self.runtime_info.remote_connected {
+                println!(
+                    "- remote_gateway: connected ({})",
+                    self.runtime_info.remote_server_base_url
+                );
+                println!("- remote_role: {}", self.runtime_info.remote_role_name);
+            } else {
+                println!(
+                    "- remote_gateway: enabled but disconnected ({})",
+                    self.runtime_info.remote_server_base_url
+                );
+                if let Some(message) = self.runtime_info.remote_error.as_ref() {
+                    println!("- remote_error: {message}");
+                }
+            }
         }
     }
 
@@ -161,13 +188,28 @@ fn build_runtime_info(
     api_base: &str,
     ws_base: &str,
 ) -> DesktopRuntimeInfo {
+    let mut effective_api_base = api_base.to_string();
+    let mut effective_ws_base = ws_base.to_string();
+    let mut effective_token = runtime.desktop_token.clone();
+
+    if runtime.remote_gateway.enabled {
+        if let Some(remote_api_base) = runtime.remote_api_base.as_ref() {
+            effective_api_base = remote_api_base.clone();
+        }
+        if let Some(remote_ws_base) = runtime.remote_ws_base.as_ref() {
+            effective_ws_base = remote_ws_base.clone();
+        }
+        effective_token.clear();
+    }
+
     DesktopRuntimeInfo {
         mode: "desktop",
         bind_addr: bind_addr.to_string(),
         web_base: web_base.to_string(),
-        api_base: api_base.to_string(),
-        ws_base: ws_base.to_string(),
-        token: runtime.desktop_token.clone(),
+        api_base: effective_api_base,
+        ws_base: effective_ws_base,
+        token: effective_token,
+        desktop_token: runtime.desktop_token.clone(),
         user_id: runtime.user_id.clone(),
         app_dir: runtime.app_dir.to_string_lossy().to_string(),
         workspace_root: runtime.workspace_root.to_string_lossy().to_string(),
@@ -178,6 +220,11 @@ fn build_runtime_info(
             .frontend_root
             .as_ref()
             .map(|path| path.to_string_lossy().to_string()),
+        remote_enabled: runtime.remote_gateway.enabled,
+        remote_connected: runtime.remote_api_base.is_some() && runtime.remote_ws_base.is_some(),
+        remote_server_base_url: runtime.remote_gateway.server_base_url.trim().to_string(),
+        remote_role_name: runtime.remote_gateway.role_name.trim().to_string(),
+        remote_error: runtime.remote_error.clone(),
     }
 }
 
@@ -206,7 +253,7 @@ fn load_index_with_runtime(
     let runtime_json =
         serde_json::to_string(runtime_info).context("serialize desktop runtime payload failed")?;
     let script = format!(
-        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{localStorage.setItem('access_token',cfg.token||'');localStorage.setItem('wunder_desktop_user_id',cfg.user_id||'');}}catch(_e){{}}}})();</script>"
+        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}if(!cfg.remote_enabled&&cfg.token){{localStorage.setItem('access_token',cfg.token);}}else if(cfg.remote_enabled&&localStorage.getItem('access_token')===localToken){{localStorage.removeItem('access_token');}}}}catch(_e){{}}}})();</script>"
     );
     Ok(inject_script_before_head_end(&template, &script))
 }
@@ -277,9 +324,15 @@ async fn runtime_config_handler(
         "api_base": state.runtime.api_base,
         "ws_base": state.runtime.ws_base,
         "token": state.runtime.token,
+        "desktop_token": state.runtime.desktop_token,
         "user_id": state.runtime.user_id,
         "workspace_root": state.runtime.workspace_root,
         "mode": state.runtime.mode,
+        "remote_enabled": state.runtime.remote_enabled,
+        "remote_connected": state.runtime.remote_connected,
+        "remote_server_base_url": state.runtime.remote_server_base_url,
+        "remote_role_name": state.runtime.remote_role_name,
+        "remote_error": state.runtime.remote_error,
     })))
 }
 

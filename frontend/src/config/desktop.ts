@@ -2,6 +2,7 @@ const DESKTOP_MODE = 'desktop';
 const DESKTOP_BOOTSTRAP_PATH = '/wunder/desktop/bootstrap';
 const DESKTOP_TOOL_CALL_MODE_KEY = 'wunder_desktop_tool_call_mode';
 const DESKTOP_USER_ID_KEY = 'wunder_desktop_user_id';
+const DESKTOP_LOCAL_TOKEN_KEY = 'wunder_desktop_local_token';
 
 export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call'] as const;
 
@@ -14,6 +15,7 @@ export type DesktopRuntime = {
   api_base: string;
   ws_base: string;
   token: string;
+  desktop_token: string;
   user_id: string;
   app_dir: string;
   workspace_root: string;
@@ -21,6 +23,11 @@ export type DesktopRuntime = {
   settings_path: string;
   repo_root: string;
   frontend_root?: string;
+  remote_enabled: boolean;
+  remote_connected: boolean;
+  remote_server_base_url: string;
+  remote_role_name: string;
+  remote_error?: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -49,13 +56,22 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
     api_base: asString(source.api_base),
     ws_base: asString(source.ws_base),
     token: asString(source.token),
+    desktop_token: asString(source.desktop_token || source.desktopToken || source.token),
     user_id: asString(source.user_id),
     app_dir: asString(source.app_dir),
     workspace_root: asString(source.workspace_root),
     temp_root: asString(source.temp_root),
     settings_path: asString(source.settings_path),
-    repo_root: asString(source.repo_root)
+    repo_root: asString(source.repo_root),
+    remote_enabled: Boolean(source.remote_enabled),
+    remote_connected: Boolean(source.remote_connected),
+    remote_server_base_url: asString(source.remote_server_base_url),
+    remote_role_name: asString(source.remote_role_name)
   };
+  const remoteError = asString(source.remote_error);
+  if (remoteError) {
+    runtime.remote_error = remoteError;
+  }
   const frontendRoot = asString(source.frontend_root);
   if (frontendRoot) {
     runtime.frontend_root = frontendRoot;
@@ -73,11 +89,24 @@ const syncDesktopIdentity = (runtime: DesktopRuntime | null): void => {
     return;
   }
   try {
-    if (runtime.token) {
-      localStorage.setItem('access_token', runtime.token);
+    if (runtime.desktop_token) {
+      localStorage.setItem(DESKTOP_LOCAL_TOKEN_KEY, runtime.desktop_token);
     }
     if (runtime.user_id) {
       localStorage.setItem(DESKTOP_USER_ID_KEY, runtime.user_id);
+    }
+
+    // Local desktop mode keeps a built-in token for seamless usage.
+    if (!runtime.remote_enabled) {
+      if (runtime.token) {
+        localStorage.setItem('access_token', runtime.token);
+      }
+      return;
+    }
+
+    const current = String(localStorage.getItem('access_token') || '').trim();
+    if (current && runtime.desktop_token && current === runtime.desktop_token) {
+      localStorage.removeItem('access_token');
     }
   } catch {
     // Ignore localStorage write failures (private mode or quota issues).
@@ -150,6 +179,26 @@ export const getDesktopRuntime = (): DesktopRuntime | null => {
     runtimeCache = readInjectedRuntime();
   }
   return runtimeCache;
+};
+
+export const isDesktopRemoteAuthMode = (): boolean => {
+  const runtime = getDesktopRuntime();
+  if (!runtime) {
+    return false;
+  }
+  return runtime.remote_enabled && runtime.remote_connected;
+};
+
+export const getDesktopLocalToken = (): string => {
+  const runtime = getDesktopRuntime();
+  if (runtime?.desktop_token) {
+    return runtime.desktop_token;
+  }
+  try {
+    return String(localStorage.getItem(DESKTOP_LOCAL_TOKEN_KEY) || '').trim();
+  } catch {
+    return '';
+  }
 };
 
 export const getDesktopToolCallMode = (): DesktopToolCallMode => {

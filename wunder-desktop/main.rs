@@ -60,7 +60,7 @@ fn run_gui(args: DesktopArgs) -> Result<()> {
 
     let runtime_info = bridge.info().clone();
     if args.print_token {
-        println!("desktop_token={}", runtime_info.token);
+        println!("desktop_token={}", runtime_info.desktop_token);
     }
 
     let web_url = runtime_info.web_base.clone();

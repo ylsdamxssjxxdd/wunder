@@ -6,6 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::warn;
+use url::Url;
 use wunder_server::config::Config;
 use wunder_server::config_store::ConfigStore;
 use wunder_server::state::{AppState, AppStateInitOptions};
@@ -25,6 +27,10 @@ pub struct DesktopRuntime {
     pub repo_root: PathBuf,
     pub user_id: String,
     pub desktop_token: String,
+    pub remote_gateway: DesktopRemoteGatewaySettings,
+    pub remote_api_base: Option<String>,
+    pub remote_ws_base: Option<String>,
+    pub remote_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -155,6 +161,10 @@ impl DesktopRuntime {
         state.lsp_manager.sync_with_config(&config).await;
         ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
 
+        let remote_gateway = settings.remote_gateway.clone();
+        let (remote_api_base, remote_ws_base, remote_error) =
+            resolve_remote_endpoints(&remote_gateway);
+
         let frontend_root =
             resolve_frontend_root(args.frontend_root.as_deref(), &repo_root, &app_dir);
 
@@ -168,6 +178,10 @@ impl DesktopRuntime {
             repo_root,
             user_id,
             desktop_token,
+            remote_gateway,
+            remote_api_base,
+            remote_ws_base,
+            remote_error,
         })
     }
 }
@@ -321,6 +335,100 @@ fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
     } else {
         app_dir.join(path)
     }
+}
+
+fn resolve_remote_endpoints(
+    remote_gateway: &DesktopRemoteGatewaySettings,
+) -> (Option<String>, Option<String>, Option<String>) {
+    if !remote_gateway.enabled {
+        return (None, None, None);
+    }
+
+    match normalize_remote_api_base_url(&remote_gateway.server_base_url).and_then(|api_base_url| {
+        let api_base = api_base_url.as_str().trim_end_matches('/').to_string();
+        let ws_base = build_remote_ws_base(&api_base_url)?;
+        Ok((api_base, ws_base))
+    }) {
+        Ok((api_base, ws_base)) => {
+            let role_name = remote_gateway.role_name.trim();
+            if role_name.is_empty() {
+                warn!(
+                    "desktop remote gateway enabled without role_name: {}",
+                    remote_gateway.server_base_url
+                );
+            }
+            (Some(api_base), Some(ws_base), None)
+        }
+        Err(err) => {
+            let message = err.to_string();
+            warn!("desktop remote gateway endpoint invalid: {message}");
+            (None, None, Some(message))
+        }
+    }
+}
+
+fn normalize_remote_api_base_url(raw: &str) -> Result<Url> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Err(anyhow!("remote gateway server_base_url is required"));
+    }
+
+    let candidate = if cleaned.starts_with("http://") || cleaned.starts_with("https://") {
+        cleaned.to_string()
+    } else {
+        format!("http://{cleaned}")
+    };
+
+    let mut url = Url::parse(&candidate)
+        .with_context(|| format!("invalid remote gateway server_base_url: {cleaned}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(anyhow!(
+            "remote gateway server_base_url must use http/https, got {}",
+            url.scheme()
+        ));
+    }
+
+    let mut path = url.path().trim_end_matches('/').to_string();
+    if path.is_empty() || path == "/" {
+        path = "/wunder".to_string();
+    } else if !path.ends_with("/wunder") {
+        path = format!("{path}/wunder");
+    }
+    if !path.starts_with('/') {
+        path = format!("/{path}");
+    }
+
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+fn build_remote_ws_base(api_base_url: &Url) -> Result<String> {
+    let mut ws_url = api_base_url.clone();
+    let ws_scheme = match api_base_url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        other => {
+            return Err(anyhow!(
+                "remote gateway server_base_url must use http/https, got {other}"
+            ))
+        }
+    };
+    ws_url
+        .set_scheme(ws_scheme)
+        .map_err(|_| anyhow!("set websocket scheme failed"))?;
+
+    let mut path = api_base_url.path().trim_end_matches('/').to_string();
+    if !path.ends_with("/wunder") {
+        if path.is_empty() || path == "/" {
+            path = "/wunder".to_string();
+        } else {
+            path = format!("{path}/wunder");
+        }
+    }
+    ws_url.set_path(&format!("{path}/chat/ws"));
+    Ok(ws_url.to_string())
 }
 
 fn set_env_path(key: &str, value: &Path) {

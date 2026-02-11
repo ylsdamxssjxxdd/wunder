@@ -26,16 +26,6 @@ const CURVE_SERIES = [
     resolve: (sample) => Number(sample?.wall_time_s),
   },
   {
-    key: "peak_concurrency",
-    labelKey: "simLab.chart.metric.peakConcurrency",
-    color: "#22c55e",
-    resolve: (sample) =>
-      Number(
-        sample?.report?.session_runs?.peak_concurrency_workers ??
-          sample?.report?.session_runs?.peak_concurrency
-      ),
-  },
-  {
     key: "end_to_end_p95",
     labelKey: "simLab.chart.metric.endToEndP95",
     color: "#f97316",
