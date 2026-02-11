@@ -1,12 +1,14 @@
 # wunder
-wunder is an agent scheduling system for organizations and users. It supports multi-tenancy, user and organization management, agent app creation and publishing, a gateway for unified access and scheduling, and built-in tooling, knowledge bases, and long-term memory capabilities. The Rust (Axum) service exposes a unified `/wunder` entry, supports streaming and non-streaming responses, and ships with user and admin frontends, a debug console, and management APIs.
+wunder is an agent orchestration system for organizations and individual users. It now has three runtime forms: server (cloud/service), cli (local terminal), and desktop (local GUI). Each form can run and ship independently. The server is the core: it supports multi-tenancy, user/org management, agent app building and publishing, unified gateway access and routing, and includes built-in tooling, knowledge bases, and long-term memory. The cli and desktop experiences are built on top of the same core.
+
 <img width="1000" height="563" alt="wunder" src="https://github.com/user-attachments/assets/4e589030-f1fc-4e0c-91a7-3419eb39a046" />
 
 ## Core Idea
 For developers, everything is an interface; for LLMs, everything is a tool.
+
 - Built-in tools (dynamic): hands and feet
-- MCP tools (dynamic): knives and swords
-- Skills (static): workflow handbooks
+- MCP tools (dynamic): blades and swords
+- Skills (static): workflow playbooks
 - Knowledge tools (static): encyclopedias
 - Custom tools (dynamic): personal gear
 - Shared tools (dynamic): the gear marketplace
@@ -15,61 +17,72 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 
 <img width="700" height="380" alt="ayanami" src="https://github.com/user-attachments/assets/8ef1f7f9-f563-4253-8663-238c831d1aa3" />
 
-## Capability Matrix
-### User Side (App Users)
-- App plaza `/home`: create agent apps and browse shared apps.
-- Chat as the default entry with streaming process and final answer display.
-- Workspace for files and artifacts with previews.
-- History and resume.
-- Light/dark themes in the user frontend.
+## Runtime Forms & Capabilities
+| Form | Best for | Core capabilities | Default persistence |
+| --- | --- | --- | --- |
+| `wunder-server` | Team collaboration, multi-tenant deployment, unified gateway access | Unified `/wunder` API, user/org governance, app publishing, channel access, monitoring & evaluation | `workspaces/<user_id>` + PostgreSQL (default) |
+| `wunder-cli` | Local development, scripting, lightweight chat | Interactive TUI, `ask/chat/resume`, `exec/tool/mcp/skills/config/doctor`, JSONL event output, `tool_call/function_call` switching | `WUNDER_TEMP/` under launch dir (SQLite + config + sessions) |
+| `wunder-desktop` | Local end users, visual operations | Tauri desktop window + local bridge service, reused user UI, MCP/Skills/tool management, WebSocket-first with SSE fallback | `WUNDER_TEMPD/` beside app + default workspace `WUNDER_WORK/` |
 
-### Admin Side (Org & Ops)
+## Capability Matrix
+### User Side (`frontend`)
+- App plaza `/home`: create agent apps and browse shared apps.
+- Chat as the default entry, with streaming intermediate events and final output.
+- Workspace for files and artifacts, with resource preview support.
+- Session history for replay and continuation.
+- Light and dark themes are both supported.
+
+### Admin Side (`web`)
 - User/org/permission management and quota governance.
 - Agent app lifecycle management (create, publish, share, retire).
-- Model, tool, Skills, and MCP management and enablement.
-- Gateway for unified entry and policy routing (auth, rate limits, audit).
-- Debugging & monitoring: session monitoring, throughput tests, and performance sampling.
+- Model, tool, Skills, and MCP configuration/enablement.
+- Unified gateway entry and policy routing (auth, rate limiting, audit).
+- Debug & observability: session monitor, throughput tests, and performance sampling.
 
-### Scheduling & Platform
-- Automatic context compaction + optional long-term memory for long sessions.
-- Multi-user isolation: `user_id` is the session/workspace key and can be virtual.
-- Tooling: built-in + MCP + Skills + knowledge + custom/shared tools.
-- UI and system prompts support language switching.
+### Orchestration Core (Rust)
+- Automatic context compaction plus optional long-term memory for stable long sessions.
+- Multi-user isolation: `user_id` is both the session key and workspace key; virtual users are supported.
+- Tool stack: built-in + MCP + Skills + knowledge + custom/shared tools.
+- Session accounting split into user turns and model turns for better observability.
+- Communication strategy is WebSocket first, with SSE as fallback.
 
 ## Entrypoints & Usage
+### Server entrypoints (multi-tenant / platform deployment)
 - Admin debug UI: `http://127.0.0.1:18000`
-- Debug frontend: `http://127.0.0.1:18001`
 - User frontend (development, default): `http://127.0.0.1:18001`
-- User frontend (production static, when Nginx is enabled): `http://127.0.0.1:18002`
-- Unified API entry: `/wunder` (streaming + non-streaming)
+- User frontend (production static, with Nginx): `http://127.0.0.1:18002`
+- API entry: `/wunder` (streaming + non-streaming)
+- MCP entry: `/wunder/mcp`
 
-### Usage flow
-1. After startup, open the user frontend (development default): `http://127.0.0.1:18001` (use `http://127.0.0.1:18002` when Nginx static deployment is enabled)
-2. Enter `/home` to create or select an agent app (or go straight to chat).
-3. Use chat to interact; prepare required files in the workspace.
+### Local forms at a glance (CLI / Desktop)
+- `wunder-cli`: local terminal form; state is persisted in `WUNDER_TEMP/` under the launch directory.
+- `wunder-desktop`: local GUI form; state is persisted in `WUNDER_TEMPD/` beside the app, with default workspace `WUNDER_WORK/`.
+- Startup examples for local forms are grouped in “Quick Start” to keep them clearly separated from server deployment.
 
-### Session Control Commands (User Frontend + Channel Inbound)
-Session control commands are available in both the user chat input and channel inbound adapters:
-
+### Session Control Commands
+#### User frontend + channel inbound
 - `/new` or `/reset`: create a new thread and switch to it.
-- `/stop` or `/cancel`: request cancellation of the current running session.
+- `/stop` or `/cancel`: request cancellation of the current run.
 - `/help` or `/?`: return command help text.
-
-User frontend also supports:
-
-- `/compact`: trigger context compaction for the current session.
+- `/compact` (frontend only): trigger context compaction for current session.
 
 Notes:
-- Commands are case-insensitive and only the first token is parsed (for example, `/new hello` is treated as `/new`).
-- Channel command parsing is in `src/channels/service.rs`; user-side command handling is in `frontend/src/views/ChatView.vue`.
+- Commands are case-insensitive; only the first token is parsed (for example, `/new hello` is treated as `/new`).
+- Channel command parsing is in `src/channels/service.rs`; frontend command handling is in `frontend/src/views/ChatView.vue`.
+
+#### CLI interactive commands (summary)
+- `/help`, `/status`, `/model`, `/tool-call-mode` (`/mode`)
+- `/session`, `/system`, `/config`
+- `/new`, `/exit` (plus TUI-only commands such as `/mouse`)
 
 ## Quick Start
-### 1) Update configuration
-Copy the example config: `config/wunder-example.yaml` -> `config/wunder.yaml`
-Copy env example: `.env.example` -> `.env` and set `WUNDER_API_KEY`, `WUNDER_POSTGRES_DSN`, `WUNDER_SANDBOX_ENDPOINT`, etc.
-Frontend API base: set `VITE_API_BASE` or `VITE_API_BASE_URL` in the repo root `.env` and restart the frontend.
+### Path A: `wunder-server` (multi-tenant / platform deployment)
+#### 1) Prepare configuration
+- Copy config template: `config/wunder-example.yaml` -> `config/wunder.yaml`
+- Copy env template: `.env.example` -> `.env`, then set `WUNDER_API_KEY`, `WUNDER_POSTGRES_DSN`, `WUNDER_SANDBOX_ENDPOINT`, etc.
+- Frontend API base: set `VITE_API_BASE` or `VITE_API_BASE_URL` in repo root `.env`, then restart the frontend.
 
-### 2) Start the service
+#### 2) Start the server
 x86
 ```bash
 docker compose -f docker-compose-x86.yml up
@@ -78,51 +91,82 @@ arm
 ```bash
 docker compose -f docker-compose-arm.yml up
 ```
-The first start pulls base images and builds dependencies, so it may take a while.
+The first startup pulls base images and builds dependencies, so it may take some time.
 
-### 3) Open entrypoints
-Admin debug UI: `http://127.0.0.1:18000`
-User frontend (development, default): `http://127.0.0.1:18001`
-User frontend (production static, when Nginx is enabled): `http://127.0.0.1:18002`
+#### 3) Open server entrypoints
+- Admin debug UI: `http://127.0.0.1:18000`
+- User frontend (development): `http://127.0.0.1:18001`
+- User frontend (production static): `http://127.0.0.1:18002`
 
-## Workspace & Persistence
-- Workspace path: `workspaces/<user_id>` (prompt uses `/workspaces/<user_id>/`).
-- Chat history/tool logs/monitor/locks/overflow events are stored in the database (PostgreSQL by default; SQLite optional).
-- Admin overrides are stored in `data/config/wunder.override.yaml`.
+### Path B: `wunder-cli` (local terminal)
+```bash
+# Enter interactive mode (TUI by default on TTY)
+cargo run --bin wunder-cli
+
+# One-shot question
+cargo run --bin wunder-cli -- ask "Summarize the current project structure"
+
+# Resume the latest session
+cargo run --bin wunder-cli -- resume --last
+
+# List available tools
+cargo run --bin wunder-cli -- tool list
+```
+
+### Path C: `wunder-desktop` (local GUI)
+```bash
+# Start desktop window (local bridge defaults to 127.0.0.1:18000)
+cargo run --features desktop --bin wunder-desktop
+
+# Start bridge with a random free port
+cargo run --features desktop --bin wunder-desktop -- --port 0
+
+# Bridge-only mode (no desktop window)
+cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
+```
+
+## Persistence & Directory Conventions
+- Server workspace: `workspaces/<user_id>` (use `/workspaces/<user_id>/` in prompts).
+- CLI persistence: `WUNDER_TEMP/` (SQLite, config overrides, sessions, user tool data).
+- Desktop persistence: `WUNDER_TEMPD/`; default workspace `WUNDER_WORK/`.
+- Chat history, tool logs, and monitor events are persisted to DB (PostgreSQL by default for server, SQLite by default for local forms).
+- Admin override path: `data/config/wunder.override.yaml` (runtime override file, safe to regenerate).
 
 ## Skills & MCP
-- Skills load from `skills/` and `EVA_SKILLS/` by default, enabled via `config/wunder.yaml` or the admin UI.
-- MCP is configured in `config/wunder.yaml` or `data/config/wunder.override.yaml`, with the tool catalog maintained by the admin UI.
+- Skills are loaded from `skills/` and `EVA_SKILLS/` by default, and can be enabled in `config/wunder.yaml` or via admin UI.
+- MCP servers are configured in `config/wunder.yaml` or `data/config/wunder.override.yaml`, and managed in admin UI.
+- server / cli / desktop share the same tool protocol and orchestration core for easier cross-form migration.
 
 ## Project Structure
-```
-src/                 # Rust server modules
-  api/               # /wunder, /a2a, admin APIs
-  core/              # config/auth/i18n
-  services/          # tools/LLM/MCP/workspace
-  ops/               # monitor/evaluation/throughput
-  sandbox/           # sandbox client/server
+```text
+src/                 # Rust core services (API/orchestration/tools/storage)
+  api/               # /wunder, /a2a, admin endpoints
+  channels/          # external channel integrations
+  gateway/           # gateway control-plane
   orchestrator/      # orchestration engine
+  services/          # tools/LLM/MCP/workspace services
   storage/           # PostgreSQL/SQLite persistence
+  core/              # config/auth/i18n/state
+wunder-cli/          # CLI runtime form (TUI + commands)
+wunder-desktop/      # Desktop runtime form (Tauri + local bridge)
+frontend/            # user frontend (Vue3)
+web/                 # admin frontend (debug/governance)
 config/              # base configuration
 prompts/             # system/tool/memory prompts
-workspaces/          # user workspaces
 skills/              # built-in skills
 EVA_SKILLS/          # skills directory
-knowledge/           # knowledge bases
-temp_dir/            # temp files
-web/                 # admin debug UI
-frontend/            # user frontend (Vue3)
-data/config/         # admin overrides
-data/throughput/     # throughput reports
-docs/                # design/API/test docs
+knowledge/           # knowledge base
+scripts/             # dev & maintenance scripts
+docs/                # design/API/plan documents
 ```
 
 ## Related Docs
 - System overview: `docs/系统介绍.md`
 - Design plan: `docs/设计方案.md`
-- API documentation: `docs/API文档.md`
-- Test plan: `docs/方案/Test-Plan.md`
+- API docs: `docs/API文档.md`
+- wunder-cli design: `docs/方案/wunder-cli实现方案.md`
+- wunder-desktop design: `docs/方案/wunder-desktop实现方案.md`
+- Test plan: `docs/方案/测试方案.md`
 
 ## wunder Devoured Core
 - EVA: <https://github.com/ylsdamxssjxxdd/eva>
@@ -130,4 +174,3 @@ docs/                # design/API/test docs
 - Claude Code: <https://github.com/anthropics/claude-code>
 - OpenClaw: <https://github.com/openclaw/openclaw>
 - OpenCode: <https://github.com/anomalyco/opencode>
-

@@ -199,6 +199,10 @@ fn build_runtime_info(
         if let Some(remote_ws_base) = runtime.remote_ws_base.as_ref() {
             effective_ws_base = remote_ws_base.clone();
         }
+    }
+
+    let remote_connected = runtime.remote_api_base.is_some() && runtime.remote_ws_base.is_some();
+    if runtime.remote_gateway.enabled && remote_connected {
         effective_token.clear();
     }
 
@@ -221,7 +225,7 @@ fn build_runtime_info(
             .as_ref()
             .map(|path| path.to_string_lossy().to_string()),
         remote_enabled: runtime.remote_gateway.enabled,
-        remote_connected: runtime.remote_api_base.is_some() && runtime.remote_ws_base.is_some(),
+        remote_connected,
         remote_server_base_url: runtime.remote_gateway.server_base_url.trim().to_string(),
         remote_role_name: runtime.remote_gateway.role_name.trim().to_string(),
         remote_error: runtime.remote_error.clone(),
@@ -253,7 +257,7 @@ fn load_index_with_runtime(
     let runtime_json =
         serde_json::to_string(runtime_info).context("serialize desktop runtime payload failed")?;
     let script = format!(
-        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}if(!cfg.remote_enabled&&cfg.token){{localStorage.setItem('access_token',cfg.token);}}else if(cfg.remote_enabled&&localStorage.getItem('access_token')===localToken){{localStorage.removeItem('access_token');}}}}catch(_e){{}}}})();</script>"
+        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';const remoteAuthMode=Boolean(cfg.remote_enabled&&cfg.remote_connected);if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}if(!remoteAuthMode&&cfg.token){{localStorage.setItem('access_token',cfg.token);}}else if(remoteAuthMode&&localStorage.getItem('access_token')===localToken){{localStorage.removeItem('access_token');}}}}catch(_e){{}}}})();</script>"
     );
     Ok(inject_script_before_head_end(&template, &script))
 }

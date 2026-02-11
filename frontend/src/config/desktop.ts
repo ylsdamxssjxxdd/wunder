@@ -96,8 +96,10 @@ const syncDesktopIdentity = (runtime: DesktopRuntime | null): void => {
       localStorage.setItem(DESKTOP_USER_ID_KEY, runtime.user_id);
     }
 
+    const remoteAuthMode = runtime.remote_enabled && runtime.remote_connected;
+
     // Local desktop mode keeps a built-in token for seamless usage.
-    if (!runtime.remote_enabled) {
+    if (!remoteAuthMode) {
       if (runtime.token) {
         localStorage.setItem('access_token', runtime.token);
       }

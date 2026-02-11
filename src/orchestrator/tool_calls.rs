@@ -194,7 +194,7 @@ fn clean_tool_call_name(raw: &str) -> String {
             name = name[pos + 1..].to_string();
         }
     }
-    for sep in [':', '：'] {
+    for sep in [':', '\u{FF1A}'] {
         if let Some(pos) = name.rfind(sep) {
             let prefix = name[..pos].to_lowercase();
             if prefix.contains("tool_call")
@@ -208,22 +208,54 @@ fn clean_tool_call_name(raw: &str) -> String {
     if let Some(pos) = name.find('<') {
         name = name[..pos].to_string();
     }
-    let cleaned = name
+    let mut cleaned = name
         .trim_matches(|ch: char| {
             matches!(
                 ch,
-                ':' | '：' | '=' | '>' | ')' | '(' | '`' | '"' | '\'' | ',' | ';'
+                ':' | '\u{FF1A}' | '=' | '>' | ')' | '(' | '`' | '"' | '\'' | ',' | ';'
             )
         })
-        .trim();
+        .trim()
+        .to_string();
     if cleaned.is_empty() {
         return String::new();
     }
+
+    if !cleaned.is_ascii() || cleaned.contains('?') {
+        if let Some(tail) = extract_ascii_tool_tail(cleaned.as_str()) {
+            cleaned = tail;
+        }
+    }
+
     let lowered = cleaned.to_lowercase();
     if matches!(lowered.as_str(), "tool" | "tool_call" | "function_call") {
         return String::new();
     }
-    cleaned.to_string()
+    cleaned
+}
+
+fn extract_ascii_tool_tail(input: &str) -> Option<String> {
+    let mut start = input.len();
+
+    for (index, ch) in input.char_indices().rev() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
+            start = index;
+            continue;
+        }
+        if start < input.len() {
+            break;
+        }
+    }
+
+    if start >= input.len() {
+        return None;
+    }
+
+    let tail = input[start..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    Some(tail.to_string())
 }
 
 fn parse_prefixed_tool_calls(payload: &str, segments: &[(usize, usize, Value)]) -> Vec<ToolCall> {
@@ -797,7 +829,19 @@ mod tests {
 
     #[test]
     fn test_extract_prefixed_tool_name_supports_fullwidth_colon() {
-        let name = extract_prefixed_tool_name("?????read_file ");
+        let name = extract_prefixed_tool_name("prefix\u{FF1A}read_file ");
         assert_eq!(name.as_deref(), Some("read_file"));
+    }
+
+    #[test]
+    fn test_parse_tool_call_prefixed_json_with_file_path_alias() {
+        let content = "call read_file with payload\n```json\n{\"file_path\":\"Cargo.toml\"}\n```";
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("file_path").and_then(Value::as_str),
+            Some("Cargo.toml")
+        );
     }
 }
