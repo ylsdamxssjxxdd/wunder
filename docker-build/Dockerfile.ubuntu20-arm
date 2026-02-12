@@ -1,0 +1,70 @@
+﻿ARG RUST_BASE_IMAGE=public.ecr.aws/docker/library/rust:1.92-slim-bullseye
+FROM ${RUST_BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV CARGO_HOME=/workspaces/.cargo \
+    CARGO_TARGET_DIR=/workspaces/target \
+    PATH="/usr/local/cargo/bin:/workspaces/.cargo/bin:${PATH}"
+
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+      cp /etc/apt/sources.list /etc/apt/sources.list.bak; \
+      sed -i -E \
+        -e 's~https?://[^ ]+/debian~https://mirrors.tuna.tsinghua.edu.cn/debian~g' \
+        -e 's~https?://security.debian.org/debian-security~https://mirrors.tuna.tsinghua.edu.cn/debian-security~g' \
+        /etc/apt/sources.list; \
+    fi; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.bak; \
+      sed -i -E \
+        -e 's~https?://deb\.debian\.org/debian~https://mirrors.tuna.tsinghua.edu.cn/debian~g' \
+        -e 's~https?://security\.debian\.org/debian-security~https://mirrors.tuna.tsinghua.edu.cn/debian-security~g' \
+        /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ ! -f /etc/apt/sources.list ] && [ ! -f /etc/apt/sources.list.d/debian.sources ]; then \
+      printf '%s\n' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye main contrib non-free' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye-updates main contrib non-free' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bullseye-backports main contrib non-free' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian-security bullseye-security main contrib non-free' \
+        > /etc/apt/sources.list; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git \
+    build-essential pkg-config cmake ninja-build clang perl \
+    libssl-dev \
+    libgtk-3-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+  && if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then \
+      apt-get install -y --no-install-recommends \
+        libwebkit2gtk-4.1-dev \
+        libjavascriptcoregtk-4.1-dev \
+        libsoup-3.0-dev; \
+    else \
+      apt-get install -y --no-install-recommends \
+        libwebkit2gtk-4.0-dev \
+        libjavascriptcoregtk-4.0-dev \
+        libsoup2.4-dev; \
+    fi \
+  && rm -rf /var/lib/apt/lists/*
+
+
+# Tauri packaging tooling (append-only, keep previous cache layers intact)
+ARG TAURI_CLI_VERSION=2.8.2
+RUN cargo install tauri-cli --version ${TAURI_CLI_VERSION} --locked
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file wget xdg-utils \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+# Build commands (inside container):
+#   cargo build --release --bin wunder-server --bin wunder-cli
+#   cargo build --release --features desktop --bin wunder-desktop
+
+CMD ["/bin/bash"]
+# docker build -t wunder-arm-20 --platform linux/amd64 -f Dockerfile.ubuntu20-arm .

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -53,6 +54,18 @@ enum MouseMode {
     Select,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusArea {
+    Input,
+    Transcript,
+}
+
+#[derive(Debug, Clone)]
+struct ResumePickerState {
+    sessions: Vec<crate::ResumeSessionSummary>,
+    selected: usize,
+}
+
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
@@ -87,6 +100,9 @@ pub struct TuiApp {
     session_stats_dirty: bool,
     shortcuts_visible: bool,
     mouse_mode: MouseMode,
+    focus_area: FocusArea,
+    transcript_selected: Option<usize>,
+    resume_picker: Option<ResumePickerState>,
     tool_phase_notice_emitted: bool,
 }
 
@@ -134,6 +150,9 @@ impl TuiApp {
             session_stats_dirty: false,
             shortcuts_visible: false,
             mouse_mode: MouseMode::Scroll,
+            focus_area: FocusArea::Input,
+            transcript_selected: None,
+            resume_picker: None,
             tool_phase_notice_emitted: false,
         };
         app.sync_model_status().await;
@@ -163,7 +182,13 @@ impl TuiApp {
                 self.session_stats.context_used_tokens.max(0)
             )
         };
-        let running_hint = if self.busy { "working..." } else { "shortcuts" };
+        let running_hint = if self.resume_picker.is_some() {
+            "resume picker"
+        } else if self.busy {
+            "working..."
+        } else {
+            "shortcuts"
+        };
         let usage_hint = self
             .last_usage
             .as_deref()
@@ -178,7 +203,13 @@ impl TuiApp {
             MouseMode::Scroll => " | mouse scroll",
             MouseMode::Select => " | mouse select",
         };
-        format!("  {running_hint}{usage_hint}{scroll_hint}{mouse_hint} (F2)    {context_summary}")
+        let focus_hint = match self.focus_area {
+            FocusArea::Input => " | focus input",
+            FocusArea::Transcript => " | focus output",
+        };
+        format!(
+            "  {running_hint}{usage_hint}{scroll_hint}{mouse_hint}{focus_hint} (F2/F3)    {context_summary}"
+        )
     }
 
     pub fn shortcuts_visible(&self) -> bool {
@@ -187,6 +218,32 @@ impl TuiApp {
 
     pub fn mouse_capture_enabled(&self) -> bool {
         self.mouse_mode == MouseMode::Scroll
+    }
+
+    pub fn selected_transcript_index(&self) -> Option<usize> {
+        self.transcript_selected
+    }
+
+    pub fn transcript_focus_active(&self) -> bool {
+        self.focus_area == FocusArea::Transcript
+    }
+
+    pub fn resume_picker_rows(&self) -> Option<(Vec<String>, usize)> {
+        let picker = self.resume_picker.as_ref()?;
+        let rows = picker
+            .sessions
+            .iter()
+            .map(|session| {
+                let current = if session.session_id == self.session_id {
+                    "*"
+                } else {
+                    " "
+                };
+                let when = format_session_timestamp(session.updated_at.max(session.last_message_at));
+                format!("{current} {}  {}  {}", session.session_id, when, session.title)
+            })
+            .collect::<Vec<_>>();
+        Some((rows, picker.selected))
     }
 
     pub fn shortcuts_lines(&self) -> Vec<String> {
@@ -207,6 +264,8 @@ impl TuiApp {
             "Ctrl+U / Ctrl+K       delete to line start/end".to_string(),
             "Ctrl+A / Ctrl+E       move to line start/end".to_string(),
             "Up / Down             history (or move line in multiline)".to_string(),
+            "F3                   toggle input/output focus".to_string(),
+            "(output focus) arrows select transcript entries".to_string(),
             "Tab                   complete slash command".to_string(),
             "PgUp/PgDn             scroll transcript".to_string(),
             "Mouse Wheel           scroll transcript".to_string(),
@@ -249,6 +308,88 @@ impl TuiApp {
             MouseMode::Scroll
         };
         self.set_mouse_mode(next);
+    }
+
+    fn set_focus_area(&mut self, focus: FocusArea) {
+        if self.focus_area == focus {
+            return;
+        }
+        self.focus_area = focus;
+        match self.focus_area {
+            FocusArea::Input => {
+                self.push_log(LogKind::Info, "focus switched to input".to_string());
+            }
+            FocusArea::Transcript => {
+                if self.transcript_selected.is_none() && !self.logs.is_empty() {
+                    self.transcript_selected = Some(self.logs.len().saturating_sub(1));
+                }
+                self.push_log(
+                    LogKind::Info,
+                    "focus switched to output (arrows now select transcript)".to_string(),
+                );
+            }
+        }
+    }
+
+    fn toggle_focus_area(&mut self) {
+        let next = if self.focus_area == FocusArea::Input {
+            FocusArea::Transcript
+        } else {
+            FocusArea::Input
+        };
+        self.set_focus_area(next);
+    }
+
+    fn has_resume_picker(&self) -> bool {
+        self.resume_picker.is_some()
+    }
+
+    async fn open_resume_picker(&mut self) -> Result<()> {
+        let sessions = crate::list_recent_sessions(&self.runtime, 40).await?;
+        if sessions.is_empty() {
+            self.push_log(LogKind::Info, "no historical sessions found".to_string());
+            self.push_log(
+                LogKind::Info,
+                "tip: send a few messages first, then /resume to switch".to_string(),
+            );
+            return Ok(());
+        }
+        let selected = sessions
+            .iter()
+            .position(|session| session.session_id == self.session_id)
+            .unwrap_or(0);
+        self.shortcuts_visible = false;
+        self.resume_picker = Some(ResumePickerState { sessions, selected });
+        Ok(())
+    }
+
+    fn close_resume_picker(&mut self) {
+        self.resume_picker = None;
+    }
+
+    fn move_resume_picker_selection(&mut self, step: isize) {
+        let Some(picker) = self.resume_picker.as_mut() else {
+            return;
+        };
+        if picker.sessions.is_empty() {
+            picker.selected = 0;
+            return;
+        }
+        let max_index = picker.sessions.len().saturating_sub(1);
+        let next = if step < 0 {
+            picker.selected.saturating_sub(step.unsigned_abs())
+        } else {
+            picker.selected.saturating_add(step as usize).min(max_index)
+        };
+        picker.selected = next;
+    }
+
+    fn selected_resume_session_id(&self) -> Option<String> {
+        let picker = self.resume_picker.as_ref()?;
+        picker
+            .sessions
+            .get(picker.selected)
+            .map(|session| session.session_id.clone())
     }
 
     pub fn input_view(&self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
@@ -325,6 +466,65 @@ impl TuiApp {
     fn max_transcript_scroll(&self, viewport_height: u16) -> u16 {
         let viewport = viewport_height.max(1);
         self.total_transcript_lines().saturating_sub(viewport)
+    }
+
+    fn move_transcript_selection(&mut self, step: isize) {
+        if self.logs.is_empty() {
+            self.transcript_selected = None;
+            return;
+        }
+        let max_index = self.logs.len().saturating_sub(1);
+        let current = self.transcript_selected.unwrap_or(max_index).min(max_index);
+        let next = if step < 0 {
+            current.saturating_sub(step.unsigned_abs())
+        } else {
+            current.saturating_add(step as usize).min(max_index)
+        };
+        self.transcript_selected = Some(next);
+        self.ensure_transcript_selection_visible(next);
+    }
+
+    fn select_transcript_boundary(&mut self, to_top: bool) {
+        if self.logs.is_empty() {
+            self.transcript_selected = None;
+            return;
+        }
+        let index = if to_top { 0 } else { self.logs.len().saturating_sub(1) };
+        self.transcript_selected = Some(index);
+        self.ensure_transcript_selection_visible(index);
+    }
+
+    fn ensure_transcript_selection_visible(&mut self, selected_index: usize) {
+        let viewport = self.transcript_viewport_height.max(1);
+        let max_scroll = self.max_transcript_scroll(viewport);
+        let current_scroll = max_scroll.saturating_sub(self.transcript_offset_from_bottom.min(max_scroll));
+
+        let width = usize::from(self.transcript_viewport_width.max(1));
+        let mut start_line = 0u16;
+        for (index, entry) in self.logs.iter().enumerate() {
+            let line_count = wrapped_visual_line_count(
+                visual_log_text(entry.kind, &entry.text).as_str(),
+                width,
+            )
+            .max(1)
+            .min(u16::MAX as usize) as u16;
+            let end_line = start_line.saturating_add(line_count.saturating_sub(1));
+            if index == selected_index {
+                let mut target_scroll = current_scroll;
+                if start_line < current_scroll {
+                    target_scroll = start_line;
+                } else {
+                    let viewport_end = current_scroll.saturating_add(viewport.saturating_sub(1));
+                    if end_line > viewport_end {
+                        target_scroll = end_line.saturating_sub(viewport.saturating_sub(1));
+                    }
+                }
+                let clamped = target_scroll.min(max_scroll);
+                self.transcript_offset_from_bottom = max_scroll.saturating_sub(clamped);
+                return;
+            }
+            start_line = end_line.saturating_add(1);
+        }
     }
 
     fn total_transcript_lines(&self) -> u16 {
@@ -425,6 +625,7 @@ impl TuiApp {
                     self.active_assistant = None;
                     self.active_reasoning = None;
                     self.transcript_offset_from_bottom = 0;
+                    self.transcript_selected = None;
                     return Ok(());
                 }
                 KeyCode::Char('n') => {
@@ -526,6 +727,18 @@ impl TuiApp {
             return Ok(());
         }
 
+        if self.has_resume_picker() {
+            self.handle_resume_picker_key(key).await?;
+            return Ok(());
+        }
+
+        if self.focus_area == FocusArea::Transcript {
+            if self.handle_transcript_focus_key(key) {
+                return Ok(());
+            }
+            self.focus_area = FocusArea::Input;
+        }
+
         match key.code {
             KeyCode::Esc => {
                 self.input.clear();
@@ -574,6 +787,9 @@ impl TuiApp {
             }
             KeyCode::F(2) => {
                 self.toggle_mouse_mode();
+            }
+            KeyCode::F(3) => {
+                self.toggle_focus_area();
             }
             KeyCode::PageUp => {
                 self.scroll_transcript_up(8);
@@ -628,6 +844,212 @@ impl TuiApp {
         Ok(())
     }
 
+    async fn handle_resume_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.close_resume_picker();
+            }
+            KeyCode::Up => self.move_resume_picker_selection(-1),
+            KeyCode::Down => self.move_resume_picker_selection(1),
+            KeyCode::PageUp => self.move_resume_picker_selection(-8),
+            KeyCode::PageDown => self.move_resume_picker_selection(8),
+            KeyCode::Home => {
+                if let Some(picker) = self.resume_picker.as_mut() {
+                    picker.selected = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Some(picker) = self.resume_picker.as_mut() {
+                    picker.selected = picker.sessions.len().saturating_sub(1);
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(target) = self.selected_resume_session_id() {
+                    self.close_resume_picker();
+                    self.resume_to_session(target.as_str()).await?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_transcript_focus_key(&mut self, key: KeyEvent) -> bool {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.focus_area = FocusArea::Input;
+                true
+            }
+            KeyCode::Up => {
+                self.move_transcript_selection(-1);
+                true
+            }
+            KeyCode::Down => {
+                self.move_transcript_selection(1);
+                true
+            }
+            KeyCode::Left => {
+                self.scroll_transcript_up(1);
+                true
+            }
+            KeyCode::Right => {
+                self.scroll_transcript_down(1);
+                true
+            }
+            KeyCode::PageUp => {
+                self.move_transcript_selection(-8);
+                true
+            }
+            KeyCode::PageDown => {
+                self.move_transcript_selection(8);
+                true
+            }
+            KeyCode::Home => {
+                self.select_transcript_boundary(true);
+                true
+            }
+            KeyCode::End => {
+                self.select_transcript_boundary(false);
+                true
+            }
+            KeyCode::F(3) => {
+                self.toggle_focus_area();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    async fn resume_to_session(&mut self, target: &str) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                "assistant is still running, wait for completion before resuming another session"
+                    .to_string(),
+            );
+            return Ok(());
+        }
+
+        let cleaned = target.trim();
+        if cleaned.is_empty() {
+            self.push_log(LogKind::Error, "session id is empty".to_string());
+            return Ok(());
+        }
+        if cleaned == self.session_id {
+            self.push_log(LogKind::Info, format!("already using session: {cleaned}"));
+            return Ok(());
+        }
+
+        if !crate::session_exists(&self.runtime, cleaned).await? {
+            self.push_log(LogKind::Error, format!("session not found: {cleaned}"));
+            self.push_log(
+                LogKind::Info,
+                "tip: /resume to list available sessions".to_string(),
+            );
+            return Ok(());
+        }
+
+        self.switch_to_existing_session(cleaned).await?;
+        Ok(())
+    }
+
+    async fn switch_to_existing_session(&mut self, session_id: &str) -> Result<()> {
+        let history = crate::load_session_history_entries(&self.runtime, session_id, 0).await?;
+        self.session_id = session_id.to_string();
+        self.runtime.save_session(&self.session_id).ok();
+        self.input.clear();
+        self.input_cursor = 0;
+        self.history_cursor = None;
+        self.config_wizard = None;
+        self.last_usage = None;
+        self.active_assistant = None;
+        self.active_reasoning = None;
+        self.stream_saw_output = false;
+        self.stream_saw_final = false;
+        self.stream_received_content_delta = false;
+        self.stream_tool_markup_open = false;
+        self.tool_phase_notice_emitted = false;
+        self.transcript_offset_from_bottom = 0;
+        self.transcript_selected = None;
+        self.focus_area = FocusArea::Input;
+        self.resume_picker = None;
+        self.logs.clear();
+
+        let restored = self.restore_transcript_from_history(history);
+        self.session_stats = crate::SessionStatsSnapshot::default();
+        self.reload_session_stats().await;
+        self.push_log(
+            LogKind::Info,
+            format!("resumed session: {} ({restored} messages)", self.session_id),
+        );
+        Ok(())
+    }
+
+    fn restore_transcript_from_history(&mut self, history: Vec<Value>) -> usize {
+        let mut restored = 0usize;
+        for record in history {
+            let Some(role) = record.get("role").and_then(Value::as_str) else {
+                continue;
+            };
+
+            let content = history_content_to_text(record.get("content"));
+            let reasoning = record
+                .get("reasoning_content")
+                .or_else(|| record.get("reasoning"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+
+            match role {
+                "user" => {
+                    if !content.trim().is_empty() {
+                        self.push_log(LogKind::User, content.trim().to_string());
+                        restored = restored.saturating_add(1);
+                    }
+                }
+                "assistant" => {
+                    if !reasoning.is_empty() {
+                        self.push_log(LogKind::Reasoning, reasoning);
+                        restored = restored.saturating_add(1);
+                    }
+                    let cleaned = sanitize_assistant_text(content.as_str());
+                    if !cleaned.is_empty() {
+                        self.push_log(LogKind::Assistant, cleaned);
+                        restored = restored.saturating_add(1);
+                    }
+                }
+                "tool" => {
+                    let cleaned = content.trim();
+                    if !cleaned.is_empty() {
+                        let (preview, truncated) = truncate_by_chars(cleaned, 500);
+                        let mut line = format!("[history] {preview}");
+                        if truncated {
+                            line.push_str(" ...");
+                        }
+                        self.push_log(LogKind::Tool, line);
+                        restored = restored.saturating_add(1);
+                    }
+                }
+                _ => {
+                    let cleaned = content.trim();
+                    if !cleaned.is_empty() {
+                        self.push_log(LogKind::Info, format!("[{role}] {cleaned}"));
+                        restored = restored.saturating_add(1);
+                    }
+                }
+            }
+        }
+
+        if restored == 0 {
+            self.push_log(LogKind::Info, "history is empty for this session".to_string());
+        }
+        restored
+    }
+
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if self.mouse_mode != MouseMode::Scroll {
             return;
@@ -644,6 +1066,8 @@ impl TuiApp {
             return self.handle_config_wizard_input(line.trim()).await;
         }
         self.shortcuts_visible = false;
+        self.resume_picker = None;
+        self.focus_area = FocusArea::Input;
 
         let prompt = line.trim_end().to_string();
         if prompt.trim().is_empty() {
@@ -1290,6 +1714,9 @@ impl TuiApp {
             SlashCommand::Mouse => {
                 self.handle_mouse_slash(command.args);
             }
+            SlashCommand::Resume => {
+                self.handle_resume_slash(command.args).await?;
+            }
             SlashCommand::New => {
                 if self.busy {
                     self.push_log(
@@ -1549,6 +1976,41 @@ impl TuiApp {
             LogKind::Info,
             "usage: /mouse [scroll|select]  (F2 to toggle)".to_string(),
         );
+    }
+
+    async fn handle_resume_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+            self.open_resume_picker().await?;
+            if self.resume_picker.is_some() {
+                self.push_log(
+                    LogKind::Info,
+                    "resume picker opened (Up/Down to choose, Enter to resume, Esc to cancel)"
+                        .to_string(),
+                );
+            }
+            return Ok(());
+        }
+
+        let target = if cleaned.eq_ignore_ascii_case("last") {
+            self.runtime
+                .load_saved_session()
+                .ok_or_else(|| anyhow!("no saved session found"))?
+        } else if let Ok(index) = cleaned.parse::<usize>() {
+            let sessions = crate::list_recent_sessions(&self.runtime, 40).await?;
+            let Some(item) = sessions.get(index.saturating_sub(1)) else {
+                self.push_log(
+                    LogKind::Error,
+                    format!("session index out of range: {index}"),
+                );
+                return Ok(());
+            };
+            item.session_id.clone()
+        } else {
+            cleaned.to_string()
+        };
+
+        self.resume_to_session(target.as_str()).await
     }
 
     async fn handle_model_slash(&mut self, args: &str) -> Result<()> {
@@ -1826,6 +2288,9 @@ impl TuiApp {
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
+        self.focus_area = FocusArea::Input;
+        self.transcript_selected = None;
+        self.resume_picker = None;
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;
         self.push_log(
@@ -2074,7 +2539,20 @@ impl TuiApp {
             if let Some(index) = self.active_reasoning.as_mut() {
                 *index = index.saturating_sub(1);
             }
+            if let Some(index) = self.transcript_selected.as_mut() {
+                *index = index.saturating_sub(1);
+            }
         }
+
+        if self.logs.is_empty() {
+            self.transcript_selected = None;
+        } else if self.focus_area == FocusArea::Transcript {
+            self.transcript_selected = Some(self.logs.len().saturating_sub(1));
+        } else if let Some(index) = self.transcript_selected {
+            let max_index = self.logs.len().saturating_sub(1);
+            self.transcript_selected = Some(index.min(max_index));
+        }
+
         self.logs.len().saturating_sub(1)
     }
 }
@@ -2223,6 +2701,55 @@ fn normalize_wrapped_cursor_position((row, col): (usize, usize), width: usize) -
     }
 
     (row.saturating_add(col / width), col % width)
+}
+
+fn history_content_to_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    match value {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = item
+                    .as_object()
+                    .and_then(|obj| obj.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    if !text.trim().is_empty() {
+                        parts.push(text.trim().to_string());
+                    }
+                }
+            }
+            if parts.is_empty() {
+                serde_json::to_string(value).unwrap_or_default()
+            } else {
+                parts.join("
+")
+            }
+        }
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| serde_json::to_string(value).unwrap_or_default()),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn format_session_timestamp(ts: f64) -> String {
+    if !ts.is_finite() || ts <= 0.0 {
+        return "-".to_string();
+    }
+    let secs = ts.floor() as i64;
+    let nanos = ((ts - secs as f64).max(0.0) * 1_000_000_000.0).round() as u32;
+    chrono::Local
+        .timestamp_opt(secs, nanos.min(999_999_999))
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 #[cfg(windows)]

@@ -194,6 +194,14 @@ for res, cat, name in targets:
     shpreader.natural_earth(resolution=res, category=cat, name=name)
 PY
 
+
+# Tauri packaging tooling (append-only, keep previous cache layers intact)
+ARG TAURI_CLI_VERSION=2.8.2
+RUN cargo install tauri-cli --version ${TAURI_CLI_VERSION} --locked
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file wget xdg-utils \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]

@@ -11,11 +11,13 @@ use args::{
     McpNameCommand, McpSubcommand, ResumeCommand, SetToolCallModeCommand, SkillNameCommand,
     SkillsCommand, SkillsSubcommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
 };
+use chrono::{Local, TimeZone};
 use clap::Parser;
 use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
 use runtime::CliRuntime;
 use serde_json::{json, Value};
+use wunder_server::storage::ChatSessionRecord;
 use slash_command::{ParsedSlashCommand, SlashCommand};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
@@ -247,6 +249,10 @@ async fn handle_chat_slash_command(
             println!("/mouse is available in TUI mode only (default `wunder-cli` on TTY)");
             Ok(false)
         }
+        SlashCommand::Resume => {
+            handle_slash_resume(runtime, session_id, command.args).await?;
+            Ok(false)
+        }
         SlashCommand::New => {
             *session_id = uuid::Uuid::new_v4().simple().to_string();
             runtime.save_session(session_id).ok();
@@ -283,6 +289,92 @@ pub(crate) struct SessionStatsSnapshot {
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResumeSessionSummary {
+    pub session_id: String,
+    pub title: String,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+}
+
+pub(crate) async fn list_recent_sessions(
+    runtime: &CliRuntime,
+    limit: usize,
+) -> Result<Vec<ResumeSessionSummary>> {
+    let user_store = runtime.state.user_store.clone();
+    let user_id = runtime.user_id.clone();
+    let limit = (limit.max(1).min(200)) as i64;
+    tokio::task::spawn_blocking(move || -> Result<Vec<ResumeSessionSummary>> {
+        let (items, _) = user_store.list_chat_sessions(&user_id, None, None, 0, limit)?;
+        Ok(items
+            .into_iter()
+            .map(|record| {
+                let title = normalize_session_title(&record);
+                ResumeSessionSummary {
+                    session_id: record.session_id,
+                    title,
+                    updated_at: record.updated_at,
+                    last_message_at: record.last_message_at,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|err| anyhow!("list sessions cancelled: {err}"))?
+}
+
+pub(crate) async fn session_exists(runtime: &CliRuntime, session_id: &str) -> Result<bool> {
+    let user_store = runtime.state.user_store.clone();
+    let user_id = runtime.user_id.clone();
+    let session_id = session_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        user_store
+            .get_chat_session(&user_id, &session_id)
+            .map(|record| record.is_some())
+    })
+    .await
+    .map_err(|err| anyhow!("session query cancelled: {err}"))?
+}
+
+pub(crate) async fn load_session_history_entries(
+    runtime: &CliRuntime,
+    session_id: &str,
+    limit: i64,
+) -> Result<Vec<Value>> {
+    runtime
+        .state
+        .workspace
+        .load_history_async(&runtime.user_id, session_id, limit)
+        .await
+}
+
+fn normalize_session_title(record: &ChatSessionRecord) -> String {
+    let title = record.title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    let agent = record
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    format!("untitled ({agent})")
+}
+
+fn format_session_time(ts: f64) -> String {
+    if !ts.is_finite() || ts <= 0.0 {
+        return "-".to_string();
+    }
+    let secs = ts.floor() as i64;
+    let nanos = ((ts - secs as f64).max(0.0) * 1_000_000_000.0).round() as u32;
+    Local
+        .timestamp_opt(secs, nanos.min(999_999_999))
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn stream_event_payload(record: &Value) -> &Value {
@@ -451,6 +543,72 @@ async fn print_session_stats(
         "- token_usage: input={} output={} total={}",
         stats.total_input_tokens, stats.total_output_tokens, stats.total_tokens
     );
+    Ok(())
+}
+
+async fn handle_slash_resume(
+    runtime: &CliRuntime,
+    session_id: &mut String,
+    args: &str,
+) -> Result<()> {
+    let cleaned = args.trim();
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+        let sessions = list_recent_sessions(runtime, 20).await?;
+        if sessions.is_empty() {
+            println!("[info] no historical sessions found");
+            println!("tip: start chatting first, then use /resume to switch");
+            return Ok(());
+        }
+
+        println!("resume");
+        for (index, item) in sessions.iter().enumerate() {
+            let marker = if item.session_id == *session_id { "*" } else { " " };
+            let when = format_session_time(item.updated_at.max(item.last_message_at));
+            println!(
+                "{marker} {:>2}. {}  {}  {}",
+                index + 1,
+                item.session_id,
+                when,
+                item.title,
+            );
+        }
+        println!("usage: /resume <session_id|index|last>");
+        return Ok(());
+    }
+
+    let target = if cleaned.eq_ignore_ascii_case("last") {
+        runtime
+            .load_saved_session()
+            .ok_or_else(|| anyhow!("no saved session found"))?
+    } else if let Ok(index) = cleaned.parse::<usize>() {
+        let sessions = list_recent_sessions(runtime, 20).await?;
+        let Some(item) = sessions.get(index.saturating_sub(1)) else {
+            println!("[error] session index out of range: {index}");
+            return Ok(());
+        };
+        item.session_id.clone()
+    } else {
+        cleaned.to_string()
+    };
+
+    if target == *session_id {
+        println!("already using session: {target}");
+        return Ok(());
+    }
+
+    if !session_exists(runtime, &target).await? {
+        println!("[error] session not found: {target}");
+        println!("tip: run /resume list to inspect available sessions");
+        return Ok(());
+    }
+
+    *session_id = target;
+    runtime.save_session(session_id).ok();
+    let history_count = load_session_history_entries(runtime, session_id, 0)
+        .await
+        .map(|entries| entries.len())
+        .unwrap_or(0);
+    println!("resumed session: {session_id} ({history_count} messages restored)");
     Ok(())
 }
 

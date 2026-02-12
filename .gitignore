@@ -50,4 +50,3 @@ WUNDER_TEMP
 gen/
 wunder-desktop/gen/
 .tmp*
-Dockerfile.ubuntu20*

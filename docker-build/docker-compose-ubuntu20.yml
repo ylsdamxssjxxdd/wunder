@@ -1,0 +1,56 @@
+﻿x-build-env: &build-env
+  TZ: ${TZ:-Asia/Shanghai}
+  WUNDER_WORKSPACE_ROOT: ${WUNDER_WORKSPACE_ROOT:-/workspaces}
+  WUNDER_CONFIG_PATH: ${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
+  WUNDER_CONFIG_OVERRIDE_PATH: ${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
+  WUNDER_LOG_LEVEL: ${WUNDER_LOG_LEVEL:-info}
+  RUST_LOG: ${WUNDER_LOG_LEVEL:-info}
+  FONTCONFIG_FILE: /app/config/fonts.conf
+  XDG_CACHE_HOME: /workspaces/.cache
+  MATPLOTLIBRC: /app/config/matplotlibrc
+  MPLCONFIGDIR: /workspaces/.matplotlib
+
+x-build-volumes: &build-volumes
+  - ../:/app
+  - wunder_workspaces:/workspaces
+  - ../fonts:/usr/share/fonts/wunder:ro
+
+services:
+  wunder-build-x86:
+    # build:
+    #   context: ..
+    #   dockerfile: docker-build/Dockerfile.ubuntu20-x86
+    image: wunder-x86-20
+    platform: linux/amd64
+    working_dir: /app
+    environment:
+      <<: *build-env
+      CARGO_HOME: /app/.cargo/x86
+      CARGO_TARGET_DIR: /app/target/x86
+    volumes: *build-volumes
+    command: ["bash", "-lc", "sleep infinity"]
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    profiles: ["x86"]
+
+  wunder-build-arm:
+    # build:
+    #   context: ..
+    #   dockerfile: docker-build/Dockerfile.ubuntu20-arm
+    image: wunder-arm-20
+    platform: linux/arm64
+    working_dir: /app
+    environment:
+      <<: *build-env
+      CARGO_HOME: /app/.cargo/arm64
+      CARGO_TARGET_DIR: /app/target/arm64
+    volumes: *build-volumes
+    command: ["bash", "-lc", "sleep infinity"]
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    profiles: ["arm"]
+
+volumes:
+  wunder_workspaces:
