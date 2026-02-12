@@ -49,6 +49,8 @@ cargo build --release --features desktop --bin wunder-desktop
 cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
 ```
 
+> NOTE: Linux containers can only produce Linux bundles (AppImage, etc.); Windows MSI must be built on Windows.
+
 ## 4. 产物位置
 
 - x86：`target/x86/release/`

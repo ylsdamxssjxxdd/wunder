@@ -41,7 +41,11 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         " Conversation "
     };
     let transcript = Paragraph::new(transcript_text)
-        .block(Block::default().title(transcript_title).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(transcript_title)
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: false });
     app.set_transcript_rendered_lines(transcript.line_count(transcript_viewport.width));
     let transcript_scroll = app.transcript_scroll(transcript_viewport.height);

@@ -17,7 +17,6 @@ use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
 use runtime::CliRuntime;
 use serde_json::{json, Value};
-use wunder_server::storage::ChatSessionRecord;
 use slash_command::{ParsedSlashCommand, SlashCommand};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
@@ -27,6 +26,7 @@ use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_window};
 use wunder_server::schemas::WunderRequest;
 use wunder_server::skills::load_skills;
+use wunder_server::storage::ChatSessionRecord;
 use wunder_server::tools::{
     build_tool_roots, collect_available_tool_names, execute_tool, resolve_tool_name, ToolContext,
 };
@@ -305,7 +305,7 @@ pub(crate) async fn list_recent_sessions(
 ) -> Result<Vec<ResumeSessionSummary>> {
     let user_store = runtime.state.user_store.clone();
     let user_id = runtime.user_id.clone();
-    let limit = (limit.max(1).min(200)) as i64;
+    let limit = limit.clamp(1, 200) as i64;
     tokio::task::spawn_blocking(move || -> Result<Vec<ResumeSessionSummary>> {
         let (items, _) = user_store.list_chat_sessions(&user_id, None, None, 0, limit)?;
         Ok(items
@@ -562,7 +562,11 @@ async fn handle_slash_resume(
 
         println!("resume");
         for (index, item) in sessions.iter().enumerate() {
-            let marker = if item.session_id == *session_id { "*" } else { " " };
+            let marker = if item.session_id == *session_id {
+                "*"
+            } else {
+                " "
+            };
             let when = format_session_time(item.updated_at.max(item.last_message_at));
             println!(
                 "{marker} {:>2}. {}  {}  {}",

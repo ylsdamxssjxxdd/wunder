@@ -239,8 +239,12 @@ impl TuiApp {
                 } else {
                     " "
                 };
-                let when = format_session_timestamp(session.updated_at.max(session.last_message_at));
-                format!("{current} {}  {}  {}", session.session_id, when, session.title)
+                let when =
+                    format_session_timestamp(session.updated_at.max(session.last_message_at));
+                format!(
+                    "{current} {}  {}  {}",
+                    session.session_id, when, session.title
+                )
             })
             .collect::<Vec<_>>();
         Some((rows, picker.selected))
@@ -489,7 +493,11 @@ impl TuiApp {
             self.transcript_selected = None;
             return;
         }
-        let index = if to_top { 0 } else { self.logs.len().saturating_sub(1) };
+        let index = if to_top {
+            0
+        } else {
+            self.logs.len().saturating_sub(1)
+        };
         self.transcript_selected = Some(index);
         self.ensure_transcript_selection_visible(index);
     }
@@ -497,17 +505,16 @@ impl TuiApp {
     fn ensure_transcript_selection_visible(&mut self, selected_index: usize) {
         let viewport = self.transcript_viewport_height.max(1);
         let max_scroll = self.max_transcript_scroll(viewport);
-        let current_scroll = max_scroll.saturating_sub(self.transcript_offset_from_bottom.min(max_scroll));
+        let current_scroll =
+            max_scroll.saturating_sub(self.transcript_offset_from_bottom.min(max_scroll));
 
         let width = usize::from(self.transcript_viewport_width.max(1));
         let mut start_line = 0u16;
         for (index, entry) in self.logs.iter().enumerate() {
-            let line_count = wrapped_visual_line_count(
-                visual_log_text(entry.kind, &entry.text).as_str(),
-                width,
-            )
-            .max(1)
-            .min(u16::MAX as usize) as u16;
+            let line_count =
+                wrapped_visual_line_count(visual_log_text(entry.kind, &entry.text).as_str(), width)
+                    .max(1)
+                    .min(u16::MAX as usize) as u16;
             let end_line = start_line.saturating_add(line_count.saturating_sub(1));
             if index == selected_index {
                 let mut target_scroll = current_scroll;
@@ -1045,7 +1052,10 @@ impl TuiApp {
         }
 
         if restored == 0 {
-            self.push_log(LogKind::Info, "history is empty for this session".to_string());
+            self.push_log(
+                LogKind::Info,
+                "history is empty for this session".to_string(),
+            );
         }
         restored
     }
@@ -2725,8 +2735,10 @@ fn history_content_to_text(value: Option<&Value>) -> String {
             if parts.is_empty() {
                 serde_json::to_string(value).unwrap_or_default()
             } else {
-                parts.join("
-")
+                parts.join(
+                    "
+",
+                )
             }
         }
         Value::Object(map) => map
