@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use slash_command::{ParsedSlashCommand, SlashCommand};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
 use wunder_server::config::{Config, LlmModelConfig};
@@ -35,6 +36,7 @@ use wunder_server::user_tools::UserMcpServer;
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
 const CONFIG_SLASH_USAGE: &str = "/config [<base_url> <api_key> <model> [max_context|auto]]";
+const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -299,13 +301,12 @@ pub(crate) struct ResumeSessionSummary {
     pub last_message_at: f64,
 }
 
-pub(crate) async fn list_recent_sessions(
+async fn query_recent_sessions(
     runtime: &CliRuntime,
-    limit: usize,
+    limit: i64,
 ) -> Result<Vec<ResumeSessionSummary>> {
     let user_store = runtime.state.user_store.clone();
     let user_id = runtime.user_id.clone();
-    let limit = limit.clamp(1, 200) as i64;
     tokio::task::spawn_blocking(move || -> Result<Vec<ResumeSessionSummary>> {
         let (items, _) = user_store.list_chat_sessions(&user_id, None, None, 0, limit)?;
         Ok(items
@@ -325,17 +326,44 @@ pub(crate) async fn list_recent_sessions(
     .map_err(|err| anyhow!("list sessions cancelled: {err}"))?
 }
 
+pub(crate) async fn list_recent_sessions(
+    runtime: &CliRuntime,
+    limit: usize,
+) -> Result<Vec<ResumeSessionSummary>> {
+    let limit = limit.clamp(1, 200) as i64;
+    let mut sessions = query_recent_sessions(runtime, limit).await?;
+    if !sessions.is_empty() {
+        return Ok(sessions);
+    }
+
+    if let Some(saved_session) = runtime.load_saved_session() {
+        let _ = ensure_cli_session_record(runtime, &saved_session, None).await?;
+        sessions = query_recent_sessions(runtime, limit).await?;
+    }
+    Ok(sessions)
+}
+
 pub(crate) async fn session_exists(runtime: &CliRuntime, session_id: &str) -> Result<bool> {
+    let target_session = session_id.trim().to_string();
+    if target_session.is_empty() {
+        return Ok(false);
+    }
+
     let user_store = runtime.state.user_store.clone();
     let user_id = runtime.user_id.clone();
-    let session_id = session_id.to_string();
-    tokio::task::spawn_blocking(move || {
+    let session_for_query = target_session.clone();
+    let exists = tokio::task::spawn_blocking(move || {
         user_store
-            .get_chat_session(&user_id, &session_id)
+            .get_chat_session(&user_id, &session_for_query)
             .map(|record| record.is_some())
     })
     .await
-    .map_err(|err| anyhow!("session query cancelled: {err}"))?
+    .map_err(|err| anyhow!("session query cancelled: {err}"))??;
+    if exists {
+        return Ok(true);
+    }
+
+    ensure_cli_session_record(runtime, &target_session, None).await
 }
 
 pub(crate) async fn load_session_history_entries(
@@ -375,6 +403,97 @@ fn format_session_time(ts: f64) -> String {
         .single()
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+async fn ensure_cli_session_record(
+    runtime: &CliRuntime,
+    session_id: &str,
+    prompt_hint: Option<&str>,
+) -> Result<bool> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Ok(false);
+    }
+
+    let title_hint = prompt_hint.and_then(build_session_title);
+    if title_hint.is_none() {
+        let has_history = runtime
+            .state
+            .workspace
+            .load_history_async(&runtime.user_id, session_id, 1)
+            .await
+            .map(|items| !items.is_empty())
+            .unwrap_or(false);
+        if !has_history {
+            return Ok(false);
+        }
+    }
+
+    let user_store = runtime.state.user_store.clone();
+    let user_id = runtime.user_id.clone();
+    let session_id = session_id.to_string();
+    tokio::task::spawn_blocking(move || -> Result<bool> {
+        let now = current_ts();
+        let mut record = user_store
+            .get_chat_session(&user_id, &session_id)?
+            .unwrap_or_else(|| ChatSessionRecord {
+                session_id: session_id.clone(),
+                user_id: user_id.clone(),
+                title: title_hint
+                    .clone()
+                    .unwrap_or_else(|| CLI_DEFAULT_SESSION_TITLE.to_string()),
+                created_at: now,
+                updated_at: now,
+                last_message_at: now,
+                agent_id: None,
+                tool_overrides: Vec::new(),
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            });
+
+        if should_auto_title(record.title.as_str()) {
+            if let Some(title) = title_hint.as_ref() {
+                record.title = title.clone();
+            }
+        }
+
+        record.updated_at = now;
+        record.last_message_at = now;
+        user_store.upsert_chat_session(&record)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|err| anyhow!("session metadata task cancelled: {err}"))?
+}
+
+fn should_auto_title(title: &str) -> bool {
+    let cleaned = title.trim();
+    cleaned.is_empty()
+        || cleaned == "\u{65B0}\u{4F1A}\u{8BDD}"
+        || cleaned == "\u{672A}\u{547D}\u{540D}\u{4F1A}\u{8BDD}"
+}
+
+fn build_session_title(content: &str) -> Option<String> {
+    let cleaned = content.trim().replace('\n', " ");
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let mut output = cleaned;
+    if output.chars().count() > 20 {
+        output = output.chars().take(20).collect::<String>();
+        output.push_str("...");
+    }
+    Some(output)
+}
+
+fn current_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 fn stream_event_payload(record: &Value) -> &Value {
@@ -1604,13 +1723,15 @@ pub(crate) async fn build_wunder_request(
     global: &GlobalArgs,
     prompt: &str,
     session_id: &str,
-) -> WunderRequest {
+) -> Result<WunderRequest> {
     let config = runtime.state.config_store.get().await;
     let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
     let request_overrides =
         build_request_overrides(&config, model_name.as_deref(), global.tool_call_mode);
 
-    WunderRequest {
+    ensure_cli_session_record(runtime, session_id, Some(prompt)).await?;
+
+    Ok(WunderRequest {
         user_id: runtime.user_id.clone(),
         question: prompt.trim().to_string(),
         tool_names: Vec::new(),
@@ -1626,7 +1747,7 @@ pub(crate) async fn build_wunder_request(
         attachments: None,
         allow_queue: true,
         is_admin: false,
-    }
+    })
 }
 
 async fn run_prompt_once(
@@ -1635,7 +1756,7 @@ async fn run_prompt_once(
     prompt: &str,
     session_id: &str,
 ) -> Result<FinalEvent> {
-    let request = build_wunder_request(runtime, global, prompt, session_id).await;
+    let request = build_wunder_request(runtime, global, prompt, session_id).await?;
 
     if global.no_stream {
         let response = runtime.state.orchestrator.run(request).await?;

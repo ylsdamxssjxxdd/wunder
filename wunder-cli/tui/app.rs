@@ -1113,7 +1113,7 @@ impl TuiApp {
 
         let request =
             crate::build_wunder_request(&self.runtime, &self.global, &prompt, &self.session_id)
-                .await;
+                .await?;
         let orchestrator = self.runtime.state.orchestrator.clone();
         let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
         self.stream_rx = Some(rx);
