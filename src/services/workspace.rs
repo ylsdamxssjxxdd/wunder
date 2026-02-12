@@ -1111,7 +1111,11 @@ impl WorkspaceManager {
         let _ = self.storage.delete_memory_settings_by_user(cleaned);
         let _ = self.storage.delete_artifact_logs(cleaned);
         let workspace_root = self.workspace_root(cleaned);
-        let workspace_deleted = fs::remove_dir_all(&workspace_root).is_ok();
+        let workspace_deleted = if self.single_root && workspace_root == self.root {
+            false
+        } else {
+            fs::remove_dir_all(&workspace_root).is_ok()
+        };
         let legacy_history_deleted = false;
         let safe_id = self.safe_user_id(cleaned);
         {
