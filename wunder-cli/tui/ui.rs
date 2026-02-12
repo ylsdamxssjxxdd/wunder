@@ -152,7 +152,9 @@ fn log_line(kind: LogKind, text: String) -> Line<'static> {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         LogKind::User => Style::default().fg(Color::LightBlue),
         LogKind::Assistant => Style::default().fg(Color::Green),
-        LogKind::Reasoning => Style::default().fg(Color::LightYellow).add_modifier(Modifier::DIM),
+        LogKind::Reasoning => Style::default()
+            .fg(Color::LightYellow)
+            .add_modifier(Modifier::DIM),
         LogKind::Tool => Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::ITALIC),

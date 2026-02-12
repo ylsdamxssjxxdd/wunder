@@ -288,12 +288,24 @@ impl LlmClient {
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
-            if !saw_done
-                && combined.trim().is_empty()
+            let stream_payload_empty = combined.trim().is_empty()
                 && reasoning_combined.trim().is_empty()
-                && tool_calls.is_none()
-            {
-                warn!("LLM stream ended without [DONE] and without payload");
+                && tool_calls.is_none();
+            if !saw_done && stream_payload_empty {
+                warn!("LLM stream ended without [DONE] and without payload, fallback to non-stream request");
+                match self.complete_with_tools(messages, tools).await {
+                    Ok(fallback) => {
+                        if !fallback.content.is_empty() || !fallback.reasoning.is_empty() {
+                            on_delta(fallback.content.clone(), fallback.reasoning.clone()).await?;
+                        }
+                        return Ok(fallback);
+                    }
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "LLM stream ended without [DONE] and without payload; fallback request failed: {err}"
+                        ));
+                    }
+                }
             }
             return Ok(LlmResponse {
                 content: combined,

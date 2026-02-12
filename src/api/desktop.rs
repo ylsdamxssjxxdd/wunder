@@ -485,7 +485,7 @@ fn list_desktop_directory_roots() -> Vec<String> {
                 roots.push(root);
             }
         }
-        return roots;
+        roots
     }
 
     #[cfg(not(target_os = "windows"))]

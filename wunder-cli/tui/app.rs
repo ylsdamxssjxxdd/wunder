@@ -1088,7 +1088,9 @@ impl TuiApp {
         let payload = event_payload(&event.data);
         match event.event.as_str() {
             "llm_output_delta" => {
-                if let Some(reasoning_delta) = payload.get("reasoning_delta").and_then(Value::as_str) {
+                if let Some(reasoning_delta) =
+                    payload.get("reasoning_delta").and_then(Value::as_str)
+                {
                     let cleaned_reasoning = sanitize_reasoning_text(reasoning_delta);
                     if !cleaned_reasoning.is_empty() {
                         self.stream_saw_output = true;
@@ -2561,8 +2563,14 @@ fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String
         lines.push(format!("  cmd: {command}"));
     }
 
-    let stdout = first.get("stdout").and_then(Value::as_str).unwrap_or_default();
-    let stderr = first.get("stderr").and_then(Value::as_str).unwrap_or_default();
+    let stdout = first
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr = first
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
 
     let mut has_output = false;
     if returncode.unwrap_or(0) == 0 {
@@ -2831,7 +2839,7 @@ cdef";
                     "returncode": 1,
                     "stdout": "",
                     "stderr": "pip is not recognized as a cmdlet
-at line:1 char:1"
+        at line:1 char:1"
                 }]
             },
             "meta": {
@@ -2844,7 +2852,9 @@ at line:1 char:1"
         assert!(!lines.is_empty());
         assert!(lines[0].contains("failed"));
         assert!(lines.iter().any(|line| line.starts_with("  stderr:")));
-        assert!(!lines.iter().any(|line| line.starts_with("  output: <empty>")));
+        assert!(!lines
+            .iter()
+            .any(|line| line.starts_with("  output: <empty>")));
     }
 
     #[test]

@@ -255,6 +255,10 @@
     "en-US": "Unable to produce a final answer within the maximum rounds.",
     "zh-CN": "未能在最大轮次内生成最终答复。"
   },
+  "error.empty_no_final_answer": {
+    "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
+    "zh-CN": "模型未返回可展示的最终答复，请重试或检查模型流式设置。"
+  },
   "error.mcp_server_disabled": {
     "en-US": "MCP server disabled: {name}",
     "zh-CN": "MCP Server 未启用: {name}"

@@ -733,9 +733,11 @@ impl Orchestrator {
                 }
             }
             if answer.is_empty() {
-                answer = i18n::t("error.max_rounds_no_final_answer");
-                if stop_reason.is_none() && reached_max_rounds {
-                    stop_reason = Some("max_rounds".to_string());
+                let (fallback_answer, fallback_reason) =
+                    resolve_empty_answer_fallback(reached_max_rounds);
+                answer = fallback_answer;
+                if stop_reason.is_none() {
+                    stop_reason = Some(fallback_reason.to_string());
                 }
             }
 
@@ -981,9 +983,35 @@ fn resolve_non_admin_max_rounds(llm_config: &LlmModelConfig, skip_tool_calls: bo
     i64::from(configured.max(minimum))
 }
 
+fn resolve_empty_answer_fallback(reached_max_rounds: bool) -> (String, &'static str) {
+    if reached_max_rounds {
+        return (i18n::t("error.max_rounds_no_final_answer"), "max_rounds");
+    }
+    (i18n::t("error.empty_no_final_answer"), "empty_response")
+}
+
 fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
     let total = usage.total.max(usage.input.saturating_add(usage.output));
     target.input = target.input.saturating_add(usage.input);
     target.output = target.output.saturating_add(usage.output);
     target.total = target.total.saturating_add(total);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_empty_answer_fallback;
+
+    #[test]
+    fn resolve_empty_answer_fallback_uses_max_rounds_reason() {
+        let (answer, stop_reason) = resolve_empty_answer_fallback(true);
+        assert!(!answer.trim().is_empty());
+        assert_eq!(stop_reason, "max_rounds");
+    }
+
+    #[test]
+    fn resolve_empty_answer_fallback_uses_empty_response_reason() {
+        let (answer, stop_reason) = resolve_empty_answer_fallback(false);
+        assert!(!answer.trim().is_empty());
+        assert_eq!(stop_reason, "empty_response");
+    }
 }
