@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::future::Future;
 use std::time::Duration;
 use tracing::warn;
-use url::form_urlencoded::byte_serialize;
+use url::{form_urlencoded::byte_serialize, Url};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -23,6 +23,10 @@ const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
 const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
+const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
+const EMBEDDINGS_RESOURCE: &str = "embeddings";
+const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 3] =
+    [&["chat", "completions"], &["embeddings"], &["models"]];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelType {
@@ -317,12 +321,9 @@ impl LlmClient {
     }
     fn endpoint(&self) -> String {
         let base =
-            resolve_base_url(&self.config).unwrap_or_else(|| "https://api.openai.com".to_string());
-        if base.ends_with("/v1") {
-            format!("{base}/chat/completions")
-        } else {
-            format!("{base}/v1/chat/completions")
-        }
+            resolve_base_url(&self.config).unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+        build_openai_resource_endpoint(&base, CHAT_COMPLETIONS_RESOURCE)
+            .unwrap_or_else(|| format!("{DEFAULT_OPENAI_BASE_URL}/{CHAT_COMPLETIONS_RESOURCE}"))
     }
 
     fn headers(&self) -> reqwest::header::HeaderMap {
@@ -433,11 +434,8 @@ pub async fn embed_texts(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow!("embedding model is required"))?;
-    let endpoint = if base_url.ends_with("/v1") {
-        format!("{base_url}/embeddings")
-    } else {
-        format!("{base_url}/v1/embeddings")
-    };
+    let endpoint = build_openai_resource_endpoint(&base_url, EMBEDDINGS_RESOURCE)
+        .ok_or_else(|| anyhow!("embedding base_url is required"))?;
     let timeout = Duration::from_secs(timeout_s.max(5));
     let client = Client::builder().timeout(timeout).build()?;
     let payload = json!({
@@ -570,6 +568,77 @@ fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
     }
     let provider = normalize_provider(config.provider.as_deref());
     provider_default_base_url(&provider).map(|value| value.to_string())
+}
+
+fn build_openai_resource_endpoint(base_url: &str, resource: &str) -> Option<String> {
+    let normalized_base = normalize_base_url(base_url)?;
+    let trimmed = resource.trim_matches('/');
+    if trimmed.is_empty() {
+        return Some(normalized_base);
+    }
+    Some(format!("{normalized_base}/{trimmed}"))
+}
+
+fn parse_url_without_query_fragment(value: &str) -> Option<Url> {
+    let mut parsed = Url::parse(value).ok()?;
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Some(parsed)
+}
+
+fn parse_or_clean_base_url(base_url: &str) -> Option<(Option<Url>, String)> {
+    let trimmed = base_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(parsed) = parse_url_without_query_fragment(trimmed) {
+        return Some((Some(parsed), String::new()));
+    }
+    let cleaned = trimmed
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches('/')
+        .to_string();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some((None, cleaned))
+    }
+}
+
+fn collect_path_segments(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn strip_openai_resource_suffix(segments: &mut Vec<String>) {
+    for suffix in OPENAI_COMPAT_RESOURCE_SUFFIXES {
+        if segments.len() < suffix.len() {
+            continue;
+        }
+        let start = segments.len() - suffix.len();
+        if segments[start..]
+            .iter()
+            .map(String::as_str)
+            .eq(suffix.iter().copied())
+        {
+            segments.truncate(start);
+            break;
+        }
+    }
+}
+
+fn is_version_segment(segment: &str) -> bool {
+    let Some(rest) = segment
+        .strip_prefix('v')
+        .or_else(|| segment.strip_prefix('V'))
+    else {
+        return false;
+    };
+    !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
@@ -1054,24 +1123,59 @@ fn encode_path_component(value: &str) -> String {
 }
 
 fn normalize_base_url(base_url: &str) -> Option<String> {
-    let cleaned = base_url.trim().trim_end_matches('/');
-    if cleaned.is_empty() {
+    let (parsed, cleaned_fallback) = parse_or_clean_base_url(base_url)?;
+    if let Some(mut parsed) = parsed {
+        let mut segments = collect_path_segments(parsed.path());
+        strip_openai_resource_suffix(&mut segments);
+        if !segments
+            .last()
+            .is_some_and(|segment| is_version_segment(segment))
+        {
+            segments.push("v1".to_string());
+        }
+        parsed.set_path(&format!("/{}", segments.join("/")));
+        return Some(parsed.to_string().trim_end_matches('/').to_string());
+    }
+
+    let mut base = cleaned_fallback;
+    for suffix in ["/chat/completions", "/embeddings", "/models"] {
+        if let Some(stripped) = base.strip_suffix(suffix) {
+            base = stripped.trim_end_matches('/').to_string();
+            break;
+        }
+    }
+    if base.is_empty() {
         return None;
     }
-    if cleaned.ends_with("/v1") {
-        Some(cleaned.to_string())
+    if base.rsplit('/').next().is_some_and(is_version_segment) {
+        Some(base)
     } else {
-        Some(format!("{cleaned}/v1"))
+        Some(format!("{base}/v1"))
     }
 }
 
 fn normalize_root_url(base_url: &str) -> Option<String> {
-    let cleaned = base_url.trim().trim_end_matches('/');
-    if cleaned.is_empty() {
-        return None;
+    let normalized = normalize_base_url(base_url)?;
+    if let Some(mut parsed) = parse_url_without_query_fragment(&normalized) {
+        let mut segments = collect_path_segments(parsed.path());
+        if segments
+            .last()
+            .is_some_and(|segment| is_version_segment(segment))
+        {
+            segments.pop();
+        }
+        if segments.is_empty() {
+            parsed.set_path("/");
+        } else {
+            parsed.set_path(&format!("/{}", segments.join("/")));
+        }
+        return Some(parsed.to_string().trim_end_matches('/').to_string());
     }
-    let root = if cleaned.ends_with("/v1") {
-        cleaned.trim_end_matches("/v1").trim_end_matches('/')
+
+    let cleaned = normalized.trim_end_matches('/');
+    let (prefix, segment) = cleaned.rsplit_once('/').unwrap_or(("", cleaned));
+    let root = if is_version_segment(segment) {
+        prefix.trim_end_matches('/')
     } else {
         cleaned
     };
@@ -1170,6 +1274,39 @@ mod tests {
         let second = take_next_sse_event(&mut buffer).expect("second event");
         assert_eq!(second, "data: {\"y\":2}");
         assert!(take_next_sse_event(&mut buffer).is_none());
+    }
+    #[test]
+    fn normalize_base_url_keeps_existing_version_segment() {
+        let normalized = normalize_base_url("https://open.bigmodel.cn/api/paas/v4/")
+            .expect("normalized base url");
+        assert_eq!(normalized, "https://open.bigmodel.cn/api/paas/v4");
+    }
+
+    #[test]
+    fn normalize_base_url_strips_resource_suffixes() {
+        let normalized = normalize_base_url("https://example.com/v1/chat/completions")
+            .expect("normalized base url");
+        assert_eq!(normalized, "https://example.com/v1");
+    }
+
+    #[test]
+    fn build_openai_resource_endpoint_uses_detected_version_path() {
+        let endpoint = build_openai_resource_endpoint(
+            "https://open.bigmodel.cn/api/paas/v4/",
+            CHAT_COMPLETIONS_RESOURCE,
+        )
+        .expect("chat endpoint");
+        assert_eq!(
+            endpoint,
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+        );
+    }
+
+    #[test]
+    fn normalize_root_url_trims_version_segment_only() {
+        let root =
+            normalize_root_url("https://open.bigmodel.cn/api/paas/v4/").expect("normalized root");
+        assert_eq!(root, "https://open.bigmodel.cn/api/paas");
     }
 
     #[tokio::test]
