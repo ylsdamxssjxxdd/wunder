@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1109,7 +1110,7 @@ pub fn load_base_config_value() -> Value {
 
 fn read_yaml(path: &str) -> Value {
     // 配置文件允许不存在，避免开发环境首次启动失败。
-    let content = match fs::read_to_string(path) {
+    let content = match read_yaml_content_with_fallback(path) {
         Ok(text) => text,
         Err(err) => {
             warn!("读取配置失败: {path}, {err}");
@@ -1120,6 +1121,34 @@ fn read_yaml(path: &str) -> Value {
         warn!("解析 YAML 失败: {path}, {err}");
         Value::Null
     })
+}
+
+fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            let Some(example_path) = resolve_example_config_path(path) else {
+                return Err(err);
+            };
+            let text = fs::read_to_string(&example_path)?;
+            warn!(
+                "配置文件不存在，回退使用示例配置: {} -> {}",
+                path,
+                example_path.display()
+            );
+            Ok(text)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn resolve_example_config_path(path: &str) -> Option<PathBuf> {
+    let path = Path::new(path);
+    let file_name = path.file_name()?.to_str()?;
+    if file_name != "wunder.yaml" {
+        return None;
+    }
+    Some(path.with_file_name("wunder-example.yaml"))
 }
 
 fn merge_yaml(base: &mut Value, override_value: Value) {

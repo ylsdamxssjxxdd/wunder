@@ -82,10 +82,12 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 
 ## 快速开始
 ### 路径 A：wunder-server（多用户 / 平台部署）
-#### 1) 更新配置
-- 拷贝示例配置：`config/wunder-example.yaml` -> `config/wunder.yaml`
-- 拷贝环境示例：`.env.example` -> `.env`，配置 `WUNDER_API_KEY`、`WUNDER_POSTGRES_DSN`、`WUNDER_SANDBOX_ENDPOINT` 等。
-- 前端 API base：在仓库根 `.env` 中设置 `VITE_API_BASE` 或 `VITE_API_BASE_URL`，并重启前端。
+#### 1) 配置（可选）
+- 开箱即用：无需 `.env` 或 `config/wunder.yaml`，缺少 `config/wunder.yaml` 时会自动回退使用 `config/wunder-example.yaml`。
+- 需要自定义时再拷贝示例：
+  - `config/wunder-example.yaml` -> `config/wunder.yaml`
+  - `.env.example` -> `.env`（如需覆盖 `WUNDER_API_KEY`、`WUNDER_POSTGRES_DSN`、`WUNDER_SANDBOX_ENDPOINT` 等）
+- 前端 API base：如需修改，在仓库根 `.env` 中设置 `VITE_API_BASE` 或 `VITE_API_BASE_URL`，并重启前端。
 
 #### 2) 启动 server
 x86

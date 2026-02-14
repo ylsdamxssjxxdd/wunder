@@ -11,6 +11,7 @@ services:
     security_opt:
       - seccomp:unconfined
     image: wunder-x86
+    pull_policy: never
     platform: linux/amd64
     working_dir: /app
     ports:
@@ -28,7 +29,7 @@ services:
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
-      - WUNDER_API_KEY=${WUNDER_API_KEY}
+      - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - FONTCONFIG_FILE=/app/config/fonts.conf
       - XDG_CACHE_HOME=/workspaces/.cache
@@ -53,6 +54,7 @@ services:
     security_opt:
       - seccomp:unconfined
     image: wunder-x86
+    pull_policy: never
     platform: linux/amd64
     working_dir: /app
     environment:
@@ -84,7 +86,9 @@ services:
     restart: always
 
   wunder-mcp:
+    build: *rust-build
     image: wunder-x86
+    pull_policy: never
     platform: linux/amd64
     privileged: true
     security_opt:

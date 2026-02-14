@@ -82,10 +82,12 @@ Notes:
 
 ## Quick Start
 ### Path A: `wunder-server` (multi-tenant / platform deployment)
-#### 1) Prepare configuration
-- Copy config template: `config/wunder-example.yaml` -> `config/wunder.yaml`
-- Copy env template: `.env.example` -> `.env`, then set `WUNDER_API_KEY`, `WUNDER_POSTGRES_DSN`, `WUNDER_SANDBOX_ENDPOINT`, etc.
-- Frontend API base: set `VITE_API_BASE` or `VITE_API_BASE_URL` in repo root `.env`, then restart the frontend.
+#### 1) Configuration (optional)
+- Works out of the box: no `.env` or `config/wunder.yaml` required; if `config/wunder.yaml` is missing, it automatically falls back to `config/wunder-example.yaml`.
+- Only copy templates when you need overrides:
+  - `config/wunder-example.yaml` -> `config/wunder.yaml`
+  - `.env.example` -> `.env` (for `WUNDER_API_KEY`, `WUNDER_POSTGRES_DSN`, `WUNDER_SANDBOX_ENDPOINT`, etc.)
+- Frontend API base: if needed, set `VITE_API_BASE` or `VITE_API_BASE_URL` in repo root `.env`, then restart frontend.
 
 #### 2) Start the server
 x86
