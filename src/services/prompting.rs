@@ -14,6 +14,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use sysinfo::System;
 use tokio::sync::{Mutex as TokioMutex, Notify};
@@ -28,6 +29,22 @@ const SYSTEM_PROMPT_SKILLS_PROTOCOL_PATH: &str = "prompts/system/skills_protocol
 const SYSTEM_PROMPT_MEMORY_PATH: &str = "prompts/system/memory.txt";
 const SYSTEM_PROMPT_EXTRA_PATH: &str = "prompts/system/extra.txt";
 pub const SYSTEM_PROMPT_MEMORY_PLACEHOLDER: &str = "<<WUNDER_HISTORY_MEMORY>>";
+
+static SYSTEM_PROMPT_TEMPLATES_REVISION: AtomicU64 = AtomicU64::new(0);
+
+/// Bump the in-memory revision used by the system prompt builder cache.
+///
+/// Admin prompt template packs are edited via API and stored on disk. Instead of
+/// hitting filesystem metadata on every system prompt build (expensive on bind
+/// mounts), we bump this revision on writes so the prompt cache is invalidated
+/// immediately and cheaply.
+pub fn bump_system_prompt_templates_revision() {
+    SYSTEM_PROMPT_TEMPLATES_REVISION.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn system_prompt_templates_revision() -> u64 {
+    SYSTEM_PROMPT_TEMPLATES_REVISION.load(Ordering::Relaxed)
+}
 
 pub struct PromptComposer {
     cache: Mutex<PromptCache>,
@@ -65,25 +82,41 @@ struct InflightEntry {
 }
 
 pub fn read_prompt_template(path: &Path) -> String {
-    let resolved = resolve_prompt_path(path);
-    let mtime = resolved
-        .metadata()
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs_f64())
-        .unwrap_or(0.0);
+    read_prompt_template_with_exists(path).0
+}
+
+fn read_prompt_template_with_exists(path: &Path) -> (String, bool) {
     let language = i18n::get_language().to_ascii_lowercase();
-    let cache_key = format!("{language}|{}", resolved.to_string_lossy());
+    let cache_key = format!("{language}|{}", path.to_string_lossy());
+    let revision = system_prompt_templates_revision();
+
     let cache = prompt_file_cache();
-    if let Some((cached_mtime, cached_text)) = cache.lock().get(&cache_key) {
-        if *cached_mtime == mtime {
-            return cached_text.clone();
+    {
+        let cache = cache.lock();
+        if let Some(entry) = cache.get(&cache_key) {
+            if entry.revision == revision {
+                return (entry.text.clone(), entry.exists);
+            }
         }
     }
-    let text = std::fs::read_to_string(&resolved).unwrap_or_default();
-    cache.lock().insert(cache_key, (mtime, text.clone()));
-    text
+
+    // Admin-managed system prompt templates are edited via API and we bump
+    // `SYSTEM_PROMPT_TEMPLATES_REVISION` on writes, so we can avoid filesystem
+    // metadata checks on hot paths (bind-mount `stat` can be expensive).
+    let resolved = resolve_prompt_path(path);
+    let (text, exists) = match std::fs::read_to_string(&resolved) {
+        Ok(text) => (text, true),
+        Err(_) => (String::new(), false),
+    };
+    cache.lock().insert(
+        cache_key,
+        PromptFileCacheEntry {
+            revision,
+            text: text.clone(),
+            exists,
+        },
+    );
+    (text, exists)
 }
 
 pub fn read_prompt_template_from_active_pack(config: &Config, path: &Path) -> String {
@@ -140,10 +173,10 @@ impl PromptComposer {
         let overrides_key = build_overrides_key(overrides);
         let agent_prompt_key = build_prompt_key(agent_prompt);
         let prompt_template_id = resolve_prompt_template_id(config);
-        let template_signature = build_template_signature(config, &prompt_template_id);
+        let templates_revision = system_prompt_templates_revision();
         let workdir_key = workdir.to_string_lossy();
         let base_key = format!(
-            "{user_id}|{config_version}|{prompt_template_id}|{template_signature}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
+            "{user_id}|{config_version}|{prompt_template_id}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
         );
         let workspace_version = workspace.get_tree_cache_version(user_id);
         let cache_key = format!("{base_key}|{workspace_version}");
@@ -352,63 +385,15 @@ fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
     root.join(template_id.trim())
 }
 
-fn resolve_prompt_template_path_from_pack(
-    config: &Config,
-    template_id: &str,
-    path: &Path,
-) -> PathBuf {
-    let template_id = template_id.trim();
-    let is_default = template_id.is_empty() || template_id.eq_ignore_ascii_case("default");
-    if !is_default {
-        let pack_root = resolve_prompt_template_root(config, template_id);
-        let candidate = pack_root.join(path);
-        let resolved = resolve_prompt_path(&candidate);
-        if resolved.exists() {
-            return resolved;
-        }
-    }
-    resolve_prompt_path(path)
-}
-
-fn file_mtime_ns(path: &Path) -> u128 {
-    path.metadata()
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0)
-}
-
-fn build_template_signature(config: &Config, template_id: &str) -> String {
-    use std::hash::{Hash, Hasher};
-
-    let files = [
-        SYSTEM_PROMPT_ROLE_PATH,
-        SYSTEM_PROMPT_ENGINEERING_PATH,
-        SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH,
-        SYSTEM_PROMPT_SKILLS_PROTOCOL_PATH,
-        SYSTEM_PROMPT_MEMORY_PATH,
-        SYSTEM_PROMPT_EXTRA_PATH,
-    ];
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for file in files {
-        let resolved = resolve_prompt_template_path_from_pack(config, template_id, Path::new(file));
-        resolved.to_string_lossy().hash(&mut hasher);
-        file_mtime_ns(&resolved).hash(&mut hasher);
-    }
-    format!("{:x}", hasher.finish())
-}
-
 fn read_prompt_template_from_pack(config: &Config, template_id: &str, path: &Path) -> String {
     let template_id = template_id.trim();
     let is_default = template_id.is_empty() || template_id.eq_ignore_ascii_case("default");
     if !is_default {
         let pack_root = resolve_prompt_template_root(config, template_id);
         let candidate = pack_root.join(path);
-        let resolved = resolve_prompt_path(&candidate);
-        if resolved.exists() {
-            return read_prompt_template(&candidate);
+        let (text, exists) = read_prompt_template_with_exists(&candidate);
+        if exists {
+            return text;
         }
     }
     read_prompt_template(path)
@@ -749,8 +734,15 @@ fn absolute_path_str_from_text(raw: &str) -> String {
     absolute_path_str(&path)
 }
 
-fn prompt_file_cache() -> &'static Mutex<HashMap<String, (f64, String)>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, (f64, String)>>> = OnceLock::new();
+#[derive(Clone)]
+struct PromptFileCacheEntry {
+    revision: u64,
+    exists: bool,
+    text: String,
+}
+
+fn prompt_file_cache() -> &'static Mutex<HashMap<String, PromptFileCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, PromptFileCacheEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -833,13 +825,18 @@ fn merge_skill_specs(base: Vec<SkillSpec>, extra: Vec<SkillSpec>) -> Vec<SkillSp
 }
 
 fn system_name() -> String {
-    let name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
-    let version = System::os_version().unwrap_or_default();
-    if version.is_empty() {
-        name
-    } else {
-        format!("{name} {version}")
-    }
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+            let version = System::os_version().unwrap_or_default();
+            if version.is_empty() {
+                name
+            } else {
+                format!("{name} {version}")
+            }
+        })
+        .clone()
 }
 
 fn now_ts() -> f64 {

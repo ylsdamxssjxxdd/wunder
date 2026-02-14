@@ -365,6 +365,7 @@ async fn update_prompt_template_file(
     tokio::fs::write(&path, payload.content)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    crate::prompting::bump_system_prompt_templates_revision();
 
     Ok(Json(json!({
         "ok": true,
@@ -435,6 +436,7 @@ async fn create_prompt_template_pack(
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
     }
+    crate::prompting::bump_system_prompt_templates_revision();
 
     Ok(Json(json!({
         "ok": true,
@@ -468,6 +470,7 @@ async fn delete_prompt_template_pack(
     tokio::fs::remove_dir_all(&pack_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    crate::prompting::bump_system_prompt_templates_revision();
 
     let active = normalize_pack_id(Some(&config.prompt_templates.active));
     if active.eq_ignore_ascii_case(pack_id.trim()) {
