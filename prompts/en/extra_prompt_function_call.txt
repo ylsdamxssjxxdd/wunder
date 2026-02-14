@@ -1,7 +1,0 @@
-Tool signatures are provided inside the <tools> </tools> XML tag:
-<tools>
-{available_tools_describe}
-</tools>
-When calling a tool, use the function call mechanism (tool_calls/function_call). Do not output <tool_call> tags or raw JSON.
-Tool results will be returned as role="tool" messages with tool_call_id.
-{engineer_info}

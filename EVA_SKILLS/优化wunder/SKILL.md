@@ -120,7 +120,7 @@
 ## 常用定位文件
 - 压缩流程：`src/orchestrator/memory.rs`
 - 摘要注入：`src/services/history.rs`
-- 提示词：`prompts/compact_prompt.txt`、`prompts/system.txt`
+- 提示词：`prompts/{zh|en}/system/*.txt`、`prompts/{zh|en}/compact_prompt.txt`、`prompts/{zh|en}/memory_summary.txt`
 - 事件与统计：`src/orchestrator/execute.rs`
 
 ## SSE 简易脚本（示例）

@@ -1,8 +1,8 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260118-07";
+import { elements } from "./elements.js?v=20260214-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { t } from "./i18n.js?v=20260118-07";
+import { t } from "./i18n.js?v=20260214-01";
 
 // 工具勾选状态使用本地缓存，按 user_id 隔离
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
@@ -246,6 +246,9 @@ export const getSelectedToolNames = () => {
 
 // 渲染系统提示词页的工具选择列表
 const renderPromptToolList = (container, items, emptyText) => {
+  if (!container) {
+    return;
+  }
   container.textContent = "";
   if (!Array.isArray(items) || items.length === 0) {
     container.textContent = emptyText;
@@ -325,13 +328,21 @@ export const applyPromptToolError = (message) => {
   const text = message
     ? t("common.loadFailedWithMessage", { message })
     : t("common.loadFailed");
-  elements.promptBuiltinTools.textContent = text;
-  elements.promptMcpTools.textContent = text;
+  if (elements.promptBuiltinTools) {
+    elements.promptBuiltinTools.textContent = text;
+  }
+  if (elements.promptMcpTools) {
+    elements.promptMcpTools.textContent = text;
+  }
   if (elements.promptA2aTools) {
     elements.promptA2aTools.textContent = text;
   }
-  elements.promptSkills.textContent = text;
-  elements.promptKnowledgeTools.textContent = text;
+  if (elements.promptSkills) {
+    elements.promptSkills.textContent = text;
+  }
+  if (elements.promptKnowledgeTools) {
+    elements.promptKnowledgeTools.textContent = text;
+  }
   if (elements.promptUserTools) {
     elements.promptUserTools.textContent = text;
   }

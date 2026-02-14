@@ -1,3 +1,40 @@
+[工具协议]
+
+[[TOOL_CALL_MODE_TOOL_CALL]]
+工具签名在 <tools> </tools> XML 标签内提供：
+<tools>
+{available_tools_describe}
+</tools>
+每次工具调用都必须遵循以下要求：
+1. 将调用内容放在 <tool_call>...</tool_call> 块中返回。
+2. 在块内输出有效 JSON，且仅包含两个键："name"(字符串) 和 "arguments"(对象)。示例：
+<tool_call>
+{"name":"最终回复","arguments":{"content":"任务已完成，还有什么我可以帮忙的吗？"}}
+</tool_call>
+
+工具执行结果会作为以 "tool_response: " 前缀的 user 消息返回。
+[[/TOOL_CALL_MODE_TOOL_CALL]]
+
+[[TOOL_CALL_MODE_FUNCTION_CALL]]
+工具签名在 <tools> </tools> XML 标签内提供：
+<tools>
+{available_tools_describe}
+</tools>
+每次工具调用请通过 function call 机制返回（tool_calls/function_call），不要输出 <tool_call> 标签或直接输出 JSON 文本。
+工具执行结果会作为 role=tool 的消息返回，并携带 tool_call_id。
+[[/TOOL_CALL_MODE_FUNCTION_CALL]]
+
+[[HAS_PLAN_TOOL]]
+[计划面板]
+当可用工具包含“计划面板”时，请优先在开始任务前用它给出简洁计划（2-6 步）。执行过程中保持计划同步更新：只保留一个 in_progress，完成的步骤及时标记为 completed，说明字段保持简短。
+[[/HAS_PLAN_TOOL]]
+
+[[HAS_QUESTION_PANEL_TOOL]]
+[问询面板]
+当可用工具包含“问询面板”时，请在任务完成前或出现多条可行路线时，主动整理 2-4 条路线或需明确的要素，调用该工具向用户发起选择。若任务已有明确单一路线，或用户明确要求“不使用问询面板/无需确认/直接执行”，必须遵循用户指令，不要调用问询面板。每条路线保持标题简短并附一句说明；若推荐某路线请标注推荐。调用后暂停继续执行，等待用户选择或新的消息。
+[[/HAS_QUESTION_PANEL_TOOL]]
+
+[[HAS_A2UI_TOOL]]
 [A2UI 界面生成指南]
 
 当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用“最终回复”工具。
@@ -42,40 +79,5 @@
 - 列表：Column + List(template) + Card；dataModelUpdate 中提供 items。
 - 详情：Card 包裹 Column；标题用 h2/h3；主按钮 primary:true。
 - 操作反馈：可用 Card 或 Modal 展示确认信息。
+[[/HAS_A2UI_TOOL]]
 
-示例A：详情卡片
-[
-  {"beginRendering":{"surfaceId":"demo","root":"root","styles":{"primaryColor":"#2563eb","font":"Inter"}}},
-  {"surfaceUpdate":{"surfaceId":"demo","components":[
-    {"id":"root","component":{"Card":{"child":"rootColumn"}}},
-    {"id":"rootColumn","component":{"Column":{"children":{"explicitList":["title","subtitle","cta"]},"alignment":"stretch"}}},
-    {"id":"title","component":{"Text":{"usageHint":"h2","text":{"path":"/title"}}}},
-    {"id":"subtitle","component":{"Text":{"usageHint":"caption","text":{"path":"/subtitle"}}}},
-    {"id":"ctaText","component":{"Text":{"text":{"literalString":"确认"}}}},
-    {"id":"cta","component":{"Button":{"child":"ctaText","primary":true,"action":{"name":"confirm"}}}}
-  ]}},
-  {"dataModelUpdate":{"surfaceId":"demo","path":"/","contents":[
-    {"key":"title","valueString":"示例标题"},
-    {"key":"subtitle","valueString":"简短说明"}
-  ]}}
-]
-
-示例B：列表模板
-[
-  {"beginRendering":{"surfaceId":"list","root":"root"}},
-  {"surfaceUpdate":{"surfaceId":"list","components":[
-    {"id":"root","component":{"Column":{"children":{"explicitList":["title","list"]}}}},
-    {"id":"title","component":{"Text":{"usageHint":"h3","text":{"literalString":"项目列表"}}}},
-    {"id":"list","component":{"List":{"direction":"vertical","children":{"template":{"componentId":"itemCard","dataBinding":"/items"}}}}},
-    {"id":"itemCard","component":{"Card":{"child":"itemRow"}}},
-    {"id":"itemRow","component":{"Row":{"children":{"explicitList":["itemName","itemDesc"]},"alignment":"center"}}},
-    {"id":"itemName","component":{"Text":{"usageHint":"h4","text":{"path":"name"}}}},
-    {"id":"itemDesc","component":{"Text":{"text":{"path":"desc"}}}}
-  ]}},
-  {"dataModelUpdate":{"surfaceId":"list","path":"/","contents":[
-    {"key":"items","valueMap":[
-      {"key":"item1","valueMap":[{"key":"name","valueString":"A"},{"key":"desc","valueString":"说明 A"}]},
-      {"key":"item2","valueMap":[{"key":"name","valueString":"B"},{"key":"desc","valueString":"说明 B"}]}
-    ]}
-  ]}}
-]

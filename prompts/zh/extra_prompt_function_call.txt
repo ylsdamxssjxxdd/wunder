@@ -1,7 +1,0 @@
-工具签名在 <tools> </tools> XML 标签内提供：
-<tools>
-{available_tools_describe}
-</tools>
-每次工具调用请通过 function call 机制返回（tool_calls/function_call），不要输出 <tool_call> 标签或直接输出 JSON 文本。
-工具执行结果会作为 role=tool 的消息返回，并携带 tool_call_id。
-{engineer_info}

@@ -1,3 +1,0 @@
-[Programming Tips]
-- Confirm language/version/runtime environment/inputs/outputs/performance goals; ask if unclear.
-- Prefer runnable, maintainable code: clear structure, naming, minimal comments, handle edges and errors.

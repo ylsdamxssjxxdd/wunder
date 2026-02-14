@@ -822,15 +822,49 @@ impl Orchestrator {
         if prompt.trim().is_empty() {
             return prompt;
         }
-        if !self.memory_store.is_enabled_async(user_id).await {
-            return prompt;
+
+        fn collapse_blank_lines(text: &str) -> String {
+            let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+            let mut out = String::with_capacity(normalized.len());
+            let mut run = 0usize;
+            for ch in normalized.chars() {
+                if ch == '\n' {
+                    run = run.saturating_add(1);
+                    if run <= 2 {
+                        out.push('\n');
+                    }
+                } else {
+                    run = 0;
+                    out.push(ch);
+                }
+            }
+            out.trim().to_string()
         }
-        let limit = if is_admin { Some(0) } else { None };
-        let records = self
-            .memory_store
-            .list_records_async(user_id, limit, false)
-            .await;
-        let block = self.memory_store.build_prompt_block(&records);
+
+        let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
+        let has_placeholder = prompt.contains(placeholder);
+
+        let block = if self.memory_store.is_enabled_async(user_id).await {
+            let limit = if is_admin { Some(0) } else { None };
+            let records = self
+                .memory_store
+                .list_records_async(user_id, limit, false)
+                .await;
+            self.memory_store.build_prompt_block(&records)
+        } else {
+            String::new()
+        };
+
+        if has_placeholder {
+            let replacement = block.trim();
+            let updated = if replacement.is_empty() {
+                prompt.replace(placeholder, "")
+            } else {
+                prompt.replace(placeholder, replacement)
+            };
+            return collapse_blank_lines(&updated);
+        }
+
         if block.is_empty() {
             return prompt;
         }

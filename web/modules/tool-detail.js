@@ -1,6 +1,6 @@
-import { elements } from "./elements.js?v=20260118-07";
+import { elements } from "./elements.js?v=20260214-01";
 import { formatToolSchema } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-07";
+import { t } from "./i18n.js?v=20260214-01";
 
 export const setToolDetailTestMode = (enabled) => {
   if (!elements.toolDetailModal) {

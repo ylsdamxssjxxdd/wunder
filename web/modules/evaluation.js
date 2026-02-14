@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260124-01";
+import { elements } from "./elements.js?v=20260214-01";
 import { getWunderBase } from "./api.js";
 import { openMonitorDetail } from "./monitor.js?v=20260113-01";
 import { formatDuration } from "./utils.js";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { state } from "./state.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260124-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260214-01";
 
 const evaluationState = {
   activeRunId: "",

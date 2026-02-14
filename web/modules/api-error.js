@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20260124-01";
+import { t } from "./i18n.js?v=20260214-01";
 import { notify } from "./notify.js";
 
 const TRACE_HEADER = "x-trace-id";

@@ -1,11 +1,11 @@
-import { elements } from "./elements.js?v=20260118-07";
+import { elements } from "./elements.js?v=20260214-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import {
   ensureToolSelectionLoaded,
   syncPromptTools,
   ensureUserToolsState,
-} from "./tools.js?v=20251227-13";
+} from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
@@ -15,7 +15,7 @@ import {
   isPlainObject,
   parseHeadersValue,
 } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-07";
+import { t } from "./i18n.js?v=20260214-01";
 
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;
@@ -1926,7 +1926,9 @@ const deleteUserKnowledgeBase = async () => {
 // 初始化自建工具弹窗交互
 export const initUserTools = () => {
   ensureUserToolsState();
-  elements.promptUserToolAdd.addEventListener("click", openUserToolModal);
+  if (elements.promptUserToolAdd) {
+    elements.promptUserToolAdd.addEventListener("click", openUserToolModal);
+  }
   elements.userToolModalClose.addEventListener("click", closeUserToolModal);
   elements.userToolModalCloseBtn.addEventListener("click", closeUserToolModal);
   elements.userToolModal.addEventListener("click", (event) => {

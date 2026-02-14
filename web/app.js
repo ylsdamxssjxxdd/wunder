@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260110-04";
 
-import { elements } from "./modules/elements.js?v=20260210-06";
+import { elements } from "./modules/elements.js?v=20260214-01";
 
 import { state } from "./modules/state.js";
 
@@ -31,9 +31,13 @@ import {
 
   resetToolSelection,
 
-} from "./modules/tools.js?v=20251231-01";
+} from "./modules/tools.js?v=20260214-01";
 
-import { initPromptPanel, loadSystemPrompt } from "./modules/prompt.js?v=20251231-01";
+import {
+  ensurePromptTemplatesLoaded,
+  initPromptPanel,
+  loadSystemPrompt,
+} from "./modules/prompt.js?v=20260214-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260118-07";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
@@ -81,7 +85,7 @@ import { initSimLabPanel } from "./modules/sim-lab.js?v=20260210-06";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260210-06";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260214-01";
 
 
 
@@ -893,11 +897,11 @@ const bindNavigation = () => {
 
     try {
 
-      await ensureToolSelectionLoaded();
+      await ensurePromptTemplatesLoaded();
 
     } catch (error) {
 
-      applyPromptToolError(error.message);
+      elements.systemPrompt.textContent = t("common.loadFailedWithMessage", { message: error.message });
 
     }
 

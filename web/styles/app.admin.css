@@ -1376,6 +1376,30 @@
   color: #3a7afe;
 }
 
+/* 系统提示词面板头部：压缩布局，图标按钮减少占用 */
+.prompt-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  row-gap: 6px;
+}
+
+.prompt-header-actions .header-input {
+  gap: 6px;
+}
+
+.prompt-header-actions #promptTemplatePack {
+  min-width: 120px;
+}
+
+.prompt-header-actions #promptUserId {
+  width: 160px;
+}
+
+.prompt-header-actions #promptTemplateSetActiveBtn.is-active {
+  background: #3a7afe;
+}
+
 .list-body {
   flex: 1 1 auto;
   min-height: 0;

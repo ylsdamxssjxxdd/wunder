@@ -739,6 +739,69 @@
   - `security.api_key`：当前 API Key（未配置时为 null）
 - 说明：仅管理员可访问，供管理端高级设置读取默认 API Key。
 
+### 4.1.6.5 `/wunder/admin/prompt_templates`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.active`：当前启用的系统提示词模板包 ID（`default` 表示仓库内 `prompts/`）
+  - `data.packs_root`：非 default 模板包的根目录（默认 `./data/prompt_templates`）
+  - `data.packs[]`：模板包列表（id/is_default/path）
+  - `data.segments[]`：系统提示词分段文件列表（key/file）
+
+### 4.1.6.6 `/wunder/admin/prompt_templates/active`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `active`：要启用的模板包 ID（空或 `default` 表示仓库内默认模板）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.active`：更新后的启用模板包 ID
+
+### 4.1.6.7 `/wunder/admin/prompt_templates/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `pack_id`：模板包 ID（可选，默认使用当前启用包）
+  - `locale`：`zh`/`en`（可选，默认跟随系统语言设置）
+  - `key`：分段 key（role/engineering/tools_protocol/skills_protocol/memory/extra）
+- `GET` 返回（JSON）：
+  - `data.pack_id`：模板包 ID
+  - `data.locale`：`zh`/`en`
+  - `data.key`：分段 key
+  - `data.path`：文件路径（服务端解析后的实际路径）
+  - `data.exists`：文件是否存在于该模板包
+  - `data.fallback_used`：是否回退读取 default 模板包内容
+  - `data.content`：文件内容
+- `PUT` 入参（JSON）：
+  - `pack_id`：模板包 ID（可选，默认使用当前启用包）
+  - `locale`：`zh`/`en`（可选，默认跟随系统语言设置）
+  - `key`：分段 key
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `data.path`：写入文件路径
+- 说明：
+  - `default` 模板包为只读，禁止通过 `PUT` 修改；请先创建新模板包再编辑。
+
+### 4.1.6.8 `/wunder/admin/prompt_templates/packs`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `pack_id`：要创建的模板包 ID（仅支持字母/数字/_/-）
+  - `copy_from`：可选，复制来源模板包 ID（默认 `default`）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：模板包 ID
+  - `data.path`：模板包路径
+  - `data.copied_from`：复制来源模板包 ID
+
+### 4.1.6.9 `/wunder/admin/prompt_templates/packs/{pack_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：删除的模板包 ID
+
 ### 4.1.7 `/wunder/admin/skills/upload`
 
 - 方法：`POST`

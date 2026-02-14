@@ -1,10 +1,10 @@
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
-import { syncPromptTools } from "./tools.js?v=20251227-13";
+import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260118-07";
+import { t } from "./i18n.js?v=20260214-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 
 const skillsList = document.getElementById("skillsList");

@@ -1,0 +1,7 @@
+[Skills Protocol]
+- Skills are reusable workflows stored on disk. When you need a skill, call the skill tool to read its SKILL.md and follow the workflow strictly.
+- If a skill does not match the user's goal, explain why and use a more suitable approach.
+
+[Mounted Skills]
+{SKILLS_LIST}
+

@@ -54,6 +54,35 @@ pub struct Config {
     pub agent_queue: AgentQueueConfig,
     #[serde(default)]
     pub user_agents: UserAgentsConfig,
+    #[serde(default)]
+    pub prompt_templates: PromptTemplatesConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplatesConfig {
+    /// Active prompt template pack id. `"default"` uses the built-in `./prompts` directory.
+    #[serde(default = "default_prompt_templates_active")]
+    pub active: String,
+    /// Root directory that stores admin-managed prompt template packs.
+    #[serde(default = "default_prompt_templates_root")]
+    pub root: String,
+}
+
+impl Default for PromptTemplatesConfig {
+    fn default() -> Self {
+        Self {
+            active: default_prompt_templates_active(),
+            root: default_prompt_templates_root(),
+        }
+    }
+}
+
+fn default_prompt_templates_active() -> String {
+    "default".to_string()
+}
+
+fn default_prompt_templates_root() -> String {
+    "./data/prompt_templates".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

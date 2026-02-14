@@ -1786,7 +1786,7 @@ button.danger {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(150px, 200px) minmax(240px, 340px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 16px;
 }

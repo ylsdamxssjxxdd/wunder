@@ -86,6 +86,10 @@
                 <i class="fa-solid fa-toolbox"></i>
                 <span data-i18n="panel.toolManager">工具管理</span>
               </button>
+              <button id="navPrompt" class="nav-btn">
+                <i class="fa-solid fa-file-lines"></i>
+                <span data-i18n="panel.prompt">系统提示词</span>
+              </button>
             </div>
           </div>
           <div class="nav-group" data-group="debug">
@@ -106,10 +110,6 @@
               <button id="navSimLab" class="nav-btn">
                 <i class="fa-solid fa-flask-vial"></i>
                 <span data-i18n="panel.simLab">蜂群测试</span>
-              </button>
-              <button id="navPrompt" class="nav-btn">
-                <i class="fa-solid fa-file-lines"></i>
-                <span data-i18n="panel.prompt">系统提示词</span>
               </button>
               <button id="navEvaluation" class="nav-btn">
                 <i class="fa-solid fa-list-check"></i>
@@ -1938,6 +1938,10 @@
         <section id="builtinPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.toolManager">工具管理</h1>
+            <button id="promptUserToolAdd" class="secondary btn-with-icon" type="button">
+              <i class="fa-solid fa-toolbox"></i>
+              <span data-i18n="userTools.title">自建工具</span>
+            </button>
             <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
               <i class="fa-solid fa-arrows-rotate"></i>
               <span data-i18n="builtin.refresh">刷新工具</span>
@@ -2445,77 +2449,81 @@
         <section id="promptPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.prompt">系统提示词</h1>
-            <div class="header-actions">
+            <div class="header-actions prompt-header-actions">
+              <div class="header-input prompt-pack-select">
+                <select
+                  id="promptTemplatePack"
+                  data-i18n-title="prompt.template.pack"
+                  data-i18n-aria-label="prompt.template.pack"
+                ></select>
+              </div>
+              <button
+                id="promptTemplateSetActiveBtn"
+                class="secondary btn-with-icon icon-only"
+                data-i18n-title="prompt.template.action.setActive"
+                data-i18n-aria-label="prompt.template.action.setActive"
+                type="button"
+              >
+                <i class="fa-solid fa-check" aria-hidden="true"></i>
+              </button>
+              <button
+                id="promptTemplateNewPackBtn"
+                class="secondary btn-with-icon icon-only"
+                data-i18n-title="prompt.template.action.newPack"
+                data-i18n-aria-label="prompt.template.action.newPack"
+                type="button"
+              >
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+              <button
+                id="promptTemplateDeletePackBtn"
+                class="secondary btn-with-icon icon-only"
+                data-i18n-title="prompt.template.action.deletePack"
+                data-i18n-aria-label="prompt.template.action.deletePack"
+                type="button"
+              >
+                <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              </button>
               <div class="header-input">
                 <label for="promptUserId" data-i18n="prompt.label.userId">user_id</label>
                 <input id="promptUserId" type="text" />
               </div>
-              <button id="loadPromptBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="prompt.action.refresh">刷新提示词</span>
+              <button
+                id="loadPromptBtn"
+                class="secondary btn-with-icon icon-only"
+                data-i18n-title="prompt.action.refresh"
+                data-i18n-aria-label="prompt.action.refresh"
+                type="button"
+              >
+                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
               </button>
               <div id="promptBuildTime" class="muted" data-i18n="prompt.buildTime.empty">构建耗时：--</div>
             </div>
           </div>
           <div class="tips" data-i18n="prompt.tip">
-            用于查看当前智能体的系统提示词，左侧勾选工具会同步注入提示词并影响调试面板请求。
+            用于管理系统提示词模板：选择模板包、编辑分段文件，并可预览当前构建出的系统提示词。
           </div>
           <div class="prompt-content">
             <div class="prompt-sidebar">
               <div class="prompt-section">
                 <div class="prompt-section-title">
-                  <i class="fa-solid fa-tools"></i><span data-i18n="prompt.section.builtin">内置工具</span>
+                  <i class="fa-solid fa-file-lines"></i><span data-i18n="prompt.template.files">分段文件</span>
                 </div>
-                <div id="promptBuiltinTools" class="prompt-tool-list"></div>
-              </div>
-              <div class="prompt-section">
-                <div class="prompt-section-title">
-                  <i class="fa-solid fa-plug"></i><span data-i18n="prompt.section.mcp">MCP 工具</span>
-                </div>
-                <div id="promptMcpTools" class="prompt-tool-list"></div>
-              </div>
-              <div class="prompt-section">
-                <div class="prompt-section-title">
-                  <i class="fa-solid fa-book"></i><span data-i18n="prompt.section.knowledge">知识库工具</span>
-                </div>
-                <div id="promptKnowledgeTools" class="prompt-tool-list"></div>
-              </div>
-              <div class="prompt-section">
-                <div class="prompt-section-title">
-                  <i class="fa-solid fa-wand-magic-sparkles"></i><span data-i18n="prompt.section.skills">技能</span>
-                </div>
-                <div id="promptSkills" class="prompt-tool-list"></div>
+                <div id="promptTemplateFileList" class="prompt-tool-list tool-list"></div>
               </div>
             </div>
             <div class="prompt-secondary">
               <div class="prompt-section">
-                <div class="prompt-section-title">
-                  <i class="fa-solid fa-diagram-project"></i><span data-i18n="prompt.section.a2a">A2A 工具</span>
-                </div>
-                <div id="promptA2aTools" class="prompt-tool-list"></div>
-              </div>
-              <div class="prompt-section">
                 <div class="prompt-section-header">
                   <div class="prompt-section-title">
-                    <i class="fa-solid fa-toolbox"></i><span data-i18n="prompt.section.userTools">自建工具</span>
+                    <i class="fa-solid fa-pen"></i><span id="promptTemplateFileTitle" data-i18n="prompt.template.editor">编辑</span>
                   </div>
-                  <button
-                    id="promptUserToolAdd"
-                    class="icon-btn"
-                    type="button"
-                    title="新增自建工具"
-                    data-i18n-title="prompt.userTool.add"
-                    data-i18n-aria-label="prompt.userTool.add"
-                  >
-                    <i class="fa-solid fa-plus"></i>
+                  <button id="promptTemplateSaveBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
                   </button>
                 </div>
-                <div id="promptUserTools" class="prompt-tool-list"></div>
-              </div>
-              <div class="prompt-section">
-                <div class="prompt-section-title">
-                  <i class="fa-solid fa-infinity"></i><span data-i18n="prompt.section.shared">共享工具</span>
-                </div>
-                <div id="promptSharedTools" class="prompt-tool-list"></div>
+                <textarea id="promptTemplateEditor" class="prompt-extra-input" spellcheck="false"></textarea>
+                <div id="promptTemplateStatus" class="muted"></div>
               </div>
             </div>
             <div class="prompt-view">
@@ -4773,7 +4781,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260210-06"></script>
+    <script type="module" src="./app.js?v=20260214-01"></script>
 </body>
 </html>
 

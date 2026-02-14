@@ -1,6 +1,7 @@
 // API 路由聚合入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
+pub mod admin_prompt_templates;
 pub mod admin_sim_lab;
 pub mod admin_swarm;
 pub(crate) mod attachment_convert;
@@ -45,6 +46,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(temp_dir::router())
         .merge(workspace::router())
         .merge(admin::router())
+        .merge(admin_prompt_templates::router())
         .merge(admin_swarm::router())
         .merge(admin_sim_lab::router())
         .merge(evaluation::router())
