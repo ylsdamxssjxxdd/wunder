@@ -1866,10 +1866,12 @@
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表
   - 返回：`data.total`、`data.items`（同上）
-- `GET /wunder/agents/running`：当前运行中的智能体会话锁 + 问询面板待选择状态
-  - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at/state/pending_question/is_default）
+- `GET /wunder/agents/running`：智能体运行状态概览（默认入口 + 个人智能体 + 共享智能体）
+  - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at/state/pending_question/is_default/last_error?）
   - `is_default`：表示通用聊天（无 agent_id 的默认入口会话）
-  - `state`：`running` | `waiting`，`pending_question` 表示存在待选择问询面板
+  - `state`：`idle` | `waiting` | `running` | `cancelling` | `done` | `error`
+  - `pending_question`：表示当前会话存在待回复/待选择的问询面板（通常对应 `state=waiting`）
+  - `last_error`：仅 `state=error` 时可能返回，表示最近一次错误的摘要（用于前端提示）
 - `POST /wunder/agents`：创建智能体
   - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
   - 返回：`data`（同智能体详情）

@@ -1990,6 +1990,69 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
+    fn load_monitor_records_by_user(
+        &self,
+        user_id: &str,
+        statuses: Option<&[&str]>,
+        since_time: Option<f64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let statuses = statuses
+            .unwrap_or(&[])
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let since_time = since_time.filter(|value| value.is_finite() && *value > 0.0);
+
+        let mut conn = self.conn()?;
+        let rows = match (!statuses.is_empty(), since_time.is_some()) {
+            (true, true) => {
+                let since = since_time.unwrap_or(0.0);
+                conn.query(
+                    "SELECT payload FROM monitor_sessions \
+                     WHERE user_id = $1 AND status = ANY($2) AND updated_time >= $3 \
+                     ORDER BY updated_time DESC LIMIT $4",
+                    &[&cleaned_user, &statuses, &since, &limit],
+                )?
+            }
+            (true, false) => conn.query(
+                "SELECT payload FROM monitor_sessions \
+                 WHERE user_id = $1 AND status = ANY($2) \
+                 ORDER BY updated_time DESC LIMIT $3",
+                &[&cleaned_user, &statuses, &limit],
+            )?,
+            (false, true) => {
+                let since = since_time.unwrap_or(0.0);
+                conn.query(
+                    "SELECT payload FROM monitor_sessions \
+                     WHERE user_id = $1 AND updated_time >= $2 \
+                     ORDER BY updated_time DESC LIMIT $3",
+                    &[&cleaned_user, &since, &limit],
+                )?
+            }
+            (false, false) => conn.query(
+                "SELECT payload FROM monitor_sessions WHERE user_id = $1 \
+                 ORDER BY updated_time DESC LIMIT $2",
+                &[&cleaned_user, &limit],
+            )?,
+        };
+        let mut records = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: String = row.get(0);
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_monitor_record(&self, _session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = _session_id.trim();

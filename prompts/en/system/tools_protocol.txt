@@ -15,15 +15,6 @@ Each tool call must follow:
 Tool results will come back as a user message with prefix "tool_response: ".
 [[/TOOL_CALL_MODE_TOOL_CALL]]
 
-[[TOOL_CALL_MODE_FUNCTION_CALL]]
-Tool signatures are provided inside the <tools> </tools> XML tag:
-<tools>
-{available_tools_describe}
-</tools>
-Use the function call mechanism (tool_calls/function_call) for tool invocation; do not output <tool_call> tags or raw JSON text.
-Tool results will come back as role=tool messages with tool_call_id.
-[[/TOOL_CALL_MODE_FUNCTION_CALL]]
-
 [[HAS_PLAN_TOOL]]
 [Plan Board]
 When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.

@@ -633,6 +633,58 @@ pub trait StorageBackend: Send + Sync {
         records.truncate(limit as usize);
         Ok(records)
     }
+    fn load_monitor_records_by_user(
+        &self,
+        user_id: &str,
+        statuses: Option<&[&str]>,
+        since_time: Option<f64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let status_set = statuses
+            .unwrap_or(&[])
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<std::collections::HashSet<_>>();
+        let since_time = since_time.filter(|value| value.is_finite() && *value > 0.0);
+
+        let mut records = self
+            .load_monitor_records()?
+            .into_iter()
+            .filter(|record| {
+                record
+                    .get("user_id")
+                    .and_then(Value::as_str)
+                    .map(|value| value.trim() == cleaned_user)
+                    .unwrap_or(false)
+            })
+            .filter(|record| {
+                if status_set.is_empty() {
+                    return true;
+                }
+                record
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(|value| status_set.contains(value.trim()))
+                    .unwrap_or(false)
+            })
+            .filter(|record| {
+                let Some(since) = since_time else {
+                    return true;
+                };
+                monitor_record_updated_time(record) >= since
+            })
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            monitor_record_updated_time(right).total_cmp(&monitor_record_updated_time(left))
+        });
+        records.truncate(limit as usize);
+        Ok(records)
+    }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;
 

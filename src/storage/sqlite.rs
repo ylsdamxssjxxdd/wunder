@@ -1744,6 +1744,62 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
+    fn load_monitor_records_by_user(
+        &self,
+        user_id: &str,
+        statuses: Option<&[&str]>,
+        since_time: Option<f64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let statuses = statuses
+            .unwrap_or(&[])
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        let since_time = since_time.filter(|value| value.is_finite() && *value > 0.0);
+
+        let mut clauses = vec!["user_id = ?".to_string()];
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+
+        if !statuses.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(statuses.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("status IN ({placeholders})"));
+            params_list.extend(statuses.iter().map(|value| SqlValue::from((*value).to_string())));
+        }
+        if let Some(since) = since_time {
+            clauses.push("updated_time >= ?".to_string());
+            params_list.push(SqlValue::from(since));
+        }
+        let where_clause = clauses.join(" AND ");
+        let sql = format!(
+            "SELECT payload FROM monitor_sessions WHERE {where_clause} ORDER BY updated_time DESC LIMIT ?"
+        );
+        params_list.push(SqlValue::from(limit));
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::with_capacity(rows.len());
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_monitor_record(&self, session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         if session_id.trim().is_empty() {

@@ -56,82 +56,6 @@
         </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
           <div class="agent-basic-settings">
-            <div class="agent-avatar-card">
-              <div class="agent-avatar-header">
-                <div class="agent-avatar-header-left">
-                  <div class="agent-avatar-title">{{ t('portal.agent.avatarTitle') }}</div>
-                  <div
-                    class="agent-avatar-preview agent-avatar-preview--toggle"
-                    role="button"
-                    tabindex="0"
-                    :aria-expanded="avatarPanelVisible"
-                    :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
-                    @click="avatarPanelVisible = !avatarPanelVisible"
-                    @keydown.enter="avatarPanelVisible = !avatarPanelVisible"
-                  >
-                    <span v-if="form.icon_name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
-                    <i
-                      v-else-if="getAvatarIconOption(form.icon_name)"
-                      class="agent-avatar-option-icon"
-                      :class="['fa-solid', getAvatarIconOption(form.icon_name).fa]"
-                      aria-hidden="true"
-                    ></i>
-                    <span v-else class="agent-avatar-option-text">Aa</span>
-                  </div>
-                </div>
-              </div>
-              <div v-show="avatarPanelVisible" class="agent-avatar-panel">
-                <div class="agent-avatar-section">
-                  <div class="agent-avatar-section-title">{{ t('portal.agent.avatarIcon') }}</div>
-                  <div class="agent-avatar-options">
-                    <button
-                      v-for="option in avatarIconOptions"
-                      :key="option.name"
-                      class="agent-avatar-option"
-                      :class="{ active: form.icon_name === option.name }"
-                      type="button"
-                      :title="option.label"
-                      @click="selectAvatarIcon(option)"
-                    >
-                      <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text">Aa</span>
-                      <i v-else class="agent-avatar-option-icon" :class="['fa-solid', option.fa]" aria-hidden="true"></i>
-                    </button>
-                  </div>
-                </div>
-                <div class="agent-avatar-section">
-                  <div class="agent-avatar-section-title">{{ t('portal.agent.avatarColor') }}</div>
-                  <div class="agent-avatar-colors">
-                    <button
-                      v-for="color in avatarColorOptions"
-                      :key="color || 'default'"
-                      class="agent-avatar-color"
-                      :class="{ active: (form.icon_color || '') === (color || '') }"
-                      type="button"
-                      :title="color || 'Aa'"
-                      :style="color ? { background: color } : {}"
-                      @click="selectAvatarColor(color)"
-                    >
-                      <span v-if="!color" class="agent-avatar-color-text">Aa</span>
-                    </button>
-                  </div>
-                  <div class="agent-avatar-custom">
-                    <input
-                      class="agent-avatar-custom-input"
-                      type="color"
-                      :value="customColor || '#6ad9ff'"
-                      @input="updateCustomColor(($event.target as HTMLInputElement).value)"
-                    />
-                    <input
-                      class="agent-avatar-custom-text"
-                      type="text"
-                      :value="customColor"
-                      :placeholder="t('portal.agent.avatarCustom')"
-                      @input="updateCustomColor(($event.target as HTMLInputElement).value)"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
             <div class="agent-share-card agent-share-card--combined">
               <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
               <div class="agent-share-row">
@@ -169,7 +93,6 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import type { CSSProperties } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
@@ -200,69 +123,6 @@ const visible = computed({
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const canEdit = computed(() => Boolean(normalizedAgentId.value));
 
-const DEFAULT_ICON_NAME = 'initial';
-
-type AvatarIconOption = {
-  name: string;
-  labelKey: string;
-  paths?: string[];
-  label?: string;
-  fa?: string;
-};
-
-const AVATAR_ICON_CLASS_MAP = {
-  chat: 'fa-comment-dots',
-  bot: 'fa-robot',
-  idea: 'fa-lightbulb',
-  target: 'fa-bullseye',
-  bolt: 'fa-bolt',
-  code: 'fa-code',
-  chart: 'fa-chart-line',
-  doc: 'fa-file-lines',
-  pen: 'fa-pen-nib',
-  calendar: 'fa-calendar-days',
-  briefcase: 'fa-briefcase',
-  clipboard: 'fa-clipboard-list',
-  book: 'fa-book-open',
-  check: 'fa-check',
-  shield: 'fa-shield-halved',
-  spark: 'fa-wand-sparkles'
-};
-
-const AVATAR_ICON_OPTIONS: AvatarIconOption[] = [
-  { name: DEFAULT_ICON_NAME, labelKey: 'portal.agent.avatar.icon.initial' },
-  { name: 'chat', labelKey: 'portal.agent.avatar.icon.chat' },
-  { name: 'bot', labelKey: 'portal.agent.avatar.icon.bot' },
-  { name: 'idea', labelKey: 'portal.agent.avatar.icon.idea' },
-  { name: 'target', labelKey: 'portal.agent.avatar.icon.target' },
-  { name: 'bolt', labelKey: 'portal.agent.avatar.icon.bolt' },
-  { name: 'code', labelKey: 'portal.agent.avatar.icon.code' },
-  { name: 'chart', labelKey: 'portal.agent.avatar.icon.chart' },
-  { name: 'doc', labelKey: 'portal.agent.avatar.icon.doc' },
-  { name: 'pen', labelKey: 'portal.agent.avatar.icon.pen' },
-  { name: 'calendar', labelKey: 'portal.agent.avatar.icon.calendar' },
-  { name: 'briefcase', labelKey: 'portal.agent.avatar.icon.briefcase' },
-  { name: 'clipboard', labelKey: 'portal.agent.avatar.icon.clipboard' },
-  { name: 'book', labelKey: 'portal.agent.avatar.icon.book' },
-  { name: 'check', labelKey: 'portal.agent.avatar.icon.check' },
-  { name: 'shield', labelKey: 'portal.agent.avatar.icon.shield' },
-  { name: 'spark', labelKey: 'portal.agent.avatar.icon.spark' }
-];
-
-const avatarColorOptions = [
-  '',
-  '#6ad9ff',
-  '#a78bfa',
-  '#34d399',
-  '#f472b6',
-  '#fbbf24',
-  '#60a5fa',
-  '#f97316',
-  '#22d3ee',
-  '#94a3b8',
-  '#f87171'
-];
-
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 
 const normalizeSandboxContainerId = (value) => {
@@ -277,117 +137,13 @@ const form = reactive({
   is_shared: false,
   system_prompt: '',
   tool_names: [],
-  sandbox_container_id: 1,
-  icon_name: DEFAULT_ICON_NAME,
-  icon_color: ''
+  sandbox_container_id: 1
 });
 
 const saving = ref(false);
 const toolSummary = ref(null);
 const toolLoading = ref(false);
 const toolError = ref('');
-
-const customColor = ref('');
-const avatarPanelVisible = ref(true);
-
-AVATAR_ICON_OPTIONS.forEach((option) => {
-  if (!option || option.name === DEFAULT_ICON_NAME) return;
-  option.fa = AVATAR_ICON_CLASS_MAP[option.name] || 'fa-circle';
-});
-
-const avatarIconOptions = computed(() =>
-  AVATAR_ICON_OPTIONS.map((option) => ({
-    ...option,
-    label: t(option.labelKey)
-  }))
-);
-
-const normalizeIconName = (name) => {
-  const trimmed = String(name || '').trim();
-  if (!trimmed) return DEFAULT_ICON_NAME;
-  return AVATAR_ICON_OPTIONS.some((option) => option.name === trimmed) ? trimmed : DEFAULT_ICON_NAME;
-};
-
-const getAvatarIconOption = (name) => AVATAR_ICON_OPTIONS.find((option) => option.name === name);
-
-const parseIconValue = (value) => {
-  if (!value || typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object') return parsed;
-    if (typeof parsed === 'string') return { name: parsed };
-  } catch (error) {
-    return { name: trimmed };
-  }
-  return { name: trimmed };
-};
-
-const getIconConfig = (value) => {
-  const parsed = parseIconValue(value);
-  return {
-    name: normalizeIconName(parsed?.name),
-    color: typeof parsed?.color === 'string' ? parsed.color : ''
-  };
-};
-
-const applyIconToForm = (value) => {
-  const config = getIconConfig(value);
-  form.icon_name = config.name;
-  form.icon_color = config.color || '';
-  customColor.value = form.icon_color || '';
-};
-
-const selectAvatarIcon = (option) => {
-  if (!option) return;
-  form.icon_name = option.name;
-};
-
-const selectAvatarColor = (color) => {
-  form.icon_color = color || '';
-  customColor.value = color || '';
-};
-
-const updateCustomColor = (value) => {
-  const next = String(value || '').trim();
-  form.icon_color = next;
-  customColor.value = next;
-};
-
-const hexToRgba = (hex, alpha) => {
-  const trimmed = String(hex || '').trim();
-  const match = trimmed.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
-  if (!match) return '';
-  let value = match[1];
-  if (value.length === 3) {
-    value = value
-      .split('')
-      .map((part) => part + part)
-      .join('');
-  }
-  const parsed = Number.parseInt(value, 16);
-  const r = (parsed >> 16) & 255;
-  const g = (parsed >> 8) & 255;
-  const b = parsed & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
-const getAvatarStyle = (config) => {
-  if (!config?.color) return {};
-  const strong = hexToRgba(config.color, 0.55);
-  const soft = hexToRgba(config.color, 0.12);
-  const border = hexToRgba(config.color, 0.6);
-  if (!strong || !soft || !border) return {};
-  const style: CSSProperties = {
-    background: `radial-gradient(circle at 30% 30%, ${strong}, ${soft})`,
-    borderColor: border
-  };
-  if (config.name !== DEFAULT_ICON_NAME) {
-    style.color = config.color;
-  }
-  return style;
-};
 
 const normalizeToolOption = (item) => {
   if (!item) return null;
@@ -483,7 +239,6 @@ const loadAgent = async () => {
     form.system_prompt = agent.system_prompt || '';
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
-    applyIconToForm(agent.icon);
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
   }
@@ -498,24 +253,13 @@ const saveAgent = async () => {
   }
   saving.value = true;
   try {
-    const iconPayload = (() => {
-      const iconName = normalizeIconName(form.icon_name);
-      const color = String(form.icon_color || '').trim();
-      if (iconName === DEFAULT_ICON_NAME && !color) return '';
-      const payload: Record<string, string> = { name: iconName };
-      if (color) {
-        payload.color = color;
-      }
-      return JSON.stringify(payload);
-    })();
     const payload = {
       name,
       description: form.description || '',
       is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
-      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
-      icon: iconPayload
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id)
     };
     await agentStore.updateAgent(normalizedAgentId.value, payload);
     ElMessage.success(t('portal.agent.updateSuccess'));
@@ -553,7 +297,6 @@ watch(
   () => visible.value,
   (value) => {
     if (value) {
-      avatarPanelVisible.value = true;
       loadToolSummary();
       loadAgent();
     }

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Eva style robot head option 4">
+  <defs>
+    <radialGradient id="badge" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#374151"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="56" fill="url(#badge)"/>
+  <path d="M36 44L50 26H78L92 44L86 86H42Z" fill="#7e22ce"/>
+  <path d="M42 86H86L76 100H52Z" fill="#4c1d95"/>
+  <path d="M50 26L58 12L63 26Z" fill="#65a30d"/>
+  <path d="M78 26L70 12L65 26Z" fill="#65a30d"/>
+  <ellipse cx="54" cy="58" rx="8" ry="7" fill="#bef264"/>
+  <ellipse cx="74" cy="58" rx="8" ry="7" fill="#bef264"/>
+  <circle cx="54" cy="58" r="2.5" fill="#334155"/>
+  <circle cx="74" cy="58" r="2.5" fill="#334155"/>
+  <rect x="54" y="74" width="20" height="4" rx="2" fill="#fb923c"/>
+</svg>

@@ -1019,6 +1019,24 @@ impl MonitorState {
         })
     }
 
+    pub fn load_records_by_user(
+        &self,
+        user_id: &str,
+        statuses: Option<&[&str]>,
+        since_time: Option<f64>,
+        limit: i64,
+    ) -> Vec<Value> {
+        let cleaned = user_id.trim().to_string();
+        if cleaned.is_empty() || limit <= 0 {
+            return Vec::new();
+        }
+        self.run_guarded("monitor.load_records_by_user", Vec::new, || {
+            self.storage
+                .load_monitor_records_by_user(&cleaned, statuses, since_time, limit)
+                .unwrap_or_default()
+        })
+    }
+
     pub fn get_detail(&self, session_id: &str) -> Option<Value> {
         self.run_guarded(
             "monitor.get_detail",

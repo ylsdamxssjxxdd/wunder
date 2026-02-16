@@ -15,15 +15,6 @@
 工具执行结果会作为以 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_TOOL_CALL]]
 
-[[TOOL_CALL_MODE_FUNCTION_CALL]]
-工具签名在 <tools> </tools> XML 标签内提供：
-<tools>
-{available_tools_describe}
-</tools>
-每次工具调用请通过 function call 机制返回（tool_calls/function_call），不要输出 <tool_call> 标签或直接输出 JSON 文本。
-工具执行结果会作为 role=tool 的消息返回，并携带 tool_call_id。
-[[/TOOL_CALL_MODE_FUNCTION_CALL]]
-
 [[HAS_PLAN_TOOL]]
 [计划面板]
 当可用工具包含“计划面板”时，请优先在开始任务前用它给出简洁计划（2-6 步）。执行过程中保持计划同步更新：只保留一个 in_progress，完成的步骤及时标记为 completed，说明字段保持简短。

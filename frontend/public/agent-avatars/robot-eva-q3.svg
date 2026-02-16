@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Eva style robot head option 3">
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#0f172a"/>
+  <path d="M36 42L50 24H78L92 42L86 86H42Z" fill="#6d28d9"/>
+  <path d="M42 86H86L76 100H52Z" fill="#3b0764"/>
+  <path d="M50 24L56 12L60 24Z" fill="#84cc16"/>
+  <path d="M78 24L72 12L68 24Z" fill="#84cc16"/>
+  <rect x="46" y="52" width="36" height="10" rx="5" fill="#334155"/>
+  <circle cx="56" cy="57" r="3" fill="#a3e635"/>
+  <circle cx="72" cy="57" r="3" fill="#a3e635"/>
+  <path d="M56 74H72" stroke="#f97316" stroke-width="4" stroke-linecap="round"/>
+  <path d="M36 42L28 50V80L42 86Z" fill="#334155"/>
+  <path d="M92 42L100 50V80L86 86Z" fill="#334155"/>
+</svg>

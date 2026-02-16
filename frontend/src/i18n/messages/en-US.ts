@@ -95,6 +95,8 @@ export default {
   'portal.card.running': 'Running',
   'portal.card.idle': 'Idle',
   'portal.card.waiting': 'Waiting',
+  'portal.card.done': 'Completed',
+  'portal.card.error': 'Error',
   'portal.card.tools': 'Tools {count}',
   'portal.card.updated': 'Updated {time}',
   'portal.section.loading': 'Loading...',

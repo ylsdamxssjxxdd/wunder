@@ -69,29 +69,22 @@
                 @keydown.enter="enterDefaultChat"
               >
                 <div class="agent-card-head">
-                  <div class="agent-card-default-icon" aria-hidden="true">
-                    <i
-                      class="fa-solid fa-comment-dots agent-card-default-icon-svg"
-                      aria-hidden="true"
-                    ></i>
+                  <div
+                    class="agent-card-avatar agent-card-avatar--robot"
+                    :class="agentAvatarStatusClass(DEFAULT_AGENT_KEY)"
+                    :title="agentStatusLabel(DEFAULT_AGENT_KEY)"
+                    :aria-label="agentStatusLabel(DEFAULT_AGENT_KEY)"
+                  >
+                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ t('portal.card.defaultTitle') }}</div>
                     <div class="agent-card-desc">{{ t('portal.card.defaultDesc') }}</div>
                   </div>
                 </div>
-                <div class="agent-card-status">
-                  <div v-if="isAgentWaiting(DEFAULT_AGENT_KEY)" class="agent-card-waiting">
-                    <span class="agent-waiting-dot"></span>
-                    <span>{{ t('portal.card.waiting') }}</span>
-                  </div>
-                  <div v-else-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
-                  <div v-else class="agent-card-idle">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.idle') }}</span>
+                <div v-if="shouldShowAgentStatusPill(DEFAULT_AGENT_KEY)" class="agent-card-status">
+                  <div :class="agentStatusPillClass(DEFAULT_AGENT_KEY)">
+                    <span>{{ agentStatusLabel(DEFAULT_AGENT_KEY) }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
@@ -132,32 +125,22 @@
                 @keydown.enter="enterAgent(agent)"
               >
                 <div class="agent-card-head">
-                  <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
-                    <i
-                      v-if="hasAgentIcon(agent)"
-                      class="agent-card-icon"
-                      :class="['fa-solid', getAgentIconClass(agent)]"
-                      aria-hidden="true"
-                    ></i>
-                    <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
+                  <div
+                    class="agent-card-avatar agent-card-avatar--robot"
+                    :class="agentAvatarStatusClass(agent.id)"
+                    :title="agentStatusLabel(agent.id)"
+                    :aria-label="agentStatusLabel(agent.id)"
+                  >
+                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
-                <div class="agent-card-status">
-                  <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
-                    <span class="agent-waiting-dot"></span>
-                    <span>{{ t('portal.card.waiting') }}</span>
-                  </div>
-                  <div v-else-if="isAgentRunning(agent.id)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
-                  <div v-else class="agent-card-idle">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.idle') }}</span>
+                <div v-if="shouldShowAgentStatusPill(agent.id)" class="agent-card-status">
+                  <div :class="agentStatusPillClass(agent.id)">
+                    <span>{{ agentStatusLabel(agent.id) }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
@@ -209,32 +192,22 @@
                 @keydown.enter="enterAgent(agent)"
               >
                 <div class="agent-card-head">
-                  <div class="agent-card-avatar" :style="getAgentAvatarStyle(agent)">
-                    <i
-                      v-if="hasAgentIcon(agent)"
-                      class="agent-card-icon"
-                      :class="['fa-solid', getAgentIconClass(agent)]"
-                      aria-hidden="true"
-                    ></i>
-                    <span v-else>{{ getAgentAvatarText(agent.name) }}</span>
+                  <div
+                    class="agent-card-avatar agent-card-avatar--robot"
+                    :class="agentAvatarStatusClass(agent.id)"
+                    :title="agentStatusLabel(agent.id)"
+                    :aria-label="agentStatusLabel(agent.id)"
+                  >
+                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
                   </div>
                 </div>
-                <div class="agent-card-status">
-                  <div v-if="isAgentWaiting(agent.id)" class="agent-card-waiting">
-                    <span class="agent-waiting-dot"></span>
-                    <span>{{ t('portal.card.waiting') }}</span>
-                  </div>
-                  <div v-else-if="isAgentRunning(agent.id)" class="agent-card-running">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.running') }}</span>
-                  </div>
-                  <div v-else class="agent-card-idle">
-                    <span class="agent-running-dot"></span>
-                    <span>{{ t('portal.card.idle') }}</span>
+                <div v-if="shouldShowAgentStatusPill(agent.id)" class="agent-card-status">
+                  <div :class="agentStatusPillClass(agent.id)">
+                    <span>{{ agentStatusLabel(agent.id) }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
@@ -320,36 +293,36 @@
       append-to-body
     >
       <template #header>
-        <div class="user-tools-header">
+        <div class="user-tools-header agent-editor-header">
           <div class="user-tools-title">{{ dialogTitle }}</div>
-          <button class="icon-btn" type="button" @click="dialogVisible = false">&times;</button>
+          <div class="agent-editor-header-actions">
+            <div v-if="!editingId" class="agent-editor-copy">
+              <span class="agent-editor-copy-label">{{ t('portal.agent.form.copyFrom') }}</span>
+              <el-select
+                v-model="form.copy_from_agent_id"
+                class="agent-copy-select"
+                clearable
+                filterable
+                size="small"
+                :placeholder="t('portal.agent.form.copyFromPlaceholder')"
+              >
+                <el-option :label="t('portal.agent.form.copyFromNone')" value="" />
+                <el-option
+                  v-for="agent in agentCopyOptions"
+                  :key="`copy-agent-${agent.id}`"
+                  :label="formatAgentCopyLabel(agent)"
+                  :value="agent.id"
+                />
+              </el-select>
+            </div>
+            <button class="icon-btn" type="button" @click="dialogVisible = false">&times;</button>
+          </div>
         </div>
       </template>
       <div class="agent-editor-body">
         <el-form :model="form" label-position="top" class="agent-editor-form">
           <el-form-item class="agent-form-item agent-form-item--name" :label="t('portal.agent.form.name')">
             <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
-          </el-form-item>
-          <el-form-item
-            v-if="!editingId"
-            class="agent-form-item agent-form-item--copy"
-            :label="t('portal.agent.form.copyFrom')"
-          >
-            <el-select
-              v-model="form.copy_from_agent_id"
-              class="agent-copy-select"
-              clearable
-              filterable
-              :placeholder="t('portal.agent.form.copyFromPlaceholder')"
-            >
-              <el-option :label="t('portal.agent.form.copyFromNone')" value="" />
-              <el-option
-                v-for="agent in agentCopyOptions"
-                :key="`copy-agent-${agent.id}`"
-                :label="formatAgentCopyLabel(agent)"
-                :value="agent.id"
-              />
-            </el-select>
           </el-form-item>
           <el-form-item
             class="agent-form-item agent-form-item--description"
@@ -398,93 +371,6 @@
           </el-form-item>
           <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
             <div class="agent-basic-settings">
-              <div class="agent-avatar-card">
-                <div class="agent-avatar-header">
-                  <div class="agent-avatar-header-left">
-                    <div class="agent-avatar-title">{{ t('portal.agent.avatarTitle') }}</div>
-                    <div
-                      class="agent-avatar-preview agent-avatar-preview--toggle"
-                      role="button"
-                      tabindex="0"
-                      :aria-expanded="avatarPanelVisible"
-                      :style="getAvatarStyle({ name: form.icon_name, color: form.icon_color })"
-                      @click="avatarPanelVisible = !avatarPanelVisible"
-                      @keydown.enter="avatarPanelVisible = !avatarPanelVisible"
-                    >
-                      <span
-                        v-if="form.icon_name === DEFAULT_ICON_NAME"
-                        class="agent-avatar-option-text"
-                        >Aa</span
-                      >
-                      <i
-                        v-else-if="getAvatarIconOption(form.icon_name)"
-                        class="agent-avatar-option-icon"
-                        :class="['fa-solid', getAvatarIconOption(form.icon_name).fa]"
-                        aria-hidden="true"
-                      ></i>
-                      <span v-else class="agent-avatar-option-text">Aa</span>
-                    </div>
-                  </div>
-                </div>
-                <div v-show="avatarPanelVisible" class="agent-avatar-panel">
-                  <div class="agent-avatar-section">
-                    <div class="agent-avatar-section-title">{{ t('portal.agent.avatarIcon') }}</div>
-                    <div class="agent-avatar-options">
-                      <button
-                        v-for="option in avatarIconOptions"
-                        :key="option.name"
-                        class="agent-avatar-option"
-                        :class="{ active: form.icon_name === option.name }"
-                        type="button"
-                        :title="option.label"
-                        @click="selectAvatarIcon(option)"
-                      >
-                        <span v-if="option.name === DEFAULT_ICON_NAME" class="agent-avatar-option-text"
-                          >Aa</span
-                        >
-                        <i
-                          v-else
-                          class="agent-avatar-option-icon"
-                          :class="['fa-solid', option.fa]"
-                          aria-hidden="true"
-                        ></i>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="agent-avatar-section">
-                    <div class="agent-avatar-section-title">{{ t('portal.agent.avatarColor') }}</div>
-                    <div class="agent-avatar-colors">
-                      <button
-                        v-for="color in avatarColorOptions"
-                        :key="color || 'default'"
-                        class="agent-avatar-color"
-                        :class="{ active: (form.icon_color || '') === (color || '') }"
-                        type="button"
-                        :title="color ? color : t('portal.agent.avatarDefault')"
-                        :style="color ? { background: color } : {}"
-                        @click="selectAvatarColor(color)"
-                      >
-                        <span v-if="!color" class="agent-avatar-color-text">{{ t('portal.agent.avatarDefault') }}</span>
-                      </button>
-                    </div>
-                    <div class="agent-avatar-custom">
-                      <input
-                        class="agent-avatar-custom-input"
-                        type="color"
-                        :value="customColor || '#6ad9ff'"
-                        @input="updateCustomColor(($event.target as HTMLInputElement).value)"
-                      />
-                      <input
-                        class="agent-avatar-custom-text"
-                        type="text"
-                        :value="customColor"
-                        :placeholder="t('portal.agent.avatarCustom')"
-                        @input="updateCustomColor(($event.target as HTMLInputElement).value)"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
               <div class="agent-share-card agent-share-card--combined">
                 <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
                 <div class="agent-share-row">
@@ -520,9 +406,8 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import type { CSSProperties } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { listAgents as listAgentsApi, listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
@@ -549,28 +434,56 @@ const saving = ref(false);
 const editingId = ref('');
 const toolCatalog = ref(null);
 const toolLoading = ref(false);
-const runningAgentIds = ref([]);
-const waitingAgentIds = ref([]);
-const externalLinks = ref([]);
+const runningAgentIds = ref<string[]>([]);
+const waitingAgentIds = ref<string[]>([]);
+const externalLinks = ref<any[]>([]);
 const externalLoading = ref(false);
-const cronAgentIds = ref(new Set());
-const avatarPanelVisible = ref(true);
-const customColor = ref('');
-const configuredChannelsByAgent = ref({});
-const agentCopyOptions = ref([]);
+const cronAgentIds = ref<Set<string>>(new Set());
+const transientAgentStates = ref<
+  Record<string, { state: 'done' | 'error'; until: number; signature: string }>
+>({});
+const acknowledgedDoneStateSignatures = ref<Record<string, string>>(readDoneAckCache());
+const configuredChannelsByAgent = ref<Record<string, string[]>>({});
+const agentCopyOptions = ref<Array<{ id: string; name: string }>>([]);
 let runningTimer = null;
 
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
-const DEFAULT_ICON_NAME = 'initial';
+const DONE_ACK_CACHE_KEY = 'wunder.portal.done_ack';
 
-type AvatarIconOption = {
-  name: string;
-  labelKey: string;
-  paths?: string[];
-  label?: string;
-  fa?: string;
-};
+function readDoneAckCache(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.sessionStorage.getItem(DONE_ACK_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const output: Record<string, string> = {};
+    Object.entries(parsed).forEach(([agentId, signature]) => {
+      const key = String(agentId || '').trim();
+      const value = String(signature || '').trim();
+      if (!key || !value) return;
+      output[key] = value;
+    });
+    return output;
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeDoneAckCache(value: Record<string, string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(DONE_ACK_CACHE_KEY, JSON.stringify(value));
+  } catch (error) {
+    // Ignore quota/private-mode errors and keep runtime state only.
+  }
+}
+
+type AgentCardState = 'idle' | 'waiting' | 'running' | 'done' | 'error';
+
+const TRANSIENT_DONE_TTL_MS = 15000;
+const TRANSIENT_ERROR_TTL_MS = 30000;
 
 const CHANNEL_ICON_META = {
   feishu: { icon: 'fa-feather-pointed', labelKey: 'channels.provider.feishu' },
@@ -579,140 +492,6 @@ const CHANNEL_ICON_META = {
   wechat: { icon: 'fa-weixin', labelKey: 'channels.provider.wechat' },
   qqbot: { icon: 'fa-qq', labelKey: 'channels.provider.qqbot' }
 };
-
-const AVATAR_ICON_CLASS_MAP = {
-  chat: 'fa-comment-dots',
-  bot: 'fa-robot',
-  idea: 'fa-lightbulb',
-  target: 'fa-bullseye',
-  bolt: 'fa-bolt',
-  code: 'fa-code',
-  chart: 'fa-chart-line',
-  doc: 'fa-file-lines',
-  pen: 'fa-pen-nib',
-  calendar: 'fa-calendar-days',
-  briefcase: 'fa-briefcase',
-  clipboard: 'fa-clipboard-list',
-  book: 'fa-book-open',
-  check: 'fa-check',
-  shield: 'fa-shield-halved',
-  spark: 'fa-wand-sparkles'
-};
-
-const AVATAR_ICON_OPTIONS: AvatarIconOption[] = [
-  { name: DEFAULT_ICON_NAME, labelKey: 'portal.agent.avatar.icon.initial' },
-  {
-    name: 'chat',
-    labelKey: 'portal.agent.avatar.icon.chat',
-    paths: ['M7 13h6a4 4 0 0 0 0-8H7a4 4 0 0 0 0 8z', 'M7 13v4l4-2']
-  },
-  {
-    name: 'bot',
-    labelKey: 'portal.agent.avatar.icon.bot',
-    paths: [
-      'M9 7h6a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4v-4a4 4 0 0 1 4-4z',
-      'M12 3v2',
-      'M9 12h.01',
-      'M15 12h.01'
-    ]
-  },
-  {
-    name: 'idea',
-    labelKey: 'portal.agent.avatar.icon.idea',
-    paths: ['M9 18h6', 'M10 22h4', 'M12 2a7 7 0 0 0-4 12c1 1 1.5 2 1.5 3h5c0-1 .5-2 1.5-3A7 7 0 0 0 12 2z']
-  },
-  {
-    name: 'target',
-    labelKey: 'portal.agent.avatar.icon.target',
-    paths: ['M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20z', 'M12 8l3 4-3 4-3-4 3-4z']
-  },
-  {
-    name: 'bolt',
-    labelKey: 'portal.agent.avatar.icon.bolt',
-    paths: ['M13 2L3 14h7l-1 8 10-12h-7l1-8z']
-  },
-  {
-    name: 'code',
-    labelKey: 'portal.agent.avatar.icon.code',
-    paths: ['M8 9l-4 3 4 3', 'M16 9l4 3-4 3', 'M10 19l4-14']
-  },
-  {
-    name: 'chart',
-    labelKey: 'portal.agent.avatar.icon.chart',
-    paths: ['M4 19V5', 'M4 19h16', 'M10 19V9', 'M16 19V7']
-  },
-  {
-    name: 'doc',
-    labelKey: 'portal.agent.avatar.icon.doc',
-    paths: ['M6 3h8l4 4v14H6z', 'M14 3v4h4', 'M8 11h8', 'M8 15h6']
-  },
-  {
-    name: 'pen',
-    labelKey: 'portal.agent.avatar.icon.pen',
-    paths: ['M4 20h4l10-10-4-4L4 16v4z', 'M13.5 6.5L17 10']
-  },
-  {
-    name: 'calendar',
-    labelKey: 'portal.agent.avatar.icon.calendar',
-    paths: ['M7 4v3', 'M17 4v3', 'M5 7h14', 'M5 7h14v12H5z', 'M9 11h2', 'M13 11h2']
-  },
-  {
-    name: 'briefcase',
-    labelKey: 'portal.agent.avatar.icon.briefcase',
-    paths: ['M9 7V5h6v2', 'M4 8h16v11H4z', 'M4 12h16']
-  },
-  {
-    name: 'clipboard',
-    labelKey: 'portal.agent.avatar.icon.clipboard',
-    paths: ['M9 4h6v2H9z', 'M7 6h10v14H7z', 'M9 10h6', 'M9 14h6']
-  },
-  {
-    name: 'book',
-    labelKey: 'portal.agent.avatar.icon.book',
-    paths: ['M4 5h8v14H4z', 'M12 5h8v14h-8z', 'M12 5v14']
-  },
-  {
-    name: 'check',
-    labelKey: 'portal.agent.avatar.icon.check',
-    paths: ['M5 13l4 4L19 7']
-  },
-  {
-    name: 'shield',
-    labelKey: 'portal.agent.avatar.icon.shield',
-    paths: ['M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z']
-  },
-  {
-    name: 'spark',
-    labelKey: 'portal.agent.avatar.icon.spark',
-    paths: ['M12 3l2.5 5 5.5.8-4 3.8.9 5.4-4.9-2.6-4.9 2.6.9-5.4-4-3.8 5.5-.8z']
-  }
-];
-
-AVATAR_ICON_OPTIONS.forEach((option) => {
-  if (!option || option.name === DEFAULT_ICON_NAME) return;
-  option.fa = AVATAR_ICON_CLASS_MAP[option.name] || 'fa-circle';
-});
-
-const avatarIconOptions = computed(() =>
-  AVATAR_ICON_OPTIONS.map((option) => ({
-    ...option,
-    label: t(option.labelKey)
-  }))
-);
-
-const avatarColorOptions = [
-  '',
-  '#6ad9ff',
-  '#a78bfa',
-  '#34d399',
-  '#f472b6',
-  '#fbbf24',
-  '#60a5fa',
-  '#f97316',
-  '#22d3ee',
-  '#94a3b8',
-  '#f87171'
-];
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 
@@ -755,9 +534,7 @@ const form = reactive({
   copy_from_agent_id: '',
   tool_names: [],
   system_prompt: '',
-  sandbox_container_id: 1,
-  icon_name: DEFAULT_ICON_NAME,
-  icon_color: ''
+  sandbox_container_id: 1
 });
 
 const basePath = computed(() => resolveUserBasePath(route.path));
@@ -779,96 +556,6 @@ const matchesQuery = (agent, query) => {
 const formatAgentCopyLabel = (agent) => {
   return String(agent?.name || '').trim() || String(agent?.id || '').trim();
 };
-
-const getAgentAvatarText = (name) => {
-  const trimmed = String(name || '').trim();
-  if (!trimmed) return 'AI';
-  const [first] = Array.from(trimmed);
-  return first ? (first.match(/[a-z]/i) ? first.toUpperCase() : first) : 'AI';
-};
-
-const normalizeIconName = (name) => {
-  const trimmed = String(name || '').trim();
-  if (!trimmed) return DEFAULT_ICON_NAME;
-  return AVATAR_ICON_OPTIONS.some((option) => option.name === trimmed) ? trimmed : DEFAULT_ICON_NAME;
-};
-
-const getAvatarIconOption = (name) => AVATAR_ICON_OPTIONS.find((option) => option.name === name);
-
-const parseIconValue = (value) => {
-  if (!value || typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object') {
-      return parsed;
-    }
-    if (typeof parsed === 'string') {
-      return { name: parsed };
-    }
-  } catch (error) {
-    return { name: trimmed };
-  }
-  return { name: trimmed };
-};
-
-const getIconConfig = (value) => {
-  const parsed = parseIconValue(value);
-  return {
-    name: normalizeIconName(parsed?.name),
-    color: typeof parsed?.color === 'string' ? parsed.color : ''
-  };
-};
-
-const hasAgentIcon = (agent) => {
-  const config = getIconConfig(agent?.icon);
-  if (config.name === DEFAULT_ICON_NAME) return false;
-  const option = getAvatarIconOption(config.name);
-  return Boolean(option?.fa);
-};
-
-const getAgentIconClass = (agent) => {
-  const config = getIconConfig(agent?.icon);
-  const option = getAvatarIconOption(config.name);
-  return option?.fa || '';
-};
-
-const hexToRgba = (hex, alpha) => {
-  const trimmed = String(hex || '').trim();
-  const match = trimmed.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
-  if (!match) return '';
-  let value = match[1];
-  if (value.length === 3) {
-    value = value
-      .split('')
-      .map((char) => char + char)
-      .join('');
-  }
-  const parsed = Number.parseInt(value, 16);
-  const r = (parsed >> 16) & 255;
-  const g = (parsed >> 8) & 255;
-  const b = parsed & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
-const getAvatarStyle = (config) => {
-  if (!config?.color) return {};
-  const strong = hexToRgba(config.color, 0.55);
-  const soft = hexToRgba(config.color, 0.12);
-  const border = hexToRgba(config.color, 0.6);
-  if (!strong || !soft || !border) return {};
-  const style: CSSProperties = {
-    background: `radial-gradient(circle at 30% 30%, ${strong}, ${soft})`,
-    borderColor: border
-  };
-  if (config.name !== DEFAULT_ICON_NAME) {
-    style.color = config.color;
-  }
-  return style;
-};
-
-const getAgentAvatarStyle = (agent) => getAvatarStyle(getIconConfig(agent?.icon));
 
 const loadAgents = async () => {
   await agentStore.loadAgents();
@@ -995,6 +682,74 @@ const isAgentWaiting = (agentId) => {
   return waitingAgentSet.value.has(key);
 };
 
+const normalizeAgentKey = (agentId) => {
+  const key = String(agentId || '').trim();
+  return key || DEFAULT_AGENT_KEY;
+};
+
+const cleanupTransientAgentStates = (now) => {
+  const current = transientAgentStates.value || {};
+  const next: Record<string, { state: 'done' | 'error'; until: number; signature: string }> = {};
+  Object.entries(current).forEach(([agentId, entry]) => {
+    if (!entry) return;
+    if (typeof entry.until !== 'number' || entry.until <= now) return;
+    if (typeof entry.signature !== 'string' || !entry.signature.trim()) return;
+    if (entry.state !== 'done' && entry.state !== 'error') return;
+    next[agentId] = entry;
+  });
+  transientAgentStates.value = next;
+};
+
+const resolveAgentCardState = (agentId): AgentCardState => {
+  const key = normalizeAgentKey(agentId);
+  if (isAgentWaiting(key)) return 'waiting';
+  if (isAgentRunning(key)) return 'running';
+  const transient = transientAgentStates.value[key];
+  if (transient && transient.until > Date.now()) {
+    const acknowledgedSignature = acknowledgedDoneStateSignatures.value[key];
+    if (transient.state === 'done' && acknowledgedSignature === transient.signature) {
+      return 'idle';
+    }
+    return transient.state;
+  }
+  return 'idle';
+};
+
+const agentAvatarStatusClass = (agentId) => `agent-card-avatar--${resolveAgentCardState(agentId)}`;
+
+const agentStatusPillClass = (agentId) => {
+  const state = resolveAgentCardState(agentId);
+  if (state === 'waiting') return 'agent-card-waiting';
+  if (state === 'running') return 'agent-card-running';
+  if (state === 'done') return 'agent-card-done';
+  if (state === 'error') return 'agent-card-error';
+  return 'agent-card-idle';
+};
+
+const agentStatusLabel = (agentId) => {
+  const state = resolveAgentCardState(agentId);
+  if (state === 'waiting') return t('portal.card.waiting');
+  if (state === 'running') return t('portal.card.running');
+  if (state === 'done') return t('portal.card.done');
+  if (state === 'error') return t('portal.card.error');
+  return t('portal.card.idle');
+};
+
+const shouldShowAgentStatusPill = (agentId) => resolveAgentCardState(agentId) !== 'idle';
+
+const acknowledgeAgentDoneState = (agentId) => {
+  const key = normalizeAgentKey(agentId);
+  const transient = transientAgentStates.value[key];
+  if (!transient || transient.state !== 'done') return;
+  if (transient.until <= Date.now()) return;
+  const nextAcknowledgedDone = {
+    ...acknowledgedDoneStateSignatures.value,
+    [key]: transient.signature
+  };
+  acknowledgedDoneStateSignatures.value = nextAcknowledgedDone;
+  writeDoneAckCache(nextAcknowledgedDone);
+};
+
 const dialogTitle = computed(() =>
   editingId.value ? t('portal.agent.editTitle') : t('portal.agent.createTitle')
 );
@@ -1062,29 +817,6 @@ const selectToolGroup = (group) => {
   form.tool_names = Array.from(next);
 };
 
-const selectAvatarIcon = (option) => {
-  if (!option) return;
-  form.icon_name = option.name;
-};
-
-const selectAvatarColor = (color) => {
-  form.icon_color = color || '';
-  customColor.value = color || '';
-};
-
-const updateCustomColor = (value) => {
-  const next = String(value || '').trim();
-  form.icon_color = next;
-  customColor.value = next;
-};
-
-const applyIconToForm = (value) => {
-  const config = getIconConfig(value);
-  form.icon_name = config.name;
-  form.icon_color = config.color || '';
-  customColor.value = form.icon_color || '';
-};
-
 const resetForm = () => {
   form.name = '';
   form.description = '';
@@ -1092,10 +824,6 @@ const resetForm = () => {
   form.copy_from_agent_id = '';
   form.system_prompt = '';
   form.sandbox_container_id = 1;
-  form.icon_name = DEFAULT_ICON_NAME;
-  form.icon_color = '';
-  customColor.value = '';
-  avatarPanelVisible.value = true;
   applyDefaultTools();
   editingId.value = '';
 };
@@ -1171,7 +899,7 @@ const loadCronAgentIds = async () => {
   try {
     const { data } = await fetchCronJobs();
     const jobs = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
-    const ids = new Set();
+    const ids = new Set<string>();
     jobs.forEach((job) => {
       const rawAgentId = String(job?.agent_id || '').trim();
       const sessionTarget = String(job?.session_target || '').trim().toLowerCase();
@@ -1188,7 +916,7 @@ const loadCronAgentIds = async () => {
     });
     cronAgentIds.value = ids;
   } catch (error) {
-    cronAgentIds.value = new Set();
+    cronAgentIds.value = new Set<string>();
   }
 };
 
@@ -1283,21 +1011,42 @@ const loadCatalog = async () => {
 
 const loadRunningAgents = async () => {
   try {
+    const prevRunning = new Set(runningAgentIds.value);
+    const prevWaiting = new Set(waitingAgentIds.value);
     const { data } = await listRunningAgents();
     const items = data?.data?.items || [];
-    const running = new Set();
-    const waiting = new Set();
+    const running = new Set<string>();
+    const waiting = new Set<string>();
+    const done = new Set<string>();
+    const failed = new Set<string>();
+    const doneSignatures = new Map<string, string>();
+    const failedSignatures = new Map<string, string>();
     items.forEach((item) => {
       const rawAgentId = String(item?.agent_id || '').trim();
       const agentId = rawAgentId || (item?.is_default ? DEFAULT_AGENT_KEY : '');
       if (!agentId) return;
       const state = String(item?.state || '').trim().toLowerCase();
+      const signature = [
+        state || 'unknown',
+        String(item?.session_id || '').trim(),
+        String(item?.updated_at || '').trim(),
+        String(item?.expires_at || '').trim()
+      ].join('|');
       const pending = item?.pending_question === true || state === 'waiting';
+      const isError = state === 'error' || state === 'failed';
+      const isDone = state === 'finished' || state === 'done' || state === 'completed';
       const isRunning =
         state === 'running' ||
         state === 'waiting' ||
+        state === 'cancelling' ||
         (!state && String(item?.expires_at || '').trim());
-      if (isRunning) {
+      if (isError) {
+        failed.add(agentId);
+        failedSignatures.set(agentId, signature);
+      } else if (isDone) {
+        done.add(agentId);
+        doneSignatures.set(agentId, signature);
+      } else if (isRunning) {
         running.add(agentId);
       }
       if (pending) {
@@ -1306,9 +1055,56 @@ const loadRunningAgents = async () => {
     });
     runningAgentIds.value = Array.from(running);
     waitingAgentIds.value = Array.from(waiting);
+
+    const now = Date.now();
+    cleanupTransientAgentStates(now);
+
+    const nextTransient = { ...transientAgentStates.value };
+    const nextAcknowledgedDone = { ...acknowledgedDoneStateSignatures.value };
+
+    running.forEach((agentId) => {
+      delete nextTransient[agentId];
+      delete nextAcknowledgedDone[agentId];
+    });
+    waiting.forEach((agentId) => {
+      delete nextTransient[agentId];
+      delete nextAcknowledgedDone[agentId];
+    });
+
+    const setTransient = (agentId, state: 'done' | 'error', signature: string) => {
+      if (!agentId) return;
+      const ttl = state === 'error' ? TRANSIENT_ERROR_TTL_MS : TRANSIENT_DONE_TTL_MS;
+      const nextSignature = signature.trim() || `${state}|${agentId}|${now}`;
+      nextTransient[agentId] = { state, until: now + ttl, signature: nextSignature };
+      if (state !== 'done') {
+        delete nextAcknowledgedDone[agentId];
+      } else if (nextAcknowledgedDone[agentId] && nextAcknowledgedDone[agentId] !== nextSignature) {
+        delete nextAcknowledgedDone[agentId];
+      }
+    };
+
+    done.forEach((agentId) => setTransient(agentId, 'done', doneSignatures.get(agentId) || ''));
+    failed.forEach((agentId) => setTransient(agentId, 'error', failedSignatures.get(agentId) || ''));
+
+    const prevActive = new Set([...prevRunning, ...prevWaiting]);
+    prevActive.forEach((agentId) => {
+      if (running.has(agentId) || waiting.has(agentId)) return;
+      if (failed.has(agentId)) return;
+      setTransient(agentId, 'done', `inferred|${agentId}|${now}`);
+    });
+
+    Object.entries(nextAcknowledgedDone).forEach(([agentId, signature]) => {
+      const current = nextTransient[agentId];
+      if (!current || current.state !== 'done' || current.signature !== signature) {
+        delete nextAcknowledgedDone[agentId];
+      }
+    });
+
+    transientAgentStates.value = nextTransient;
+    acknowledgedDoneStateSignatures.value = nextAcknowledgedDone;
+    writeDoneAckCache(nextAcknowledgedDone);
   } catch (error) {
-    runningAgentIds.value = [];
-    waitingAgentIds.value = [];
+    // Keep the last known state to avoid flickering to idle when the polling request fails.
   }
 };
 
@@ -1322,24 +1118,6 @@ const openCreateDialog = async () => {
   dialogVisible.value = true;
 };
 
-const openEditDialog = async (agent) => {
-  if (!agent) return;
-  if (!toolCatalog.value) {
-    await loadCatalog();
-  }
-  form.name = agent.name || '';
-  form.description = agent.description || '';
-  form.is_shared = Boolean(agent.is_shared);
-  form.copy_from_agent_id = '';
-  form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
-  form.system_prompt = agent.system_prompt || '';
-  form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
-  applyIconToForm(agent.icon);
-  avatarPanelVisible.value = true;
-  editingId.value = agent.id;
-  dialogVisible.value = true;
-};
-
 const saveAgent = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
@@ -1348,16 +1126,6 @@ const saveAgent = async () => {
   }
   saving.value = true;
   try {
-    const iconPayload = (() => {
-      const name = normalizeIconName(form.icon_name);
-      const color = String(form.icon_color || '').trim();
-      if (name === DEFAULT_ICON_NAME && !color) return '';
-      const payload: Record<string, string> = { name };
-      if (color) {
-        payload.color = color;
-      }
-      return JSON.stringify(payload);
-    })();
     const payload = {
       name,
       description: form.description || '',
@@ -1365,8 +1133,7 @@ const saveAgent = async () => {
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
-      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
-      icon: iconPayload
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id)
     };
     if (!payload.copy_from_agent_id) {
       delete payload.copy_from_agent_id;
@@ -1388,37 +1155,15 @@ const saveAgent = async () => {
   }
 };
 
-const confirmDelete = async (agent) => {
-  if (!agent) return;
-  try {
-    await ElMessageBox.confirm(
-      t('portal.agent.deleteConfirm', { name: agent.name }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('portal.agent.delete'),
-        cancelButtonText: t('portal.agent.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
-    return;
-  }
-  try {
-    await agentStore.deleteAgent(agent.id);
-    await loadAgentCopyOptions();
-    ElMessage.success(t('portal.agent.deleteSuccess'));
-  } catch (error) {
-    showApiError(error, t('portal.agent.deleteFailed'));
-  }
-};
-
 const enterAgent = (agent) => {
   const agentId = agent?.id;
   if (!agentId) return;
+  acknowledgeAgentDoneState(agentId);
   router.push(`${basePath.value}/chat?agent_id=${encodeURIComponent(agentId)}`);
 };
 
 const enterDefaultChat = () => {
+  acknowledgeAgentDoneState(DEFAULT_AGENT_KEY);
   router.push({ path: `${basePath.value}/chat`, query: { entry: 'default' } });
 };
 

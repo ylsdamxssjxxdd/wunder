@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Eva style robot head option 2">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#4c1d95"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="24" fill="#111827"/>
+  <path d="M30 40L48 18H80L98 40L91 86L76 104H52L37 86Z" fill="url(#plate)"/>
+  <path d="M48 18L62 10L60 28Z" fill="#84cc16"/>
+  <path d="M80 18L66 10L68 28Z" fill="#84cc16"/>
+  <path d="M44 52H84L80 66H48Z" fill="#fb923c"/>
+  <path d="M51 69H63L58 77H48Z" fill="#bef264"/>
+  <path d="M77 69H65L70 77H80Z" fill="#bef264"/>
+  <path d="M44 84L64 92L84 84L78 98H50Z" fill="#312e81"/>
+  <path d="M24 48L30 40L34 78L26 82Z" fill="#374151"/>
+  <path d="M104 48L98 40L94 78L102 82Z" fill="#374151"/>
+</svg>

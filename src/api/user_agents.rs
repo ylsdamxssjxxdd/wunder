@@ -93,80 +93,283 @@ async fn list_running_agents(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
+
+    #[derive(Debug, Clone, Default)]
+    struct AgentStatusCandidate {
+        state: &'static str,
+        updated_time: f64,
+        session_id: String,
+        expires_at: Option<f64>,
+        pending_question: bool,
+        last_error: Option<String>,
+    }
+
+    const STATE_IDLE: &str = "idle";
+    const STATE_WAITING: &str = "waiting";
+    const STATE_RUNNING: &str = "running";
+    const STATE_CANCELLING: &str = "cancelling";
+    const STATE_DONE: &str = "done";
+    const STATE_ERROR: &str = "error";
+
+    const DONE_TTL_S: f64 = 15.0;
+    const ERROR_TTL_S: f64 = 30.0;
+    const RECENT_WINDOW_S: f64 = 120.0;
+
+    fn state_rank(state: &str) -> i32 {
+        match state {
+            STATE_WAITING => 50,
+            STATE_CANCELLING => 40,
+            STATE_RUNNING => 30,
+            STATE_ERROR => 20,
+            STATE_DONE => 10,
+            _ => 0,
+        }
+    }
+
+    fn should_replace(current: &AgentStatusCandidate, next: &AgentStatusCandidate) -> bool {
+        let current_rank = state_rank(current.state);
+        let next_rank = state_rank(next.state);
+        if next_rank != current_rank {
+            return next_rank > current_rank;
+        }
+        next.updated_time > current.updated_time
+    }
+
+    fn format_optional_ts(value: f64) -> String {
+        if value <= 0.0 {
+            return "".to_string();
+        }
+        format_ts(value)
+    }
+
+    // Determine which agent apps should be included in the response.
+    // Keep ordering stable: default, owned agents, shared agents.
+    let access = state
+        .user_store
+        .get_user_agent_access(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let owned_agents = state
+        .user_store
+        .list_user_agents(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let owned_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), owned_agents);
+
+    let shared_agents = state
+        .user_store
+        .list_shared_user_agents(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let shared_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents);
+
+    let mut agent_order = Vec::new();
+    agent_order.push("".to_string()); // default entry
+
+    let mut allowed_set = HashSet::new();
+    allowed_set.insert("".to_string());
+    for agent in &owned_agents {
+        if allowed_set.insert(agent.agent_id.clone()) {
+            agent_order.push(agent.agent_id.clone());
+        }
+    }
+    for agent in &shared_agents {
+        if allowed_set.insert(agent.agent_id.clone()) {
+            agent_order.push(agent.agent_id.clone());
+        }
+    }
+
+    let mut status_by_agent = HashMap::<String, AgentStatusCandidate>::new();
+    for agent_id in &agent_order {
+        status_by_agent.insert(
+            agent_id.clone(),
+            AgentStatusCandidate {
+                state: STATE_IDLE,
+                ..AgentStatusCandidate::default()
+            },
+        );
+    }
+
+    // 1) Session locks (authoritative for long-running sessions via heartbeat).
     let locks = state
         .user_store
         .list_session_locks_by_user(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut items = Vec::new();
-    let mut seen_sessions = HashSet::new();
     for lock in locks {
-        seen_sessions.insert(lock.session_id.clone());
-        let agent_id = lock.agent_id.trim();
-        let is_default = agent_id.is_empty();
-        let agent_id = if is_default { "" } else { agent_id };
-        items.push(json!({
-            "agent_id": agent_id,
-            "session_id": lock.session_id,
-            "updated_at": format_ts(lock.updated_time),
-            "expires_at": format_ts(lock.expires_at),
-            "state": "running",
-            "is_default": is_default,
-        }));
-    }
-    let active_sessions = state.monitor.list_sessions(true);
-    for session in active_sessions {
-        let status = session.get("status").and_then(Value::as_str).unwrap_or("");
-        if status != MonitorState::STATUS_WAITING
-            && status != MonitorState::STATUS_RUNNING
-            && status != MonitorState::STATUS_CANCELLING
-        {
+        let cleaned_agent = lock.agent_id.trim().to_string();
+        if cleaned_agent.starts_with("subagent:") {
             continue;
         }
-        let session_user_id = session.get("user_id").and_then(Value::as_str).unwrap_or("");
+        if !allowed_set.contains(&cleaned_agent) {
+            continue;
+        }
+        let next = AgentStatusCandidate {
+            state: STATE_RUNNING,
+            updated_time: lock.updated_time,
+            session_id: lock.session_id,
+            expires_at: Some(lock.expires_at),
+            pending_question: false,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(&cleaned_agent) {
+            if should_replace(current, &next) {
+                status_by_agent.insert(cleaned_agent, next);
+            }
+        }
+    }
+
+    // 2) Active monitor sessions (waiting/running/cancelling), persisted in storage so they survive restarts.
+    let active_records = state.monitor.load_records_by_user(
+        &user_id,
+        Some(&[
+            MonitorState::STATUS_WAITING,
+            MonitorState::STATUS_RUNNING,
+            MonitorState::STATUS_CANCELLING,
+        ]),
+        None,
+        2048,
+    );
+    for record in active_records {
+        let session_user_id = record.get("user_id").and_then(Value::as_str).unwrap_or("").trim();
         if session_user_id != user_id {
             continue;
         }
-        let session_id = session
+        let agent_id = record.get("agent_id").and_then(Value::as_str).unwrap_or("").trim();
+        if !allowed_set.contains(agent_id) {
+            continue;
+        }
+        let status = record.get("status").and_then(Value::as_str).unwrap_or("").trim();
+        let state = match status {
+            MonitorState::STATUS_WAITING => STATE_WAITING,
+            MonitorState::STATUS_CANCELLING => STATE_CANCELLING,
+            MonitorState::STATUS_RUNNING => STATE_RUNNING,
+            _ => continue,
+        };
+        let updated_time = record
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0);
+        let session_id = record
             .get("session_id")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
             .to_string();
-        if session_id.is_empty() {
+        let next = AgentStatusCandidate {
+            state,
+            updated_time,
+            session_id,
+            expires_at: None,
+            pending_question: state == STATE_WAITING,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        }
+    }
+
+    // 3) Recently completed/error sessions, used to display a transient state without frontend inference.
+    let now = now_ts();
+    let recent_records = state.monitor.load_records_by_user(
+        &user_id,
+        Some(&[
+            MonitorState::STATUS_FINISHED,
+            MonitorState::STATUS_ERROR,
+            MonitorState::STATUS_CANCELLED,
+        ]),
+        Some((now - RECENT_WINDOW_S).max(0.0)),
+        512,
+    );
+    for record in recent_records {
+        let session_user_id = record.get("user_id").and_then(Value::as_str).unwrap_or("").trim();
+        if session_user_id != user_id {
             continue;
         }
-        if seen_sessions.contains(&session_id) {
+        let agent_id = record.get("agent_id").and_then(Value::as_str).unwrap_or("").trim();
+        if !allowed_set.contains(agent_id) {
             continue;
         }
-        let record = state
-            .user_store
-            .get_chat_session(&user_id, &session_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let Some(record) = record else {
+        let Some(current) = status_by_agent.get(agent_id) else {
             continue;
         };
-        let agent_id = record.agent_id.unwrap_or_default();
-        let is_default = agent_id.trim().is_empty();
-        let agent_id = if is_default { "".to_string() } else { agent_id };
-        let updated_at = session
+        if state_rank(current.state) > state_rank(STATE_IDLE) {
+            continue;
+        }
+        let status = record.get("status").and_then(Value::as_str).unwrap_or("").trim();
+        let updated_time = record
             .get("updated_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0);
+        let ended_time = record
+            .get("ended_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(updated_time);
+        let elapsed = (now - ended_time).max(0.0);
+        let state = match status {
+            MonitorState::STATUS_ERROR if elapsed <= ERROR_TTL_S => STATE_ERROR,
+            MonitorState::STATUS_FINISHED if elapsed <= DONE_TTL_S => STATE_DONE,
+            _ => continue,
+        };
+        let session_id = record
+            .get("session_id")
             .and_then(Value::as_str)
             .unwrap_or("")
+            .trim()
             .to_string();
-        let is_waiting = status == MonitorState::STATUS_WAITING;
-        items.push(json!({
-            "agent_id": agent_id,
-            "session_id": session_id,
-            "updated_at": updated_at,
-            "expires_at": "",
-            "state": if is_waiting { "waiting" } else { "running" },
-            "pending_question": is_waiting,
-            "is_default": is_default,
-        }));
+        let last_error = if state == STATE_ERROR {
+            record
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        } else {
+            None
+        };
+        status_by_agent.insert(
+            agent_id.to_string(),
+            AgentStatusCandidate {
+                state,
+                updated_time,
+                session_id,
+                expires_at: None,
+                pending_question: false,
+                last_error,
+            },
+        );
     }
-    Ok(Json(
-        json!({ "data": { "total": items.len(), "items": items } }),
-    ))
+
+    let items = agent_order
+        .into_iter()
+        .map(|agent_id| {
+            let candidate = status_by_agent.remove(&agent_id).unwrap_or_default();
+            let is_default = agent_id.trim().is_empty();
+            let mut payload = json!({
+                "agent_id": if is_default { "" } else { agent_id.as_str() },
+                "session_id": candidate.session_id,
+                "updated_at": format_optional_ts(candidate.updated_time),
+                "expires_at": candidate.expires_at.map(format_optional_ts).unwrap_or_default(),
+                "state": candidate.state,
+                "pending_question": candidate.pending_question,
+                "is_default": is_default,
+            });
+            if let Some(last_error) = candidate
+                .last_error
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if let Value::Object(ref mut map) = payload {
+                    map.insert("last_error".to_string(), Value::String(last_error.to_string()));
+                }
+            }
+            payload
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({ "data": { "total": items.len(), "items": items } })))
 }
 
 async fn get_agent(
