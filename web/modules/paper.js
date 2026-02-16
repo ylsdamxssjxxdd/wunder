@@ -1,5 +1,5 @@
-import { elements } from "./elements.js?v=20260214-01";
-import { t } from "./i18n.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
+import { t } from "./i18n.js?v=20260215-01";
 
 const MAX_TOC_LEVEL = 3;
 let rendered = false;

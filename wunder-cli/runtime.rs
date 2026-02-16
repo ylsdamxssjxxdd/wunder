@@ -30,7 +30,7 @@ struct SessionMeta {
 impl CliRuntime {
     pub async fn init(global: &GlobalArgs) -> Result<Self> {
         let launch_dir = std::env::current_dir().context("read current directory failed")?;
-        let repo_root = resolve_repo_root();
+        let repo_root = resolve_repo_root(&launch_dir);
         let temp_root = global
             .temp_root
             .clone()
@@ -47,6 +47,7 @@ impl CliRuntime {
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
+        set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
@@ -189,13 +190,40 @@ impl CliRuntime {
     }
 }
 
-fn resolve_repo_root() -> PathBuf {
-    std::env::var("WUNDER_CLI_PROJECT_ROOT")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
+    if let Ok(value) = std::env::var("WUNDER_CLI_PROJECT_ROOT") {
+        let cleaned = value.trim();
+        if !cleaned.is_empty() {
+            let candidate = PathBuf::from(cleaned);
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if looks_like_repo_root(&manifest) {
+        return manifest;
+    }
+
+    if looks_like_repo_root(launch_dir) {
+        return launch_dir.to_path_buf();
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(app_dir) = exe.parent() {
+            if looks_like_repo_root(app_dir) {
+                return app_dir.to_path_buf();
+            }
+        }
+    }
+
+    // Fallback: keep the previous behavior as last resort.
+    manifest
+}
+
+fn looks_like_repo_root(candidate: &Path) -> bool {
+    candidate.join("config/wunder.yaml").is_file() || candidate.join("prompts").is_dir()
 }
 
 fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
@@ -219,6 +247,19 @@ fn set_env_path(key: &str, value: &Path) {
 fn set_env_path_if_exists(key: &str, value: &Path) {
     if value.exists() {
         set_env_path(key, value);
+    }
+}
+
+fn set_env_prompts_root_if_unset(repo_root: &Path) {
+    if std::env::var("WUNDER_PROMPTS_ROOT")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    if repo_root.join("prompts").is_dir() {
+        set_env_path("WUNDER_PROMPTS_ROOT", repo_root);
     }
 }
 

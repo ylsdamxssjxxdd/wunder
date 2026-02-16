@@ -29,11 +29,6 @@ Tool results will come back as role=tool messages with tool_call_id.
 When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.
 [[/HAS_PLAN_TOOL]]
 
-[[HAS_QUESTION_PANEL_TOOL]]
-[Question Panel]
-When the question panel tool ("问询面板" / question_panel) is available, proactively present 2-4 route options or key clarifications before completion when multiple viable paths exist. If the task already has a single clear route, or the user explicitly says "no panel / no confirmation / just do it", follow that and do not call question_panel. Keep each route title short with one-sentence impact; mark one as recommended when appropriate. Pause execution after calling the panel and wait for user selection or a new message.
-[[/HAS_QUESTION_PANEL_TOOL]]
-
 [[HAS_A2UI_TOOL]]
 [A2UI UI Generation Guide]
 
@@ -56,4 +51,3 @@ General rules:
 - List templates use List.children.template: dataBinding points to the list data; template uses relative paths (e.g. "name") from dataContext.
 - Primary action buttons should include "primary": true.
 [[/HAS_A2UI_TOOL]]
-

@@ -3,6 +3,9 @@
   WUNDER_WORKSPACE_ROOT: ${WUNDER_WORKSPACE_ROOT:-/workspaces}
   WUNDER_CONFIG_PATH: ${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
   WUNDER_CONFIG_OVERRIDE_PATH: ${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
+  WUNDER_USER_TOOLS_ROOT: ${WUNDER_USER_TOOLS_ROOT:-/app/data/user_tools}
+  WUNDER_VECTOR_KNOWLEDGE_ROOT: ${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/data/vector_knowledge}
+  WUNDER_TEMP_DIR_ROOT: ${WUNDER_TEMP_DIR_ROOT:-/workspaces/temp_dir}
   WUNDER_LOG_LEVEL: ${WUNDER_LOG_LEVEL:-info}
   RUST_LOG: ${WUNDER_LOG_LEVEL:-info}
   FONTCONFIG_FILE: /app/config/fonts.conf

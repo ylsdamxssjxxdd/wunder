@@ -134,6 +134,13 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 
 ## Persistence & Directory Conventions
 - Server workspace: `workspaces/<user_id>` (use `/workspaces/<user_id>/` in prompts).
+- Docker Compose uses two named volumes by default:
+  - `wunder_workspaces`: mounted to `/workspaces` (user workspaces + temp dir; `WUNDER_TEMP_DIR_ROOT` defaults to `/workspaces/temp_dir`)
+  - `wunder_logs`: mounted to PostgreSQL/Weaviate data dirs (`/var/lib/postgresql/data`, `/var/lib/weaviate`)
+- Other runtime configs remain on the repo bind mount:
+  - local `./data/config`, `./data/prompt_templates`, `./data/user_tools`, etc.
+- Build/dependency caches (`target/`, `.cargo/`, `frontend/node_modules/`) stay on the repo bind mount for easier local cleanup/management.
+- Note: `docker compose down -v` deletes `wunder_workspaces` and `wunder_logs` volumes; it won't delete the local `data/` directory in the repo.
 - CLI persistence: `WUNDER_TEMP/` (SQLite, config overrides, sessions, user tool data).
 - Desktop persistence: `WUNDER_TEMPD/`; default workspace `WUNDER_WORK/`.
 - Chat history, tool logs, and monitor events are persisted to DB (PostgreSQL by default for server, SQLite by default for local forms).

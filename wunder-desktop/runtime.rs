@@ -105,7 +105,6 @@ impl DesktopRuntime {
         let base_config = prepare_base_config_path(&repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
-        let prompts_root = repo_root.join("prompts");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
         let vector_root = temp_root.join("vector_knowledge");
@@ -113,7 +112,7 @@ impl DesktopRuntime {
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
-        set_env_path_if_exists("WUNDER_PROMPTS_ROOT", &prompts_root);
+        set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
@@ -430,6 +429,19 @@ fn set_env_path(key: &str, value: &Path) {
 fn set_env_path_if_exists(key: &str, value: &Path) {
     if value.exists() {
         set_env_path(key, value);
+    }
+}
+
+fn set_env_prompts_root_if_unset(repo_root: &Path) {
+    if std::env::var("WUNDER_PROMPTS_ROOT")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    if repo_root.join("prompts").is_dir() {
+        set_env_path("WUNDER_PROMPTS_ROOT", repo_root);
     }
 }
 

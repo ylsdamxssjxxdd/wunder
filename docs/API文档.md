@@ -13,7 +13,7 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认使用命名卷 `wunder_postgres` 保存 PostgreSQL 数据，避免绑定到 `data/` 目录。
+- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区 + 临时目录，`WUNDER_TEMP_DIR_ROOT` 默认 `/workspaces/temp_dir`）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录便于管理。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置优先读取 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
@@ -453,7 +453,7 @@
 - 方法：`GET`
 - 鉴权：无
 - 入参（query）：`filename` 文件路径（相对 `temp_dir/`，不支持 `..`）
-- 说明：从项目根目录 `temp_dir/` 目录读取文件并下载。
+- 说明：默认从项目根目录 `temp_dir/` 目录读取文件并下载；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回：文件流（`Content-Disposition: attachment`）
 
 ### 4.1.2.25 `/wunder/temp_dir/upload`
@@ -465,7 +465,7 @@
   - `file` 文件字段（支持多个同名字段）
   - `path` 目标子目录路径（相对 `temp_dir/`，可选）
   - `overwrite` 是否覆盖同名文件（可选，默认 true）
-- 说明：上传文件到项目根目录 `temp_dir/`，若设置 `path` 则自动创建目录。
+- 说明：默认上传文件到项目根目录 `temp_dir/`，若设置 `path` 则自动创建目录；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回（JSON）：
   - `ok`：是否成功
   - `files`：上传后的文件名列表
@@ -474,7 +474,7 @@
 
 - 方法：`GET`
 - 鉴权：无
-- 说明：列出项目根目录 `temp_dir/` 的文件（包含子目录，返回相对路径）。
+- 说明：列出临时目录文件（包含子目录，返回相对路径）；默认根目录为项目根 `temp_dir/`，可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定。
 - 返回（JSON）：
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
@@ -487,6 +487,7 @@
   - `all`：是否清空目录（true 表示清空）
   - `filename`：要删除的文件路径（相对 `temp_dir/`）
   - `filenames`：要删除的文件路径数组（相对 `temp_dir/`）
+- 说明：默认操作项目根目录 `temp_dir/`；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回（JSON）：
   - `ok`：是否成功
   - `removed`：已删除文件名列表
@@ -2476,7 +2477,7 @@
 - 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
 - 鼠标模式可通过 `F2` 或 `/mouse [scroll|select]` 切换：`scroll` 启用滚轮滚动，`select` 关闭捕获以便直接框选复制。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
-- CLI 提示词优先读取 `prompts/zh|en` 文件（可通过 `WUNDER_PROMPTS_ROOT` 指定根目录），缺失时自动回退二进制内嵌模板。
+- CLI 提示词优先读取 `prompts/zh|en` 文件（可通过 `WUNDER_PROMPTS_ROOT` 指向包含 `prompts/` 的根目录）。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。
 
 ## wunder-desktop 本地桥接接口约定（M0/M4 已落地）

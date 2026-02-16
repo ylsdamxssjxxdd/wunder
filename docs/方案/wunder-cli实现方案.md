@@ -126,13 +126,13 @@ CLI 初始化时设置：
 - `WUNDER_CONFIG_PATH`
 - `WUNDER_CONFIG_OVERRIDE_PATH`
 - `WUNDER_I18N_MESSAGES_PATH`
-- `WUNDER_PROMPTS_ROOT`（可选，仅用于外部覆盖提示词）
+- `WUNDER_PROMPTS_ROOT`（可选，用于覆盖提示词根目录；指向包含 `prompts/` 子目录的路径）
 - `WUNDER_SKILL_RUNNER_PATH`
 - `WUNDER_USER_TOOLS_ROOT`
 - `WUNDER_VECTOR_KNOWLEDGE_ROOT`
 - `WUNDER_WORKSPACE_SINGLE_ROOT=1`
 
-用途：确保从任意目录启动时，路径相关组件可定位；提示词默认走内嵌模板，不依赖磁盘 prompts 目录。
+用途：确保从任意目录启动时，路径相关组件可定位；提示词默认读取 `prompts/` 目录（可用 `WUNDER_PROMPTS_ROOT` 覆盖）。
 
 ---
 
@@ -161,9 +161,9 @@ CLI 初始化时设置：
 4. `vector_knowledge` 支持自定义根目录
    - 用 `WUNDER_VECTOR_KNOWLEDGE_ROOT` 替换固定 `vector_knowledge/`。
 
-5. `prompting` 支持“内嵌模板 + 外部覆盖”
-   - 核心提示词通过内置模板内嵌（system/plan/question_panel/extra/engineer/a2ui/compact/memory_summary）。
-   - 若外部路径存在同名文件，仍可按 `WUNDER_PROMPTS_ROOT` 覆盖，兼顾可移植性与可定制性。
+5. `prompting` 支持“磁盘模板 + 外部覆盖”
+   - 默认从 `prompts/{zh|en}/...` 读取系统提示词与压缩/记忆提示词。
+   - 若外部路径存在同名文件，可按 `WUNDER_PROMPTS_ROOT` 覆盖，兼顾可移植性与可定制性。
 
 6. `skills` 支持自定义 skill runner 路径
    - 用 `WUNDER_SKILL_RUNNER_PATH` 指向仓库脚本。

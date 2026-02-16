@@ -121,12 +121,30 @@ fn resolve_pack_root(config: &Config, pack_id: &str) -> PathBuf {
 }
 
 fn resolve_prompts_root() -> PathBuf {
-    std::env::var(PROMPTS_ROOT_ENV)
+    let root = std::env::var(PROMPTS_ROOT_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from("."));
+    normalize_prompts_root(root)
+}
+
+fn normalize_prompts_root(root: PathBuf) -> PathBuf {
+    if root.join("prompts").is_dir() {
+        return root;
+    }
+    let looks_like_prompts_dir = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("prompts"))
+        .unwrap_or(false);
+    if looks_like_prompts_dir && (root.join("zh").is_dir() || root.join("en").is_dir()) {
+        if let Some(parent) = root.parent() {
+            return parent.to_path_buf();
+        }
+    }
+    root
 }
 
 fn resolve_segment_file_name(key: &str) -> Option<&'static str> {

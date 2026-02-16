@@ -1,11 +1,11 @@
 import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { escapeHtml, formatDuration, formatTimestamp, formatTokenCount } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
-import { t } from "./i18n.js?v=20260214-01";
+import { t } from "./i18n.js?v=20260215-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 
 const THROUGHPUT_STATE_KEY = "wunder_throughput_state";

@@ -18,6 +18,7 @@ use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 const MAX_TEMP_DIR_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+const TEMP_DIR_ROOT_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -295,6 +296,18 @@ async fn temp_dir_remove(
 }
 
 fn temp_dir_root() -> Result<PathBuf, Response> {
+    if let Ok(value) = std::env::var(TEMP_DIR_ROOT_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                return Ok(candidate);
+            }
+            let root = std::env::current_dir()
+                .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+            return Ok(root.join(candidate));
+        }
+    }
     let root = std::env::current_dir()
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(root.join("temp_dir"))

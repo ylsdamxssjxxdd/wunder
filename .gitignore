@@ -44,6 +44,7 @@ frontend/dist
 frontend/.env
 frontend/node_modules/
 download
+backups/
 temp_dir
 vector_knowledge
 WUNDER_TEMP

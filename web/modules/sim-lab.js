@@ -1,8 +1,8 @@
-import { elements } from "./elements.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
 import { getWunderBase } from "./api.js";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260214-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
 
 let initialized = false;
 let running = false;

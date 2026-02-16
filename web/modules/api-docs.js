@@ -1,7 +1,7 @@
 ﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
 import { getWunderBase } from "./api.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260214-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
 
 const DEFAULT_API_DOCS_SRC = "/docs/api-docs.json";
 

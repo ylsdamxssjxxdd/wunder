@@ -133,7 +133,7 @@ APP_DIR/
 - `WUNDER_CONFIG_OVERRIDE_PATH=./WUNDER_TEMPD/config/wunder.override.yaml`
 - `WUNDER_USER_TOOLS_ROOT=./WUNDER_TEMPD/user_tools`
 - `WUNDER_VECTOR_KNOWLEDGE_ROOT=./WUNDER_TEMPD/vector_knowledge`
-- `WUNDER_PROMPTS_ROOT=<repo_or_bundle>/prompts`
+- `WUNDER_PROMPTS_ROOT=<repo_or_bundle>`（指向包含 `prompts/` 子目录的根路径）
 - `WUNDER_SKILL_RUNNER_PATH=<repo_or_bundle>/scripts/skill_runner.py`
 - `WUNDER_WORKSPACE_SINGLE_ROOT=1`
 

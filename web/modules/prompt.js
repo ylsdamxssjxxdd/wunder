@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
 import { state } from "./state.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260214-01";
+import { t } from "./i18n.js?v=20260215-01";
 
 const TEMPLATE_FILES = [
   { key: "role", labelKey: "prompt.template.file.role", defaultLabel: "角色定位" },
@@ -286,6 +286,26 @@ const selectTemplateFile = async (key) => {
 
 const SKILL_HEADERS = new Set(["[Mounted Skills]", "[已挂载技能]"]);
 
+const resolveToolCategory = (toolName) => {
+  const name = String(toolName || "").trim();
+  if (!name) {
+    return "";
+  }
+  if (state.toolSelection?.builtin?.some((item) => item.name === name)) {
+    return "builtin";
+  }
+  if (state.toolSelection?.knowledge?.some((item) => item.name === name)) {
+    return "knowledge";
+  }
+  if (state.toolSelection?.userTools?.some((item) => item.name === name)) {
+    return "user";
+  }
+  if (state.toolSelection?.sharedTools?.some((item) => item.name === name)) {
+    return "shared";
+  }
+  return "";
+};
+
 const renderToolHighlightLine = (line) => {
   const match = line.match(/"name"\s*:\s*"([^"]+)"/);
   const escapedLine = escapeHtml(line);
@@ -294,9 +314,11 @@ const renderToolHighlightLine = (line) => {
   }
   const escapedMatch = escapeHtml(match[0]);
   const escapedName = escapeHtml(match[1]);
+  const category = resolveToolCategory(match[1]);
+  const classes = category ? `tool-highlight ${category}` : "tool-highlight";
   const highlightedMatch = escapedMatch.replace(
     escapedName,
-    `<span class=\"tool-highlight\">${escapedName}</span>`
+    `<span class=\"${classes}\">${escapedName}</span>`
   );
   return escapedLine.replace(escapedMatch, highlightedMatch);
 };

@@ -1,9 +1,9 @@
-import { elements } from "./elements.js?v=20260214-01";
+import { elements } from "./elements.js?v=20260215-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { isPlainObject } from "./utils.js?v=20251229-02";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260214-01";
+import { t } from "./i18n.js?v=20260215-01";
 
 const FEISHU_LONG_CONNECTION_STATUS_KEYS = {
   running: "channels.runtime.feishu.status.running",

@@ -27,6 +27,9 @@ services:
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
+      - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/data/user_tools}
+      - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/data/vector_knowledge}
+      - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/workspaces/temp_dir}
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
@@ -67,8 +70,12 @@ services:
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
+      - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
+      - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/data/user_tools}
+      - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/data/vector_knowledge}
+      - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/workspaces/temp_dir}
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
       - CARGO_HOME=/app/.cargo/arm64
@@ -117,10 +124,11 @@ services:
       - POSTGRES_DB=wunder
       - POSTGRES_USER=wunder
       - POSTGRES_PASSWORD=wunder
+      - PGDATA=/var/lib/postgresql/data/postgres
     ports:
       - "127.0.0.1:${WUNDER_POSTGRES_PORT:-5432}:5432"
     volumes:
-      - wunder_postgres:/var/lib/postgresql/data
+      - wunder_logs:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
       interval: 5s
@@ -139,13 +147,13 @@ services:
       - QUERY_DEFAULTS_LIMIT=25
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - DEFAULT_VECTORIZER_MODULE=none
-      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate/weaviate
       - ENABLE_MODULES=
       - CLUSTER_HOSTNAME=node1
     ports:
       - "127.0.0.1:${WEAVIATE_PORT:-18003}:8080"
     volumes:
-      - wunder_weaviate:/var/lib/weaviate
+      - wunder_logs:/var/lib/weaviate
     restart: always
   wunder-frontend:
     image: node:22.14
@@ -158,6 +166,7 @@ services:
     restart: always
     volumes:
       - ./frontend:/app
+      # Keep node_modules on the repo bind mount for easier local cleanup/management.
     ports:
       - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
     environment:
@@ -191,5 +200,4 @@ services:
 
 volumes:
   wunder_workspaces:
-  wunder_postgres:
-  wunder_weaviate:
+  wunder_logs:
