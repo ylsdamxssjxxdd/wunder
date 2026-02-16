@@ -13,7 +13,7 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区 + 临时目录，`WUNDER_TEMP_DIR_ROOT` 默认 `/workspaces/temp_dir`）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录便于管理。
+- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录便于管理。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置优先读取 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。

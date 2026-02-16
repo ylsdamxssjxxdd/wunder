@@ -1,4 +1,4 @@
-import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260110-04";
+import { APP_CONFIG, applyDefaultConfig } from "./app.config.js?v=20260215-01";
 
 import {
 
@@ -8,19 +8,19 @@ import {
 
   updateDefaultConfig,
 
-} from "./app.config.js?v=20260110-04";
+} from "./app.config.js?v=20260215-01";
 
 import { elements } from "./modules/elements.js?v=20260215-01";
 
 import { state } from "./modules/state.js";
 
 
-import { appendLog } from "./modules/log.js?v=20260108-02";
+import { appendLog } from "./modules/log.js?v=20260215-01";
 import { loadI18nConfig } from "./modules/i18n-config.js";
 
-import { initToolDetailModal } from "./modules/tool-detail.js?v=20260115-05";
+import { initToolDetailModal } from "./modules/tool-detail.js?v=20260215-01";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260118-07";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260215-01";
 import {
 
   applyPromptToolError,
@@ -39,13 +39,13 @@ import {
   loadSystemPrompt,
 } from "./modules/prompt.js?v=20260215-01";
 
-import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260118-07";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260113-01";
-import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260108-02";
-import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260211-01";
-import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260206-01";
-import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260210-01";
-import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260206-01";
+import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260215-01";
+import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
+import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260215-01";
+import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
+import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
+import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
 import {
 
   initMemoryPanel,
@@ -56,34 +56,34 @@ import {
 
   toggleMemoryPolling,
 
-} from "./modules/memory.js?v=20251231-05";
+} from "./modules/memory.js?v=20260215-01";
 
-import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260115-05";
+import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
   initLspPanel,
   loadLspConfig,
   onLspPanelActivate,
   onLspPanelDeactivate,
-} from "./modules/lsp.js?v=20260118-09";
+} from "./modules/lsp.js?v=20260215-01";
 
-import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260115-05";
+import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260215-01";
 
-import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260124-03";
-import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20251231-01";
+import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260215-01";
+import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260215-01";
 
-import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260112-06";
-import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260115-05";
+import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260215-01";
+import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260215-01";
 
-import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260110-06";
+import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260215-01";
 
-import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260105-01";
-import { initApiDocsPanel } from "./modules/api-docs.js?v=20260126-01";
-import { initPaperPanel } from "./modules/paper.js?v=20260122-03";
-import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260112-05";
-import { initPerformancePanel } from "./modules/performance.js?v=20260111-01";
-import { initSimLabPanel } from "./modules/sim-lab.js?v=20260210-06";
-import { initEvaluationPanel } from "./modules/evaluation.js?v=20260115-06";
-import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260210-01";
+import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260215-01";
+import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
+import { initPaperPanel } from "./modules/paper.js?v=20260215-01";
+import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260215-01";
+import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
+import { initSimLabPanel } from "./modules/sim-lab.js?v=20260215-01";
+import { initEvaluationPanel } from "./modules/evaluation.js?v=20260215-01";
+import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260215-01";
 

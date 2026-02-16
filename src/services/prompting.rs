@@ -445,43 +445,43 @@ fn build_system_prompt_skeleton(
         ]),
     );
 
-    let tools_text = if tool_call_mode == ToolCallMode::ToolCall && !tools.is_empty() {
-        tools.iter().map(render_tool_spec).collect::<Vec<_>>().join("\n")
+    // When `tool_call_mode=function_call`, tool specs and invocation protocol are
+    // provided by the LLM API itself, so we omit the entire tools-protocol block
+    // to keep the system prompt minimal.
+    let tools_block = if tool_call_mode == ToolCallMode::ToolCall {
+        let tools_text = if !tools.is_empty() {
+            tools.iter().map(render_tool_spec).collect::<Vec<_>>().join("\n")
+        } else {
+            String::new()
+        };
+        let mut tools_flags = HashMap::new();
+        tools_flags.insert("TOOL_CALL_MODE_TOOL_CALL".to_string(), true);
+        tools_flags.insert("TOOL_CALL_MODE_FUNCTION_CALL".to_string(), false);
+        let has_a2ui = allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "a2ui");
+        let has_plan = allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "计划面板");
+        let has_question_panel = allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "问询面板");
+        tools_flags.insert("HAS_A2UI_TOOL".to_string(), has_a2ui);
+        tools_flags.insert("HAS_PLAN_TOOL".to_string(), has_plan);
+        tools_flags.insert("HAS_QUESTION_PANEL_TOOL".to_string(), has_question_panel);
+        let tools_template = read_prompt_template_from_pack(
+            config,
+            &template_id,
+            Path::new(SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH),
+        );
+        let tools_template = apply_prompt_flags(&tools_template, &tools_flags);
+        render_template(
+            &tools_template,
+            &HashMap::from([("available_tools_describe".to_string(), tools_text)]),
+        )
     } else {
         String::new()
     };
-    let mut tools_flags = HashMap::new();
-    tools_flags.insert(
-        "TOOL_CALL_MODE_TOOL_CALL".to_string(),
-        tool_call_mode == ToolCallMode::ToolCall,
-    );
-    tools_flags.insert(
-        "TOOL_CALL_MODE_FUNCTION_CALL".to_string(),
-        tool_call_mode == ToolCallMode::FunctionCall,
-    );
-    let has_a2ui = tool_call_mode == ToolCallMode::ToolCall
-        && allowed_tool_names
-            .iter()
-            .any(|name| resolve_tool_name(name) == "a2ui");
-    let has_plan = allowed_tool_names
-        .iter()
-        .any(|name| resolve_tool_name(name) == "计划面板");
-    let has_question_panel = allowed_tool_names
-        .iter()
-        .any(|name| resolve_tool_name(name) == "问询面板");
-    tools_flags.insert("HAS_A2UI_TOOL".to_string(), has_a2ui);
-    tools_flags.insert("HAS_PLAN_TOOL".to_string(), has_plan);
-    tools_flags.insert("HAS_QUESTION_PANEL_TOOL".to_string(), has_question_panel);
-    let tools_template = read_prompt_template_from_pack(
-        config,
-        &template_id,
-        Path::new(SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH),
-    );
-    let tools_template = apply_prompt_flags(&tools_template, &tools_flags);
-    let tools_block = render_template(
-        &tools_template,
-        &HashMap::from([("available_tools_describe".to_string(), tools_text)]),
-    );
 
     let skills_block = if skills.is_empty() {
         String::new()

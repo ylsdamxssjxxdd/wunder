@@ -1548,6 +1548,7 @@ async fn admin_knowledge_update(
     let config = state.config_store.get().await;
     let normalized = normalize_admin_knowledge_bases(&config, payload.knowledge.bases)?;
     let removed_vector_bases = collect_removed_vector_bases(&config.knowledge.bases, &normalized);
+    let removed_literal_bases = collect_removed_literal_bases(&config.knowledge.bases, &normalized);
     let updated = state
         .config_store
         .update(|config| {
@@ -1556,6 +1557,7 @@ async fn admin_knowledge_update(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     cleanup_removed_vector_roots(state.storage.clone(), removed_vector_bases).await;
+    cleanup_removed_literal_roots(removed_literal_bases, &normalized).await;
     Ok(Json(
         json!({ "knowledge": { "bases": updated.knowledge.bases } }),
     ))
@@ -1579,6 +1581,22 @@ fn collect_removed_vector_bases(
         .collect()
 }
 
+fn collect_removed_literal_bases(
+    current: &[KnowledgeBaseConfig],
+    next: &[KnowledgeBaseConfig],
+) -> Vec<(String, String)> {
+    let mut next_names = HashSet::new();
+    for base in next {
+        next_names.insert(base.name.clone());
+    }
+    current
+        .iter()
+        .filter(|base| !base.is_vector())
+        .filter(|base| !next_names.contains(&base.name))
+        .map(|base| (base.name.clone(), base.root.clone()))
+        .collect()
+}
+
 async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: Vec<String>) {
     for name in bases {
         let owner_key = vector_knowledge::resolve_owner_key(None);
@@ -1596,6 +1614,85 @@ async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: V
                     "Failed to remove vector knowledge root {}: {}",
                     root.to_string_lossy(),
                     err
+                );
+            }
+        }
+    }
+}
+
+async fn cleanup_removed_literal_roots(
+    bases: Vec<(String, String)>,
+    next: &[KnowledgeBaseConfig],
+) {
+    if bases.is_empty() {
+        return;
+    }
+
+    let current_dir = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(_) => PathBuf::from("."),
+    };
+    let knowledge_root = current_dir.join("knowledge");
+    let knowledge_root_compare = normalize_path_for_compare(&normalize_existing_path(&knowledge_root));
+
+    // If a base is renamed but keeps the same root, never delete the folder.
+    let mut next_root_keys = HashSet::new();
+    for base in next {
+        if base.is_vector() {
+            continue;
+        }
+        let root = base.root.trim();
+        if root.is_empty() {
+            continue;
+        }
+        let root_path = PathBuf::from(root);
+        let root_abs = if root_path.is_absolute() {
+            root_path
+        } else {
+            current_dir.join(root_path)
+        };
+        let key = normalize_path_for_compare(&normalize_existing_path(&root_abs));
+        next_root_keys.insert(key);
+    }
+
+    for (name, root_text) in bases {
+        let trimmed = root_text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let root_path = PathBuf::from(trimmed);
+        let root_abs = if root_path.is_absolute() {
+            root_path
+        } else {
+            current_dir.join(root_path)
+        };
+        let root_key = normalize_path_for_compare(&normalize_existing_path(&root_abs));
+        if next_root_keys.contains(&root_key) {
+            continue;
+        }
+
+        if root_key == knowledge_root_compare {
+            info!("Skip removing literal knowledge root for {name}: root points to ./knowledge");
+            continue;
+        }
+        if !is_within_root(&knowledge_root, &root_abs) {
+            info!(
+                "Skip removing literal knowledge root for {name}: root is outside ./knowledge ({})",
+                root_abs.to_string_lossy()
+            );
+            continue;
+        }
+        if !root_abs.exists() {
+            continue;
+        }
+        if !root_abs.is_dir() {
+            continue;
+        }
+        if let Err(err) = tokio::fs::remove_dir_all(&root_abs).await {
+            if err.kind() != ErrorKind::NotFound {
+                info!(
+                    "Failed to remove literal knowledge root for {name} ({}): {err}",
+                    root_abs.to_string_lossy()
                 );
             }
         }

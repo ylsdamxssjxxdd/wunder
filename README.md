@@ -135,8 +135,9 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 ## 持久化与目录约定
 - server 工作区：`workspaces/<user_id>`（提示词中使用 `/workspaces/<user_id>/`）。
 - Docker Compose 默认使用两个 named volume：
-  - `wunder_workspaces`：挂载到 `/workspaces`（用户工作区与临时目录，`WUNDER_TEMP_DIR_ROOT` 默认 `/workspaces/temp_dir`）
+  - `wunder_workspaces`：挂载到 `/workspaces`（用户工作区）
   - `wunder_logs`：挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）
+- `temp_dir` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`；可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）
 - 其他运行态配置保留在仓库本地目录（bind mount）：
   - `./data/config`、`./data/prompt_templates`、`./data/user_tools` 等继续存放在本地 `data/`
 - 构建与依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录（bind mount），便于本地清理与管理。
