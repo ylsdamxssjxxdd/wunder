@@ -1070,3 +1070,90 @@
 :root[data-user-theme='light'] .channel-binding-item {
   background: #ffffff;
 }
+
+@media (max-width: 720px) {
+  .tool-manager-page,
+  .cron-manager-page,
+  .channel-manager-page {
+    gap: 10px;
+  }
+
+  .tool-manager-page .user-tools-sidebar,
+  .cron-sidebar,
+  .channel-sidebar {
+    width: 100%;
+    min-width: 0;
+    padding: 10px;
+  }
+
+  .tool-manager-page .user-tools-pane,
+  .cron-content,
+  .channel-content {
+    padding: 10px;
+    border-radius: 10px;
+  }
+
+  .tool-catalog-grid,
+  .channel-detail-grid,
+  .channel-form {
+    grid-template-columns: 1fr;
+  }
+
+  .cron-sidebar-actions,
+  .channel-sidebar-actions,
+  .cron-actions,
+  .channel-actions,
+  .channel-form-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .cron-run-list,
+  .cron-run-detail {
+    max-height: 200px;
+  }
+
+  .channel-binding-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .tool-manager-page .user-tools-sidebar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .tool-manager-page .user-tools-sidebar-title {
+    display: none;
+  }
+
+  .tool-manager-page .user-tools-tab {
+    width: auto;
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  .cron-create-actions,
+  .channel-create-actions {
+    flex-direction: column;
+  }
+
+  .cron-action-btn,
+  .channel-action-btn,
+  .cron-create-mode-btn {
+    min-height: 40px;
+  }
+
+  .channel-input,
+  .channel-textarea,
+  .cron-create-input {
+    font-size: 16px;
+  }
+}

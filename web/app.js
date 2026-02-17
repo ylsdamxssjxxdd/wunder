@@ -816,8 +816,25 @@ const bindNavigation = () => {
     syncToolManagerShortcutState(state.runtime.activePanel);
   };
 
+  const hideLegacyCustomToolShortcut = () => {
+    const candidates = document.querySelectorAll(
+      [
+        '#builtinPanel #promptUserToolAdd',
+        '#builtinPanel button[data-i18n="prompt.userTool.add"]',
+        '#builtinPanel button[data-i18n="prompt.section.userTools"]',
+        '#builtinPanel button[data-i18n="userTools.title"]',
+        '.tool-manager-shortcut[data-tool-panel="userTools"]',
+      ].join(", ")
+    );
+    candidates.forEach((item) => {
+      item.hidden = true;
+      item.setAttribute("aria-hidden", "true");
+    });
+  };
+
   ensureToolManagerShortcutMirrors();
   bindToolManagerShortcutButtons();
+  hideLegacyCustomToolShortcut();
 
   if (elements.navA2aServices) {
     elements.navA2aServices.addEventListener("click", openA2aServicesPanel);
@@ -1388,8 +1405,6 @@ const bootstrap = async () => {
 
 
 bootstrap();
-
-
 
 
 

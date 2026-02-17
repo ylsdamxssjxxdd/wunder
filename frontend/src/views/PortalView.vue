@@ -5,56 +5,6 @@
       <section class="portal-main">
         <div class="portal-main-scroll">
           <section class="portal-section portal-section--agents">
-            <div class="portal-section-header portal-section-header--search">
-              <div class="portal-section-heading">
-                <div class="portal-section-title-row">
-                  <div class="portal-section-title">{{ t('portal.section.myAgents') }}</div>
-                  <div class="portal-section-actions">
-                    <div class="portal-search portal-section-search">
-                      <i
-                        class="fa-solid fa-magnifying-glass portal-search-icon"
-                        aria-hidden="true"
-                      ></i>
-                      <input
-                        v-model="searchQuery"
-                        type="text"
-                        :placeholder="t('portal.search.placeholder')"
-                      />
-                      <button
-                        v-if="searchQuery"
-                        class="portal-search-clear"
-                        type="button"
-                        :aria-label="t('portal.search.clear')"
-                        @click="searchQuery = ''"
-                      >
-                        &times;
-                      </button>
-                    </div>
-                    <button
-                      class="portal-more-apps-toggle"
-                      type="button"
-                      :class="{ 'is-active': showMoreApps }"
-                      :aria-expanded="showMoreApps ? 'true' : 'false'"
-                      :title="t('portal.section.moreAppsDesc')"
-                      @click="toggleMoreApps"
-                    >
-                      <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
-                      <span>{{ t('portal.section.moreApps') }}</span>
-                      <span class="portal-more-apps-toggle-count">{{ filteredExternalLinks.length }}</span>
-                      <i
-                        class="fa-solid portal-more-apps-toggle-arrow"
-                        :class="showMoreApps ? 'fa-chevron-up' : 'fa-chevron-down'"
-                        aria-hidden="true"
-                      ></i>
-                    </button>
-                    <div class="portal-section-meta">
-                      {{ t('portal.section.count', { count: filteredAgents.length }) }}
-                    </div>
-                  </div>
-                </div>
-                <div class="portal-section-desc">{{ t('portal.section.myAgentsDesc') }}</div>
-              </div>
-            </div>
             <div class="agent-grid portal-agent-grid">
               <button class="agent-card agent-card--create" type="button" @click="openCreateDialog">
                 <div class="agent-card-plus">+</div>
@@ -175,9 +125,7 @@
             <div class="portal-section-header">
               <div>
                 <div class="portal-section-title">{{ t('portal.section.sharedAgents') }}</div>
-                <div class="portal-section-desc">{{ t('portal.section.sharedAgentsDesc') }}</div>
               </div>
-              <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredSharedAgents.length }) }}</div>
             </div>
             <div class="agent-grid portal-agent-grid">
               <div v-if="showSharedAgentLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>
@@ -240,8 +188,7 @@
           </section>
           <section v-if="showMoreApps" class="portal-section portal-section--apps">
             <div class="portal-section-header portal-section-header--apps">
-              <div class="portal-section-desc portal-section-desc--apps">{{ t('portal.section.moreAppsDesc') }}</div>
-              <div class="portal-section-meta">{{ t('portal.section.count', { count: filteredExternalLinks.length }) }}</div>
+              <div class="portal-section-title">{{ t('portal.section.moreApps') }}</div>
             </div>
             <div class="agent-grid portal-agent-grid">
               <div v-if="externalLoading" class="agent-empty">{{ t('portal.section.loading') }}</div>

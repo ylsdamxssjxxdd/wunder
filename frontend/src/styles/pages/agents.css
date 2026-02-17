@@ -1,12 +1,13 @@
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: clamp(12px, 2vw, 16px);
 }
 
 .portal-agent-grid {
-  grid-template-columns: repeat(auto-fill, 220px);
-  justify-content: flex-start;
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+  justify-content: stretch;
+  align-items: stretch;
 }
 
 .agent-card {
@@ -27,6 +28,7 @@
   color: inherit;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
   min-height: 150px;
+  min-width: 0;
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
 }
 
@@ -62,11 +64,14 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .agent-card-head-text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .agent-card-avatar {
@@ -167,12 +172,16 @@
   font-size: 16px;
   font-weight: 700;
   color: #e8f0ff;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .agent-card-desc {
   color: rgba(203, 213, 225, 0.88);
   font-size: 13px;
   margin-top: 4px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .agent-card-plus {
@@ -193,6 +202,8 @@
   font-size: 12px;
   color: rgba(163, 184, 208, 0.92);
   align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 
@@ -201,6 +212,7 @@
   padding-top: 4px;
   width: 100%;
   justify-content: space-between;
+  row-gap: 6px;
 }
 
 .agent-card-meta-right {
@@ -208,6 +220,9 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .agent-card-container-id {
@@ -215,6 +230,9 @@
   font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-card-cron-indicator {
@@ -498,30 +516,13 @@
 }
 
 :root[data-user-theme='light'] .agent-card {
-  background: linear-gradient(
-    165deg,
-    rgba(255, 255, 255, 0.98) 0%,
-    rgba(244, 248, 255, 0.98) 52%,
-    rgba(238, 245, 255, 0.98) 100%
-  );
-  border-color: rgba(96, 132, 196, 0.2);
-  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.12);
+  background: #ffffff;
+  border-color: rgba(96, 132, 196, 0.28);
+  box-shadow: none;
 }
 
 :root[data-user-theme='light'] .agent-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    125deg,
-    rgba(59, 130, 246, 0.14) 0%,
-    rgba(99, 102, 241, 0.1) 42%,
-    rgba(14, 165, 233, 0.08) 100%
-  );
-  opacity: 0.9;
-  pointer-events: none;
-  z-index: 0;
+  content: none;
 }
 
 :root[data-user-theme='light'] .agent-card-title {
@@ -540,14 +541,14 @@
 
 :root[data-user-theme='light'] .agent-card:hover {
   border-color: rgba(59, 130, 246, 0.48);
-  box-shadow: 0 18px 38px rgba(59, 130, 246, 0.18);
+  box-shadow: none;
 }
 
 :root[data-user-theme='light'] .agent-card-avatar {
   border-color: rgba(71, 85, 105, 0.2);
   color: #4e6580;
   background: rgba(140, 167, 198, 0.2);
-  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.12);
+  box-shadow: none;
 }
 
 :root[data-user-theme='light'] .agent-card-avatar--idle {
@@ -651,10 +652,12 @@
 .user-tools-dialog.agent-editor-dialog .el-dialog__body {
   padding: 16px 20px 24px;
   overflow: auto;
-  max-height: calc(90vh - 180px);
+  max-height: calc(90dvh - 180px);
 }
 
 .user-tools-dialog.agent-editor-dialog.el-dialog {
+  width: min(820px, calc(100vw - 28px)) !important;
+  max-width: calc(100vw - 28px);
   border-color: rgba(106, 217, 255, 0.25);
   box-shadow: 0 32px 80px rgba(4, 8, 18, 0.6);
 }
@@ -831,6 +834,52 @@
   .agent-share-card--combined {
     flex: 1 1 100%;
     min-width: 0;
+  }
+
+  .user-tools-dialog.agent-editor-dialog.el-dialog {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px);
+    margin-top: 2vh !important;
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-dialog__body {
+    padding: 14px 16px 18px;
+    max-height: calc(100dvh - 210px);
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-dialog__footer {
+    padding: 10px 16px 14px;
+  }
+
+  .agent-editor-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .agent-editor-copy {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .user-tools-dialog.agent-editor-dialog .agent-copy-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .agent-form-item {
+    padding: 12px 13px;
+  }
+
+  .agent-share-row--sandbox {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .agent-sandbox-select,
+  .agent-share-row--sandbox .el-select {
+    width: 100%;
   }
 }
 
@@ -1072,4 +1121,130 @@
 :root[data-user-theme='light'] .agent-card .user-tools-btn.danger:hover {
   background: rgba(239, 68, 68, 0.26);
   border-color: rgba(185, 28, 28, 0.7);
+}
+
+@media (max-width: 960px) {
+  .portal-agent-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(208px, 100%), 1fr));
+  }
+
+  .agent-card {
+    padding: 14px;
+  }
+
+  .agent-card-status {
+    top: 10px;
+    right: 10px;
+  }
+}
+
+@media (max-width: 720px) {
+  .agent-grid,
+  .portal-agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-card {
+    min-height: 132px;
+    padding: 14px;
+  }
+
+  .agent-card-head {
+    gap: 10px;
+  }
+
+  .agent-card-avatar {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 11px;
+  }
+
+  .agent-card-avatar-icon {
+    width: 17px;
+    height: 17px;
+    font-size: 17px;
+  }
+
+  .agent-card-title {
+    font-size: 15px;
+  }
+
+  .agent-card-desc {
+    font-size: 12px;
+  }
+
+  .agent-card-running,
+  .agent-card-waiting,
+  .agent-card-done,
+  .agent-card-error {
+    font-size: 11px;
+    padding: 2px 7px;
+  }
+}
+
+@media (max-width: 560px) {
+  .agent-grid,
+  .portal-agent-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-card {
+    min-height: 0;
+    padding: 13px;
+  }
+
+  .agent-card-status {
+    position: static;
+    align-items: flex-start;
+    margin-top: 2px;
+  }
+
+  .agent-card-meta--updated {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agent-card-meta-right {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .agent-card-container-id {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+
+  .agent-editor-header-actions {
+    gap: 8px;
+  }
+
+  .agent-editor-copy-label {
+    display: none;
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-dialog__header {
+    padding: 12px 14px;
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-dialog__body {
+    padding: 12px 12px 14px;
+    max-height: calc(100dvh - 196px);
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-dialog__footer {
+    padding: 9px 12px 12px;
+  }
+
+  .user-tools-dialog.agent-editor-dialog .el-button {
+    min-height: 40px;
+  }
+
+  .agent-tool-group-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
 }
