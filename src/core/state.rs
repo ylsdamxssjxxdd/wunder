@@ -12,6 +12,7 @@ use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
+use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::services::swarm::{SwarmService, TeamRunRunner};
 use crate::skills::{load_skills, SkillRegistry};
@@ -91,6 +92,7 @@ pub struct AppState {
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
     pub user_store: Arc<UserStore>,
+    pub external_auth_codes: Arc<ExternalAuthCodeStore>,
     pub throughput: ThroughputManager,
     pub evaluation: EvaluationManager,
     pub storage: Arc<dyn StorageBackend>,
@@ -130,6 +132,7 @@ impl AppState {
             Arc::new(UserToolStore::new(&config).context("初始化用户工具存储失败")?);
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
+        let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
 
         if options.seed_org_units {
             org_units::seed_org_units_if_empty(user_store.as_ref())
@@ -225,6 +228,7 @@ impl AppState {
             user_tool_store,
             user_tool_manager,
             user_store,
+            external_auth_codes,
             throughput,
             evaluation,
             storage,

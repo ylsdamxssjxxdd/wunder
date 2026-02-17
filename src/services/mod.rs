@@ -3,6 +3,7 @@ pub mod agent_runtime;
 pub mod attachment;
 pub mod cron;
 pub mod doc2md;
+pub mod external_auth;
 pub mod history;
 pub mod knowledge;
 pub mod llm;

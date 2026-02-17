@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import type { RouteRecordRaw } from 'vue-router';
+import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
 
 import UserLayout from '@/layouts/UserLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
@@ -22,15 +22,77 @@ import AdminSystemView from '@/views/AdminSystemView.vue';
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { resolveApiBase } from '@/config/runtime';
 
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
 const DESKTOP_HOME_PATH = '/desktop/home';
+const EMBED_AUTH_QUERY_KEYS = new Set(['wunder_token', 'access_token', 'wunder_code']);
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const asQueryText = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = String(item || '').trim();
+      if (text) return text;
+    }
+    return '';
+  }
+  return String(value || '').trim();
+};
+
+const resolveQueryToken = (query: LocationQuery): string => {
+  const wunderToken = asQueryText(query.wunder_token);
+  if (wunderToken) return wunderToken;
+  return asQueryText(query.access_token);
+};
+
+const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wunder_code);
+
+const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
+  const output: LocationQueryRaw = {};
+  Object.entries(query).forEach(([key, value]) => {
+    if (!EMBED_AUTH_QUERY_KEYS.has(key)) {
+      output[key] = value as string | null | (string | null)[];
+    }
+  });
+  return output;
+};
+
+const hasEmbedAuthQuery = (query: LocationQuery): boolean =>
+  Object.keys(query).some((key) => EMBED_AUTH_QUERY_KEYS.has(key));
+
+const resolveApiEndpoint = (path: string): string => {
+  const apiBase = resolveApiBase();
+  const base = apiBase ? apiBase.replace(/\/+$/, '') : '/wunder';
+  return `${base}${path}`;
+};
+
+const exchangeEmbedCode = async (code: string): Promise<string> => {
+  const response = await fetch(resolveApiEndpoint('/auth/external/exchange'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code })
+  });
+
+  const payload = asRecord(await response.json().catch(() => ({})));
+  if (!response.ok) {
+    const error = asRecord(payload.error);
+    const message = String(error.message || payload.message || 'external auth exchange failed').trim();
+    throw new Error(message || 'external auth exchange failed');
+  }
+
+  const data = asRecord(payload.data);
+  const token = String(data.access_token || '').trim();
+  if (!token) {
+    throw new Error('external auth token is empty');
+  }
+  return token;
+};
 
 const isAuthRequiredError = (error: unknown): boolean => {
   const source = asRecord(error);
@@ -145,6 +207,35 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  const authStore = useAuthStore();
+
+  const query = to.query;
+  let tokenFromQuery = resolveQueryToken(query);
+  if (!tokenFromQuery) {
+    const code = resolveQueryCode(query);
+    if (code) {
+      try {
+        tokenFromQuery = await exchangeEmbedCode(code);
+      } catch {
+        authStore.logout();
+        return { path: USER_LOGIN_PATH, replace: true };
+      }
+    }
+  }
+  if (tokenFromQuery) {
+    authStore.token = tokenFromQuery;
+    authStore.user = null;
+    localStorage.setItem('access_token', tokenFromQuery);
+    if (hasEmbedAuthQuery(query)) {
+      return {
+        path: to.path,
+        query: stripEmbedAuthQuery(query),
+        hash: to.hash,
+        replace: true
+      };
+    }
+  }
+
   const desktopMode = isDesktopModeEnabled();
 
   if (!desktopMode && to.path.startsWith('/desktop')) {
@@ -153,7 +244,6 @@ router.beforeEach(async (to) => {
 
   if (to.path.startsWith('/demo') && !desktopMode) {
     enableDemoMode();
-    const authStore = useAuthStore();
     await authStore.loadProfile();
   } else {
     disableDemoMode();
@@ -161,7 +251,6 @@ router.beforeEach(async (to) => {
 
   if (desktopMode && !to.path.startsWith('/admin')) {
     const remoteAuthMode = isDesktopRemoteAuthMode();
-    const authStore = useAuthStore();
 
     if (remoteAuthMode && (to.path === '/login' || to.path === '/register')) {
       if (!hasAccessToken()) {
@@ -218,7 +307,6 @@ router.beforeEach(async (to) => {
   }
 
   const token = hasAccessToken();
-  const authStore = useAuthStore();
 
   if ((to.path === '/login' || to.path === '/register') && token) {
     try {

@@ -18,6 +18,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/register", post(register))
         .route("/wunder/auth/login", post(login))
         .route("/wunder/auth/demo", post(login_demo))
+        .route("/wunder/auth/external/login", post(external_login))
+        .route("/wunder/auth/external/code", post(external_issue_code))
+        .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
@@ -38,6 +41,23 @@ struct RegisterRequest {
 struct LoginRequest {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalLoginRequest {
+    /// Shared secret, configured via `security.external_auth_key` (or env `WUNDER_EXTERNAL_AUTH_KEY`).
+    key: String,
+    /// External system account identifier (will be normalized to wunder user_id).
+    username: String,
+    /// External system password (used to set/verify wunder password).
+    password: String,
+    #[serde(default)]
+    unit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalExchangeRequest {
+    code: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +140,116 @@ async fn login_demo(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let profile = build_user_profile(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
+}
+
+async fn external_login(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalLoginRequest>,
+) -> Result<Json<Value>, Response> {
+    validate_external_key(&state, &payload.key).await?;
+
+    let username = payload.username.trim();
+    let password = payload.password.trim();
+    if username.is_empty() || password.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+
+    let user_store = state.user_store.clone();
+    let username_snapshot = username.to_string();
+    let password_snapshot = password.to_string();
+    let unit_snapshot = unit_id.clone();
+    let (session, created, updated) = tokio::task::spawn_blocking(move || {
+        provision_external_user(&user_store, &username_snapshot, &password_snapshot, unit_snapshot)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let profile = build_user_profile(&state, &session.user)?;
+    Ok(Json(json!({
+        "data": {
+            "access_token": session.token.token,
+            "user": profile,
+            "created": created,
+            "updated": updated,
+        }
+    })))
+}
+
+async fn external_issue_code(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalLoginRequest>,
+) -> Result<Json<Value>, Response> {
+    validate_external_key(&state, &payload.key).await?;
+
+    let username = payload.username.trim();
+    let password = payload.password.trim();
+    if username.is_empty() || password.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+
+    let user_store = state.user_store.clone();
+    let username_snapshot = username.to_string();
+    let password_snapshot = password.to_string();
+    let unit_snapshot = unit_id.clone();
+    let (session, created, updated) = tokio::task::spawn_blocking(move || {
+        provision_external_user(&user_store, &username_snapshot, &password_snapshot, unit_snapshot)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let record = state
+        .external_auth_codes
+        .issue(
+            session.user.user_id.clone(),
+            session.token.token.clone(),
+            60.0,
+        )
+        .await;
+
+    Ok(Json(json!({
+        "data": {
+            "code": record.code,
+            "expires_at": record.expires_at,
+            "created": created,
+            "updated": updated,
+        }
+    })))
+}
+
+async fn external_exchange(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalExchangeRequest>,
+) -> Result<Json<Value>, Response> {
+    let record = state
+        .external_auth_codes
+        .take(&payload.code)
+        .await
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "code expired".to_string()))?;
+
+    let user = state
+        .user_store
+        .get_user_by_id(&record.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "user not found".to_string()))?;
+    let profile = build_user_profile(&state, &user)?;
+    Ok(Json(json!({
+        "data": {
+            "access_token": record.token,
+            "user": profile,
+        }
+    })))
 }
 
 async fn me(
@@ -311,6 +441,106 @@ fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
     raw.map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
+}
+
+async fn validate_external_key(state: &Arc<AppState>, key: &str) -> Result<(), Response> {
+    let provided = key.trim();
+    if provided.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let expected = config.external_auth_key();
+    let Some(expected) = expected else {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "external auth disabled".to_string(),
+        ));
+    };
+    if provided != expected {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            i18n::t("error.api_key_invalid"),
+        ));
+    }
+    Ok(())
+}
+
+fn provision_external_user(
+    user_store: &UserStore,
+    username: &str,
+    password: &str,
+    unit_id: Option<String>,
+) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
+    let normalized =
+        UserStore::normalize_user_id(username).ok_or_else(|| anyhow::anyhow!("invalid username"))?;
+    if UserStore::is_default_admin(&normalized) {
+        return Err(anyhow::anyhow!("admin account is protected"));
+    }
+    let password = password.trim();
+    if password.is_empty() {
+        return Err(anyhow::anyhow!("password is empty"));
+    }
+
+    let mut created = false;
+    let mut updated = false;
+
+    let existing = user_store.get_user_by_username(&normalized)?;
+    if let Some(mut user) = existing {
+        if UserStore::is_admin(&user) {
+            return Err(anyhow::anyhow!("admin account is protected"));
+        }
+        if user.status.trim().to_lowercase() != "active" {
+            return Err(anyhow::anyhow!("user disabled"));
+        }
+
+        // Keep wunder password in sync with external system password.
+        if !UserStore::verify_password(&user.password_hash, password) {
+            user.password_hash = UserStore::hash_password(password)?;
+            user.updated_at = now_ts();
+            user_store.update_user(&user)?;
+            updated = true;
+        }
+
+        // Update unit binding when provided.
+        if let Some(next_unit_id) = unit_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            if user.unit_id.as_deref() != Some(next_unit_id) {
+                let previous_level = user
+                    .unit_id
+                    .as_deref()
+                    .and_then(|id| user_store.get_org_unit(id).ok().flatten())
+                    .map(|unit| unit.level);
+                let next_unit = user_store
+                    .get_org_unit(next_unit_id)?
+                    .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
+                let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+                user.unit_id = Some(next_unit.unit_id.clone());
+                if user.daily_quota == previous_default {
+                    user.daily_quota = UserStore::default_daily_quota_by_level(Some(next_unit.level));
+                }
+                user.updated_at = now_ts();
+                user_store.update_user(&user)?;
+                updated = true;
+            }
+        }
+    } else {
+        user_store.create_user(
+            &normalized,
+            None,
+            password,
+            Some("A"),
+            unit_id,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )?;
+        created = true;
+    }
+
+    let session = user_store.login(&normalized, password)?;
+    Ok((session, created, updated))
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

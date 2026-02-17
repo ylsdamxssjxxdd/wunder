@@ -58,6 +58,7 @@ prompt_templates: # 系统提示词模板包配置（管理端可切换/编辑�
 
 security: # 安全与权限配置
   api_key: ${WUNDER_API_KEY} # API/MCP 访问密钥，客户端需通过 X-API-Key 或 Authorization: Bearer 传入
+  external_auth_key: ${WUNDER_EXTERNAL_AUTH_KEY:-} # 外部系统嵌入登录密钥，仅用于 /wunder/auth/external/* 接口（留空表示禁用）
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
     - '*'
   allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）
