@@ -195,6 +195,7 @@ export const elements = {
   simLabProjects: document.getElementById("simLabProjects"),
   simLabWorkers: document.getElementById("simLabWorkers"),
   simLabWorkerStep: document.getElementById("simLabWorkerStep"),
+  simLabWorkerTaskRounds: document.getElementById("simLabWorkerTaskRounds"),
   simLabMaxWait: document.getElementById("simLabMaxWait"),
   simLabMotherWait: document.getElementById("simLabMotherWait"),
   simLabPollMs: document.getElementById("simLabPollMs"),

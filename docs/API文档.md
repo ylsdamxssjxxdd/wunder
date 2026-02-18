@@ -2416,6 +2416,7 @@
 - 方法：`GET`
 - 说明：返回模拟测试项目列表与默认参数，当前内置 `swarm_flow` 项目。
 - 鉴权：管理员令牌（Bearer）。
+- 备注：`defaults` 中包含 `worker_task_rounds`（默认 3），用于控制工蜂任务连续分配轮次。
 
 #### 4.8.14 `/wunder/admin/sim_lab/runs`
 - 方法：`POST`
@@ -2433,13 +2434,14 @@
       "max_wait_s": 180,
       "mother_wait_s": 30,
       "poll_ms": 120,
+      "worker_task_rounds": 3,
       "keep_artifacts": false
     }
   }
 }
 ```
-- 参数说明：`run_id` 可选，建议前端传入用于后续停止；未传时服务端自动生成。
-- 运行前置：服务端会确保模拟账号 `wunder-sim` 存在；每次运行会重置该账号下历史会话与智能体应用，并按 `workers` 重建工蜂应用（容器 `1..10` 随机分配），随后由母蜂发起真实蜂群链路。
+- 参数说明：`run_id` 可选，建议前端传入用于后续停止；未传时服务端自动生成。`worker_task_rounds` 可选，默认 `3`（范围 `1..20`），控制每个工蜂被连续分配任务的轮次（每轮都会继续对话并下发下一任务）。
+- 运行前置：服务端会确保模拟账号 `wunder-sim` 存在；每次运行会重置该账号下历史会话与智能体应用，并按 `workers` 重建工蜂应用（容器 `1..10` 随机分配），随后由母蜂按多轮随机任务向工蜂发起真实蜂群链路。
 - 响应：`data` 返回 `run_id/mode/wall_time_s/project_total/project_success/project_failed/projects[]`，其中 `projects[]` 含每个项目的执行状态、耗时、报告与错误信息。
 
 #### 4.8.15 `/wunder/admin/sim_lab/runs/{run_id}/status`

@@ -18,6 +18,8 @@ let curveChart = null;
 const HISTORY_STORAGE_KEY = "wunder_sim_lab_history";
 const HISTORY_LIMIT = 20;
 const DEFAULT_WORKER_STEP = 10;
+const DEFAULT_WORKER_TASK_ROUNDS = 3;
+const MAX_WORKER_TASK_ROUNDS = 20;
 const CURVE_SERIES = [
   {
     key: "wall_time_s",
@@ -361,6 +363,7 @@ const updateRunButton = () => {
   [
     elements.simLabWorkers,
     elements.simLabWorkerStep,
+    elements.simLabWorkerTaskRounds,
     elements.simLabMaxWait,
     elements.simLabMotherWait,
     elements.simLabPollMs,
@@ -469,6 +472,11 @@ const applyDefaults = () => {
   }
   if (elements.simLabWorkerStep) {
     elements.simLabWorkerStep.value = String(DEFAULT_WORKER_STEP);
+  }
+  if (elements.simLabWorkerTaskRounds) {
+    elements.simLabWorkerTaskRounds.value = String(
+      Number(defaults.worker_task_rounds) || DEFAULT_WORKER_TASK_ROUNDS
+    );
   }
   if (elements.simLabMaxWait) {
     elements.simLabMaxWait.value = String(defaults.max_wait_s || 180);
@@ -844,6 +852,13 @@ const buildRunPayload = (runId, workersOverride) => {
   const workers = Number.isFinite(Number(workersOverride))
     ? Number(workersOverride)
     : numberValue(elements.simLabWorkers, 100);
+  const workerTaskRounds = Math.max(
+    1,
+    Math.min(
+      MAX_WORKER_TASK_ROUNDS,
+      readPositiveInt(elements.simLabWorkerTaskRounds, DEFAULT_WORKER_TASK_ROUNDS)
+    )
+  );
   return {
     run_id: runId,
     projects,
@@ -853,6 +868,7 @@ const buildRunPayload = (runId, workersOverride) => {
         max_wait_s: Math.max(10, Math.floor(numberValue(elements.simLabMaxWait, 180))),
         mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
+        worker_task_rounds: workerTaskRounds,
       },
     },
   };

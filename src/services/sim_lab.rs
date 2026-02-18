@@ -27,6 +27,8 @@ const DEFAULT_WORKERS: usize = 100;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
 const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
 const DEFAULT_POLL_MS: u64 = 120;
+const DEFAULT_WORKER_TASK_ROUNDS: usize = 3;
+const MAX_WORKER_TASK_ROUNDS: usize = 20;
 const MOCK_MODEL_NAME: &str = "__swarm_flow_mock__";
 const MOTHER_MARKER: &str = "MOTHER_SIM_START";
 const WORKER_MARKER: &str = "WORKER_SIM_TASK";
@@ -97,12 +99,13 @@ pub fn list_projects() -> Vec<SimLabProject> {
     vec![SimLabProject {
         project_id: PROJECT_SWARM_FLOW.to_string(),
         title: "Swarm Chain Test".to_string(),
-        description: "Deterministic mother/worker/tool-loop simulation for swarm chain validation using in-process mock model and real orchestrator pipeline.".to_string(),
+        description: "Seeded mother/worker/tool-loop simulation for swarm chain validation using in-process mock model and real orchestrator pipeline, with multi-round randomized worker tasks.".to_string(),
         defaults: json!({
             "workers": DEFAULT_WORKERS,
             "max_wait_s": DEFAULT_MAX_WAIT_S,
             "mother_wait_s": DEFAULT_MOTHER_WAIT_S,
             "poll_ms": DEFAULT_POLL_MS,
+            "worker_task_rounds": DEFAULT_WORKER_TASK_ROUNDS,
             "keep_artifacts": false
         }),
     }]
@@ -134,12 +137,14 @@ pub async fn run_sim_lab(
         let keep_artifacts = request.keep_artifacts.unwrap_or(false);
         let started_at = Utc::now();
         let started = Instant::now();
+        let run_seed = splitmix64(stable_string_hash64(&run_id));
 
         let mut tasks = FuturesUnordered::new();
         for project_id in projects {
             let state = state.clone();
             let run_control = run_control.clone();
             let project_options = options_by_project.get(&project_id).cloned();
+            let project_seed = splitmix64(run_seed ^ stable_string_hash64(&project_id));
             tasks.push(async move {
                 run_project(
                     state,
@@ -147,6 +152,7 @@ pub async fn run_sim_lab(
                     &project_id,
                     project_options.as_ref(),
                     keep_artifacts,
+                    project_seed,
                 )
                 .await
             });
@@ -293,12 +299,13 @@ async fn run_project(
     project_id: &str,
     options: Option<&Value>,
     keep_artifacts: bool,
+    run_seed: u64,
 ) -> SimLabProjectReport {
     let started = Instant::now();
     let result = match project_id {
         PROJECT_SWARM_FLOW => {
             let args = SimArgs::from_json(options, keep_artifacts);
-            run_swarm_flow(state, args, run_control)
+            run_swarm_flow(state, args, run_control, run_seed)
                 .await
                 .map(|report| serde_json::to_value(report).unwrap_or(Value::Null))
         }
@@ -333,6 +340,7 @@ struct SimArgs {
     max_wait_s: u64,
     mother_wait_s: f64,
     poll_ms: u64,
+    worker_task_rounds: usize,
     keep_artifacts: bool,
 }
 
@@ -343,6 +351,7 @@ impl Default for SimArgs {
             max_wait_s: DEFAULT_MAX_WAIT_S,
             mother_wait_s: DEFAULT_MOTHER_WAIT_S,
             poll_ms: DEFAULT_POLL_MS,
+            worker_task_rounds: DEFAULT_WORKER_TASK_ROUNDS,
             keep_artifacts: false,
         }
     }
@@ -367,6 +376,10 @@ impl SimArgs {
             .unwrap_or(DEFAULT_MOTHER_WAIT_S)
             .max(1.0);
         args.poll_ms = read_u64(map, "poll_ms").unwrap_or(DEFAULT_POLL_MS).max(40);
+        args.worker_task_rounds = read_u64(map, "worker_task_rounds")
+            .map(|value| value as usize)
+            .unwrap_or(DEFAULT_WORKER_TASK_ROUNDS)
+            .clamp(1, MAX_WORKER_TASK_ROUNDS);
         args.keep_artifacts = read_bool(map, "keep_artifacts").unwrap_or(keep_artifacts);
         args
     }
@@ -397,6 +410,8 @@ fn read_bool(map: &Map<String, Value>, key: &str) -> Option<bool> {
 struct MockScenario {
     worker_agent_ids: Vec<String>,
     mother_wait_s: f64,
+    worker_task_rounds: usize,
+    run_seed: u64,
 }
 
 #[derive(Default)]
@@ -430,6 +445,7 @@ struct FlowConfigSnapshot {
     max_wait_s: u64,
     mother_wait_s: f64,
     poll_ms: u64,
+    worker_task_rounds: usize,
     worker_tool_loops: usize,
 }
 
@@ -499,6 +515,7 @@ struct FlowChecks {
     mother_finished: bool,
     all_worker_runs_success: bool,
     each_worker_has_two_tool_calls: bool,
+    each_worker_has_expected_tool_calls: bool,
     no_active_runs_left: bool,
 }
 
@@ -521,6 +538,7 @@ async fn run_swarm_flow(
     state: Arc<AppState>,
     args: SimArgs,
     run_control: Arc<SimRunControl>,
+    run_seed: u64,
 ) -> Result<FlowReport> {
     let started_at = Utc::now();
     let started = Instant::now();
@@ -553,6 +571,8 @@ async fn run_swarm_flow(
             let mut scenario = mock_state.scenario.write();
             scenario.worker_agent_ids = worker_agent_ids.clone();
             scenario.mother_wait_s = args.mother_wait_s;
+            scenario.worker_task_rounds = args.worker_task_rounds;
+            scenario.run_seed = run_seed;
         }
 
         let mother_session_id = create_mother_session(state.as_ref(), &user_id, &mother_agent_id)?;
@@ -627,6 +647,7 @@ async fn run_swarm_flow(
 }
 
 fn build_mock_request_overrides(args: &SimArgs, llm_base_url: &str) -> Value {
+    let max_rounds = args.worker_task_rounds.saturating_add(4).clamp(6, 64);
     json!({
         "server": {
             "max_active_sessions": (args.workers.saturating_mul(4)).max(16)
@@ -648,7 +669,7 @@ fn build_mock_request_overrides(args: &SimArgs, llm_base_url: &str) -> Value {
                     "model": "mock-swarm-flow",
                     "stream": false,
                     "retry": 0,
-                    "max_rounds": 6,
+                    "max_rounds": max_rounds,
                     "tool_call_mode": "tool_call",
                     "temperature": 0.0
                 }
@@ -749,35 +770,60 @@ async fn mock_chat_completions(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let first_user = first_user_message(&messages);
+    let user_message = last_user_message(&messages);
     let observation_payloads = collect_observation_payloads(&messages);
-    let observed_tools = observed_tool_names(&observation_payloads);
+    let current_observation_payloads = collect_current_observation_payloads(&messages);
+    let observed_tools = observed_tool_names(&current_observation_payloads);
 
-    let response = if first_user.contains(MOTHER_MARKER) {
+    let response = if user_message.contains(MOTHER_MARKER) {
         state.mother_calls.fetch_add(1, Ordering::Relaxed);
         mother_mock_response(&state.scenario.read(), &observation_payloads)
-    } else if first_user.contains(WORKER_MARKER) {
+    } else if user_message.contains(WORKER_MARKER) {
         state.worker_calls.fetch_add(1, Ordering::Relaxed);
-        worker_mock_response(&first_user, &observed_tools)
+        worker_mock_response(&state.scenario.read(), &user_message, &observed_tools)
     } else {
         state.fallback_calls.fetch_add(1, Ordering::Relaxed);
-        fallback_mock_response(&first_user)
+        fallback_mock_response(&user_message)
     };
 
     Json(response)
 }
 
 fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value]) -> Value {
-    if observation_payloads.is_empty() {
+    let total_rounds = scenario.worker_task_rounds.max(1);
+    let summaries = extract_swarm_wait_summaries(observation_payloads);
+    let completed_rounds = summaries.len();
+
+    if completed_rounds < total_rounds {
+        if completed_rounds > 0 {
+            if let Some(summary) = summaries.last() {
+                if !summary.all_finished {
+                    return openai_chat_response(
+                        &format!(
+                            "Mother preset final: swarm round {completed_rounds}/{total_rounds} incomplete. success={}/{} failed={} all_finished={} elapsed_s={:.3}.",
+                            summary.success_total,
+                            summary.total,
+                            summary.failed_total,
+                            summary.all_finished,
+                            summary.elapsed_s
+                        ),
+                        None,
+                    );
+                }
+            }
+        }
+
+        let round = completed_rounds + 1;
         let tasks = scenario
             .worker_agent_ids
             .iter()
             .enumerate()
             .map(|(index, agent_id)| {
+                let mission = choose_worker_mission(scenario.run_seed, agent_id, round);
                 json!({
                     "agentId": agent_id,
-                    "message": format!("{WORKER_MARKER}: worker={agent_id}; execute two tool rounds"),
-                    "label": format!("sim-worker-{index}"),
+                    "message": format!("{WORKER_MARKER}: worker={agent_id}; task_round={round}/{total_rounds}; mission={mission}"),
+                    "label": format!("sim-worker-{index}-r{round}"),
                     "createIfMissing": true
                 })
             })
@@ -791,15 +837,17 @@ fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value])
             "includeCurrent": false
         });
         return openai_chat_response(
-            "Mother preset round-1: parsed intent, dispatching worker swarm and waiting for completion.",
+            &format!(
+                "Mother preset round-{round}/{total_rounds}: dispatching worker swarm and waiting for completion."
+            ),
             Some(vec![function_tool_call("agent_swarm", &args)]),
         );
     }
 
-    if let Some(summary) = extract_swarm_wait_summary(observation_payloads) {
+    if let Some(summary) = summaries.last().copied().or_else(|| extract_swarm_wait_summary(observation_payloads)) {
         return openai_chat_response(
             &format!(
-                "Mother preset final: swarm done. success={}/{} failed={} all_finished={} elapsed_s={:.3}.",
+                "Mother preset final: swarm rounds done {completed_rounds}/{total_rounds}. last_round_success={}/{} last_round_failed={} last_round_all_finished={} last_round_elapsed_s={:.3}.",
                 summary.success_total,
                 summary.total,
                 summary.failed_total,
@@ -811,7 +859,9 @@ fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value])
     }
 
     openai_chat_response(
-        "Mother preset final: worker outputs merged after two tool rounds per worker. Flow complete.",
+        &format!(
+            "Mother preset final: worker outputs merged after {total_rounds} rounds per worker. Flow complete."
+        ),
         None,
     )
 }
@@ -862,15 +912,16 @@ impl WorkerToolKind {
         }
     }
 
-    fn args(self, worker_tag: &str) -> Value {
-        let worker_file = format!("sim_lab/workers/{worker_tag}.txt");
+    fn args(self, worker_tag: &str, task_round: usize, task_seed: u64) -> Value {
+        let suffix = format!("{:03}", task_seed % 1000);
+        let worker_file = format!("sim_lab/workers/{worker_tag}_r{task_round}_{suffix}.txt");
         match self {
             Self::ListFiles => json!({
                 "path": ".",
-                "max_depth": 2,
+                "max_depth": 1 + (task_seed % 3) as u64,
             }),
             Self::SearchContent => json!({
-                "query": "swarm",
+                "query": choose_search_query(task_seed),
                 "path": ".",
                 "max_depth": 2,
                 "max_files": 40,
@@ -879,7 +930,7 @@ impl WorkerToolKind {
                 "files": [{
                     "path": "sim_lab/shared/context.txt",
                     "start_line": 1,
-                    "end_line": 40,
+                    "end_line": 10 + (task_seed % 31) as u64,
                 }]
             }),
             Self::WriteFile => json!({
@@ -898,22 +949,22 @@ impl WorkerToolKind {
                     "action": "replace",
                     "start_line": 3,
                     "end_line": 3,
-                    "new_content": "result=edited",
+                    "new_content": format!("result=edited;r{task_round};{suffix}"),
                 }],
                 "ensure_newline_at_eof": true,
             }),
             Self::ExecuteCommand => json!({
-                "content": format!("echo swarm-worker-{worker_tag}"),
+                "content": format!("echo swarm-worker-{worker_tag}-r{task_round}-{suffix}"),
                 "workdir": ".",
                 "timeout_s": 5,
             }),
             Self::ProgrammaticToolCall => json!({
-                "filename": format!("sim_worker_{worker_tag}.py"),
+                "filename": format!("sim_worker_{worker_tag}_r{task_round}_{suffix}.py"),
                 "workdir": ".",
-                "content": "print('swarm worker script prepared')",
+                "content": format!("print('swarm worker script prepared r{task_round} {suffix}')"),
             }),
             Self::FinalResponse => json!({
-                "content": format!("worker {worker_tag} final response via tool"),
+                "content": format!("worker {worker_tag} final response via tool r{task_round} {suffix}"),
             }),
         }
     }
@@ -965,16 +1016,23 @@ impl WorkerToolProfile {
     }
 }
 
-fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> Value {
-    let worker_tag = worker_tag(first_user);
-    let profile = choose_worker_profile(first_user);
+fn worker_mock_response(
+    scenario: &MockScenario,
+    user_message: &str,
+    observed_tools: &HashSet<String>,
+) -> Value {
+    let worker_tag = worker_tag(user_message);
+    let task_round = extract_task_round(user_message);
+    let task_seed = derive_worker_task_seed(scenario.run_seed, &worker_tag, task_round);
+    let profile = choose_worker_profile(task_seed);
     let (round_one_tool, round_two_tool) = profile.round_tools();
 
     if !round_one_tool.observed_by(observed_tools) {
-        let args = round_one_tool.args(&worker_tag);
+        let args = round_one_tool.args(&worker_tag, task_round, task_seed);
         return openai_chat_response(
             &format!(
-                "Worker preset round-1 ({}) call {}.",
+                "Worker preset task {task_round}/{} round-1 ({}) call {}.",
+                scenario.worker_task_rounds.max(1),
                 profile.label(),
                 round_one_tool.function_name()
             ),
@@ -986,10 +1044,11 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
     }
 
     if !round_two_tool.observed_by(observed_tools) {
-        let args = round_two_tool.args(&worker_tag);
+        let args = round_two_tool.args(&worker_tag, task_round, task_seed);
         return openai_chat_response(
             &format!(
-                "Worker preset round-2 ({}) call {}.",
+                "Worker preset task {task_round}/{} round-2 ({}) call {}.",
+                scenario.worker_task_rounds.max(1),
                 profile.label(),
                 round_two_tool.function_name()
             ),
@@ -1002,7 +1061,8 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
 
     openai_chat_response(
         &format!(
-            "Worker preset final: profile={} two rounds complete for {}.",
+            "Worker preset final: task {task_round}/{} profile={} complete for {}.",
+            scenario.worker_task_rounds.max(1),
             profile.label(),
             worker_tag
         ),
@@ -1010,12 +1070,8 @@ fn worker_mock_response(first_user: &str, observed_tools: &HashSet<String>) -> V
     )
 }
 
-fn choose_worker_profile(first_user: &str) -> WorkerToolProfile {
-    let source = extract_worker_agent_hint(first_user).unwrap_or_else(|| first_user.to_string());
-    let hash = source.bytes().fold(0u64, |state, byte| {
-        state.wrapping_mul(131).wrapping_add(byte as u64)
-    });
-    match (hash % 8) as usize {
+fn choose_worker_profile(task_seed: u64) -> WorkerToolProfile {
+    match (task_seed % 8) as usize {
         0 => WorkerToolProfile::InspectSearch,
         1 => WorkerToolProfile::InspectRead,
         2 => WorkerToolProfile::WriteReplace,
@@ -1025,6 +1081,61 @@ fn choose_worker_profile(first_user: &str) -> WorkerToolProfile {
         6 => WorkerToolProfile::PtcSearch,
         _ => WorkerToolProfile::CommandPtc,
     }
+}
+
+fn choose_search_query(task_seed: u64) -> &'static str {
+    const QUERIES: [&str; 6] = ["swarm", "worker", "context", "tool", "orchestration", "metrics"];
+    QUERIES[(task_seed as usize) % QUERIES.len()]
+}
+
+fn extract_task_round(user_message: &str) -> usize {
+    let marker = "task_round=";
+    let Some(marker_pos) = user_message.find(marker) else {
+        return 1;
+    };
+
+    let value = &user_message[marker_pos + marker.len()..];
+    let raw = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if raw.is_empty() {
+        return 1;
+    }
+
+    let raw = raw.split('/').next().unwrap_or(raw).trim();
+    raw.parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+        .clamp(1, MAX_WORKER_TASK_ROUNDS)
+}
+
+fn stable_string_hash64(text: &str) -> u64 {
+    text.bytes().fold(0u64, |state, byte| {
+        state.wrapping_mul(131).wrapping_add(byte as u64)
+    })
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = value;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn derive_worker_task_seed(run_seed: u64, worker_tag: &str, task_round: usize) -> u64 {
+    let hash = stable_string_hash64(worker_tag);
+    splitmix64(
+        run_seed
+            ^ hash
+            ^ (task_round as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+    )
 }
 
 fn extract_worker_agent_hint(first_user: &str) -> Option<String> {
@@ -1107,8 +1218,15 @@ fn function_tool_call(name: &str, args: &Value) -> Value {
     })
 }
 
-fn first_user_message(messages: &[Value]) -> String {
-    for message in messages {
+fn last_user_message(messages: &[Value]) -> String {
+    last_user_message_index(messages)
+        .and_then(|index| messages.get(index))
+        .map(|message| flatten_content_text(message.get("content")))
+        .unwrap_or_default()
+}
+
+fn last_user_message_index(messages: &[Value]) -> Option<usize> {
+    for (index, message) in messages.iter().enumerate().rev() {
         let role = message
             .get("role")
             .and_then(Value::as_str)
@@ -1117,14 +1235,25 @@ fn first_user_message(messages: &[Value]) -> String {
             continue;
         }
         let content = flatten_content_text(message.get("content"));
+        if content.trim().is_empty() {
+            continue;
+        }
         if content.trim_start().starts_with(OBSERVATION_PREFIX) {
             continue;
         }
-        if !content.trim().is_empty() {
-            return content;
-        }
+        return Some(index);
     }
-    String::new()
+    None
+}
+
+fn collect_current_observation_payloads(messages: &[Value]) -> Vec<Value> {
+    let Some(last_user_index) = last_user_message_index(messages) else {
+        return Vec::new();
+    };
+    if last_user_index + 1 >= messages.len() {
+        return Vec::new();
+    }
+    collect_observation_payloads(&messages[last_user_index + 1..])
 }
 
 fn flatten_content_text(content: Option<&Value>) -> String {
@@ -1208,6 +1337,21 @@ fn observed_tool_names(observation_payloads: &[Value]) -> HashSet<String> {
                 .map(ToString::to_string)
         })
         .collect::<HashSet<_>>()
+}
+
+fn choose_worker_mission(run_seed: u64, agent_id: &str, task_round: usize) -> &'static str {
+    const MISSIONS: [&str; 8] = [
+        "inspect_workspace",
+        "trace_swarm_context",
+        "validate_tool_chain",
+        "mutate_worker_file",
+        "sample_latency_path",
+        "stress_search_branch",
+        "exercise_ptc_branch",
+        "verify_final_response",
+    ];
+    let seed = derive_worker_task_seed(run_seed, agent_id, task_round);
+    MISSIONS[(seed as usize) % MISSIONS.len()]
 }
 
 fn is_list_files_tool(name: &str) -> bool {
@@ -1314,6 +1458,51 @@ fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWai
     None
 }
 
+fn extract_swarm_wait_summaries(observation_payloads: &[Value]) -> Vec<SwarmWaitSummary> {
+    let mut summaries = Vec::new();
+    for payload in observation_payloads {
+        let Some(data) = payload.get("data") else {
+            continue;
+        };
+        let Some(wait) = data.get("wait") else {
+            continue;
+        };
+        if !wait.is_object() {
+            continue;
+        }
+
+        let total = wait
+            .get("total")
+            .and_then(Value::as_u64)
+            .or_else(|| data.get("task_total").and_then(Value::as_u64))
+            .unwrap_or(0) as usize;
+        let success_total = wait
+            .get("success_total")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let failed_total = wait
+            .get("failed_total")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let all_finished = wait
+            .get("all_finished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let elapsed_s = wait
+            .get("elapsed_s")
+            .and_then(Value::as_f64)
+            .unwrap_or_default();
+        summaries.push(SwarmWaitSummary {
+            total,
+            success_total,
+            failed_total,
+            all_finished,
+            elapsed_s,
+        });
+    }
+    summaries
+}
+
 fn seed_swarm_workspace(state: &AppState, user_id: &str) -> Result<()> {
     let shared_context = [
         "swarm simulation context",
@@ -1365,7 +1554,9 @@ fn seed_swarm_agents(
             hive_id: DEFAULT_HIVE_ID.to_string(),
             name: format!("SwarmWorkerSim{}", index + 1),
             description: "Deterministic worker agent for tool-loop simulation".to_string(),
-            system_prompt: "Execute two tool loops then return final summary.".to_string(),
+            system_prompt:
+                "Execute assigned task in two tool loops, then await the next task round."
+                    .to_string(),
             tool_names: worker_tools.clone(),
             access_level: "A".to_string(),
             is_shared: false,
@@ -1528,6 +1719,8 @@ fn build_report(
     let mut worker_items = Vec::new();
     let mut all_worker_success = true;
     let mut each_worker_two_tools = true;
+    let mut each_worker_expected_tools = true;
+    let expected_tool_calls_per_worker = args.worker_task_rounds.saturating_mul(2);
     for session in &worker_session_rows {
         let session_id = session.session_id.clone();
         let status = worker_status_map
@@ -1540,6 +1733,9 @@ fn build_report(
         let tool_calls = tool_calls_by_session.get(&session_id).copied().unwrap_or(0);
         if tool_calls != 2 {
             each_worker_two_tools = false;
+        }
+        if tool_calls != expected_tool_calls_per_worker {
+            each_worker_expected_tools = false;
         }
         worker_items.push(WorkerSessionItem {
             session_id,
@@ -1568,6 +1764,7 @@ fn build_report(
             max_wait_s: args.max_wait_s,
             mother_wait_s: args.mother_wait_s,
             poll_ms: args.poll_ms,
+            worker_task_rounds: args.worker_task_rounds,
             worker_tool_loops: 2,
         },
         artifacts: FlowArtifacts {
@@ -1608,6 +1805,7 @@ fn build_report(
             mother_finished: !mother_result.answer.trim().is_empty(),
             all_worker_runs_success: all_worker_success,
             each_worker_has_two_tool_calls: each_worker_two_tools,
+            each_worker_has_expected_tool_calls: each_worker_expected_tools,
             no_active_runs_left: !active_left,
         },
     })
