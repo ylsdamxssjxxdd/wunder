@@ -1972,7 +1972,7 @@ async fn handle_stdio_approvals(mut rx: ApprovalRequestRx) {
     }
 }
 
-fn truncate_for_stderr(mut text: String, max_chars: usize) -> String {
+fn truncate_for_stderr(text: String, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }

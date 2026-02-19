@@ -2,7 +2,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::approval::ApprovalRequestTx;
+use crate::core::approval::ApprovalRequestTx;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WunderRequest {

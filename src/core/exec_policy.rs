@@ -1,4 +1,4 @@
-use crate::approval::ApprovalMode;
+use crate::core::approval::ApprovalMode;
 use crate::config::Config;
 use crate::tools::resolve_tool_name;
 use dashmap::DashMap;

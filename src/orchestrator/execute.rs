@@ -1,6 +1,8 @@
 use super::tool_calls::ToolCall;
 use super::*;
-use crate::approval::{ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse};
+use crate::core::approval::{
+    ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
+};
 
 struct PlannedToolCall {
     call: ToolCall,

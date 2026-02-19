@@ -2648,8 +2648,9 @@ impl TuiApp {
 
         let root = self.runtime.launch_dir.clone();
         let focus = args.trim().to_string();
+        let focus_for_prompt = focus.clone();
         let prompt = match tokio::task::spawn_blocking(move || {
-            crate::build_review_prompt(root.as_path(), &focus)
+            crate::build_review_prompt(root.as_path(), &focus_for_prompt)
         })
         .await
         {

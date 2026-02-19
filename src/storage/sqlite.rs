@@ -1768,8 +1768,7 @@ impl StorageBackend for SqliteStorage {
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
 
         if !statuses.is_empty() {
-            let placeholders = std::iter::repeat("?")
-                .take(statuses.len())
+            let placeholders = std::iter::repeat_n("?", statuses.len())
                 .collect::<Vec<_>>()
                 .join(", ");
             clauses.push(format!("status IN ({placeholders})"));

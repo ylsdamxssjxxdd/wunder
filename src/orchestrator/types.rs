@@ -1,5 +1,5 @@
 use super::*;
-use crate::approval::ApprovalRequestTx;
+use crate::core::approval::ApprovalRequestTx;
 
 #[derive(Clone)]
 pub(super) struct PreparedRequest {

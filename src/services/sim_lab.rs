@@ -919,7 +919,7 @@ impl WorkerToolKind {
         match self {
             Self::ListFiles => json!({
                 "path": ".",
-                "max_depth": 1 + (task_seed % 3) as u64,
+                "max_depth": 1 + (task_seed % 3),
             }),
             Self::SearchContent => json!({
                 "query": choose_search_query(task_seed),
@@ -931,7 +931,7 @@ impl WorkerToolKind {
                 "files": [{
                     "path": "sim_lab/shared/context.txt",
                     "start_line": 1,
-                    "end_line": 10 + (task_seed % 31) as u64,
+                    "end_line": 10 + (task_seed % 31),
                 }]
             }),
             Self::WriteFile => json!({

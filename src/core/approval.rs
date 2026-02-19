@@ -55,9 +55,10 @@ pub struct ApprovalRequest {
 }
 
 pub type ApprovalRequestTx = mpsc::UnboundedSender<ApprovalRequest>;
+#[allow(dead_code)]
 pub type ApprovalRequestRx = mpsc::UnboundedReceiver<ApprovalRequest>;
 
+#[allow(dead_code)]
 pub fn new_channel() -> (ApprovalRequestTx, ApprovalRequestRx) {
     mpsc::unbounded_channel()
 }
-
