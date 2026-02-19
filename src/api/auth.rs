@@ -164,7 +164,12 @@ async fn external_login(
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
-        provision_external_user(&user_store, &username_snapshot, &password_snapshot, unit_snapshot)
+        provision_external_user(
+            &user_store,
+            &username_snapshot,
+            &password_snapshot,
+            unit_snapshot,
+        )
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
@@ -203,7 +208,12 @@ async fn external_issue_code(
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
-        provision_external_user(&user_store, &username_snapshot, &password_snapshot, unit_snapshot)
+        provision_external_user(
+            &user_store,
+            &username_snapshot,
+            &password_snapshot,
+            unit_snapshot,
+        )
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
@@ -474,8 +484,8 @@ fn provision_external_user(
     password: &str,
     unit_id: Option<String>,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
-    let normalized =
-        UserStore::normalize_user_id(username).ok_or_else(|| anyhow::anyhow!("invalid username"))?;
+    let normalized = UserStore::normalize_user_id(username)
+        .ok_or_else(|| anyhow::anyhow!("invalid username"))?;
     if UserStore::is_default_admin(&normalized) {
         return Err(anyhow::anyhow!("admin account is protected"));
     }
@@ -518,7 +528,8 @@ fn provision_external_user(
                 let previous_default = UserStore::default_daily_quota_by_level(previous_level);
                 user.unit_id = Some(next_unit.unit_id.clone());
                 if user.daily_quota == previous_default {
-                    user.daily_quota = UserStore::default_daily_quota_by_level(Some(next_unit.level));
+                    user.daily_quota =
+                        UserStore::default_daily_quota_by_level(Some(next_unit.level));
                 }
                 user.updated_at = now_ts();
                 user_store.update_user(&user)?;

@@ -1620,10 +1620,7 @@ async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: V
     }
 }
 
-async fn cleanup_removed_literal_roots(
-    bases: Vec<(String, String)>,
-    next: &[KnowledgeBaseConfig],
-) {
+async fn cleanup_removed_literal_roots(bases: Vec<(String, String)>, next: &[KnowledgeBaseConfig]) {
     if bases.is_empty() {
         return;
     }
@@ -1633,7 +1630,8 @@ async fn cleanup_removed_literal_roots(
         Err(_) => PathBuf::from("."),
     };
     let knowledge_root = current_dir.join("knowledge");
-    let knowledge_root_compare = normalize_path_for_compare(&normalize_existing_path(&knowledge_root));
+    let knowledge_root_compare =
+        normalize_path_for_compare(&normalize_existing_path(&knowledge_root));
 
     // If a base is renamed but keeps the same root, never delete the folder.
     let mut next_root_keys = HashSet::new();

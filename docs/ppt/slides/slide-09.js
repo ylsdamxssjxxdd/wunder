@@ -2,53 +2,45 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 9 页：自建工具，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="自建工具">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip" href="#4">总览</a>
-            <a class="section-chip" href="#5">内置</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip" href="#8">知识库</a>
-            <a class="section-chip active" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>自建工具：私人装备</h2>
-        <p class="section-lead">每个人都能拥有自己的工具箱</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>个人工具包独立配置</li>
-              <li>路径：data/user_tools/&lt;user_id&gt;</li>
-              <li>别名统一为 user_id@tool</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>满足个性化需求且不影响他人</li>
-              <li>能力可选择共享给团队</li>
-            </ul>
-            <span class="pill">治理要点</span>
-            <p>隔离可控，启用需明确勾选</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-custom.svg" alt="自建工具示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="工作区资产沉淀">
+  <div class="slide-meta">
+    <span class="section-tag">第3节 能力底座</span>
+    <div class="section-map">
+      <a class="section-chip" href="#8">总览</a>
+      <a class="section-chip active" href="#9">工作区</a>
+      <a class="section-chip" href="#10">提示词治理</a>
+      <a class="section-chip" href="#11">记忆压缩</a>
+      <a class="section-chip" href="#12">蜂群协作</a>
+    </div>
+  </div>
+  <h2>工作区：把执行结果沉淀成长期资产</h2>
+  <p class="section-lead">输出不止是文本，而是可复用文件与过程记录</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">隔离与持久化</span>
+      <ul>
+        <li>默认路径：/workspaces/&lt;user_id&gt;</li>
+        <li>可按 sandbox_container_id 继续隔离空间</li>
+      </ul>
+      <span class="pill">沉淀内容</span>
+      <ul>
+        <li>文档、脚本、产物与中间结果</li>
+        <li>会话历史、工具日志与事件轨迹</li>
+      </ul>
+      <div class="note"><strong>价值：</strong>跨会话继续复用，避免重复劳动。</div>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/workspace-asset-lifecycle.svg" alt="工作区与资产沉淀示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

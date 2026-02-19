@@ -2,53 +2,43 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 7 页：Skills 工具，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="Skills 工具">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip" href="#4">总览</a>
-            <a class="section-chip" href="#5">内置</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip active" href="#7">Skills</a>
-            <a class="section-chip" href="#8">知识库</a>
-            <a class="section-chip" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>Skills 工具：通关攻略</h2>
-        <p class="section-lead">把成功经验写成可重复的 SOP</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>SKILL.md 描述输入与步骤</li>
-              <li>run.py 执行具体流程</li>
-              <li>一句话触发完整任务</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>保证执行一致性与可复制性</li>
-              <li>减少人工操作与沟通成本</li>
-            </ul>
-            <span class="pill">治理要点</span>
-            <p>版本管理与共享边界清晰</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-skills.svg" alt="Skills 工具示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="并发模型">
+  <div class="slide-meta">
+    <span class="section-tag">第2节 主链路与并发模型</span>
+    <div class="section-map">
+      <a class="section-chip" href="#4">架构总览</a>
+      <a class="section-chip" href="#5">请求链路</a>
+      <a class="section-chip" href="#6">流式恢复</a>
+      <a class="section-chip active" href="#7">并发模型</a>
+    </div>
+  </div>
+  <h2>并发控制：主线程、队列与轮次统计</h2>
+  <p class="section-lead">把“可并发”与“可治理”放在同一机制里</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">主线程机制</span>
+      <p>按 user_id + agent_id 维护主线程与主会话。</p>
+      <span class="pill">队列机制</span>
+      <p>忙时进入 agent_tasks，由 AgentRuntime 异步调度执行。</p>
+      <span class="pill">轮次口径</span>
+      <ul>
+        <li>用户轮次：每条用户消息 +1</li>
+        <li>模型轮次：每次模型/工具/最终回复动作 +1</li>
+      </ul>
+      <p class="hint">token 统计口径为“上下文占用量”，不是总消耗量。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/concurrency-thread-queue.svg" alt="主线程与队列并发模型示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

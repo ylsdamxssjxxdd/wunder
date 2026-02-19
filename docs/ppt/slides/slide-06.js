@@ -2,53 +2,44 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 6 页：MCP 工具，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="MCP 工具">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip" href="#4">总览</a>
-            <a class="section-chip" href="#5">内置</a>
-            <a class="section-chip active" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip" href="#8">知识库</a>
-            <a class="section-chip" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>MCP 工具：刀和剑</h2>
-        <p class="section-lead">当内置不够用，就把外部能力接进来</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>通过 MCP 协议接入外部服务</li>
-              <li>统一以 server@tool 方式调用</li>
-              <li>自动加入工具清单管理</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>连接企业系统、搜索、BI 等能力</li>
-              <li>形成跨系统的执行链路</li>
-            </ul>
-            <span class="pill">治理要点</span>
-            <p>allow_tools 白名单 + 统一超时控制</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-mcp.svg" alt="MCP 工具示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="流式恢复">
+  <div class="slide-meta">
+    <span class="section-tag">第2节 主链路与并发模型</span>
+    <div class="section-map">
+      <a class="section-chip" href="#4">架构总览</a>
+      <a class="section-chip" href="#5">请求链路</a>
+      <a class="section-chip active" href="#6">流式恢复</a>
+      <a class="section-chip" href="#7">并发模型</a>
+    </div>
+  </div>
+  <h2>流式策略：WebSocket 优先，SSE 兜底</h2>
+  <p class="section-lead">兼顾低延迟实时体验与兼容性恢复能力</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">协议选择</span>
+      <ul>
+        <li>默认首选 WebSocket（/wunder/ws 与 /wunder/chat/ws）</li>
+        <li>兼容通道保留 SSE，老客户端可平滑接入</li>
+      </ul>
+      <span class="pill">断线恢复</span>
+      <ul>
+        <li>事件写入 stream_events，支持 after_event_id 回放</li>
+        <li>慢客户端与短暂断连可自动补齐关键事件</li>
+      </ul>
+      <div class="note"><strong>目标：</strong>网络波动不打断业务任务执行。</div>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/streaming-ws-sse.svg" alt="WebSocket 与 SSE 双通道示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

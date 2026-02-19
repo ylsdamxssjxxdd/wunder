@@ -2,51 +2,47 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 2 页：核心理念，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="核心理念">
-        <div class="slide-meta">
-          <span class="section-tag">第1节 核心理念</span>
-          <div class="section-map">
-            <a class="section-chip active" href="#2">核心理念</a>
-            <a class="section-chip" href="#3">运行流程</a>
-          </div>
-        </div>
-        <h2>从“会聊”到“会做事”</h2>
-        <p class="section-lead">一次提问，跑通从理解到落地的链路</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">用户看到的</span>
-            <ul>
-              <li>只需提出问题</li>
-              <li>过程清晰可追踪</li>
-              <li>结果能落成产物</li>
-            </ul>
-            <span class="pill">统一入口</span>
-            <p>/wunder 支持流式返回过程与最终回复</p>
-          </div>
-          <div class="card soft stack">
-            <span class="pill">核心理念</span>
-            <ul>
-              <li>对开发者：一切是接口（API/配置/工具）</li>
-              <li>对大模型：一切皆工具（可调用、可组合、可治理）</li>
-              <li>一次提问即可驱动完整执行链路</li>
-            </ul>
-            <div class="note">
-              <strong>结果导向：</strong>让答案沉淀为可复用的产物
-            </div>
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="重构定位-破题">
+  <div class="slide-meta">
+    <span class="section-tag">第1节 重构定位</span>
+    <div class="section-map">
+      <a class="section-chip active" href="#2">破题</a>
+      <a class="section-chip" href="#3">定位</a>
+    </div>
+  </div>
+  <h2>为什么要从聊天升级到执行系统</h2>
+  <p class="section-lead">业务需要稳定交付结果，而不是一次性文本回答</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">旧范式痛点</span>
+      <ul>
+        <li>回答可读但难直接落地</li>
+        <li>过程不可控，复盘成本高</li>
+        <li>跨系统协作依赖人工拼接</li>
+      </ul>
+      <span class="pill">组织层风险</span>
+      <p>能力停留在对话窗口，难以沉淀成长期资产</p>
+    </div>
+    <div class="card soft stack">
+      <span class="pill">重构目标</span>
+      <ul>
+        <li>把“提问”升级为“可执行任务”</li>
+        <li>把执行过程升级为“可观测链路”</li>
+        <li>把结果升级为“可复用资产”</li>
+      </ul>
+      <div class="note">
+        <strong>结论：</strong>wunder 的目标是交付能力平台，不是聊天壳。
+      </div>
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

@@ -2,53 +2,45 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 8 页：知识库工具，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="知识库工具">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip" href="#4">总览</a>
-            <a class="section-chip" href="#5">内置</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip active" href="#8">知识库</a>
-            <a class="section-chip" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>知识库工具：百科全书</h2>
-        <p class="section-lead">让答案可追溯，减少“拍脑袋”</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>用 Markdown 构建资料库</li>
-              <li>按标题切分知识点</li>
-              <li>query / limit 作为输入</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>制度、流程、资料统一检索</li>
-              <li>回答可追溯、可复用</li>
-            </ul>
-            <span class="pill">治理要点</span>
-            <p>定期更新与权限控制</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-knowledge.svg" alt="知识库工具示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="能力底座总览">
+  <div class="slide-meta">
+    <span class="section-tag">第3节 能力底座</span>
+    <div class="section-map">
+      <a class="section-chip active" href="#8">总览</a>
+      <a class="section-chip" href="#9">工作区</a>
+      <a class="section-chip" href="#10">提示词治理</a>
+      <a class="section-chip" href="#11">记忆压缩</a>
+      <a class="section-chip" href="#12">蜂群协作</a>
+    </div>
+  </div>
+  <h2>能力底座总览：统一工具编排，统一复用方式</h2>
+  <p class="section-lead">扩展能力不再散落，而是纳入同一调用协议</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">工具体系</span>
+      <ul>
+        <li>内置工具 / MCP / Skills / 知识库</li>
+        <li>用户自建工具与共享工具</li>
+        <li>A2A 服务工具与跨系统协作工具</li>
+      </ul>
+      <span class="pill">编排价值</span>
+      <ul>
+        <li>统一发现、统一调用、统一权限控制</li>
+        <li>能力可持续复用，不依赖个人记忆</li>
+      </ul>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/capability-foundation-map.svg" alt="能力底座工具编排示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

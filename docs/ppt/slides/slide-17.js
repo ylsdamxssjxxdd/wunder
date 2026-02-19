@@ -2,43 +2,40 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 17 页：线程管理，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="线程管理">
-        <div class="slide-meta">
-          <span class="section-tag">第5节 智能体管理测试功能</span>
-          <div class="section-map">
-            <a class="section-chip" href="#16">总览</a>
-            <a class="section-chip active" href="#17">线程管理</a>
-            <a class="section-chip" href="#18">吞吐量测试</a>
-            <a class="section-chip" href="#19">能力评估</a>
-          </div>
-        </div>
-        <h2>线程管理：并发可控、全程可观测</h2>
-        <p class="section-lead">生命周期、并发规则与监控事件一体化</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">生命周期</span>
-            <p>running → finished / error / cancelled</p>
-            <span class="pill">并发规则</span>
-            <p>单用户单线程，冲突即时返回</p>
-            <span class="pill">监控与取消</span>
-            <p>实时事件流，异常可终止</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/agent-thread-management.svg" alt="线程管理示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="安全边界">
+  <div class="slide-meta">
+    <span class="section-tag">第5节 治理与稳定性</span>
+    <div class="section-map">
+      <a class="section-chip" href="#16">组织治理</a>
+      <a class="section-chip active" href="#17">安全边界</a>
+      <a class="section-chip" href="#18">观测评测</a>
+    </div>
+  </div>
+  <h2>安全边界：白名单、拒绝规则、沙盒执行</h2>
+  <p class="section-lead">执行能力越强，越要清晰定义可执行范围</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">执行边界</span>
+      <p>allow_paths / allow_commands / deny_globs 联合约束。</p>
+      <span class="pill">风险隔离</span>
+      <p>高风险命令与脚本可下沉到 sandbox 服务执行。</p>
+      <span class="pill">鉴权机制</span>
+      <p>管理员 API Key、用户 Bearer Token、渠道签名/令牌校验。</p>
+      <span class="pill">控制面防护</span>
+      <p>Gateway 握手、origin 与 trusted proxy 策略共同生效。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/security-boundary-sandbox.svg" alt="安全边界与沙盒隔离示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

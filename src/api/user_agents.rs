@@ -159,7 +159,8 @@ async fn list_running_agents(
         .user_store
         .list_shared_user_agents(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let shared_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents);
+    let shared_agents =
+        filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents);
 
     let mut agent_order = Vec::new();
     agent_order.push("".to_string()); // default entry
@@ -228,15 +229,27 @@ async fn list_running_agents(
         2048,
     );
     for record in active_records {
-        let session_user_id = record.get("user_id").and_then(Value::as_str).unwrap_or("").trim();
+        let session_user_id = record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if session_user_id != user_id {
             continue;
         }
-        let agent_id = record.get("agent_id").and_then(Value::as_str).unwrap_or("").trim();
+        let agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if !allowed_set.contains(agent_id) {
             continue;
         }
-        let status = record.get("status").and_then(Value::as_str).unwrap_or("").trim();
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         let state = match status {
             MonitorState::STATUS_WAITING => STATE_WAITING,
             MonitorState::STATUS_CANCELLING => STATE_CANCELLING,
@@ -282,11 +295,19 @@ async fn list_running_agents(
         512,
     );
     for record in recent_records {
-        let session_user_id = record.get("user_id").and_then(Value::as_str).unwrap_or("").trim();
+        let session_user_id = record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if session_user_id != user_id {
             continue;
         }
-        let agent_id = record.get("agent_id").and_then(Value::as_str).unwrap_or("").trim();
+        let agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if !allowed_set.contains(agent_id) {
             continue;
         }
@@ -296,7 +317,11 @@ async fn list_running_agents(
         if state_rank(current.state) > state_rank(STATE_IDLE) {
             continue;
         }
-        let status = record.get("status").and_then(Value::as_str).unwrap_or("").trim();
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         let updated_time = record
             .get("updated_time")
             .and_then(Value::as_f64)
@@ -362,14 +387,19 @@ async fn list_running_agents(
                 .filter(|value| !value.is_empty())
             {
                 if let Value::Object(ref mut map) = payload {
-                    map.insert("last_error".to_string(), Value::String(last_error.to_string()));
+                    map.insert(
+                        "last_error".to_string(),
+                        Value::String(last_error.to_string()),
+                    );
                 }
             }
             payload
         })
         .collect::<Vec<_>>();
 
-    Ok(Json(json!({ "data": { "total": items.len(), "items": items } })))
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
 }
 
 async fn get_agent(

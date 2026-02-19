@@ -2,50 +2,45 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 11 页：工作区，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="工作区">
-        <div class="slide-meta">
-          <span class="section-tag">第3节 工作区</span>
-          <div class="section-map">
-            <a class="section-chip active" href="#11">工作区</a>
-            <a class="section-chip" href="#12">功能演示</a>
-          </div>
-        </div>
-        <h2>工作区：长期的资料落脚点</h2>
-        <p class="section-lead">产出不会消失，而是持续积累</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">定位</span>
-            <p>每个用户一块持久化空间</p>
-            <span class="pill">路径示例</span>
-            <p>data/workspaces/&lt;user_id&gt;</p>
-            <span class="pill">沉淀内容</span>
-            <ul>
-              <li>文档、脚本、分析结果</li>
-              <li>工具执行产物与中间文件</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>对话输出直接变成资产</li>
-              <li>跨会话继续使用同一资料</li>
-              <li>方便分享、复用、协作</li>
-            </ul>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/workspace-tree.svg" alt="工作区树示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="记忆与压缩">
+  <div class="slide-meta">
+    <span class="section-tag">第3节 能力底座</span>
+    <div class="section-map">
+      <a class="section-chip" href="#8">总览</a>
+      <a class="section-chip" href="#9">工作区</a>
+      <a class="section-chip" href="#10">提示词治理</a>
+      <a class="section-chip active" href="#11">记忆压缩</a>
+      <a class="section-chip" href="#12">蜂群协作</a>
+    </div>
+  </div>
+  <h2>长会话续航：上下文压缩 + 长期记忆</h2>
+  <p class="section-lead">把对话长度风险转化为可控的上下文治理</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">上下文压缩</span>
+      <ul>
+        <li>达到阈值后自动触发结构化摘要</li>
+        <li>保留关键轨迹，降低上下文膨胀</li>
+      </ul>
+      <span class="pill">长期记忆</span>
+      <ul>
+        <li>最终回复后异步总结写入记忆库</li>
+        <li>后续会话按策略注入 [长期记忆]</li>
+      </ul>
+      <p class="hint">token 统计口径为上下文占用，不等同计费总消耗。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/context-memory-compaction.svg" alt="上下文压缩与长期记忆示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

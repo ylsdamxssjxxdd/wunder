@@ -2,50 +2,40 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 13 页：前沿特性（记忆与上下文压缩），用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="前沿特性">
-        <div class="slide-meta">
-          <span class="section-tag">第4节 前沿特性</span>
-          <div class="section-map">
-            <a class="section-chip active" href="#13">记忆与压缩</a>
-            <a class="section-chip" href="#14">A2UI</a>
-            <a class="section-chip" href="#15">A2A</a>
-          </div>
-        </div>
-        <h2>前沿特性：记忆与上下文压缩</h2>
-        <p class="section-lead">长对话稳定运行，关键结论可延续</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">上下文压缩</span>
-            <ul>
-              <li>触发：上下文占用达到阈值</li>
-              <li>保留系统提示词与近期消息</li>
-              <li>生成结构化摘要继续对话</li>
-            </ul>
-            <span class="pill">长期记忆</span>
-            <ul>
-              <li>最终回复后自动总结</li>
-              <li>按时间戳写入长期记忆</li>
-              <li>后续会话注入 [长期记忆]</li>
-            </ul>
-            <span class="pill">口径说明</span>
-            <p>统计的是上下文占用 token，不是总消耗</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/feature-memory.svg" alt="记忆与上下文压缩示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="多入口协同">
+  <div class="slide-meta">
+    <span class="section-tag">第4节 多入口与外部互通</span>
+    <div class="section-map">
+      <a class="section-chip active" href="#13">多入口协同</a>
+      <a class="section-chip" href="#14">渠道多模态</a>
+      <a class="section-chip" href="#15">外部互通</a>
+    </div>
+  </div>
+  <h2>多入口协同：同一核心服务不同角色</h2>
+  <p class="section-lead">用户、管理员与开发者都复用同一调度底座</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">用户入口</span>
+      <p>frontend 与 desktop 提供会话、工作区与应用广场。</p>
+      <span class="pill">管理入口</span>
+      <p>web 负责模型、工具、权限、监控与评估治理。</p>
+      <span class="pill">开发入口</span>
+      <p>cli 面向本地开发、自动化与调试回放。</p>
+      <span class="pill">统一执行</span>
+      <p>不同入口最终都回到同一 /wunder 调度链路。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/multi-entry-collaboration.svg" alt="多入口协同示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

@@ -1772,7 +1772,11 @@ impl StorageBackend for SqliteStorage {
                 .collect::<Vec<_>>()
                 .join(", ");
             clauses.push(format!("status IN ({placeholders})"));
-            params_list.extend(statuses.iter().map(|value| SqlValue::from((*value).to_string())));
+            params_list.extend(
+                statuses
+                    .iter()
+                    .map(|value| SqlValue::from((*value).to_string())),
+            );
         }
         if let Some(since) = since_time {
             clauses.push("updated_time >= ?".to_string());

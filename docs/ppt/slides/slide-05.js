@@ -2,53 +2,43 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 5 页：内置工具，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="内置工具">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip" href="#4">总览</a>
-            <a class="section-chip active" href="#5">内置</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip" href="#8">知识库</a>
-            <a class="section-chip" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>内置工具：手和脚</h2>
-        <p class="section-lead">先把常用动作标准化</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>文件读写、搜索、替换</li>
-              <li>命令执行与脚本运行</li>
-              <li>ptc 临时脚本支持</li>
-            </ul>
-            <span class="pill">有什么用</span>
-            <ul>
-              <li>把答案直接写成文件结果</li>
-              <li>批量整理、清洗、生成产物</li>
-            </ul>
-            <span class="pill">治理要点</span>
-            <p>allow_paths / allow_commands 控制访问范围</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-builtin.svg" alt="内置工具示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="请求主链路">
+  <div class="slide-meta">
+    <span class="section-tag">第2节 主链路与并发模型</span>
+    <div class="section-map">
+      <a class="section-chip" href="#4">架构总览</a>
+      <a class="section-chip active" href="#5">请求链路</a>
+      <a class="section-chip" href="#6">流式恢复</a>
+      <a class="section-chip" href="#7">并发模型</a>
+    </div>
+  </div>
+  <h2>/wunder 主链路：从请求到最终回复</h2>
+  <p class="section-lead">一次调用可完整穿过“理解→执行→沉淀”闭环</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">执行步骤</span>
+      <ul>
+        <li>请求进入 AgentRuntime，绑定会话与主线程</li>
+        <li>Orchestrator 拉取历史、构建上下文、调用模型</li>
+        <li>按需触发工具调用与知识检索</li>
+        <li>流式输出中间事件与最终回复</li>
+        <li>会话状态、事件与产物写回存储</li>
+      </ul>
+      <div class="note"><strong>结果：</strong>不仅有答案，还有完整执行轨迹。</div>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/request-lifecycle.svg" alt="请求生命周期示意图" />
+    </div>
+  </div>
+  <p class="hint">输入核心字段：user_id / question / tool_names / stream</p>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

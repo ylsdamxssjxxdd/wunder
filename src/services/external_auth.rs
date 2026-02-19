@@ -28,7 +28,12 @@ impl ExternalAuthCodeStore {
         Self::default()
     }
 
-    pub async fn issue(&self, user_id: String, token: String, ttl_s: f64) -> ExternalAuthCodeRecord {
+    pub async fn issue(
+        &self,
+        user_id: String,
+        token: String,
+        ttl_s: f64,
+    ) -> ExternalAuthCodeRecord {
         let now = now_ts();
         let expires_at = now + ttl_s.max(1.0);
         let record = ExternalAuthCodeRecord {

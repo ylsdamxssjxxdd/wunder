@@ -2,50 +2,44 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 14 页：A2UI，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="A2UI">
-        <div class="slide-meta">
-          <span class="section-tag">第4节 前沿特性</span>
-          <div class="section-map">
-            <a class="section-chip" href="#13">记忆与压缩</a>
-            <a class="section-chip active" href="#14">A2UI</a>
-            <a class="section-chip" href="#15">A2A</a>
-          </div>
-        </div>
-        <h2>A2UI：让回答直接变成界面</h2>
-        <p class="section-lead">结构化输出，前端可直接渲染</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">是什么</span>
-            <ul>
-              <li>模型输出 A2UI JSON 消息</li>
-              <li>前端渲染卡片、表单、按钮</li>
-              <li>结构化展示过程与结果</li>
-            </ul>
-            <span class="pill">接入方式</span>
-            <ul>
-              <li>显式启用 a2ui 工具</li>
-              <li>SSE 输出 a2ui 事件</li>
-              <li>前端按组件规范渲染</li>
-            </ul>
-            <span class="pill">价值</span>
-            <p>降低二次开发成本，体验更直观</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/feature-a2ui.svg" alt="A2UI 结构化渲染示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="渠道与多模态">
+  <div class="slide-meta">
+    <span class="section-tag">第4节 多入口与外部互通</span>
+    <div class="section-map">
+      <a class="section-chip" href="#13">多入口协同</a>
+      <a class="section-chip active" href="#14">渠道多模态</a>
+      <a class="section-chip" href="#15">外部互通</a>
+    </div>
+  </div>
+  <h2>渠道与多模态：消息接入即业务入口</h2>
+  <p class="section-lead">统一 webhook + 绑定路由 + outbox 重试，支撑跨平台交付</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">接入范围</span>
+      <ul>
+        <li>飞书、WhatsApp Cloud、QQ Bot 等渠道</li>
+        <li>账号绑定后自动映射到用户与会话</li>
+      </ul>
+      <span class="pill">处理链路</span>
+      <ul>
+        <li>入站校验 → 会话路由 → 调度执行</li>
+        <li>出站进入 channel_outbox 异步重试投递</li>
+      </ul>
+      <span class="pill">多模态能力</span>
+      <p>支持语音转写、图片识别、地理描述与语音回包。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/channel-multimodal-pipeline.svg" alt="渠道接入与多模态处理示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

@@ -845,7 +845,11 @@ fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value])
         );
     }
 
-    if let Some(summary) = summaries.last().copied().or_else(|| extract_swarm_wait_summary(observation_payloads)) {
+    if let Some(summary) = summaries
+        .last()
+        .copied()
+        .or_else(|| extract_swarm_wait_summary(observation_payloads))
+    {
         return openai_chat_response(
             &format!(
                 "Mother preset final: swarm rounds done {completed_rounds}/{total_rounds}. last_round_success={}/{} last_round_failed={} last_round_all_finished={} last_round_elapsed_s={:.3}.",
@@ -1085,7 +1089,14 @@ fn choose_worker_profile(task_seed: u64) -> WorkerToolProfile {
 }
 
 fn choose_search_query(task_seed: u64) -> &'static str {
-    const QUERIES: [&str; 6] = ["swarm", "worker", "context", "tool", "orchestration", "metrics"];
+    const QUERIES: [&str; 6] = [
+        "swarm",
+        "worker",
+        "context",
+        "tool",
+        "orchestration",
+        "metrics",
+    ];
     QUERIES[(task_seed as usize) % QUERIES.len()]
 }
 
@@ -1132,11 +1143,7 @@ fn splitmix64(mut value: u64) -> u64 {
 
 fn derive_worker_task_seed(run_seed: u64, worker_tag: &str, task_round: usize) -> u64 {
     let hash = stable_string_hash64(worker_tag);
-    splitmix64(
-        run_seed
-            ^ hash
-            ^ (task_round as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
-    )
+    splitmix64(run_seed ^ hash ^ (task_round as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93))
 }
 
 fn extract_worker_agent_hint(first_user: &str) -> Option<String> {

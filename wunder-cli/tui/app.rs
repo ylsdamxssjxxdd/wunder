@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
 use unicode_width::UnicodeWidthChar;
-use wunder_server::approval::{new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse};
+use wunder_server::approval::{
+    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
+};
 use wunder_server::schemas::StreamEvent;
 
 use crate::args::GlobalArgs;
@@ -89,6 +91,7 @@ struct IndexedFile {
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
+    display_language: String,
     session_id: String,
     input: String,
     input_cursor: usize,
@@ -142,10 +145,12 @@ impl TuiApp {
         let session_id =
             session_override.unwrap_or_else(|| runtime.resolve_session(global.session.as_deref()));
         runtime.save_session(&session_id).ok();
+        let display_language = crate::locale::resolve_cli_language(&global);
 
         let mut app = Self {
             runtime,
             global,
+            display_language,
             session_id,
             input: String::new(),
             input_cursor: 0,
@@ -209,6 +214,10 @@ impl TuiApp {
         self.should_quit
     }
 
+    pub fn is_zh_language(&self) -> bool {
+        crate::locale::is_zh_language(self.display_language.as_str())
+    }
+
     pub fn status_line(&self) -> String {
         let context_summary = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
@@ -216,39 +225,93 @@ impl TuiApp {
                 Some(max_context),
             )
             .unwrap_or(0);
-            format!("{percent_left}% context left")
+            if self.is_zh_language() {
+                format!("剩余上下文 {percent_left}%")
+            } else {
+                format!("{percent_left}% context left")
+            }
         } else {
-            format!(
-                "{} context used",
-                self.session_stats.context_used_tokens.max(0)
-            )
+            let used = self.session_stats.context_used_tokens.max(0);
+            if self.is_zh_language() {
+                format!("已用上下文 {used}")
+            } else {
+                format!("{used} context used")
+            }
         };
         let running_hint = if self.resume_picker.is_some() {
-            "resume picker"
+            if self.is_zh_language() {
+                "会话恢复面板"
+            } else {
+                "resume picker"
+            }
         } else if self.active_approval.is_some() {
-            "approval pending"
+            if self.is_zh_language() {
+                "待审批"
+            } else {
+                "approval pending"
+            }
         } else if self.busy {
-            "working..."
+            if self.is_zh_language() {
+                "执行中..."
+            } else {
+                "working..."
+            }
+        } else if self.is_zh_language() {
+            "快捷键"
         } else {
             "shortcuts"
         };
         let usage_hint = self
             .last_usage
             .as_deref()
-            .map(|value| format!(" | last tokens {value}"))
+            .map(|value| {
+                if self.is_zh_language() {
+                    format!(" | 最近 tokens {value}")
+                } else {
+                    format!(" | last tokens {value}")
+                }
+            })
             .unwrap_or_default();
         let scroll_hint = if self.transcript_offset_from_bottom > 0 {
-            format!(" | scroll -{}", self.transcript_offset_from_bottom)
+            if self.is_zh_language() {
+                format!(" | 滚动 -{}", self.transcript_offset_from_bottom)
+            } else {
+                format!(" | scroll -{}", self.transcript_offset_from_bottom)
+            }
         } else {
             String::new()
         };
         let mouse_hint = match self.mouse_mode {
-            MouseMode::Scroll => " | mouse scroll",
-            MouseMode::Select => " | mouse select",
+            MouseMode::Scroll => {
+                if self.is_zh_language() {
+                    " | 鼠标滚轮"
+                } else {
+                    " | mouse scroll"
+                }
+            }
+            MouseMode::Select => {
+                if self.is_zh_language() {
+                    " | 鼠标选择"
+                } else {
+                    " | mouse select"
+                }
+            }
         };
         let focus_hint = match self.focus_area {
-            FocusArea::Input => " | focus input",
-            FocusArea::Transcript => " | focus output",
+            FocusArea::Input => {
+                if self.is_zh_language() {
+                    " | 输入焦点"
+                } else {
+                    " | focus input"
+                }
+            }
+            FocusArea::Transcript => {
+                if self.is_zh_language() {
+                    " | 输出焦点"
+                } else {
+                    " | focus output"
+                }
+            }
         };
         format!(
             "  {running_hint}{usage_hint}{scroll_hint}{mouse_hint}{focus_hint} (F2/F3)    {context_summary}"
@@ -347,25 +410,48 @@ impl TuiApp {
 
     pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
         let request = self.active_approval.as_ref()?;
-        let mut lines = vec![
-            format!("id: {}", request.id),
-            format!("tool: {}", request.tool),
-            format!("summary: {}", request.summary),
-            format!("kind: {:?}", request.kind),
-        ];
+        let mut lines = if self.is_zh_language() {
+            vec![
+                format!("编号: {}", request.id),
+                format!("工具: {}", request.tool),
+                format!("摘要: {}", request.summary),
+                format!("类型: {:?}", request.kind),
+            ]
+        } else {
+            vec![
+                format!("id: {}", request.id),
+                format!("tool: {}", request.tool),
+                format!("summary: {}", request.summary),
+                format!("kind: {:?}", request.kind),
+            ]
+        };
 
         let detail = compact_json(&request.detail);
         if !detail.trim().is_empty() {
-            lines.push(format!("detail: {detail}"));
+            if self.is_zh_language() {
+                lines.push(format!("详情: {detail}"));
+            } else {
+                lines.push(format!("detail: {detail}"));
+            }
         }
         let args = compact_json(&request.args);
         if !args.trim().is_empty() {
-            lines.push(format!("args: {args}"));
+            if self.is_zh_language() {
+                lines.push(format!("参数: {args}"));
+            } else {
+                lines.push(format!("args: {args}"));
+            }
         }
         lines.push(String::new());
-        lines.push("1/Enter/Y: approve once".to_string());
-        lines.push("2/A: approve for session".to_string());
-        lines.push("3/N/Esc: deny".to_string());
+        if self.is_zh_language() {
+            lines.push("1/Enter/Y: 仅本次批准".to_string());
+            lines.push("2/A: 本会话批准".to_string());
+            lines.push("3/N/Esc: 拒绝".to_string());
+        } else {
+            lines.push("1/Enter/Y: approve once".to_string());
+            lines.push("2/A: approve for session".to_string());
+            lines.push("3/N/Esc: deny".to_string());
+        }
         Some(lines)
     }
 
@@ -374,6 +460,36 @@ impl TuiApp {
             MouseMode::Scroll => "scroll",
             MouseMode::Select => "select/copy",
         };
+        if self.is_zh_language() {
+            let mouse_mode = if self.mouse_mode == MouseMode::Scroll {
+                "滚轮"
+            } else {
+                "选择/复制"
+            };
+            return vec![
+                "Esc / ?               关闭快捷键面板".to_string(),
+                "Enter                 发送消息".to_string(),
+                "Shift+Enter / Ctrl+J  插入换行".to_string(),
+                "Left / Right          光标左右移动".to_string(),
+                "Ctrl+B / Ctrl+F       光标左右移动".to_string(),
+                "Alt+B / Alt+F         按词移动".to_string(),
+                "Alt+Left/Right        按词移动".to_string(),
+                "Ctrl+W / Alt+Backspace 删除上一个词".to_string(),
+                "Alt+Delete            删除下一个词".to_string(),
+                "Ctrl+U / Ctrl+K       删除到行首/行尾".to_string(),
+                "Ctrl+A / Ctrl+E       移动到行首/行尾".to_string(),
+                "Up / Down             历史消息（多行时为上下移动）".to_string(),
+                "F3                   切换输入/输出焦点".to_string(),
+                "(输出焦点) arrows     选择会话日志条目".to_string(),
+                "Tab                   补全 slash 命令".to_string(),
+                "PgUp/PgDn             滚动输出区".to_string(),
+                "Mouse Wheel           滚动输出区".to_string(),
+                "Shift+Drag            选择/复制（取决于终端）".to_string(),
+                format!("F2                   切换鼠标模式 ({mouse_mode})"),
+                "Ctrl+N / Ctrl+L       新会话 / 清空输出".to_string(),
+                "Ctrl+C                中断 / 双击退出".to_string(),
+            ];
+        }
         vec![
             "Esc / ?               close shortcuts".to_string(),
             "Enter                 send message".to_string(),
@@ -673,7 +789,11 @@ impl TuiApp {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
             let body = trimmed.trim_start_matches('/');
-            return slash_command::popup_lines(body, 7);
+            return slash_command::popup_lines_with_language(
+                body,
+                7,
+                self.display_language.as_str(),
+            );
         }
 
         let cursor = self.input_cursor.min(self.input.len());
@@ -693,7 +813,11 @@ impl TuiApp {
     pub fn popup_title(&self) -> &'static str {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
-            return " Commands ";
+            return if self.is_zh_language() {
+                " 命令 "
+            } else {
+                " Commands "
+            };
         }
         let cursor = self.input_cursor.min(self.input.len());
         let head = &self.input[..cursor];
@@ -703,9 +827,17 @@ impl TuiApp {
             .unwrap_or(0);
         let token = &head[token_start..];
         if token.starts_with('@') {
-            return " Files ";
+            return if self.is_zh_language() {
+                " 文件 "
+            } else {
+                " Files "
+            };
         }
-        " Commands "
+        if self.is_zh_language() {
+            " 命令 "
+        } else {
+            " Commands "
+        }
     }
 
     fn mention_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
@@ -1151,10 +1283,9 @@ impl TuiApp {
 
         let _ = request.respond_to.send(response);
         match response {
-            ApprovalResponse::ApproveOnce => self.push_log(
-                LogKind::Info,
-                format!("approved once: {}", request.summary),
-            ),
+            ApprovalResponse::ApproveOnce => {
+                self.push_log(LogKind::Info, format!("approved once: {}", request.summary))
+            }
             ApprovalResponse::ApproveSession => self.push_log(
                 LogKind::Info,
                 format!("approved for session: {}", request.summary),
@@ -1250,28 +1381,47 @@ impl TuiApp {
         if self.busy {
             self.push_log(
                 LogKind::Error,
-                "assistant is still running, wait for completion before resuming another session"
-                    .to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，请等待完成后再恢复其他会话",
+                    "assistant is still running, wait for completion before resuming another session",
+                ),
             );
             return Ok(());
         }
 
         let cleaned = target.trim();
         if cleaned.is_empty() {
-            self.push_log(LogKind::Error, "session id is empty".to_string());
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "会话 ID 不能为空",
+                    "session id is empty",
+                ),
+            );
             return Ok(());
         }
         if cleaned == self.session_id {
-            self.push_log(LogKind::Info, format!("already using session: {cleaned}"));
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("当前已在会话: {cleaned}"));
+            } else {
+                self.push_log(LogKind::Info, format!("already using session: {cleaned}"));
+            }
             return Ok(());
         }
 
         if !crate::session_exists(&self.runtime, cleaned).await? {
-            self.push_log(LogKind::Error, format!("session not found: {cleaned}"));
-            self.push_log(
-                LogKind::Info,
-                "tip: /resume to list available sessions".to_string(),
-            );
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("会话不存在: {cleaned}"));
+                self.push_log(LogKind::Info, "提示: 用 /resume 列出可用会话".to_string());
+            } else {
+                self.push_log(LogKind::Error, format!("session not found: {cleaned}"));
+                self.push_log(
+                    LogKind::Info,
+                    "tip: /resume to list available sessions".to_string(),
+                );
+            }
             return Ok(());
         }
 
@@ -1308,10 +1458,20 @@ impl TuiApp {
         let restored = self.restore_transcript_from_history(history);
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;
-        self.push_log(
-            LogKind::Info,
-            format!("resumed session: {} ({restored} messages)", self.session_id),
-        );
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!(
+                    "已恢复会话: {}（已恢复 {restored} 条消息）",
+                    self.session_id
+                ),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("resumed session: {} ({restored} messages)", self.session_id),
+            );
+        }
         Ok(())
     }
 
@@ -1374,7 +1534,11 @@ impl TuiApp {
         if restored == 0 {
             self.push_log(
                 LogKind::Info,
-                "history is empty for this session".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "当前会话暂无历史消息",
+                    "history is empty for this session",
+                ),
             );
         }
         restored
@@ -1561,7 +1725,10 @@ impl TuiApp {
             return;
         }
         let cleaned = if cleaned.chars().count() > MAX_HISTORY_ENTRY_CHARS {
-            let mut shortened = cleaned.chars().take(MAX_HISTORY_ENTRY_CHARS).collect::<String>();
+            let mut shortened = cleaned
+                .chars()
+                .take(MAX_HISTORY_ENTRY_CHARS)
+                .collect::<String>();
             shortened.push_str("...(truncated)");
             shortened
         } else {
@@ -2100,7 +2267,8 @@ impl TuiApp {
 
         match command.command {
             SlashCommand::Help => {
-                for help in slash_command::help_lines() {
+                for help in slash_command::help_lines_with_language(self.display_language.as_str())
+                {
                     self.push_log(LogKind::Info, help);
                 }
             }
@@ -2342,6 +2510,7 @@ impl TuiApp {
             &api_key,
             &model_name,
             manual_max_context,
+            self.display_language.as_str(),
         )
         .await?;
 
@@ -2413,9 +2582,13 @@ impl TuiApp {
         }
 
         let target = if cleaned.eq_ignore_ascii_case("last") {
-            self.runtime
-                .load_saved_session()
-                .ok_or_else(|| anyhow!("no saved session found"))?
+            self.runtime.load_saved_session().ok_or_else(|| {
+                anyhow!(crate::locale::tr(
+                    self.display_language.as_str(),
+                    "未找到保存的会话",
+                    "no saved session found",
+                ))
+            })?
         } else if let Ok(index) = cleaned.parse::<usize>() {
             let sessions = crate::list_recent_sessions(&self.runtime, 40).await?;
             let Some(item) = sessions.get(index.saturating_sub(1)) else {
@@ -2442,13 +2615,23 @@ impl TuiApp {
 
         let config = self.runtime.state.config_store.get().await;
         if !config.llm.models.contains_key(target) {
-            self.push_log(LogKind::Error, format!("model not found: {target}"));
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("模型不存在: {target}"));
+            } else {
+                self.push_log(LogKind::Error, format!("model not found: {target}"));
+            }
             let models = crate::sorted_model_names(&config);
             if models.is_empty() {
                 self.push_log(
                     LogKind::Info,
-                    "no models configured. run /config first.".to_string(),
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "尚未配置模型，请先运行 /config",
+                        "no models configured. run /config first.",
+                    ),
                 );
+            } else if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("可用模型: {}", models.join(", ")));
             } else {
                 self.push_log(
                     LogKind::Info,
@@ -2468,7 +2651,11 @@ impl TuiApp {
             .await?;
 
         self.sync_model_status().await;
-        self.push_log(LogKind::Info, format!("model set: {target}"));
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("模型已切换: {target}"));
+        } else {
+            self.push_log(LogKind::Info, format!("model set: {target}"));
+        }
         self.show_model_status().await;
         Ok(())
     }
@@ -2480,18 +2667,33 @@ impl TuiApp {
             .resolve_model_name(self.global.model.as_deref())
             .await
             .unwrap_or_else(|| "<none>".to_string());
-        self.push_log(LogKind::Info, format!("current model: {active_model}"));
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("当前模型: {active_model}"));
+        } else {
+            self.push_log(LogKind::Info, format!("current model: {active_model}"));
+        }
 
         let models = crate::sorted_model_names(&config);
         if models.is_empty() {
             self.push_log(
                 LogKind::Info,
-                "no models configured. run /config first.".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "尚未配置模型，请先运行 /config",
+                    "no models configured. run /config first.",
+                ),
             );
             return;
         }
 
-        self.push_log(LogKind::Info, "available models:".to_string());
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "可用模型：",
+                "available models:",
+            ),
+        );
         for name in models {
             let marker = if name == active_model { "*" } else { " " };
             let mode = config
@@ -2507,16 +2709,30 @@ impl TuiApp {
     async fn handle_tool_call_mode_slash(&mut self, args: &str) -> Result<()> {
         let cleaned = args.trim();
         if cleaned.is_empty() {
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "工具调用模式: 模型={} 模式={}",
+                        self.model_name, self.tool_call_mode
+                    ),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "tool_call_mode: model={} mode={}",
+                        self.model_name, self.tool_call_mode
+                    ),
+                );
+            }
             self.push_log(
                 LogKind::Info,
-                format!(
-                    "tool_call_mode: model={} mode={}",
-                    self.model_name, self.tool_call_mode
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /tool-call-mode <tool_call|function_call> [model]",
+                    "usage: /tool-call-mode <tool_call|function_call> [model]",
                 ),
-            );
-            self.push_log(
-                LogKind::Info,
-                "usage: /tool-call-mode <tool_call|function_call> [model]".to_string(),
             );
             return Ok(());
         }
@@ -2526,20 +2742,39 @@ impl TuiApp {
             return Ok(());
         };
         let Some(mode) = crate::parse_tool_call_mode(mode_token) else {
-            self.push_log(LogKind::Error, format!("invalid mode: {mode_token}"));
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("非法模式: {mode_token}"));
+            } else {
+                self.push_log(LogKind::Error, format!("invalid mode: {mode_token}"));
+            }
             self.push_log(
                 LogKind::Info,
-                "valid modes: tool_call, function_call".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "可选模式: tool_call, function_call",
+                    "valid modes: tool_call, function_call",
+                ),
             );
             return Ok(());
         };
 
         let model = parts.next().map(str::to_string);
         if parts.next().is_some() {
-            self.push_log(LogKind::Error, "too many arguments".to_string());
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "参数过多",
+                    "too many arguments",
+                ),
+            );
             self.push_log(
                 LogKind::Info,
-                "usage: /tool-call-mode <tool_call|function_call> [model]".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /tool-call-mode <tool_call|function_call> [model]",
+                    "usage: /tool-call-mode <tool_call|function_call> [model]",
+                ),
             );
             return Ok(());
         }
@@ -2547,10 +2782,14 @@ impl TuiApp {
         let config = self.runtime.state.config_store.get().await;
         let target_model = if let Some(model_name) = model {
             if !config.llm.models.contains_key(&model_name) {
-                self.push_log(
-                    LogKind::Error,
-                    format!("model not found in config: {model_name}"),
-                );
+                if self.is_zh_language() {
+                    self.push_log(LogKind::Error, format!("配置中不存在模型: {model_name}"));
+                } else {
+                    self.push_log(
+                        LogKind::Error,
+                        format!("model not found in config: {model_name}"),
+                    );
+                }
                 return Ok(());
             }
             model_name
@@ -2558,7 +2797,13 @@ impl TuiApp {
             self.runtime
                 .resolve_model_name(self.global.model.as_deref())
                 .await
-                .ok_or_else(|| anyhow!("no llm model configured"))?
+                .ok_or_else(|| {
+                    anyhow!(crate::locale::tr(
+                        self.display_language.as_str(),
+                        "尚未配置 LLM 模型",
+                        "no llm model configured",
+                    ))
+                })?
         };
 
         let mode_text = mode.as_str().to_string();
@@ -2577,35 +2822,61 @@ impl TuiApp {
             .await?;
 
         self.sync_model_status().await;
-        self.push_log(
-            LogKind::Info,
-            format!(
-                "tool_call_mode set: model={target_model} mode={}",
-                mode.as_str()
-            ),
-        );
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!(
+                    "工具调用模式已设置: 模型={target_model} 模式={}",
+                    mode.as_str()
+                ),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!(
+                    "tool_call_mode set: model={target_model} mode={}",
+                    mode.as_str()
+                ),
+            );
+        }
         Ok(())
     }
 
     async fn handle_approvals_slash(&mut self, args: &str) -> Result<()> {
         let cleaned = args.trim();
         if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("审批模式: {}", self.approval_mode));
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("approval_mode: {}", self.approval_mode),
+                );
+            }
             self.push_log(
                 LogKind::Info,
-                format!("approval_mode: {}", self.approval_mode),
-            );
-            self.push_log(
-                LogKind::Info,
-                "usage: /approvals [show|suggest|auto_edit|full_auto]".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /approvals [show|suggest|auto_edit|full_auto]",
+                    "usage: /approvals [show|suggest|auto_edit|full_auto]",
+                ),
             );
             return Ok(());
         }
 
         let Some(mode) = crate::parse_approval_mode(cleaned) else {
-            self.push_log(LogKind::Error, format!("invalid approval mode: {cleaned}"));
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("非法审批模式: {cleaned}"));
+            } else {
+                self.push_log(LogKind::Error, format!("invalid approval mode: {cleaned}"));
+            }
             self.push_log(
                 LogKind::Info,
-                "valid modes: suggest, auto_edit, full_auto".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "可选模式: suggest, auto_edit, full_auto",
+                    "valid modes: suggest, auto_edit, full_auto",
+                ),
             );
             return Ok(());
         };
@@ -2619,18 +2890,34 @@ impl TuiApp {
             })
             .await?;
         self.sync_model_status().await;
-        self.push_log(
-            LogKind::Info,
-            format!("approval_mode set: {}", mode.as_str()),
-        );
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("审批模式已设置: {}", mode.as_str()));
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("approval_mode set: {}", mode.as_str()),
+            );
+        }
         Ok(())
     }
 
     async fn handle_diff_slash(&mut self) -> Result<()> {
         let root = self.runtime.launch_dir.clone();
-        let lines = tokio::task::spawn_blocking(move || crate::git_diff_summary_lines(root.as_path()))
-            .await
-            .unwrap_or_else(|_| Ok(vec!["diff".to_string(), "[error] diff task cancelled".to_string()]))?;
+        let language = self.display_language.clone();
+        let lines = tokio::task::spawn_blocking(move || {
+            crate::git_diff_summary_lines_with_language(root.as_path(), language.as_str())
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Ok(vec![
+                crate::locale::tr(self.display_language.as_str(), "变更摘要", "diff"),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "[错误] diff 任务已取消",
+                    "[error] diff task cancelled",
+                ),
+            ])
+        })?;
         for line in lines {
             self.push_log(LogKind::Info, line);
         }
@@ -2641,7 +2928,11 @@ impl TuiApp {
         if self.busy {
             self.push_log(
                 LogKind::Error,
-                "assistant is still running, wait for completion before running /review".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，请等待完成后再执行 /review",
+                    "assistant is still running, wait for completion before running /review",
+                ),
             );
             return Ok(());
         }
@@ -2649,8 +2940,13 @@ impl TuiApp {
         let root = self.runtime.launch_dir.clone();
         let focus = args.trim().to_string();
         let focus_for_prompt = focus.clone();
+        let language = self.display_language.clone();
         let prompt = match tokio::task::spawn_blocking(move || {
-            crate::build_review_prompt(root.as_path(), &focus_for_prompt)
+            crate::build_review_prompt_with_language(
+                root.as_path(),
+                &focus_for_prompt,
+                language.as_str(),
+            )
         })
         .await
         {
@@ -2660,7 +2956,11 @@ impl TuiApp {
                 return Ok(());
             }
             Err(err) => {
-                self.push_log(LogKind::Error, format!("review task cancelled: {err}"));
+                if self.is_zh_language() {
+                    self.push_log(LogKind::Error, format!("review 任务已取消: {err}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("review task cancelled: {err}"));
+                }
                 return Ok(());
             }
         };
@@ -2684,7 +2984,10 @@ impl TuiApp {
             self.push_log(LogKind::Info, format!("no files found for: {query}"));
             return Ok(());
         }
-        self.push_log(LogKind::Info, format!("mention results ({})", results.len()));
+        self.push_log(
+            LogKind::Info,
+            format!("mention results ({})", results.len()),
+        );
         for path in results {
             self.push_log(LogKind::Info, path);
         }
@@ -2692,6 +2995,7 @@ impl TuiApp {
     }
 
     async fn sync_model_status(&mut self) {
+        self.display_language = crate::locale::resolve_cli_language(&self.global);
         let config = self.runtime.state.config_store.get().await;
         self.approval_mode = self
             .global
@@ -2726,10 +3030,23 @@ impl TuiApp {
     }
 
     fn session_stats_lines(&self) -> Vec<String> {
+        let is_zh = self.is_zh_language();
         let mut lines = vec![
-            "session".to_string(),
-            format!("- id: {}", self.session_id),
-            format!("- model: {}", self.model_name),
+            if is_zh {
+                "会话".to_string()
+            } else {
+                "session".to_string()
+            },
+            if is_zh {
+                format!("- 会话 ID: {}", self.session_id)
+            } else {
+                format!("- id: {}", self.session_id)
+            },
+            if is_zh {
+                format!("- 模型: {}", self.model_name)
+            } else {
+                format!("- model: {}", self.model_name)
+            },
         ];
 
         if let Some(total) = self.model_max_context {
@@ -2737,7 +3054,16 @@ impl TuiApp {
             let left =
                 crate::context_left_percent(self.session_stats.context_used_tokens, Some(total))
                     .unwrap_or(0);
-            lines.push(format!("- context: {used}/{total} ({left}% left)"));
+            if is_zh {
+                lines.push(format!("- 上下文: {used}/{total} (剩余 {left}%)"));
+            } else {
+                lines.push(format!("- context: {used}/{total} ({left}% left)"));
+            }
+        } else if is_zh {
+            lines.push(format!(
+                "- 上下文: {}/未知",
+                self.session_stats.context_used_tokens.max(0)
+            ));
         } else {
             lines.push(format!(
                 "- context: {}/unknown",
@@ -2745,18 +3071,30 @@ impl TuiApp {
             ));
         }
 
-        lines.push(format!("- model_calls: {}", self.session_stats.model_calls));
-        lines.push(format!("- tool_calls: {}", self.session_stats.tool_calls));
-        lines.push(format!(
-            "- tool_results: {}",
-            self.session_stats.tool_results
-        ));
-        lines.push(format!(
-            "- token_usage: input={} output={} total={}",
-            self.session_stats.total_input_tokens,
-            self.session_stats.total_output_tokens,
-            self.session_stats.total_tokens
-        ));
+        if is_zh {
+            lines.push(format!("- 模型调用: {}", self.session_stats.model_calls));
+            lines.push(format!("- 工具调用: {}", self.session_stats.tool_calls));
+            lines.push(format!("- 工具结果: {}", self.session_stats.tool_results));
+            lines.push(format!(
+                "- token 占用: input={} output={} total={}",
+                self.session_stats.total_input_tokens,
+                self.session_stats.total_output_tokens,
+                self.session_stats.total_tokens
+            ));
+        } else {
+            lines.push(format!("- model_calls: {}", self.session_stats.model_calls));
+            lines.push(format!("- tool_calls: {}", self.session_stats.tool_calls));
+            lines.push(format!(
+                "- tool_results: {}",
+                self.session_stats.tool_results
+            ));
+            lines.push(format!(
+                "- token_usage: input={} output={} total={}",
+                self.session_stats.total_input_tokens,
+                self.session_stats.total_output_tokens,
+                self.session_stats.total_tokens
+            ));
+        }
         lines
     }
 
@@ -2764,50 +3102,117 @@ impl TuiApp {
         let cleaned = args.trim();
         if cleaned.eq_ignore_ascii_case("clear") {
             self.runtime.clear_extra_prompt()?;
-            self.push_log(LogKind::Info, "extra prompt cleared".to_string());
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "额外提示词已清除",
+                    "extra prompt cleared",
+                ),
+            );
         } else if let Some(rest) = cleaned.strip_prefix("set ") {
             let prompt = rest.trim();
             if prompt.is_empty() {
-                self.push_log(LogKind::Error, "extra prompt is empty".to_string());
+                self.push_log(
+                    LogKind::Error,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "额外提示词为空",
+                        "extra prompt is empty",
+                    ),
+                );
                 self.push_log(
                     LogKind::Info,
-                    "usage: /system [set <extra_prompt>|clear]".to_string(),
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "用法: /system [set <extra_prompt>|clear]",
+                        "usage: /system [set <extra_prompt>|clear]",
+                    ),
                 );
                 return Ok(());
             }
             self.runtime.save_extra_prompt(prompt)?;
-            self.push_log(
-                LogKind::Info,
-                format!("extra prompt saved ({} chars)", prompt.chars().count()),
-            );
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!("额外提示词已保存（{} 字符）", prompt.chars().count()),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("extra prompt saved ({} chars)", prompt.chars().count()),
+                );
+            }
         } else if !cleaned.is_empty() && !cleaned.eq_ignore_ascii_case("show") {
-            self.push_log(LogKind::Error, "invalid /system args".to_string());
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "无效的 /system 参数",
+                    "invalid /system args",
+                ),
+            );
             self.push_log(
                 LogKind::Info,
-                "usage: /system [set <extra_prompt>|clear]".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /system [set <extra_prompt>|clear]",
+                    "usage: /system [set <extra_prompt>|clear]",
+                ),
             );
             return Ok(());
         }
 
         let prompt = crate::build_current_system_prompt(&self.runtime, &self.global).await?;
         let extra_prompt = self.runtime.load_extra_prompt();
-        self.push_log(LogKind::Info, "system".to_string());
-        self.push_log(LogKind::Info, format!("- session: {}", self.session_id));
         self.push_log(
             LogKind::Info,
-            format!(
-                "- extra_prompt: {}",
-                extra_prompt
-                    .as_ref()
-                    .map(|value| format!("enabled ({} chars)", value.chars().count()))
-                    .unwrap_or_else(|| "none".to_string())
+            crate::locale::tr(self.display_language.as_str(), "系统提示词", "system"),
+        );
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("- 会话: {}", self.session_id));
+        } else {
+            self.push_log(LogKind::Info, format!("- session: {}", self.session_id));
+        }
+        self.push_log(
+            LogKind::Info,
+            if self.is_zh_language() {
+                format!(
+                    "- 额外提示词: {}",
+                    extra_prompt
+                        .as_ref()
+                        .map(|value| format!("已启用（{} 字符）", value.chars().count()))
+                        .unwrap_or_else(|| "无".to_string())
+                )
+            } else {
+                format!(
+                    "- extra_prompt: {}",
+                    extra_prompt
+                        .as_ref()
+                        .map(|value| format!("enabled ({} chars)", value.chars().count()))
+                        .unwrap_or_else(|| "none".to_string())
+                )
+            },
+        );
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "--- 系统提示词开始 ---",
+                "--- system prompt ---",
             ),
         );
-        self.push_log(LogKind::Info, "--- system prompt ---".to_string());
         for line in prompt.lines() {
             self.push_log(LogKind::Info, line.to_string());
         }
-        self.push_log(LogKind::Info, "--- end system prompt ---".to_string());
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "--- 系统提示词结束 ---",
+                "--- end system prompt ---",
+            ),
+        );
         Ok(())
     }
 
@@ -2842,23 +3247,67 @@ impl TuiApp {
     }
 
     fn status_lines(&self) -> Vec<String> {
+        let is_zh = self.is_zh_language();
         vec![
-            "status".to_string(),
-            format!("- session: {}", self.session_id),
-            format!("- model: {}", self.model_name),
-            format!("- tool_call_mode: {}", self.tool_call_mode),
-            format!("- approval_mode: {}", self.approval_mode),
-            format!("- max_rounds: {}", self.model_max_rounds),
+            if is_zh {
+                "状态".to_string()
+            } else {
+                "status".to_string()
+            },
+            if is_zh {
+                format!("- 会话: {}", self.session_id)
+            } else {
+                format!("- session: {}", self.session_id)
+            },
+            if is_zh {
+                format!("- 模型: {}", self.model_name)
+            } else {
+                format!("- model: {}", self.model_name)
+            },
+            if is_zh {
+                format!("- 工具调用模式: {}", self.tool_call_mode)
+            } else {
+                format!("- tool_call_mode: {}", self.tool_call_mode)
+            },
+            if is_zh {
+                format!("- 审批模式: {}", self.approval_mode)
+            } else {
+                format!("- approval_mode: {}", self.approval_mode)
+            },
+            if is_zh {
+                format!("- 最大轮次: {}", self.model_max_rounds)
+            } else {
+                format!("- max_rounds: {}", self.model_max_rounds)
+            },
             format!(
-                "- mouse_mode: {}",
+                "{} {}",
+                if is_zh {
+                    "- 鼠标模式:"
+                } else {
+                    "- mouse_mode:"
+                },
                 if self.mouse_mode == MouseMode::Scroll {
-                    "scroll"
+                    if is_zh {
+                        "scroll(滚轮)"
+                    } else {
+                        "scroll"
+                    }
+                } else if is_zh {
+                    "select(选择)"
                 } else {
                     "select"
                 }
             ),
-            format!("- workspace: {}", self.runtime.launch_dir.to_string_lossy()),
-            format!("- temp_root: {}", self.runtime.temp_root.to_string_lossy()),
+            if is_zh {
+                format!("- 工作目录: {}", self.runtime.launch_dir.to_string_lossy())
+            } else {
+                format!("- workspace: {}", self.runtime.launch_dir.to_string_lossy())
+            },
+            if is_zh {
+                format!("- 临时目录: {}", self.runtime.temp_root.to_string_lossy())
+            } else {
+                format!("- temp_root: {}", self.runtime.temp_root.to_string_lossy())
+            },
         ]
     }
 
@@ -3073,6 +3522,11 @@ impl TuiApp {
     }
 
     fn push_log(&mut self, kind: LogKind, text: String) -> usize {
+        let text = if matches!(kind, LogKind::Info | LogKind::Error) {
+            localize_cli_notice(self.display_language.as_str(), text.as_str())
+        } else {
+            text
+        };
         self.logs.push(LogEntry { kind, text });
         if self.logs.len() > MAX_LOG_ENTRIES {
             self.logs.remove(0);
@@ -3764,6 +4218,202 @@ fn compact_json(value: &Value) -> String {
         text.push_str("...");
     }
     text
+}
+
+fn localize_cli_notice(language: &str, text: &str) -> String {
+    if !crate::locale::is_zh_language(language) {
+        return text.to_string();
+    }
+
+    if let Some(value) = text.strip_prefix("approved once: ") {
+        return format!("已单次批准: {value}");
+    }
+    if let Some(value) = text.strip_prefix("approved for session: ") {
+        return format!("已批准本会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("denied: ") {
+        return format!("已拒绝: {value}");
+    }
+    if let Some(value) = text.strip_prefix("already using session: ") {
+        return format!("当前已在会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("session not found: ") {
+        return format!("会话不存在: {value}");
+    }
+    if let Some(value) = text.strip_prefix("switched to session: ") {
+        return format!("已切换到会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("resumed session: ") {
+        return format!("已恢复会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model set: ") {
+        return format!("模型已切换: {value}");
+    }
+    if let Some(value) = text.strip_prefix("current model: ") {
+        return format!("当前模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("available models: ") {
+        return format!("可用模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid /mouse args: ") {
+        return format!("无效的 /mouse 参数: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid mode: ") {
+        return format!("非法模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid approval mode: ") {
+        return format!("非法审批模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("no files found for: ") {
+        return format!("未找到文件: {value}");
+    }
+    if let Some(value) = text.strip_prefix("mention results (") {
+        return format!("搜索结果 ({value}");
+    }
+    if let Some(value) = text.strip_prefix("extra prompt saved (") {
+        return format!("额外提示词已保存 ({value}");
+    }
+    if let Some(value) = text.strip_prefix("tool_call_mode set: ") {
+        return format!("工具调用模式已设置: {value}");
+    }
+    if let Some(value) = text.strip_prefix("approval_mode set: ") {
+        return format!("审批模式已设置: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model not found: ") {
+        return format!("模型不存在: {value}");
+    }
+    if let Some(value) = text.strip_prefix("session index out of range: ") {
+        return format!("会话索引越界: {value}");
+    }
+    if let Some(value) = text.strip_prefix("unknown command: ") {
+        return format!("未知命令: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model not found in config: ") {
+        return format!("配置中不存在模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- provider: ") {
+        return format!("- 提供商: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- base_url: ") {
+        return format!("- base_url: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- model: ") {
+        return format!("- 模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- tool_call_mode: ") {
+        return format!("- 工具调用模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- session: ") {
+        return format!("- 会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- id: ") {
+        return format!("- 会话 ID: {value}");
+    }
+    if let Some(value) = text.strip_prefix("review task cancelled: ") {
+        return format!("review 任务已取消: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- extra_prompt: enabled (") {
+        return format!("- 额外提示词: 已启用（{value}");
+    }
+
+    match text {
+        "wunder-cli tui mode. type /help for commands." => {
+            "wunder-cli TUI 模式。输入 /help 查看命令。".to_string()
+        }
+        "no historical sessions found" => "未找到历史会话".to_string(),
+        "tip: start chatting first, then use /resume to switch" => {
+            "提示：先发起对话，再用 /resume 切换。".to_string()
+        }
+        "tip: send a few messages first, then /resume to switch" => {
+            "提示：先发送几条消息，再用 /resume 切换。".to_string()
+        }
+        "focus switched to input" => "焦点已切换到输入区".to_string(),
+        "focus switched to output (arrows now select transcript)" => {
+            "焦点已切换到输出区（方向键可选择日志）".to_string()
+        }
+        "assistant is still running, wait for completion before creating a new session" => {
+            "助手仍在运行，请等待完成后再新建会话".to_string()
+        }
+        "assistant is still running, wait for completion before sending a new prompt" => {
+            "助手仍在运行，请等待完成后再发送新消息".to_string()
+        }
+        "assistant is still running, wait for completion before running /review" => {
+            "助手仍在运行，请等待完成后再执行 /review".to_string()
+        }
+        "assistant is still running, wait for completion before resuming another session" => {
+            "助手仍在运行，请等待完成后再恢复其他会话".to_string()
+        }
+        "interrupt requested, waiting for running round to stop..." => {
+            "已请求中断，等待当前轮次停止...".to_string()
+        }
+        "no cancellable round found, press Ctrl+C again to exit" => {
+            "未找到可中断轮次，再按一次 Ctrl+C 退出".to_string()
+        }
+        "press Ctrl+C again to exit (or wait to continue)" => {
+            "再按一次 Ctrl+C 退出（或等待继续）".to_string()
+        }
+        "usage: /mention <query>" => "用法: /mention <query>".to_string(),
+        "usage: /approvals [show|suggest|auto_edit|full_auto]" => {
+            "用法: /approvals [show|suggest|auto_edit|full_auto]".to_string()
+        }
+        "valid modes: suggest, auto_edit, full_auto" => {
+            "可选模式: suggest, auto_edit, full_auto".to_string()
+        }
+        "usage: /tool-call-mode <tool_call|function_call> [model]" => {
+            "用法: /tool-call-mode <tool_call|function_call> [model]".to_string()
+        }
+        "valid modes: tool_call, function_call" => "可选模式: tool_call, function_call".to_string(),
+        "too many arguments" => "参数过多".to_string(),
+        "config values cannot be empty" => "配置值不能为空".to_string(),
+        "configure llm model (step 1/4)" => "配置 LLM 模型（步骤 1/4）".to_string(),
+        "config cancelled" => "配置已取消".to_string(),
+        "input base_url (empty line to cancel)" => "请输入 base_url（空行取消）".to_string(),
+        "input api_key (step 2/4)" => "请输入 api_key（步骤 2/4）".to_string(),
+        "input model name (step 3/4)" => "请输入模型名称（步骤 3/4）".to_string(),
+        "input max_context (step 4/4, optional; Enter for auto probe)" => {
+            "请输入 max_context（步骤 4/4，可选；回车自动探测）".to_string()
+        }
+        "model configured" => "模型配置完成".to_string(),
+        "- max_context: auto probe unavailable (or keep existing)" => {
+            "- max_context: 自动探测不可用（或保留现有值）".to_string()
+        }
+        "mouse mode: scroll (wheel enabled)" => "鼠标模式：scroll（启用滚轮）".to_string(),
+        "mouse mode: select/copy (wheel disabled)" => {
+            "鼠标模式：select/copy（禁用滚轮）".to_string()
+        }
+        "usage: /mouse [scroll|select]  (F2 to toggle)" => {
+            "用法: /mouse [scroll|select]  （F2 切换）".to_string()
+        }
+        "resume picker opened (Up/Down to choose, Enter to resume, Esc to cancel)" => {
+            "已打开会话恢复面板（上下选择，Enter 恢复，Esc 取消）".to_string()
+        }
+        "tip: /resume to list available sessions" => "提示: 用 /resume 列出可用会话".to_string(),
+        "tip: run /resume list to inspect available sessions" => {
+            "提示: 运行 /resume list 查看可用会话".to_string()
+        }
+        "type /help to list available slash commands" => {
+            "输入 /help 查看可用 slash 命令".to_string()
+        }
+        "available models:" => "可用模型：".to_string(),
+        "no models configured. run /config first." => "尚未配置模型，请先运行 /config".to_string(),
+        "no saved session found" => "未找到保存的会话".to_string(),
+        "no llm model configured" => "尚未配置 LLM 模型".to_string(),
+        "session id is empty" => "会话 ID 不能为空".to_string(),
+        "extra prompt cleared" => "额外提示词已清除".to_string(),
+        "extra prompt is empty" => "额外提示词为空".to_string(),
+        "- extra_prompt: none" => "- 额外提示词: 无".to_string(),
+        "usage: /system [set <extra_prompt>|clear]" => {
+            "用法: /system [set <extra_prompt>|clear]".to_string()
+        }
+        "invalid /system args" => "无效的 /system 参数".to_string(),
+        "system" => "系统提示词".to_string(),
+        "--- system prompt ---" => "--- 系统提示词开始 ---".to_string(),
+        "--- end system prompt ---" => "--- 系统提示词结束 ---".to_string(),
+        "stream ended without model output or final answer" => {
+            "流式输出结束，但未收到模型输出或最终答案".to_string()
+        }
+        _ => text.to_string(),
+    }
 }
 
 fn build_workspace_file_index(root: &std::path::Path) -> Vec<IndexedFile> {

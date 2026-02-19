@@ -2,44 +2,42 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 12 页：智能体功能演示，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="智能体功能演示">
-        <div class="slide-meta">
-          <span class="section-tag">第3节 工作区</span>
-          <div class="section-map">
-            <a class="section-chip" href="#11">工作区</a>
-            <a class="section-chip active" href="#12">功能演示</a>
-          </div>
-        </div>
-        <h2>智能体功能演示：画爱心并保存</h2>
-        <p class="section-lead">证明“工具 + 工作区”闭环</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">演示步骤</span>
-            <ul>
-              <li>提问：请用 Python 画一颗爱心</li>
-              <li>执行：生成图片并保存到临时文件区</li>
-              <li>下载：用户将结果保存到本地</li>
-            </ul>
-            <div class="note">
-              <strong>结果：</strong>从一句话到可交付文件
-            </div>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/demo-heart.svg" alt="爱心产物示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="蜂群协作">
+  <div class="slide-meta">
+    <span class="section-tag">第3节 能力底座</span>
+    <div class="section-map">
+      <a class="section-chip" href="#8">总览</a>
+      <a class="section-chip" href="#9">工作区</a>
+      <a class="section-chip" href="#10">提示词治理</a>
+      <a class="section-chip" href="#11">记忆压缩</a>
+      <a class="section-chip active" href="#12">蜂群协作</a>
+    </div>
+  </div>
+  <h2>蜂群协作：TeamRun / TeamTask 并行收敛</h2>
+  <p class="section-lead">复杂任务可拆分并行执行，再统一归并输出</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">触发方式</span>
+      <p>会话内通过 agent_swarm 工具创建 TeamRun。</p>
+      <span class="pill">执行过程</span>
+      <p>母任务拆解 TeamTask，子智能体并行执行后汇总。</p>
+      <span class="pill">可观测性</span>
+      <p>team_* 事件实时回传，前端可展示任务进度面板。</p>
+      <span class="pill">当前策略</span>
+      <p>保留 hive_id 作用域能力，产品侧默认单蜂巢 default。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/swarm-teamrun-flow.svg" alt="蜂群协作 TeamRun 流程示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

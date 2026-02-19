@@ -104,7 +104,11 @@ fn normalize_locale(raw: Option<&str>) -> String {
 
 fn resolve_packs_root(config: &Config) -> PathBuf {
     let root = config.prompt_templates.root.trim();
-    let selected = if root.is_empty() { DEFAULT_PACKS_ROOT } else { root };
+    let selected = if root.is_empty() {
+        DEFAULT_PACKS_ROOT
+    } else {
+        root
+    };
     let path = PathBuf::from(selected);
     if path.is_absolute() {
         path
@@ -161,9 +165,7 @@ fn resolve_segment_path(pack_root: &Path, locale: &str, key: &str) -> Result<Pat
             format!("unknown segment key: {key}"),
         ));
     };
-    Ok(pack_root.join(format!(
-        "prompts/{locale}/system/{file_name}"
-    )))
+    Ok(pack_root.join(format!("prompts/{locale}/system/{file_name}")))
 }
 
 async fn list_prompt_templates(
@@ -308,7 +310,9 @@ async fn get_prompt_template_file(
         let fallback_root = resolve_pack_root(&config, DEFAULT_PACK_ID);
         let fallback_path = resolve_segment_path(&fallback_root, &locale, key)?;
         (
-            tokio::fs::read_to_string(&fallback_path).await.unwrap_or_default(),
+            tokio::fs::read_to_string(&fallback_path)
+                .await
+                .unwrap_or_default(),
             true,
         )
     } else {
@@ -442,7 +446,9 @@ async fn create_prompt_template_pack(
     for locale in ["zh", "en"] {
         for (key, _) in SYSTEM_SEGMENTS {
             let src_path = resolve_segment_path(&src_root, locale, key)?;
-            let content = tokio::fs::read_to_string(&src_path).await.unwrap_or_default();
+            let content = tokio::fs::read_to_string(&src_path)
+                .await
+                .unwrap_or_default();
             let dst_path = resolve_segment_path(&pack_root, locale, key)?;
             if let Some(parent) = dst_path.parent() {
                 tokio::fs::create_dir_all(parent)

@@ -1,4 +1,5 @@
 mod args;
+mod locale;
 mod render;
 mod runtime;
 mod slash_command;
@@ -13,8 +14,8 @@ use args::{
     SkillsSubcommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
 };
 use chrono::{Local, TimeZone};
+use clap::CommandFactory;
 use clap::Parser;
-use clap::{CommandFactory};
 use clap_complete::generate;
 use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
@@ -26,7 +27,9 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
-use wunder_server::approval::{new_channel as new_approval_channel, ApprovalRequestRx, ApprovalResponse};
+use wunder_server::approval::{
+    new_channel as new_approval_channel, ApprovalRequestRx, ApprovalResponse,
+};
 use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_window};
 use wunder_server::schemas::WunderRequest;
@@ -70,8 +73,8 @@ async fn dispatch_command(
         Command::Resume(cmd) => handle_resume(runtime, global, cmd).await,
         Command::Exec(cmd) => handle_exec(runtime, global, cmd).await,
         Command::Tool(cmd) => handle_tool(runtime, global, cmd).await,
-        Command::Mcp(cmd) => handle_mcp(runtime, cmd).await,
-        Command::Skills(cmd) => handle_skills(runtime, cmd).await,
+        Command::Mcp(cmd) => handle_mcp(runtime, global, cmd).await,
+        Command::Skills(cmd) => handle_skills(runtime, global, cmd).await,
         Command::Config(cmd) => handle_config(runtime, global, cmd).await,
         Command::Doctor(cmd) => handle_doctor(runtime, global, cmd).await,
         Command::Completion(cmd) => handle_completion(cmd).await,
@@ -89,8 +92,9 @@ async fn run_default(
     global: &GlobalArgs,
     prompt: Option<String>,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     if let Some(prompt) = prompt {
-        let prompt = resolve_prompt_text(Some(prompt))?;
+        let prompt = resolve_prompt_text(Some(prompt), language.as_str())?;
         let session_id = global
             .session
             .clone()
@@ -100,7 +104,7 @@ async fn run_default(
     }
 
     if !io::stdin().is_terminal() {
-        let prompt = resolve_prompt_text(None)?;
+        let prompt = resolve_prompt_text(None, language.as_str())?;
         let session_id = global
             .session
             .clone()
@@ -117,7 +121,8 @@ async fn run_default(
 }
 
 async fn handle_ask(runtime: &CliRuntime, global: &GlobalArgs, command: AskCommand) -> Result<()> {
-    let prompt = resolve_prompt_text(command.prompt)?;
+    let language = locale::resolve_cli_language(global);
+    let prompt = resolve_prompt_text(command.prompt, language.as_str())?;
     let session_id = global
         .session
         .clone()
@@ -139,15 +144,20 @@ async fn handle_resume(
     global: &GlobalArgs,
     mut command: ResumeCommand,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     if command.last && command.prompt.is_none() {
         // Clap cannot express this positional behavior directly.
         command.prompt = command.session_id.take();
     }
 
     let session_id = if command.last {
-        runtime
-            .load_saved_session()
-            .ok_or_else(|| anyhow!("no saved session found, start with `wunder-cli chat` first"))?
+        runtime.load_saved_session().ok_or_else(|| {
+            anyhow!(locale::tr(
+                language.as_str(),
+                "未找到保存的会话，请先使用 `wunder-cli chat` 开始对话",
+                "no saved session found, start with `wunder-cli chat` first",
+            ))
+        })?
     } else if let Some(session_id) = command
         .session_id
         .as_deref()
@@ -162,7 +172,7 @@ async fn handle_resume(
     runtime.save_session(&session_id).ok();
 
     let first_prompt = match command.prompt {
-        Some(prompt) => Some(resolve_prompt_text(Some(prompt))?),
+        Some(prompt) => Some(resolve_prompt_text(Some(prompt), language.as_str())?),
         None => None,
     };
     if should_run_tui(global) {
@@ -185,6 +195,7 @@ async fn run_chat_loop(
     first_prompt: Option<String>,
     session_override: Option<String>,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     let mut session_id =
         session_override.unwrap_or_else(|| runtime.resolve_session(global.session.as_deref()));
     runtime.save_session(&session_id).ok();
@@ -192,8 +203,19 @@ async fn run_chat_loop(
     let mut first = first_prompt
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    println!("wunder-cli interactive mode. type /help for commands.");
-    println!("session: {session_id}");
+    println!(
+        "{}",
+        locale::tr(
+            language.as_str(),
+            "wunder-cli 交互模式。输入 /help 查看命令。",
+            "wunder-cli interactive mode. type /help for commands.",
+        )
+    );
+    if locale::is_zh_language(language.as_str()) {
+        println!("会话: {session_id}");
+    } else {
+        println!("session: {session_id}");
+    }
 
     loop {
         let input = if let Some(prompt) = first.take() {
@@ -221,8 +243,13 @@ async fn run_chat_loop(
                 }
                 continue;
             }
-            println!("[error] unknown command: {trimmed}");
-            println!("type /help to list available slash commands");
+            if locale::is_zh_language(language.as_str()) {
+                println!("[错误] 未知命令: {trimmed}");
+                println!("输入 /help 查看可用 slash 命令");
+            } else {
+                println!("[error] unknown command: {trimmed}");
+                println!("type /help to list available slash commands");
+            }
             continue;
         }
 
@@ -239,9 +266,10 @@ async fn handle_chat_slash_command(
     session_id: &mut String,
     command: ParsedSlashCommand<'_>,
 ) -> Result<bool> {
+    let language = locale::resolve_cli_language(global);
     match command.command {
         SlashCommand::Help => {
-            for line in slash_command::help_lines() {
+            for line in slash_command::help_lines_with_language(language.as_str()) {
                 println!("{line}");
             }
             Ok(false)
@@ -259,17 +287,28 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Mouse => {
-            println!("/mouse is available in TUI mode only (default `wunder-cli` on TTY)");
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "/mouse 仅在 TUI 模式可用（TTY 下默认直接运行 `wunder-cli`）",
+                    "/mouse is available in TUI mode only (default `wunder-cli` on TTY)",
+                )
+            );
             Ok(false)
         }
         SlashCommand::Resume => {
-            handle_slash_resume(runtime, session_id, command.args).await?;
+            handle_slash_resume(runtime, global, session_id, command.args).await?;
             Ok(false)
         }
         SlashCommand::New => {
             *session_id = uuid::Uuid::new_v4().simple().to_string();
             runtime.save_session(session_id).ok();
-            println!("switched to session: {session_id}");
+            if locale::is_zh_language(language.as_str()) {
+                println!("已切换到会话: {session_id}");
+            } else {
+                println!("switched to session: {session_id}");
+            }
             Ok(false)
         }
         SlashCommand::Config => {
@@ -289,18 +328,26 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Approvals => {
-            handle_slash_approvals(runtime, command.args).await?;
+            handle_slash_approvals(runtime, global, command.args).await?;
             Ok(false)
         }
         SlashCommand::Diff => {
-            print_git_diff_summary(runtime.launch_dir.as_path())?;
+            print_git_diff_summary(runtime.launch_dir.as_path(), language.as_str())?;
             Ok(false)
         }
         SlashCommand::Review => {
-            let prompt = match build_review_prompt(runtime.launch_dir.as_path(), command.args) {
+            let prompt = match build_review_prompt_with_language(
+                runtime.launch_dir.as_path(),
+                command.args,
+                language.as_str(),
+            ) {
                 Ok(prompt) => prompt,
                 Err(err) => {
-                    println!("[error] {err}");
+                    if locale::is_zh_language(language.as_str()) {
+                        println!("[错误] {err}");
+                    } else {
+                        println!("[error] {err}");
+                    }
                     return Ok(false);
                 }
             };
@@ -310,7 +357,14 @@ async fn handle_chat_slash_command(
         SlashCommand::Mention => {
             let query = command.args.trim();
             if query.is_empty() {
-                println!("usage: /mention <query>");
+                println!(
+                    "{}",
+                    locale::tr(
+                        language.as_str(),
+                        "用法: /mention <query>",
+                        "usage: /mention <query>",
+                    )
+                );
                 return Ok(false);
             }
             for path in search_workspace_files(runtime.launch_dir.as_path(), query, 20) {
@@ -634,6 +688,8 @@ async fn print_runtime_status(
     global: &GlobalArgs,
     session_id: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let config = runtime.state.config_store.get().await;
     let model_name = runtime
         .resolve_model_name(global.model.as_deref())
@@ -653,22 +709,45 @@ async fn print_runtime_status(
     let stats = load_session_stats(runtime, session_id).await;
     let approval_mode = resolve_effective_approval_mode(&config, global.approval_mode);
 
-    println!("status");
-    println!("- session: {session_id}");
-    println!("- model: {model_name}");
-    println!("- tool_call_mode: {tool_call_mode}");
-    println!("- approval_mode: {approval_mode}");
-    println!("- max_rounds: {max_rounds}");
+    println!("{}", locale::tr(language.as_str(), "状态", "status"));
+    if is_zh {
+        println!("- 会话: {session_id}");
+    } else {
+        println!("- session: {session_id}");
+    }
+    if is_zh {
+        println!("- 模型: {model_name}");
+        println!("- 工具调用模式: {tool_call_mode}");
+        println!("- 审批模式: {approval_mode}");
+        println!("- 最大轮次: {max_rounds}");
+    } else {
+        println!("- model: {model_name}");
+        println!("- tool_call_mode: {tool_call_mode}");
+        println!("- approval_mode: {approval_mode}");
+        println!("- max_rounds: {max_rounds}");
+    }
     if let Some(total) = max_context {
         let used = stats.context_used_tokens.max(0) as u64;
         let left = context_left_percent(stats.context_used_tokens, Some(total)).unwrap_or(0);
-        println!("- context: {used}/{total} ({left}% left)");
+        if is_zh {
+            println!("- 上下文: {used}/{total} (剩余 {left}%)");
+        } else {
+            println!("- context: {used}/{total} ({left}% left)");
+        }
+    } else if is_zh {
+        println!("- 上下文: {}/未知", stats.context_used_tokens.max(0));
     } else {
         println!("- context: {}/unknown", stats.context_used_tokens.max(0));
     }
-    println!("- workspace: {}", config.workspace.root);
-    println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
-    println!("- db_path: {}", config.storage.db_path);
+    if is_zh {
+        println!("- 工作目录: {}", config.workspace.root);
+        println!("- 临时目录: {}", runtime.temp_root.to_string_lossy());
+        println!("- 数据库路径: {}", config.storage.db_path);
+    } else {
+        println!("- workspace: {}", config.workspace.root);
+        println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
+        println!("- db_path: {}", config.storage.db_path);
+    }
     Ok(())
 }
 
@@ -677,6 +756,8 @@ async fn print_session_stats(
     global: &GlobalArgs,
     session_id: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let config = runtime.state.config_store.get().await;
     let model_name = runtime
         .resolve_model_name(global.model.as_deref())
@@ -688,41 +769,73 @@ async fn print_session_stats(
         .filter(|value| *value > 0);
     let stats = load_session_stats(runtime, session_id).await;
 
-    println!("session");
-    println!("- id: {session_id}");
-    println!("- model: {model_name}");
+    println!("{}", locale::tr(language.as_str(), "会话", "session"));
+    if is_zh {
+        println!("- 会话 ID: {session_id}");
+    } else {
+        println!("- id: {session_id}");
+    }
+    if is_zh {
+        println!("- 模型: {model_name}");
+    } else {
+        println!("- model: {model_name}");
+    }
     if let Some(total) = max_context {
         let used = stats.context_used_tokens.max(0) as u64;
         let left = context_left_percent(stats.context_used_tokens, Some(total)).unwrap_or(0);
-        println!("- context: {used}/{total} ({left}% left)");
+        if is_zh {
+            println!("- 上下文: {used}/{total} (剩余 {left}%)");
+        } else {
+            println!("- context: {used}/{total} ({left}% left)");
+        }
+    } else if is_zh {
+        println!("- 上下文: {}/未知", stats.context_used_tokens.max(0));
     } else {
         println!("- context: {}/unknown", stats.context_used_tokens.max(0));
     }
-    println!("- model_calls: {}", stats.model_calls);
-    println!("- tool_calls: {}", stats.tool_calls);
-    println!("- tool_results: {}", stats.tool_results);
-    println!(
-        "- token_usage: input={} output={} total={}",
-        stats.total_input_tokens, stats.total_output_tokens, stats.total_tokens
-    );
+    if is_zh {
+        println!("- 模型调用: {}", stats.model_calls);
+        println!("- 工具调用: {}", stats.tool_calls);
+        println!("- 工具结果: {}", stats.tool_results);
+        println!(
+            "- token 占用: input={} output={} total={}",
+            stats.total_input_tokens, stats.total_output_tokens, stats.total_tokens
+        );
+    } else {
+        println!("- model_calls: {}", stats.model_calls);
+        println!("- tool_calls: {}", stats.tool_calls);
+        println!("- tool_results: {}", stats.tool_results);
+        println!(
+            "- token_usage: input={} output={} total={}",
+            stats.total_input_tokens, stats.total_output_tokens, stats.total_tokens
+        );
+    }
     Ok(())
 }
 
 async fn handle_slash_resume(
     runtime: &CliRuntime,
+    global: &GlobalArgs,
     session_id: &mut String,
     args: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let cleaned = args.trim();
     if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
         let sessions = list_recent_sessions(runtime, 20).await?;
         if sessions.is_empty() {
-            println!("[info] no historical sessions found");
-            println!("tip: start chatting first, then use /resume to switch");
+            if is_zh {
+                println!("[提示] 未找到历史会话");
+                println!("提示: 先开始对话，再使用 /resume 切换");
+            } else {
+                println!("[info] no historical sessions found");
+                println!("tip: start chatting first, then use /resume to switch");
+            }
             return Ok(());
         }
 
-        println!("resume");
+        println!("{}", locale::tr(language.as_str(), "恢复会话", "resume"));
         for (index, item) in sessions.iter().enumerate() {
             let marker = if item.session_id == *session_id {
                 "*"
@@ -738,18 +851,33 @@ async fn handle_slash_resume(
                 item.title,
             );
         }
-        println!("usage: /resume <session_id|index|last>");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "用法: /resume <session_id|index|last>",
+                "usage: /resume <session_id|index|last>",
+            )
+        );
         return Ok(());
     }
 
     let target = if cleaned.eq_ignore_ascii_case("last") {
-        runtime
-            .load_saved_session()
-            .ok_or_else(|| anyhow!("no saved session found"))?
+        runtime.load_saved_session().ok_or_else(|| {
+            anyhow!(locale::tr(
+                language.as_str(),
+                "未找到保存的会话",
+                "no saved session found",
+            ))
+        })?
     } else if let Ok(index) = cleaned.parse::<usize>() {
         let sessions = list_recent_sessions(runtime, 20).await?;
         let Some(item) = sessions.get(index.saturating_sub(1)) else {
-            println!("[error] session index out of range: {index}");
+            if is_zh {
+                println!("[错误] 会话索引越界: {index}");
+            } else {
+                println!("[error] session index out of range: {index}");
+            }
             return Ok(());
         };
         item.session_id.clone()
@@ -758,13 +886,22 @@ async fn handle_slash_resume(
     };
 
     if target == *session_id {
-        println!("already using session: {target}");
+        if is_zh {
+            println!("当前已在会话: {target}");
+        } else {
+            println!("already using session: {target}");
+        }
         return Ok(());
     }
 
     if !session_exists(runtime, &target).await? {
-        println!("[error] session not found: {target}");
-        println!("tip: run /resume list to inspect available sessions");
+        if is_zh {
+            println!("[错误] 会话不存在: {target}");
+            println!("提示: 运行 /resume list 查看可用会话");
+        } else {
+            println!("[error] session not found: {target}");
+            println!("tip: run /resume list to inspect available sessions");
+        }
         return Ok(());
     }
 
@@ -774,7 +911,11 @@ async fn handle_slash_resume(
         .await
         .map(|entries| entries.len())
         .unwrap_or(0);
-    println!("resumed session: {session_id} ({history_count} messages restored)");
+    if is_zh {
+        println!("已恢复会话: {session_id}（已恢复 {history_count} 条消息）");
+    } else {
+        println!("resumed session: {session_id} ({history_count} messages restored)");
+    }
     Ok(())
 }
 
@@ -784,41 +925,96 @@ async fn handle_slash_system(
     session_id: &str,
     args: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let cleaned = args.trim();
     if cleaned.eq_ignore_ascii_case("clear") {
         runtime.clear_extra_prompt()?;
-        println!("extra prompt cleared");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "额外提示词已清除",
+                "extra prompt cleared"
+            )
+        );
         return Ok(());
     }
     if let Some(rest) = cleaned.strip_prefix("set ") {
         let prompt = rest.trim();
         if prompt.is_empty() {
-            println!("[error] extra prompt is empty");
-            println!("usage: /system [set <extra_prompt>|clear]");
+            if is_zh {
+                println!("[错误] 额外提示词为空");
+                println!("用法: /system [set <extra_prompt>|clear]");
+            } else {
+                println!("[error] extra prompt is empty");
+                println!("usage: /system [set <extra_prompt>|clear]");
+            }
             return Ok(());
         }
         runtime.save_extra_prompt(prompt)?;
-        println!("extra prompt saved ({} chars)", prompt.chars().count());
+        if is_zh {
+            println!("额外提示词已保存（{} 字符）", prompt.chars().count());
+        } else {
+            println!("extra prompt saved ({} chars)", prompt.chars().count());
+        }
     } else if !cleaned.is_empty() && !cleaned.eq_ignore_ascii_case("show") {
-        println!("[error] invalid /system args");
-        println!("usage: /system [set <extra_prompt>|clear]");
+        if is_zh {
+            println!("[错误] 无效的 /system 参数");
+            println!("用法: /system [set <extra_prompt>|clear]");
+        } else {
+            println!("[error] invalid /system args");
+            println!("usage: /system [set <extra_prompt>|clear]");
+        }
         return Ok(());
     }
 
     let prompt = build_current_system_prompt(runtime, global).await?;
     let extra = runtime.load_extra_prompt();
-    println!("system");
-    println!("- session: {session_id}");
+    println!("{}", locale::tr(language.as_str(), "系统提示词", "system"));
     println!(
-        "- extra_prompt: {}",
-        extra
-            .as_ref()
-            .map(|value| format!("enabled ({} chars)", value.chars().count()))
-            .unwrap_or_else(|| "none".to_string())
+        "{}",
+        if is_zh {
+            format!("- 会话: {session_id}")
+        } else {
+            format!("- session: {session_id}")
+        }
     );
-    println!("--- system prompt ---");
+    let extra_prompt = extra
+        .as_ref()
+        .map(|value| {
+            if is_zh {
+                format!("已启用（{} 字符）", value.chars().count())
+            } else {
+                format!("enabled ({} chars)", value.chars().count())
+            }
+        })
+        .unwrap_or_else(|| locale::tr(language.as_str(), "无", "none"));
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 额外提示词: {extra_prompt}")
+        } else {
+            format!("- extra_prompt: {extra_prompt}")
+        }
+    );
+    println!(
+        "{}",
+        locale::tr(
+            language.as_str(),
+            "--- 系统提示词开始 ---",
+            "--- system prompt ---"
+        )
+    );
     println!("{prompt}");
-    println!("--- end system prompt ---");
+    println!(
+        "{}",
+        locale::tr(
+            language.as_str(),
+            "--- 系统提示词结束 ---",
+            "--- end system prompt ---",
+        )
+    );
     Ok(())
 }
 
@@ -862,6 +1058,8 @@ pub(crate) async fn build_current_system_prompt(
 }
 
 async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &str) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let target = args.trim();
     if target.is_empty() {
         show_model_status(runtime, global).await?;
@@ -870,10 +1068,23 @@ async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &st
 
     let config = runtime.state.config_store.get().await;
     if !config.llm.models.contains_key(target) {
-        println!("[error] model not found: {target}");
+        if is_zh {
+            println!("[错误] 模型不存在: {target}");
+        } else {
+            println!("[error] model not found: {target}");
+        }
         let models = sorted_model_names(&config);
         if models.is_empty() {
-            println!("no models configured. run /config first.");
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "尚未配置模型，请先运行 /config",
+                    "no models configured. run /config first.",
+                )
+            );
+        } else if is_zh {
+            println!("可用模型: {}", models.join(", "));
         } else {
             println!("available models: {}", models.join(", "));
         }
@@ -889,26 +1100,46 @@ async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &st
         })
         .await?;
 
-    println!("model set: {target}");
+    if is_zh {
+        println!("模型已切换: {target}");
+    } else {
+        println!("model set: {target}");
+    }
     show_model_status(runtime, global).await?;
     Ok(())
 }
 
 async fn show_model_status(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let config = runtime.state.config_store.get().await;
     let active_model = runtime
         .resolve_model_name(global.model.as_deref())
         .await
         .unwrap_or_else(|| "<none>".to_string());
-    println!("current model: {active_model}");
+    if is_zh {
+        println!("当前模型: {active_model}");
+    } else {
+        println!("current model: {active_model}");
+    }
 
     let models = sorted_model_names(&config);
     if models.is_empty() {
-        println!("no models configured. run /config first.");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "尚未配置模型，请先运行 /config",
+                "no models configured. run /config first.",
+            )
+        );
         return Ok(());
     }
 
-    println!("available models:");
+    println!(
+        "{}",
+        locale::tr(language.as_str(), "可用模型：", "available models:")
+    );
     for name in models {
         let marker = if name == active_model { "*" } else { " " };
         let model_entry = config.llm.models.get(&name);
@@ -923,8 +1154,14 @@ async fn show_model_status(runtime: &CliRuntime, global: &GlobalArgs) -> Result<
             .and_then(|model| model.max_context)
             .filter(|value| *value > 0)
             .map(|value| value.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        println!("{marker} {name} ({mode}, max_rounds={max_rounds}, max_context={max_context})");
+            .unwrap_or_else(|| locale::tr(language.as_str(), "未知", "unknown"));
+        if is_zh {
+            println!("{marker} {name} ({mode}, 最大轮次={max_rounds}, 上下文上限={max_context})");
+        } else {
+            println!(
+                "{marker} {name} ({mode}, max_rounds={max_rounds}, max_context={max_context})"
+            );
+        }
     }
     Ok(())
 }
@@ -934,6 +1171,8 @@ async fn handle_slash_tool_call_mode(
     global: &GlobalArgs,
     args: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let cleaned = args.trim();
     if cleaned.is_empty() {
         let config = runtime.state.config_store.get().await;
@@ -947,8 +1186,19 @@ async fn handle_slash_tool_call_mode(
             .get(&model_name)
             .and_then(|model| model.tool_call_mode.as_deref())
             .unwrap_or("tool_call");
-        println!("tool_call_mode: model={model_name} mode={mode}");
-        println!("usage: /tool-call-mode <tool_call|function_call> [model]");
+        if is_zh {
+            println!("工具调用模式: 模型={model_name} 模式={mode}");
+        } else {
+            println!("tool_call_mode: model={model_name} mode={mode}");
+        }
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "用法: /tool-call-mode <tool_call|function_call> [model]",
+                "usage: /tool-call-mode <tool_call|function_call> [model]",
+            )
+        );
         return Ok(());
     }
 
@@ -957,15 +1207,25 @@ async fn handle_slash_tool_call_mode(
         return Ok(());
     };
     let Some(mode) = parse_tool_call_mode(mode_token) else {
-        println!("[error] invalid mode: {mode_token}");
-        println!("valid modes: tool_call, function_call");
+        if is_zh {
+            println!("[错误] 非法模式: {mode_token}");
+            println!("可选模式: tool_call, function_call");
+        } else {
+            println!("[error] invalid mode: {mode_token}");
+            println!("valid modes: tool_call, function_call");
+        }
         return Ok(());
     };
 
     let model = parts.next().map(str::to_string);
     if parts.next().is_some() {
-        println!("[error] too many arguments");
-        println!("usage: /tool-call-mode <tool_call|function_call> [model]");
+        if is_zh {
+            println!("[错误] 参数过多");
+            println!("用法: /tool-call-mode <tool_call|function_call> [model]");
+        } else {
+            println!("[error] too many arguments");
+            println!("usage: /tool-call-mode <tool_call|function_call> [model]");
+        }
         return Ok(());
     }
 
@@ -980,7 +1240,13 @@ fn parse_tool_call_mode(raw: &str) -> Option<ToolCallModeArg> {
     }
 }
 
-async fn handle_slash_approvals(runtime: &CliRuntime, args: &str) -> Result<()> {
+async fn handle_slash_approvals(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    args: &str,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let cleaned = args.trim();
     if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
         let config = runtime.state.config_store.get().await;
@@ -991,18 +1257,34 @@ async fn handle_slash_approvals(runtime: &CliRuntime, args: &str) -> Result<()> 
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("full_auto");
-        println!("approval_mode: {mode}");
-        println!("usage: /approvals [show|suggest|auto_edit|full_auto]");
+        if is_zh {
+            println!("审批模式: {mode}");
+        } else {
+            println!("approval_mode: {mode}");
+        }
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "用法: /approvals [show|suggest|auto_edit|full_auto]",
+                "usage: /approvals [show|suggest|auto_edit|full_auto]",
+            )
+        );
         return Ok(());
     }
 
     let Some(mode) = parse_approval_mode(cleaned) else {
-        println!("[error] invalid approval mode: {cleaned}");
-        println!("valid modes: suggest, auto_edit, full_auto");
+        if is_zh {
+            println!("[错误] 非法审批模式: {cleaned}");
+            println!("可选模式: suggest, auto_edit, full_auto");
+        } else {
+            println!("[error] invalid approval mode: {cleaned}");
+            println!("valid modes: suggest, auto_edit, full_auto");
+        }
         return Ok(());
     };
 
-    config_set_approval_mode(runtime, SetApprovalModeCommand { mode }).await
+    config_set_approval_mode(runtime, global, SetApprovalModeCommand { mode }).await
 }
 
 pub(crate) fn parse_approval_mode(raw: &str) -> Option<ApprovalModeArg> {
@@ -1020,7 +1302,10 @@ fn sorted_model_names(config: &Config) -> Vec<String> {
     names
 }
 
-fn resolve_effective_approval_mode(config: &Config, override_mode: Option<ApprovalModeArg>) -> String {
+fn resolve_effective_approval_mode(
+    config: &Config,
+    override_mode: Option<ApprovalModeArg>,
+) -> String {
     if let Some(mode) = override_mode {
         return mode.as_str().to_string();
     }
@@ -1040,7 +1325,12 @@ async fn handle_exec(
     command: ExecCommand,
 ) -> Result<()> {
     if command.command.is_empty() {
-        return Err(anyhow!("command is required"));
+        let language = locale::resolve_cli_language(global);
+        return Err(anyhow!(locale::tr(
+            language.as_str(),
+            "必须提供命令内容",
+            "command is required",
+        )));
     }
     let content = command.command.join(" ");
     let args = json!({
@@ -1067,8 +1357,14 @@ async fn handle_tool_run(
     global: &GlobalArgs,
     command: ToolRunCommand,
 ) -> Result<()> {
-    let args: Value = serde_json::from_str(command.args.trim())
-        .with_context(|| format!("invalid json for --args: {}", command.args.trim()))?;
+    let language = locale::resolve_cli_language(global);
+    let args: Value = serde_json::from_str(command.args.trim()).with_context(|| {
+        if locale::is_zh_language(language.as_str()) {
+            format!("--args 不是合法 JSON: {}", command.args.trim())
+        } else {
+            format!("invalid json for --args: {}", command.args.trim())
+        }
+    })?;
     run_tool_direct(runtime, global, &command.name, args).await
 }
 
@@ -1143,18 +1439,24 @@ async fn run_tool_direct(
     Ok(())
 }
 
-async fn handle_mcp(runtime: &CliRuntime, command: McpCommand) -> Result<()> {
+async fn handle_mcp(runtime: &CliRuntime, global: &GlobalArgs, command: McpCommand) -> Result<()> {
     match command.command {
-        McpSubcommand::List(cmd) => mcp_list(runtime, cmd).await,
-        McpSubcommand::Get(cmd) => mcp_get(runtime, cmd).await,
-        McpSubcommand::Add(cmd) => mcp_add(runtime, cmd).await,
-        McpSubcommand::Remove(cmd) => mcp_remove(runtime, cmd).await,
-        McpSubcommand::Enable(cmd) => mcp_toggle(runtime, cmd, true).await,
-        McpSubcommand::Disable(cmd) => mcp_toggle(runtime, cmd, false).await,
+        McpSubcommand::List(cmd) => mcp_list(runtime, global, cmd).await,
+        McpSubcommand::Get(cmd) => mcp_get(runtime, global, cmd).await,
+        McpSubcommand::Add(cmd) => mcp_add(runtime, global, cmd).await,
+        McpSubcommand::Remove(cmd) => mcp_remove(runtime, global, cmd).await,
+        McpSubcommand::Enable(cmd) => mcp_toggle(runtime, global, cmd, true).await,
+        McpSubcommand::Disable(cmd) => mcp_toggle(runtime, global, cmd, false).await,
     }
 }
 
-async fn mcp_list(runtime: &CliRuntime, command: McpListCommand) -> Result<()> {
+async fn mcp_list(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpListCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let mut payload = runtime
         .state
         .user_tool_store
@@ -1167,23 +1469,60 @@ async fn mcp_list(runtime: &CliRuntime, command: McpListCommand) -> Result<()> {
         return Ok(());
     }
     if payload.mcp_servers.is_empty() {
-        println!("No MCP servers configured. Use `wunder-cli mcp add` to add one.");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "尚未配置 MCP 服务器。使用 `wunder-cli mcp add` 新增。",
+                "No MCP servers configured. Use `wunder-cli mcp add` to add one.",
+            )
+        );
         return Ok(());
     }
     for server in payload.mcp_servers {
-        let state = format_mcp_state(&server);
+        let state = format_mcp_state(&server, is_zh);
         println!("{} ({state})", server.name);
-        println!("  transport: {}", server.transport);
-        println!("  endpoint: {}", server.endpoint);
+        println!(
+            "{}",
+            if is_zh {
+                format!("  传输: {}", server.transport)
+            } else {
+                format!("  transport: {}", server.transport)
+            }
+        );
+        println!(
+            "{}",
+            if is_zh {
+                format!("  地址: {}", server.endpoint)
+            } else {
+                format!("  endpoint: {}", server.endpoint)
+            }
+        );
         if !server.allow_tools.is_empty() {
-            println!("  allow_tools: {}", server.allow_tools.join(", "));
+            println!(
+                "{}",
+                if is_zh {
+                    format!("  允许工具: {}", server.allow_tools.join(", "))
+                } else {
+                    format!("  allow_tools: {}", server.allow_tools.join(", "))
+                }
+            );
         }
-        println!("  remove: wunder-cli mcp remove {}", server.name);
+        println!(
+            "{}",
+            if is_zh {
+                format!("  删除: wunder-cli mcp remove {}", server.name)
+            } else {
+                format!("  remove: wunder-cli mcp remove {}", server.name)
+            }
+        );
     }
     Ok(())
 }
 
-async fn mcp_get(runtime: &CliRuntime, command: McpGetCommand) -> Result<()> {
+async fn mcp_get(runtime: &CliRuntime, global: &GlobalArgs, command: McpGetCommand) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let payload = runtime
         .state
         .user_tool_store
@@ -1192,7 +1531,13 @@ async fn mcp_get(runtime: &CliRuntime, command: McpGetCommand) -> Result<()> {
         .mcp_servers
         .into_iter()
         .find(|server| server.name.trim() == command.name.trim())
-        .ok_or_else(|| anyhow!("mcp server not found: {}", command.name.trim()))?;
+        .ok_or_else(|| {
+            anyhow!(if is_zh {
+                format!("未找到 MCP 服务器: {}", command.name.trim())
+            } else {
+                format!("mcp server not found: {}", command.name.trim())
+            })
+        })?;
 
     if command.json {
         println!("{}", serde_json::to_string_pretty(&server)?);
@@ -1200,32 +1545,89 @@ async fn mcp_get(runtime: &CliRuntime, command: McpGetCommand) -> Result<()> {
     }
 
     println!("{}", server.name);
-    println!("  status: {}", format_mcp_state(&server));
-    println!("  transport: {}", server.transport);
-    println!("  endpoint: {}", server.endpoint);
+    println!(
+        "{}",
+        if is_zh {
+            format!("  状态: {}", format_mcp_state(&server, true))
+        } else {
+            format!("  status: {}", format_mcp_state(&server, false))
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("  传输: {}", server.transport)
+        } else {
+            format!("  transport: {}", server.transport)
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("  地址: {}", server.endpoint)
+        } else {
+            format!("  endpoint: {}", server.endpoint)
+        }
+    );
     let description = if server.description.trim().is_empty() {
         "-"
     } else {
         server.description.as_str()
     };
-    println!("  description: {description}");
+    println!(
+        "{}",
+        if is_zh {
+            format!("  描述: {description}")
+        } else {
+            format!("  description: {description}")
+        }
+    );
     let display_name = if server.display_name.trim().is_empty() {
         "-"
     } else {
         server.display_name.as_str()
     };
-    println!("  display_name: {display_name}");
+    println!(
+        "{}",
+        if is_zh {
+            format!("  显示名: {display_name}")
+        } else {
+            format!("  display_name: {display_name}")
+        }
+    );
     if !server.allow_tools.is_empty() {
-        println!("  allow_tools: {}", server.allow_tools.join(", "));
+        println!(
+            "{}",
+            if is_zh {
+                format!("  允许工具: {}", server.allow_tools.join(", "))
+            } else {
+                format!("  allow_tools: {}", server.allow_tools.join(", "))
+            }
+        );
     }
     if !server.shared_tools.is_empty() {
-        println!("  shared_tools: {}", server.shared_tools.join(", "));
+        println!(
+            "{}",
+            if is_zh {
+                format!("  共享工具: {}", server.shared_tools.join(", "))
+            } else {
+                format!("  shared_tools: {}", server.shared_tools.join(", "))
+            }
+        );
     }
-    println!("  remove: wunder-cli mcp remove {}", server.name);
+    println!(
+        "{}",
+        if is_zh {
+            format!("  删除: wunder-cli mcp remove {}", server.name)
+        } else {
+            format!("  remove: wunder-cli mcp remove {}", server.name)
+        }
+    );
     Ok(())
 }
 
-async fn mcp_add(runtime: &CliRuntime, command: McpAddCommand) -> Result<()> {
+async fn mcp_add(runtime: &CliRuntime, global: &GlobalArgs, command: McpAddCommand) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     let mut payload = runtime
         .state
         .user_tool_store
@@ -1250,11 +1652,21 @@ async fn mcp_add(runtime: &CliRuntime, command: McpAddCommand) -> Result<()> {
         .state
         .user_tool_store
         .update_mcp_servers(&runtime.user_id, payload.mcp_servers)?;
-    println!("mcp server added: {}", command.name.trim());
+    if locale::is_zh_language(language.as_str()) {
+        println!("已添加 MCP 服务器: {}", command.name.trim());
+    } else {
+        println!("mcp server added: {}", command.name.trim());
+    }
     Ok(())
 }
 
-async fn mcp_remove(runtime: &CliRuntime, command: McpNameCommand) -> Result<()> {
+async fn mcp_remove(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpNameCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let mut payload = runtime
         .state
         .user_tool_store
@@ -1269,14 +1681,27 @@ async fn mcp_remove(runtime: &CliRuntime, command: McpNameCommand) -> Result<()>
         .user_tool_store
         .update_mcp_servers(&runtime.user_id, payload.mcp_servers)?;
     if before == after {
-        println!("mcp server not found: {}", command.name.trim());
+        if is_zh {
+            println!("未找到 MCP 服务器: {}", command.name.trim());
+        } else {
+            println!("mcp server not found: {}", command.name.trim());
+        }
+    } else if is_zh {
+        println!("已移除 MCP 服务器: {}", command.name.trim());
     } else {
         println!("mcp server removed: {}", command.name.trim());
     }
     Ok(())
 }
 
-async fn mcp_toggle(runtime: &CliRuntime, command: McpNameCommand, enabled: bool) -> Result<()> {
+async fn mcp_toggle(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpNameCommand,
+    enabled: bool,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let mut payload = runtime
         .state
         .user_tool_store
@@ -1293,31 +1718,53 @@ async fn mcp_toggle(runtime: &CliRuntime, command: McpNameCommand, enabled: bool
         .user_tool_store
         .update_mcp_servers(&runtime.user_id, payload.mcp_servers)?;
     if changed {
-        let state = if enabled { "enabled" } else { "disabled" };
-        println!("mcp server {state}: {}", command.name.trim());
+        let state = if enabled {
+            locale::tr(language.as_str(), "启用", "enabled")
+        } else {
+            locale::tr(language.as_str(), "禁用", "disabled")
+        };
+        if is_zh {
+            println!("MCP 服务器已{state}: {}", command.name.trim());
+        } else {
+            println!("mcp server {state}: {}", command.name.trim());
+        }
+    } else if is_zh {
+        println!("未找到 MCP 服务器: {}", command.name.trim());
     } else {
         println!("mcp server not found: {}", command.name.trim());
     }
     Ok(())
 }
 
-fn format_mcp_state(server: &UserMcpServer) -> &'static str {
-    if server.enabled {
+fn format_mcp_state(server: &UserMcpServer, is_zh: bool) -> &'static str {
+    if is_zh {
+        if server.enabled {
+            "启用"
+        } else {
+            "禁用"
+        }
+    } else if server.enabled {
         "enabled"
     } else {
         "disabled"
     }
 }
 
-async fn handle_skills(runtime: &CliRuntime, command: SkillsCommand) -> Result<()> {
+async fn handle_skills(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: SkillsCommand,
+) -> Result<()> {
     match command.command {
-        SkillsSubcommand::List => skills_list(runtime).await,
-        SkillsSubcommand::Enable(cmd) => skills_toggle(runtime, cmd, true).await,
-        SkillsSubcommand::Disable(cmd) => skills_toggle(runtime, cmd, false).await,
+        SkillsSubcommand::List => skills_list(runtime, global).await,
+        SkillsSubcommand::Enable(cmd) => skills_toggle(runtime, global, cmd, true).await,
+        SkillsSubcommand::Disable(cmd) => skills_toggle(runtime, global, cmd, false).await,
     }
 }
 
-async fn skills_list(runtime: &CliRuntime) -> Result<()> {
+async fn skills_list(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let payload = runtime
         .state
         .user_tool_store
@@ -1337,12 +1784,22 @@ async fn skills_list(runtime: &CliRuntime) -> Result<()> {
     let mut specs = registry.list_specs();
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     if specs.is_empty() {
-        println!("no skills found in {}", skill_root.to_string_lossy());
+        if is_zh {
+            println!("在 {} 未找到技能", skill_root.to_string_lossy());
+        } else {
+            println!("no skills found in {}", skill_root.to_string_lossy());
+        }
         return Ok(());
     }
     for spec in specs {
         let enabled = if enabled_set.contains(&spec.name) {
-            "enabled"
+            if is_zh {
+                "启用"
+            } else {
+                "enabled"
+            }
+        } else if is_zh {
+            "禁用"
         } else {
             "disabled"
         };
@@ -1353,9 +1810,11 @@ async fn skills_list(runtime: &CliRuntime) -> Result<()> {
 
 async fn skills_toggle(
     runtime: &CliRuntime,
+    global: &GlobalArgs,
     command: SkillNameCommand,
     enable: bool,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     let payload = runtime
         .state
         .user_tool_store
@@ -1377,7 +1836,13 @@ async fn skills_toggle(
         .user_tool_manager
         .clear_skill_cache(Some(&runtime.user_id));
     if enable {
-        println!("skill enabled: {target}");
+        if locale::is_zh_language(language.as_str()) {
+            println!("技能已启用: {target}");
+        } else {
+            println!("skill enabled: {target}");
+        }
+    } else if locale::is_zh_language(language.as_str()) {
+        println!("技能已禁用: {target}");
     } else {
         println!("skill disabled: {target}");
     }
@@ -1394,7 +1859,9 @@ async fn handle_config(
         ConfigSubcommand::SetToolCallMode(cmd) => {
             config_set_tool_call_mode(runtime, global, cmd).await
         }
-        ConfigSubcommand::SetApprovalMode(cmd) => config_set_approval_mode(runtime, cmd).await,
+        ConfigSubcommand::SetApprovalMode(cmd) => {
+            config_set_approval_mode(runtime, global, cmd).await
+        }
     }
 }
 
@@ -1403,6 +1870,7 @@ async fn config_setup_from_slash(
     global: &GlobalArgs,
     args: &str,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     let cleaned = args.trim();
     if cleaned.is_empty() {
         return config_interactive_setup(runtime, global).await;
@@ -1411,15 +1879,25 @@ async fn config_setup_from_slash(
     let values = match shell_words::split(cleaned) {
         Ok(parts) => parts,
         Err(err) => {
-            println!("[error] failed to parse /config args: {err}");
-            println!("usage: {CONFIG_SLASH_USAGE}");
+            if locale::is_zh_language(language.as_str()) {
+                println!("[错误] /config 参数解析失败: {err}");
+                println!("用法: {CONFIG_SLASH_USAGE}");
+            } else {
+                println!("[error] failed to parse /config args: {err}");
+                println!("usage: {CONFIG_SLASH_USAGE}");
+            }
             return Ok(());
         }
     };
 
     if !(values.len() == 3 || values.len() == 4) {
-        println!("[error] invalid /config args");
-        println!("usage: {CONFIG_SLASH_USAGE}");
+        if locale::is_zh_language(language.as_str()) {
+            println!("[错误] /config 参数不合法");
+            println!("用法: {CONFIG_SLASH_USAGE}");
+        } else {
+            println!("[error] invalid /config args");
+            println!("usage: {CONFIG_SLASH_USAGE}");
+        }
         return Ok(());
     }
 
@@ -1427,17 +1905,27 @@ async fn config_setup_from_slash(
     let api_key = values[1].trim();
     let model_name = values[2].trim();
     if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
-        println!("[error] /config requires non-empty base_url, api_key and model");
-        println!("usage: {CONFIG_SLASH_USAGE}");
+        if locale::is_zh_language(language.as_str()) {
+            println!("[错误] /config 需要非空的 base_url、api_key 和 model");
+            println!("用法: {CONFIG_SLASH_USAGE}");
+        } else {
+            println!("[error] /config requires non-empty base_url, api_key and model");
+            println!("usage: {CONFIG_SLASH_USAGE}");
+        }
         return Ok(());
     }
 
     let manual_max_context = if let Some(raw) = values.get(3) {
-        match parse_optional_max_context_value(raw) {
+        match parse_optional_max_context_value_localized(raw, language.as_str()) {
             Ok(value) => value,
             Err(err) => {
-                println!("[error] {err}");
-                println!("usage: {CONFIG_SLASH_USAGE}");
+                if locale::is_zh_language(language.as_str()) {
+                    println!("[错误] {err}");
+                    println!("用法: {CONFIG_SLASH_USAGE}");
+                } else {
+                    println!("[error] {err}");
+                    println!("usage: {CONFIG_SLASH_USAGE}");
+                }
                 return Ok(());
             }
         }
@@ -1445,19 +1933,47 @@ async fn config_setup_from_slash(
         None
     };
 
-    let (provider, resolved_max_context) =
-        apply_cli_model_config(runtime, base_url, api_key, model_name, manual_max_context).await?;
+    let (provider, resolved_max_context) = apply_cli_model_config(
+        runtime,
+        base_url,
+        api_key,
+        model_name,
+        manual_max_context,
+        language.as_str(),
+    )
+    .await?;
 
-    println!("model configured");
-    println!("- provider: {provider}");
-    println!("- base_url: {base_url}");
-    println!("- model: {model_name}");
+    let is_zh = locale::is_zh_language(language.as_str());
+    println!(
+        "{}",
+        locale::tr(language.as_str(), "模型配置完成", "model configured")
+    );
+    if is_zh {
+        println!("- 提供商: {provider}");
+        println!("- base_url: {base_url}");
+        println!("- 模型: {model_name}");
+    } else {
+        println!("- provider: {provider}");
+        println!("- base_url: {base_url}");
+        println!("- model: {model_name}");
+    }
     if let Some(value) = resolved_max_context {
         println!("- max_context: {value}");
     } else {
-        println!("- max_context: auto probe unavailable (or keep existing)");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "- max_context: 自动探测不可用（或保留现有值）",
+                "- max_context: auto probe unavailable (or keep existing)",
+            )
+        );
     }
-    println!("- tool_call_mode: tool_call");
+    if is_zh {
+        println!("- 工具调用模式: tool_call");
+    } else {
+        println!("- tool_call_mode: tool_call");
+    }
     Ok(())
 }
 
@@ -1467,12 +1983,17 @@ pub(crate) async fn apply_cli_model_config(
     api_key: &str,
     model_name: &str,
     manual_max_context: Option<u32>,
+    language: &str,
 ) -> Result<(String, Option<u32>)> {
     let base_url = base_url.trim().to_string();
     let api_key = api_key.trim().to_string();
     let model_name = model_name.trim().to_string();
     if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
-        return Err(anyhow!("base_url, api_key and model are required"));
+        return Err(anyhow!(locale::tr(
+            language,
+            "base_url、api_key 和 model 不能为空",
+            "base_url, api_key and model are required",
+        )));
     }
 
     let provider = infer_provider_from_base_url(&base_url);
@@ -1580,18 +2101,30 @@ async fn config_set_tool_call_mode(
     global: &GlobalArgs,
     command: SetToolCallModeCommand,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let current = runtime.state.config_store.get().await;
     let model = if let Some(model) = command.model.clone() {
         let cleaned = model.trim().to_string();
         if !current.llm.models.contains_key(&cleaned) {
-            return Err(anyhow!("model not found in config: {cleaned}"));
+            return Err(anyhow!(if is_zh {
+                format!("配置中不存在模型: {cleaned}")
+            } else {
+                format!("model not found in config: {cleaned}")
+            }));
         }
         cleaned
     } else {
         runtime
             .resolve_model_name(global.model.as_deref())
             .await
-            .ok_or_else(|| anyhow!("no llm model configured"))?
+            .ok_or_else(|| {
+                anyhow!(locale::tr(
+                    language.as_str(),
+                    "尚未配置 LLM 模型",
+                    "no llm model configured",
+                ))
+            })?
     };
     let mode = command.mode.as_str().to_string();
     let model_for_update = model.clone();
@@ -1609,14 +2142,25 @@ async fn config_set_tool_call_mode(
         })
         .await?;
 
-    println!(
-        "tool_call_mode set: model={model} mode={}",
-        command.mode.as_str()
-    );
+    if is_zh {
+        println!(
+            "工具调用模式已设置: 模型={model} 模式={}",
+            command.mode.as_str()
+        );
+    } else {
+        println!(
+            "tool_call_mode set: model={model} mode={}",
+            command.mode.as_str()
+        );
+    }
     Ok(())
 }
 
-async fn config_set_approval_mode(runtime: &CliRuntime, command: SetApprovalModeCommand) -> Result<()> {
+async fn config_set_approval_mode(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: SetApprovalModeCommand,
+) -> Result<()> {
     let mode = command.mode.as_str().to_string();
     runtime
         .state
@@ -1625,30 +2169,71 @@ async fn config_set_approval_mode(runtime: &CliRuntime, command: SetApprovalMode
             config.security.approval_mode = Some(mode.clone());
         })
         .await?;
-    println!("approval_mode set: {}", command.mode.as_str());
+    let language = locale::resolve_cli_language(global);
+    if locale::is_zh_language(language.as_str()) {
+        println!("审批模式已设置: {}", command.mode.as_str());
+    } else {
+        println!("approval_mode set: {}", command.mode.as_str());
+    }
     Ok(())
 }
 
 async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
     if let Some(model) = runtime.resolve_model_name(global.model.as_deref()).await {
-        println!("current model: {model}");
+        if locale::is_zh_language(language.as_str()) {
+            println!("当前模型: {model}");
+        } else {
+            println!("current model: {model}");
+        }
     }
-    println!("configure llm model (press Enter on required field to cancel)");
+    println!(
+        "{}",
+        locale::tr(
+            language.as_str(),
+            "配置 LLM 模型（必填项直接回车可取消）",
+            "configure llm model (press Enter on required field to cancel)",
+        )
+    );
 
-    let Some(base_url) = prompt_config_value("base_url: ")? else {
-        println!("config cancelled");
+    let Some(base_url) =
+        prompt_config_value(locale::tr(language.as_str(), "base_url：", "base_url: ").as_str())?
+    else {
+        println!(
+            "{}",
+            locale::tr(language.as_str(), "配置已取消", "config cancelled")
+        );
         return Ok(());
     };
-    let Some(api_key) = prompt_config_value("api_key: ")? else {
-        println!("config cancelled");
+    let Some(api_key) =
+        prompt_config_value(locale::tr(language.as_str(), "api_key：", "api_key: ").as_str())?
+    else {
+        println!(
+            "{}",
+            locale::tr(language.as_str(), "配置已取消", "config cancelled")
+        );
         return Ok(());
     };
-    let Some(model_name) = prompt_config_value("model: ")? else {
-        println!("config cancelled");
+    let Some(model_name) =
+        prompt_config_value(locale::tr(language.as_str(), "model：", "model: ").as_str())?
+    else {
+        println!(
+            "{}",
+            locale::tr(language.as_str(), "配置已取消", "config cancelled")
+        );
         return Ok(());
     };
-    let manual_max_context = parse_optional_max_context_value(
-        read_line("max_context (optional, Enter for auto probe): ")?.as_str(),
+    let manual_max_context = parse_optional_max_context_value_localized(
+        read_line(
+            locale::tr(
+                language.as_str(),
+                "max_context（可选，回车自动探测）：",
+                "max_context (optional, Enter for auto probe): ",
+            )
+            .as_str(),
+        )?
+        .as_str(),
+        language.as_str(),
     )?;
 
     let (provider, resolved_max_context) = apply_cli_model_config(
@@ -1657,34 +2242,67 @@ async fn config_interactive_setup(runtime: &CliRuntime, global: &GlobalArgs) -> 
         &api_key,
         &model_name,
         manual_max_context,
+        language.as_str(),
     )
     .await?;
 
-    println!("model configured");
-    println!("- provider: {provider}");
-    println!("- base_url: {base_url}");
-    println!("- model: {model_name}");
+    println!(
+        "{}",
+        locale::tr(language.as_str(), "模型配置完成", "model configured")
+    );
+    if locale::is_zh_language(language.as_str()) {
+        println!("- 提供商: {provider}");
+        println!("- base_url: {base_url}");
+        println!("- 模型: {model_name}");
+    } else {
+        println!("- provider: {provider}");
+        println!("- base_url: {base_url}");
+        println!("- model: {model_name}");
+    }
     if let Some(value) = resolved_max_context {
         println!("- max_context: {value}");
     } else {
-        println!("- max_context: auto probe unavailable (or keep existing)");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "- max_context: 自动探测不可用（或保留现有值）",
+                "- max_context: auto probe unavailable (or keep existing)",
+            )
+        );
     }
-    println!("- tool_call_mode: tool_call");
+    if locale::is_zh_language(language.as_str()) {
+        println!("- 工具调用模式: tool_call");
+    } else {
+        println!("- tool_call_mode: tool_call");
+    }
     Ok(())
 }
 
-fn parse_optional_max_context_value(raw: &str) -> Result<Option<u32>> {
+fn parse_optional_max_context_value_localized(raw: &str, language: &str) -> Result<Option<u32>> {
     let cleaned = raw.trim();
     if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("auto") {
         return Ok(None);
     }
-    let value = cleaned
-        .parse::<u32>()
-        .map_err(|_| anyhow!("max_context must be a positive integer"))?;
+    let value = cleaned.parse::<u32>().map_err(|_| {
+        anyhow!(locale::tr(
+            language,
+            "max_context 必须是正整数",
+            "max_context must be a positive integer",
+        ))
+    })?;
     if value == 0 {
-        return Err(anyhow!("max_context must be greater than 0"));
+        return Err(anyhow!(locale::tr(
+            language,
+            "max_context 必须大于 0",
+            "max_context must be greater than 0",
+        )));
     }
     Ok(Some(value))
+}
+
+fn parse_optional_max_context_value(raw: &str) -> Result<Option<u32>> {
+    parse_optional_max_context_value_localized(raw, "en-US")
 }
 
 pub(crate) async fn resolve_model_max_context_value(
@@ -1763,6 +2381,8 @@ async fn handle_doctor(
     global: &GlobalArgs,
     command: DoctorCommand,
 ) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
     let config = runtime.state.config_store.get().await;
     let model = runtime.resolve_model_name(global.model.as_deref()).await;
     let prompts_root = std::env::var("WUNDER_PROMPTS_ROOT").unwrap_or_default();
@@ -1795,24 +2415,99 @@ async fn handle_doctor(
         ),
     ];
 
-    println!("wunder-cli doctor");
-    println!("- launch_dir: {}", runtime.launch_dir.to_string_lossy());
-    println!("- temp_root: {}", runtime.temp_root.to_string_lossy());
-    println!("- project_root: {}", runtime.repo_root.to_string_lossy());
-    println!("- user_id: {}", runtime.user_id);
-    println!("- workspace_root: {}", config.workspace.root);
-    println!("- db_path: {}", config.storage.db_path);
-    println!("- model: {}", model.unwrap_or_else(|| "<none>".to_string()));
     println!(
-        "- approval_mode: {}",
-        resolve_effective_approval_mode(&config, global.approval_mode)
+        "{}",
+        locale::tr(language.as_str(), "wunder-cli 诊断", "wunder-cli doctor")
     );
     println!(
-        "- override_config_exists: {}",
-        runtime
-            .temp_root
-            .join("config/wunder.override.yaml")
-            .exists()
+        "{}",
+        if is_zh {
+            format!("- 启动目录: {}", runtime.launch_dir.to_string_lossy())
+        } else {
+            format!("- launch_dir: {}", runtime.launch_dir.to_string_lossy())
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 临时目录: {}", runtime.temp_root.to_string_lossy())
+        } else {
+            format!("- temp_root: {}", runtime.temp_root.to_string_lossy())
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 项目根目录: {}", runtime.repo_root.to_string_lossy())
+        } else {
+            format!("- project_root: {}", runtime.repo_root.to_string_lossy())
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 用户 ID: {}", runtime.user_id)
+        } else {
+            format!("- user_id: {}", runtime.user_id)
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 工作目录: {}", config.workspace.root)
+        } else {
+            format!("- workspace_root: {}", config.workspace.root)
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 数据库路径: {}", config.storage.db_path)
+        } else {
+            format!("- db_path: {}", config.storage.db_path)
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("- 模型: {}", model.unwrap_or_else(|| "<none>".to_string()))
+        } else {
+            format!("- model: {}", model.unwrap_or_else(|| "<none>".to_string()))
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!(
+                "- 审批模式: {}",
+                resolve_effective_approval_mode(&config, global.approval_mode)
+            )
+        } else {
+            format!(
+                "- approval_mode: {}",
+                resolve_effective_approval_mode(&config, global.approval_mode)
+            )
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!(
+                "- 覆盖配置存在: {}",
+                runtime
+                    .temp_root
+                    .join("config/wunder.override.yaml")
+                    .exists()
+            )
+        } else {
+            format!(
+                "- override_config_exists: {}",
+                runtime
+                    .temp_root
+                    .join("config/wunder.override.yaml")
+                    .exists()
+            )
+        }
     );
 
     for (name, path, should_exist) in checks {
@@ -1822,11 +2517,23 @@ async fn handle_doctor(
             std::path::Path::new(path.as_str()).exists()
         };
         let status = if !should_exist || exists {
-            "ok"
+            locale::tr(language.as_str(), "正常", "ok")
         } else {
-            "missing"
+            locale::tr(language.as_str(), "缺失", "missing")
         };
-        println!("- {name}: [{status}] {path}");
+        let check_name = if is_zh {
+            match name {
+                "base_config" => "基础配置",
+                "override_config" => "覆盖配置",
+                "i18n_messages" => "i18n 消息文件",
+                "prompts_root" => "提示词根目录",
+                "skill_runner" => "技能运行器",
+                _ => name,
+            }
+        } else {
+            name
+        };
+        println!("- {check_name}: [{status}] {path}");
     }
 
     if command.verbose {
@@ -1888,11 +2595,12 @@ async fn run_prompt_once(
     prompt: &str,
     session_id: &str,
 ) -> Result<FinalEvent> {
+    let language = locale::resolve_cli_language(global);
     let mut request = build_wunder_request(runtime, global, prompt, session_id).await?;
     let _approval_task = if should_interactive_approvals(global) {
         let (tx, rx) = new_approval_channel();
         request.approval_tx = Some(tx);
-        Some(tokio::spawn(handle_stdio_approvals(rx)))
+        Some(tokio::spawn(handle_stdio_approvals(rx, language)))
     } else {
         None
     };
@@ -1943,16 +2651,36 @@ fn should_interactive_approvals(global: &GlobalArgs) -> bool {
     io::stdin().is_terminal() && io::stdout().is_terminal()
 }
 
-async fn handle_stdio_approvals(mut rx: ApprovalRequestRx) {
+async fn handle_stdio_approvals(mut rx: ApprovalRequestRx, language: String) {
+    let is_zh = locale::is_zh_language(language.as_str());
     while let Some(request) = rx.recv().await {
         eprintln!();
-        eprintln!("[approval] {}", request.summary);
-        eprintln!("- tool: {}", request.tool);
+        if is_zh {
+            eprintln!("[审批] {}", request.summary);
+        } else {
+            eprintln!("[approval] {}", request.summary);
+        }
+        if is_zh {
+            eprintln!("- 工具: {}", request.tool);
+        } else {
+            eprintln!("- tool: {}", request.tool);
+        }
         let args = serde_json::to_string(&request.args).unwrap_or_else(|_| "{}".to_string());
         if !args.trim().is_empty() && args != "{}" {
-            eprintln!("- args: {}", truncate_for_stderr(args, 600));
+            if is_zh {
+                eprintln!("- 参数: {}", truncate_for_stderr(args, 600, is_zh));
+            } else {
+                eprintln!("- args: {}", truncate_for_stderr(args, 600, is_zh));
+            }
         }
-        eprintln!("approve? [y]=once  [a]=session  [n]=deny");
+        eprintln!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "是否批准？[y]=本次  [a]=本会话  [n]=拒绝",
+                "approve? [y]=once  [a]=session  [n]=deny",
+            )
+        );
 
         let choice = tokio::task::spawn_blocking(|| {
             let mut buffer = String::new();
@@ -1972,7 +2700,7 @@ async fn handle_stdio_approvals(mut rx: ApprovalRequestRx) {
     }
 }
 
-fn truncate_for_stderr(text: String, max_chars: usize) -> String {
+fn truncate_for_stderr(text: String, max_chars: usize, is_zh: bool) -> String {
     if max_chars == 0 {
         return String::new();
     }
@@ -1983,7 +2711,11 @@ fn truncate_for_stderr(text: String, max_chars: usize) -> String {
     for ch in text.chars().take(max_chars) {
         out.push(ch);
     }
-    out.push_str("...(truncated)");
+    if is_zh {
+        out.push_str("...(已截断)");
+    } else {
+        out.push_str("...(truncated)");
+    }
     out
 }
 
@@ -2035,7 +2767,11 @@ fn build_request_overrides(
         );
     }
 
-    if root.is_empty() { None } else { Some(Value::Object(root)) }
+    if root.is_empty() {
+        None
+    } else {
+        Some(Value::Object(root))
+    }
 }
 
 fn resolve_selected_model(config: &Config, model_name: Option<&str>) -> Option<String> {
@@ -2053,31 +2789,43 @@ fn resolve_selected_model(config: &Config, model_name: Option<&str>) -> Option<S
         .or_else(|| config.llm.models.keys().next().cloned())
 }
 
-fn resolve_prompt_text(prompt: Option<String>) -> Result<String> {
+fn resolve_prompt_text(prompt: Option<String>, language: &str) -> Result<String> {
     match prompt {
         Some(value) => {
             let trimmed = value.trim();
             if trimmed == "-" {
-                read_stdin_all()
+                read_stdin_all(language)
             } else if trimmed.is_empty() {
-                Err(anyhow!("prompt is empty"))
+                Err(anyhow!(locale::tr(
+                    language,
+                    "提问内容为空",
+                    "prompt is empty",
+                )))
             } else {
                 Ok(trimmed.to_string())
             }
         }
-        None => read_stdin_all(),
+        None => read_stdin_all(language),
     }
 }
 
-fn read_stdin_all() -> Result<String> {
+fn read_stdin_all(language: &str) -> Result<String> {
     if io::stdin().is_terminal() {
-        return Err(anyhow!("prompt is required"));
+        return Err(anyhow!(locale::tr(
+            language,
+            "必须提供提问内容",
+            "prompt is required",
+        )));
     }
     let mut buffer = String::new();
     io::stdin().read_to_string(&mut buffer)?;
     let text = buffer.trim();
     if text.is_empty() {
-        Err(anyhow!("stdin is empty"))
+        Err(anyhow!(locale::tr(
+            language,
+            "stdin 为空",
+            "stdin is empty",
+        )))
     } else {
         Ok(text.to_string())
     }
@@ -2107,61 +2855,90 @@ fn normalize_name_list(values: Vec<String>) -> Vec<String> {
     output
 }
 
-pub(crate) fn print_git_diff_summary(workspace_root: &std::path::Path) -> Result<()> {
-    for line in git_diff_summary_lines(workspace_root)? {
+pub(crate) fn print_git_diff_summary(
+    workspace_root: &std::path::Path,
+    language: &str,
+) -> Result<()> {
+    for line in git_diff_summary_lines_with_language(workspace_root, language)? {
         println!("{line}");
     }
     Ok(())
 }
 
-pub(crate) fn git_diff_summary_lines(workspace_root: &std::path::Path) -> Result<Vec<String>> {
+pub(crate) fn git_diff_summary_lines_with_language(
+    workspace_root: &std::path::Path,
+    language: &str,
+) -> Result<Vec<String>> {
+    let is_zh = locale::is_zh_language(language);
     if !workspace_root.join(".git").exists() {
         return Ok(vec![
-            "diff".to_string(),
-            "[info] current workspace is not a git repository".to_string(),
+            locale::tr(language, "变更摘要", "diff"),
+            locale::tr(
+                language,
+                "[提示] 当前工作区不是 git 仓库",
+                "[info] current workspace is not a git repository",
+            ),
         ]);
     }
 
     let mut lines = Vec::new();
-    lines.push("diff".to_string());
+    lines.push(locale::tr(language, "变更摘要", "diff"));
 
     let Some(status) = run_git(workspace_root, ["status", "--porcelain"]) else {
-        lines.push("[error] git is not available (cannot run `git status`)".to_string());
+        lines.push(locale::tr(
+            language,
+            "[错误] 未检测到 git（无法执行 `git status`）",
+            "[error] git is not available (cannot run `git status`)",
+        ));
         return Ok(lines);
     };
     if status.trim().is_empty() {
-        lines.push("- status: clean".to_string());
+        lines.push(locale::tr(language, "- 状态: 干净", "- status: clean"));
         return Ok(lines);
     }
 
     let changed = status.lines().count();
-    lines.push(format!("- status: {changed} paths changed"));
+    if is_zh {
+        lines.push(format!("- 状态: {changed} 个路径有变更"));
+    } else {
+        lines.push(format!("- status: {changed} paths changed"));
+    }
     for row in status.lines().take(80) {
         lines.push(format!("  {row}"));
     }
     if changed > 80 {
-        lines.push(format!("  ... ({} more)", changed - 80));
+        if is_zh {
+            lines.push(format!("  ...（还有 {} 项）", changed - 80));
+        } else {
+            lines.push(format!("  ... ({} more)", changed - 80));
+        }
     }
 
     let stat = run_git(workspace_root, ["diff", "--stat"]).unwrap_or_default();
     if !stat.trim().is_empty() {
-        lines.push("- diff --stat:".to_string());
+        lines.push(locale::tr(language, "- diff --stat：", "- diff --stat:"));
         for row in stat.lines().take(80) {
             lines.push(format!("  {row}"));
         }
         if stat.lines().count() > 80 {
-            lines.push("  ... (truncated)".to_string());
+            lines.push(locale::tr(language, "  ...（已截断）", "  ... (truncated)"));
         }
     }
 
     Ok(lines)
 }
 
-pub(crate) fn build_review_prompt(workspace_root: &std::path::Path, focus: &str) -> Result<String> {
+pub(crate) fn build_review_prompt_with_language(
+    workspace_root: &std::path::Path,
+    focus: &str,
+    language: &str,
+) -> Result<String> {
     if !workspace_root.join(".git").exists() {
-        return Err(anyhow!(
-            "current workspace is not a git repository, /review requires git diff"
-        ));
+        return Err(anyhow!(locale::tr(
+            language,
+            "当前工作区不是 git 仓库，/review 依赖 git diff",
+            "current workspace is not a git repository, /review requires git diff",
+        )));
     }
 
     let focus = focus.trim();
@@ -2171,8 +2948,13 @@ pub(crate) fn build_review_prompt(workspace_root: &std::path::Path, focus: &str)
         format!("Focus: {focus}\n")
     };
 
-    let status = run_git(workspace_root, ["status", "--porcelain"])
-        .ok_or_else(|| anyhow!("git is not available (cannot run `git status`)"))?;
+    let status = run_git(workspace_root, ["status", "--porcelain"]).ok_or_else(|| {
+        anyhow!(locale::tr(
+            language,
+            "未检测到 git（无法执行 `git status`）",
+            "git is not available (cannot run `git status`)",
+        ))
+    })?;
     let cached = run_git(workspace_root, ["diff", "--cached"]).unwrap_or_default();
     let unstaged = run_git(workspace_root, ["diff"]).unwrap_or_default();
 
@@ -2373,13 +3155,9 @@ mod tests {
         model.max_rounds = Some(12);
         config.llm.models.insert(model_name.to_string(), model);
 
-        let overrides = build_request_overrides(
-            &config,
-            None,
-            Some(ToolCallModeArg::FunctionCall),
-            None,
-        )
-        .expect("overrides expected");
+        let overrides =
+            build_request_overrides(&config, None, Some(ToolCallModeArg::FunctionCall), None)
+                .expect("overrides expected");
         assert_eq!(
             overrides["llm"]["models"][model_name]["tool_call_mode"],
             json!("function_call")

@@ -303,8 +303,9 @@ fn temp_dir_root() -> Result<PathBuf, Response> {
             if candidate.is_absolute() {
                 return Ok(candidate);
             }
-            let root = std::env::current_dir()
-                .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+            let root = std::env::current_dir().map_err(|err| {
+                error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+            })?;
             return Ok(root.join(candidate));
         }
     }

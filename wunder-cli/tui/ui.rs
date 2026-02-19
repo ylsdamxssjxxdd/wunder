@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
+    let is_zh = app.is_zh_language();
     let popup_lines = app.popup_lines();
     let vertical = build_layout(frame.area(), popup_lines.len());
 
@@ -36,7 +37,13 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     app.set_transcript_viewport(transcript_viewport.width, transcript_viewport.height);
     let transcript_text = Text::from(transcript_lines);
     let transcript_title = if app.transcript_focus_active() {
-        " Conversation (Output Focus) "
+        if is_zh {
+            " 会话（输出焦点） "
+        } else {
+            " Conversation (Output Focus) "
+        }
+    } else if is_zh {
+        " 会话 "
     } else {
         " Conversation "
     };
@@ -71,7 +78,11 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
     let input = Paragraph::new(input_text)
         .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().title(" Input ").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(if is_zh { " 输入 " } else { " Input " })
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(input, input_area);
 
@@ -82,19 +93,19 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     }
 
     if let Some((rows, selected)) = app.resume_picker_rows() {
-        draw_resume_modal(frame, frame.area(), rows, selected);
+        draw_resume_modal(frame, frame.area(), rows, selected, is_zh);
     }
 
     if app.shortcuts_visible() {
-        draw_shortcuts_modal(frame, frame.area(), app.shortcuts_lines());
+        draw_shortcuts_modal(frame, frame.area(), app.shortcuts_lines(), is_zh);
     }
 
     if let Some(lines) = app.approval_modal_lines() {
-        draw_approval_modal(frame, frame.area(), lines);
+        draw_approval_modal(frame, frame.area(), lines, is_zh);
     }
 }
 
-fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
+fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh: bool) {
     if area.width < 8 || area.height < 6 {
         return;
     }
@@ -125,7 +136,7 @@ fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
     let widget = Paragraph::new(lines.join("\n"))
         .block(
             Block::default()
-                .title(" Shortcuts ")
+                .title(if is_zh { " 快捷键 " } else { " Shortcuts " })
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White).bg(Color::Black)),
         )
@@ -168,7 +179,13 @@ fn inner_rect(rect: Rect) -> Rect {
     }
 }
 
-fn draw_resume_modal(frame: &mut Frame, area: Rect, rows: Vec<String>, selected: usize) {
+fn draw_resume_modal(
+    frame: &mut Frame,
+    area: Rect,
+    rows: Vec<String>,
+    selected: usize,
+    is_zh: bool,
+) {
     if area.width < 20 || area.height < 8 {
         return;
     }
@@ -217,7 +234,11 @@ fn draw_resume_modal(frame: &mut Frame, area: Rect, rows: Vec<String>, selected:
         Style::default().fg(Color::White),
     )));
     lines.push(Line::from(Span::styled(
-        "Up/Down select, Enter resume, Esc cancel",
+        if is_zh {
+            "上下选择，Enter 恢复，Esc 取消"
+        } else {
+            "Up/Down select, Enter resume, Esc cancel"
+        },
         Style::default().fg(Color::Gray),
     )));
 
@@ -225,7 +246,11 @@ fn draw_resume_modal(frame: &mut Frame, area: Rect, rows: Vec<String>, selected:
     let widget = Paragraph::new(lines)
         .block(
             Block::default()
-                .title(" Resume Sessions ")
+                .title(if is_zh {
+                    " 恢复历史会话 "
+                } else {
+                    " Resume Sessions "
+                })
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White).bg(Color::Black)),
         )
@@ -233,7 +258,7 @@ fn draw_resume_modal(frame: &mut Frame, area: Rect, rows: Vec<String>, selected:
     frame.render_widget(widget, popup);
 }
 
-fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
+fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh: bool) {
     if area.width < 24 || area.height < 8 {
         return;
     }
@@ -263,7 +288,7 @@ fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
     let widget = Paragraph::new(lines.join("\n"))
         .block(
             Block::default()
-                .title(" Approval ")
+                .title(if is_zh { " 审批 " } else { " Approval " })
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White).bg(Color::Black)),
         )

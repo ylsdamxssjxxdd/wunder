@@ -2,22 +2,23 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
-/// Wunder CLI
+/// Wunder CLI（命令行）
 ///
 /// If no subcommand is specified, enters TUI on TTY (or handles one-shot input).
+/// 未指定子命令时，在 TTY 下进入 TUI（或处理一次性输入）。
 #[derive(Debug, Parser)]
 #[command(
     author,
     version,
     bin_name = "wunder-cli",
     subcommand_negates_reqs = true,
-    override_usage = "wunder-cli [OPTIONS] [PROMPT]\n       wunder-cli [OPTIONS] <COMMAND> [ARGS]"
+    override_usage = "wunder-cli [OPTIONS] [PROMPT]\n       wunder-cli [OPTIONS] <COMMAND> [ARGS]\n       wunder-cli [选项] [PROMPT]\n       wunder-cli [选项] <命令> [参数]"
 )]
 pub struct Cli {
     #[command(flatten)]
     pub global: GlobalArgs,
 
-    /// Initial prompt. When omitted, enters TUI/interactive mode.
+    /// Initial prompt / 初始提问，留空进入 TUI/交互模式。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 
@@ -27,43 +28,43 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Args)]
 pub struct GlobalArgs {
-    /// Model name.
+    /// Model name / 模型名称。
     #[arg(long, short = 'm', global = true)]
     pub model: Option<String>,
 
-    /// Tool call protocol mode.
+    /// Tool call protocol mode / 工具调用协议模式。
     #[arg(long = "tool-call-mode", global = true, value_enum)]
     pub tool_call_mode: Option<ToolCallModeArg>,
 
-    /// Approval mode for write/exec style tools.
+    /// Approval mode for write/exec style tools / 写入与执行类工具审批模式。
     #[arg(long = "approval-mode", global = true, value_enum)]
     pub approval_mode: Option<ApprovalModeArg>,
 
-    /// Session id.
+    /// Session id / 会话 ID。
     #[arg(long, global = true)]
     pub session: Option<String>,
 
-    /// Output stream events as JSONL.
+    /// Output stream events as JSONL / 以 JSONL 输出流事件。
     #[arg(long, global = true, default_value_t = false)]
     pub json: bool,
 
-    /// Language override, e.g. zh-CN / en-US.
-    #[arg(long = "lang", global = true)]
+    /// Language override (e.g. zh-CN / en-US) / 语言覆盖。
+    #[arg(long = "lang", alias = "language", global = true)]
     pub language: Option<String>,
 
-    /// Base config path, defaults to <repo>/config/wunder.yaml.
+    /// Base config path / 基础配置路径（默认 <repo>/config/wunder.yaml）。
     #[arg(long = "config", global = true)]
     pub config_path: Option<PathBuf>,
 
-    /// Runtime temp root, defaults to ./WUNDER_TEMP.
+    /// Runtime temp root / 运行时临时目录（默认 ./WUNDER_TEMP）。
     #[arg(long = "temp-root", global = true)]
     pub temp_root: Option<PathBuf>,
 
-    /// Logical user id (single-user mode defaults to cli_user).
+    /// Logical user id / 逻辑用户 ID（单用户默认 cli_user）。
     #[arg(long = "user", global = true)]
     pub user: Option<String>,
 
-    /// Disable streaming output.
+    /// Disable streaming output / 关闭流式输出。
     #[arg(long = "no-stream", global = true, default_value_t = false)]
     pub no_stream: bool,
 }
@@ -104,70 +105,70 @@ impl ApprovalModeArg {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Ask one question and print the result.
+    /// Ask one question and print the result / 单轮提问并输出结果。
     Ask(AskCommand),
 
-    /// Start an interactive chat session.
+    /// Start an interactive chat session / 启动交互会话。
     Chat(ChatCommand),
 
-    /// Resume a previous session.
+    /// Resume a previous session / 恢复历史会话。
     Resume(ResumeCommand),
 
-    /// Execute shell command via builtin tool.
+    /// Execute shell command via builtin tool / 通过内置工具执行命令。
     #[command(visible_alias = "e")]
     Exec(ExecCommand),
 
-    /// Run builtin/MCP/skill tools directly.
+    /// Run builtin/MCP/skill tools directly / 直接运行内置工具、MCP 或技能。
     Tool(ToolCommand),
 
-    /// Manage MCP servers in local single-user config.
+    /// Manage MCP servers in local single-user config / 管理本地 MCP 服务器。
     Mcp(McpCommand),
 
-    /// Manage local skills for current user.
+    /// Manage local skills for current user / 管理当前用户本地技能。
     Skills(SkillsCommand),
 
-    /// Inspect and update runtime config.
+    /// Inspect and update runtime config / 查看与修改运行配置。
     Config(ConfigCommand),
 
-    /// Diagnose local runtime environment.
+    /// Diagnose local runtime environment / 诊断本地运行环境。
     Doctor(DoctorCommand),
 
-    /// Generate shell completion scripts.
+    /// Generate shell completion scripts / 生成 Shell 补全脚本。
     Completion(CompletionCommand),
 }
 
 #[derive(Debug, Args)]
 pub struct AskCommand {
-    /// Prompt to run. Use '-' to read from stdin.
+    /// Prompt to run / 提问内容；传 '-' 从 stdin 读取。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct ChatCommand {
-    /// Optional first prompt for the interactive session.
+    /// Optional first prompt / 交互会话的首条提问（可选）。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct ResumeCommand {
-    /// Session id. If omitted, use --last or current saved session.
+    /// Session id / 会话 ID；留空时使用 --last 或当前保存会话。
     #[arg(value_name = "SESSION_ID")]
     pub session_id: Option<String>,
 
-    /// Resume the most recent recorded session.
+    /// Resume the most recent recorded session / 恢复最近会话。
     #[arg(long = "last", default_value_t = false)]
     pub last: bool,
 
-    /// Optional prompt to send after resuming. Use '-' to read from stdin.
+    /// Optional prompt after resume / 恢复后发送提问（可选，'-' 从 stdin 读取）。
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct ExecCommand {
-    /// Command content to execute.
+    /// Command content / 要执行的命令内容。
     #[arg(
         value_name = "COMMAND",
         trailing_var_arg = true,
@@ -175,11 +176,11 @@ pub struct ExecCommand {
     )]
     pub command: Vec<String>,
 
-    /// Working directory, defaults to current launch dir.
+    /// Working directory / 工作目录（默认当前启动目录）。
     #[arg(long)]
     pub workdir: Option<String>,
 
-    /// Timeout seconds.
+    /// Timeout seconds / 超时时间（秒）。
     #[arg(long = "timeout-s")]
     pub timeout_s: Option<f64>,
 }
@@ -192,19 +193,19 @@ pub struct ToolCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ToolSubcommand {
-    /// Run a tool directly.
+    /// Run a tool directly / 直接运行工具。
     Run(ToolRunCommand),
 
-    /// List available tools.
+    /// List available tools / 列出可用工具。
     List,
 }
 
 #[derive(Debug, Args)]
 pub struct ToolRunCommand {
-    /// Tool name.
+    /// Tool name / 工具名。
     pub name: String,
 
-    /// JSON arguments object.
+    /// JSON arguments object / JSON 参数对象。
     #[arg(long, default_value = "{}")]
     pub args: String,
 }
@@ -217,38 +218,38 @@ pub struct McpCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum McpSubcommand {
-    #[command(about = "List configured MCP servers")]
+    #[command(about = "List configured MCP servers / 列出已配置 MCP 服务器")]
     List(McpListCommand),
 
-    #[command(about = "Show one MCP server")]
+    #[command(about = "Show one MCP server / 查看单个 MCP 服务器")]
     Get(McpGetCommand),
 
-    #[command(about = "Add or replace an MCP server")]
+    #[command(about = "Add or replace an MCP server / 新增或替换 MCP 服务器")]
     Add(McpAddCommand),
 
-    #[command(about = "Remove an MCP server")]
+    #[command(about = "Remove an MCP server / 移除 MCP 服务器")]
     Remove(McpNameCommand),
 
-    #[command(about = "Enable an MCP server")]
+    #[command(about = "Enable an MCP server / 启用 MCP 服务器")]
     Enable(McpNameCommand),
 
-    #[command(about = "Disable an MCP server")]
+    #[command(about = "Disable an MCP server / 禁用 MCP 服务器")]
     Disable(McpNameCommand),
 }
 
 #[derive(Debug, Args)]
 pub struct McpListCommand {
-    /// Output the configured servers as JSON.
+    /// Output configured servers as JSON / 以 JSON 输出已配置服务器。
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct McpGetCommand {
-    /// MCP server name.
+    /// MCP server name / MCP 服务器名称。
     pub name: String,
 
-    /// Output the server configuration as JSON.
+    /// Output server config as JSON / 以 JSON 输出服务器配置。
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
@@ -289,8 +290,11 @@ pub struct SkillsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum SkillsSubcommand {
+    /// List local skills / 列出本地技能。
     List,
+    /// Enable one skill / 启用单个技能。
     Enable(SkillNameCommand),
+    /// Disable one skill / 禁用单个技能。
     Disable(SkillNameCommand),
 }
 
@@ -307,34 +311,42 @@ pub struct ConfigCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigSubcommand {
+    /// Show runtime config / 查看运行配置。
     Show,
+    /// Set tool call mode / 设置工具调用模式。
     SetToolCallMode(SetToolCallModeCommand),
+    /// Set approval mode / 设置审批模式。
     SetApprovalMode(SetApprovalModeCommand),
 }
 
 #[derive(Debug, Args)]
 pub struct SetToolCallModeCommand {
+    /// Mode value / 模式值。
     #[arg(value_enum)]
     pub mode: ToolCallModeArg,
 
+    /// Optional model name / 可选模型名称。
     #[arg(long)]
     pub model: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct SetApprovalModeCommand {
+    /// Mode value / 模式值。
     #[arg(value_enum)]
     pub mode: ApprovalModeArg,
 }
 
 #[derive(Debug, Args)]
 pub struct DoctorCommand {
+    /// Print extended diagnostics / 输出扩展诊断信息。
     #[arg(long, default_value_t = false)]
     pub verbose: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct CompletionCommand {
+    /// Target shell / 目标 Shell。
     #[arg(value_enum, default_value_t = Shell::Bash)]
     pub shell: Shell,
 }

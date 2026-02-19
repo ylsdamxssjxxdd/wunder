@@ -1,0 +1,106 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="gprompt-template-governance" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#F6FAFF"/>
+<stop offset="1" stop-color="#EAF3FF"/>
+</linearGradient>
+<filter id="shadowprompt-template-governance" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F1C33" flood-opacity="0.12"/>
+</filter>
+<marker id="arrowprompt-template-governance" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+<path d="M0,0 L0,6 L8,3 z" fill="#3F76E8"/>
+</marker>
+<style>
+.ttl { font: 700 34px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1C2840; }
+.sub { font: 500 19px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #556681; }
+.h3 { font: 700 22px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1F2A44; }
+.body { font: 500 17px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5C6F8F; }
+.cap { font: 600 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #2A3F66; }
+.small { font: 500 14px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #6A7A95; }
+</style>
+</defs>
+<rect x="18" y="18" width="1164" height="684" rx="28" fill="url(#gprompt-template-governance)" stroke="#DCE6F5"/>
+<text x="600" y="86" text-anchor="middle" class="ttl">
+<tspan x="600" dy="0">提示词模板治理流程</tspan>
+</text>
+<text x="600" y="124" text-anchor="middle" class="sub">
+<tspan x="600" dy="0">模板包切换 + 双语目录 + 形态分段注入</tspan>
+</text>
+<g filter="url(#shadowprompt-template-governance)"><rect x="80" y="210" width="188" height="150" rx="18" fill="#FFFFFF" stroke="#D6E2F3"/></g>
+<rect x="94" y="224" width="34" height="22" rx="11" fill="#3F76E8" fill-opacity="0.18"/>
+<text x="111" y="240" text-anchor="middle" class="cap">
+<tspan x="111" dy="0">1</tspan>
+</text>
+<text x="174.0" y="288" text-anchor="middle" class="h3">
+<tspan x="174.0" dy="0">语言解析</tspan>
+</text>
+<text x="174.0" y="326" text-anchor="middle" class="body">
+<tspan x="174.0" dy="0">zh/en 目录映射</tspan>
+</text>
+<line x1="268" y1="285.0" x2="286" y2="285.0" stroke="#3F76E8" stroke-width="3" marker-end="url(#arrowprompt-template-governance)"/>
+<g filter="url(#shadowprompt-template-governance)"><rect x="292" y="210" width="188" height="150" rx="18" fill="#FDFEFF" stroke="#D6E2F3"/></g>
+<rect x="306" y="224" width="34" height="22" rx="11" fill="#3F76E8" fill-opacity="0.18"/>
+<text x="323" y="240" text-anchor="middle" class="cap">
+<tspan x="323" dy="0">2</tspan>
+</text>
+<text x="386.0" y="288" text-anchor="middle" class="h3">
+<tspan x="386.0" dy="0">模板选择</tspan>
+</text>
+<text x="386.0" y="326" text-anchor="middle" class="body">
+<tspan x="386.0" dy="0">prompt_templ</tspan>
+<tspan x="386.0" dy="24">ates.active</tspan>
+</text>
+<line x1="480" y1="285.0" x2="498" y2="285.0" stroke="#3F76E8" stroke-width="3" marker-end="url(#arrowprompt-template-governance)"/>
+<g filter="url(#shadowprompt-template-governance)"><rect x="504" y="210" width="188" height="150" rx="18" fill="#F7FBFF" stroke="#D6E2F3"/></g>
+<rect x="518" y="224" width="34" height="22" rx="11" fill="#3F76E8" fill-opacity="0.18"/>
+<text x="535" y="240" text-anchor="middle" class="cap">
+<tspan x="535" dy="0">3</tspan>
+</text>
+<text x="598.0" y="288" text-anchor="middle" class="h3">
+<tspan x="598.0" dy="0">分段拼装</tspan>
+</text>
+<text x="598.0" y="326" text-anchor="middle" class="body">
+<tspan x="598.0" dy="0">role/tools/m</tspan>
+<tspan x="598.0" dy="24">emory</tspan>
+</text>
+<line x1="692" y1="285.0" x2="710" y2="285.0" stroke="#3F76E8" stroke-width="3" marker-end="url(#arrowprompt-template-governance)"/>
+<g filter="url(#shadowprompt-template-governance)"><rect x="716" y="210" width="188" height="150" rx="18" fill="#FFFFFF" stroke="#D6E2F3"/></g>
+<rect x="730" y="224" width="34" height="22" rx="11" fill="#3F76E8" fill-opacity="0.18"/>
+<text x="747" y="240" text-anchor="middle" class="cap">
+<tspan x="747" dy="0">4</tspan>
+</text>
+<text x="810.0" y="288" text-anchor="middle" class="h3">
+<tspan x="810.0" dy="0">形态注入</tspan>
+</text>
+<text x="810.0" y="326" text-anchor="middle" class="body">
+<tspan x="810.0" dy="0">server 与</tspan>
+<tspan x="810.0" dy="24">cli/desktop</tspan>
+</text>
+<line x1="904" y1="285.0" x2="922" y2="285.0" stroke="#3F76E8" stroke-width="3" marker-end="url(#arrowprompt-template-governance)"/>
+<g filter="url(#shadowprompt-template-governance)"><rect x="928" y="210" width="188" height="150" rx="18" fill="#F9FCFF" stroke="#D6E2F3"/></g>
+<rect x="942" y="224" width="34" height="22" rx="11" fill="#3F76E8" fill-opacity="0.18"/>
+<text x="959" y="240" text-anchor="middle" class="cap">
+<tspan x="959" dy="0">5</tspan>
+</text>
+<text x="1022.0" y="288" text-anchor="middle" class="h3">
+<tspan x="1022.0" dy="0">运行生效</tspan>
+</text>
+<text x="1022.0" y="326" text-anchor="middle" class="body">
+<tspan x="1022.0" dy="0">统一下发系统提示词</tspan>
+</text>
+<rect x="80" y="432" width="336" height="38" rx="19" fill="#FFFFFF" stroke="#D6E2F3"/>
+<circle cx="98" cy="451" r="4" fill="#3F76E8"/>
+<text x="114" y="457" text-anchor="start" class="small">
+<tspan x="114" dy="0">默认模板包只读</tspan>
+</text>
+<rect x="432" y="432" width="336" height="38" rx="19" fill="#FFFFFF" stroke="#D6E2F3"/>
+<circle cx="450" cy="451" r="4" fill="#3F76E8"/>
+<text x="466" y="457" text-anchor="start" class="small">
+<tspan x="466" dy="0">英文模式优先英文别名</tspan>
+</text>
+<rect x="784" y="432" width="336" height="38" rx="19" fill="#FFFFFF" stroke="#D6E2F3"/>
+<circle cx="802" cy="451" r="4" fill="#3F76E8"/>
+<text x="818" y="457" text-anchor="start" class="small">
+<tspan x="818" dy="0">提示词成为可治理资产</tspan>
+</text>
+</svg>

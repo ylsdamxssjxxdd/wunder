@@ -230,7 +230,9 @@ impl PromptComposer {
             let include_ptc = allowed_tool_names
                 .iter()
                 .any(|name| resolve_tool_name(name) == "ptc");
-            let tool_specs = if tool_call_mode == ToolCallMode::ToolCall && !allowed_tool_names.is_empty() {
+            let tool_specs = if tool_call_mode == ToolCallMode::ToolCall
+                && !allowed_tool_names.is_empty()
+            {
                 let tool_cache_key = format!(
                     "{config_version}|{user_tool_version}|{shared_tool_version}|{language}|{tool_key}"
                 );
@@ -421,7 +423,8 @@ fn build_system_prompt_skeleton(
     let os_name = system_name();
     let date_str = Local::now().format("%Y-%m-%d").to_string();
 
-    let role = read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_ROLE_PATH));
+    let role =
+        read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_ROLE_PATH));
 
     let mut engineering_flags = HashMap::new();
     let is_local = is_local_runtime_mode(&config.server.mode);
@@ -450,7 +453,11 @@ fn build_system_prompt_skeleton(
     // to keep the system prompt minimal.
     let tools_block = if tool_call_mode == ToolCallMode::ToolCall {
         let tools_text = if !tools.is_empty() {
-            tools.iter().map(render_tool_spec).collect::<Vec<_>>().join("\n")
+            tools
+                .iter()
+                .map(render_tool_spec)
+                .collect::<Vec<_>>()
+                .join("\n")
         } else {
             String::new()
         };
@@ -501,11 +508,8 @@ fn build_system_prompt_skeleton(
         )
     };
 
-    let memory_template = read_prompt_template_from_pack(
-        config,
-        &template_id,
-        Path::new(SYSTEM_PROMPT_MEMORY_PATH),
-    );
+    let memory_template =
+        read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_MEMORY_PATH));
     let memory_block = render_template(
         &memory_template,
         &HashMap::from([(
@@ -523,9 +527,15 @@ fn build_system_prompt_skeleton(
         blocks.push(SYSTEM_PROMPT_MEMORY_PLACEHOLDER.to_string());
     }
 
-    if let Some(extra) = agent_prompt.map(str::trim).filter(|value| !value.is_empty()) {
-        let extra_template =
-            read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_EXTRA_PATH));
+    if let Some(extra) = agent_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let extra_template = read_prompt_template_from_pack(
+            config,
+            &template_id,
+            Path::new(SYSTEM_PROMPT_EXTRA_PATH),
+        );
         let extra_block = render_template(
             &extra_template,
             &HashMap::from([("EXTRA_PROMPT".to_string(), extra.to_string())]),
@@ -576,7 +586,10 @@ fn apply_prompt_flags(template: &str, flags: &HashMap<String, bool>) -> String {
     let mut output = String::with_capacity(template.len());
     for raw_line in template.lines() {
         let trimmed = raw_line.trim();
-        if let Some(tag) = trimmed.strip_prefix("[[").and_then(|rest| rest.strip_suffix("]]")) {
+        if let Some(tag) = trimmed
+            .strip_prefix("[[")
+            .and_then(|rest| rest.strip_suffix("]]"))
+        {
             let tag = tag.trim();
             if let Some(_tag) = tag.strip_prefix('/') {
                 if !stack.is_empty() {
@@ -693,9 +706,11 @@ fn insert_locale_after_prompts(path: &Path, locale: &str) -> Option<PathBuf> {
     if !found {
         return None;
     }
-    if rest.first().and_then(|value| value.to_str()).is_some_and(|value| {
-        value.eq_ignore_ascii_case("en") || value.eq_ignore_ascii_case("zh")
-    }) {
+    if rest
+        .first()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("en") || value.eq_ignore_ascii_case("zh"))
+    {
         return None;
     }
     let mut candidate = prefix.join(locale);

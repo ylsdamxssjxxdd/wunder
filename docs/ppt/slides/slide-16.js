@@ -2,43 +2,40 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 16 页：智能体管理测试功能，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="智能体管理测试功能">
-        <div class="slide-meta">
-          <span class="section-tag">第5节 智能体管理测试功能</span>
-          <div class="section-map">
-            <a class="section-chip active" href="#16">总览</a>
-            <a class="section-chip" href="#17">线程管理</a>
-            <a class="section-chip" href="#18">吞吐量测试</a>
-            <a class="section-chip" href="#19">能力评估</a>
-          </div>
-        </div>
-        <h2>智能体管理测试功能：总览</h2>
-        <p class="section-lead">第 5 节共四页：线程管理 / 吞吐量测试 / 能力评估</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">线程管理</span>
-            <p>生命周期可观测，冲突可提示、可取消</p>
-            <span class="pill">吞吐量测试</span>
-            <p>并发压测与 QPS 指标，关注资源占用</p>
-            <span class="pill">能力评估</span>
-            <p>成功率与质量评分，支持回归对比</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/agent-management-overview.svg" alt="管理测试总览示意图" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="组织治理">
+  <div class="slide-meta">
+    <span class="section-tag">第5节 治理与稳定性</span>
+    <div class="section-map">
+      <a class="section-chip active" href="#16">组织治理</a>
+      <a class="section-chip" href="#17">安全边界</a>
+      <a class="section-chip" href="#18">观测评测</a>
+    </div>
+  </div>
+  <h2>组织治理：用户、单位、权限与配额</h2>
+  <p class="section-lead">把“谁能做什么、能用多少”变成平台规则</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">组织模型</span>
+      <p>支持组织树、用户账号、角色权限与层级管理。</p>
+      <span class="pill">访问控制</span>
+      <p>工具/智能体可按用户维度配置 allow/block 策略。</p>
+      <span class="pill">配额治理</span>
+      <p>注册用户按日额度控制，0 点重置并可视化展示。</p>
+      <span class="pill">身份区分</span>
+      <p>线程用户可虚构；注册用户由管理端控制治理策略。</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/org-governance-model.svg" alt="组织治理与权限配额示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

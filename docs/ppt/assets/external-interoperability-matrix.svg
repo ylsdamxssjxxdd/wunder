@@ -1,0 +1,73 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="gexternal-interoperability-matrix" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#F8FAFF"/>
+<stop offset="1" stop-color="#EDF4FF"/>
+</linearGradient>
+<filter id="shadowexternal-interoperability-matrix" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F1C33" flood-opacity="0.12"/>
+</filter>
+<marker id="arrowexternal-interoperability-matrix" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+<path d="M0,0 L0,6 L8,3 z" fill="#3B74E5"/>
+</marker>
+<style>
+.ttl { font: 700 34px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1C2840; }
+.sub { font: 500 19px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #556681; }
+.h3 { font: 700 22px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1F2A44; }
+.body { font: 500 17px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5C6F8F; }
+.cap { font: 600 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #2A3F66; }
+.small { font: 500 14px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #6A7A95; }
+</style>
+</defs>
+<rect x="18" y="18" width="1164" height="684" rx="28" fill="url(#gexternal-interoperability-matrix)" stroke="#DCE6F5"/>
+<text x="600" y="86" text-anchor="middle" class="ttl">
+<tspan x="600" dy="0">外部互通接口矩阵</tspan>
+</text>
+<text x="600" y="124" text-anchor="middle" class="sub">
+<tspan x="600" dy="0">A2A、MCP、Gateway 与 External Auth 协同开放能力</tspan>
+</text>
+<rect x="150" y="190" width="900" height="320" rx="18" fill="#FFFFFF" stroke="#D7E3F4"/>
+<line x1="600.0" y1="190" x2="600.0" y2="510" stroke="#D7E3F4" stroke-width="2"/>
+<line x1="150" y1="350.0" x2="1050" y2="350.0" stroke="#D7E3F4" stroke-width="2"/>
+<rect x="205.0" y="214.0" width="340" height="112" rx="14" fill="#F9FCFF" stroke="#D8E4F5"/>
+<text x="375.0" y="262.0" text-anchor="middle" class="h3">
+<tspan x="375.0" dy="0">A2A</tspan>
+</text>
+<text x="375.0" y="294.0" text-anchor="middle" class="body">
+<tspan x="375.0" dy="0">JSON-RPC + SSE</tspan>
+<tspan x="375.0" dy="24">能力互通</tspan>
+</text>
+<rect x="655.0" y="214.0" width="340" height="112" rx="14" fill="#F9FCFF" stroke="#D8E4F5"/>
+<text x="825.0" y="262.0" text-anchor="middle" class="h3">
+<tspan x="825.0" dy="0">MCP</tspan>
+</text>
+<text x="825.0" y="294.0" text-anchor="middle" class="body">
+<tspan x="825.0" dy="0">工具协议标准接入</tspan>
+</text>
+<rect x="205.0" y="374.0" width="340" height="112" rx="14" fill="#F9FCFF" stroke="#D8E4F5"/>
+<text x="375.0" y="422.0" text-anchor="middle" class="h3">
+<tspan x="375.0" dy="0">Gateway</tspan>
+</text>
+<text x="375.0" y="454.0" text-anchor="middle" class="body">
+<tspan x="375.0" dy="0">控制面 WebSocket 协同</tspan>
+</text>
+<rect x="655.0" y="374.0" width="340" height="112" rx="14" fill="#F9FCFF" stroke="#D8E4F5"/>
+<text x="825.0" y="422.0" text-anchor="middle" class="h3">
+<tspan x="825.0" dy="0">External Auth</tspan>
+</text>
+<text x="825.0" y="454.0" text-anchor="middle" class="body">
+<tspan x="825.0" dy="0">外部系统免登录嵌入</tspan>
+</text>
+<rect x="112" y="536" width="304" height="84" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+<text x="264" y="582" text-anchor="middle" class="small">
+<tspan x="264" dy="0">统一鉴权策略</tspan>
+</text>
+<rect x="440" y="536" width="304" height="84" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+<text x="592" y="582" text-anchor="middle" class="small">
+<tspan x="592" dy="0">AgentCard 能力发现</tspan>
+</text>
+<rect x="768" y="536" width="304" height="84" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+<text x="920" y="582" text-anchor="middle" class="small">
+<tspan x="920" dy="0">降低跨系统对接成本</tspan>
+</text>
+</svg>

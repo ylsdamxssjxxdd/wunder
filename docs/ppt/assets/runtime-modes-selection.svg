@@ -1,0 +1,76 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="gruntime-modes-selection" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#F7FAFF"/>
+<stop offset="1" stop-color="#EDF4FF"/>
+</linearGradient>
+<filter id="shadowruntime-modes-selection" x="-20%" y="-20%" width="140%" height="140%">
+<feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F1C33" flood-opacity="0.12"/>
+</filter>
+<marker id="arrowruntime-modes-selection" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+<path d="M0,0 L0,6 L8,3 z" fill="#3F74E4"/>
+</marker>
+<style>
+.ttl { font: 700 34px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1C2840; }
+.sub { font: 500 19px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #556681; }
+.h3 { font: 700 22px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1F2A44; }
+.body { font: 500 17px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5C6F8F; }
+.cap { font: 600 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #2A3F66; }
+.small { font: 500 14px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #6A7A95; }
+</style>
+</defs>
+<rect x="18" y="18" width="1164" height="684" rx="28" fill="url(#gruntime-modes-selection)" stroke="#DCE6F5"/>
+<text x="600" y="86" text-anchor="middle" class="ttl">
+<tspan x="600" dy="0">三形态运行选型</tspan>
+</text>
+<text x="600" y="124" text-anchor="middle" class="sub">
+<tspan x="600" dy="0">按场景选择 server / cli / desktop 并共享同一能力模型</tspan>
+</text>
+<g filter="url(#shadowruntime-modes-selection)"><rect x="110" y="210" width="304" height="240" rx="18" fill="#FFFFFF" stroke="#D8E4F5"/></g>
+<rect x="110" y="210" width="304" height="54" rx="18" fill="#3F74E4" fill-opacity="0.16"/>
+<text x="262.0" y="244" text-anchor="middle" class="h3">
+<tspan x="262.0" dy="0">server</tspan>
+</text>
+<text x="132" y="312" text-anchor="start" class="body">
+<tspan x="132" dy="0">多用户平台治理</tspan>
+</text>
+<text x="132" y="356" text-anchor="start" class="body">
+<tspan x="132" dy="0">默认 PostgreSQL 持久化</tspan>
+</text>
+<line x1="414" y1="330" x2="440" y2="330" stroke="#3F74E4" stroke-width="2.5" marker-end="url(#arrowruntime-modes-selection)"/>
+<g filter="url(#shadowruntime-modes-selection)"><rect x="450" y="210" width="304" height="240" rx="18" fill="#FFFFFF" stroke="#D8E4F5"/></g>
+<rect x="450" y="210" width="304" height="54" rx="18" fill="#3F74E4" fill-opacity="0.24"/>
+<text x="602.0" y="244" text-anchor="middle" class="h3">
+<tspan x="602.0" dy="0">cli</tspan>
+</text>
+<text x="472" y="312" text-anchor="start" class="body">
+<tspan x="472" dy="0">本地调试自动化</tspan>
+</text>
+<text x="472" y="356" text-anchor="start" class="body">
+<tspan x="472" dy="0">持久化目录 WUNDER_TEMP</tspan>
+</text>
+<line x1="754" y1="330" x2="780" y2="330" stroke="#3F74E4" stroke-width="2.5" marker-end="url(#arrowruntime-modes-selection)"/>
+<g filter="url(#shadowruntime-modes-selection)"><rect x="790" y="210" width="304" height="240" rx="18" fill="#FFFFFF" stroke="#D8E4F5"/></g>
+<rect x="790" y="210" width="304" height="54" rx="18" fill="#3F74E4" fill-opacity="0.32"/>
+<text x="942.0" y="244" text-anchor="middle" class="h3">
+<tspan x="942.0" dy="0">desktop</tspan>
+</text>
+<text x="812" y="312" text-anchor="start" class="body">
+<tspan x="812" dy="0">本地可视化运行</tspan>
+</text>
+<text x="812" y="356" text-anchor="start" class="body">
+<tspan x="812" dy="0">持久化目录 WUNDER_TEMPD</tspan>
+</text>
+<rect x="120" y="490" width="320" height="100" rx="14" fill="#FFFFFF" stroke="#D8E4F5"/>
+<text x="280" y="538" text-anchor="middle" class="small">
+<tspan x="280" dy="0">同一核心能力跨形态复用</tspan>
+</text>
+<rect x="466" y="490" width="320" height="100" rx="14" fill="#FFFFFF" stroke="#D8E4F5"/>
+<text x="626" y="538" text-anchor="middle" class="small">
+<tspan x="626" dy="0">先选场景再选形态</tspan>
+</text>
+<rect x="812" y="490" width="320" height="100" rx="14" fill="#FFFFFF" stroke="#D8E4F5"/>
+<text x="972" y="538" text-anchor="middle" class="small">
+<tspan x="972" dy="0">减少部署与维护成本</tspan>
+</text>
+</svg>

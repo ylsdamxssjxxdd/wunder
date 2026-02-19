@@ -1,3 +1,5 @@
+use crate::locale;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashCommand {
     Model,
@@ -162,7 +164,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
     })
 }
 
-pub fn help_lines() -> Vec<String> {
+pub fn help_lines_with_language(language: &str) -> Vec<String> {
     let width = SLASH_COMMAND_DOCS
         .iter()
         .map(|entry| entry.usage.len())
@@ -176,14 +178,14 @@ pub fn help_lines() -> Vec<String> {
             format!(
                 "{usage:<width$}  {description}",
                 usage = entry.usage,
-                description = entry.description,
+                description = localized_description(entry, language),
                 width = width,
             )
         })
         .collect()
 }
 
-pub fn popup_lines(prefix: &str, limit: usize) -> Vec<String> {
+pub fn popup_lines_with_language(prefix: &str, limit: usize, language: &str) -> Vec<String> {
     let cleaned = prefix.trim();
     let (head, tail) = split_head(cleaned);
     let width = SLASH_COMMAND_DOCS
@@ -197,7 +199,7 @@ pub fn popup_lines(prefix: &str, limit: usize) -> Vec<String> {
             return vec![format!(
                 "{usage:<width$}  {description}",
                 usage = entry.usage,
-                description = entry.description,
+                description = localized_description(entry, language),
                 width = width,
             )];
         }
@@ -222,7 +224,7 @@ pub fn popup_lines(prefix: &str, limit: usize) -> Vec<String> {
             format!(
                 "{usage:<width$}  {description}",
                 usage = entry.usage,
-                description = entry.description,
+                description = localized_description(entry, language),
                 width = width,
             )
         })
@@ -274,6 +276,29 @@ fn command_token(entry: &SlashCommandDoc) -> &str {
     entry.usage.split_whitespace().next().unwrap_or(entry.usage)
 }
 
+fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
+    let zh = match entry.command {
+        SlashCommand::Model => "查看当前模型或切换默认模型",
+        SlashCommand::ToolCallMode => "切换工具调用协议（别名：/mode）",
+        SlashCommand::Approvals => "查看或切换审批模式",
+        SlashCommand::Diff => "显示当前工作区 git 变更摘要",
+        SlashCommand::Review => "基于当前 git 变更发起评审",
+        SlashCommand::Mention => "在工作区内搜索文件",
+        SlashCommand::Status => "显示当前会话运行状态",
+        SlashCommand::Session => "显示当前会话统计信息",
+        SlashCommand::System => "查看系统提示词或管理额外提示词",
+        SlashCommand::Mouse => "切换鼠标滚轮/选择模式",
+        SlashCommand::Resume => "列出并恢复历史会话",
+        SlashCommand::New => "开始新会话",
+        SlashCommand::Config => "交互式配置模型或一行直配",
+        SlashCommand::ConfigShow => "显示当前运行配置",
+        SlashCommand::Help => "显示 slash 命令帮助",
+        SlashCommand::Exit => "退出交互模式",
+        SlashCommand::Quit => "退出交互模式",
+    };
+    locale::tr(language, zh, entry.description)
+}
+
 fn split_head(input: &str) -> (&str, &str) {
     let cleaned = input.trim_start();
     if cleaned.is_empty() {
@@ -312,14 +337,14 @@ mod tests {
 
     #[test]
     fn popup_lines_show_usage_for_argument_entry() {
-        let lines = popup_lines("tool-call-mode function_call", 7);
+        let lines = popup_lines_with_language("tool-call-mode function_call", 7, "en-US");
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("/tool-call-mode <tool_call|function_call> [model]"));
     }
 
     #[test]
     fn popup_lines_accepts_mode_alias_for_argument_entry() {
-        let lines = popup_lines("mode tool_call", 7);
+        let lines = popup_lines_with_language("mode tool_call", 7, "en-US");
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("/tool-call-mode <tool_call|function_call> [model]"));
     }
@@ -340,7 +365,7 @@ mod tests {
 
     #[test]
     fn popup_lines_show_mouse_usage_for_argument_entry() {
-        let lines = popup_lines("mouse scroll", 7);
+        let lines = popup_lines_with_language("mouse scroll", 7, "en-US");
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("/mouse [scroll|select]"));
     }

@@ -2,53 +2,41 @@
 
 (() => {
 
-// 通过全局命名空间获取工具函数与注册器，避免模块加载带来的 CORS 限制。
 const { createSlide, registerSlide } = window.WunderPpt;
 
-// 第 4 页：工具体系总览，用于拆分维护本页内容。
 function buildSlide() {
   return createSlide(`
-<section class="slide" data-title="工具体系">
-        <div class="slide-meta">
-          <span class="section-tag">第2节 工具体系</span>
-          <div class="section-map">
-            <a class="section-chip active" href="#4">总览</a>
-            <a class="section-chip" href="#5">内置</a>
-            <a class="section-chip" href="#6">MCP</a>
-            <a class="section-chip" href="#7">Skills</a>
-            <a class="section-chip" href="#8">知识库</a>
-            <a class="section-chip" href="#9">自建</a>
-            <a class="section-chip" href="#10">共享</a>
-          </div>
-        </div>
-        <h2>六类工具构成能力地图</h2>
-        <p class="section-lead">能力拆分后，才能被治理、复用与共享</p>
-        <div class="grid two">
-          <div class="card stack">
-            <span class="pill">工具类型</span>
-            <ul>
-              <li>内置工具：手和脚（文件/命令/ptc）</li>
-              <li>MCP 工具：刀和剑（外部服务接入）</li>
-              <li>Skills 工具：通关攻略（流程固化）</li>
-              <li>知识库工具：百科全书（可检索资料）</li>
-              <li>自建工具：私人装备（个人能力包）</li>
-              <li>共享工具：装备市场（团队复用池）</li>
-            </ul>
-            <span class="pill">统一治理</span>
-            <p>统一清单、白名单管控、可组合使用</p>
-            <span class="pill">价值</span>
-            <p>让能力标准化、可追踪、可复用</p>
-          </div>
-          <div class="card media-panel is-image stack">
-            <img src="assets/tool-system-overview.svg" alt="工具体系总览图（六类工具 + 调度层）" />
-          </div>
-        </div>
-      </section>
+<section class="slide" data-title="架构总览">
+  <div class="slide-meta">
+    <span class="section-tag">第2节 主链路与并发模型</span>
+    <div class="section-map">
+      <a class="section-chip active" href="#4">架构总览</a>
+      <a class="section-chip" href="#5">请求链路</a>
+      <a class="section-chip" href="#6">流式恢复</a>
+      <a class="section-chip" href="#7">并发模型</a>
+    </div>
+  </div>
+  <h2>重构后架构：入口层 × 调度层 × 能力层 × 治理层</h2>
+  <p class="section-lead">主链路稳定与能力扩展，都通过统一分层实现</p>
+  <div class="grid two">
+    <div class="card stack">
+      <span class="pill">入口层</span>
+      <p>frontend / web / cli / desktop / channel / gateway</p>
+      <span class="pill">调度层</span>
+      <p>AgentRuntime + Orchestrator 统一编排模型与工具</p>
+      <span class="pill">能力层</span>
+      <p>工具系统、知识库、工作区、记忆、蜂群协作</p>
+      <span class="pill">治理层</span>
+      <p>权限、安全、配额、监控、压测与评估</p>
+    </div>
+    <div class="card media-panel is-image stack">
+      <img src="assets/architecture-four-layers.svg" alt="系统四层架构示意图" />
+    </div>
+  </div>
+</section>
   `);
 }
 
-// 注册页面构建函数，保持与清单一致的加载顺序。
 registerSlide(buildSlide);
-
 
 })();

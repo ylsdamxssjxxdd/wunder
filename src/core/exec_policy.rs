@@ -1,5 +1,5 @@
-use crate::core::approval::ApprovalMode;
 use crate::config::Config;
+use crate::core::approval::ApprovalMode;
 use crate::tools::resolve_tool_name;
 use dashmap::DashMap;
 use serde_json::{json, Value};
@@ -73,8 +73,9 @@ pub fn evaluate_tool_call(
     let edit_tool_name = resolve_tool_name("edit_file");
     let replace_tool_name = resolve_tool_name("replace_text");
     let is_exec_tool = tool_name == exec_tool_name || tool_name == ptc_tool_name;
-    let is_write_tool =
-        tool_name == write_tool_name || tool_name == edit_tool_name || tool_name == replace_tool_name;
+    let is_write_tool = tool_name == write_tool_name
+        || tool_name == edit_tool_name
+        || tool_name == replace_tool_name;
     if !is_exec_tool && !is_write_tool {
         return None;
     }
@@ -117,7 +118,11 @@ pub fn evaluate_tool_call(
     }
 
     if is_exec_tool {
-        if matches!(approval_mode, ApprovalMode::Suggest | ApprovalMode::AutoEdit) && !approved {
+        if matches!(
+            approval_mode,
+            ApprovalMode::Suggest | ApprovalMode::AutoEdit
+        ) && !approved
+        {
             requires_approval = true;
             allowed = false;
             if reason.is_empty() {
@@ -333,10 +338,8 @@ mod tests {
             &args,
             Some("session_b"),
             Some("user_b"),
-        )
-        .expect("decision");
-        assert!(decision.allowed);
-        assert!(!decision.requires_approval);
+        );
+        assert!(decision.is_none());
 
         let args_repeat = json!({ "content": "rm -rf /tmp/cache" });
         let decision_repeat = evaluate_tool_call(
@@ -345,10 +348,19 @@ mod tests {
             &args_repeat,
             Some("session_b"),
             Some("user_b"),
+        );
+        assert!(decision_repeat.is_none());
+
+        let decision_other_session = evaluate_tool_call(
+            &config,
+            &tool_name,
+            &args_repeat,
+            Some("session_other"),
+            Some("user_b"),
         )
         .expect("decision");
-        assert!(decision_repeat.allowed);
-        assert!(!decision_repeat.requires_approval);
+        assert!(!decision_other_session.allowed);
+        assert!(decision_other_session.requires_approval);
     }
 
     #[test]
@@ -357,9 +369,14 @@ mod tests {
         config.security.approval_mode = Some("suggest".to_string());
         let tool_name = resolve_tool_name("write_file");
         let args = json!({ "path": "src/main.rs", "content": "fn main(){}" });
-        let decision =
-            evaluate_tool_call(&config, &tool_name, &args, Some("session_c"), Some("user_c"))
-                .expect("decision");
+        let decision = evaluate_tool_call(
+            &config,
+            &tool_name,
+            &args,
+            Some("session_c"),
+            Some("user_c"),
+        )
+        .expect("decision");
         assert!(!decision.allowed);
         assert!(decision.requires_approval);
         assert_eq!(decision.reason, "write_requires_approval");
@@ -372,9 +389,14 @@ mod tests {
         config.security.approval_mode = Some("auto_edit".to_string());
         let tool_name = resolve_tool_name("execute_command");
         let args = json!({ "content": "echo hello" });
-        let decision =
-            evaluate_tool_call(&config, &tool_name, &args, Some("session_d"), Some("user_d"))
-                .expect("decision");
+        let decision = evaluate_tool_call(
+            &config,
+            &tool_name,
+            &args,
+            Some("session_d"),
+            Some("user_d"),
+        )
+        .expect("decision");
         assert!(!decision.allowed);
         assert!(decision.requires_approval);
         assert_eq!(decision.reason, "exec_requires_approval");
