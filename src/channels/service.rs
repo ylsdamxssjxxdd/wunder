@@ -444,26 +444,39 @@ impl ChannelHub {
             Some(guard) => guard,
             None => {
                 return self
-                    .respond_busy(&message, &session_info, resolved_binding.as_ref())
+                    .respond_busy(&message, &session_info, resolved_binding.as_ref(), None)
                     .await;
             }
         };
 
+        let mut processing_ack_message_id = None;
         if message
             .channel
             .trim()
             .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
         {
-            if let Err(err) = self
-                .send_processing_ack(&config, &message, &session_info, resolved_binding.as_ref())
-                .await
-            {
-                warn!(
-                    "send channel processing ack failed: channel={}, account_id={}, session_id={}, error={err}",
-                    message.channel,
-                    message.account_id,
-                    session_info.session_id
-                );
+            if let Some(feishu_cfg) = account_cfg.feishu.as_ref() {
+                match self
+                    .send_processing_ack(
+                        &message,
+                        &session_info,
+                        resolved_binding.as_ref(),
+                        feishu_cfg,
+                    )
+                    .await
+                {
+                    Ok(message_id) => {
+                        processing_ack_message_id = message_id;
+                    }
+                    Err(err) => {
+                        warn!(
+                            "send channel processing ack failed: channel={}, account_id={}, session_id={}, error={err}",
+                            message.channel,
+                            message.account_id,
+                            session_info.session_id
+                        );
+                    }
+                }
             }
         }
 
@@ -548,7 +561,12 @@ impl ChannelHub {
             ChannelModelResult::Answer(answer) => answer,
             ChannelModelResult::Busy => {
                 return self
-                    .respond_busy(&message, &session_info, resolved_binding.as_ref())
+                    .respond_busy(
+                        &message,
+                        &session_info,
+                        resolved_binding.as_ref(),
+                        processing_ack_message_id.as_deref(),
+                    )
                     .await;
             }
         };
@@ -558,6 +576,20 @@ impl ChannelHub {
                 message.channel, message.account_id, message.peer.id
             );
         }
+        let mut outbound_meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.as_ref().and_then(|b| b.binding_id.clone()),
+            "message_id": message.message_id,
+            "media": meta,
+        });
+        if let Some(ack_message_id) = processing_ack_message_id.as_deref() {
+            if let Some(meta_obj) = outbound_meta.as_object_mut() {
+                meta_obj.insert(
+                    "processing_ack_message_id".to_string(),
+                    Value::String(ack_message_id.to_string()),
+                );
+            }
+        }
         let mut outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -565,12 +597,7 @@ impl ChannelHub {
             thread: message.thread.clone(),
             text: Some(response.clone()),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": session_info.session_id,
-                "binding_id": resolved_binding.as_ref().and_then(|b| b.binding_id.clone()),
-                "message_id": message.message_id,
-                "media": meta,
-            })),
+            meta: Some(outbound_meta),
         };
 
         let tts_enabled = session_info.tts_enabled.unwrap_or(false);
@@ -982,6 +1009,8 @@ impl ChannelHub {
             .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
         {
             if let Some(feishu_cfg) = account_cfg.feishu.as_ref() {
+                let processing_ack = is_processing_ack_payload(&record.payload);
+                let processing_ack_message_id = extract_processing_ack_message_id(&record.payload);
                 let outbound: ChannelOutboundMessage =
                     serde_json::from_value(record.payload.clone())
                         .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
@@ -997,6 +1026,18 @@ impl ChannelHub {
                             "outbox_id": record.outbox_id,
                         }),
                     );
+                }
+                if !processing_ack {
+                    if let Some(ack_message_id) = processing_ack_message_id.as_deref() {
+                        if let Err(err) =
+                            feishu::delete_message(&self.http, ack_message_id, feishu_cfg).await
+                        {
+                            warn!(
+                                "cleanup feishu processing ack failed: account_id={}, outbox_id={}, message_id={}, error={err}",
+                                record.account_id, record.outbox_id, ack_message_id
+                            );
+                        }
+                    }
                 }
                 return Ok(());
             }
@@ -1534,6 +1575,7 @@ impl ChannelHub {
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
+        processing_ack_message_id: Option<&str>,
     ) -> Result<ChannelInboundResult> {
         let last_message = self
             .load_latest_user_message(&session_info.user_id, &session_info.session_id)
@@ -1560,6 +1602,23 @@ impl ChannelHub {
             &busy_text,
         )
         .await;
+        let mut outbound_meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+            "message_id": message.message_id,
+            "busy": true,
+        });
+        if let Some(ack_message_id) = processing_ack_message_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(meta_obj) = outbound_meta.as_object_mut() {
+                meta_obj.insert(
+                    "processing_ack_message_id".to_string(),
+                    Value::String(ack_message_id.to_string()),
+                );
+            }
+        }
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -1567,12 +1626,7 @@ impl ChannelHub {
             thread: message.thread.clone(),
             text: Some(busy_text.clone()),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": session_info.session_id,
-                "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
-                "message_id": message.message_id,
-                "busy": true,
-            })),
+            meta: Some(outbound_meta),
         };
         let outbox_id = self.enqueue_outbox(&outbound).await?;
         Ok(ChannelInboundResult {
@@ -1583,11 +1637,11 @@ impl ChannelHub {
 
     async fn send_processing_ack(
         &self,
-        config: &Config,
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
-    ) -> Result<()> {
+        feishu_cfg: &FeishuConfig,
+    ) -> Result<Option<String>> {
         let ack_text = "已收到消息，正在处理中，请稍后。".to_string();
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
@@ -1603,14 +1657,8 @@ impl ChannelHub {
                 "processing_ack": true,
             })),
         };
-        let outbox_id = self.enqueue_outbox(&outbound).await?;
-        if !resolve_outbox_config(config.channels.outbox.clone()).worker_enabled {
-            let record = self.get_outbox(&outbox_id).await?;
-            if let Some(record) = record {
-                self.deliver_outbox_record(&record).await?;
-            }
-        }
-        Ok(())
+        let result = feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
+        Ok(result.message_id)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2261,6 +2309,26 @@ fn extract_session_id(payload: &Value) -> Option<String> {
         .and_then(|meta| meta.get("session_id"))
         .and_then(Value::as_str)
         .map(|value| value.to_string())
+}
+
+fn is_processing_ack_payload(payload: &Value) -> bool {
+    payload
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("processing_ack"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn extract_processing_ack_message_id(payload: &Value) -> Option<String> {
+    payload
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("processing_ack_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn truncate_text(text: &str, max: usize) -> String {

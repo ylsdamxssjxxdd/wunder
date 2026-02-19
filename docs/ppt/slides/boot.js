@@ -2,7 +2,7 @@
 
 
 
-const CACHE_BUST = "v=20260219-04";
+const CACHE_BUST = "v=20260219-06";
 const withCacheBust = (path) => (path.includes("?") ? path : `${path}?${CACHE_BUST}`);
 
 

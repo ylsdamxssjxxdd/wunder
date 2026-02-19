@@ -1,91 +1,78 @@
 <svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
 <defs>
-<linearGradient id="gmulti-entry-collaboration" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#F7FAFF"/>
-<stop offset="1" stop-color="#EEF5FF"/>
-</linearGradient>
-<filter id="shadowmulti-entry-collaboration" x="-20%" y="-20%" width="140%" height="140%">
-<feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F1C33" flood-opacity="0.12"/>
-</filter>
-<marker id="arrowmulti-entry-collaboration" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
-<path d="M0,0 L0,6 L8,3 z" fill="#4D80F5"/>
-</marker>
-<style>
-.ttl { font: 700 34px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1C2840; }
-.sub { font: 500 19px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #556681; }
-.h3 { font: 700 22px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1F2A44; }
-.body { font: 500 17px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5C6F8F; }
-.cap { font: 600 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #2A3F66; }
-.small { font: 500 14px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #6A7A95; }
-</style>
+  <linearGradient id="bg-mec" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#F7FAFF"/>
+    <stop offset="1" stop-color="#EEF5FF"/>
+  </linearGradient>
+  <filter id="shadow-mec" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0F1C33" flood-opacity="0.12"/>
+  </filter>
+  <marker id="arrow-mec" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L0,6 L8,3 z" fill="#4D80F5"/>
+  </marker>
+  <style>
+    .ttl { font: 700 34px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1C2840; }
+    .sub { font: 500 19px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #556681; }
+    .h3 { font: 700 22px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #1F2A44; }
+    .cap { font: 600 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #2A3F66; }
+    .body { font: 500 16px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5C6F8F; }
+    .small { font: 500 15px 'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif; fill: #5D6E8B; }
+  </style>
 </defs>
-<rect x="18" y="18" width="1164" height="684" rx="28" fill="url(#gmulti-entry-collaboration)" stroke="#DCE6F5"/>
-<text x="600" y="86" text-anchor="middle" class="ttl">
-<tspan x="600" dy="0">多入口协同模型</tspan>
-</text>
-<text x="600" y="124" text-anchor="middle" class="sub">
-<tspan x="600" dy="0">frontend / web / cli / desktop 共享同一调度底座</tspan>
-</text>
-<g filter="url(#shadowmulti-entry-collaboration)"><circle cx="600" cy="336" r="96" fill="#FFFFFF" stroke="#D8E4F5" stroke-width="2"/></g>
-<circle cx="600" cy="336" r="78" fill="#4D80F5" fill-opacity="0.16"/>
-<text x="600" y="330" text-anchor="middle" class="h3">
-<tspan x="600" dy="0">/wunder 主链路</tspan>
-</text>
-<text x="600" y="366" text-anchor="middle" class="body">
-<tspan x="600" dy="0">统一调度中枢</tspan>
-</text>
-<line x1="600" y1="336" x2="600.0" y2="104.0" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="515.0" y="68.0" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="600.0" y="102.0" text-anchor="middle" class="cap">
-<tspan x="600.0" dy="0">用户前端</tspan>
-</text>
-<line x1="600" y1="336" x2="800.9178936779898" y2="220.0" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="715.9178936779898" y="184.0" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="800.9178936779898" y="218.0" text-anchor="middle" class="cap">
-<tspan x="800.9178936779898" dy="0">管理端</tspan>
-</text>
-<line x1="600" y1="336" x2="800.9178936779898" y2="452.0" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="715.9178936779898" y="416.0" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="800.9178936779898" y="450.0" text-anchor="middle" class="cap">
-<tspan x="800.9178936779898" dy="0">CLI</tspan>
-</text>
-<line x1="600" y1="336" x2="600.0" y2="568.0" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="515.0" y="532.0" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="600.0" y="566.0" text-anchor="middle" class="cap">
-<tspan x="600.0" dy="0">Desktop</tspan>
-</text>
-<line x1="600" y1="336" x2="399.0821063220102" y2="452.0" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="314.0821063220102" y="416.0" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="399.0821063220102" y="450.0" text-anchor="middle" class="cap">
-<tspan x="399.0821063220102" dy="0">渠道入口</tspan>
-</text>
-<line x1="600" y1="336" x2="399.08210632201025" y2="219.99999999999997" stroke="#4D80F5" stroke-opacity="0.55" stroke-width="2"/>
-<rect x="314.08210632201025" y="183.99999999999997" width="170" height="72" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
-<text x="399.08210632201025" y="217.99999999999997" text-anchor="middle" class="cap">
-<tspan x="399.08210632201025" dy="0">网关入口</tspan>
-</text>
-<rect x="110" y="530" width="300" height="98" rx="16" fill="#FFFFFF" stroke="#D8E4F5"/>
-<rect x="124" y="544" width="8" height="8" rx="4" fill="#4D80F5"/>
-<text x="140" y="557" text-anchor="start" class="cap">
-<tspan x="140" dy="0">关键收益</tspan>
-</text>
-<text x="140" y="587" text-anchor="start" class="body">
-<tspan x="140" dy="0">多端体验不同能力一致</tspan>
-</text>
-<rect x="440" y="530" width="300" height="98" rx="16" fill="#FFFFFF" stroke="#D8E4F5"/>
-<rect x="454" y="544" width="8" height="8" rx="4" fill="#4D80F5"/>
-<text x="470" y="557" text-anchor="start" class="cap">
-<tspan x="470" dy="0">关键收益</tspan>
-</text>
-<text x="470" y="587" text-anchor="start" class="body">
-<tspan x="470" dy="0">减少重复开发与接口分裂</tspan>
-</text>
-<rect x="770" y="530" width="300" height="98" rx="16" fill="#FFFFFF" stroke="#D8E4F5"/>
-<rect x="784" y="544" width="8" height="8" rx="4" fill="#4D80F5"/>
-<text x="800" y="557" text-anchor="start" class="cap">
-<tspan x="800" dy="0">关键收益</tspan>
-</text>
-<text x="800" y="587" text-anchor="start" class="body">
-<tspan x="800" dy="0">统一会话模型便于治理</tspan>
-</text>
+
+<rect x="18" y="18" width="1164" height="684" rx="28" fill="url(#bg-mec)" stroke="#DCE6F5"/>
+
+<text x="600" y="86" text-anchor="middle" class="ttl">多入口协同模型</text>
+<text x="600" y="124" text-anchor="middle" class="sub">frontend / web / cli / desktop 共享同一调度底座</text>
+
+<!-- 连线放在底层，避免压住节点 -->
+<g opacity="0.78">
+  <path d="M330 222 C430 222 470 236 520 270" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+  <path d="M330 342 C430 342 470 328 520 306" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+  <path d="M330 462 C430 462 470 420 520 342" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+
+  <path d="M870 222 C770 222 730 236 680 270" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+  <path d="M870 342 C770 342 730 328 680 306" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+  <path d="M870 462 C770 462 730 420 680 342" stroke="#4D80F5" stroke-width="2.2" fill="none" marker-end="url(#arrow-mec)"/>
+</g>
+
+<g filter="url(#shadow-mec)">
+  <rect x="120" y="182" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+  <rect x="120" y="302" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+  <rect x="120" y="422" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+
+  <rect x="870" y="182" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+  <rect x="870" y="302" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+  <rect x="870" y="422" width="210" height="80" rx="14" fill="#FFFFFF" stroke="#D7E3F4"/>
+</g>
+
+<text x="225" y="230" text-anchor="middle" class="cap">用户前端</text>
+<text x="225" y="350" text-anchor="middle" class="cap">CLI</text>
+<text x="225" y="470" text-anchor="middle" class="cap">渠道入口</text>
+
+<text x="975" y="230" text-anchor="middle" class="cap">管理端</text>
+<text x="975" y="350" text-anchor="middle" class="cap">Desktop</text>
+<text x="975" y="470" text-anchor="middle" class="cap">网关入口</text>
+
+<g filter="url(#shadow-mec)">
+  <rect x="520" y="236" width="160" height="210" rx="22" fill="#FFFFFF" stroke="#D7E3F4"/>
+</g>
+<rect x="540" y="260" width="120" height="72" rx="14" fill="#4D80F5" fill-opacity="0.14"/>
+<text x="600" y="302" text-anchor="middle" class="h3">/wunder</text>
+<text x="600" y="354" text-anchor="middle" class="h3">主链路</text>
+<text x="600" y="384" text-anchor="middle" class="body">统一调度中枢</text>
+<text x="600" y="412" text-anchor="middle" class="body">会话与工具口径一致</text>
+
+<g filter="url(#shadow-mec)">
+  <rect x="70" y="548" width="1060" height="114" rx="18" fill="#FFFFFF" stroke="#D8E4F5"/>
+</g>
+
+<rect x="110" y="582" width="300" height="52" rx="12" fill="#F7FAFF" stroke="#DCE7F5"/>
+<text x="260" y="614" text-anchor="middle" class="small">多端体验不同，能力一致</text>
+
+<rect x="450" y="582" width="300" height="52" rx="12" fill="#F7FAFF" stroke="#DCE7F5"/>
+<text x="600" y="614" text-anchor="middle" class="small">减少重复开发与接口分裂</text>
+
+<rect x="790" y="582" width="300" height="52" rx="12" fill="#F7FAFF" stroke="#DCE7F5"/>
+<text x="940" y="614" text-anchor="middle" class="small">统一会话模型便于治理</text>
 </svg>

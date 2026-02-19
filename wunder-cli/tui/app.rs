@@ -1,11 +1,12 @@
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
 use unicode_width::UnicodeWidthChar;
@@ -470,6 +471,8 @@ impl TuiApp {
                 "Esc / ?               关闭快捷键面板".to_string(),
                 "Enter                 发送消息".to_string(),
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
+                "Ctrl+V / Shift+Insert 粘贴剪贴板文本".to_string(),
+                "Right Click           粘贴剪贴板文本（scroll 模式）".to_string(),
                 "Left / Right          光标左右移动".to_string(),
                 "Ctrl+B / Ctrl+F       光标左右移动".to_string(),
                 "Alt+B / Alt+F         按词移动".to_string(),
@@ -494,6 +497,8 @@ impl TuiApp {
             "Esc / ?               close shortcuts".to_string(),
             "Enter                 send message".to_string(),
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
+            "Ctrl+V / Shift+Insert paste clipboard text".to_string(),
+            "Right Click           paste clipboard text (scroll mode)".to_string(),
             "Left / Right          move cursor".to_string(),
             "Ctrl+B / Ctrl+F       move cursor".to_string(),
             "Alt+B / Alt+F         move by word".to_string(),
@@ -941,6 +946,21 @@ impl TuiApp {
         self.pending_paste.push_back(text);
     }
 
+    fn paste_from_system_clipboard(&mut self) {
+        match read_system_clipboard_text() {
+            Ok(Some(text)) => self.on_paste(text),
+            Ok(None) => {}
+            Err(error) => {
+                let hint = crate::locale::tr(
+                    self.display_language.as_str(),
+                    "读取系统剪贴板失败，请确认终端允许粘贴且剪贴板存在文本",
+                    "failed to read text from system clipboard; ensure terminal paste is allowed and clipboard has text",
+                );
+                self.push_log(LogKind::Info, format!("{hint}: {error}"));
+            }
+        }
+    }
+
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<()> {
         if self
             .ctrl_c_hint_deadline
@@ -952,6 +972,12 @@ impl TuiApp {
 
         if self.active_approval.is_some() {
             self.handle_approval_key(key);
+            return Ok(());
+        }
+
+        if is_paste_shortcut(key) {
+            self.focus_area = FocusArea::Input;
+            self.paste_from_system_clipboard();
             return Ok(());
         }
 
@@ -979,6 +1005,11 @@ impl TuiApp {
                     } else {
                         self.history_down();
                     }
+                    return Ok(());
+                }
+                KeyCode::Char('\u{0016}') => {
+                    self.focus_area = FocusArea::Input;
+                    self.paste_from_system_clipboard();
                     return Ok(());
                 }
                 _ => {}
@@ -1545,6 +1576,12 @@ impl TuiApp {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            self.focus_area = FocusArea::Input;
+            self.paste_from_system_clipboard();
+            return;
+        }
+
         if self.mouse_mode != MouseMode::Scroll {
             return;
         }
@@ -2536,14 +2573,22 @@ impl TuiApp {
         let cleaned = args.trim();
         if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
             let mode = if self.mouse_mode == MouseMode::Scroll {
-                "scroll"
+                crate::locale::tr(self.display_language.as_str(), "滚轮", "scroll")
             } else {
-                "select"
+                crate::locale::tr(self.display_language.as_str(), "选择", "select")
             };
-            self.push_log(LogKind::Info, format!("mouse mode: {mode}"));
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("鼠标模式: {mode}"));
+            } else {
+                self.push_log(LogKind::Info, format!("mouse mode: {mode}"));
+            }
             self.push_log(
                 LogKind::Info,
-                "usage: /mouse [scroll|select]  (F2 to toggle)".to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /mouse [scroll|select]  （F2 切换）",
+                    "usage: /mouse [scroll|select]  (F2 to toggle)",
+                ),
             );
             return;
         }
@@ -3374,7 +3419,14 @@ impl TuiApp {
         }
 
         if !has_meaningful_assistant {
-            self.push_log(LogKind::Assistant, "正在调用工具...".to_string());
+            self.push_log(
+                LogKind::Assistant,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "正在调用工具...",
+                    "calling tools...",
+                ),
+            );
         }
         self.tool_phase_notice_emitted = true;
     }
@@ -3566,6 +3618,115 @@ pub(super) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Reasoning => "think> ",
         LogKind::Tool => "tool> ",
         LogKind::Error => "error> ",
+    }
+}
+
+fn is_paste_shortcut(key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&'v') => {
+            let modifiers = key.modifiers;
+            let has_paste_modifier = modifiers.contains(KeyModifiers::CONTROL)
+                || modifiers.contains(KeyModifiers::SUPER);
+            has_paste_modifier && !modifiers.contains(KeyModifiers::ALT)
+        }
+        KeyCode::Insert => key.modifiers.contains(KeyModifiers::SHIFT),
+        _ => false,
+    }
+}
+
+fn normalize_clipboard_text(text: String) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+
+    let normalized = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\u{0}', "");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(normalized)
+}
+
+fn read_system_clipboard_text() -> Result<Option<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$ErrorActionPreference='Stop'; $value = Get-Clipboard -Raw; if ($null -ne $value) { [Console]::Out.Write($value) }",
+            ])
+            .output()
+            .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
+        }
+        Ok(normalize_clipboard_text(
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("pbpaste")
+            .output()
+            .map_err(|error| anyhow!("failed to invoke pbpaste: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!("pbpaste failed: {stderr}"));
+        }
+        return Ok(normalize_clipboard_text(
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        const CLIPBOARD_COMMANDS: &[(&str, &[&str])] = &[
+            ("wl-paste", &["-n"]),
+            ("xclip", &["-selection", "clipboard", "-o"]),
+            ("xsel", &["--clipboard", "--output"]),
+        ];
+
+        for (program, args) in CLIPBOARD_COMMANDS {
+            match Command::new(program).args(*args).output() {
+                Ok(output) if output.status.success() => {
+                    return Ok(normalize_clipboard_text(
+                        String::from_utf8_lossy(&output.stdout).into_owned(),
+                    ));
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if !stderr.is_empty() {
+                        return Err(anyhow!("{program} failed: {stderr}"));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(anyhow!("{program} failed: {error}")),
+            }
+        }
+
+        return Err(anyhow!(
+            "no supported clipboard command found (tried wl-paste, xclip, xsel)"
+        ));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        Ok(None)
     }
 }
 
@@ -4552,6 +4713,34 @@ cdef";
         assert_eq!(wrapped_visual_line_count("abcdef", 3), 2);
         assert_eq!(wrapped_visual_line_count("ab\ncd", 8), 2);
         assert_eq!(wrapped_visual_line_count("\u{4f60}\u{597d}\u{5417}", 4), 2);
+    }
+
+    #[test]
+    fn paste_shortcut_accepts_ctrl_v_and_shift_insert() {
+        assert!(is_paste_shortcut(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_paste_shortcut(KeyEvent::new(
+            KeyCode::Char('V'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )));
+        assert!(is_paste_shortcut(KeyEvent::new(
+            KeyCode::Insert,
+            KeyModifiers::SHIFT
+        )));
+    }
+
+    #[test]
+    fn paste_shortcut_rejects_plain_or_alt_modified_v() {
+        assert!(!is_paste_shortcut(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_paste_shortcut(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::ALT | KeyModifiers::CONTROL
+        )));
     }
 
     #[test]

@@ -160,3 +160,47 @@
 - **审批/沙盒改造的入侵性**：要做出 codex 的“提议 -> 审批 -> 执行”体验，需要在 orchestrator 工具执行前引入可暂停/可恢复的状态机或 dry-run/apply 两段式写入；建议先 M1 做最小可用（先覆盖写/exec 两类），再逐步扩展。
 - **Diff/Review 依赖 git**：codex 默认依赖 git；wunder-cli 需要兼容“无 git 的目录”，可采用提示 + 简化 fallback 策略，避免复杂实现拖慢落地。
 - **性能优化优先级**：建议先把审批/可控性做出来，再做重型虚拟化；否则容易陷入“UI 很快但不够安全”的体验落差。
+
+## 6. 与 codex-main 的差距复审（2026-02-19）
+
+> 参考基线：`参考项目/codex-main/codex-rs` 当前实现（重点对比 `cli/src/main.rs`、`tui/src/slash_command.rs`、`tui/src/bottom_pane/chat_composer.rs`）。
+
+### 6.1 已经明显对齐（本轮复盘结果）
+
+- **审批体验主链路已具备**：CLI/TUI 均可触发审批（含一次批准/会话批准/拒绝），并支持 `/approvals` 切换策略。
+- **高频工作流已覆盖**：`/diff`、`/review`、`/mention`、`/resume`、`/status`、`/session`、`/config` 已可在交互流中闭环使用。
+- **基础交互可靠性提升**：忙时中断、双击退出保护、输入历史持久化、鼠标模式切换、会话恢复选择器等已落地。
+- **双语体验显著提升**：CLI/TUI 操作指引、状态文本、日志与帮助说明基本实现中英双语输出（`--lang`/`--language`）。
+
+### 6.2 仍与 codex 存在的主要差距（按优先级）
+
+1. **命令与能力面差距（中）**
+   - codex 内置更完整的会话/治理命令集（如 `fork`、`compact`、`plan`、`personality`、`debug-config`、`ps/clean`、`apps` 等）。
+   - wunder-cli 目前命令集聚焦核心开发闭环，仍偏“精简版 codex”。
+
+2. **输入框高级能力差距（高）**
+   - codex 的 `ChatComposer` 具备更完整状态机：命令/File/Skill 多类 popup、Windows 粘贴 burst 检测、图像附件占位与恢复、外部编辑器回填一致性。
+   - wunder-cli 当前已有 slash + mention 与基础粘贴队列，但尚未覆盖 burst 识别、技能弹窗、附件回填等高级细节。
+
+3. **会话模型能力差距（中）**
+   - codex 提供 resume + fork + 回溯编辑/草稿恢复的组合体验。
+   - wunder-cli 目前具备 resume 与基础历史恢复，缺少 fork 语义和更细粒度回溯编辑链路。
+
+4. **配置可观测性差距（中）**
+   - codex 有更强的配置层可观测能力（debug-config、feature toggles 与来源解释）。
+   - wunder-cli 当前 `doctor/config show` 可用，但“配置来源层级解释”和特性开关可视化仍不足。
+
+5. **性能防抖与大输出治理差距（中）**
+   - codex 对流式大输出有更系统的 chunking/backpressure 策略。
+   - wunder-cli 仍以简单流式刷新为主，极端长输出下可能出现 UI backlog。
+
+6. **沙盒与权限边界差距（已知不对齐项）**
+   - codex 提供更完整 sandbox 模型与权限视图。
+   - wunder 当前按项目要求不引入 sandbox-mode，此项是策略性差异，不作为当前阶段阻塞项。
+
+### 6.3 建议下一阶段（R3）聚焦项
+
+- **R3-1 输入框高级化**：补齐 paste burst 检测与 skill popup，减少 Windows 下粘贴误触与输入抖动。
+- **R3-2 会话增强**：新增 `fork` 与会话分支可视化，强化“探索式改动”体验。
+- **R3-3 可观测增强**：新增 `/debug-config`（或等价命令）输出“最终值 + 来源层 + 覆盖路径”。
+- **R3-4 流式性能治理**：引入分批渲染与背压，确保长会话/大工具输出下 TUI 不卡顿。

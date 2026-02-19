@@ -723,40 +723,18 @@ pub fn extract_inbound_messages(
     }])
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct FeishuSendResult {
+    pub message_id: Option<String>,
+}
+
 pub async fn send_outbound(
     http: &Client,
     outbound: &ChannelOutboundMessage,
     config: &FeishuConfig,
-) -> Result<()> {
-    let (app_id, app_secret) = app_credentials(config)?;
+) -> Result<FeishuSendResult> {
+    let tenant_token = fetch_tenant_access_token(http, config).await?;
     let base_url = resolve_openapi_base_url(config);
-    let token_url = format!("{base_url}/open-apis/auth/v3/tenant_access_token/internal");
-    let token_resp = http
-        .post(token_url)
-        .json(&json!({ "app_id": app_id, "app_secret": app_secret }))
-        .send()
-        .await?;
-    if !token_resp.status().is_success() {
-        let status = token_resp.status();
-        let body = token_resp.text().await.unwrap_or_default();
-        return Err(anyhow!("feishu token failed: {status} {body}"));
-    }
-    let token_payload: Value = token_resp.json().await?;
-    let code = token_payload
-        .get("code")
-        .and_then(Value::as_i64)
-        .unwrap_or(-1);
-    if code != 0 {
-        let message = token_payload
-            .get("msg")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        return Err(anyhow!("feishu token failed: {message}"));
-    }
-    let tenant_token = token_payload
-        .get("tenant_access_token")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("feishu token missing tenant_access_token"))?;
     let receive_id_type = config
         .receive_id_type
         .as_deref()
@@ -787,12 +765,94 @@ pub async fn send_outbound(
         }))
         .send()
         .await?;
-    if send_resp.status().is_success() {
+    if !send_resp.status().is_success() {
+        let status = send_resp.status();
+        let body = send_resp.text().await.unwrap_or_default();
+        return Err(anyhow!("feishu outbound failed: {status} {body}"));
+    }
+    let payload: Value = send_resp.json().await?;
+    let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = payload
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(anyhow!("feishu outbound failed: {message}"));
+    }
+    let message_id = payload
+        .get("data")
+        .and_then(Value::as_object)
+        .and_then(|data| data.get("message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(FeishuSendResult { message_id })
+}
+
+pub async fn delete_message(http: &Client, message_id: &str, config: &FeishuConfig) -> Result<()> {
+    let cleaned_message_id = message_id.trim();
+    if cleaned_message_id.is_empty() {
         return Ok(());
     }
-    let status = send_resp.status();
-    let body = send_resp.text().await.unwrap_or_default();
-    Err(anyhow!("feishu outbound failed: {status} {body}"))
+    let tenant_token = fetch_tenant_access_token(http, config).await?;
+    let base_url = resolve_openapi_base_url(config);
+    let delete_url = format!("{base_url}/open-apis/im/v1/messages/{cleaned_message_id}");
+    let delete_resp = http
+        .delete(delete_url)
+        .bearer_auth(tenant_token)
+        .send()
+        .await?;
+    if !delete_resp.status().is_success() {
+        let status = delete_resp.status();
+        let body = delete_resp.text().await.unwrap_or_default();
+        return Err(anyhow!("feishu delete message failed: {status} {body}"));
+    }
+    let payload: Value = delete_resp.json().await?;
+    let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = payload
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(anyhow!("feishu delete message failed: {message}"));
+    }
+    Ok(())
+}
+
+async fn fetch_tenant_access_token(http: &Client, config: &FeishuConfig) -> Result<String> {
+    let (app_id, app_secret) = app_credentials(config)?;
+    let base_url = resolve_openapi_base_url(config);
+    let token_url = format!("{base_url}/open-apis/auth/v3/tenant_access_token/internal");
+    let token_resp = http
+        .post(token_url)
+        .json(&json!({ "app_id": app_id, "app_secret": app_secret }))
+        .send()
+        .await?;
+    if !token_resp.status().is_success() {
+        let status = token_resp.status();
+        let body = token_resp.text().await.unwrap_or_default();
+        return Err(anyhow!("feishu token failed: {status} {body}"));
+    }
+    let token_payload: Value = token_resp.json().await?;
+    let code = token_payload
+        .get("code")
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    if code != 0 {
+        let message = token_payload
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(anyhow!("feishu token failed: {message}"));
+    }
+    token_payload
+        .get("tenant_access_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("feishu token missing tenant_access_token"))
 }
 
 #[cfg(test)]
