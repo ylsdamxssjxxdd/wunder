@@ -185,6 +185,7 @@ async fn run_one_request(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     };
 
     if args.stream {

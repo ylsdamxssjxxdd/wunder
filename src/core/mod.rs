@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod approval;
 pub mod command_utils;
 pub mod config;
 pub mod config_store;

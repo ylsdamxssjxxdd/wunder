@@ -57,7 +57,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         let popup = Paragraph::new(popup_lines.join("\n"))
             .block(
                 Block::default()
-                    .title(" Commands ")
+                    .title(app.popup_title())
                     .borders(Borders::ALL)
                     .style(Style::default().fg(Color::Gray)),
             )
@@ -87,6 +87,10 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
 
     if app.shortcuts_visible() {
         draw_shortcuts_modal(frame, frame.area(), app.shortcuts_lines());
+    }
+
+    if let Some(lines) = app.approval_modal_lines() {
+        draw_approval_modal(frame, frame.area(), lines);
     }
 }
 
@@ -222,6 +226,44 @@ fn draw_resume_modal(frame: &mut Frame, area: Rect, rows: Vec<String>, selected:
         .block(
             Block::default()
                 .title(" Resume Sessions ")
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White).bg(Color::Black)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, popup);
+}
+
+fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>) {
+    if area.width < 24 || area.height < 8 {
+        return;
+    }
+    let max_line_width = lines
+        .iter()
+        .map(|line| line.chars().count() as u16)
+        .max()
+        .unwrap_or(0);
+    let width = max_line_width
+        .saturating_add(6)
+        .max(52)
+        .min(area.width.saturating_sub(2));
+    let content_height = lines.len() as u16;
+    let height = content_height
+        .saturating_add(4)
+        .max(10)
+        .min(area.height.saturating_sub(2));
+
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+
+    frame.render_widget(Clear, popup);
+    let widget = Paragraph::new(lines.join("\n"))
+        .block(
+            Block::default()
+                .title(" Approval ")
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::White).bg(Color::Black)),
         )

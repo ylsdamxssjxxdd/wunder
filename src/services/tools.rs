@@ -1705,6 +1705,7 @@ async fn dispatch_swarm_batch_task(
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
+        approval_tx: None,
     };
 
     let parent_session_id = context.session_id.trim();
@@ -2869,6 +2870,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
+        approval_tx: None,
     };
     let announce_parent_session_id = normalize_optional_string(payload.announce_parent_session_id);
     let announce_label = normalize_optional_string(payload.label);
@@ -3019,6 +3021,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
+        approval_tx: None,
     };
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());

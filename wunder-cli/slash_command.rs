@@ -2,6 +2,10 @@
 pub enum SlashCommand {
     Model,
     ToolCallMode,
+    Approvals,
+    Diff,
+    Review,
+    Mention,
     Status,
     Session,
     System,
@@ -28,7 +32,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 13] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 17] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -38,6 +42,26 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 13] = [
         command: SlashCommand::ToolCallMode,
         usage: "/tool-call-mode <tool_call|function_call> [model]",
         description: "switch tool protocol mode (alias: /mode)",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Approvals,
+        usage: "/approvals [show|suggest|auto_edit|full_auto]",
+        description: "show or switch approval mode",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Diff,
+        usage: "/diff",
+        description: "show current git diff summary",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Review,
+        usage: "/review [focus]",
+        description: "review current git changes with model",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Mention,
+        usage: "/mention <query>",
+        description: "search files in workspace",
     },
     SlashCommandDoc {
         command: SlashCommand::Status,
@@ -115,6 +139,10 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "new" => (SlashCommand::New, remaining),
         "model" => (SlashCommand::Model, remaining),
         "tool-call-mode" | "mode" => (SlashCommand::ToolCallMode, remaining),
+        "approvals" => (SlashCommand::Approvals, remaining),
+        "diff" => (SlashCommand::Diff, remaining),
+        "review" => (SlashCommand::Review, remaining),
+        "mention" => (SlashCommand::Mention, remaining),
         "config" => {
             let (sub, rest) = split_head(remaining);
             if sub.eq_ignore_ascii_case("show") {
@@ -227,6 +255,10 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "new" => SlashCommand::New,
         "model" => SlashCommand::Model,
         "tool-call-mode" | "mode" => SlashCommand::ToolCallMode,
+        "approvals" => SlashCommand::Approvals,
+        "diff" => SlashCommand::Diff,
+        "review" => SlashCommand::Review,
+        "mention" => SlashCommand::Mention,
         "config" => SlashCommand::Config,
         "exit" => SlashCommand::Exit,
         "quit" | "q" => SlashCommand::Quit,

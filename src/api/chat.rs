@@ -706,6 +706,7 @@ pub(crate) async fn build_chat_request(
         attachments,
         allow_queue: true,
         is_admin: UserStore::is_admin(user),
+        approval_tx: None,
     })
 }
 

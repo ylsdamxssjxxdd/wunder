@@ -3,8 +3,13 @@ use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
 use unicode_width::UnicodeWidthChar;
+use wunder_server::approval::{new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse};
 use wunder_server::schemas::StreamEvent;
 
 use crate::args::GlobalArgs;
@@ -12,6 +17,10 @@ use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 
 const MAX_LOG_ENTRIES: usize = 1200;
+const MAX_DRAIN_MESSAGES_PER_TICK: usize = 400;
+const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
+const MAX_PERSISTED_HISTORY: usize = 200;
+const MAX_HISTORY_ENTRY_CHARS: usize = 4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
@@ -66,6 +75,17 @@ struct ResumePickerState {
     selected: usize,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct InputHistoryStore {
+    entries: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedFile {
+    path: String,
+    lowered: String,
+}
+
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
@@ -82,9 +102,16 @@ pub struct TuiApp {
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: String,
+    pending_paste: VecDeque<String>,
+    workspace_files: Vec<IndexedFile>,
     active_assistant: Option<usize>,
     active_reasoning: Option<usize>,
     stream_rx: Option<UnboundedReceiver<StreamMessage>>,
+    approval_rx: Option<ApprovalRequestRx>,
+    approval_queue: VecDeque<ApprovalRequest>,
+    active_approval: Option<ApprovalRequest>,
+    approval_mode: String,
+    ctrl_c_hint_deadline: Option<Instant>,
     model_name: String,
     tool_call_mode: String,
     model_max_rounds: u32,
@@ -132,9 +159,16 @@ impl TuiApp {
             history: Vec::new(),
             history_cursor: None,
             history_draft: String::new(),
+            pending_paste: VecDeque::new(),
+            workspace_files: Vec::new(),
             active_assistant: None,
             active_reasoning: None,
             stream_rx: None,
+            approval_rx: None,
+            approval_queue: VecDeque::new(),
+            active_approval: None,
+            approval_mode: "full_auto".to_string(),
+            ctrl_c_hint_deadline: None,
             model_name: "<none>".to_string(),
             tool_call_mode: "tool_call".to_string(),
             model_max_rounds: crate::CLI_MIN_MAX_ROUNDS,
@@ -155,6 +189,13 @@ impl TuiApp {
             resume_picker: None,
             tool_phase_notice_emitted: false,
         };
+        app.load_persisted_history();
+        app.workspace_files = tokio::task::spawn_blocking({
+            let root = app.runtime.launch_dir.clone();
+            move || build_workspace_file_index(&root)
+        })
+        .await
+        .unwrap_or_default();
         app.sync_model_status().await;
         app.reload_session_stats().await;
         app.push_log(
@@ -184,6 +225,8 @@ impl TuiApp {
         };
         let running_hint = if self.resume_picker.is_some() {
             "resume picker"
+        } else if self.active_approval.is_some() {
+            "approval pending"
         } else if self.busy {
             "working..."
         } else {
@@ -220,6 +263,58 @@ impl TuiApp {
         self.mouse_mode == MouseMode::Scroll
     }
 
+    fn input_history_file(&self) -> PathBuf {
+        let mut name = self
+            .runtime
+            .user_id
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>();
+        if name.trim_matches('_').is_empty() {
+            name = "cli_user".to_string();
+        }
+        self.runtime
+            .temp_root
+            .join(format!("sessions/input_history_{name}.json"))
+    }
+
+    fn load_persisted_history(&mut self) {
+        let path = self.input_history_file();
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(store) = serde_json::from_str::<InputHistoryStore>(&text) else {
+            return;
+        };
+        self.history = store
+            .entries
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect();
+        if self.history.len() > MAX_PERSISTED_HISTORY {
+            let keep_from = self.history.len().saturating_sub(MAX_PERSISTED_HISTORY);
+            self.history = self.history.split_off(keep_from);
+        }
+    }
+
+    fn persist_history(&self) {
+        let path = self.input_history_file();
+        let parent = path.parent().map(PathBuf::from);
+        if let Some(parent) = parent {
+            if fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        let store = InputHistoryStore {
+            entries: self.history.clone(),
+        };
+        let Ok(payload) = serde_json::to_vec_pretty(&store) else {
+            return;
+        };
+        let _ = fs::write(path, payload);
+    }
+
     pub fn selected_transcript_index(&self) -> Option<usize> {
         self.transcript_selected
     }
@@ -250,6 +345,30 @@ impl TuiApp {
         Some((rows, picker.selected))
     }
 
+    pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
+        let request = self.active_approval.as_ref()?;
+        let mut lines = vec![
+            format!("id: {}", request.id),
+            format!("tool: {}", request.tool),
+            format!("summary: {}", request.summary),
+            format!("kind: {:?}", request.kind),
+        ];
+
+        let detail = compact_json(&request.detail);
+        if !detail.trim().is_empty() {
+            lines.push(format!("detail: {detail}"));
+        }
+        let args = compact_json(&request.args);
+        if !args.trim().is_empty() {
+            lines.push(format!("args: {args}"));
+        }
+        lines.push(String::new());
+        lines.push("1/Enter/Y: approve once".to_string());
+        lines.push("2/A: approve for session".to_string());
+        lines.push("3/N/Esc: deny".to_string());
+        Some(lines)
+    }
+
     pub fn shortcuts_lines(&self) -> Vec<String> {
         let mouse_mode = match self.mouse_mode {
             MouseMode::Scroll => "scroll",
@@ -276,7 +395,7 @@ impl TuiApp {
             "Shift+Drag            select/copy (terminal bypass, if supported)".to_string(),
             format!("F2                   toggle mouse mode ({mouse_mode})"),
             "Ctrl+N / Ctrl+L       new session / clear transcript".to_string(),
-            "Ctrl+C                exit".to_string(),
+            "Ctrl+C                interrupt / double-tap exit".to_string(),
         ]
     }
 
@@ -552,18 +671,74 @@ impl TuiApp {
 
     pub fn popup_lines(&self) -> Vec<String> {
         let trimmed = self.input.trim_start();
-        if !trimmed.starts_with('/') {
-            return Vec::new();
+        if trimmed.starts_with('/') {
+            let body = trimmed.trim_start_matches('/');
+            return slash_command::popup_lines(body, 7);
         }
-        let body = trimmed.trim_start_matches('/');
-        slash_command::popup_lines(body, 7)
+
+        let cursor = self.input_cursor.min(self.input.len());
+        let head = &self.input[..cursor];
+        let token_start = head
+            .rfind(char::is_whitespace)
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0);
+        let token = &head[token_start..];
+        if let Some(query) = token.strip_prefix('@') {
+            return self.mention_popup_lines(query, 7);
+        }
+
+        Vec::new()
+    }
+
+    pub fn popup_title(&self) -> &'static str {
+        let trimmed = self.input.trim_start();
+        if trimmed.starts_with('/') {
+            return " Commands ";
+        }
+        let cursor = self.input_cursor.min(self.input.len());
+        let head = &self.input[..cursor];
+        let token_start = head
+            .rfind(char::is_whitespace)
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0);
+        let token = &head[token_start..];
+        if token.starts_with('@') {
+            return " Files ";
+        }
+        " Commands "
+    }
+
+    fn mention_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+        let query = query.trim();
+        if query.is_empty() {
+            return self
+                .workspace_files
+                .iter()
+                .take(limit)
+                .map(|item| format!("@{}", item.path))
+                .collect();
+        }
+        let lowered = query.to_ascii_lowercase();
+        self.workspace_files
+            .iter()
+            .filter(|item| item.lowered.contains(&lowered))
+            .take(limit)
+            .map(|item| format!("@{}", item.path))
+            .collect()
     }
 
     pub async fn drain_stream_events(&mut self) {
+        self.flush_pending_paste();
+        self.drain_approval_requests();
+
+        let mut drained = 0usize;
         loop {
             let Some(receiver) = self.stream_rx.as_mut() else {
                 break;
             };
+            if drained >= MAX_DRAIN_MESSAGES_PER_TICK {
+                break;
+            }
             match receiver.try_recv() {
                 Ok(message) => self.handle_stream_message(message),
                 Err(TryRecvError::Empty) => break,
@@ -578,6 +753,7 @@ impl TuiApp {
                     break;
                 }
             }
+            drained = drained.saturating_add(1);
         }
 
         if self.session_stats_dirty {
@@ -590,7 +766,63 @@ impl TuiApp {
         self.session_stats = crate::load_session_stats(&self.runtime, &self.session_id).await;
     }
 
+    fn drain_approval_requests(&mut self) {
+        loop {
+            let Some(receiver) = self.approval_rx.as_mut() else {
+                break;
+            };
+            match receiver.try_recv() {
+                Ok(request) => {
+                    self.enqueue_approval_request(request);
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.approval_rx = None;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn enqueue_approval_request(&mut self, request: ApprovalRequest) {
+        // Ensure the approval overlay is not obscured by other modal states.
+        self.shortcuts_visible = false;
+        self.resume_picker = None;
+
+        if self.active_approval.is_none() {
+            self.active_approval = Some(request);
+            return;
+        }
+        self.approval_queue.push_back(request);
+    }
+
+    fn flush_pending_paste(&mut self) {
+        while let Some(chunk) = self.pending_paste.pop_front() {
+            self.insert_text_at_cursor(chunk.as_str());
+        }
+    }
+
+    pub fn on_paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        self.pending_paste.push_back(text);
+    }
+
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self
+            .ctrl_c_hint_deadline
+            .map(|deadline| Instant::now() > deadline)
+            .unwrap_or(false)
+        {
+            self.ctrl_c_hint_deadline = None;
+        }
+
+        if self.active_approval.is_some() {
+            self.handle_approval_key(key);
+            return Ok(());
+        }
+
         if key.modifiers == KeyModifiers::NONE {
             match key.code {
                 KeyCode::Char('\u{0002}') => {
@@ -624,7 +856,7 @@ impl TuiApp {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') | KeyCode::Char('d') => {
-                    self.should_quit = true;
+                    self.handle_ctrl_c();
                     return Ok(());
                 }
                 KeyCode::Char('l') => {
@@ -851,6 +1083,90 @@ impl TuiApp {
         Ok(())
     }
 
+    fn handle_ctrl_c(&mut self) {
+        let now = Instant::now();
+        if self.busy {
+            if self
+                .ctrl_c_hint_deadline
+                .map(|deadline| deadline >= now)
+                .unwrap_or(false)
+            {
+                self.should_quit = true;
+                return;
+            }
+            if self.runtime.state.monitor.cancel(&self.session_id) {
+                self.push_log(
+                    LogKind::Info,
+                    "interrupt requested, waiting for running round to stop...".to_string(),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    "no cancellable round found, press Ctrl+C again to exit".to_string(),
+                );
+            }
+            self.ctrl_c_hint_deadline = Some(now + CTRL_C_EXIT_WINDOW);
+            return;
+        }
+
+        if self
+            .ctrl_c_hint_deadline
+            .map(|deadline| deadline >= now)
+            .unwrap_or(false)
+        {
+            self.should_quit = true;
+            return;
+        }
+
+        self.ctrl_c_hint_deadline = Some(now + CTRL_C_EXIT_WINDOW);
+        self.push_log(
+            LogKind::Info,
+            "press Ctrl+C again to exit (or wait to continue)".to_string(),
+        );
+    }
+
+    fn handle_approval_key(&mut self, key: KeyEvent) {
+        let Some(request) = self.active_approval.take() else {
+            return;
+        };
+
+        let response = match key.code {
+            KeyCode::Esc => Some(ApprovalResponse::Deny),
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                Some(ApprovalResponse::ApproveOnce)
+            }
+            KeyCode::Char('2') | KeyCode::Char('a') | KeyCode::Char('A') => {
+                Some(ApprovalResponse::ApproveSession)
+            }
+            KeyCode::Char('3') | KeyCode::Char('n') | KeyCode::Char('N') => {
+                Some(ApprovalResponse::Deny)
+            }
+            _ => None,
+        };
+
+        let Some(response) = response else {
+            self.active_approval = Some(request);
+            return;
+        };
+
+        let _ = request.respond_to.send(response);
+        match response {
+            ApprovalResponse::ApproveOnce => self.push_log(
+                LogKind::Info,
+                format!("approved once: {}", request.summary),
+            ),
+            ApprovalResponse::ApproveSession => self.push_log(
+                LogKind::Info,
+                format!("approved for session: {}", request.summary),
+            ),
+            ApprovalResponse::Deny => {
+                self.push_log(LogKind::Info, format!("denied: {}", request.summary))
+            }
+        };
+
+        self.active_approval = self.approval_queue.pop_front();
+    }
+
     async fn handle_resume_picker_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
@@ -979,6 +1295,10 @@ impl TuiApp {
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
+        self.approval_rx = None;
+        self.active_approval = None;
+        self.approval_queue.clear();
+        self.ctrl_c_hint_deadline = None;
         self.transcript_offset_from_bottom = 0;
         self.transcript_selected = None;
         self.focus_area = FocusArea::Input;
@@ -1106,14 +1426,35 @@ impl TuiApp {
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
-        self.push_log(LogKind::User, prompt.clone());
+        let user_echo = prompt.clone();
+        self.start_stream_request(prompt, user_echo).await
+    }
+
+    async fn start_stream_request(&mut self, prompt: String, user_echo: String) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                "assistant is still running, wait for completion before sending a new prompt"
+                    .to_string(),
+            );
+            return Ok(());
+        }
+
+        self.ctrl_c_hint_deadline = None;
+        self.push_log(LogKind::User, user_echo);
         self.busy = true;
         self.active_assistant = None;
         self.active_reasoning = None;
 
-        let request =
+        let (approval_tx, approval_rx) = new_approval_channel();
+        self.approval_rx = Some(approval_rx);
+        self.approval_queue.clear();
+        self.active_approval = None;
+
+        let mut request =
             crate::build_wunder_request(&self.runtime, &self.global, &prompt, &self.session_id)
                 .await?;
+        request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.orchestrator.clone();
         let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
         self.stream_rx = Some(rx);
@@ -1140,17 +1481,37 @@ impl TuiApp {
 
     fn apply_first_suggestion(&mut self) {
         let trimmed = self.input.trim_start();
-        if !trimmed.starts_with('/') {
+        if trimmed.starts_with('/') {
+            let body = trimmed.trim_start_matches('/');
+            if body.contains(char::is_whitespace) {
+                return;
+            }
+            if let Some(suggestion) = slash_command::first_command_completion(body) {
+                self.input = format!("/{suggestion} ");
+                self.input_cursor = self.input.len();
+            }
             return;
         }
-        let body = trimmed.trim_start_matches('/');
-        if body.contains(char::is_whitespace) {
+
+        let cursor = self.input_cursor.min(self.input.len());
+        let token_start = self
+            .input
+            .get(..cursor)
+            .and_then(|text| text.rfind(char::is_whitespace))
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0);
+        let token = &self.input[token_start..cursor];
+        let Some(query) = token.strip_prefix('@') else {
             return;
-        }
-        if let Some(suggestion) = slash_command::first_command_completion(body) {
-            self.input = format!("/{suggestion} ");
-            self.input_cursor = self.input.len();
-        }
+        };
+
+        let suggestions = self.mention_popup_lines(query, 1);
+        let Some(first) = suggestions.first() else {
+            return;
+        };
+        let replacement = format!("{first} ");
+        self.input.replace_range(token_start..cursor, &replacement);
+        self.input_cursor = token_start.saturating_add(replacement.len());
     }
 
     fn should_use_multiline_navigation(&self) -> bool {
@@ -1195,15 +1556,31 @@ impl TuiApp {
     }
 
     fn push_history(&mut self, value: &str) {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        let cleaned = if cleaned.chars().count() > MAX_HISTORY_ENTRY_CHARS {
+            let mut shortened = cleaned.chars().take(MAX_HISTORY_ENTRY_CHARS).collect::<String>();
+            shortened.push_str("...(truncated)");
+            shortened
+        } else {
+            cleaned.to_string()
+        };
         if self
             .history
             .last()
-            .map(|existing| existing == value)
+            .map(|existing| existing == &cleaned)
             .unwrap_or(false)
         {
             return;
         }
-        self.history.push(value.to_string());
+        self.history.push(cleaned);
+        if self.history.len() > MAX_PERSISTED_HISTORY {
+            let keep_from = self.history.len().saturating_sub(MAX_PERSISTED_HISTORY);
+            self.history = self.history.split_off(keep_from);
+        }
+        self.persist_history();
     }
 
     fn insert_char_at_cursor(&mut self, ch: char) {
@@ -1215,6 +1592,20 @@ impl TuiApp {
         }
         self.input.insert(self.input_cursor, ch);
         self.input_cursor += ch.len_utf8();
+    }
+
+    fn insert_text_at_cursor(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.input_cursor > self.input.len() {
+            self.input_cursor = self.input.len();
+        }
+        if !self.input.is_char_boundary(self.input_cursor) {
+            self.input_cursor = prev_char_boundary(&self.input, self.input_cursor);
+        }
+        self.input.insert_str(self.input_cursor, text);
+        self.input_cursor = self.input_cursor.saturating_add(text.len());
     }
 
     fn backspace_at_cursor(&mut self) {
@@ -1490,6 +1881,9 @@ impl TuiApp {
                 self.active_assistant = None;
                 self.active_reasoning = None;
                 self.stream_rx = None;
+                self.approval_rx = None;
+                self.active_approval = None;
+                self.approval_queue.clear();
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
@@ -1508,6 +1902,9 @@ impl TuiApp {
                 self.active_assistant = None;
                 self.active_reasoning = None;
                 self.stream_rx = None;
+                self.approval_rx = None;
+                self.active_approval = None;
+                self.approval_queue.clear();
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
@@ -1750,6 +2147,18 @@ impl TuiApp {
             SlashCommand::ToolCallMode => {
                 self.handle_tool_call_mode_slash(command.args).await?;
             }
+            SlashCommand::Approvals => {
+                self.handle_approvals_slash(command.args).await?;
+            }
+            SlashCommand::Diff => {
+                self.handle_diff_slash().await?;
+            }
+            SlashCommand::Review => {
+                self.handle_review_slash(command.args).await?;
+            }
+            SlashCommand::Mention => {
+                self.handle_mention_slash(command.args).await?;
+            }
             SlashCommand::Exit | SlashCommand::Quit => {
                 self.should_quit = true;
             }
@@ -1783,6 +2192,7 @@ impl TuiApp {
             "db_path": config.storage.db_path,
             "model": model,
             "tool_call_mode": tool_call_mode,
+            "approval_mode": self.approval_mode,
             "max_rounds": self.model_max_rounds,
             "max_context": max_context,
             "context_used": self.session_stats.context_used_tokens.max(0),
@@ -2177,8 +2587,125 @@ impl TuiApp {
         Ok(())
     }
 
+    async fn handle_approvals_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            self.push_log(
+                LogKind::Info,
+                format!("approval_mode: {}", self.approval_mode),
+            );
+            self.push_log(
+                LogKind::Info,
+                "usage: /approvals [show|suggest|auto_edit|full_auto]".to_string(),
+            );
+            return Ok(());
+        }
+
+        let Some(mode) = crate::parse_approval_mode(cleaned) else {
+            self.push_log(LogKind::Error, format!("invalid approval mode: {cleaned}"));
+            self.push_log(
+                LogKind::Info,
+                "valid modes: suggest, auto_edit, full_auto".to_string(),
+            );
+            return Ok(());
+        };
+
+        let mode_text = mode.as_str().to_string();
+        self.runtime
+            .state
+            .config_store
+            .update(move |config| {
+                config.security.approval_mode = Some(mode_text.clone());
+            })
+            .await?;
+        self.sync_model_status().await;
+        self.push_log(
+            LogKind::Info,
+            format!("approval_mode set: {}", mode.as_str()),
+        );
+        Ok(())
+    }
+
+    async fn handle_diff_slash(&mut self) -> Result<()> {
+        let root = self.runtime.launch_dir.clone();
+        let lines = tokio::task::spawn_blocking(move || crate::git_diff_summary_lines(root.as_path()))
+            .await
+            .unwrap_or_else(|_| Ok(vec!["diff".to_string(), "[error] diff task cancelled".to_string()]))?;
+        for line in lines {
+            self.push_log(LogKind::Info, line);
+        }
+        Ok(())
+    }
+
+    async fn handle_review_slash(&mut self, args: &str) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                "assistant is still running, wait for completion before running /review".to_string(),
+            );
+            return Ok(());
+        }
+
+        let root = self.runtime.launch_dir.clone();
+        let focus = args.trim().to_string();
+        let prompt = match tokio::task::spawn_blocking(move || {
+            crate::build_review_prompt(root.as_path(), &focus)
+        })
+        .await
+        {
+            Ok(Ok(prompt)) => prompt,
+            Ok(Err(err)) => {
+                self.push_log(LogKind::Error, err.to_string());
+                return Ok(());
+            }
+            Err(err) => {
+                self.push_log(LogKind::Error, format!("review task cancelled: {err}"));
+                return Ok(());
+            }
+        };
+
+        let user_echo = if focus.is_empty() {
+            "/review".to_string()
+        } else {
+            format!("/review {focus}")
+        };
+        self.start_stream_request(prompt, user_echo).await
+    }
+
+    async fn handle_mention_slash(&mut self, args: &str) -> Result<()> {
+        let query = args.trim();
+        if query.is_empty() {
+            self.push_log(LogKind::Info, "usage: /mention <query>".to_string());
+            return Ok(());
+        }
+        let results = crate::search_workspace_files(self.runtime.launch_dir.as_path(), query, 30);
+        if results.is_empty() {
+            self.push_log(LogKind::Info, format!("no files found for: {query}"));
+            return Ok(());
+        }
+        self.push_log(LogKind::Info, format!("mention results ({})", results.len()));
+        for path in results {
+            self.push_log(LogKind::Info, path);
+        }
+        Ok(())
+    }
+
     async fn sync_model_status(&mut self) {
         let config = self.runtime.state.config_store.get().await;
+        self.approval_mode = self
+            .global
+            .approval_mode
+            .map(|mode| mode.as_str().to_string())
+            .or_else(|| {
+                config
+                    .security
+                    .approval_mode
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "full_auto".to_string());
         self.model_name = self
             .runtime
             .resolve_model_name(self.global.model.as_deref())
@@ -2298,6 +2825,10 @@ impl TuiApp {
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
+        self.approval_rx = None;
+        self.active_approval = None;
+        self.approval_queue.clear();
+        self.ctrl_c_hint_deadline = None;
         self.focus_area = FocusArea::Input;
         self.transcript_selected = None;
         self.resume_picker = None;
@@ -2315,6 +2846,7 @@ impl TuiApp {
             format!("- session: {}", self.session_id),
             format!("- model: {}", self.model_name),
             format!("- tool_call_mode: {}", self.tool_call_mode),
+            format!("- approval_mode: {}", self.approval_mode),
             format!("- max_rounds: {}", self.model_max_rounds),
             format!(
                 "- mouse_mode: {}",
@@ -3231,6 +3763,60 @@ fn compact_json(value: &Value) -> String {
         text.push_str("...");
     }
     text
+}
+
+fn build_workspace_file_index(root: &std::path::Path) -> Vec<IndexedFile> {
+    const MAX_INDEX_FILES: usize = 50_000;
+    let excluded_dirs = [
+        ".git",
+        "target",
+        "WUNDER_TEMP",
+        "data",
+        "frontend",
+        "web",
+        "node_modules",
+        "参考项目",
+        "backups",
+    ];
+    let mut items = Vec::new();
+    let walker = walkdir::WalkDir::new(root).follow_links(false);
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| {
+            let path = entry.path();
+            if path == root {
+                return true;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                return true;
+            };
+            !excluded_dirs
+                .iter()
+                .any(|excluded| name.eq_ignore_ascii_case(excluded))
+        })
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = relative.to_string_lossy().replace('\\', "/");
+        if rel.is_empty() {
+            continue;
+        }
+        items.push(IndexedFile {
+            lowered: rel.to_ascii_lowercase(),
+            path: rel,
+        });
+        if items.len() >= MAX_INDEX_FILES {
+            break;
+        }
+    }
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    items
 }
 
 #[cfg(test)]

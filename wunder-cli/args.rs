@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 /// Wunder CLI
@@ -33,6 +34,10 @@ pub struct GlobalArgs {
     /// Tool call protocol mode.
     #[arg(long = "tool-call-mode", global = true, value_enum)]
     pub tool_call_mode: Option<ToolCallModeArg>,
+
+    /// Approval mode for write/exec style tools.
+    #[arg(long = "approval-mode", global = true, value_enum)]
+    pub approval_mode: Option<ApprovalModeArg>,
 
     /// Session id.
     #[arg(long, global = true)]
@@ -79,6 +84,24 @@ impl ToolCallModeArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum ApprovalModeArg {
+    Suggest,
+    AutoEdit,
+    FullAuto,
+}
+
+impl ApprovalModeArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Suggest => "suggest",
+            Self::AutoEdit => "auto_edit",
+            Self::FullAuto => "full_auto",
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Ask one question and print the result.
@@ -108,6 +131,9 @@ pub enum Command {
 
     /// Diagnose local runtime environment.
     Doctor(DoctorCommand),
+
+    /// Generate shell completion scripts.
+    Completion(CompletionCommand),
 }
 
 #[derive(Debug, Args)]
@@ -283,6 +309,7 @@ pub struct ConfigCommand {
 pub enum ConfigSubcommand {
     Show,
     SetToolCallMode(SetToolCallModeCommand),
+    SetApprovalMode(SetApprovalModeCommand),
 }
 
 #[derive(Debug, Args)]
@@ -295,7 +322,19 @@ pub struct SetToolCallModeCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct SetApprovalModeCommand {
+    #[arg(value_enum)]
+    pub mode: ApprovalModeArg,
+}
+
+#[derive(Debug, Args)]
 pub struct DoctorCommand {
     #[arg(long, default_value_t = false)]
     pub verbose: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionCommand {
+    #[arg(value_enum, default_value_t = Shell::Bash)]
+    pub shell: Shell,
 }

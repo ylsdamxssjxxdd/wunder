@@ -1,5 +1,6 @@
 use super::tool_calls::ToolCall;
 use super::*;
+use crate::approval::{ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse};
 
 struct PlannedToolCall {
     call: ToolCall,
@@ -488,6 +489,7 @@ impl Orchestrator {
                             &allowed_tool_names,
                             &session_id,
                             is_admin,
+                            prepared.approval_tx.clone(),
                         )
                         .await?;
                     for (index, outcome) in outcomes.into_iter().enumerate() {
@@ -833,6 +835,7 @@ impl Orchestrator {
         allowed_tool_names: &HashSet<String>,
         session_id: &str,
         is_admin: bool,
+        approval_tx: Option<ApprovalRequestTx>,
     ) -> Result<Vec<ToolExecutionOutcome>, OrchestratorError> {
         if calls.is_empty() {
             return Ok(Vec::new());
@@ -840,6 +843,7 @@ impl Orchestrator {
         let parallelism = resolve_tool_parallelism(calls.len());
         let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
             let orchestrator = self;
+            let approval_tx = approval_tx.clone();
             async move {
                 let PlannedToolCall { call, name } = planned;
                 let args = call.arguments.clone();
@@ -863,14 +867,101 @@ impl Orchestrator {
                     )
                 } else if let Some(decision) = policy_decision.as_ref() {
                     if !decision.allowed {
-                        let mut denied = ToolResultPayload::error(
-                            i18n::t("tool.exec.not_allowed"),
-                            json!({ "tool": name.clone() }),
-                        );
-                        if let Some(meta) = policy_meta.clone() {
-                            denied.insert_meta("policy", meta);
+                        let mut approved = None;
+                        if decision.requires_approval {
+                            if let Some(tx) = approval_tx.clone() {
+                                let (respond_to, response_rx) = tokio::sync::oneshot::channel();
+                                let kind = approval_kind_for_tool(&name);
+                                let summary = approval_summary_for_tool(&name, &args, kind);
+                                let detail = json!({
+                                    "policy": policy_meta.clone().unwrap_or(Value::Null),
+                                    "reason": decision.reason.clone(),
+                                });
+                                let request = ApprovalRequest {
+                                    id: Uuid::new_v4().simple().to_string(),
+                                    kind,
+                                    tool: name.clone(),
+                                    args: args.clone(),
+                                    summary,
+                                    detail,
+                                    respond_to,
+                                };
+                                if tx.send(request).is_ok() {
+                                    approved = tokio::select! {
+                                        res = response_rx => res.ok(),
+                                        err = orchestrator.wait_for_cancelled(session_id) => {
+                                            return Err(err);
+                                        }
+                                    };
+                                }
+                            }
                         }
-                        denied
+
+                        let approved = match approved.unwrap_or(ApprovalResponse::Deny) {
+                            ApprovalResponse::ApproveOnce => Some(ApprovalResponse::ApproveOnce),
+                            ApprovalResponse::ApproveSession => {
+                                let args_approved = args_with_approved_flag(&args);
+                                let _ = crate::exec_policy::evaluate_tool_call(
+                                    tool_context.config,
+                                    &name,
+                                    &args_approved,
+                                    Some(tool_context.session_id),
+                                    Some(tool_context.user_id),
+                                );
+                                Some(ApprovalResponse::ApproveSession)
+                            }
+                            ApprovalResponse::Deny => None,
+                        };
+
+                        if let Some(approval_choice) = approved {
+                            let result = tokio::select! {
+                                res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                                err = orchestrator.wait_for_cancelled(session_id) => {
+                                    return Err(err);
+                                }
+                            };
+                            let mut executed = match result {
+                                Ok(value) => ToolResultPayload::from_value(value),
+                                Err(err) => {
+                                    let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                        i18n::t_with_params(
+                                            "error.tool_execution_failed",
+                                            &HashMap::from([(
+                                                "name".to_string(),
+                                                format!("{name} timeout"),
+                                            )]),
+                                        )
+                                    } else {
+                                        err.to_string()
+                                    };
+                                    ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                                }
+                            };
+                            if let Some(meta) = policy_meta.clone() {
+                                executed.insert_meta("policy", meta);
+                            }
+                            executed.insert_meta(
+                                "approval",
+                                json!({
+                                    "status": "approved",
+                                    "scope": if approval_choice == ApprovalResponse::ApproveSession {
+                                        "session"
+                                    } else {
+                                        "once"
+                                    }
+                                }),
+                            );
+                            executed
+                        } else {
+                            let mut denied = ToolResultPayload::error(
+                                i18n::t("tool.exec.not_allowed"),
+                                json!({ "tool": name.clone() }),
+                            );
+                            if let Some(meta) = policy_meta.clone() {
+                                denied.insert_meta("policy", meta);
+                            }
+                            denied
+                        }
                     } else {
                         let result = tokio::select! {
                             res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
@@ -995,6 +1086,53 @@ fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
     target.input = target.input.saturating_add(usage.input);
     target.output = target.output.saturating_add(usage.output);
     target.total = target.total.saturating_add(total);
+}
+
+fn approval_kind_for_tool(tool_name: &str) -> ApprovalRequestKind {
+    let exec_tool = resolve_tool_name("execute_command");
+    let ptc_tool = resolve_tool_name("ptc");
+    if tool_name == exec_tool || tool_name == ptc_tool {
+        ApprovalRequestKind::Exec
+    } else {
+        ApprovalRequestKind::Patch
+    }
+}
+
+fn approval_summary_for_tool(tool_name: &str, args: &Value, kind: ApprovalRequestKind) -> String {
+    match kind {
+        ApprovalRequestKind::Exec => extract_command_text(args)
+            .map(|cmd| format!("{tool_name}: {cmd}"))
+            .unwrap_or_else(|| tool_name.to_string()),
+        ApprovalRequestKind::Patch => args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|path| format!("{tool_name}: {path}"))
+            .unwrap_or_else(|| tool_name.to_string()),
+    }
+}
+
+fn extract_command_text(args: &Value) -> Option<String> {
+    let obj = args.as_object()?;
+    for key in ["content", "command", "cmd"] {
+        if let Some(Value::String(text)) = obj.get(key) {
+            let cleaned = text.trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn args_with_approved_flag(args: &Value) -> Value {
+    if let Some(obj) = args.as_object() {
+        let mut updated = obj.clone();
+        updated.insert("approved".to_string(), Value::Bool(true));
+        return Value::Object(updated);
+    }
+    json!({ "raw": args, "approved": true })
 }
 
 #[cfg(test)]

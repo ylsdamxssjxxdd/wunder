@@ -723,6 +723,7 @@ impl A2aService {
             attachments: None,
             allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
+            approval_tx: None,
         };
 
         if blocking {
@@ -811,6 +812,7 @@ impl A2aService {
             attachments: None,
             allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
+            approval_tx: None,
         };
 
         let (tx, rx) = mpsc::channel(64);

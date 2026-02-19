@@ -3,7 +3,10 @@ mod ui;
 
 use anyhow::Result;
 use app::TuiApp;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -75,6 +78,9 @@ async fn run_loop(
                 Event::Mouse(mouse) => {
                     app.on_mouse(mouse);
                 }
+                Event::Paste(text) => {
+                    app.on_paste(text);
+                }
                 _ => {}
             }
         }
@@ -85,7 +91,7 @@ async fn run_loop(
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -97,6 +103,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
+        DisableBracketedPaste,
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;

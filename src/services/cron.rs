@@ -1167,6 +1167,7 @@ impl CronRuntime {
             attachments: None,
             allow_queue: true,
             is_admin: UserStore::is_admin(&user),
+            approval_tx: None,
         })
     }
 

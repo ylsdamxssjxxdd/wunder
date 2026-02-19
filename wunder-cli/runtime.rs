@@ -316,6 +316,16 @@ fn apply_cli_defaults(config: &mut Config, launch_dir: &Path, temp_root: &Path, 
     config.cron.enabled = false;
 
     config.sandbox.mode = "local".to_string();
+    if config
+        .security
+        .approval_mode
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        config.security.approval_mode = Some("suggest".to_string());
+    }
 
     let launch_skills = launch_dir.join("skills");
     let repo_skills = repo_root.join("skills");

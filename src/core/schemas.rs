@@ -2,6 +2,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use crate::approval::ApprovalRequestTx;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WunderRequest {
@@ -33,6 +34,8 @@ pub struct WunderRequest {
     pub allow_queue: bool,
     #[serde(skip)]
     pub is_admin: bool,
+    #[serde(skip)]
+    pub approval_tx: Option<ApprovalRequestTx>,
 }
 
 fn default_stream() -> bool {

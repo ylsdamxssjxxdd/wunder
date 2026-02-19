@@ -1,4 +1,5 @@
 use super::*;
+use crate::approval::ApprovalRequestTx;
 
 #[derive(Clone)]
 pub(super) struct PreparedRequest {
@@ -18,6 +19,7 @@ pub(super) struct PreparedRequest {
     pub(super) language: String,
     pub(super) allow_queue: bool,
     pub(super) is_admin: bool,
+    pub(super) approval_tx: Option<ApprovalRequestTx>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

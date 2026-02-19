@@ -539,6 +539,7 @@ impl ChannelHub {
             },
             allow_queue: false,
             is_admin: false,
+            approval_tx: None,
         };
         let response = match self
             .run_channel_request(request, &session_info.user_id, &session_info.session_id)

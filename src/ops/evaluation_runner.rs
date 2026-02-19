@@ -820,6 +820,7 @@ async fn run_case(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     };
 
     let stream_future = collect_case_stream(ctx, request, session_id);

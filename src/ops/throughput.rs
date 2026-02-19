@@ -1023,6 +1023,7 @@ async fn run_request(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     };
     let started = Instant::now();
     let result = if request_timeout_s > 0.0 {

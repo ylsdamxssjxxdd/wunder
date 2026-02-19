@@ -2479,7 +2479,8 @@
 - `wunder-cli exec|e <command...>`：命令执行快捷入口。
 - `wunder-cli mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
 - `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
-- `wunder-cli config show|set-tool-call-mode`：查看/设置运行配置。
+- `wunder-cli config show|set-tool-call-mode|set-approval-mode`：查看/设置运行配置。
+- `wunder-cli completion <bash|zsh|fish|powershell>`：生成 shell 自动补全脚本。
 - `wunder-cli doctor`：运行时环境诊断。
 - 无子命令且终端可用时，默认进入 codex 风格 TUI（顶部状态栏 + 会话区 + 命令提示 + 输入区）。
 - 默认读取 `--config` 指定或 `config/wunder.yaml`；若 CLI 未找到仓库配置，会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为基础配置。
@@ -2489,12 +2490,19 @@
   - `/status`：输出会话状态（session/model/tool_call_mode/workspace/db）。
   - `/model [name]`：查看当前模型，或切换默认模型。
   - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
+  - `/approvals [show|suggest|auto_edit|full_auto]`：查看或切换审批模式。
+  - `/diff`：显示当前 workspace 的 git 变更摘要。
+  - `/review [focus]`：基于当前 git 变更自动生成代码评审请求并调用模型分析。
+  - `/mention <query>`：快速搜索 workspace 文件路径。
   - `/config`：TUI 与 `chat` 行式模式统一为向导式配置（`base_url -> api_key -> model -> max_context`），并支持 `/config <base_url> <api_key> <model> [max_context]` 一行配置。
   - `/config show`：输出当前运行配置。
   - `/new` / `/session` / `/system` / `/mouse` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计，`/mouse` 切换滚轮/复制模式）。
+- 审批链路：当 `approval_mode` 生效且触发写文件/命令执行策略时，CLI/TUI 会弹出审批请求（一次同意 / 会话同意 / 拒绝），再决定是否执行工具调用。
 - TUI 顶部状态栏突出 `xx% context left`，隐藏低价值 mode/state 字段；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
 - TUI 多行编辑体验已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Ctrl+B/F` 字符移动，`Alt+B/F/Left/Right` 按词导航，`Ctrl+W`/`Alt+Backspace`/`Alt+Delete` 按词删除。
 - 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
+- TUI 支持粘贴事件（`Event::Paste`）批量写入输入框，并支持 `@` 文件提示补全（Tab 选首项）。
+- Ctrl+C 策略：忙碌态优先发起中断，空闲态双击 Ctrl+C 才退出，避免误退出。
 - 鼠标模式可通过 `F2` 或 `/mouse [scroll|select]` 切换：`scroll` 启用滚轮滚动，`select` 关闭捕获以便直接框选复制。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词优先读取 `prompts/zh|en` 文件（可通过 `WUNDER_PROMPTS_ROOT` 指向包含 `prompts/` 的根目录）。

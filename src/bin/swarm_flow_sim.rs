@@ -282,6 +282,7 @@ async fn main() -> Result<()> {
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     };
 
     let mother_response = state.orchestrator.run(mother_request).await?;

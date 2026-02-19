@@ -600,6 +600,7 @@ async fn run_swarm_flow(
             attachments: None,
             allow_queue: true,
             is_admin: false,
+            approval_tx: None,
         };
 
         if run_control.cancel_requested.load(Ordering::Relaxed) {

@@ -376,6 +376,7 @@ async fn handle_ws(
                             attachments: payload.attachments,
                             allow_queue: true,
                             is_admin: UserStore::is_admin(&user),
+                            approval_tx: None,
                         };
                         let outcome = match state.agent_runtime.submit_user_request(request).await {
                             Ok(outcome) => outcome,

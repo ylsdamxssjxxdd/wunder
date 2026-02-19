@@ -1148,6 +1148,7 @@ fn build_task_request(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     }
 }
 

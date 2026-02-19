@@ -97,6 +97,10 @@ pub struct SecurityConfig {
     pub deny_globs: Vec<String>,
     #[serde(default)]
     pub exec_policy_mode: Option<String>,
+    /// CLI-only: approval mode for write/exec tools (suggest/auto_edit/full_auto).
+    /// Server deployments typically leave this unset and rely on allow_paths/deny_globs + auth.
+    #[serde(default)]
+    pub approval_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -6,13 +6,16 @@ mod tui;
 
 use anyhow::{anyhow, Context, Result};
 use args::{
-    AskCommand, ChatCommand, Cli, Command, ConfigCommand, ConfigSubcommand, DoctorCommand,
-    ExecCommand, GlobalArgs, McpAddCommand, McpCommand, McpGetCommand, McpListCommand,
-    McpNameCommand, McpSubcommand, ResumeCommand, SetToolCallModeCommand, SkillNameCommand,
-    SkillsCommand, SkillsSubcommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
+    ApprovalModeArg, AskCommand, ChatCommand, Cli, Command, CompletionCommand, ConfigCommand,
+    ConfigSubcommand, DoctorCommand, ExecCommand, GlobalArgs, McpAddCommand, McpCommand,
+    McpGetCommand, McpListCommand, McpNameCommand, McpSubcommand, ResumeCommand,
+    SetApprovalModeCommand, SetToolCallModeCommand, SkillNameCommand, SkillsCommand,
+    SkillsSubcommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
 };
 use chrono::{Local, TimeZone};
 use clap::Parser;
+use clap::{CommandFactory};
+use clap_complete::generate;
 use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
 use runtime::CliRuntime;
@@ -23,6 +26,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
+use wunder_server::approval::{new_channel as new_approval_channel, ApprovalRequestRx, ApprovalResponse};
 use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_window};
 use wunder_server::schemas::WunderRequest;
@@ -70,7 +74,14 @@ async fn dispatch_command(
         Command::Skills(cmd) => handle_skills(runtime, cmd).await,
         Command::Config(cmd) => handle_config(runtime, global, cmd).await,
         Command::Doctor(cmd) => handle_doctor(runtime, global, cmd).await,
+        Command::Completion(cmd) => handle_completion(cmd).await,
     }
+}
+
+async fn handle_completion(command: CompletionCommand) -> Result<()> {
+    let mut cmd = Cli::command();
+    generate(command.shell, &mut cmd, "wunder-cli", &mut io::stdout());
+    Ok(())
 }
 
 async fn run_default(
@@ -275,6 +286,36 @@ async fn handle_chat_slash_command(
         }
         SlashCommand::ToolCallMode => {
             handle_slash_tool_call_mode(runtime, global, command.args).await?;
+            Ok(false)
+        }
+        SlashCommand::Approvals => {
+            handle_slash_approvals(runtime, command.args).await?;
+            Ok(false)
+        }
+        SlashCommand::Diff => {
+            print_git_diff_summary(runtime.launch_dir.as_path())?;
+            Ok(false)
+        }
+        SlashCommand::Review => {
+            let prompt = match build_review_prompt(runtime.launch_dir.as_path(), command.args) {
+                Ok(prompt) => prompt,
+                Err(err) => {
+                    println!("[error] {err}");
+                    return Ok(false);
+                }
+            };
+            run_prompt_once(runtime, global, prompt.as_str(), session_id).await?;
+            Ok(false)
+        }
+        SlashCommand::Mention => {
+            let query = command.args.trim();
+            if query.is_empty() {
+                println!("usage: /mention <query>");
+                return Ok(false);
+            }
+            for path in search_workspace_files(runtime.launch_dir.as_path(), query, 20) {
+                println!("{path}");
+            }
             Ok(false)
         }
         SlashCommand::Exit | SlashCommand::Quit => Ok(true),
@@ -610,11 +651,13 @@ async fn print_runtime_status(
         .and_then(|model| model.max_context)
         .filter(|value| *value > 0);
     let stats = load_session_stats(runtime, session_id).await;
+    let approval_mode = resolve_effective_approval_mode(&config, global.approval_mode);
 
     println!("status");
     println!("- session: {session_id}");
     println!("- model: {model_name}");
     println!("- tool_call_mode: {tool_call_mode}");
+    println!("- approval_mode: {approval_mode}");
     println!("- max_rounds: {max_rounds}");
     if let Some(total) = max_context {
         let used = stats.context_used_tokens.max(0) as u64;
@@ -785,8 +828,12 @@ pub(crate) async fn build_current_system_prompt(
 ) -> Result<String> {
     let config = runtime.state.config_store.get().await;
     let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
-    let request_overrides =
-        build_request_overrides(&config, model_name.as_deref(), global.tool_call_mode);
+    let request_overrides = build_request_overrides(
+        &config,
+        model_name.as_deref(),
+        global.tool_call_mode,
+        global.approval_mode,
+    );
     let skills = runtime.state.skills.read().await.clone();
     let user_tool_bindings =
         runtime
@@ -933,10 +980,58 @@ fn parse_tool_call_mode(raw: &str) -> Option<ToolCallModeArg> {
     }
 }
 
+async fn handle_slash_approvals(runtime: &CliRuntime, args: &str) -> Result<()> {
+    let cleaned = args.trim();
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+        let config = runtime.state.config_store.get().await;
+        let mode = config
+            .security
+            .approval_mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("full_auto");
+        println!("approval_mode: {mode}");
+        println!("usage: /approvals [show|suggest|auto_edit|full_auto]");
+        return Ok(());
+    }
+
+    let Some(mode) = parse_approval_mode(cleaned) else {
+        println!("[error] invalid approval mode: {cleaned}");
+        println!("valid modes: suggest, auto_edit, full_auto");
+        return Ok(());
+    };
+
+    config_set_approval_mode(runtime, SetApprovalModeCommand { mode }).await
+}
+
+pub(crate) fn parse_approval_mode(raw: &str) -> Option<ApprovalModeArg> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "suggest" | "suggested" => Some(ApprovalModeArg::Suggest),
+        "auto_edit" | "auto-edit" | "auto" => Some(ApprovalModeArg::AutoEdit),
+        "full_auto" | "full-auto" | "full" => Some(ApprovalModeArg::FullAuto),
+        _ => None,
+    }
+}
+
 fn sorted_model_names(config: &Config) -> Vec<String> {
     let mut names: Vec<String> = config.llm.models.keys().cloned().collect();
     names.sort();
     names
+}
+
+fn resolve_effective_approval_mode(config: &Config, override_mode: Option<ApprovalModeArg>) -> String {
+    if let Some(mode) = override_mode {
+        return mode.as_str().to_string();
+    }
+    config
+        .security
+        .approval_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("full_auto")
+        .to_string()
 }
 
 async fn handle_exec(
@@ -1299,6 +1394,7 @@ async fn handle_config(
         ConfigSubcommand::SetToolCallMode(cmd) => {
             config_set_tool_call_mode(runtime, global, cmd).await
         }
+        ConfigSubcommand::SetApprovalMode(cmd) => config_set_approval_mode(runtime, cmd).await,
     }
 }
 
@@ -1455,6 +1551,7 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let max_context = model_entry
         .and_then(|model| model.max_context)
         .filter(|value| *value > 0);
+    let approval_mode = resolve_effective_approval_mode(&config, global.approval_mode);
     let session_id = runtime.resolve_session(global.session.as_deref());
     let stats = load_session_stats(runtime, &session_id).await;
 
@@ -1467,6 +1564,7 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         "db_path": config.storage.db_path,
         "model": model,
         "tool_call_mode": tool_call_mode,
+        "approval_mode": approval_mode,
         "max_rounds": max_rounds,
         "max_context": max_context,
         "context_used": stats.context_used_tokens.max(0),
@@ -1515,6 +1613,19 @@ async fn config_set_tool_call_mode(
         "tool_call_mode set: model={model} mode={}",
         command.mode.as_str()
     );
+    Ok(())
+}
+
+async fn config_set_approval_mode(runtime: &CliRuntime, command: SetApprovalModeCommand) -> Result<()> {
+    let mode = command.mode.as_str().to_string();
+    runtime
+        .state
+        .config_store
+        .update(move |config| {
+            config.security.approval_mode = Some(mode.clone());
+        })
+        .await?;
+    println!("approval_mode set: {}", command.mode.as_str());
     Ok(())
 }
 
@@ -1692,6 +1803,17 @@ async fn handle_doctor(
     println!("- workspace_root: {}", config.workspace.root);
     println!("- db_path: {}", config.storage.db_path);
     println!("- model: {}", model.unwrap_or_else(|| "<none>".to_string()));
+    println!(
+        "- approval_mode: {}",
+        resolve_effective_approval_mode(&config, global.approval_mode)
+    );
+    println!(
+        "- override_config_exists: {}",
+        runtime
+            .temp_root
+            .join("config/wunder.override.yaml")
+            .exists()
+    );
 
     for (name, path, should_exist) in checks {
         let exists = if path.trim().is_empty() {
@@ -1712,6 +1834,11 @@ async fn handle_doctor(
             "skills_paths": config.skills.paths,
             "allow_paths": config.security.allow_paths,
             "allow_commands": config.security.allow_commands,
+            "approval_mode_config": config.security.approval_mode,
+            "approval_mode_effective": resolve_effective_approval_mode(&config, global.approval_mode),
+            "exec_policy_mode": config.security.exec_policy_mode,
+            "base_config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
+            "override_config_path": std::env::var("WUNDER_CONFIG_OVERRIDE_PATH").unwrap_or_default(),
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }
@@ -1726,8 +1853,12 @@ pub(crate) async fn build_wunder_request(
 ) -> Result<WunderRequest> {
     let config = runtime.state.config_store.get().await;
     let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
-    let request_overrides =
-        build_request_overrides(&config, model_name.as_deref(), global.tool_call_mode);
+    let request_overrides = build_request_overrides(
+        &config,
+        model_name.as_deref(),
+        global.tool_call_mode,
+        global.approval_mode,
+    );
 
     ensure_cli_session_record(runtime, session_id, Some(prompt)).await?;
 
@@ -1747,6 +1878,7 @@ pub(crate) async fn build_wunder_request(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        approval_tx: None,
     })
 }
 
@@ -1756,7 +1888,14 @@ async fn run_prompt_once(
     prompt: &str,
     session_id: &str,
 ) -> Result<FinalEvent> {
-    let request = build_wunder_request(runtime, global, prompt, session_id).await?;
+    let mut request = build_wunder_request(runtime, global, prompt, session_id).await?;
+    let _approval_task = if should_interactive_approvals(global) {
+        let (tx, rx) = new_approval_channel();
+        request.approval_tx = Some(tx);
+        Some(tokio::spawn(handle_stdio_approvals(rx)))
+    } else {
+        None
+    };
 
     if global.no_stream {
         let response = runtime.state.orchestrator.run(request).await?;
@@ -1797,12 +1936,65 @@ async fn run_prompt_once(
     Ok(final_event)
 }
 
+fn should_interactive_approvals(global: &GlobalArgs) -> bool {
+    if global.json {
+        return false;
+    }
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+async fn handle_stdio_approvals(mut rx: ApprovalRequestRx) {
+    while let Some(request) = rx.recv().await {
+        eprintln!();
+        eprintln!("[approval] {}", request.summary);
+        eprintln!("- tool: {}", request.tool);
+        let args = serde_json::to_string(&request.args).unwrap_or_else(|_| "{}".to_string());
+        if !args.trim().is_empty() && args != "{}" {
+            eprintln!("- args: {}", truncate_for_stderr(args, 600));
+        }
+        eprintln!("approve? [y]=once  [a]=session  [n]=deny");
+
+        let choice = tokio::task::spawn_blocking(|| {
+            let mut buffer = String::new();
+            std::io::stdin().read_line(&mut buffer).ok();
+            buffer
+        })
+        .await
+        .ok()
+        .unwrap_or_default();
+
+        let response = match choice.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" | "1" => ApprovalResponse::ApproveOnce,
+            "a" | "always" | "2" => ApprovalResponse::ApproveSession,
+            _ => ApprovalResponse::Deny,
+        };
+        let _ = request.respond_to.send(response);
+    }
+}
+
+fn truncate_for_stderr(mut text: String, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+    let mut out = String::new();
+    for ch in text.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out.push_str("...(truncated)");
+    out
+}
+
 fn build_request_overrides(
     config: &Config,
     model_name: Option<&str>,
     tool_call_mode: Option<ToolCallModeArg>,
+    approval_mode: Option<ApprovalModeArg>,
 ) -> Option<Value> {
     let selected_model = resolve_selected_model(config, model_name)?;
+    let mut root = serde_json::Map::new();
     let mut model_overrides = serde_json::Map::new();
 
     if let Some(mode) = tool_call_mode {
@@ -1824,16 +2016,26 @@ fn build_request_overrides(
     }
 
     if model_overrides.is_empty() {
-        return None;
+        // noop
+    } else {
+        root.insert(
+            "llm".to_string(),
+            json!({
+                "models": {
+                    selected_model: model_overrides
+                }
+            }),
+        );
     }
 
-    Some(json!({
-        "llm": {
-            "models": {
-                selected_model: model_overrides
-            }
-        }
-    }))
+    if let Some(mode) = approval_mode {
+        root.insert(
+            "security".to_string(),
+            json!({ "approval_mode": mode.as_str() }),
+        );
+    }
+
+    if root.is_empty() { None } else { Some(Value::Object(root)) }
 }
 
 fn resolve_selected_model(config: &Config, model_name: Option<&str>) -> Option<String> {
@@ -1905,6 +2107,210 @@ fn normalize_name_list(values: Vec<String>) -> Vec<String> {
     output
 }
 
+pub(crate) fn print_git_diff_summary(workspace_root: &std::path::Path) -> Result<()> {
+    for line in git_diff_summary_lines(workspace_root)? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+pub(crate) fn git_diff_summary_lines(workspace_root: &std::path::Path) -> Result<Vec<String>> {
+    if !workspace_root.join(".git").exists() {
+        return Ok(vec![
+            "diff".to_string(),
+            "[info] current workspace is not a git repository".to_string(),
+        ]);
+    }
+
+    let mut lines = Vec::new();
+    lines.push("diff".to_string());
+
+    let Some(status) = run_git(workspace_root, ["status", "--porcelain"]) else {
+        lines.push("[error] git is not available (cannot run `git status`)".to_string());
+        return Ok(lines);
+    };
+    if status.trim().is_empty() {
+        lines.push("- status: clean".to_string());
+        return Ok(lines);
+    }
+
+    let changed = status.lines().count();
+    lines.push(format!("- status: {changed} paths changed"));
+    for row in status.lines().take(80) {
+        lines.push(format!("  {row}"));
+    }
+    if changed > 80 {
+        lines.push(format!("  ... ({} more)", changed - 80));
+    }
+
+    let stat = run_git(workspace_root, ["diff", "--stat"]).unwrap_or_default();
+    if !stat.trim().is_empty() {
+        lines.push("- diff --stat:".to_string());
+        for row in stat.lines().take(80) {
+            lines.push(format!("  {row}"));
+        }
+        if stat.lines().count() > 80 {
+            lines.push("  ... (truncated)".to_string());
+        }
+    }
+
+    Ok(lines)
+}
+
+pub(crate) fn build_review_prompt(workspace_root: &std::path::Path, focus: &str) -> Result<String> {
+    if !workspace_root.join(".git").exists() {
+        return Err(anyhow!(
+            "current workspace is not a git repository, /review requires git diff"
+        ));
+    }
+
+    let focus = focus.trim();
+    let focus_line = if focus.is_empty() {
+        String::new()
+    } else {
+        format!("Focus: {focus}\n")
+    };
+
+    let status = run_git(workspace_root, ["status", "--porcelain"])
+        .ok_or_else(|| anyhow!("git is not available (cannot run `git status`)"))?;
+    let cached = run_git(workspace_root, ["diff", "--cached"]).unwrap_or_default();
+    let unstaged = run_git(workspace_root, ["diff"]).unwrap_or_default();
+
+    const MAX_DIFF_CHARS: usize = 120_000;
+    let mut diff_body = String::new();
+    if !cached.trim().is_empty() {
+        diff_body.push_str("## git diff --cached\n");
+        diff_body.push_str(&cached);
+        if !diff_body.ends_with('\n') {
+            diff_body.push('\n');
+        }
+        diff_body.push('\n');
+    }
+    if !unstaged.trim().is_empty() {
+        diff_body.push_str("## git diff\n");
+        diff_body.push_str(&unstaged);
+        if !diff_body.ends_with('\n') {
+            diff_body.push('\n');
+        }
+    }
+    if diff_body.trim().is_empty() {
+        diff_body = "<no diff>".to_string();
+    }
+    let diff_trimmed = truncate_chars(&diff_body, MAX_DIFF_CHARS);
+
+    Ok(format!(
+        r#"你是一名严格的代码审查员。请基于下面的 git 变更做 review（像 codex 一样）：
+- 先列出问题（按严重程度排序）：bug/安全/行为回归/边界条件/并发/错误处理/性能/可维护性
+- 再列出可选优化与可读性建议
+- 最后给出建议的验证步骤（命令/测试用例）
+- 输出要简洁、可执行；避免泛泛而谈
+
+{focus_line}## git status --porcelain
+{status}
+
+{diff_trimmed}
+"#
+    ))
+}
+
+pub(crate) fn search_workspace_files(
+    workspace_root: &std::path::Path,
+    query: &str,
+    limit: usize,
+) -> Vec<String> {
+    let query = query.trim();
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let lowered = query.to_ascii_lowercase();
+
+    // Avoid scanning huge dependency trees in common wunder repos.
+    let excluded_dirs = [
+        ".git",
+        "target",
+        "WUNDER_TEMP",
+        "data",
+        "frontend",
+        "web",
+        "node_modules",
+        "参考项目",
+        "backups",
+    ];
+
+    let mut matches = Vec::new();
+    let walker = walkdir::WalkDir::new(workspace_root).follow_links(false);
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| {
+            let path = entry.path();
+            if path == workspace_root {
+                return true;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                return true;
+            };
+            !excluded_dirs
+                .iter()
+                .any(|excluded| name.eq_ignore_ascii_case(excluded))
+        })
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(workspace_root) else {
+            continue;
+        };
+        let rel = relative.to_string_lossy().replace('\\', "/");
+        if rel.is_empty() {
+            continue;
+        }
+
+        if rel.to_ascii_lowercase().contains(&lowered) {
+            matches.push(rel);
+            if matches.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    matches.sort();
+    matches.truncate(limit);
+    matches
+}
+
+fn run_git<I, S>(workspace_root: &std::path::Path, args: I) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(workspace_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    for ch in text.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out.push_str("\n...(truncated)\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1923,7 +2329,8 @@ mod tests {
         model.max_rounds = None;
         config.llm.models.insert(model_name.to_string(), model);
 
-        let overrides = build_request_overrides(&config, None, None).expect("overrides expected");
+        let overrides =
+            build_request_overrides(&config, None, None, None).expect("overrides expected");
         assert_eq!(
             overrides["llm"]["models"][model_name]["max_rounds"],
             json!(8)
@@ -1944,7 +2351,8 @@ mod tests {
         model.max_rounds = Some(1);
         config.llm.models.insert(model_name.to_string(), model);
 
-        let overrides = build_request_overrides(&config, None, None).expect("overrides expected");
+        let overrides =
+            build_request_overrides(&config, None, None, None).expect("overrides expected");
         assert_eq!(
             overrides["llm"]["models"][model_name]["max_rounds"],
             json!(CLI_MIN_MAX_ROUNDS)
@@ -1965,15 +2373,20 @@ mod tests {
         model.max_rounds = Some(12);
         config.llm.models.insert(model_name.to_string(), model);
 
-        let overrides = build_request_overrides(&config, None, Some(ToolCallModeArg::FunctionCall))
-            .expect("overrides expected");
+        let overrides = build_request_overrides(
+            &config,
+            None,
+            Some(ToolCallModeArg::FunctionCall),
+            None,
+        )
+        .expect("overrides expected");
         assert_eq!(
             overrides["llm"]["models"][model_name]["tool_call_mode"],
             json!("function_call")
         );
         assert!(overrides["llm"]["models"][model_name]["max_rounds"].is_null());
 
-        assert!(build_request_overrides(&config, None, None).is_none());
+        assert!(build_request_overrides(&config, None, None, None).is_none());
     }
 
     #[test]
