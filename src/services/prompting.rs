@@ -252,7 +252,11 @@ impl PromptComposer {
             } else {
                 Vec::new()
             };
-            let workdir_display = workspace.display_path(user_id, workdir);
+            let workdir_display = if is_local_runtime_mode(&config.server.mode) {
+                absolute_path_str(workdir)
+            } else {
+                workspace.display_path(user_id, workdir)
+            };
             let base_skill_specs = skills.list_specs();
             let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
             if let Some(bindings) = user_tool_bindings {

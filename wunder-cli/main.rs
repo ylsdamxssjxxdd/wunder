@@ -11,7 +11,8 @@ use args::{
     ConfigSubcommand, DoctorCommand, ExecCommand, GlobalArgs, McpAddCommand, McpCommand,
     McpGetCommand, McpListCommand, McpNameCommand, McpSubcommand, ResumeCommand,
     SetApprovalModeCommand, SetToolCallModeCommand, SkillNameCommand, SkillsCommand,
-    SkillsSubcommand, ToolCallModeArg, ToolCommand, ToolRunCommand, ToolSubcommand,
+    SkillsListCommand, SkillsSubcommand, SkillsUploadCommand, ToolCallModeArg, ToolCommand,
+    ToolRunCommand, ToolSubcommand,
 };
 use chrono::{Local, TimeZone};
 use clap::CommandFactory;
@@ -22,8 +23,10 @@ use render::{FinalEvent, StreamRenderer};
 use runtime::CliRuntime;
 use serde_json::{json, Value};
 use slash_command::{ParsedSlashCommand, SlashCommand};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing_subscriber::EnvFilter;
 use wunder_server::a2a_store::A2aStore;
@@ -32,13 +35,15 @@ use wunder_server::approval::{
 };
 use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_window};
+use wunder_server::path_utils::is_within_root;
 use wunder_server::schemas::WunderRequest;
-use wunder_server::skills::load_skills;
+use wunder_server::skills::{load_skills, SkillSpec};
 use wunder_server::storage::ChatSessionRecord;
 use wunder_server::tools::{
     build_tool_roots, collect_available_tool_names, execute_tool, resolve_tool_name, ToolContext,
 };
 use wunder_server::user_tools::UserMcpServer;
+use zip::ZipArchive;
 
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
@@ -1756,13 +1761,20 @@ async fn handle_skills(
     command: SkillsCommand,
 ) -> Result<()> {
     match command.command {
-        SkillsSubcommand::List => skills_list(runtime, global).await,
+        SkillsSubcommand::List(cmd) => skills_list(runtime, global, cmd).await,
         SkillsSubcommand::Enable(cmd) => skills_toggle(runtime, global, cmd, true).await,
         SkillsSubcommand::Disable(cmd) => skills_toggle(runtime, global, cmd, false).await,
+        SkillsSubcommand::Upload(cmd) => skills_upload(runtime, global, cmd).await,
+        SkillsSubcommand::Remove(cmd) => skills_remove(runtime, global, cmd).await,
+        SkillsSubcommand::Root => skills_root(runtime, global),
     }
 }
 
-async fn skills_list(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+async fn skills_list(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: SkillsListCommand,
+) -> Result<()> {
     let language = locale::resolve_cli_language(global);
     let is_zh = locale::is_zh_language(language.as_str());
     let payload = runtime
@@ -1771,18 +1783,34 @@ async fn skills_list(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         .load_user_tools(&runtime.user_id);
     let enabled_set: HashSet<String> = payload.skills.enabled.into_iter().collect();
 
-    let config = runtime.state.config_store.get().await;
-    let skill_root = runtime
-        .state
-        .user_tool_store
-        .get_skill_root(&runtime.user_id);
-    let mut scan_config = config.clone();
-    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
-    scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false, false);
+    let (skill_root, specs) = load_user_skill_specs(runtime).await;
+    if command.json {
+        let items = specs
+            .iter()
+            .map(|spec| {
+                json!({
+                    "name": spec.name,
+                    "path": spec.path,
+                    "enabled": enabled_set.contains(&spec.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "root": skill_root,
+                "count": items.len(),
+                "skills": items,
+            }))?
+        );
+        return Ok(());
+    }
 
-    let mut specs = registry.list_specs();
-    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    if is_zh {
+        println!("技能目录: {}", skill_root.to_string_lossy());
+    } else {
+        println!("skill root: {}", skill_root.to_string_lossy());
+    }
     if specs.is_empty() {
         if is_zh {
             println!("在 {} 未找到技能", skill_root.to_string_lossy());
@@ -1803,7 +1831,7 @@ async fn skills_list(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         } else {
             "disabled"
         };
-        println!("{} [{}]", spec.name, enabled);
+        println!("{} [{}] {}", spec.name, enabled, spec.path);
     }
     Ok(())
 }
@@ -1815,13 +1843,34 @@ async fn skills_toggle(
     enable: bool,
 ) -> Result<()> {
     let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let target = command.name.trim().to_string();
+    if target.is_empty() {
+        if is_zh {
+            println!("技能名称不能为空");
+        } else {
+            println!("skill name cannot be empty");
+        }
+        return Ok(());
+    }
+
+    let (_, specs) = load_user_skill_specs(runtime).await;
+    let available: HashSet<String> = specs.into_iter().map(|spec| spec.name).collect();
+    if enable && !available.contains(&target) {
+        if is_zh {
+            println!("未找到技能: {target}");
+        } else {
+            println!("skill not found: {target}");
+        }
+        return Ok(());
+    }
+
     let payload = runtime
         .state
         .user_tool_store
         .load_user_tools(&runtime.user_id);
     let mut enabled = payload.skills.enabled;
-    let target = command.name.trim().to_string();
-    enabled.retain(|name| name.trim() != target);
+    enabled.retain(|name| name.trim() != target.as_str());
     if enable {
         enabled.push(target.clone());
     }
@@ -1836,17 +1885,392 @@ async fn skills_toggle(
         .user_tool_manager
         .clear_skill_cache(Some(&runtime.user_id));
     if enable {
-        if locale::is_zh_language(language.as_str()) {
+        if is_zh {
             println!("技能已启用: {target}");
         } else {
             println!("skill enabled: {target}");
         }
-    } else if locale::is_zh_language(language.as_str()) {
+    } else if is_zh {
         println!("技能已禁用: {target}");
     } else {
         println!("skill disabled: {target}");
     }
     Ok(())
+}
+
+fn skills_root(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let root = runtime
+        .state
+        .user_tool_store
+        .get_skill_root(&runtime.user_id);
+    if is_zh {
+        println!("技能目录: {}", root.to_string_lossy());
+    } else {
+        println!("skill root: {}", root.to_string_lossy());
+    }
+    io::stdout().flush()?;
+    Ok(())
+}
+
+async fn skills_upload(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: SkillsUploadCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let source = resolve_cli_input_path(runtime.launch_dir.as_path(), command.source.as_path());
+    if !source.exists() {
+        if is_zh {
+            println!("上传源不存在: {}", source.to_string_lossy());
+        } else {
+            println!("upload source not found: {}", source.to_string_lossy());
+        }
+        return Ok(());
+    }
+
+    let (skill_root, before_specs) = load_user_skill_specs(runtime).await;
+    fs::create_dir_all(&skill_root)?;
+    let before_path_map = collect_skill_path_map(&before_specs);
+
+    let files_written = if source.is_dir()
+        || source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+    {
+        import_skill_directory(source.as_path(), skill_root.as_path(), command.replace)?
+    } else {
+        let extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if extension == "zip" || extension == "skill" {
+            extract_skill_archive(source.as_path(), skill_root.as_path(), command.replace)?
+        } else {
+            if is_zh {
+                println!("仅支持 .zip/.skill 或包含 SKILL.md 的目录");
+            } else {
+                println!(
+                    "only .zip/.skill archives or directories containing SKILL.md are supported"
+                );
+            }
+            return Ok(());
+        }
+    };
+
+    runtime
+        .state
+        .user_tool_manager
+        .clear_skill_cache(Some(&runtime.user_id));
+
+    let (_, after_specs) = load_user_skill_specs(runtime).await;
+    let after_path_map = collect_skill_path_map(&after_specs);
+    let mut imported_names = after_path_map
+        .iter()
+        .filter(|(path, _)| !before_path_map.contains_key(*path))
+        .map(|(_, name)| name.clone())
+        .collect::<Vec<_>>();
+    imported_names.sort();
+    imported_names.dedup();
+
+    if !imported_names.is_empty() {
+        let payload = runtime
+            .state
+            .user_tool_store
+            .load_user_tools(&runtime.user_id);
+        let mut enabled = payload.skills.enabled;
+        enabled.extend(imported_names.clone());
+        let enabled = normalize_name_list(enabled);
+        runtime.state.user_tool_store.update_skills(
+            &runtime.user_id,
+            enabled,
+            payload.skills.shared,
+        )?;
+    }
+
+    if is_zh {
+        println!(
+            "技能上传完成，写入文件 {files_written} 个，新增技能 {} 个",
+            imported_names.len()
+        );
+    } else {
+        println!(
+            "skill upload completed, wrote {files_written} files, discovered {} new skills",
+            imported_names.len()
+        );
+    }
+    if !imported_names.is_empty() {
+        println!("{}", imported_names.join(", "));
+    }
+    Ok(())
+}
+
+async fn skills_remove(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: SkillNameCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let target = command.name.trim();
+    if target.is_empty() {
+        if is_zh {
+            println!("技能名称不能为空");
+        } else {
+            println!("skill name cannot be empty");
+        }
+        return Ok(());
+    }
+
+    let (skill_root, specs) = load_user_skill_specs(runtime).await;
+    let Some(spec) = specs.into_iter().find(|item| item.name == target) else {
+        if is_zh {
+            println!("未找到技能: {target}");
+        } else {
+            println!("skill not found: {target}");
+        }
+        return Ok(());
+    };
+
+    let skill_file = PathBuf::from(spec.path);
+    let Some(skill_dir) = skill_file.parent() else {
+        return Err(anyhow!(
+            "invalid skill path: {}",
+            skill_file.to_string_lossy()
+        ));
+    };
+    if !is_within_root(skill_root.as_path(), skill_dir) {
+        return Err(anyhow!(
+            "skill path out of root: {}",
+            skill_dir.to_string_lossy()
+        ));
+    }
+
+    fs::remove_dir_all(skill_dir).with_context(|| {
+        format!(
+            "remove skill directory failed: {}",
+            skill_dir.to_string_lossy()
+        )
+    })?;
+    runtime
+        .state
+        .user_tool_manager
+        .clear_skill_cache(Some(&runtime.user_id));
+
+    let payload = runtime
+        .state
+        .user_tool_store
+        .load_user_tools(&runtime.user_id);
+    let mut enabled = payload.skills.enabled;
+    enabled.retain(|name| name.trim() != target);
+    runtime.state.user_tool_store.update_skills(
+        &runtime.user_id,
+        normalize_name_list(enabled),
+        payload.skills.shared,
+    )?;
+
+    if is_zh {
+        println!("技能已删除: {target}");
+    } else {
+        println!("skill removed: {target}");
+    }
+    Ok(())
+}
+
+async fn load_user_skill_specs(runtime: &CliRuntime) -> (PathBuf, Vec<SkillSpec>) {
+    let config = runtime.state.config_store.get().await;
+    let skill_root = runtime
+        .state
+        .user_tool_store
+        .get_skill_root(&runtime.user_id);
+    let mut scan_config = config.clone();
+    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+    scan_config.skills.enabled = Vec::new();
+    let registry = load_skills(&scan_config, false, false, false);
+    let mut specs = registry.list_specs();
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    (skill_root, specs)
+}
+
+fn collect_skill_path_map(specs: &[SkillSpec]) -> HashMap<String, String> {
+    specs
+        .iter()
+        .map(|spec| (canonical_skill_path(spec.path.as_str()), spec.name.clone()))
+        .collect()
+}
+
+fn canonical_skill_path(raw: &str) -> String {
+    let path = PathBuf::from(raw);
+    let resolved = path.canonicalize().unwrap_or(path);
+    resolved.to_string_lossy().to_ascii_lowercase()
+}
+
+fn resolve_cli_input_path(base: &Path, source: &Path) -> PathBuf {
+    if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        base.join(source)
+    }
+}
+
+fn import_skill_directory(source: &Path, skill_root: &Path, replace: bool) -> Result<usize> {
+    let source_dir = if source.is_file() {
+        let is_skill_markdown = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"));
+        if !is_skill_markdown {
+            return Err(anyhow!("source file must be SKILL.md"));
+        }
+        source
+            .parent()
+            .ok_or_else(|| anyhow!("SKILL.md has no parent directory"))?
+    } else {
+        source
+    };
+    if !source_dir.join("SKILL.md").is_file() {
+        return Err(anyhow!("source directory must contain SKILL.md"));
+    }
+
+    let skill_name = source_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| anyhow!("cannot infer skill directory name"))?;
+    let target_dir = skill_root.join(skill_name);
+    if !is_within_root(skill_root, &target_dir) {
+        return Err(anyhow!("target skill path out of bounds"));
+    }
+
+    let source_norm = source_dir
+        .canonicalize()
+        .unwrap_or_else(|_| source_dir.to_path_buf());
+    let target_norm = target_dir
+        .canonicalize()
+        .unwrap_or_else(|_| target_dir.clone());
+    if source_norm == target_norm {
+        return Ok(0);
+    }
+
+    if target_dir.exists() {
+        if !replace {
+            return Err(anyhow!(
+                "target skill already exists: {} (use --replace to overwrite)",
+                target_dir.to_string_lossy()
+            ));
+        }
+        fs::remove_dir_all(&target_dir)?;
+    }
+    copy_dir_recursive(source_dir, &target_dir)
+}
+
+fn extract_skill_archive(archive_path: &Path, skill_root: &Path, replace: bool) -> Result<usize> {
+    let file = fs::File::open(archive_path)
+        .with_context(|| format!("open archive failed: {}", archive_path.to_string_lossy()))?;
+    let mut archive = ZipArchive::new(file).context("invalid zip archive")?;
+    let mut files_written = 0usize;
+
+    let mut has_root_files = false;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).context("read zip entry failed")?;
+        if entry.is_dir() {
+            continue;
+        }
+        let normalized = entry.name().replace('\\', "/");
+        if !normalized.contains('/') {
+            has_root_files = true;
+            break;
+        }
+    }
+
+    let package_stem = archive_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("imported_skill");
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).context("read zip entry failed")?;
+        if entry.is_dir() {
+            continue;
+        }
+        let mut relative = normalize_archive_entry_path(entry.name())?;
+        if has_root_files {
+            relative = PathBuf::from(package_stem).join(relative);
+        }
+
+        let dest = skill_root.join(&relative);
+        if !is_within_root(skill_root, &dest) {
+            return Err(anyhow!(
+                "zip entry out of skill root: {}",
+                relative.to_string_lossy()
+            ));
+        }
+        if dest.exists() && !replace {
+            return Err(anyhow!(
+                "target file already exists: {} (use --replace to overwrite)",
+                dest.to_string_lossy()
+            ));
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut buffer = Vec::new();
+        entry.read_to_end(&mut buffer)?;
+        fs::write(&dest, buffer)?;
+        files_written = files_written.saturating_add(1);
+    }
+    Ok(files_written)
+}
+
+fn normalize_archive_entry_path(raw: &str) -> Result<PathBuf> {
+    let cleaned = raw.replace('\\', "/");
+    let trimmed = cleaned.trim_matches('/');
+    if trimmed.is_empty() {
+        return Err(anyhow!("empty zip entry path"));
+    }
+    let relative = PathBuf::from(trimmed);
+    for component in relative.components() {
+        if matches!(
+            component,
+            std::path::Component::Prefix(_)
+                | std::path::Component::RootDir
+                | std::path::Component::ParentDir
+        ) {
+            return Err(anyhow!(
+                "zip entry contains illegal path segment: {trimmed}"
+            ));
+        }
+    }
+    Ok(relative)
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<usize> {
+    let mut files_written = 0usize;
+    for entry in walkdir::WalkDir::new(source)
+        .into_iter()
+        .filter_map(|item| item.ok())
+    {
+        let path = entry.path();
+        let relative = path.strip_prefix(source).unwrap_or(path);
+        let dest = target.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&dest)?;
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(path, &dest)?;
+        files_written = files_written.saturating_add(1);
+    }
+    Ok(files_written)
 }
 
 async fn handle_config(

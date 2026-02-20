@@ -1810,7 +1810,40 @@
   - 收到消息后统一走 ChannelHub 主链路并触发智能体回复。
 
 
-### 4.1.54.4 `/wunder/channel/qqbot/webhook`（QQ Bot）
+### 4.1.54.4 `/wunder/channel/wechat/webhook`（企业微信）
+
+- 方法：`GET/POST`
+- 鉴权：
+  - `GET`/`POST` 安全模式下使用 `msg_signature/timestamp/nonce` + `wechat.token` 校验签名。
+  - 使用加密模式时需配置 `wechat.encoding_aes_key` 进行 AES-CBC 解密。
+- Query：
+  - `account_id`：可选，优先指定渠道账号。
+  - `msg_signature`、`timestamp`、`nonce`：企业微信回调签名参数。
+  - `echostr`：仅 `GET` URL 验证时使用。
+- Header：
+  - `x-channel-account`：可选，覆盖 `account_id`。
+- URL 验证（GET）：
+  - 传入 `msg_signature/timestamp/nonce/echostr` 后返回解密后的明文字符串。
+- 消息回调（POST）：
+  - 入参为企业微信 XML（支持明文或 `<Encrypt>` 加密包）。
+  - 目前仅处理 `MsgType=text`，其余类型直接返回 `success` 不进入智能体链路。
+  - 成功返回纯文本 `success`（非 JSON），避免企业微信重复回调。
+- 出站投递：
+  - 当 `ChannelAccount.config.wechat.corp_id/agent_id/secret` 可用时，调用企业微信 API 直连发送文本：
+    - 先请求 `/cgi-bin/gettoken`
+    - 再请求 `/cgi-bin/message/send`
+  - `peer.kind=user` -> `touser`
+  - `peer.kind=group` -> `toparty`
+  - `peer.kind=tag` -> `totag`
+- 配置（ChannelAccount.config）：
+  - `wechat.corp_id`
+  - `wechat.agent_id`
+  - `wechat.secret`
+  - `wechat.token`（回调签名校验）
+  - `wechat.encoding_aes_key`（回调解密）
+  - `wechat.domain`（可选，默认 `qyapi.weixin.qq.com`）
+
+### 4.1.54.5 `/wunder/channel/qqbot/webhook`（QQ Bot）
 
 - 方法：`POST`
 - 鉴权：可选（由 `inbound_token` 统一控制）
@@ -2095,6 +2128,10 @@
     - `app_id`、`app_secret`（必填或沿用已有值）
     - `receive_group_chat`（可选，默认 `true`）
     - `domain`（可选，默认 `open.feishu.cn`）
+  - 企业微信快捷入参：
+    - `wechat.corp_id`、`wechat.agent_id`、`wechat.secret`（必填或沿用已有值）
+    - `wechat.token`、`wechat.encoding_aes_key`（回调签名/解密，可选但建议配置）
+    - `wechat.domain`（可选，默认 `qyapi.weixin.qq.com`）
   - 行为说明：
     - 首次创建会自动写入 `inbound_token`。
     - 会自动维护默认绑定（`peer_id="*"`），并按 `peer_kind` / `receive_group_chat` 更新。

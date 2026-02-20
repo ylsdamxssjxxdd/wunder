@@ -7,6 +7,7 @@ use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig,
 };
+use crate::channels::wechat;
 use crate::channels::whatsapp_cloud;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::monitor::MonitorState;
@@ -1052,6 +1053,31 @@ impl ChannelHub {
                     serde_json::from_value(record.payload.clone())
                         .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
                 qqbot::send_outbound(&self.http, &outbound, qqbot_cfg).await?;
+                self.update_outbox_status(record, "sent", None).await?;
+                if let Some(session_id) = extract_session_id(&record.payload) {
+                    self.monitor.record_event(
+                        &session_id,
+                        "channel_outbound",
+                        &json!({
+                            "channel": record.channel,
+                            "account_id": record.account_id,
+                            "outbox_id": record.outbox_id,
+                        }),
+                    );
+                }
+                return Ok(());
+            }
+        }
+        if record
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(wechat::WECHAT_CHANNEL)
+        {
+            if let Some(wechat_cfg) = account_cfg.wechat.as_ref() {
+                let outbound: ChannelOutboundMessage =
+                    serde_json::from_value(record.payload.clone())
+                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+                wechat::send_outbound(&self.http, &outbound, wechat_cfg).await?;
                 self.update_outbox_status(record, "sent", None).await?;
                 if let Some(session_id) = extract_session_id(&record.payload) {
                     self.monitor.record_event(

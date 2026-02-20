@@ -6,6 +6,7 @@ pub mod qqbot;
 pub mod rate_limit;
 pub mod service;
 pub mod types;
+pub mod wechat;
 pub mod whatsapp_cloud;
 
 pub use service::ChannelHub;

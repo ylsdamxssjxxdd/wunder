@@ -31,24 +31,26 @@ impl CliRuntime {
     pub async fn init(global: &GlobalArgs) -> Result<Self> {
         let launch_dir = std::env::current_dir().context("read current directory failed")?;
         let repo_root = resolve_repo_root(&launch_dir);
+        let wunder_home = resolve_wunder_home_dir(&launch_dir);
         let temp_root = global
             .temp_root
             .clone()
             .unwrap_or_else(|| launch_dir.join("WUNDER_TEMP"));
-        ensure_runtime_dirs(&temp_root)?;
+        let user_tools_root = wunder_home.join("user_tools");
+        let vector_root = wunder_home.join("vector_knowledge");
+        ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
 
         let base_config = prepare_base_config_path(global, &repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
-        let user_tools_root = temp_root.join("user_tools");
-        let vector_root = temp_root.join("vector_knowledge");
 
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
         set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
+        set_env_path("WUNDER_HOME", &wunder_home);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
@@ -57,6 +59,7 @@ impl CliRuntime {
         let launch_dir_for_update = launch_dir.clone();
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
+        let wunder_home_for_update = wunder_home.clone();
         let config = config_store
             .update(move |config| {
                 apply_cli_defaults(
@@ -64,6 +67,7 @@ impl CliRuntime {
                     &launch_dir_for_update,
                     &temp_root_for_update,
                     &repo_root_for_update,
+                    &wunder_home_for_update,
                 );
             })
             .await
@@ -226,14 +230,21 @@ fn looks_like_repo_root(candidate: &Path) -> bool {
     candidate.join("config/wunder.yaml").is_file() || candidate.join("prompts").is_dir()
 }
 
-fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
+fn ensure_runtime_dirs(
+    temp_root: &Path,
+    wunder_home: &Path,
+    user_tools_root: &Path,
+    vector_root: &Path,
+) -> Result<()> {
     for dir in [
         temp_root.to_path_buf(),
         temp_root.join("config"),
         temp_root.join("logs"),
         temp_root.join("sessions"),
-        temp_root.join("user_tools"),
-        temp_root.join("vector_knowledge"),
+        wunder_home.to_path_buf(),
+        wunder_home.join("skills"),
+        user_tools_root.to_path_buf(),
+        vector_root.to_path_buf(),
     ] {
         fs::create_dir_all(dir)?;
     }
@@ -301,7 +312,13 @@ fn ensure_generated_base_config(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn apply_cli_defaults(config: &mut Config, launch_dir: &Path, temp_root: &Path, repo_root: &Path) {
+fn apply_cli_defaults(
+    config: &mut Config,
+    launch_dir: &Path,
+    temp_root: &Path,
+    repo_root: &Path,
+    wunder_home: &Path,
+) {
     config.server.mode = "cli".to_string();
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = temp_root
@@ -327,11 +344,20 @@ fn apply_cli_defaults(config: &mut Config, launch_dir: &Path, temp_root: &Path, 
         config.security.approval_mode = Some("suggest".to_string());
     }
 
+    let user_skills = wunder_home.join("skills");
+    let project_wunder_skills = launch_dir.join(".wunder").join("skills");
     let launch_skills = launch_dir.join("skills");
     let repo_skills = repo_root.join("skills");
-    let repo_eva_skills = repo_root.join("EVA_SKILLS");
-    let mut skill_paths = vec![launch_skills, repo_skills, repo_eva_skills];
+    let mut skill_paths = vec![
+        user_skills,
+        project_wunder_skills,
+        launch_skills,
+        repo_skills,
+    ];
     for existing in &config.skills.paths {
+        if is_eva_skills_path(existing) {
+            continue;
+        }
         let resolved = resolve_maybe_relative_path(existing, repo_root, launch_dir);
         skill_paths.push(resolved);
     }
@@ -340,12 +366,60 @@ fn apply_cli_defaults(config: &mut Config, launch_dir: &Path, temp_root: &Path, 
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    let mut allow_paths = Vec::new();
-    allow_paths.extend(config.security.allow_paths.iter().cloned());
-    allow_paths.push(repo_root.join("EVA_SKILLS").to_string_lossy().to_string());
+    let mut allow_paths = config
+        .security
+        .allow_paths
+        .iter()
+        .filter(|path| !is_eva_skills_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    allow_paths.push(wunder_home.to_string_lossy().to_string());
+    allow_paths.push(launch_dir.join(".wunder").to_string_lossy().to_string());
     allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
     allow_paths.push(launch_dir.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
+}
+
+fn resolve_wunder_home_dir(launch_dir: &Path) -> PathBuf {
+    if let Some(path) = read_non_empty_env_path("WUNDER_HOME") {
+        return path;
+    }
+    if let Some(home) = resolve_user_home_dir() {
+        return home.join(".wunder");
+    }
+    launch_dir.join(".wunder")
+}
+
+fn resolve_user_home_dir() -> Option<PathBuf> {
+    if let Some(path) = read_non_empty_env_path("HOME") {
+        return Some(path);
+    }
+    if let Some(path) = read_non_empty_env_path("USERPROFILE") {
+        return Some(path);
+    }
+    let drive = std::env::var("HOMEDRIVE").ok().unwrap_or_default();
+    let home_path = std::env::var("HOMEPATH").ok().unwrap_or_default();
+    let combined = format!("{drive}{home_path}");
+    let cleaned = combined.trim();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(cleaned))
+    }
+}
+
+fn read_non_empty_env_path(key: &str) -> Option<PathBuf> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn is_eva_skills_path(raw: &str) -> bool {
+    let normalized = raw.replace('\\', "/").to_ascii_lowercase();
+    let trimmed = normalized.trim();
+    trimmed == "eva_skills" || trimmed == "./eva_skills" || trimmed.ends_with("/eva_skills")
 }
 
 fn resolve_maybe_relative_path(raw: &str, repo_root: &Path, launch_dir: &Path) -> PathBuf {

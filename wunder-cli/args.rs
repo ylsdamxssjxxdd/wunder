@@ -291,11 +291,34 @@ pub struct SkillsCommand {
 #[derive(Debug, Subcommand)]
 pub enum SkillsSubcommand {
     /// List local skills / 列出本地技能。
-    List,
+    List(SkillsListCommand),
     /// Enable one skill / 启用单个技能。
     Enable(SkillNameCommand),
     /// Disable one skill / 禁用单个技能。
     Disable(SkillNameCommand),
+    /// Upload skills from .zip/.skill package / 从 .zip/.skill 包上传技能。
+    Upload(SkillsUploadCommand),
+    /// Remove one local skill / 删除本地技能。
+    Remove(SkillNameCommand),
+    /// Print local skill root path / 输出本地技能根目录。
+    Root,
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsListCommand {
+    /// Output as JSON / 以 JSON 输出。
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsUploadCommand {
+    /// Package path (.zip/.skill) or skill directory / 包路径（.zip/.skill）或技能目录。
+    pub source: PathBuf,
+
+    /// Replace existing files when conflict occurs / 冲突时覆盖已有文件。
+    #[arg(long, default_value_t = false)]
+    pub replace: bool,
 }
 
 #[derive(Debug, Args)]

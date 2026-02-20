@@ -1,5 +1,5 @@
 use crate::api::user_context::resolve_user;
-use crate::channels::types::{ChannelAccountConfig, FeishuConfig};
+use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig};
 use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
@@ -64,6 +64,8 @@ struct ChannelAccountUpsertRequest {
     config: Option<Value>,
     #[serde(default)]
     feishu: Option<FeishuAccountPayload>,
+    #[serde(default)]
+    wechat: Option<WechatAccountPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +74,22 @@ struct FeishuAccountPayload {
     app_id: Option<String>,
     #[serde(default)]
     app_secret: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WechatAccountPayload {
+    #[serde(default)]
+    corp_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    secret: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    encoding_aes_key: Option<String>,
     #[serde(default)]
     domain: Option<String>,
 }
@@ -430,6 +448,139 @@ async fn upsert_channel_account(
                 long_connection_enabled: Some(true),
             }),
         );
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) {
+        let existing_wechat = ChannelAccountConfig::from_value(&config_value)
+            .wechat
+            .unwrap_or_default();
+
+        let corp_id = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.corp_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .corp_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "wechat corp_id is required".to_string(),
+                )
+            })?;
+        let agent_id = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.agent_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .agent_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "wechat agent_id is required".to_string(),
+                )
+            })?;
+        let secret = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.secret.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .secret
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "wechat secret is required".to_string(),
+                )
+            })?;
+        let token = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.token.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let encoding_aes_key = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.encoding_aes_key.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .encoding_aes_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let domain = payload
+            .wechat
+            .as_ref()
+            .and_then(|value| value.domain.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat
+                    .domain
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "qyapi.weixin.qq.com".to_string());
+        selected_peer_kind = "user".to_string();
+
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        map.insert(
+            "wechat".to_string(),
+            json!(WechatConfig {
+                corp_id: Some(corp_id),
+                agent_id: Some(agent_id),
+                secret: Some(secret),
+                token,
+                encoding_aes_key,
+                domain: Some(domain),
+            }),
+        );
     } else if existing.is_none() && payload.config.is_none() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -443,6 +594,14 @@ async fn upsert_channel_account(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "feishu peer_kind must be user or group".to_string(),
+        ));
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
+        && !matches!(selected_peer_kind.as_str(), "user")
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "wechat peer_kind must be user".to_string(),
         ));
     }
     if selected_peer_kind.trim().is_empty() {
@@ -707,6 +866,12 @@ async fn upsert_channel_binding(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "feishu peer_kind must be user or group".to_string(),
+        ));
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) && !matches!(peer_kind.as_str(), "user") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "wechat peer_kind must be user".to_string(),
         ));
     }
     if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
@@ -1050,6 +1215,9 @@ fn build_user_account_item(
     {
         peer_kind = "group".to_string();
     }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) && peer_kind != "user" {
+        peer_kind = "user".to_string();
+    }
 
     let active = status.trim().eq_ignore_ascii_case("active");
     let receive_group_chat = peer_kind == "group";
@@ -1141,6 +1309,53 @@ fn build_user_account_item(
                 "access_token_set": access_token_set,
                 "verify_token_set": verify_token_set,
                 "api_version": whatsapp.api_version,
+            }
+        });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) {
+        let wechat = account_cfg.wechat.unwrap_or_default();
+        let corp_id = wechat
+            .corp_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let agent_id = wechat
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let secret_set = wechat
+            .secret
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let token_set = wechat
+            .token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let encoding_aes_key_set = wechat
+            .encoding_aes_key
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let domain = wechat
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("qyapi.weixin.qq.com")
+            .to_string();
+        configured = !corp_id.is_empty() && !agent_id.is_empty() && secret_set;
+        config_preview = json!({
+            "wechat": {
+                "corp_id": corp_id,
+                "agent_id": agent_id,
+                "secret_set": secret_set,
+                "token_set": token_set,
+                "encoding_aes_key_set": encoding_aes_key_set,
+                "domain": domain,
             }
         });
     } else {
@@ -1263,6 +1478,9 @@ fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>
             "user".to_string()
         };
     }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) {
+        return "user".to_string();
+    }
     if receive_group_chat == Some(false) {
         return "user".to_string();
     }
@@ -1376,7 +1594,8 @@ fn sync_user_default_binding(
 
 fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
     let normalized = peer_kind.trim().to_ascii_lowercase();
-    if channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
+    if (channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT))
         && matches!(normalized.as_str(), "dm" | "direct" | "single")
     {
         return "user".to_string();

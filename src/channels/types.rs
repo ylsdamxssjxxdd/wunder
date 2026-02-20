@@ -85,6 +85,22 @@ pub struct QqBotConfig {
     pub markdown_support: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WechatConfig {
+    #[serde(default, alias = "corpId")]
+    pub corp_id: Option<String>,
+    #[serde(default, alias = "agentId")]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default, alias = "encodingAesKey")]
+    pub encoding_aes_key: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
     pub channel: String,
@@ -159,6 +175,8 @@ pub struct ChannelAccountConfig {
     pub feishu: Option<FeishuConfig>,
     #[serde(default)]
     pub qqbot: Option<QqBotConfig>,
+    #[serde(default)]
+    pub wechat: Option<WechatConfig>,
 }
 
 impl ChannelAccountConfig {

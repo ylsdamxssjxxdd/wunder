@@ -6906,6 +6906,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "serde_yaml",
+ "sha1",
  "sha2",
  "shell-words",
  "sse-stream",
