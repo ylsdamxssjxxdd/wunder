@@ -191,7 +191,7 @@ CLI 初始化时设置：
 - `resume [SESSION_ID] [PROMPT]`：恢复会话，支持 `--last`，终端场景默认进入 TUI。
 - `tool run|list`：工具直调/列表。
 - `exec`（别名 `e`）：命令执行快捷入口（映射 `执行命令` 工具）。
-- `mcp list|get|add|remove|enable|disable`：本地 MCP 配置管理。
+- `mcp list|get|add|remove|enable|disable|login|logout`：本地 MCP 配置与鉴权管理。
 - `skills list|enable|disable`：本地 skills 启用状态管理。
 - `config show|set-tool-call-mode`：查看/设置运行配置。
 - 交互内置命令 `/config`：向导依次输入 `base_url / api_key / model / max_context`（max_context 可留空自动探测），自动写入 override 并设为默认模型。

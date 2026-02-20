@@ -210,3 +210,5 @@
 - **工作目录真实路径**：CLI 本地运行时系统提示词中的 `{DIR}` 改为真实绝对路径显示，不再使用 `/workspaces/...` 虚拟映射。
 - **默认技能目录迁移**：CLI 默认技能/用户工具目录切换到用户主目录 `.wunder`（如 `~/.wunder/user_tools/...` 与 `~/.wunder/skills`），并移除 `EVA_SKILLS` 作为默认来源。
 - **技能管理增强**：新增 `skills upload/remove/root`，并增强 `skills list --json`，支持技能包上传、删除和路径可视化管理，体验对齐 codex 的“本地技能可管理”方向。
+- **MCP 管理补齐**：新增 `wunder-cli mcp login/logout`（写入或清除 `auth` 凭据），`mcp list/get` 同步展示鉴权状态与快捷操作指引。
+- **TUI `/mcp` 对齐**：交互态新增 `/mcp [name|list]`，可在 TUI 中查看 MCP 服务器配置与鉴权状态，补齐 codex 风格的“会话内 MCP 可见性”。

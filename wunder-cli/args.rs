@@ -235,6 +235,12 @@ pub enum McpSubcommand {
 
     #[command(about = "Disable an MCP server / 禁用 MCP 服务器")]
     Disable(McpNameCommand),
+
+    #[command(about = "Save auth credentials for an MCP server / 为 MCP 服务器保存鉴权凭据")]
+    Login(McpLoginCommand),
+
+    #[command(about = "Clear auth credentials for an MCP server / 清除 MCP 服务器鉴权凭据")]
+    Logout(McpNameCommand),
 }
 
 #[derive(Debug, Args)]
@@ -280,6 +286,24 @@ pub struct McpAddCommand {
 #[derive(Debug, Args)]
 pub struct McpNameCommand {
     pub name: String,
+}
+
+#[derive(Debug, Args)]
+pub struct McpLoginCommand {
+    /// MCP server name / MCP 服务器名称。
+    pub name: String,
+
+    /// Bearer token (stored as auth.bearer_token) / Bearer Token（保存到 auth.bearer_token）。
+    #[arg(long, conflicts_with_all = ["token", "api_key"])]
+    pub bearer_token: Option<String>,
+
+    /// Token (stored as auth.token) / Token（保存到 auth.token）。
+    #[arg(long, conflicts_with_all = ["bearer_token", "api_key"])]
+    pub token: Option<String>,
+
+    /// API key (stored as auth.api_key) / API Key（保存到 auth.api_key）。
+    #[arg(long = "api-key", conflicts_with_all = ["bearer_token", "token"])]
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Args)]

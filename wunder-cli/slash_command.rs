@@ -8,6 +8,7 @@ pub enum SlashCommand {
     Diff,
     Review,
     Mention,
+    Mcp,
     Status,
     Session,
     System,
@@ -34,7 +35,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 17] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 18] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -64,6 +65,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 17] = [
         command: SlashCommand::Mention,
         usage: "/mention <query>",
         description: "search files in workspace",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Mcp,
+        usage: "/mcp [name|list]",
+        description: "list configured MCP servers and auth status",
     },
     SlashCommandDoc {
         command: SlashCommand::Status,
@@ -145,6 +151,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "diff" => (SlashCommand::Diff, remaining),
         "review" => (SlashCommand::Review, remaining),
         "mention" => (SlashCommand::Mention, remaining),
+        "mcp" => (SlashCommand::Mcp, remaining),
         "config" => {
             let (sub, rest) = split_head(remaining);
             if sub.eq_ignore_ascii_case("show") {
@@ -261,6 +268,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "diff" => SlashCommand::Diff,
         "review" => SlashCommand::Review,
         "mention" => SlashCommand::Mention,
+        "mcp" => SlashCommand::Mcp,
         "config" => SlashCommand::Config,
         "exit" => SlashCommand::Exit,
         "quit" | "q" => SlashCommand::Quit,
@@ -284,6 +292,7 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::Diff => "显示当前工作区 git 变更摘要",
         SlashCommand::Review => "基于当前 git 变更发起评审",
         SlashCommand::Mention => "在工作区内搜索文件",
+        SlashCommand::Mcp => "列出当前 MCP 配置与鉴权状态",
         SlashCommand::Status => "显示当前会话运行状态",
         SlashCommand::Session => "显示当前会话统计信息",
         SlashCommand::System => "查看系统提示词或管理额外提示词",
@@ -368,5 +377,19 @@ mod tests {
         let lines = popup_lines_with_language("mouse scroll", 7, "en-US");
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("/mouse [scroll|select]"));
+    }
+
+    #[test]
+    fn parse_mcp_command_with_args() {
+        let parsed = parse_slash_command("/mcp docs").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Mcp);
+        assert_eq!(parsed.args, "docs");
+    }
+
+    #[test]
+    fn popup_lines_show_mcp_usage_for_argument_entry() {
+        let lines = popup_lines_with_language("mcp list", 7, "en-US");
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("/mcp [name|list]"));
     }
 }

@@ -14,6 +14,7 @@ use wunder_server::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
 };
 use wunder_server::schemas::StreamEvent;
+use wunder_server::user_tools::UserMcpServer;
 
 use crate::args::GlobalArgs;
 use crate::runtime::CliRuntime;
@@ -2364,6 +2365,9 @@ impl TuiApp {
             SlashCommand::Mention => {
                 self.handle_mention_slash(command.args).await?;
             }
+            SlashCommand::Mcp => {
+                self.handle_mcp_slash(command.args).await?;
+            }
             SlashCommand::Exit | SlashCommand::Quit => {
                 self.should_quit = true;
             }
@@ -3039,6 +3043,95 @@ impl TuiApp {
         Ok(())
     }
 
+    async fn handle_mcp_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        let is_zh = self.is_zh_language();
+        if cleaned.eq_ignore_ascii_case("help") {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /mcp [name|list]",
+                    "usage: /mcp [name|list]",
+                ),
+            );
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "示例: /mcp 或 /mcp my-server",
+                    "examples: /mcp or /mcp my-server",
+                ),
+            );
+            return Ok(());
+        }
+
+        let mut payload = self
+            .runtime
+            .state
+            .user_tool_store
+            .load_user_tools(&self.runtime.user_id);
+        payload
+            .mcp_servers
+            .sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+
+        if payload.mcp_servers.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "尚未配置 MCP 服务器。使用 `wunder-cli mcp add` 新增。",
+                    "No MCP servers configured. Use `wunder-cli mcp add` to add one.",
+                ),
+            );
+            return Ok(());
+        }
+
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(self.display_language.as_str(), "MCP 配置", "mcp"),
+            );
+            for server in payload.mcp_servers {
+                for line in format_mcp_server_lines_for_tui(&server, is_zh, false) {
+                    self.push_log(LogKind::Info, line);
+                }
+            }
+            return Ok(());
+        }
+
+        let Some(server) = payload
+            .mcp_servers
+            .into_iter()
+            .find(|item| item.name.trim().eq_ignore_ascii_case(cleaned))
+        else {
+            if is_zh {
+                self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {cleaned}"));
+                self.push_log(LogKind::Info, "提示: 用 /mcp 列出所有服务器".to_string());
+            } else {
+                self.push_log(LogKind::Error, format!("mcp server not found: {cleaned}"));
+                self.push_log(
+                    LogKind::Info,
+                    "hint: run /mcp to list all servers".to_string(),
+                );
+            }
+            return Ok(());
+        };
+
+        self.push_log(
+            LogKind::Info,
+            if is_zh {
+                format!("MCP 服务器: {}", server.name)
+            } else {
+                format!("mcp server: {}", server.name)
+            },
+        );
+        for line in format_mcp_server_lines_for_tui(&server, is_zh, true) {
+            self.push_log(LogKind::Info, line);
+        }
+        Ok(())
+    }
+
     async fn sync_model_status(&mut self) {
         self.display_language = crate::locale::resolve_cli_language(&self.global);
         let config = self.runtime.state.config_store.get().await;
@@ -3618,6 +3711,176 @@ pub(super) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Reasoning => "think> ",
         LogKind::Tool => "tool> ",
         LogKind::Error => "error> ",
+    }
+}
+
+fn format_mcp_server_lines_for_tui(
+    server: &UserMcpServer,
+    is_zh: bool,
+    detailed: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let state = format_mcp_state_label(server.enabled, is_zh);
+    let auth = format_mcp_auth_state_for_tui(server, is_zh);
+    if detailed {
+        lines.push(if is_zh {
+            format!("- 状态: {state}")
+        } else {
+            format!("- status: {state}")
+        });
+        lines.push(if is_zh {
+            format!("- 鉴权: {auth}")
+        } else {
+            format!("- auth: {auth}")
+        });
+    } else {
+        lines.push(format!("- {} ({state}, {auth})", server.name));
+    }
+
+    let transport = if server.transport.trim().is_empty() {
+        "streamable-http"
+    } else {
+        server.transport.trim()
+    };
+    lines.push(if is_zh {
+        format!("  传输: {transport}")
+    } else {
+        format!("  transport: {transport}")
+    });
+    lines.push(if is_zh {
+        format!("  地址: {}", server.endpoint)
+    } else {
+        format!("  endpoint: {}", server.endpoint)
+    });
+
+    if detailed {
+        let description = if server.description.trim().is_empty() {
+            "-"
+        } else {
+            server.description.trim()
+        };
+        let display_name = if server.display_name.trim().is_empty() {
+            "-"
+        } else {
+            server.display_name.trim()
+        };
+        lines.push(if is_zh {
+            format!("  描述: {description}")
+        } else {
+            format!("  description: {description}")
+        });
+        lines.push(if is_zh {
+            format!("  显示名: {display_name}")
+        } else {
+            format!("  display_name: {display_name}")
+        });
+        if !server.allow_tools.is_empty() {
+            lines.push(if is_zh {
+                format!("  允许工具: {}", server.allow_tools.join(", "))
+            } else {
+                format!("  allow_tools: {}", server.allow_tools.join(", "))
+            });
+        }
+        if !server.shared_tools.is_empty() {
+            lines.push(if is_zh {
+                format!("  共享工具: {}", server.shared_tools.join(", "))
+            } else {
+                format!("  shared_tools: {}", server.shared_tools.join(", "))
+            });
+        }
+    }
+
+    if !server.tool_specs.is_empty() {
+        lines.push(if is_zh {
+            format!("  缓存工具数: {}", server.tool_specs.len())
+        } else {
+            format!("  cached_tools: {}", server.tool_specs.len())
+        });
+    }
+
+    if is_zh {
+        lines.push(format!(
+            "  登录: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        ));
+        lines.push(format!("  退出: wunder-cli mcp logout {}", server.name));
+    } else {
+        lines.push(format!(
+            "  login: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        ));
+        lines.push(format!("  logout: wunder-cli mcp logout {}", server.name));
+    }
+    lines
+}
+
+fn format_mcp_state_label(enabled: bool, is_zh: bool) -> &'static str {
+    if is_zh {
+        if enabled {
+            "启用"
+        } else {
+            "禁用"
+        }
+    } else if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+fn format_mcp_auth_state_for_tui(server: &UserMcpServer, is_zh: bool) -> String {
+    if let Some(key) = detect_mcp_auth_key_for_tui(server) {
+        if is_zh {
+            format!("已登录（{}）", mcp_auth_key_label_for_tui(key, true))
+        } else {
+            format!("logged in ({})", mcp_auth_key_label_for_tui(key, false))
+        }
+    } else if is_zh {
+        "未登录".to_string()
+    } else {
+        "not logged in".to_string()
+    }
+}
+
+fn detect_mcp_auth_key_for_tui(server: &UserMcpServer) -> Option<&'static str> {
+    let Some(Value::Object(map)) = server.auth.as_ref() else {
+        return None;
+    };
+    ["bearer_token", "token", "api_key"]
+        .into_iter()
+        .find(|key| {
+            map.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+        })
+}
+
+fn mcp_auth_key_label_for_tui(key: &str, is_zh: bool) -> &'static str {
+    match key {
+        "bearer_token" => {
+            if is_zh {
+                "Bearer Token"
+            } else {
+                "bearer token"
+            }
+        }
+        "token" => "token",
+        "api_key" => {
+            if is_zh {
+                "API Key"
+            } else {
+                "api key"
+            }
+        }
+        _ => {
+            if is_zh {
+                "未知"
+            } else {
+                "unknown"
+            }
+        }
     }
 }
 

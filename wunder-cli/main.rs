@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use args::{
     ApprovalModeArg, AskCommand, ChatCommand, Cli, Command, CompletionCommand, ConfigCommand,
     ConfigSubcommand, DoctorCommand, ExecCommand, GlobalArgs, McpAddCommand, McpCommand,
-    McpGetCommand, McpListCommand, McpNameCommand, McpSubcommand, ResumeCommand,
+    McpGetCommand, McpListCommand, McpLoginCommand, McpNameCommand, McpSubcommand, ResumeCommand,
     SetApprovalModeCommand, SetToolCallModeCommand, SkillNameCommand, SkillsCommand,
     SkillsListCommand, SkillsSubcommand, SkillsUploadCommand, ToolCallModeArg, ToolCommand,
     ToolRunCommand, ToolSubcommand,
@@ -374,6 +374,23 @@ async fn handle_chat_slash_command(
             }
             for path in search_workspace_files(runtime.launch_dir.as_path(), query, 20) {
                 println!("{path}");
+            }
+            Ok(false)
+        }
+        SlashCommand::Mcp => {
+            let target = command.args.trim();
+            if target.is_empty() || target.eq_ignore_ascii_case("list") {
+                mcp_list(runtime, global, McpListCommand { json: false }).await?;
+            } else {
+                mcp_get(
+                    runtime,
+                    global,
+                    McpGetCommand {
+                        name: target.to_string(),
+                        json: false,
+                    },
+                )
+                .await?;
             }
             Ok(false)
         }
@@ -1452,6 +1469,8 @@ async fn handle_mcp(runtime: &CliRuntime, global: &GlobalArgs, command: McpComma
         McpSubcommand::Remove(cmd) => mcp_remove(runtime, global, cmd).await,
         McpSubcommand::Enable(cmd) => mcp_toggle(runtime, global, cmd, true).await,
         McpSubcommand::Disable(cmd) => mcp_toggle(runtime, global, cmd, false).await,
+        McpSubcommand::Login(cmd) => mcp_login(runtime, global, cmd).await,
+        McpSubcommand::Logout(cmd) => mcp_logout(runtime, global, cmd).await,
     }
 }
 
@@ -1486,6 +1505,7 @@ async fn mcp_list(
     }
     for server in payload.mcp_servers {
         let state = format_mcp_state(&server, is_zh);
+        let auth_state = format_mcp_auth_state(&server, is_zh);
         println!("{} ({state})", server.name);
         println!(
             "{}",
@@ -1501,6 +1521,14 @@ async fn mcp_list(
                 format!("  地址: {}", server.endpoint)
             } else {
                 format!("  endpoint: {}", server.endpoint)
+            }
+        );
+        println!(
+            "{}",
+            if is_zh {
+                format!("  鉴权: {auth_state}")
+            } else {
+                format!("  auth: {auth_state}")
             }
         );
         if !server.allow_tools.is_empty() {
@@ -1521,6 +1549,19 @@ async fn mcp_list(
                 format!("  remove: wunder-cli mcp remove {}", server.name)
             }
         );
+        if is_zh {
+            println!(
+                "  登录: wunder-cli mcp login {} --bearer-token <TOKEN>",
+                server.name
+            );
+            println!("  退出: wunder-cli mcp logout {}", server.name);
+        } else {
+            println!(
+                "  login: wunder-cli mcp login {} --bearer-token <TOKEN>",
+                server.name
+            );
+            println!("  logout: wunder-cli mcp logout {}", server.name);
+        }
     }
     Ok(())
 }
@@ -1572,6 +1613,14 @@ async fn mcp_get(runtime: &CliRuntime, global: &GlobalArgs, command: McpGetComma
             format!("  地址: {}", server.endpoint)
         } else {
             format!("  endpoint: {}", server.endpoint)
+        }
+    );
+    println!(
+        "{}",
+        if is_zh {
+            format!("  鉴权: {}", format_mcp_auth_state(&server, true))
+        } else {
+            format!("  auth: {}", format_mcp_auth_state(&server, false))
         }
     );
     let description = if server.description.trim().is_empty() {
@@ -1628,6 +1677,19 @@ async fn mcp_get(runtime: &CliRuntime, global: &GlobalArgs, command: McpGetComma
             format!("  remove: wunder-cli mcp remove {}", server.name)
         }
     );
+    if is_zh {
+        println!(
+            "  登录: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        );
+        println!("  退出: wunder-cli mcp logout {}", server.name);
+    } else {
+        println!(
+            "  login: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        );
+        println!("  logout: wunder-cli mcp logout {}", server.name);
+    }
     Ok(())
 }
 
@@ -1741,6 +1803,98 @@ async fn mcp_toggle(
     Ok(())
 }
 
+async fn mcp_login(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpLoginCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let auth_payload = resolve_mcp_login_auth(command, language.as_str())?;
+    let mut payload = runtime
+        .state
+        .user_tool_store
+        .load_user_tools(&runtime.user_id);
+    let mut found = false;
+    for server in &mut payload.mcp_servers {
+        if server.name.trim() == auth_payload.server_name.as_str() {
+            server.auth = Some(json!({
+                auth_payload.auth_key: auth_payload.auth_value
+            }));
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        if is_zh {
+            println!("未找到 MCP 服务器: {}", auth_payload.server_name);
+        } else {
+            println!("mcp server not found: {}", auth_payload.server_name);
+        }
+        return Ok(());
+    }
+
+    runtime
+        .state
+        .user_tool_store
+        .update_mcp_servers(&runtime.user_id, payload.mcp_servers)?;
+    let auth_name = mcp_auth_key_label(auth_payload.auth_key, is_zh);
+    if is_zh {
+        println!(
+            "已更新 MCP 鉴权凭据: {} ({auth_name})",
+            auth_payload.server_name
+        );
+    } else {
+        println!(
+            "mcp auth updated: {} ({auth_name})",
+            auth_payload.server_name
+        );
+    }
+    Ok(())
+}
+
+async fn mcp_logout(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpNameCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let mut payload = runtime
+        .state
+        .user_tool_store
+        .load_user_tools(&runtime.user_id);
+    let mut found = false;
+    for server in &mut payload.mcp_servers {
+        if server.name.trim() == command.name.trim() {
+            server.auth = None;
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        if is_zh {
+            println!("未找到 MCP 服务器: {}", command.name.trim());
+        } else {
+            println!("mcp server not found: {}", command.name.trim());
+        }
+        return Ok(());
+    }
+
+    runtime
+        .state
+        .user_tool_store
+        .update_mcp_servers(&runtime.user_id, payload.mcp_servers)?;
+    if is_zh {
+        println!("已清除 MCP 鉴权凭据: {}", command.name.trim());
+    } else {
+        println!("mcp auth cleared: {}", command.name.trim());
+    }
+    Ok(())
+}
+
 fn format_mcp_state(server: &UserMcpServer, is_zh: bool) -> &'static str {
     if is_zh {
         if server.enabled {
@@ -1753,6 +1907,110 @@ fn format_mcp_state(server: &UserMcpServer, is_zh: bool) -> &'static str {
     } else {
         "disabled"
     }
+}
+
+fn format_mcp_auth_state(server: &UserMcpServer, is_zh: bool) -> String {
+    if let Some(key) = detect_mcp_auth_key(server) {
+        let label = mcp_auth_key_label(key, is_zh);
+        if is_zh {
+            format!("已登录（{label}）")
+        } else {
+            format!("logged in ({label})")
+        }
+    } else if is_zh {
+        "未登录".to_string()
+    } else {
+        "not logged in".to_string()
+    }
+}
+
+fn detect_mcp_auth_key(server: &UserMcpServer) -> Option<&'static str> {
+    let Some(Value::Object(map)) = server.auth.as_ref() else {
+        return None;
+    };
+    ["bearer_token", "token", "api_key"]
+        .into_iter()
+        .find(|key| {
+            map.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+        })
+}
+
+fn mcp_auth_key_label(key: &str, is_zh: bool) -> &'static str {
+    match key {
+        "bearer_token" => {
+            if is_zh {
+                "Bearer Token"
+            } else {
+                "bearer token"
+            }
+        }
+        "token" => "token",
+        "api_key" => {
+            if is_zh {
+                "API Key"
+            } else {
+                "api key"
+            }
+        }
+        _ => {
+            if is_zh {
+                "未知"
+            } else {
+                "unknown"
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct McpLoginAuthPayload {
+    server_name: String,
+    auth_key: &'static str,
+    auth_value: String,
+}
+
+fn resolve_mcp_login_auth(command: McpLoginCommand, language: &str) -> Result<McpLoginAuthPayload> {
+    let name = command.name.trim().to_string();
+    if name.is_empty() {
+        return Err(anyhow!(locale::tr(
+            language,
+            "MCP 服务器名称不能为空",
+            "mcp server name is required",
+        )));
+    }
+    let mut candidates = Vec::new();
+    if let Some(value) = normalized_secret(command.bearer_token) {
+        candidates.push(("bearer_token", value));
+    }
+    if let Some(value) = normalized_secret(command.token) {
+        candidates.push(("token", value));
+    }
+    if let Some(value) = normalized_secret(command.api_key) {
+        candidates.push(("api_key", value));
+    }
+    if candidates.len() != 1 {
+        return Err(anyhow!(locale::tr(
+            language,
+            "请且仅请提供一种鉴权参数：--bearer-token / --token / --api-key",
+            "please provide exactly one auth option: --bearer-token / --token / --api-key",
+        )));
+    }
+    let (auth_key, auth_value) = candidates.remove(0);
+    Ok(McpLoginAuthPayload {
+        server_name: name,
+        auth_key,
+        auth_value,
+    })
+}
+
+fn normalized_secret(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
 }
 
 async fn handle_skills(
