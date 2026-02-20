@@ -1818,7 +1818,7 @@
   - 使用加密模式时需配置 `wechat.encoding_aes_key` 进行 AES-CBC 解密。
 - Query：
   - `account_id`：可选，优先指定渠道账号。
-  - `msg_signature`、`timestamp`、`nonce`：企业微信回调签名参数。
+  - `msg_signature` 或 `signature`、`timestamp`、`nonce`：企业微信回调签名参数（兼容不同模式参数名）。
   - `echostr`：仅 `GET` URL 验证时使用。
 - Header：
   - `x-channel-account`：可选，覆盖 `account_id`。
@@ -1826,12 +1826,15 @@
   - 传入 `msg_signature/timestamp/nonce/echostr` 后返回解密后的明文字符串。
 - 消息回调（POST）：
   - 入参为企业微信 XML（支持明文或 `<Encrypt>` 加密包）。
-  - 目前仅处理 `MsgType=text`，其余类型直接返回 `success` 不进入智能体链路。
+  - 当前支持 `MsgType=text` 与 `MsgType=voice`（优先取 `Recognition` 语音识别结果）；`event` 仅处理可映射文本的场景（如菜单点击）。
+  - `enter_agent/subscribe/unsubscribe` 等事件会忽略并直接返回 `success`。
   - 成功返回纯文本 `success`（非 JSON），避免企业微信重复回调。
+  - 文本消息采用异步处理：服务端先快速回 `success`，再在后台完成模型调用与出站回包，规避渠道侧 5 秒超时重试。
 - 出站投递：
   - 当 `ChannelAccount.config.wechat.corp_id/agent_id/secret` 可用时，调用企业微信 API 直连发送文本：
     - 先请求 `/cgi-bin/gettoken`
     - 再请求 `/cgi-bin/message/send`
+  - 服务端会缓存企业微信 `access_token`（提前刷新），降低 token 接口压力和发送延迟。
   - `peer.kind=user` -> `touser`
   - `peer.kind=group` -> `toparty`
   - `peer.kind=tag` -> `totag`
@@ -1843,7 +1846,45 @@
   - `wechat.encoding_aes_key`（回调解密）
   - `wechat.domain`（可选，默认 `qyapi.weixin.qq.com`）
 
-### 4.1.54.5 `/wunder/channel/qqbot/webhook`（QQ Bot）
+### 4.1.54.5 `/wunder/channel/wechat_mp/webhook`（微信公众号）
+
+- 方法：`GET/POST`
+- 鉴权：
+  - 明文模式使用 `signature/timestamp/nonce` + `wechat_mp.token` 校验签名。
+  - 安全模式使用 `msg_signature/timestamp/nonce` + `wechat_mp.token` 校验消息签名。
+  - 安全模式下需配置 `wechat_mp.encoding_aes_key` 解密 `<Encrypt>` 载荷。
+- Query：
+  - `account_id`：可选，优先指定渠道账号。
+  - `msg_signature` 或 `signature`、`timestamp`、`nonce`：公众号回调签名参数（兼容不同模式参数名）。
+  - `echostr`：仅 `GET` URL 验证时使用。
+  - `encrypt_type`：`POST` 可选（如 `aes`）。
+- Header：
+  - `x-channel-account`：可选，覆盖 `account_id`。
+- URL 验证（GET）：
+  - 签名通过后返回明文 challenge；若配置了 `encoding_aes_key`，会优先尝试解密 `echostr`。
+- 消息回调（POST）：
+  - 入参为公众号 XML（支持明文或 `<Encrypt>` 加密包）。
+  - 当前支持 `MsgType=text`、`MsgType=voice`（优先取 `Recognition`），`event` 仅映射可转文本的事件；`unsubscribe` 事件会忽略。
+  - 成功返回纯文本 `success`（非 JSON）。
+  - 文本消息采用异步处理：先快速回 `success`，后台完成模型调用与出站回包，规避 5 秒超时重试。
+- 账号识别：
+  - 支持 `account_id` 直指账号。
+  - 未显式指定时，优先用签名匹配 `wechat_mp.token`，其次用 `ToUserName` 匹配 `wechat_mp.original_id`/`wechat_mp.app_id`。
+- 出站投递：
+  - 当 `ChannelAccount.config.wechat_mp.app_id/app_secret` 可用时，调用公众号 API 直连发送文本：
+    - 先请求 `/cgi-bin/token`
+    - 再请求 `/cgi-bin/message/custom/send`
+  - 服务端会缓存公众号 `access_token`（提前刷新）。
+  - 当前默认按 `peer.kind=user` 发送到 `touser`（OpenID）。
+- 配置（ChannelAccount.config）：
+  - `wechat_mp.app_id`
+  - `wechat_mp.app_secret`
+  - `wechat_mp.token`（回调签名校验，可选但建议配置）
+  - `wechat_mp.encoding_aes_key`（回调解密，可选）
+  - `wechat_mp.original_id`（用于账号识别，可选）
+  - `wechat_mp.domain`（可选，默认 `api.weixin.qq.com`）
+
+### 4.1.54.6 `/wunder/channel/qqbot/webhook`（QQ Bot）
 
 - 方法：`POST`
 - 鉴权：可选（由 `inbound_token` 统一控制）
@@ -2132,6 +2173,12 @@
     - `wechat.corp_id`、`wechat.agent_id`、`wechat.secret`（必填或沿用已有值）
     - `wechat.token`、`wechat.encoding_aes_key`（回调签名/解密，可选但建议配置）
     - `wechat.domain`（可选，默认 `qyapi.weixin.qq.com`）
+  - 公众号快捷入参：
+    - `app_id`、`app_secret` 或 `wechat_mp.app_id`、`wechat_mp.app_secret`（必填或沿用已有值）
+    - `wechat_mp.token`、`wechat_mp.encoding_aes_key`（回调签名/解密，可选但建议配置）
+    - `wechat_mp.original_id`（用于 ToUserName 账号匹配，可选）
+    - `domain` 或 `wechat_mp.domain`（可选，默认 `api.weixin.qq.com`）
+    - `peer_kind` 固定 `user`
   - 行为说明：
     - 首次创建会自动写入 `inbound_token`。
     - 会自动维护默认绑定（`peer_id="*"`），并按 `peer_kind` / `receive_group_chat` 更新。

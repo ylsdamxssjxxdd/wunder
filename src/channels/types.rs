@@ -101,6 +101,22 @@ pub struct WechatConfig {
     pub domain: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WechatMpConfig {
+    #[serde(default, alias = "appId")]
+    pub app_id: Option<String>,
+    #[serde(default, alias = "appSecret")]
+    pub app_secret: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default, alias = "encodingAesKey")]
+    pub encoding_aes_key: Option<String>,
+    #[serde(default, alias = "originalId", alias = "ghId")]
+    pub original_id: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
     pub channel: String,
@@ -177,6 +193,8 @@ pub struct ChannelAccountConfig {
     pub qqbot: Option<QqBotConfig>,
     #[serde(default)]
     pub wechat: Option<WechatConfig>,
+    #[serde(default)]
+    pub wechat_mp: Option<WechatMpConfig>,
 }
 
 impl ChannelAccountConfig {

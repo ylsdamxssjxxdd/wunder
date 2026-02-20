@@ -68,7 +68,7 @@
           <label class="channel-form-field">
             <span>{{ t('channels.field.peerKind') }}</span>
             <select v-model="createForm.peer_kind" class="channel-input">
-              <option value="group">{{ t('channels.peerKind.group') }}</option>
+              <option v-if="!isCreateUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
               <option value="user">{{ t('channels.peerKind.user') }}</option>
             </select>
           </label>
@@ -203,7 +203,7 @@
               <label class="channel-form-field">
                 <span>{{ t('channels.field.peerKind') }}</span>
                 <select v-model="editForm.peer_kind" class="channel-input">
-                  <option value="group">{{ t('channels.peerKind.group') }}</option>
+                  <option v-if="!isEditUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
                   <option value="user">{{ t('channels.peerKind.user') }}</option>
                 </select>
               </label>
@@ -261,7 +261,8 @@ const emit = defineEmits(['changed']);
 
 const { t } = useI18n();
 
-const FALLBACK_CHANNELS = ['feishu', 'whatsapp', 'telegram', 'wechat', 'qqbot'];
+const FALLBACK_CHANNELS = ['feishu', 'whatsapp', 'telegram', 'wechat', 'wechat_mp', 'qqbot'];
+const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp'];
 const resolvedAgentId = computed(() => {
   const trimmed = String(props.agentId || '').trim();
   return trimmed || '';
@@ -333,6 +334,10 @@ const supportedChannelOptions = computed(() => {
 });
 
 const isFeishuCreate = computed(() => createForm.channel === 'feishu');
+const isCreateUserOnlyChannel = computed(() => USER_ONLY_CHANNELS.includes(createForm.channel));
+const isEditUserOnlyChannel = computed(() =>
+  selectedAccount.value ? USER_ONLY_CHANNELS.includes(selectedAccount.value.channel) : false
+);
 
 const providerLabel = (channel) => {
   const key = `channels.provider.${channel}`;
@@ -530,7 +535,7 @@ const onCreateChannelChange = () => {
   if (createForm.channel === 'feishu') {
     createForm.receive_group_chat = true;
   } else {
-    createForm.peer_kind = 'group';
+    createForm.peer_kind = USER_ONLY_CHANNELS.includes(createForm.channel) ? 'user' : 'group';
     createForm.config_text = '{}';
   }
 };
@@ -579,7 +584,7 @@ const createAccount = async () => {
       return;
     }
     payload.config = config;
-    payload.peer_kind = createForm.peer_kind || 'group';
+    payload.peer_kind = USER_ONLY_CHANNELS.includes(channel) ? 'user' : createForm.peer_kind || 'group';
   }
 
   createSaving.value = true;
@@ -642,7 +647,8 @@ const saveAccount = async () => {
       return;
     }
     payload.config = config;
-    payload.peer_kind = editForm.peer_kind || 'group';
+    payload.peer_kind =
+      USER_ONLY_CHANNELS.includes(account.channel) ? 'user' : editForm.peer_kind || 'group';
   }
 
   saving.value = true;

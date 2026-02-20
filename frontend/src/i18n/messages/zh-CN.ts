@@ -294,6 +294,8 @@ export default {
   'channels.provider.whatsapp.desc': 'WhatsApp Cloud API',
   'channels.provider.wechat': '微信',
   'channels.provider.wechat.desc': '微信渠道',
+  'channels.provider.wechat_mp': '微信公众号',
+  'channels.provider.wechat_mp.desc': '微信公众号渠道',
   'channels.provider.qqbot': 'QQ Bot',
   'channels.provider.qqbot.desc': 'QQ Bot 渠道',
   'channels.provider.telegram': 'Telegram',

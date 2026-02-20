@@ -1,5 +1,5 @@
 use crate::api::user_context::resolve_user;
-use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig};
+use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig, WechatMpConfig};
 use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
@@ -20,12 +20,14 @@ const USER_CHANNEL_FEISHU: &str = "feishu";
 const USER_CHANNEL_QQBOT: &str = "qqbot";
 const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
 const USER_CHANNEL_WECHAT: &str = "wechat";
+const USER_CHANNEL_WECHAT_MP: &str = "wechat_mp";
 const USER_CHANNEL_TELEGRAM: &str = "telegram";
-const SUPPORTED_USER_CHANNELS: [&str; 5] = [
+const SUPPORTED_USER_CHANNELS: [&str; 6] = [
     USER_CHANNEL_FEISHU,
     USER_CHANNEL_QQBOT,
     USER_CHANNEL_WHATSAPP,
     USER_CHANNEL_WECHAT,
+    USER_CHANNEL_WECHAT_MP,
     USER_CHANNEL_TELEGRAM,
 ];
 const DEFAULT_GROUP_PEER_KIND: &str = "group";
@@ -66,6 +68,8 @@ struct ChannelAccountUpsertRequest {
     feishu: Option<FeishuAccountPayload>,
     #[serde(default)]
     wechat: Option<WechatAccountPayload>,
+    #[serde(default)]
+    wechat_mp: Option<WechatMpAccountPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +94,22 @@ struct WechatAccountPayload {
     token: Option<String>,
     #[serde(default)]
     encoding_aes_key: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WechatMpAccountPayload {
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    app_secret: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    encoding_aes_key: Option<String>,
+    #[serde(default)]
+    original_id: Option<String>,
     #[serde(default)]
     domain: Option<String>,
 }
@@ -581,6 +601,157 @@ async fn upsert_channel_account(
                 domain: Some(domain),
             }),
         );
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) {
+        let existing_wechat_mp = ChannelAccountConfig::from_value(&config_value)
+            .wechat_mp
+            .unwrap_or_default();
+
+        let app_id = payload
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .wechat_mp
+                    .as_ref()
+                    .and_then(|value| value.app_id.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                existing_wechat_mp
+                    .app_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "wechat_mp app_id is required".to_string(),
+                )
+            })?;
+        let app_secret = payload
+            .app_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .wechat_mp
+                    .as_ref()
+                    .and_then(|value| value.app_secret.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                existing_wechat_mp
+                    .app_secret
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "wechat_mp app_secret is required".to_string(),
+                )
+            })?;
+        let token = payload
+            .wechat_mp
+            .as_ref()
+            .and_then(|value| value.token.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat_mp
+                    .token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let encoding_aes_key = payload
+            .wechat_mp
+            .as_ref()
+            .and_then(|value| value.encoding_aes_key.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat_mp
+                    .encoding_aes_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let original_id = payload
+            .wechat_mp
+            .as_ref()
+            .and_then(|value| value.original_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_wechat_mp
+                    .original_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let domain = payload
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .wechat_mp
+                    .as_ref()
+                    .and_then(|value| value.domain.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                existing_wechat_mp
+                    .domain
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "api.weixin.qq.com".to_string());
+        selected_peer_kind = "user".to_string();
+
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        map.insert(
+            "wechat_mp".to_string(),
+            json!(WechatMpConfig {
+                app_id: Some(app_id),
+                app_secret: Some(app_secret),
+                token,
+                encoding_aes_key,
+                original_id,
+                domain: Some(domain),
+            }),
+        );
     } else if existing.is_none() && payload.config.is_none() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -602,6 +773,14 @@ async fn upsert_channel_account(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "wechat peer_kind must be user".to_string(),
+        ));
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP)
+        && !matches!(selected_peer_kind.as_str(), "user")
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "wechat_mp peer_kind must be user".to_string(),
         ));
     }
     if selected_peer_kind.trim().is_empty() {
@@ -872,6 +1051,13 @@ async fn upsert_channel_binding(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "wechat peer_kind must be user".to_string(),
+        ));
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) && !matches!(peer_kind.as_str(), "user")
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "wechat_mp peer_kind must be user".to_string(),
         ));
     }
     if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
@@ -1215,7 +1401,10 @@ fn build_user_account_item(
     {
         peer_kind = "group".to_string();
     }
-    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) && peer_kind != "user" {
+    if (channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
+        || channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP))
+        && peer_kind != "user"
+    {
         peer_kind = "user".to_string();
     }
 
@@ -1358,6 +1547,53 @@ fn build_user_account_item(
                 "domain": domain,
             }
         });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) {
+        let wechat_mp = account_cfg.wechat_mp.unwrap_or_default();
+        let app_id = wechat_mp
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let app_secret_set = wechat_mp
+            .app_secret
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let token_set = wechat_mp
+            .token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let encoding_aes_key_set = wechat_mp
+            .encoding_aes_key
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let original_id = wechat_mp
+            .original_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let domain = wechat_mp
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("api.weixin.qq.com")
+            .to_string();
+        configured = !app_id.is_empty() && app_secret_set;
+        config_preview = json!({
+            "wechat_mp": {
+                "app_id": app_id,
+                "app_secret_set": app_secret_set,
+                "token_set": token_set,
+                "encoding_aes_key_set": encoding_aes_key_set,
+                "original_id": original_id,
+                "domain": domain,
+            }
+        });
     } else {
         configured = config
             .as_object()
@@ -1481,6 +1717,9 @@ fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>
     if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT) {
         return "user".to_string();
     }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) {
+        return "user".to_string();
+    }
     if receive_group_chat == Some(false) {
         return "user".to_string();
     }
@@ -1595,7 +1834,8 @@ fn sync_user_default_binding(
 fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
     let normalized = peer_kind.trim().to_ascii_lowercase();
     if (channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
-        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT))
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP))
         && matches!(normalized.as_str(), "dm" | "direct" | "single")
     {
         return "user".to_string();

@@ -1,5 +1,5 @@
 use crate::channels::types::{
-    ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender, WechatConfig,
+    ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender, WechatMpConfig,
 };
 use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, KeyIvInit};
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 type Aes256CbcDec = cbc::Decryptor<Aes256>;
 
-pub const WECHAT_CHANNEL: &str = "wechat";
+pub const WECHAT_MP_CHANNEL: &str = "wechat_mp";
 const TOKEN_REFRESH_LEEWAY_S: u64 = 300;
 const TOKEN_MIN_REUSE_S: u64 = 60;
 const TOKEN_FALLBACK_EXPIRES_S: u64 = 7200;
@@ -28,10 +28,33 @@ struct CachedToken {
     expires_at: Instant,
 }
 
-static WECHAT_TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
+static WECHAT_MP_TOKEN_CACHE: LazyLock<Mutex<HashMap<String, CachedToken>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn verify_signature(
+pub fn verify_callback_signature(
+    token: &str,
+    timestamp: &str,
+    nonce: &str,
+    signature: &str,
+) -> bool {
+    let token = token.trim();
+    let timestamp = timestamp.trim();
+    let nonce = nonce.trim();
+    let signature = signature.trim();
+    if token.is_empty() || timestamp.is_empty() || nonce.is_empty() || signature.is_empty() {
+        return false;
+    }
+    let mut parts = [token, timestamp, nonce];
+    parts.sort_unstable();
+    let mut hasher = Sha1::new();
+    for part in parts {
+        hasher.update(part.as_bytes());
+    }
+    let digest = hex::encode(hasher.finalize());
+    digest.eq_ignore_ascii_case(signature)
+}
+
+pub fn verify_message_signature(
     token: &str,
     timestamp: &str,
     nonce: &str,
@@ -64,52 +87,49 @@ pub fn verify_signature(
 pub fn decrypt_payload(
     encrypted: &str,
     encoding_aes_key: &str,
-    expected_receive_id: Option<&str>,
+    expected_app_id: Option<&str>,
 ) -> Result<String> {
     let key = decode_encoding_aes_key(encoding_aes_key)?;
     let encrypted = encrypted.trim();
     if encrypted.is_empty() {
-        return Err(anyhow!("wechat encrypted payload is empty"));
+        return Err(anyhow!("wechat mp encrypted payload is empty"));
     }
     let buffer = base64::engine::general_purpose::STANDARD
         .decode(encrypted)
-        .map_err(|_| anyhow!("wechat encrypted payload is not valid base64"))?;
+        .map_err(|_| anyhow!("wechat mp encrypted payload is not valid base64"))?;
     if buffer.is_empty() {
-        return Err(anyhow!("wechat encrypted payload is empty"));
+        return Err(anyhow!("wechat mp encrypted payload is empty"));
     }
-
     let iv = &key[..16];
     let mut cipher_text = buffer;
     let plain = Aes256CbcDec::new(key.as_slice().into(), iv.into())
         .decrypt_padded_mut::<Pkcs7>(&mut cipher_text)
-        .map_err(|_| anyhow!("wechat payload decrypt failed"))?;
+        .map_err(|_| anyhow!("wechat mp payload decrypt failed"))?;
     if plain.len() < 20 {
-        return Err(anyhow!("wechat payload is too short"));
+        return Err(anyhow!("wechat mp payload is too short"));
     }
     let msg_len: [u8; 4] = plain[16..20]
         .try_into()
-        .map_err(|_| anyhow!("wechat payload length parse failed"))?;
+        .map_err(|_| anyhow!("wechat mp payload length parse failed"))?;
     let msg_len = u32::from_be_bytes(msg_len) as usize;
     let msg_start = 20;
     let msg_end = msg_start + msg_len;
     if msg_end > plain.len() {
-        return Err(anyhow!("wechat payload length out of range"));
+        return Err(anyhow!("wechat mp payload length out of range"));
     }
-
-    let receive_id = String::from_utf8_lossy(&plain[msg_end..])
+    let app_id = String::from_utf8_lossy(&plain[msg_end..])
         .trim()
         .to_string();
-    if let Some(expected) = expected_receive_id
+    if let Some(expected) = expected_app_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        if !receive_id.is_empty() && !receive_id.eq_ignore_ascii_case(expected) {
-            return Err(anyhow!("wechat payload receive_id mismatch"));
+        if !app_id.is_empty() && !app_id.eq_ignore_ascii_case(expected) {
+            return Err(anyhow!("wechat mp payload app_id mismatch"));
         }
     }
-
     String::from_utf8(plain[msg_start..msg_end].to_vec())
-        .map_err(|_| anyhow!("wechat payload body is not utf-8"))
+        .map_err(|_| anyhow!("wechat mp payload body is not utf-8"))
 }
 
 pub fn parse_xml_fields(xml: &str) -> Result<HashMap<String, String>> {
@@ -118,7 +138,6 @@ pub fn parse_xml_fields(xml: &str) -> Result<HashMap<String, String>> {
     let mut buffer = Vec::new();
     let mut current_tag: Option<String> = None;
     let mut output = HashMap::new();
-
     loop {
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => {
@@ -129,7 +148,7 @@ pub fn parse_xml_fields(xml: &str) -> Result<HashMap<String, String>> {
                 if let Some(tag) = current_tag.take() {
                     let text = event
                         .unescape()
-                        .map_err(|_| anyhow!("wechat xml text decode failed"))?
+                        .map_err(|_| anyhow!("wechat mp xml text decode failed"))?
                         .trim()
                         .to_string();
                     if !text.is_empty() {
@@ -149,7 +168,7 @@ pub fn parse_xml_fields(xml: &str) -> Result<HashMap<String, String>> {
                 current_tag = None;
             }
             Ok(Event::Eof) => break,
-            Err(err) => return Err(anyhow!("wechat xml parse failed: {err}")),
+            Err(err) => return Err(anyhow!("wechat mp xml parse failed: {err}")),
             _ => {}
         }
         buffer.clear();
@@ -170,49 +189,53 @@ pub fn extract_inbound_messages(
         .get("FromUserName")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("invalid wechat payload: missing FromUserName"))?;
-    let (message_type, content) = match msg_type.as_str() {
-        "text" => (
-            "text".to_string(),
-            fields
-                .get("Content")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        ),
-        "voice" => (
-            "text".to_string(),
-            fields
-                .get("Recognition")
-                .or_else(|| fields.get("Content"))
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        ),
+        .ok_or_else(|| anyhow!("invalid wechat mp payload: missing FromUserName"))?;
+    let content = match msg_type.as_str() {
+        "text" => fields
+            .get("Content")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        "voice" => fields
+            .get("Recognition")
+            .or_else(|| fields.get("Content"))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         "event" => {
             let event = fields
                 .get("Event")
                 .map(|value| value.trim().to_ascii_lowercase())
                 .unwrap_or_default();
-            if matches!(event.as_str(), "enter_agent" | "subscribe" | "unsubscribe") {
-                return Ok(Vec::new());
-            }
-            let event_key = fields
-                .get("EventKey")
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-            if event == "click" {
-                (
-                    "text".to_string(),
-                    event_key.or_else(|| Some("[wechat_click]".to_string())),
-                )
-            } else if event_key.is_some() {
-                ("text".to_string(), event_key)
+            if matches!(event.as_str(), "unsubscribe") {
+                None
+            } else if event == "location" {
+                let lat = fields
+                    .get("Latitude")
+                    .or_else(|| fields.get("Location_X"))
+                    .map(|value| value.trim())
+                    .unwrap_or_default();
+                let lng = fields
+                    .get("Longitude")
+                    .or_else(|| fields.get("Location_Y"))
+                    .map(|value| value.trim())
+                    .unwrap_or_default();
+                if lat.is_empty() || lng.is_empty() {
+                    None
+                } else {
+                    Some(format!("[location] {lat},{lng}"))
+                }
             } else {
-                return Ok(Vec::new());
+                fields
+                    .get("EventKey")
+                    .or_else(|| fields.get("Content"))
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
             }
         }
-        _ => return Ok(Vec::new()),
+        _ => None,
     };
-    let content = content.ok_or_else(|| anyhow!("invalid wechat payload: missing content"))?;
+    let Some(content) = content else {
+        return Ok(Vec::new());
+    };
     let message_id = fields
         .get("MsgId")
         .or_else(|| fields.get("MsgID"))
@@ -222,9 +245,8 @@ pub fn extract_inbound_messages(
     let ts = fields
         .get("CreateTime")
         .and_then(|value| value.trim().parse::<f64>().ok());
-
     Ok(vec![ChannelMessage {
-        channel: WECHAT_CHANNEL.to_string(),
+        channel: WECHAT_MP_CHANNEL.to_string(),
         account_id: account_id.to_string(),
         peer: ChannelPeer {
             kind: "user".to_string(),
@@ -237,38 +259,28 @@ pub fn extract_inbound_messages(
             id: peer_id,
             name: None,
         }),
-        message_type,
+        message_type: "text".to_string(),
         text: Some(content),
         attachments: Vec::new(),
         location: None,
         ts,
-        meta: Some(json!({ "wechat": fields })),
+        meta: Some(json!({ "wechat_mp": fields })),
     }])
 }
 
 pub async fn send_outbound(
     http: &Client,
     outbound: &ChannelOutboundMessage,
-    config: &WechatConfig,
+    config: &WechatMpConfig,
 ) -> Result<()> {
     let access_token = fetch_access_token(http, config).await?;
     let base_url = resolve_api_base_url(config);
-    let agent_id = config
-        .agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("wechat agent_id missing"))?;
-    let agent_id = agent_id
-        .parse::<i64>()
-        .map_err(|_| anyhow!("wechat agent_id must be integer"))?;
-
     let text = outbound
         .text
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
+        .map(|value| value.to_string())
         .or_else(|| {
             outbound
                 .attachments
@@ -278,31 +290,14 @@ pub async fn send_outbound(
         .unwrap_or_else(|| "(empty message)".to_string());
     let peer_id = outbound.peer.id.trim();
     if peer_id.is_empty() {
-        return Err(anyhow!("wechat outbound peer id missing"));
+        return Err(anyhow!("wechat mp outbound peer id missing"));
     }
-
-    let mut payload = json!({
+    let payload = json!({
+        "touser": peer_id,
         "msgtype": "text",
-        "agentid": agent_id,
         "text": { "content": text },
-        "safe": 0,
-        "enable_duplicate_check": 1,
-        "duplicate_check_interval": 1800,
     });
-    let peer_kind = outbound.peer.kind.trim().to_ascii_lowercase();
-    if peer_kind == "group" {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("toparty".to_string(), Value::String(peer_id.to_string()));
-        }
-    } else if peer_kind == "tag" {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("totag".to_string(), Value::String(peer_id.to_string()));
-        }
-    } else if let Some(map) = payload.as_object_mut() {
-        map.insert("touser".to_string(), Value::String(peer_id.to_string()));
-    }
-
-    let send_url = format!("{base_url}/cgi-bin/message/send");
+    let send_url = format!("{base_url}/cgi-bin/message/custom/send");
     let response = http
         .post(send_url)
         .query(&[("access_token", access_token.as_str())])
@@ -312,7 +307,7 @@ pub async fn send_outbound(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!("wechat outbound failed: {status} {body}"));
+        return Err(anyhow!("wechat mp outbound failed: {status} {body}"));
     }
     let body: Value = response.json().await?;
     let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
@@ -321,49 +316,52 @@ pub async fn send_outbound(
             .get("errmsg")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        return Err(anyhow!("wechat outbound failed: {errmsg}"));
+        return Err(anyhow!("wechat mp outbound failed: {errmsg}"));
     }
     Ok(())
 }
 
-async fn fetch_access_token(http: &Client, config: &WechatConfig) -> Result<String> {
-    let corp_id = config
-        .corp_id
+async fn fetch_access_token(http: &Client, config: &WechatMpConfig) -> Result<String> {
+    let app_id = config
+        .app_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("wechat corp_id missing"))?;
-    let secret = config
-        .secret
+        .ok_or_else(|| anyhow!("wechat mp app_id missing"))?;
+    let app_secret = config
+        .app_secret
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("wechat secret missing"))?;
+        .ok_or_else(|| anyhow!("wechat mp app_secret missing"))?;
     let base_url = resolve_api_base_url(config);
-    let cache_key = build_token_cache_key(&base_url, corp_id, secret);
+    let cache_key = build_token_cache_key(&base_url, app_id, app_secret);
     if let Some(cached) = load_cached_token(&cache_key) {
         return Ok(cached);
     }
-
-    let token_url = format!("{base_url}/cgi-bin/gettoken");
+    let token_url = format!("{base_url}/cgi-bin/token");
     let response = http
         .get(token_url)
-        .query(&[("corpid", corp_id), ("corpsecret", secret)])
+        .query(&[
+            ("grant_type", "client_credential"),
+            ("appid", app_id),
+            ("secret", app_secret),
+        ])
         .send()
         .await?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!("wechat token request failed: {status} {body}"));
+        return Err(anyhow!("wechat mp token request failed: {status} {body}"));
     }
     let body: Value = response.json().await?;
-    let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+    let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(0);
     if errcode != 0 {
         let errmsg = body
             .get("errmsg")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        return Err(anyhow!("wechat token request failed: {errmsg}"));
+        return Err(anyhow!("wechat mp token request failed: {errmsg}"));
     }
     let token = body
         .get("access_token")
@@ -371,7 +369,7 @@ async fn fetch_access_token(http: &Client, config: &WechatConfig) -> Result<Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| anyhow!("wechat token missing access_token"))?;
+        .ok_or_else(|| anyhow!("wechat mp token missing access_token"))?;
     let expires_in = body
         .get("expires_in")
         .and_then(Value::as_u64)
@@ -380,13 +378,13 @@ async fn fetch_access_token(http: &Client, config: &WechatConfig) -> Result<Stri
     Ok(token)
 }
 
-fn resolve_api_base_url(config: &WechatConfig) -> String {
+fn resolve_api_base_url(config: &WechatMpConfig) -> String {
     let domain = config
         .domain
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("qyapi.weixin.qq.com");
+        .unwrap_or("api.weixin.qq.com");
     if domain.starts_with("http://") || domain.starts_with("https://") {
         domain.trim_end_matches('/').to_string()
     } else {
@@ -397,7 +395,7 @@ fn resolve_api_base_url(config: &WechatConfig) -> String {
 fn decode_encoding_aes_key(raw: &str) -> Result<Vec<u8>> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(anyhow!("wechat encoding_aes_key missing"));
+        return Err(anyhow!("wechat mp encoding_aes_key missing"));
     }
     let padded = if raw.ends_with('=') {
         raw.to_string()
@@ -406,9 +404,9 @@ fn decode_encoding_aes_key(raw: &str) -> Result<Vec<u8>> {
     };
     let key = base64::engine::general_purpose::STANDARD
         .decode(padded)
-        .map_err(|_| anyhow!("wechat encoding_aes_key is invalid base64"))?;
+        .map_err(|_| anyhow!("wechat mp encoding_aes_key is invalid base64"))?;
     if key.len() != 32 {
-        return Err(anyhow!("wechat encoding_aes_key length invalid"));
+        return Err(anyhow!("wechat mp encoding_aes_key length invalid"));
     }
     Ok(key)
 }
@@ -434,7 +432,7 @@ fn build_fallback_message_id(
         .filter(|value| !value.is_empty())
         .unwrap_or("-");
     Some(format!(
-        "wx:{account}:{peer}:{ty}:{event}:{event_key}:{ts}",
+        "wxmp:{account}:{peer}:{ty}:{event}:{event_key}:{ts}",
         account = account_id.trim(),
         peer = peer_id.trim(),
         ty = msg_type.trim(),
@@ -442,21 +440,21 @@ fn build_fallback_message_id(
     ))
 }
 
-fn build_token_cache_key(base_url: &str, corp_id: &str, secret: &str) -> String {
+fn build_token_cache_key(base_url: &str, app_id: &str, app_secret: &str) -> String {
     let mut hasher = Sha1::new();
-    hasher.update(secret.as_bytes());
+    hasher.update(app_secret.as_bytes());
     let secret_hash = hex::encode(hasher.finalize());
     format!(
-        "{base}:{corp}:{hash}",
+        "{base}:{app}:{hash}",
         base = base_url,
-        corp = corp_id,
+        app = app_id,
         hash = secret_hash
     )
 }
 
 fn load_cached_token(cache_key: &str) -> Option<String> {
     let now = Instant::now();
-    let guard = WECHAT_TOKEN_CACHE.lock().ok()?;
+    let guard = WECHAT_MP_TOKEN_CACHE.lock().ok()?;
     let item = guard.get(cache_key)?;
     if item.expires_at > now + Duration::from_secs(TOKEN_MIN_REUSE_S) {
         return Some(item.token.clone());
@@ -469,7 +467,7 @@ fn store_cached_token(cache_key: &str, token: &str, expires_in: u64) {
         .saturating_sub(TOKEN_REFRESH_LEEWAY_S)
         .max(TOKEN_MIN_REUSE_S);
     let expires_at = Instant::now() + Duration::from_secs(usable_s);
-    if let Ok(mut guard) = WECHAT_TOKEN_CACHE.lock() {
+    if let Ok(mut guard) = WECHAT_MP_TOKEN_CACHE.lock() {
         guard.insert(
             cache_key.to_string(),
             CachedToken {
@@ -485,11 +483,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn verify_signature_with_sorted_parts() {
+    fn verify_callback_signature_works() {
         let token = "token";
         let timestamp = "1710000000";
         let nonce = "abc";
-        let encrypted = "cipher_text";
+        let mut parts = [token, timestamp, nonce];
+        parts.sort_unstable();
+        let mut hasher = Sha1::new();
+        for part in parts {
+            hasher.update(part.as_bytes());
+        }
+        let signature = hex::encode(hasher.finalize());
+        assert!(verify_callback_signature(
+            token, timestamp, nonce, &signature
+        ));
+    }
+
+    #[test]
+    fn verify_message_signature_works() {
+        let token = "token";
+        let timestamp = "1710000000";
+        let nonce = "abc";
+        let encrypted = "cipher";
         let mut parts = [token, timestamp, nonce, encrypted];
         parts.sort_unstable();
         let mut hasher = Sha1::new();
@@ -497,36 +512,16 @@ mod tests {
             hasher.update(part.as_bytes());
         }
         let signature = hex::encode(hasher.finalize());
-        assert!(verify_signature(
+        assert!(verify_message_signature(
             token, timestamp, nonce, encrypted, &signature
         ));
     }
 
     #[test]
-    fn parse_xml_fields_extracts_text() {
-        let xml =
-            "<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[hello]]></Content></xml>";
-        let fields = parse_xml_fields(xml).expect("xml should parse");
-        assert_eq!(fields.get("MsgType").cloned(), Some("text".to_string()));
-        assert_eq!(fields.get("Content").cloned(), Some("hello".to_string()));
-    }
-
-    #[test]
-    fn extract_inbound_messages_only_text() {
-        let xml = "<xml><FromUserName><![CDATA[u1]]></FromUserName><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[你好]]></Content><CreateTime>1710000000</CreateTime></xml>";
-        let messages = extract_inbound_messages(xml, "acc_1").expect("extract should succeed");
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].channel, WECHAT_CHANNEL);
-        assert_eq!(messages[0].peer.id, "u1");
-        assert_eq!(messages[0].text.as_deref(), Some("你好"));
-    }
-
-    #[test]
-    fn extract_inbound_messages_supports_voice_recognition() {
-        let xml = "<xml><FromUserName><![CDATA[u1]]></FromUserName><MsgType><![CDATA[voice]]></MsgType><Recognition><![CDATA[测试语音]]></Recognition><CreateTime>1710000001</CreateTime></xml>";
+    fn extract_inbound_messages_supports_voice() {
+        let xml = "<xml><FromUserName><![CDATA[o_1]]></FromUserName><MsgType><![CDATA[voice]]></MsgType><Recognition><![CDATA[test voice]]></Recognition><CreateTime>1710000000</CreateTime></xml>";
         let messages = extract_inbound_messages(xml, "acc_1").expect("voice should parse");
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].text.as_deref(), Some("测试语音"));
-        assert!(messages[0].message_id.is_some());
+        assert_eq!(messages[0].text.as_deref(), Some("test voice"));
     }
 }
